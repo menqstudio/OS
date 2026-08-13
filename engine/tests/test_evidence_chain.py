@@ -25,6 +25,7 @@ from bro_evidence import (
 from bro_signature import load_trusted_keys
 from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
+import _self_owned_ack
 
 NOW = 1_700_000_000
 YEAR = 365 * 24 * 60 * 60
@@ -272,8 +273,9 @@ class CompletionIntegrationTests(EvidenceFixture):
         (floor_dir / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
         # This process owns that directory, which R-06 refuses by default — a mark the policed
         # account can rewind is not a mark. A test harness has no second principal; say so.
-        ack = unittest.mock.patch.dict(
-            os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"})
+        # Through the FILE form: the raw variable is honoured only under `BRO_ENV=ci` now,
+        # and a test host is not CI.
+        ack = _self_owned_ack.patch(self.tmp)
         ack.start()
         self.addCleanup(ack.stop)
 

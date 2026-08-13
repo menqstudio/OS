@@ -21,7 +21,18 @@ landed:
      ``docs/PHASE_10_PRODUCTION_ITEMS.md`` names — have a caller outside their own module and
      outside their own tests. ``assert_no_bytecode_shadow`` is the worked example: it exists,
      it is documented, it raises the right error, and it has never once been called.
-  3. Every ``allow-*``/``deny-*`` grant in
+  3. Declared ``apps/desktop/src-tauri/**`` RUST symbols have a caller outside their own
+     module and outside ``#[cfg(test)]``. This is the same defect in the language the security
+     core is written in, and it was invisible here until 2026-08-09: ``rustc`` never warns
+     about a ``pub fn`` in a library crate that nobody calls, so the ``governed_output_stream``
+     mint/resolve/sweep ladder shipped, was reviewed, grew nine unit tests, and had zero
+     production callers. That ladder was **deleted on 2026-08-10** when rev-30 §4.10(f) was
+     actually built (as supervisor state, in the engine) and its table turned out to disagree
+     with the design it cited — so this gate's worked example is now history rather than a file
+     you can open, and the ``rust_symbols`` section it justified is empty. The examples below
+     are kept in the past tense for the same reason the rule is kept: the next one will look
+     exactly like it did.
+  4. Every ``allow-*``/``deny-*`` grant in
      ``apps/desktop/src-tauri/capabilities/default.json`` corresponds to a registered command
      and vice versa — and an ``allow``-granted command with no caller is reported as what it
      is: invokable attack surface with no user.
@@ -50,8 +61,16 @@ Overstating a gate's coverage is the same lie one level up, so, precisely:
   * **For the ``policy_flag`` kind it proves the flag is READ, never that it is SET.** Whether
     ``engine/.bro/policy.json`` actually enables it is residual item O-3, outside this gate.
   * **Scope is fixed:** frontend callers are searched only under ``apps/desktop/src/**``;
-    Python callers only under ``engine/``, ``bridge/``, ``tools/``. A caller in another crate,
-    another binary, a shell script, or a downstream repository is invisible.
+    Python callers only under ``engine/``, ``bridge/``, ``tools/``; Rust callers only under
+    ``apps/desktop/src-tauri/**``. A caller in a shell script or a downstream repository is
+    invisible.
+  * **A Rust caller must be NAMED, not inferred.** A ``rust_symbol`` counts as called only via
+    ``module::name(`` or a bare ``name(`` in a file that also ``use``s it from that module.
+    That is deliberate: a bare name match alone would have counted ``ai.rs``'s unrelated
+    ``resolve()`` as a caller of ``governed_output_stream::resolve``. The cost is the other
+    direction — a call through a trait object, a re-export under a different path, or a
+    function pointer is NOT seen, so ``must_have_caller`` is the expectation to use sparingly
+    and ``declared_unreachable`` is the one this gate can actually defend.
 
 What it DOES hold reliably: comments and block comments are stripped before matching, so a
 mention in a comment is never a call; and test files are classified separately, so a symbol
@@ -78,7 +97,14 @@ DEFAULT_CAP = pathlib.Path("apps/desktop/src-tauri/capabilities/default.json")
 FRONTEND_SRC = pathlib.Path("apps/desktop/src")
 FRONTEND_SUFFIXES = (".ts", ".tsx")
 PY_SCAN_DIRS = ("engine", "bridge", "tools")
+RUST_SCAN_DIRS = ("apps/desktop/src-tauri",)
 SKIP_PARTS = {"node_modules", "target", ".git", "__pycache__", "dist"}
+WORKFLOWS = pathlib.Path(".github/workflows")
+#: A gate that no workflow executes is the uncalled-command defect one level up: it exists,
+#: it is documented, it reads as protection, and it protects nothing. This is how
+#: tools/check_i18n_parity.py came to be run by no job at all while the roadmap's status
+#: board said i18n parity was "enforced in CI".
+GATE_GLOB = "check_*.py"
 
 #: Reason categories a declared-unreachable Tauri command may claim. The category alone is not
 #: the reason — every entry must ALSO carry prose saying why, which is the whole point of the
@@ -95,6 +121,11 @@ REASONS_NEEDING_TRACKING = {"not-yet-wired"}
 
 ENGINE_EXPECTATIONS = {"must_have_caller", "declared_unreachable"}
 ENGINE_KINDS = {"function", "policy_flag"}
+
+#: Rust symbols carry the same two expectations. There is no `policy_flag` counterpart: a Rust
+#: constant is read by the compiler, not by a config file, so the only question worth gating is
+#: whether a function has a caller.
+RUST_KINDS = {"function"}
 
 #: A reason has to be a sentence someone thought about. These are the strings people type when
 #: they want the gate to be quiet, and "unreachable, no reason given" is not a reason.
@@ -116,10 +147,21 @@ def _read(path: pathlib.Path) -> str:
         return ""
 
 
+def blank_keeping_lines(text: str) -> str:
+    """`text` with every non-newline character replaced by a space.
+
+    Used wherever a region is removed from a source file: the region stops matching, and every
+    line after it keeps its number. Line numbers are most of the value of a "nothing calls it"
+    report — one that is off by the length of a block comment sends the reader to the wrong
+    place, and a reader who is sent to the wrong place stops believing the gate.
+    """
+    return re.sub(r"[^\n]", " ", text)
+
+
 def strip_c_comments(text: str) -> str:
     """Remove block and line comments. A mention in a comment is not a call — that distinction
     is load-bearing here, because the dead symbols in this repository are all well commented."""
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = re.sub(r"/\*.*?\*/", lambda m: blank_keeping_lines(m.group(0)), text, flags=re.DOTALL)
     return re.sub(r"(?m)//[^\n]*", " ", text)
 
 
@@ -289,6 +331,152 @@ def python_callers(
     return outside, only_tests
 
 
+# --------------------------------------------------------------------------------------
+# Rust scanning
+#
+# The security core of this product is Rust, and until 2026-08-09 none of it was covered by
+# this gate. That mattered: `rustc` warns about an uncalled *private* item and says nothing
+# about a `pub fn` in a library crate, which is precisely the shape the whole
+# `governed_output_stream` mint/resolve/sweep ladder had — public, unit-tested, and called by
+# nothing outside its own `#[cfg(test)] mod tests`.
+# --------------------------------------------------------------------------------------
+
+def is_rust_test(path: pathlib.Path) -> bool:
+    """A Cargo integration-test file. Everything under `tests/` is a test by Cargo's own rule."""
+    return "tests" in path.parts or path.name.startswith("test_")
+
+
+def rust_files(root: pathlib.Path) -> list[pathlib.Path]:
+    out: list[pathlib.Path] = []
+    for top in RUST_SCAN_DIRS:
+        base = root / top
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.rs"):
+            if SKIP_PARTS & set(path.parts):
+                continue
+            out.append(path)
+    return sorted(out)
+
+
+def _skip_rust_literal(text: str, index: int) -> int:
+    """Index just past the string/char literal starting at `index`, so its braces are not counted."""
+    quote = text[index]
+    if quote == "'":
+        # A char literal is at most `'\x41'`; a lifetime (`&'a str`) has no closing quote, so
+        # bail out unless one turns up within a few characters.
+        end = text.find("'", index + 1)
+        if end == -1 or end - index > 6:
+            return index + 1
+        return end + 1
+    index += 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == quote:
+            return index + 1
+        index += 1
+    return index
+
+
+def strip_rust_test_modules(text: str) -> str:
+    """Blank out every `#[cfg(test)] mod … { … }` block, preserving line numbers.
+
+    A symbol whose only callers live in its own `#[cfg(test)]` module is exactly as dead as one
+    with no callers at all, and it is the harder case to see: nine passing unit tests read as
+    evidence the thing works, and they are evidence the thing works — not evidence anything uses
+    it. Brace matching skips string and char literals so a `"{"` in a SQL statement does not
+    close the module early.
+    """
+    out: list[str] = []
+    cursor = 0
+    while True:
+        marker = text.find("#[cfg(test)]", cursor)
+        if marker < 0:
+            out.append(text[cursor:])
+            return "".join(out)
+        out.append(text[cursor:marker])
+        brace = text.find("{", marker)
+        semicolon = text.find(";", marker)
+        if brace < 0 or (semicolon != -1 and semicolon < brace):
+            # `#[cfg(test)] mod tests;` or an attribute on a non-block item: drop the attribute
+            # only. (A separate test FILE is caught by `is_rust_test` instead.)
+            out.append(blank_keeping_lines(text[marker:marker + len("#[cfg(test)]")]))
+            cursor = marker + len("#[cfg(test)]")
+            continue
+        depth = 0
+        index = brace
+        while index < len(text):
+            char = text[index]
+            if char in "\"'":
+                index = _skip_rust_literal(text, index)
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    index += 1
+                    break
+            index += 1
+        out.append(blank_keeping_lines(text[marker:index]))
+        cursor = index
+
+
+def rust_callers(
+    root: pathlib.Path,
+    files: list[pathlib.Path],
+    name: str,
+    module: str,
+    defined_in: str | None,
+) -> tuple[list[str], list[str]]:
+    """(non-test callers, test-only callers) as "file:line" strings, for a Rust `pub fn`.
+
+    A caller must NAME the symbol, one of two ways: the qualified call `module::name(`, or a
+    bare `name(` in a file that also `use`s `name` from `module`. A bare match on its own is
+    refused, and that refusal is the reason this function exists in this shape: `ai.rs` defines
+    its own `resolve()`, so a bare-name scan would have reported
+    `governed_output_stream::resolve` as having a caller — a false green produced by the gate
+    that exists to prevent false greens.
+
+    The cost is real and runs the other way: a call reached through a trait object, a re-export
+    under a different path, or a function pointer is NOT seen. So `must_have_caller` overstates
+    what this can defend, and `declared_unreachable` — RED the moment a named caller appears —
+    is the expectation it can actually hold.
+    """
+    qualified = re.compile(
+        r"\b" + re.escape(module) + r"\s*::\s*" + re.escape(name) + r"\s*\("
+    )
+    imported = re.compile(
+        r"\buse\b[^;]*\b" + re.escape(module) + r"\b[^;]*\b" + re.escape(name) + r"\b[^;]*;"
+    )
+    bare = re.compile(r"\b" + re.escape(name) + r"\s*\(")
+
+    def hits(text: str) -> set[int]:
+        lines = {text.count("\n", 0, m.start()) + 1 for m in qualified.finditer(text)}
+        if imported.search(text):
+            lines |= {text.count("\n", 0, m.start()) + 1 for m in bare.finditer(text)}
+        return lines
+
+    outside: list[str] = []
+    only_tests: list[str] = []
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        if defined_in and rel == defined_in:
+            continue
+        text = strip_c_comments(_read(path))
+        every = hits(text)
+        if not every:
+            continue
+        production = set() if is_rust_test(path) else hits(strip_rust_test_modules(text))
+        for line in sorted(production):
+            outside.append(f"{rel}:{line}")
+        for line in sorted(every - production):
+            only_tests.append(f"{rel}:{line}")
+    return outside, only_tests
+
+
 def capability_grants(root: pathlib.Path) -> dict[str, str]:
     """command fn name -> 'allow' | 'deny' from capabilities/default.json (core:* ignored)."""
     doc = json.loads(_read(root / DEFAULT_CAP) or "{}")
@@ -335,6 +523,32 @@ def bad_reason(text: object) -> bool:
     return normalized in PLACEHOLDER_REASONS or len(text.strip()) < MIN_REASON_CHARS
 
 
+def gate_modules(root: pathlib.Path) -> list[str]:
+    """Every gate under tools/, as a repo-relative posix path."""
+    return sorted(p.relative_to(root).as_posix() for p in (root / "tools").glob(GATE_GLOB))
+
+
+def workflow_invocations(root: pathlib.Path) -> set[str]:
+    """Gate paths mentioned by any workflow file.
+
+    A text scan, like the rest of this gate: a workflow step that builds the command
+    from a variable is invisible, which is a false RED the declarations file absorbs.
+    """
+    invoked: set[str] = set()
+    directory = root / WORKFLOWS
+    if not directory.is_dir():
+        return invoked
+    for workflow in sorted(directory.glob("*.y*ml")):
+        text = _read(workflow)
+        for gate in gate_modules(root):
+            # The gate PATH, i.e. the job actually runs it against the tree. Running only its
+            # self-tests deliberately does NOT count: a checker proven correct and never
+            # pointed at the repository is the same nothing as a command with no caller.
+            if gate in text:
+                invoked.add(gate)
+    return invoked
+
+
 def tracking_path_missing(root: pathlib.Path, tracked_by: object) -> bool:
     if not isinstance(tracked_by, str) or not tracked_by.strip():
         return True
@@ -352,6 +566,7 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
     declarations = load_declarations(root)
     declared_commands = declarations.get("tauri_commands", {})
     declared_symbols = declarations.get("engine_symbols", {})
+    declared_rust = declarations.get("rust_symbols", {})
 
     registered = registered_commands(root)
     defined = defined_commands(root)
@@ -520,6 +735,131 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
                     f"starts protecting the new caller instead of excusing its absence."
                 )
 
+    # --- 4b) declared src-tauri RUST symbols ------------------------------------------------
+    # Same rules as the engine symbols above, in the language the security core is written in.
+    # Deliberately NOT a second gate module: the declarations file, the reason-quality rules and
+    # the declaration-rot rule already live here, and duplicating them is the "do not build what
+    # exists" rule broken while enforcing it.
+    rs_files = rust_files(root)
+    rust_state: dict[str, dict] = {}
+    for name in sorted(declared_rust):
+        entry = declared_rust[name]
+        kind = entry.get("kind")
+        expectation = entry.get("expectation")
+        defined_in = entry.get("defined_in")
+        module = entry.get("module")
+        if kind not in RUST_KINDS:
+            problems.append(f"rust symbol `{name}`: kind {kind!r} not in {sorted(RUST_KINDS)}")
+            continue
+        if expectation not in ENGINE_EXPECTATIONS:
+            problems.append(
+                f"rust symbol `{name}`: expectation {expectation!r} not in "
+                f"{sorted(ENGINE_EXPECTATIONS)}"
+            )
+            continue
+        if not isinstance(module, str) or not module:
+            problems.append(
+                f"rust symbol `{name}`: `module` is required — a caller must NAME the symbol "
+                f"(`module::{name}(`), because a bare-name match would count any unrelated "
+                f"function of the same name as a caller."
+            )
+            continue
+        if not isinstance(defined_in, str) or not (root / defined_in).exists():
+            problems.append(
+                f"rust symbol `{name}`: defined_in {defined_in!r} does not exist"
+            )
+            continue
+        stem = pathlib.PurePosixPath(defined_in)
+        if not (stem.stem == module or stem.name == "mod.rs" and stem.parent.name == module):
+            problems.append(
+                f"rust symbol `{name}`: module {module!r} does not match defined_in "
+                f"{defined_in!r}. The declared call path must be the real one, or the gate "
+                f"searches for calls that could never exist and reports silence as proof."
+            )
+            continue
+        if not re.search(r"\bfn\s+" + re.escape(name) + r"\b", _read(root / defined_in)):
+            problems.append(
+                f"rust symbol `{name}`: {defined_in} declares no `fn {name}` — the declaration "
+                f"has rotted away from the code."
+            )
+            continue
+        outside, only_tests = rust_callers(root, rs_files, name, module, defined_in)
+        rust_state[name] = {
+            "callers": outside,
+            "test_callers": only_tests,
+            "expectation": expectation,
+            "module": module,
+        }
+        if expectation == "must_have_caller" and not outside:
+            hint = (
+                f" It is referenced ONLY from tests ({only_tests[:2]}) — nine green unit tests "
+                f"are evidence the function works, never evidence anything uses it."
+                if only_tests
+                else ""
+            )
+            problems.append(
+                f"rust symbol `{name}` is declared must_have_caller and has ZERO callers "
+                f"outside {defined_in} and its `#[cfg(test)]` modules.{hint}"
+            )
+        if expectation == "declared_unreachable":
+            if bad_reason(entry.get("reason")):
+                problems.append(
+                    f"rust symbol `{name}`: declared_unreachable needs at least "
+                    f"{MIN_REASON_CHARS} characters saying why; got {entry.get('reason')!r}."
+                )
+            if not entry.get("residual_item") and tracking_path_missing(
+                root, entry.get("tracked_by")
+            ):
+                problems.append(
+                    f"rust symbol `{name}`: declared_unreachable must name the residual item "
+                    f"(`residual_item`) or an existing `tracked_by` file."
+                )
+            if outside:
+                problems.append(
+                    f"rust symbol `{name}` is declared unreachable but now HAS a caller "
+                    f"({outside[0]}). Good — flip its expectation to must_have_caller so the "
+                    f"gate starts protecting the new caller instead of excusing its absence."
+                )
+
+    # --- 5) every gate under tools/ is actually EXECUTED by a workflow ----------------------
+    # The same defect as an uncalled command, one level up. Added rather than given its own
+    # module on purpose: a second gate would have duplicated the declarations file, the
+    # reason-quality rules and the declaration-rot rule that already live here, which is the
+    # "do not build what exists" rule broken while implementing it.
+    declared_gates = declarations.get("tools_gates", {})
+    if not isinstance(declared_gates, dict):
+        problems.append(f"{DECLARATIONS.as_posix()}: 'tools_gates' must be an object")
+        declared_gates = {}
+    declared_gates = {k: v for k, v in declared_gates.items() if not k.startswith("$")}
+    invoked_gates = workflow_invocations(root)
+    all_gates = gate_modules(root)
+    for gate in all_gates:
+        if gate in invoked_gates:
+            if gate in declared_gates:
+                problems.append(
+                    f"gate `{gate}` is declared un-run in {DECLARATIONS.as_posix()} but IS "
+                    f"executed by a workflow. Delete the entry — an exception must not outlive "
+                    f"the condition it described."
+                )
+            continue
+        entry = declared_gates.get(gate)
+        if entry is None:
+            problems.append(
+                f"gate `{gate}` is executed by NO workflow under {WORKFLOWS.as_posix()}/. A check "
+                f"nobody runs is not a check; it is a file that resembles one. Wire it into a "
+                f"workflow, or declare it in {DECLARATIONS.as_posix()} under 'tools_gates' with a "
+                f"written reason."
+            )
+        elif bad_reason(entry.get("reason")):
+            problems.append(
+                f"gate `{gate}`: an un-run gate needs at least {MIN_REASON_CHARS} characters "
+                f"saying why nothing runs it; got {entry.get('reason')!r}."
+            )
+    for gate in sorted(set(declared_gates) - set(all_gates)):
+        problems.append(
+            f"{DECLARATIONS.as_posix()}: 'tools_gates' declares `{gate}`, which does not exist."
+        )
+
     summary = {
         "registered": len(registered),
         "reached": len(registered) - len(unreached),
@@ -527,6 +867,9 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
         "grants": len(grants),
         "ungated": len(ungated),
         "engine": engine_state,
+        "rust": rust_state,
+        "gates": len(all_gates),
+        "gates_run": len(invoked_gates),
     }
     return problems, summary
 
@@ -545,9 +888,15 @@ LIMITS = (
     "    further; a constant reached through a second constant reads as unreachable, and any\n"
     "    reference to a declared read_via constant counts as a read.\n"
     "  - `policy_flag` symbols are proven READ, never proven SET in engine/.bro/policy.json.\n"
-    "  - scope is fixed: frontend apps/desktop/src/** only; python engine/, bridge/, tools/ only.\n"
+    "  - scope is fixed: frontend apps/desktop/src/** only; python engine/, bridge/, tools/\n"
+    "    only; rust apps/desktop/src-tauri/** only.\n"
+    "  - a rust caller must NAME the symbol (`module::name(`, or a bare call in a file that\n"
+    "    `use`s it from that module): a bare-name scan would have counted ai.rs's unrelated\n"
+    "    `resolve()` as calling governed_output_stream::resolve. The price is the other\n"
+    "    direction - a call through a trait object, a re-export, or a fn pointer is NOT seen.\n"
     "  What it does hold: comments are stripped (a mention is not a call), and test-only callers\n"
-    "  do not count (that is precisely how a dead security function read as green)."
+    "  do not count - neither a python tests/ module nor a rust `#[cfg(test)] mod` (that is\n"
+    "  precisely how a dead security function, and a whole rust ladder, read as green)."
 )
 
 
@@ -587,6 +936,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"         - {name}: ZERO callers, observed by THIS run (declared_unreachable).")
     for name in live:
         print(f"         + {name}: caller {engine[name]['callers'][0]}")
+
+    rust = summary["rust"]
+    rust_live = sorted(n for n, s in rust.items() if s["expectation"] == "must_have_caller")
+    rust_dead = sorted(n for n, s in rust.items() if s["expectation"] == "declared_unreachable")
+    print(
+        f"       src-tauri rust symbols: {len(rust_live)} enforced with a real caller; "
+        f"{len(rust_dead)} declared caller-less with a written reason."
+    )
+    for name in rust_dead:
+        state = rust[name]
+        tests = f", {len(state['test_callers'])} test-only reference(s)" if state["test_callers"] else ""
+        print(
+            f"         - {state['module']}::{name}: ZERO production callers, observed by THIS "
+            f"run (declared_unreachable{tests})."
+        )
+    for name in rust_live:
+        print(f"         + {rust[name]['module']}::{name}: caller {rust[name]['callers'][0]}")
     print()
     print(LIMITS)
     return 0

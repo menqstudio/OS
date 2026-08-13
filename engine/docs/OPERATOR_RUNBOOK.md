@@ -71,11 +71,16 @@ item O-3). `BRO_TRUSTED_REGISTRY_ROOT` names the deployment's real registry root
 See `runtime/bro_signature.resolve_registry_root` and `tests/test_provisioned_registry_root.py`
 (all 23 call sites AST-enumerated and frozen, so a new caller cannot reintroduce a split brain).
 
-> **Deployment A does not set it for you.** `Provisioned::engine_env()` returns
-> `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`
-> and `BRO_SESSION_ID` — and the desktop startup path deliberately does **not** export them; the
-> list does not even include `BRO_TRUSTED_REGISTRY_ROOT`. So on a stock desktop install the engine
-> still reads the committed development registry. Wiring the two is a deployment decision.
+> **The desktop deployment does set it (since 2026-08-09).** `Provisioned::engine_env()` returns
+> `BRO_TRUSTED_REGISTRY_ROOT`, `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`,
+> `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID`, and `apps/desktop/src-tauri/src/engine_trust.rs`
+> applies that set — whole, or not at all — to the child process the app launches the engine in.
+> This paragraph used to say the list did not even include `BRO_TRUSTED_REGISTRY_ROOT` and that a
+> stock install therefore read the committed development registry. Both were true and neither is now.
+>
+> An environment of your own still wins over nothing and loses to nothing: if you have already set
+> any of these, or `BRO_OPERATOR_ROOT_PUBKEY`, to something the install did not mint, the desktop
+> **refuses the governed call by name** instead of overriding you or being overridden.
 
 > `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` short-circuits **every** custody rule in the
 > runtime at once, not just the pin's. It is no longer set anywhere, and the anchor now passes those
@@ -136,7 +141,7 @@ Trust configuration is not runtime state, but it decides whether any of the abov
 | --- | --- | --- |
 | `BRO_OPERATOR_ROOT_PUBKEY_FILE` | the out-of-registry operator-root pin | the production form; `BRO_OPERATOR_ROOT_PUBKEY` is the CI form. If both are set they must match |
 | `BRO_OPERATOR_REGISTRY_MIN_FILE` | the registry anti-rollback floor | what makes revocation stick against a replayed older registry |
-| `BRO_TRUSTED_REGISTRY_ROOT` | where `config/trusted-keys.json` is read from | §0.0; unset means the engine's own tree |
+| `BRO_TRUSTED_REGISTRY_ROOT` | where `config/trusted-keys.json` is read from | §0.0; unset means the engine's own tree. The desktop install sets it to `<anchor>/registry` |
 | `BRO_CONDUCTOR_SESSION_TOKEN` / `BRO_SESSION_ID` | the operator-signed `conductor-session` and the session it binds | required: `require_conductor_session_token` is `true` in `.bro/policy.json`, and an absent key, a wrong type or an unreadable policy all mean REQUIRED |
 | `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` | the audit-head signing command and its key id | deliberately two variables: a half-configuration is refused loudly rather than degrading to an unanchored ledger |
 
@@ -285,7 +290,7 @@ adversary who rewrites both a file and its manifest entry.
 | --- | --- |
 | Verify deployment posture | `python3 tools/bro_deploy_preflight.py` |
 | Point the engine at a provisioned registry | `export BRO_TRUSTED_REGISTRY_ROOT=<absolute root holding config/trusted-keys.json>` (§0.0) |
-| Know which registry answered | unset ⇒ the engine's own tree, i.e. the committed **development** registry; see `runtime/bro_signature.resolve_registry_root` |
+| Know which registry answered | unset ⇒ the engine's own tree, i.e. the committed **development** registry; see `runtime/bro_signature.resolve_registry_root`. A desktop-launched engine has it set by `engine_trust::apply` |
 | Enable shadow rollout | `export BRO_ENFORCEMENT=shadow BRO_SHADOW_LEDGER=<external .jsonl>` |
 | Return to enforce | `unset BRO_ENFORCEMENT` (or set it to `enforce`) |
 | Read shadow would-block records | `bro_audit_log.verify` + `read_all` on `BRO_SHADOW_LEDGER` |

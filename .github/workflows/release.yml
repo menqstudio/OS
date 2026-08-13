@@ -134,9 +134,27 @@ jobs:
             ConvertTo-Json -Depth 6 | Set-Content -Path $overlayPath -Encoding utf8
           "TAURI_WINDOWS_CONFIG_OVERLAY=$overlayPath" >> $env:GITHUB_ENV
 
+      # PINNED (audit F-15). This step is handed the Tauri updater signing key and its
+      # password, four Apple signing/notarization secrets and a `contents: write`
+      # GITHUB_TOKEN, and it builds the installer the Owner runs. It was the ONLY `uses:`
+      # in the repository resolving a MUTABLE tag: whoever can move `tauri-apps/tauri-action`'s
+      # `v0` tag could have run their own code inside that secret set, on the release commit,
+      # with write access to the release.
+      #
+      # Provenance of this SHA (resolved 2026-08-10 against the live GitHub API, NOT guessed):
+      #   gh api repos/tauri-apps/tauri-action/git/ref/tags/v0
+      #     -> {"object": {"sha": "fce9c610…", "type": "tag"}}          # annotated tag object
+      #   gh api repos/tauri-apps/tauri-action/git/tags/fce9c610…
+      #     -> {"object": {"sha": "84b9d35b…", "type": "commit"}}       # dereferenced commit
+      #   gh api repos/tauri-apps/tauri-action/tags --jq '…sha=="84b9d35b…"…'
+      #     -> v0.6.2, v0.6, v0, action-v0.6.2
+      # So this pin is exactly what `@v0` resolved to at the moment of pinning — behaviour is
+      # unchanged, the mutability is gone. Note upstream has since published `action-v1.0.0`
+      # on a different commit; moving to it is a version bump for the Owner to make, not
+      # something a pinning change should smuggle in.
       - name: Build + bundle (signed; the preflight guarantees the material is present)
         id: tauri
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater signing (docs/RELEASE_SETUP.md §3). The PUBLIC half lives in

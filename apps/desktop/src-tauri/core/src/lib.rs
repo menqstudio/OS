@@ -7,14 +7,25 @@ pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
 pub mod governed_turn_ipc;
+// Wave 3b-1B §4.10(g): the trusted-side (BROKER, §0 role #2) governed-turn preparation and the
+// `bridge.governed-turn-submit.v1` frame writer. Pure — no socket, no subprocess, no clock.
+pub mod governed_prepare;
+pub mod governed_submit;
+// The one place in this tree that STARTS the governed bridge sidecar, and the provisioned
+// trust environment its governed arm cannot be built without. Both used to live in the renderer-hosting
+// binary crate, where the synchronous broker binary could not reach them; a second spawn
+// there would have been a second trust application.
+pub mod engine_trust;
+pub mod governed_sidecar;
 pub mod governed_message_store;
 pub mod fd_lifecycle;
 pub mod privilege_drop;
 pub mod tcb_integrity;
 pub mod broker_turns;
 pub mod broker_orchestrator;
-pub mod governed_output_stream;
 pub mod governed_verification;
+pub mod governed_output_pull;
+pub mod governed_bridge_result;
 pub mod windows_broker;
 pub mod ipc_framing;
 pub mod real_ids;
@@ -526,16 +537,39 @@ mod tests {
         (step.id, ap.id, ap.nonce.clone().unwrap(), ap.request_digest.clone().unwrap())
     }
 
+    /// Audit F-30. This test used to be named
+    /// `t011_self_approval_by_durable_principal_is_refused_but_native_confirms` and drove
+    /// `approve_confirmed` with `"webview:main"` as the confirmer — a value NO production
+    /// caller emits, since `confirm_approval` passes the literal `"native"`. So it was
+    /// green while the production path was unguarded, and the equality it exercised could
+    /// not fail on any shipped path.
+    ///
+    /// What is asserted now is the property the shipped call site actually has: the
+    /// confirmer must be `NATIVE_CONFIRMER_PRINCIPAL`, so EVERY webview principal is
+    /// refused — including a second window that did not raise the request, which the old
+    /// equality let through.
     #[test]
-    fn t011_self_approval_by_durable_principal_is_refused_but_native_confirms() {
+    fn t011_only_the_native_authority_can_confirm_and_it_does() {
         let c = conn();
         let (_step, ap_id, nonce, digest) = t011_pending(&c);
-        // Approving while claiming the SAME principal that requested it is refused.
+        // The requesting window is refused …
         assert!(matches!(
             repo::approvals::approve_confirmed(&c, &ap_id, "webview:main", "native:main", None, &nonce, &digest),
             Err(CoreError::Invalid { field: "approver", .. })
         ));
-        // The renderer-independent native confirmation is a DISTINCT principal.
+        // … and so is a DIFFERENT window, which the old `origin == confirmer` equality
+        // would have admitted. This assertion fails on the pre-F-30 code.
+        assert!(matches!(
+            repo::approvals::approve_confirmed(&c, &ap_id, "webview:other", "native:main", None, &nonce, &digest),
+            Err(CoreError::Invalid { field: "approver", .. })
+        ));
+        // The refusal does not depend on the row: an unknown id refuses the same way, so
+        // the check cannot be used to probe which approval ids exist.
+        assert!(matches!(
+            repo::approvals::approve_confirmed(&c, "no-such-approval", "webview:main", "native:main", None, &nonce, &digest),
+            Err(CoreError::Invalid { field: "approver", .. })
+        ));
+        // The renderer-independent native confirmation is the one accepted principal.
         let ok = repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest).unwrap();
         assert_eq!(ok.status, "approved");
         assert_eq!(ok.confirmation_method.as_deref(), Some("native"));
@@ -543,6 +577,81 @@ mod tests {
         assert!(ok.nonce.is_none(), "nonce must be consumed");
         // And the grant is now valid at the authority layer.
         assert!(repo::approvals::approved_for(&c, &ok.entity_id.clone().unwrap(), "run_step", "Execute run step").unwrap());
+    }
+
+    /// Audit F-30, the other half. A requester may not record itself under the native
+    /// authority's name — otherwise the confirmer check above could be satisfied by a row
+    /// the renderer authored, and the composition below would not hold.
+    #[test]
+    fn t011_a_requester_cannot_claim_the_native_authoritys_name() {
+        let c = conn();
+        let r = repo::runs::create(&c, "gated", "plan-body").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
+        let err = repo::approvals::create(
+            &c, "Execute run step", "risky", "A2", "medium", "gev",
+            Some("run_step"), Some(&step.id),
+            repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(),
+        );
+        assert!(matches!(err, Err(CoreError::Invalid { field: "origin_principal", .. })));
+        // Nothing was written: the refusal is not a half-created row.
+        assert!(repo::approvals::list(&c, None, None).unwrap().is_empty());
+    }
+
+    /// The property the deleted `origin_principal == confirmer_principal` equality
+    /// advertised, proven over the COMPOSITION of the two checks that replaced it rather
+    /// than by a comparison that could not fire.
+    ///
+    /// For every origin `create` will accept, `approve_confirmed` refuses that same value
+    /// as a confirmer — so no row can exist whose requester is also its approver. The
+    /// quantifier is what makes this stronger than the old check: it holds for origins the
+    /// old equality never saw, and it does not depend on the two happening to be equal.
+    #[test]
+    fn approvals_composition_forbids_self_approval() {
+        let c = conn();
+        let r = repo::runs::create(&c, "gated", "plan-body").unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
+        let origins = [
+            "webview:main",
+            "webview:other",
+            "webview:",
+            "automation:nightly",
+            "native:main", // close to the accepted name, and still not it
+            "NATIVE",      // the check is exact, not case-folded
+        ];
+        for origin in origins {
+            let ap = repo::approvals::create(
+                &c, "Execute run step", "risky", "A2", "medium", "gev",
+                Some("run_step"), Some(&step.id), origin, "sess-1", &crate::id(),
+            )
+            .unwrap_or_else(|e| panic!("`{origin}` should be a creatable origin: {e:?}"));
+            // The stored origin is never the accepted confirmer …
+            assert_ne!(
+                ap.origin_principal.as_deref(),
+                Some(repo::approvals::NATIVE_CONFIRMER_PRINCIPAL),
+                "`create` must never store the native authority's name"
+            );
+            // … and presenting it as the confirmer is refused.
+            assert!(
+                matches!(
+                    repo::approvals::approve_confirmed(
+                        &c, &ap.id, origin, "native:main", None,
+                        ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                    ),
+                    Err(CoreError::Invalid { field: "approver", .. })
+                ),
+                "`{origin}` must not be able to approve its own request"
+            );
+        }
+        // And the one name that IS accepted as a confirmer cannot be an origin at all,
+        // which is what closes the quantifier: there is no origin left to try.
+        assert!(matches!(
+            repo::approvals::create(
+                &c, "Execute run step", "risky", "A2", "medium", "gev",
+                Some("run_step"), Some(&step.id),
+                repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(),
+            ),
+            Err(CoreError::Invalid { field: "origin_principal", .. })
+        ));
     }
 
     #[test]
@@ -720,7 +829,11 @@ mod tests {
     #[test]
     fn t011_self_approval_survives_a_real_reopen() {
         // Restart-safe for real: create in one connection, DROP it, reopen the same
-        // file, and confirm the durable origin_principal still blocks self-approval.
+        // file, and confirm a webview principal still cannot confirm. (Before F-30 this
+        // read "the durable origin_principal still blocks self-approval"; the durable row
+        // is still what makes the reopen meaningful — the request, its nonce and its
+        // digest all survive it — but the refusal comes from the confirmer check, which
+        // is the one that can fire on a production value.)
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t011.db");
         let path = path.to_str().unwrap();

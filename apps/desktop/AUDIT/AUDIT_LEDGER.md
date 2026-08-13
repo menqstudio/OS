@@ -146,6 +146,511 @@ audit passes, and the Owner approves. See [`NEXT_CHAT.md`](../../../NEXT_CHAT.md
 | `H-6-protected-set-gaps` | ⚠️ OPEN (O-1) | **bytecode-shadow (O-1, HIGH):** *(Corrected 2026-08-09 — this cell said `assert_no_bytecode_shadow` “has no caller and the wall is not run with `-B`”. Both halves are false today and `CLAUDE.md` §6 has said so since: it has three real callers (`bro_control_plane.py:80`, `:271`, and `bro_protected.verify_control_plane_digest`) and every hook interpreter runs `-B`.)* What is actually open is the READ half, which cannot be closed from inside Python: `-B` stops bytecode being written; nothing stops CPython reading a `.pyc` planted before the process starts, which shadows the very module that would detect it. The compensating rule is that the engine refuses a control plane the running account can write — free from a packaged install, and needing verification on a packaged build rather than assertion (independent audit **D-09**). Fix is trust-critical + interacts with the CI `compileall` step — deferred to focused keystone-class work. |
 | `LOW-findings` / `MEDIUM-findings` | ◑ mixed | Bundle files; see the independent audit + `BroCore_Audit_Report.md`. |
 
+## Desktop-surface sweep (2026-08-10, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark in this section is **◑**. Nothing here has been independently audited, and the RED verdict
+above still stands. The sweep covered the 29 LIVE findings from the consolidated index whose fix lands in
+`apps/desktop/src/**`, `apps/desktop/src-tauri/src/**` or `apps/desktop/src-tauri/core/src/**`.
+
+**Note on sources.** `2026-08-06-consolidated-index.md` is the only index of all three rounds. The round-2
+and round-3 detail files **do not exist in the tree** — only round 1 survives, as
+`2026-08-06-remediation-audit.md` — so R2/R3 titles are truncated at roughly 110 characters and were
+verified against the code rather than against their own text.
+
+### One row in this ledger is WRONG, not merely stale
+
+R2 `core/src/governed_turn_ipc.rs:239` is listed **⚠️ OPEN** on the claim that `CommittedMessage::new`
+hardcodes `trust_state`, making `bound` a tautology. It does not: `trust_state` is a **parameter**
+(`governed_turn_ipc.rs:239-254`). The row describes code that no longer exists. Recorded here rather than
+silently edited, because a ledger that quietly repairs itself is the failure this file exists to prevent.
+
+### ◑ Already closed by later work — the ledger did not know (12)
+
+| id / loc | claim | why it is closed |
+|---|---|---|
+| R3 `src/commands.rs:1064` | unescaped `"Name: text"` speaker protocol | `cde5279` — the turn format is `AUTHOR ": " JSON-STRING`, injective |
+| R3 `src/commands.rs:1072` | roster names raw into every system prompt | `cde5279` — `validate_roster` rejects rather than truncates, plus a splice-side defence |
+| R3 ×2 `src/ai.rs:1072` | coding-agent auto-approve / undocumented env var | `cde5279` — `BRO_PROTECTED_PATHS` + `TrustSurfaceGuard`, settling on `Drop` |
+| R2 `core/src/repo.rs:660` | M-1 self-approval guard cannot fire | **F-30**, `dc4735a` |
+| R2 `core/src/governed_turn_ipc.rs:239` | `bound` tautology | **the ledger row is wrong** — see above |
+| R2 `core/src/governed_verification.rs:209` | replay defence only `InMemoryLedger` | `broker_turns::DurableAcceptanceLedger`, `BEGIN IMMEDIATE`, opened at `broker/src/main.rs:401` |
+| R2 `core/src/production_trust.rs:49` | `production_verified` never asks which root anchor | `resolve_trust_state` requires a `VerifiedManifestRoot` and splits on `root_provenance()` |
+| R2 `src/governed_selftest.rs:88` | failed model silently replaced by a constant | `AnswerSource` travels with the answer; 3 tests |
+| R2 `src/features/Settings.tsx:361` | unconditional "fail-closed, verified-receipt-mandatory" | gated on `isGoverned && ready` |
+| R2 `src/features/Onboarding.strings.ts:21` | onboarding promises lease+receipt for all model calls | `howBody` names the condition and says "That is NOT the default" |
+| R2 `src/services/governedTurn.ts:121` | zero UI callers | `Bridge.tsx:181` calls it |
+| R3 `src/features/Decisions.tsx:321` | empty record set reported `ok` + a green node | explicit `n == 0` branch |
+| R3 repo badge join on a non-unique column | | aggregate projection, `COUNT(*)=0 ⇒ NULL`, weaker-wins, migration 0023 |
+| R3 `src/governance.rs:248` | GREEN verdicts from an unauthenticated source | `authenticated: RECORDS_ARE_AUTHENTICATED` (false) + a UI tag |
+| R3 `src/files.rs:200` | two distinguishable error strings → existence oracle | one `PATH_REFUSED` for every branch |
+
+### ◑ Fixed in this sweep (4)
+
+| finding | what it actually was |
+|---|---|
+| `core/src/supervisor_ledger.rs:358` | `accept_prepare`'s idempotency comparison called itself "deliberately exhaustive over the durable request binding" and hand-listed **16 of 24** bound columns. The five it never looked at were `challenge_accepted_at_ms` and all four `challenge_registry_*` — **including the anti-rollback `epoch`**. A retry re-presenting the same nonce under a **rolled-back registry epoch** was answered `Idempotent`, "the same turn". Replaced with a `#[derive(PartialEq)] struct DurableBinding`, so the field list *is* the comparison. **The Python twin `governed_supervisor_ledger._BOUND_FIELDS` omits exactly the same five and is NOT fixed** — it is another agent's file this round, so the Rust side is currently stricter than the Python side. |
+| `src/governed_turn.rs:85` | no total deadline on the renderer→broker read. `SO_RCVTIMEO` restarts per byte, so 8256 bytes × 120 s could hold a synchronous Tauri command for roughly **11.5 days**. Now `EXCHANGE_BUDGET_MS`, with the loop and its arithmetic lifted **out of `mod linux`** — the previous bound lived where no non-Linux suite could reach it. Includes the guard that returns `None` rather than arming `Duration::ZERO`, which POSIX reads as *infinite*, at exactly the moment the bound matters most. |
+| `core/src/repo.rs:1116` | the demonstration badge was a bare flag row. It is the **only green badge the shipped app can display**, and `demonstration_verified_reply` `remove_dir_all`s the chain's working directory before writing it, so every artifact was destroyed and `(message_id, recorded_at)` was the whole evidence. Migration **0024**: the row carries the SHA-256 of the exact bytes the chain bound, written in the same transaction as the message, recomputed on read. Pre-0024 rows are `NULL` and **lose the badge** — back-filling them from the body they sit beside would manufacture the evidence. |
+| `src/features/Conversations.tsx:372` | Demo-verify made the thread render every session message twice: `s.reload()` refetched history while `extra` still held the streamed copies, so `[...history, ...extra]` duplicated each under colliding `key={m.id}`. Now `mergeThread`, preferring the persisted row because it carries the badge. |
+
+### ◑ Deliberately NOT fixed, with reasons
+
+* **`production_trust.rs:73` (F-29 tautology)** — real, and the code and this ledger already say so. There
+  is exactly one key source, so no call site can make it fail; the property holds by construction.
+  Deleting it removes a fail-closed guard for a future caller, and "fixing" it means inventing a second
+  source. Left with the honest comment.
+* **`windows_broker.rs:272` unreachable, and `governed_output_stream.rs` §4.10(f)** — wiring either makes
+  a governed surface reachable, which is forbidden. Already declared with written reasons in
+  `config/reachability-declarations.json`.
+* **`governed_verification.rs:276`** — §7.1's mandatory freshness step really is absent;
+  `verify_and_accept` is documented "no clock" and `FreshnessWindow` exists only on the v1
+  `receipt_store` path. Fixing it changes the signature and the caller in `broker/src/chain_executor.rs`,
+  outside this sweep's surface and adjacent to live work. **Recommended as the next item.**
+  **Closed in the freshness round below (2026-08-10, same day, separate session) — ◑, Builder's claim.**
+* **`supervisor_ledger.rs:779`** — `final_event_hash` validates case-insensitively and compares
+  case-sensitively. True, but it fails **closed** (a re-cased retry reads as `EvidenceFork`, never as a
+  bypass), and the Python twin behaves identically; fixing only the Rust side would create twin
+  divergence on a CAS for an unreachable corner.
+* **`0014_*.sql:57`** — the comment "cannot be turned into a storage-DoS vector" is false (per-row cap, no
+  row cap). Editing an already-applied migration's bytes to correct a comment is not worth the
+  migration-ledger risk. Reported, not changed.
+
+### Mutation results
+
+13 killed. **Two survived, and the reason is the point:** the first badge implementation had two guards —
+`AND d.body_sha256 IS NOT NULL` in SQL and the digest comparison in Rust — and deleting **either one alone
+changed nothing**, because each masked the other. The SQL guard could not change any outcome, so it was
+deleted rather than shipped, leaving one decision point that can fail. Re-run after collapsing: no
+survivors.
+
+Numbers, each from a run performed for this sweep and re-run independently before the commit:
+`brops --lib` **124**, `brops-core --lib` **314**, frontend **69 files / 638 tests**, `tsc --noEmit` clean,
+`check_ai_surfaces` / `check_capabilities` / `check_reachability` GREEN. No gate was touched.
+
+## §7.1 freshness round (2026-08-10, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark here is **◑**. It closes exactly one row of the sweep above — the one that sweep named as its
+next item — and touches nothing else.
+
+### What the finding was
+
+`verify_and_accept` decided acceptance with **no bound on how old the receipt was**. Every check it made
+is time-free: a signature that verified when it was minted verifies forever, and the identity/binding
+equalities hold forever too. The acceptance ledger is a **replay** defence — it stops the same receipt
+being accepted twice — and has no opinion at all about a receipt that has never been accepted and was
+signed a year ago. §7.1's "Freshness" bullet is the missing property, and it was missing.
+
+### ◑ Fixed
+
+| where | what |
+|---|---|
+| `core/src/governed_verification.rs` | New `check_receipt_freshness`, called at step **4d** (after the attestation turn-binding, before the output digest and before the ledger claim, so a stale receipt burns neither 8 MiB of hashing nor the one-time nonce). It bounds **both** signed `_ms` fields — `challenge_accepted_at_ms` and `completed_at_ms` — inside the §1-LOCKED `FreshnessWindow{future_skew_ms: 60000, max_age_ms: 300000}` (the real `receipt_store` constant, reused not re-declared), inclusive on both ends per §1; enforces the §1 integer range `1 ≤ v ≤ 2^53-1` on both fields **and on the clock**; and enforces the §7 ordering `challenge_accepted_at_ms ≤ completed_at_ms`. New `Freshness` type: private fields, one public constructor `Freshness::at(now_ms)` that always installs the locked window, and a checker that refuses any window **wider** than it — there is no way to express "unbounded". |
+| `broker/src/chain_executor.rs` | New `WallClock` seam + `SystemWallClock`; `GovernedChain::new` installs the real clock, `with_clock` is the test-only override. The clock is read **at acceptance**, not at turn start, because the receipt ages while the turn executes. An unreadable clock returns `None` and **Blocks** — it is never `unwrap_or(0)`, which would collapse the window to `[-300000, 60000]` and make every 1970-stamped receipt "fresh". |
+| `win-live/src/proof.rs` (tests only) | The in-process proof tests pinned `1_900_000_000_000` — the year 2030 — as "a fixed, plausible wall clock". With a real acceptance clock that is a skewed receipt, and it Blocks. They now use the host's real clock, which is also what both **shipped** callers of `in_process_turn_produce` (`governed_trust_selftest`, the demonstration-chat command) pass. A new test asserts a run under a fabricated clock (±10 years) cannot commit in either direction. |
+
+### The arithmetic, done rather than asserted
+
+A cap larger than the largest legal input is a check that cannot fail, so:
+`LEASE_DURATION_MS` = **210000** (§4.3 pins `lease_issued_at_ms == challenge_accepted_at_ms` and
+`completed_at_ms ≤ lease_expires_at_ms`), challenge TTL ≤ **30000**, sum **240000 < 300000** — and
+`300000 − 210000 = 90000 ms` of budget left for the broker's own post-completion work.
+`the_locked_window_nests_the_whole_legitimate_lease_budget_with_real_slack` asserts all of it **and**
+shows both edges on the real verifier: a turn at the worst legitimate age is accepted, one millisecond
+past `max_age_ms` Blocks.
+
+### Mutation results
+
+**18 mutants, 17 killed, 1 survivor, named.** Every mutant was applied to the shipping source, the named
+test watched to fail, then the file restored byte-exact and the restore verified by SHA-256.
+
+Killed: removing the freshness call (8 tests); stale limit off by one; future limit off by one; window
+bounds made exclusive at the edge; dropping the `now_ms` range check; dropping the §1 `_ms` range check;
+dropping the ordering check; dropping the window-configuration guard; bounding only one of the two `_ms`
+fields; widening the locked window to a year; narrowing it to 60 s; zeroing the future skew; feeding the
+verifier the receipt's own timestamp as the clock; the shipped `GovernedChain::new` installing a fixed
+far-future clock; computing both bounds over `completed_at_ms` only; moving freshness after the ledger
+claim; and letting the win-live proof caller choose the acceptance clock.
+
+**Survivor — `self.clock.now_ms().unwrap_or(0)` in place of `.ok_or(Block)?`.** It survives because it is
+**behaviourally equivalent**: `now_ms == 0` is outside §1's `1 ≤ v` range, so the core refuses it anyway.
+No black-box test can separate the two, since both produce the same `UpstreamBlocked`. It is
+defence-in-depth overlap, not a hole — and it is left in the report rather than killed with a test written
+only to kill it.
+
+### Numbers, each from a run performed for this round
+
+`brops-core --lib` **323** (314 before, +9), `brops-core` all targets **363** (323 + 4 + 9 + 10 + 17),
+`brops --lib` **124** (unchanged), `brops-broker` **31 lib + 3 main** (27 + 3 before, +4),
+`brops-win-live --lib` **83** (82 before, +1), frontend **69 files / 638 tests**,
+`check_reachability.py` GREEN (exit 0), `check_spec_references.py` GREEN (exit 0).
+
+Pre-existing and untouched: `brops-audit-signer --test anchor_end_to_end` has 2 failures on this box —
+one is the declared-prerequisite panic for `windows-elevated-registration` (this session is not elevated)
+and one is an engine-side anchor case. Neither crate depends on the changed code.
+
+No gate was flipped: `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker`
+are byte-untouched (`apps/desktop/src-tauri/src/**` and `broker/src/main.rs` have no diff).
+
+## Windows / provisioning-crate sweep (2026-08-10, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark in this section is **◑**. The RED verdict above still stands. This sweep covered the 39 LIVE
+findings from the consolidated index whose fix lands in `win-live/**`, `win-broker/**`, `provision/**`,
+`launcher/**`, `executor/**`, `audit-signer/**`, `proof/**`, `core/src/windows_broker.rs` or
+`src/governed_selftest.rs` — the privileged Windows and provisioning surface, which the 2026-08-10
+desktop sweep did not touch.
+
+### ◑ Already closed by later work — the ledger did not know (21 of 39)
+
+`R-02` + `R-16` (win-live evidence constants, and the containment handle) · `R-17` (executor image pin
+was decorative; `execution.rs::executor_image_binding` now refuses an unmeasured or mismatched image
+BEFORE the producer runs) · `R-18` (no §2.5 floor on Windows; `win-live/src/tcb_floor.rs` is ~830 lines
+with four real callers that `exit(5)`) · `R-25` (evidence counters the invariant forbids) · `R2
+execution.rs:115/118` (executor exited before `execution-started`; driver's own pid attested) · `R2
+pipe.rs:56` (NULL DACL) · half of `R-44` (the pipe squat window) · `R2 proof.rs:293` + `R2
+win_live_turn.rs:203` (`InMemoryLedger` / in-memory DB — both are `DurableAcceptanceLedger` over a real
+file now) · `R3 servers.rs:744` (publish-before-decide) · `R3 win_provision.rs:74` (adopts a pre-existing
+root) · `R-03` (launcher store-input TOCTOU) · `R2 launcher/main.rs:444` (F-08's decision had no test —
+it has six) · `R2 launcher/main.rs:447` (drop-order constant → recorded `DropJournal`) · `R-21` (broker
+names the recorder's counter dir) · `R2 isolation_proof.ps1:46` + `R2/R3 win_live_proof.ps1:30` (both
+harnesses now compare, and `-RootKey` is operator-supplied) · `R3 spawn_as.rs:141` (password on argv →
+`--password-stdin`) · `R2 governed_selftest.rs:88` (`AnswerSource`) · `R-45` (zero CI coverage —
+`brops-win-live` now runs on both runners).
+
+### ◑ Fixed in this sweep
+
+| finding | what it actually was |
+|---|---|
+| **`R-42` / `R-24` — no evidence-head floor on Windows at all** | The supervisor's whole state was `accepted: Mutex<BTreeMap<String, Acceptance>>`, keyed by `execution_attempt_id`, so **nothing was ever compared across runs**: turn A at head 100 then turn B at head 1 were both attested and signed without objection, on the only platform the desktop ships on, while F-09's row said the floor runs "on every `complete-run`" with no platform qualifier. Two halves were missing, and fixing one without the other does nothing. **(a)** `head_sequence` — the one field that orders two runs — was `cfg.facts.evidence_head_sequence` in the live driver and the literal `3` in the in-process proof, i.e. a constant, so a floor would have compared a constant against itself. That is the F-02 defect, closed on the other four `evidence_*` values and left alive on the fifth, under a doc-comment that *stated* the deployment must advance it. It now comes from `win-live/src/head_sequence.rs`, a durable counter that claims each number with `create_new` (atomic) rather than read-then-write, refuses a damaged counter instead of reading it as absent, and cannot re-issue a number whose marker exists. **(b)** `complete_run` now runs `brops_core::supervisor_ledger::evidence_floor_cas` — the SAME durable CAS the Linux supervisor uses, over the same shared DDL — between the state-machine decision and the store publish: after, so a refused turn cannot burn a head sequence; before, so a rejected head never reaches the store the signer reads. `Supervisor::new` is fallible and there is no `Option` and no in-memory fallback. This also gives `core/src/supervisor_ledger.rs` the first non-`create_schema` caller R-24 recorded it as lacking. |
+| **Both machine-proof harnesses could never PASS** (new; not in any audit round) | The round that gave `win_live_proof.ps1` and `isolation_proof.ps1` a real comparison also made their `RESULT: PASS` line unreachable. Each case function ended with `Write-Output "<transcript>"` and then the verdict object, and PowerShell puts both on the success stream — so `$results += Run-Case ...` appended a `[string]` AND a `[pscustomobject]` per case, `$results.Count` was 4 against `$expectedCases = 2`, and the arity guard fired on every run. Neither harness has ever emitted its GREEN line as written. The self-tests stayed green because they call the CASE function directly and never touch the collection. It fails in the safe direction, and it is still the same defect this repository keeps finding: a proof that cannot pass is a check that cannot fail with the sign flipped. The transcript now rides on the result object; the run decision is a pure `Resolve-ProofOutcome` the self-test drives with seven new vectors, including a results array with a leaked transcript in it. |
+| **The isolated signer resolved the containment report and threw it away** (R2 `servers.rs:1037`) | `let _ = (policy_bundle_sha256, containment_evidence_sha256);` — with a comment claiming both were "bound via request/handles". Neither was. The containment report is the one chain document written BY the party the isolated signer exists to be a second opinion on, and it was the only one the signer merely counted. `containment_evidence_handle` is now a fourth `CHAIN_AGREEMENT` entry: it must carry `brops.containment-evidence.v1` and agree with the attested evidence on `run_id`, `execution_attempt_id` and `output_handle`. The policy bundle stays resolve-only and the comment now says so instead of implying a check. 3 new tests. |
+| **Nine dead `Facts` fields + four placeholder store blobs** (the residue of F-02) | F-02 removed `receipt_id`, the three terminal-artifact handles and the four `evidence_*` values from the PROTOCOL, but left the config that used to supply them: `win_provision` still seeded four placeholder blobs into the protected store — documents that LOOK like a completed run's terminal artifacts — and still wrote their handles plus a fabricated `evidence_final_event_hash` and a constant `receipt_id` into `config.json`, where an operator reads them as the deployment's evidence head. **Nothing had read any of them since F-02.** The substance was removed and the appearance was kept. Both are gone; serde ignores unknown keys, so an older config still loads. |
+| **`R-19` — the Windows verdict document asserts facts the code contradicts** | Still true, and re-checking found two more. (1) "the shipped desktop app … does not even link this kit" — `Cargo.toml` links `brops-win-live` on Windows and two shipped `#[tauri::command]`s call `proof::in_process_turn_produce`; what IS true is that they run under the compiled-in demonstration root and can never render `production_verified`. (2) "`attest-run` is bound **one-time**" — `attest_run` never consumes anything; two calls return byte-identical bytes. (3) "seeds not plaintext at rest" — `win_provision` writes 64 plaintext hex chars; what was fixed is the ACL race, not encryption. (4) the two anti-rollback rows say CONFIRMED-CLOSED for a signature `resolver.rs` and `tcb.rs` both describe in their own comments as a corruption check under a PUBLIC source constant. Corrected in place with the false sentences struck through rather than deleted. |
+
+### ◑ Deliberately NOT fixed, with reasons
+
+* **`R-43` / half of `R-44` — no read/write deadline on the Windows named pipes, and the frame is read
+  BEFORE peer authentication; the client never authenticates the server.** Real and unchanged. Not fixed
+  because the whole of `pipe.rs` is `#![cfg(windows)]` with no pure seam, so **no test on either CI runner
+  could witness the fix**, and a deadline needs overlapped I/O + `CancelIoEx` — a rewrite of the transport
+  adjacent to the live trust chain. Shipping an unwitnessable change to that file is how the last three
+  rounds got their ✅s. The audit's own adversary is also narrowed since it was written: the pipe DACL is
+  no longer NULL, so in the cross-account deployment only the provisioned broker SID can open it at all.
+* **`R2 config.rs:140` — the DPAPI seal-on-first-use fails open and silently**, in three places, each
+  returning `Ok(seed)` and leaving the seed plaintext. Worse than the audit knew: the service account is
+  granted `FILE_GENERIC_READ` only (`provision_custody.rs`), so the reseal's `std::fs::write` into
+  `keys/` **cannot succeed** and the seal is effectively dead code. Not fixed because the honest fix is a
+  decision about custody posture, not a patch: either the provisioner seals at creation (changing what
+  `win_provision` writes and what the §2.5 pin measures) or the claim is withdrawn. The claim IS
+  withdrawn — in `WINDOWS_BROKER_AUDIT_VERDICT.md` — and the mechanism is left for a session that can
+  test it elevated.
+* **`R2 win_provision.rs:121` — `manifest_epoch` is the literal `2` and `floor.json` is rewritten
+  unconditionally on every run**, so the manifest anti-rollback floor can refuse a same-epoch fork and
+  nothing else, and re-provisioning resets it. Not fixed here because `floor.json` is also a §2.5 pinned
+  artifact (`tcb_floor.rs`, `anti-rollback-floor`), so making the floor genuinely advance changes its
+  digest and refuses all four bins until re-pinned — the two anti-rollback mechanisms are mutually
+  exclusive as designed, and reconciling them is a design decision, not a sweep item. Recorded in the
+  verdict document instead.
+* **`R-40` / `R-41` — the driver's start-of-process clock is used as `completed_at_ms`**, so the
+  in-process receipt has zero duration and the live named-pipe path now fails CLOSED (`complete-run`
+  refuses `completed_before_execution_started`, because the supervisor's `execution-started` clock is
+  strictly later). Real. Not fixed because the fix is a clock seam through `GovernedExecutionCore`, which
+  is the same object the §7.1 freshness round wired a `WallClock` into days ago; two sessions injecting
+  clocks into the same struct is how twin divergence starts. **Recommended as the next item**, and it is
+  an availability bug on a path that cannot currently complete, not a trust hole.
+* **`core/src/windows_broker.rs:272` — the entire Windows peer-authorization and image-integrity policy
+  layer is unreachable.** Wiring it makes a governed surface reachable, which is forbidden. **But the
+  sweep row above that says it is "already declared with written reasons in
+  `config/reachability-declarations.json`" is FALSE** — that file has six `rust_symbols` entries (three when this row was written, three more the same day)
+  (`pull_output`, `governed_pull_output`, `governed_turn_output_read`) and names no symbol in
+  `windows_broker.rs`. By the file's own words the module is in the state it calls the dangerous one:
+  "unreachable-AND-undeclared — the state in which nobody can tell which of those it is." Left for the
+  owner of that config, reported rather than silently edited.
+* **`R-20` / `R-23` (launcher: one lease does not authorize one execution; the second TCB owner is the
+  hardcoded uid 500)** — both still true, both Linux-only setuid code, and R-23's constant carries a TODO
+  to bind it from the root-owned `TcbPinManifest`, which is the actual fix and is a Linux-deployment
+  change no test on this box can witness. Also noted: the launcher's *decisions* are tested on Windows,
+  its `real_main` *call sites* are not — deleting `verify_store_input_bindings(&lease)?` from `real_main`
+  leaves every suite green.
+* **`R-28`** — `live_turn`'s `verify_tcb` still exits the process rather than gating a served turn, and
+  the broker's floor call site still cannot pass on the kit's own layout. Unchanged, Linux-only,
+  `live_turn.rs` has zero tests on any host.
+* **`R2 servers.rs:576`** — `receipt_id` is `format!("R-{now_ms}-{counter}")`, predictable from an
+  observed lease. The uniqueness half is closed (`DurableAcceptanceLedger`, `receipt_id TEXT PRIMARY
+  KEY`); predictability alone is not exploitable without also defeating that ledger, and changing the id
+  format is a wire-compatibility decision.
+* **`R3 isolation_proof.ps1:20`** — the harness still reads seven service-account passwords in cleartext
+  and hands them to `Register-ScheduledTask -Password`. Real. The audit's "a path its own harness wrote"
+  clause is now wrong: nothing in the tree writes `accounts_creds.txt`; it is an operator-supplied
+  precondition. Fixing it means replacing Task Scheduler with the hardened `spawn_as --password-stdin`
+  path, which needs elevation and seven real service accounts to test.
+
+### Mutation results
+
+**20 mutants applied to the shipping source, 17 killed, 3 survivors named.** Every mutant was applied to
+the real file, the named test watched to fail, the file restored byte-exact and the restore verified by
+SHA-256. (13 Rust, 7 PowerShell. An earlier draft of this paragraph said 24/21 — the count included two
+anchors that never applied and one that broke the build, i.e. mutants that were never actually run. It is
+corrected here rather than left, because an inflated mutation score in this file is the same defect as an
+inflated ✅.)
+
+Killed: accepting a stale head; accepting a same-head fork; scoping the floor per-attempt instead of
+per-install; an in-memory floor fallback when unconfigured; claiming a head sequence by hint arithmetic
+instead of `create_new`; a malformed counter reading as absent; a negative counter accepted; the proof
+reverting to a constant `head_sequence`; dropping the containment-evidence agreement entirely; dropping
+`output_handle` from it; treating an absent agreement field as satisfied; and, on both harnesses, the
+case-count check, the failed-case check and the stray-object check.
+
+**The stray-object check survived its first mutation, and that is worth recording.** Deleting it changed
+no exit code, because a leaked `[string]` has no `Pass` and therefore also trips the failed-case check —
+two guards masking each other, the arrangement the desktop sweep had to collapse a fortnight ago. It was
+not deleted, because its real contribution is the CAUSE: without it a leaked transcript is reported as two
+mystery case failures with empty problem lists, which is exactly how this defect stayed invisible. So the
+self-test now asserts the MESSAGE, not just the exit code, on six vectors — and the mutant dies.
+
+**Survivor 1 — `MAX_PROBE: 4096 → 8192` in `head_sequence.rs`.** `the_probe_is_bounded_rather_than_
+unbounded` derives its fixture from the constant, so it follows the mutation. Behaviourally equivalent
+for the property that matters (the walk terminates and a free slot inside the window is still found);
+the value is a DoS margin, not a boundary. Not killed with a test written only to kill it.
+
+**Survivor 2 — re-introducing `Write-Output "<transcript>"` inside `Invoke-Turn` / `Run-Case`.** The
+harness self-tests cannot reach those functions: they start three processes, register scheduled tasks
+and need elevation. This is the "mutant that survives only because the code sits in a branch no test can
+reach" class, stated rather than papered over. What changed is that the regression is now REPORTED by
+name (`non-result object(s) reached the results array; a case function wrote to the success stream`)
+instead of appearing as a misleading case count.
+
+**Survivor 3 — scoping the floor's `task_id` per attempt.** It survives because the property it targets
+is enforced inside `brops_core::supervisor_ledger::evidence_floor_cas`, which compares against the highest
+head recorded anywhere on the INSTALL regardless of task, so the call site's `task_id` is only the
+idempotency key. The call site's real contribution is passing the true `install_id` — mutating THAT
+(`M4b`) kills four tests. Named rather than dropped, because "the mutant did not weaken anything" and "the
+test is weak" look identical from the score alone.
+
+*Not a mutant, but the same class, found while inventorying:* the launcher's `real_main` call sites
+(`verify_store_input_bindings`, `verify_lease_matches_attested_request`) are inside
+`#[cfg(target_os = "linux")] mod linux` and no test constructs that sequence — deleting either invocation
+leaves every suite green on every host. The decisions are well covered; the wiring is not.
+
+*Also worth recording:* the first version of `head_sequence.rs` used ONE staging filename for the
+counter, and `concurrent_allocations_never_return_the_same_number` failed immediately — the engine's R-30
+"unlocked load-compare-write over a shared temp filename" defect, reproduced by accident and caught by a
+test written before it was noticed.
+
+### Numbers, each from a run performed for this sweep
+
+`brops-win-live --lib` **101** (83 before, +18) · `brops-win-broker` **3 + 5** · `brops-launcher` **32** ·
+`brops-executor` **5** · `brops-core --lib` **376** (unchanged by this sweep; 343 at this session's start,
+the difference is another session's work in `core/`) · `brops --lib` **127** (unchanged) ·
+`win_live_proof.ps1 -SelfTest` **PASS, exit 0** (11 case vectors + **10** run vectors, 7 of them new) ·
+`isolation_proof.ps1 -SelfTest` **PASS, exit 0** (9 case vectors + **10** run vectors, 7 new).
+
+**Pre-existing failures on this box, NOT caused by this sweep and NOT silenced.**
+`BROPS_TEST_MISSING_PREREQUISITES` was never set.
+* `brops-provision --test anchor_custody`: **21 passed, 1 failed** —
+  `a_symlink_inside_the_anchor_is_refused_rather_than_followed`, declared prerequisite
+  `windows-symlink-creation` (this account holds no `SeCreateSymbolicLinkPrivilege`).
+* `brops-audit-signer --test anchor_end_to_end`: **8 passed, 1 failed** —
+  `registration_applies_the_plan_for_real_or_says_why_it_could_not`, declared prerequisite
+  `windows-elevated-registration` (this session is a FilteredAdministrator).
+* **New observation, reported not fixed:** that suite is **not safe to run concurrently with itself**. It
+  contends on the machine-global anchor `C:\ProgramData\BroPS-o2-anchor\trust-anchor`, and while another
+  session ran it in this shared tree the failure count drifted 1 → 2 → 3
+  (`an_anchor_signed_by_any_key_the_app_holds_is_refused_by_the_real_verifier`,
+  `rewriting_the_operator_pin_is_refused_by_the_operating_system_and_the_forgery_fails`). Both pass in
+  isolation and the count returns to 1. A machine-global fixture in a parallel test binary is a flake
+  generator; naming it here so a future red run is not mistaken for a regression.
+
+No gate was touched. `commands.rs:1152 governed_verification_unconfigured`, `UpstreamBlockedExecutor` and
+`connect_broker` are byte-untouched — nothing under `apps/desktop/src-tauri/src/` was modified at all.
+The R-42 fix can only REFUSE more turns than before; it cannot make any surface reachable.
+
+## Engine / bridge / tools sweep (2026-08-12, `at-main-2`) — **Builder's claim, nobody else has looked**
+
+Every mark in this section is **◑**. The RED verdict above still stands. This sweep covered the
+LIVE findings from the consolidated index whose fix lands in `engine/runtime/**`,
+`engine/tools/**`, `engine/ci/**`, `engine/AUDIT/**`, `bridge/**` or `tools/**` — the ENGINE, which
+neither the 2026-08-10 desktop sweep nor the Windows/provisioning sweep touched.
+`engine/ci/live/run_live_turn.sh` and `apps/desktop/src-tauri/broker/**` were another session's
+files this round and were not read for edits.
+
+**33 in-surface findings inventoried. 17 were already closed and the ledger did not know. 5 were
+live and are fixed. 8 are live and deliberately not fixed, with reasons. 3 were not re-verified
+deeply enough to claim either way, and say so.**
+
+### One row of the Desktop-surface sweep is now stale
+
+That sweep's `supervisor_ledger.rs:358` row ends: *"The Python twin
+`governed_supervisor_ledger._BOUND_FIELDS` omits exactly the same five and is NOT fixed."* It is
+fixed, at `e4f73e2`. `_BOUND_FIELDS` is now derived —
+`tuple(f.name for f in dataclass_fields(NewAcceptance) if f.name not in _IDENTITY_FIELDS +
+_DIGEST_COMPARED_FIELDS)` — so the field list IS the comparison, the same property the Rust
+`#[derive(PartialEq)] struct DurableBinding` gives, and the only two exclusions are named in
+writing next to their reason. `challenge_accepted_at_ms` and all four `challenge_registry_*`,
+including the anti-rollback `epoch`, are compared. Recorded here rather than silently edited.
+
+### ◑ Already closed by later work — the ledger did not know (17)
+
+| id / loc | claim | why it is closed today |
+|---|---|---|
+| **P0** R1 `governed_supervisor.py:848` | `complete-run` takes the reply digest raw off the wire; the supervisor never observes the execution | `build_run_attestation` has no `facts` parameter and takes an `AttestationState`; `evidence_from_state` sources all 25 fields from the durable row + pinned config; `governed_supervisor_ledger.derive_evidence_from_chain` REFUSES a completion whose `output_handle` is not the `output-captured` digest in the recorder's own chain (`2debb71`) |
+| P1 R1 `bro_completion.py:255` | head-floor cleared by deleting its directory; `BRO_EVIDENCE_HEAD_FLOOR` ungated | `_load_floor_index` refuses a missing `_index.json`, with bootstrap instructions; the env path goes through `_external_dir` + `_refuse_self_owned_floor` |
+| P3 R1 `bro_completion.py:226` | the floor is advanced from a SECOND independent read of the head file | advanced from `head.head_sequence` + the digest of the head `validate_chain` actually verified |
+| **P1** R3 `isolated_signer.py:647` | §7 deep verification is three existence checks | `_verify_chain_handles` + `_CHAIN_AGREEMENT`: each document is parsed, its protocol tag checked, and every shared field REQUIRED and compared; a missing field is a refusal, not a vacuous pass |
+| P3 R3 `isolated_signer.py:199` | §1.5 step 4 dropped; `REASON_POLICY_MISMATCH` raised nowhere | `_check_policy_authorization` binds `(policy_id, policy_version)` to the registered bundle handle; an unprovisioned allowlist REFUSES |
+| P2 R3 + P3 R3 `isolated_signer_server.py:273` | no catch-all; a planted store blob kills the signer for all future turns | `except Exception` fail-closed backstop in `handle_connection`, a second one in `serve_forever`, detail to stderr and not to the peer |
+| P2 R2 + P3 R2 `engine/tools/brops_isolation_prover.py:84` | attack 4 is decided by a protocol-name mismatch, so it proves the shape guard is not there | the attack now sends `brops.evidence-request.v1` — the supervisor's OWN protocol — with a positive control that must come back `run_binding_invalid`; delete the shape gate and the attack matches the control, so the row goes INCONCLUSIVE rather than quietly passing |
+| P2 R1 `governed_supervisor_ledger.py:640` / `:645` | the anti-rollback floor is keyed on a `task_id` the broker chooses | `_evidence_floor_cas` compares against `_install_floor_ceiling` — the highest head recorded anywhere on the INSTALL, in any task bucket; `task_id` is only the idempotency key |
+| P2 R1 `governed_supervisor_ledger.py:553` | the four evidence values reach the signer as the broker's self-report | `DERIVED_EVIDENCE_FIELDS` are derived by `derive_evidence_from_chain` and are not in `COMPLETION_FIELDS`, i.e. not on the wire at all |
+| P2 R3 `governed_supervisor_ledger.py:575` | no upper time bound survives the pre-launch lease gate | `lease_launch_gate` refuses `lease_not_yet_valid`, `lease_expired` AND `insufficient_remaining_budget` (`MIN_LAUNCH_REMAINING_MS`), boundary-pinned against the Rust twin |
+| P3 R3 `governed_supervisor.py:688` | §4.7 execution receipt is not implemented | `build_execution_receipt` builds `brops.execution-receipt.v1` from the acceptance + completion rows; its handle is in `DERIVED_HANDLE_FIELDS`, which a caller cannot supply |
+| P3 R3 `challenge_authority_server.py:239` | `brops_protocol` has no deployed caller | imported by `brops_socket`, `governed_turn_open`, `governed_staging_upload`, `governed_output_read`, `governed_turn_result` |
+| P3 R3 `brops_evidence_store.py:76` | §2.3 runtime store-ACL enforcement is unimplemented | `posix_forbidden_mode` is a pure rule with a real `nt` branch, and `harden_private_dir` is the single entry point |
+| P2 R1 `bro_signature.py:263` | `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is an ungated ambient env var | the raw variable is honoured only under `BRO_ENV=ci`; otherwise a `_FILE` form under a principal this process cannot rewrite, checked through `bro_custody` on both platforms |
+| R2 desktop-sweep handoff, `_BOUND_FIELDS` | the Python idempotency comparison omits five bound columns | derived from `NewAcceptance`; see above |
+
+### ◑ Fixed in this sweep (5)
+
+| finding | what it actually was |
+|---|---|
+| **R1 `governed_supervisor_server.py:626` — one 8 KiB frame kills the supervisor** | `handle_connection` caught `(FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError)`. `json.loads` raises `RecursionError` — a `RuntimeError`, in none of them — on a body that nests ~3900 deep in 7800 bytes, comfortably inside the 8 KiB frame bound, so nothing earlier refused it. It escaped the handler, and `serve_forever` had **no `except` at all**, only `finally: conn.close()`. One frame from either authorized peer ended the process that issues every lease and produces every attestation. The isolated signer's front door already had exactly this backstop; the supervisor — the twin it is meant to match — did not. Both are present now, the peer is told only `internal supervisor fault`, and the detail goes to the operator's stderr rather than becoming an information channel. |
+| **R1 `governed_supervisor_server.py:183` — no timeout of any kind on the front door** | `SocketPeerConn` never called `settimeout`, and the accept loop is serial, so a peer that connected and then sent nothing held every governed turn on the install for as long as it liked. Fixed with a **total** `CONNECTION_BUDGET_S` armed at accept and shared by both directions — a per-recv timeout is not a bound, because it restarts on every byte that arrives, which is the same defect the desktop sweep found in `governed_turn.rs`. The arithmetic is lifted OUT of `SocketPeerConn` into `recv_budget_s` / `recv_exactly_bounded`, because that class cannot be constructed off Linux (`read_peercred_uid` refuses) and a bound expressed only inside it would sit in a branch no runner here can reach. Exhaustion is `None`, never `0.0`: `settimeout(0)` is non-blocking, and the POSIX `SO_RCVTIMEO` it maps to reads 0 as *infinite*. |
+| **R1 `bro_completion.py:271` — the head-floor advance is an unlocked load-compare-write** | Still true, and worse than "two concurrent turns race". The compare sat outside any lock and the write inside none, so which head was recorded was decided by whichever `os.replace` landed last rather than by which head was higher: turn A (head 5) and turn B (head 3) both read 0, both passed `head_sequence <= current`, and if B landed second the mark went **down** — "never lowers the mark" was true of the comparison and false of the operation. The `_index.json` roster is worse: one file that every task read-modify-writes through one shared staging name, so a concurrent enrolment silently loses the loser — and a task missing from the roster is, by `_load_head_floor`'s own rule, a task never seen, so deleting its mark afterwards reads as a first sighting and returns `(0, None)`. That is the R-06 rollback restored by timing alone, needing no attacker capability. The whole load-compare-write now runs under `_floor_write_lock`: an ADVISORY lock (`fcntl.flock` / `msvcrt.locking`), not an `O_EXCL` lock file, so a crash cannot leave the floor permanently unwritable; a platform with neither primitive REFUSES; and the unprovisioned-floor refusal is taken BEFORE the lock, so the lock cannot become the way an absent floor starts looking provisioned. |
+| **R2 `bro_orchestration_runtime.py:380` — the claim-lock reentrancy check is PID equality** | `_guard_held_by_this_process` compared the pid in the lock file with `os.getpid()`. A lock file orphaned by a process that died inside the guard keeps that pid forever, and pids are recycled (default `pid_max` 32768). The unrelated later process handed that pid was told it already held the guard, so `_mutation_guard` yielded holding **nothing**, while any other process was free to break the stale lock and take it for real: two writers inside a guard whose only purpose is that there is one. It now compares the token this process minted at acquisition against the token on disk. *Both* `_claim_guard` implementations register — the V1 runtime **overrides** `_claim_guard` with its own near-copy, and registering in only the base one left every base method V1 delegates into trying to re-acquire a lock it already held. That regression was invisible to the unit tests and was caught by the full suite (1 failure + 5 errors across `test_control_room_api` and `test_reconciler`); a test for the override's wiring is now in the tree. |
+| **R2 `isolated_signer.py:599` — `_check_run_binding` binds nothing** | Half-true, and now half-fixed honestly. The function contained `if not evidence["request_nonce"]: raise _Refuse(REASON_NONCE_MISMATCH)` under a comment that states the defect in its own words — *"already validated"*. `request_nonce` is in `EVIDENCE_STRING_FIELDS`, `_validate_evidence` has already required `_capped_str` (`0 < len`), and the single call site runs `validate_sign_request` first, unconditionally: **the branch could not be taken by any input**, inside the function the design calls the independent authorization gate (§1.5). Deleted rather than annotated — unlike the F-29 guard it has no future call site to defend, because it is a private method with one caller that validates first. A test now locks where the property actually lives: the shape gate, reason `malformed`. What was deliberately NOT built on top of it is below. |
+
+### ◑ Deliberately NOT fixed, with reasons
+
+* **`isolated_signer.py` still raises neither `run_binding_invalid` nor `nonce_mismatch`**, though
+  both are in the ratified §4.2 vocabulary (`engine/contracts/brops-sign-result.v1.schema.json`) and
+  `SECURITY_NEGATIVE_TEST_MATRIX` NM-XBIND-10 expects the first for an internally inconsistent
+  `run_id`/`execution_attempt_id`/`lease_id`. The obvious repair — cross-compare the chain documents
+  the signer already reads — **would be the same defect wearing a longer name**: the record, the
+  execution receipt and the lease are all built by the same supervisor from the same acceptance and
+  completion rows (`build_terminal_record` / `build_execution_receipt` / `_lease_payload`), so every
+  field they share agrees BY CONSTRUCTION and a comparison of them could not fail either. Binding
+  the run against a source the supervisor does not control needs the signer to hold one, which §5
+  does not give it. A protocol change and an Owner/Architect decision, stated in the code.
+* **`engine/ci/live/run_signer.py:83` — the isolated signer pins its supervisor-attestation
+  verifying key from the shared deployment config** (`cfg["keys"]["supervisor_attest_pub_hex_value"]`),
+  not from the root-signed manifest. Real and unchanged. Fixing it means resolving the key from the
+  manifest under the §2.5 floor and refusing an inline one — a change whose only end-to-end witness
+  is the Linux 7-service `run_live_turn.sh`, another session's file this round, which no runner on
+  this box can execute. Shipping an unwitnessable change to the trust chain is how the last three
+  rounds got their ✅s.
+* **`run_signer.py:103` — the signer's identity allowlist and the supervisor's identity block are
+  two reads of the same `config.json`.** Same reason: separating them is a provisioning-topology
+  change verifiable only on the live kit.
+* **`engine/ci/live/provision_keys.py:383` — the challenge-authority key is outside the root-signed
+  manifest.** `build_manifest_bytes(signer_pub_hex, sup_pub_hex)` carries two keys and the challenge
+  key is not one of them, so the key that authorizes an acceptance is not covered by the root
+  signature. Real. Adding it changes the manifest bytes that the Rust `KeyManifest` /
+  `manifest_resolver.rs` / `production_trust.rs` parse — cross-language, and **no `cargo` command
+  could be run this session** (the box's memory was reserved for another agent's build), so the twin
+  could not be compiled, let alone tested. Left rather than guessed at.
+* **`provision_keys.py:245` — `anchor_provenance = "external"` is still a string the kit writes about
+  itself.** Narrowed since the audit: the external branch requires the operator to supply
+  `--manifest-in` / `--manifest-sig-in` / `--root-anchor-*` and serves those bytes verbatim, and the
+  kit-generated default prints `production_verified=false root_anchor=kit_generated`. What remains is
+  that nothing cryptographically distinguishes the two labels at the point of writing. Same live-kit
+  witness problem.
+* **`governed_supervisor.py:710` — §4.3's signed 25-field lease is a 5-field unsigned blob.**
+  `_lease_payload` carries `lease_id`, `execution_attempt_id`, `lease_expires_at_ms` and the two
+  executable digests, persisted and content-addressed rather than signed. A real
+  design-conformance gap, and a protocol change touching the setuid launcher's pin checks on Linux.
+  Not a sweep item.
+* **`bro_completion.py:269` — the head-floor mark is advanced by the very process it polices.**
+  Unchanged, deliberately: it is an open design contradiction (a floor this process can write fails
+  custody; one it cannot write fails the advance), pinned as executable fact by
+  `HeadFloorConfigurationContradictionTests`. The serialization lock added above needs the same write
+  capability as the mark it protects, so it neither widens nor narrows the contradiction — noted in
+  that class so its statement stays true.
+* **The base `DurableOrchestrationRuntime._claim_guard` and the V1 override are near-duplicates that
+  have already diverged**: the V1 copy retries `PermissionError` (a Windows delete-pending race on an
+  `O_EXCL` open) and the base copy does not, so the base guard hard-fails where the override
+  recovers. Found while fixing the reentrancy hole above; reported rather than merged, because
+  collapsing two lock implementations changes the mutation path of every runtime method and wants
+  its own round.
+
+### Not re-verified deeply enough to claim either way (3)
+
+`engine/ci/live/run_supervisor.py:130` (§0.1 platform capability gate has no implementation),
+`engine/ci/live/build_tcb_pin_manifest.py:84` (the coverage floor is satisfied by logical NAME, not
+causal role), and `engine/tests/test_governed_chain_e2e.py:487` (the two F-01 regression tests
+assert only that an unknown attempt id is refused). All three are live-kit or long-file reads that
+this sweep sampled rather than drove. Recorded as unknown rather than assigned a status — inventing
+one is the defect this file exists to catch.
+
+### Mutation results
+
+**18 mutants applied to the shipping source, 16 killed, 2 survivors named.** Every mutant was
+applied to the real file, the named test watched to fail, the file restored byte-exact and the
+restore verified by SHA-256. The harness is crash-safe rather than `try/finally`-safe: pristine bytes
+and their digests are written to disk before the first mutation, a sentinel is armed before it and
+cleared only after the final restore verifies, the harness refuses to start while a sentinel exists,
+and it has a `--restore` mode. Five files were touched and all five ended byte-identical.
+
+Killed: deleting the `handle_connection` catch-all; deleting the `serve_forever` catch-all; arming
+`settimeout(0)` at the exact moment the budget expires; a budget that never expires; a read loop
+that ignores an exhausted budget; a timed-out `recv` escaping the loop; advancing the floor with no
+lock; load-compare outside the lock with the write inside (**the original defect, reproduced
+exactly**); a lock context manager that locks nothing; dropping the pre-lock provisioning check; a
+roster rewrite that stops reading the roster; a shape gate that stops requiring a non-empty nonce;
+deleting the one decision `_check_run_binding` still makes; restoring pid-equality reentrancy;
+trusting the in-process ownership record without re-reading the lock; and the V1 `_claim_guard`
+override not registering its token.
+
+**Survivor 1 — re-adding the deleted `if not evidence["request_nonce"]` check.** It survives because
+that is precisely the finding: the branch cannot be taken, so putting it back changes no outcome and
+no test. Reported rather than killed, because a test that detected the presence of dead code would
+be a test of the source text, not of behaviour.
+
+**Survivor 2 — not clearing `_HELD_CLAIM_TOKENS` on release.** Behaviourally equivalent: the release
+path unlinks the lock file, so `_lock_owner()` returns `None` and the `== held` comparison already
+answers correctly whether or not the entry was popped. Unlike the pair the desktop sweep had to
+collapse, the pop is not a second guard at all — it is cleanup that stops a long-lived process
+accumulating misleading entries — so it is kept and named here rather than deleted, and no test was
+written only to kill it.
+
+### Numbers, each from a run performed for this sweep
+
+engine `PYTHONDONTWRITEBYTECODE=1 BRO_ENV=ci python -B -m unittest discover -s tests -q`:
+**1915 tests, OK (skipped=43)** — 1895/43 at this session's start, +20 new tests. **Converged:** two
+consecutive full runs gave an identical 1915/43 (113.5 s and 106.5 s). The run between them is
+recorded honestly too — **1914 tests, FAILED (failures=1, errors=5)** — the V1 `_claim_guard` wiring
+regression described above, found by the full suite after the unit tests stayed green.
+bridge `-s bridge/tests` **210, OK**. `tools/` self-tests **419, OK** (see the caveat below: a
+later re-run is 419 with 1 failure, from the same in-flight file).
+Gates, each exit 0 against this sweep's final tree: `check_spec_references`,
+`check_reachability`, `check_coordination`, `check_ledger_ddl_parity`, `check_residual_items`.
+
+**One caveat, stated rather than rounded off.** A later re-run of `check_spec_references` returns
+exit 1, and it is not this sweep: its single complaint is
+`engine/ci/live/ladder_evidence.py:105 cites §4.10(h)` — an **untracked** file another session
+created in this shared tree while this sweep was running (`git status` shows five such `??` files
+under `engine/ci/live/`, none of them touched or read here). This sweep's diff does not touch
+`engine/ci/**` at all, and the thirteen lines it adds that cite a section name only §0.1, §1.5,
+§2.3, §2.5, §4.2, §4.3, §4.7, §5 and §7, all of them declared. Naming it here so a future red run
+is not mistaken for this sweep's regression — and so it is not mistaken for someone else's problem
+either, if it is still red when that file lands. The same file takes the `tools/` suite from
+**419 OK** to **419 with 1 failure**, `test_check_spec_references.SpecReferenceGateTests.`
+`test_the_real_repository_passes_its_own_gate`, whose whole assertion is that the real tree passes
+its own gate — i.e. one cause, two red lines, and neither of them in this sweep's files.
+
+`BROPS_TEST_MISSING_PREREQUISITES` was never set. No suite was silenced and no prerequisite was
+declared to quiet a failure.
+
+**No gate was flipped.** `git status` shows ten modified files: nine under `engine/runtime/` and
+`engine/tests/`, plus this ledger. (Five `??` untracked files under `engine/ci/live/` belong to
+another session in this shared tree and were neither created nor edited here.)
+`apps/desktop/src/**`, `apps/desktop/src-tauri/**`, `.github/`, `tools/`, `config/`, `bridge/`,
+`NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md`, `engine/ci/**` including
+`engine/ci/live/run_live_turn.sh`, and
+`apps/desktop/src-tauri/broker/**` have no diff at all, so `governed_verification_unconfigured`,
+`UpstreamBlockedExecutor` and `connect_broker` are byte-untouched. Every change here can only REFUSE
+more than before — a hostile frame becomes a refusal instead of a crash, a starved connection
+becomes a framing refusal, a concurrent floor advance is serialized, and a claim guard is harder to
+enter. None of them makes a governed surface reachable.
+
 ## Legend
 **One legend, and it is the one under “How to read the status column” above:** ✅ = an independent
 audit confirmed it · ◑ = the Builder's claim, nobody else has looked · 🔴 / ⚠️ = open · by-design =

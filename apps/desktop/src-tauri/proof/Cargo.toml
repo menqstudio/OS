@@ -10,6 +10,15 @@ name = "live_turn"
 path = "src/bin/live_turn.rs"
 
 [[bin]]
+# The rev-30 §4.10(g) LADDER driver. It builds the SAME `LadderChain` the broker's
+# `build_governed_executor` builds and runs one turn through `run_governed_turn` — and it is NOT
+# the `brops-broker` binary: no `build_governed_executor`, no renderer socket, no `SO_PEERCRED` on
+# that hop, and its `KeyResolver` is anchored to the KIT-generated root (which can never render
+# `production_verified=true`). Its own header carries the whole statement.
+name = "ladder_turn"
+path = "src/bin/ladder_turn.rs"
+
+[[bin]]
 name = "governed_recorder"
 path = "src/bin/governed_recorder.rs"
 

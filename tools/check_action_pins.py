@@ -50,13 +50,15 @@ ALL_GLOBS = DISPATCHED_GLOBS + (
 #: Actions that are NOT SHA-pinned, each with the reason it is exempt. An entry here is a
 #: DECLARED exception, reviewable in the diff — never a silent one. Removing an entry must make
 #: the gate fail, so an exception cannot quietly become the norm.
-FLOATING_ALLOWED = {
-    # Independent audit F-15: this step receives TAURI_SIGNING_PRIVATE_KEY and a contents:write
-    # token while resolving a MUTABLE major tag. It is owner-gated (pinning it changes release
-    # behaviour), so it is declared here rather than silently tolerated. Closing F-15 means
-    # replacing the tag with a SHA and deleting this entry.
-    "tauri-apps/tauri-action": "audit F-15, owner-gated: mutable @v0 tag on the signing step",
-}
+#:
+#: EMPTY, and that is the point. The one entry that ever lived here was
+#: `tauri-apps/tauri-action` — the release workflow's signing step, which resolved a mutable
+#: `@v0` tag while holding the Tauri signing key, four Apple secrets and a contents:write
+#: token. Audit F-15 is CLOSED: release.yml now pins it to
+#: `84b9d35b5fc46c1e45415bdb6144030364f7ebc5` (v0.6.2 — exactly what `@v0` resolved to), so the
+#: exception is deleted rather than left behind as a standing permission. Rule 1 now applies to
+#: every third-party action in the repository with no carve-outs.
+FLOATING_ALLOWED: dict[str, str] = {}
 
 #: First-party reusable/local actions (`./path`) are not pinned and are not third-party.
 _USES_RE = re.compile(

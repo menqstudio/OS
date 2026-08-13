@@ -163,6 +163,115 @@ class AcceptanceCasTests(unittest.TestCase):
             gsl.accept_prepare(conn, _acceptance("att-2", receipt_id="receipt-att-1"), 20)
 
 
+class BoundFieldComparisonTests(unittest.TestCase):
+    """The retry comparison must cover EVERY field the acceptance INSERT binds.
+
+    It did not. ``_BOUND_FIELDS`` was a hand-written 15-name tuple beside an INSERT that
+    bound 23, and nothing in either could show the gap. Five of the eight missing names were
+    load-bearing: ``challenge_accepted_at_ms`` and all four ``challenge_registry_*``,
+    **including the anti-rollback ``epoch``**. A retry re-presenting the same nonce under a
+    ROLLED-BACK registry epoch therefore compared equal on everything the list happened to
+    name and came back ``IDEMPOTENT`` — "the same turn" — instead of :class:`Conflict`.
+
+    Each of the five gets its own test below, differing from the accepted row in exactly ONE
+    field, so a comparison that stops covering that field goes red for that field and not
+    for a neighbour's. The two structural tests then make the list itself unable to fall
+    behind the INSERT again, which is the defect underneath the five.
+    """
+
+    def rebind(self, **over):
+        conn = _conn()
+        gsl.accept_prepare(conn, _acceptance(), 10)
+        with self.assertRaises(gsl.Conflict):
+            gsl.accept_prepare(conn, _acceptance(**over), 20)
+        # ...and no second attempt was created by the refusal.
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1)
+
+    def test_a_retry_under_a_rolled_back_registry_epoch_is_a_conflict(self):
+        """The anti-rollback field. An accepted turn was judged under epoch 7; the same
+        nonce coming back under epoch 6 is a DIFFERENT registry making the same claim."""
+        self.rebind(challenge_registry_epoch=6)
+
+    def test_a_retry_under_a_different_registry_handle_is_a_conflict(self):
+        self.rebind(challenge_registry_handle="reg-h-2")
+
+    def test_a_retry_under_a_different_registry_hash_is_a_conflict(self):
+        self.rebind(challenge_registry_hash="reg-hash-2")
+
+    def test_a_retry_under_a_different_registry_root_key_is_a_conflict(self):
+        self.rebind(challenge_registry_root_key_id="root-2")
+
+    def test_a_retry_with_a_different_acceptance_time_is_a_conflict(self):
+        """§7.1 step 4c binds the signed envelope against ``challenge_accepted_at_ms``, so
+        two acceptances that disagree on it are two turns however alike the rest looks."""
+        self.rebind(challenge_accepted_at_ms=1_000_001)
+
+    # ---- the list cannot fall behind the INSERT again --------------------------
+    def test_the_compared_set_is_derived_from_the_binding_itself(self):
+        """Not "the list currently contains these names" — that is the assertion that let
+        the gap open. The compared set must BE the acceptance binding minus the two names
+        excluded in writing, so a field added to ``NewAcceptance`` is compared from the
+        moment it exists."""
+        import dataclasses
+        declared = [f.name for f in dataclasses.fields(gsl.NewAcceptance)]
+        excluded = set(gsl._IDENTITY_FIELDS) | set(gsl._DIGEST_COMPARED_FIELDS)
+        self.assertEqual(list(gsl._BOUND_FIELDS),
+                         [n for n in declared if n not in excluded])
+        self.assertTrue(excluded.issubset(set(declared)))
+        # Every excluded name is still checked, just not by value: the two identity fields
+        # are the lookup key, and the payload blob is compared through its digest.
+        self.assertEqual(set(gsl._IDENTITY_FIELDS), {"install_id", "request_nonce"})
+        self.assertEqual(set(gsl._DIGEST_COMPARED_FIELDS), {"lease_payload_bytes"})
+
+    def test_every_column_the_insert_binds_comes_from_the_acceptance_binding(self):
+        """The other half. A derived list still drifts if the INSERT grows a column the
+        dataclass does not have, so the INSERT's own column list is read out of the source
+        and held against the binding. The four names the supervisor stamps rather than binds
+        are enumerated here, and nothing else may appear."""
+        import dataclasses
+        import inspect
+        import re
+
+        source = re.sub(r"\s+", " ", inspect.getsource(gsl._prepare_locked).replace('"', ""))
+        match = re.search(
+            r"INSERT INTO governed_turn_acceptance \(([^)]*)\) VALUES", source)
+        self.assertIsNotNone(match, "the acceptance INSERT could not be located")
+        columns = {c.strip() for c in match.group(1).split(",") if c.strip()}
+
+        #: Stamped by the supervisor at insert time or derived from a bound field; not part
+        #: of the caller-visible binding, so not fields of `NewAcceptance`.
+        stamped = {"lease_payload_sha256", "state", "created_at_ms", "updated_at_ms"}
+        declared = {f.name for f in dataclasses.fields(gsl.NewAcceptance)}
+
+        self.assertEqual(columns - stamped, declared)
+        self.assertEqual(columns & stamped, stamped)
+        # And the compared set plus the two written-down exclusions accounts for all of it.
+        self.assertEqual(
+            set(gsl._BOUND_FIELDS) | set(gsl._IDENTITY_FIELDS)
+            | set(gsl._DIGEST_COMPARED_FIELDS),
+            declared)
+
+    def test_a_replayed_challenge_still_returns_the_original_row(self):
+        """The boundary between the two entry points, pinned rather than assumed.
+        ``reuse_or_prepare`` looks the CHALLENGE up first and returns the ORIGINAL row, per
+        §5 ("a replayed challenge returns the ORIGINAL lease; it never mints a second
+        attempt"), so a rolled-back-registry replay of the same challenge does not reach the
+        field comparison at all — it is answered with what was accepted the first time, and
+        the rolled-back values are never recorded. The comparison above governs
+        ``accept_prepare``, the nonce-keyed path."""
+        conn = _conn()
+        outcome, first = gsl.reuse_or_prepare(conn, _acceptance(), 10)
+        self.assertEqual(outcome, gsl.CREATED)
+        outcome, again = gsl.reuse_or_prepare(
+            conn, _acceptance(challenge_registry_epoch=6), 20)
+        self.assertEqual(outcome, gsl.IDEMPOTENT)
+        self.assertEqual(again["challenge_registry_epoch"], 7)
+        self.assertEqual(again["execution_attempt_id"], first["execution_attempt_id"])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1)
+
+
 class ReuseOrPrepareTests(unittest.TestCase):
     """The front-door operation: accept a challenge ONCE, tolerate an honest retry."""
 
@@ -354,6 +463,118 @@ class EvidenceFloorTests(unittest.TestCase):
             "SELECT highest_head_sequence FROM governed_evidence_head_floor"
         ).fetchone()[0]
         self.assertEqual(floor, 13)
+
+
+# ---------------------------------------------------------------------------
+# The floor is scoped to the INSTALL, not to a caller-chosen task_id.
+#
+# Every test above drives one constant `task_id`, which is exactly why none of them
+# could see the defect: `_evidence_floor_cas` read only the `(install_id, task_id)`
+# row, so a head below the durable floor was accepted merely by presenting it under a
+# task_id that had no row yet — `row is None` bootstrapped a fresh bucket and the floor
+# never fired. `task_id` arrives on the wire (`validate_create_pending` accepts any
+# bounded string; the supervisor copies it out of the challenge payload), so that made
+# the scope of the anti-rollback defence a value the attacker picks.
+# ---------------------------------------------------------------------------
+
+
+class EvidenceFloorInstallScopeTests(unittest.TestCase):
+    def _complete(self, conn, attempt, task_id, head, now_ms=50):
+        _drive_to_executing(conn, attempt, _acceptance(attempt, task_id=task_id))
+        return gsl.record_completion(
+            conn, attempt, _produced(), now_ms,
+            derived=_derived(evidence_head_sequence=head))
+
+    def test_a_fresh_task_id_cannot_reset_the_floor(self):
+        # THE reproduction. Before the fix this recorded `created` and produced a full
+        # attestation state over the rolled-back head.
+        conn = _conn()
+        self.assertEqual(self._complete(conn, "att-1", "task-1", 99), gsl.CREATED)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-2", "task-1", 3)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-3", "task-FRESH", 3)
+        # Refused whole: no completion, no attestation, and no bucket to hide in.
+        self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-3"))
+        self.assertEqual(
+            [tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")],
+            [("task-1", 99)])
+
+    def test_a_new_task_must_still_advance_the_install_wide_counter(self):
+        # `head_sequence` comes from ONE per-recorder counter, so a genuinely new task's
+        # first head is still HIGHER than every head this install has recorded.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        self.assertEqual(self._complete(conn, "att-2", "task-2", 13), gsl.CREATED)
+        self.assertEqual(
+            sorted(tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")),
+            [("task-1", 12), ("task-2", 13)])
+
+    def test_an_equal_head_under_a_different_task_is_a_fork(self):
+        # One install, one counter: the same head_sequence cannot be minted twice.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        with self.assertRaises(gsl.EvidenceFork):
+            self._complete(conn, "att-2", "task-2", 12)
+
+    def test_another_install_keeps_its_own_independent_floor(self):
+        # The scope narrowed to the install, not below it: a different install_id is a
+        # different recorder with a different counter and is unaffected.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 99)
+        _drive_to_executing(
+            conn, "att-2", _acceptance("att-2", install_id="install-2", task_id="task-1"))
+        self.assertEqual(
+            gsl.record_completion(conn, "att-2", _produced(), 60,
+                                  derived=_derived(evidence_head_sequence=3)),
+            gsl.CREATED)
+
+    def test_an_interleaved_idempotent_re_sign_is_still_idempotent(self):
+        # A byte-identical re-presentation of a head a task ALREADY holds writes nothing
+        # and must not read as a rollback just because another task advanced past it.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        self._complete(conn, "att-2", "task-2", 13)
+        self.assertEqual(self._complete(conn, "att-3", "task-1", 12), gsl.CREATED)
+        self.assertEqual(
+            sorted(tuple(r) for r in conn.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")),
+            [("task-1", 12), ("task-2", 13)])
+
+    def test_a_corrupt_row_in_another_bucket_still_fails_closed(self):
+        # The install-wide ceiling can be a row this task never touches; a corrupt one
+        # must refuse rather than be silently skipped.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 99)
+        # (`event_count = 0` is refused by the DDL CHECK, which is the point of having
+        # both walls; corrupt the one field the CHECK cannot constrain.)
+        conn.execute("UPDATE governed_evidence_head_floor SET final_event_hash = 'short'"
+                     " WHERE task_id = 'task-1'")
+        with self.assertRaises(gsl.Corrupt):
+            self._complete(conn, "att-2", "task-2", 100)
+
+    def test_a_corrupt_row_in_this_bucket_is_reported_as_corrupt(self):
+        # The row this task holds is read before the install-wide ceiling, so it needs its
+        # own integrity check: without one a corrupt mark is laundered into an
+        # `EvidenceFork` verdict, which reads as "the caller forked" rather than "this
+        # deployment's floor is damaged".
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 12)
+        conn.execute("UPDATE governed_evidence_head_floor SET last_sequence = 2"
+                     " WHERE task_id = 'task-1'")
+        with self.assertRaises(gsl.Corrupt):
+            self._complete(conn, "att-2", "task-1", 12)
+
+    def test_the_ceiling_is_the_highest_bucket_not_just_any_bucket(self):
+        # With more than two buckets, reading the WRONG row still refuses the obvious
+        # rollback while letting a head between the lowest and the highest through.
+        conn = _conn()
+        self._complete(conn, "att-1", "task-1", 5)
+        self._complete(conn, "att-2", "task-2", 100)
+        with self.assertRaises(gsl.StaleEvidence):
+            self._complete(conn, "att-3", "task-3", 50)
 
 
 # ---------------------------------------------------------------------------

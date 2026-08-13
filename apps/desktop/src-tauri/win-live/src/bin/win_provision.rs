@@ -244,11 +244,15 @@ fn main() {
     let history_sha256 = seed_blob(&store, b"brops-history-v1");
     let generation_config_sha256 = seed_blob(&store, b"brops-generation-config-v1");
     let policy_bundle_handle = seed_blob(&store, b"brops-policy-bundle-v1");
-    let containment_evidence_handle = seed_blob(&store, b"brops-containment-evidence-v1");
-    let record_handle = seed_blob(&store, b"brops-record-v1");
-    let lease_handle = seed_blob(&store, b"brops-lease-v1");
-    let execution_receipt_handle = seed_blob(&store, b"brops-execution-receipt-v1");
-    let evidence_final_event_hash = crypto::sha256_hex(b"brops-final-event-v1");
+    // audit F-02 / R-42: four PLACEHOLDER blobs used to be seeded here —
+    // `brops-containment-evidence-v1`, `-record-v1`, `-lease-v1`, `-execution-receipt-v1` — plus a
+    // fabricated `evidence_final_event_hash`, and their handles went into `config.json` as the
+    // deployment's terminal artifacts and evidence head. F-02 made the supervisor build and
+    // content-address the real three itself and derive the head from the execution's own chain, so
+    // nothing has read these since; but they were still provisioned, so the protected store still
+    // held four documents that LOOKED like a completed run's terminal artifacts and the config still
+    // named an evidence head that described nothing. The substance was removed and the appearance
+    // was kept. They are gone now, along with the nine dead `Facts` fields that carried them.
 
     let launcher_sha = crypto::sha256_hex(b"brops-windows-launcher-v1");
     let executor_sha = std::fs::read(&executor_path)
@@ -372,21 +376,12 @@ fn main() {
             conversation_id: "conv-live-1".to_string(),
         },
         facts: Facts {
-            receipt_id: "brops-live-receipt-1".to_string(),
             supervisor_id: supervisor_id.clone(),
             executor_id: executor_id.clone(),
             builder_id: builder_id.clone(),
             policy_id: "brops-policy-1".to_string(),
             policy_version: "1".to_string(),
             policy_bundle_handle,
-            containment_evidence_handle,
-            record_handle,
-            lease_handle,
-            execution_receipt_handle,
-            evidence_final_event_hash,
-            evidence_event_count: 3,
-            evidence_last_sequence: 3,
-            evidence_head_sequence: 3,
         },
         supervisor_cfg: SupervisorCfg {
             launcher_executable_sha256: launcher_sha,

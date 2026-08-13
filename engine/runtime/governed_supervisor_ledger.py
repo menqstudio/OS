@@ -46,7 +46,7 @@ import json
 import os
 import pathlib
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -203,6 +203,14 @@ def open_ledger(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = FULL")
+    # Every operation below owns a `BEGIN IMMEDIATE` precisely because a SECOND writer is
+    # expected -- a second supervisor process, and now the §2.4 background sweep, which holds
+    # its own connection to this file. SQLite's default busy timeout is ZERO, which turns that
+    # expected contention into an immediate `database is locked` fault: the write lock would be
+    # taken correctly and the loser would fail rather than wait microseconds for it. Each
+    # transaction here is one short read-decide-write, so waiting is the correct answer and this
+    # bound is a fault ceiling rather than a design assumption.
+    conn.execute("PRAGMA busy_timeout = 5000")
     apply_schema(conn)
     return conn
 
@@ -300,23 +308,35 @@ class NewAcceptance:
     generation_config_handle: str
 
 
+#: The two fields that IDENTIFY the stored row rather than bind it. The collision lookup
+#: below selects ``WHERE install_id = ? AND request_nonce = ?``, so a row that came back
+#: agrees on them by construction; comparing them again would be a check that cannot fail.
+_IDENTITY_FIELDS: Tuple[str, ...] = ("install_id", "request_nonce")
+
+#: Compared by DIGEST, immediately before the loop, because the column holds a BLOB and the
+#: row stores its ``lease_payload_sha256`` beside it. Listing it here keeps it out of the
+#: value-comparison without letting it fall out of the comparison altogether.
+_DIGEST_COMPARED_FIELDS: Tuple[str, ...] = ("lease_payload_bytes",)
+
 #: Every bound field compared when deciding idempotent-retry vs hard conflict.
-_BOUND_FIELDS: Tuple[str, ...] = (
-    "challenge_handle",
-    "run_id",
-    "task_id",
-    "workspace_id",
-    "execution_attempt_id",
-    "lease_id",
-    "lease_issued_at_ms",
-    "lease_expires_at_ms",
-    "receipt_id",
-    "supervisor_id",
-    "requested_at_ms",
-    "request_sha256",
-    "system_handle",
-    "history_handle",
-    "generation_config_handle",
+#:
+#: **DERIVED, not hand-maintained — and that is the fix, not a style choice.** This used to
+#: be a literal 15-name tuple beside an INSERT that bound 23, and the eight-name gap was not
+#: visible from either. Five of the eight were real: ``challenge_accepted_at_ms`` and all
+#: four ``challenge_registry_*``, **including the anti-rollback ``epoch``** — so a retry
+#: re-presenting the same nonce under a ROLLED-BACK registry epoch compared equal on every
+#: field the list happened to name and was answered ``IDEMPOTENT``, "the same turn", instead
+#: of :class:`Conflict`. ``challenge_accepted_at_ms`` matters for the same reason: §7.1 step
+#: 4c binds the signed envelope against it, so two acceptances differing in it are two
+#: different turns however similar the rest looks.
+#:
+#: Deriving the tuple from :class:`NewAcceptance` makes the field list BE the comparison, the
+#: way the Rust twin's ``#[derive(PartialEq)] struct DurableBinding`` does: a field added to
+#: the acceptance binding is compared from the moment it exists, and the only way to exclude
+#: one is to name it above, in writing, next to the reason.
+_BOUND_FIELDS: Tuple[str, ...] = tuple(
+    f.name for f in dataclass_fields(NewAcceptance)
+    if f.name not in _IDENTITY_FIELDS + _DIGEST_COMPARED_FIELDS
 )
 
 CREATED = "created"
@@ -700,6 +720,29 @@ def validate_completion_facts(produced: Any) -> Dict[str, Any]:
     return {field: produced[field] for field in COMPLETION_FIELDS}
 
 
+def _refuse_corrupt_floor_row(row: sqlite3.Row) -> None:
+    """Fail closed on a stored floor row that cannot be a floor (startup-integrity)."""
+    if (row["highest_head_sequence"] < 1 or row["event_count"] < 1
+            or row["last_sequence"] < 1
+            or row["last_sequence"] != row["event_count"]
+            or len(row["final_event_hash"]) != 64):
+        raise Corrupt("evidence_head_floor")
+
+
+def _install_floor_ceiling(conn: sqlite3.Connection, install_id: str) -> Optional[sqlite3.Row]:
+    """The HIGHEST head this install has ever recorded, in ANY task bucket.
+
+    This — not the per-task row — is the anti-rollback floor. See
+    :func:`_evidence_floor_cas` for why the per-task row cannot be one.
+    """
+    return conn.execute(
+        "SELECT task_id, highest_head_sequence, event_count, last_sequence, final_event_hash"
+        " FROM governed_evidence_head_floor WHERE install_id = ?"
+        " ORDER BY highest_head_sequence DESC, task_id ASC LIMIT 1",
+        (install_id,),
+    ).fetchone()
+
+
 def _evidence_floor_cas(conn: sqlite3.Connection, install_id: str, task_id: str,
                         facts: Mapping[str, Any], now_ms: int) -> str:
     """The durable evidence-head anti-rollback/anti-fork floor (§5 step 11 / §7 P1-7),
@@ -708,18 +751,70 @@ def _evidence_floor_cas(conn: sqlite3.Connection, install_id: str, task_id: str,
     (The Rust twin owns its own ``BEGIN IMMEDIATE`` and refuses nesting; here the floor is
     deliberately folded into the completion's single transaction — same atomicity, one
     fewer lock acquisition, and a refused floor cannot leave a completion behind.)
+
+    **The floor is scoped to the INSTALL, not to ``(install_id, task_id)``.** The earlier
+    code read and compared only the ``(install_id, task_id)`` row, so a head below the
+    durable floor was accepted merely by presenting it under a task_id that had no row
+    yet: the ``row is None`` branch bootstrapped a brand-new bucket and the floor never
+    fired. Driven against this ledger, ``(task-1, head 99)`` recorded, ``(task-1, head 3)``
+    was refused ``StaleEvidence``, and ``(task-FRESH, head 3)`` — the SAME rolled-back head
+    — recorded ``created`` and produced attestation state. ``task_id`` is not a supervisor
+    secret: it arrives on the wire, ``challenge_authority.validate_create_pending`` accepts
+    any bounded string for it, and the supervisor copies it out of the challenge
+    (``governed_supervisor.py`` ``task_id=payload["task_id"]``). A defence whose scope the
+    attacker chooses is not a defence.
+
+    Scoping it to the install is not a tightening of convenience — it is what the number
+    means. ``head_sequence`` is minted by ONE per-recorder counter
+    (``governed_recorder.rs::next_head_sequence`` read-increments a single
+    ``<evidence_state_dir>/evidence-head-sequence.json``), so it is monotonic across every
+    run of a deployment regardless of task. Partitioning the floor by task_id therefore
+    could never have matched the counter it polices; it could only ever create buckets to
+    hide in.
+
+    The per-task row is KEPT (the DDL and its Rust twin are unchanged) as the per-task
+    detail record and as the idempotency key: re-presenting the exact head a bucket
+    already holds is the idempotent re-sign and writes nothing, which is why that case is
+    decided BEFORE the install-wide ceiling — otherwise a legitimate byte-identical retry
+    of an older attempt would read as a rollback once another task had advanced past it.
     """
     head_sequence = facts["evidence_head_sequence"]
     event_count = facts["evidence_event_count"]
     last_sequence = facts["evidence_last_sequence"]
     final_event_hash = facts["evidence_final_event_hash"]
 
-
     row = conn.execute(
         "SELECT highest_head_sequence, event_count, last_sequence, final_event_hash"
         " FROM governed_evidence_head_floor WHERE install_id = ? AND task_id = ?",
         (install_id, task_id),
     ).fetchone()
+    if row is not None:
+        _refuse_corrupt_floor_row(row)
+        if head_sequence == row["highest_head_sequence"]:
+            identical = (event_count == row["event_count"]
+                         and last_sequence == row["last_sequence"]
+                         and final_event_hash == row["final_event_hash"])
+            if identical:
+                return "idempotent"
+            raise EvidenceFork("equal head_sequence with divergent chain content")
+
+    ceiling = _install_floor_ceiling(conn, install_id)
+    if ceiling is not None:
+        _refuse_corrupt_floor_row(ceiling)
+        highest = ceiling["highest_head_sequence"]
+        if head_sequence < highest:
+            raise StaleEvidence(
+                "head_sequence %d below durable floor %d (recorded for task %r on this install)"
+                % (head_sequence, highest, ceiling["task_id"]))
+        if head_sequence == highest:
+            # One install, one counter: the same head_sequence cannot legitimately be minted
+            # twice. Equal-and-identical for THIS task was already returned above, so an equal
+            # head arriving here is either a different task claiming a taken counter value or
+            # divergent content under the same one. Both are forks.
+            raise EvidenceFork(
+                "head_sequence %d is already recorded for task %r on this install"
+                % (head_sequence, ceiling["task_id"]))
+
     if row is None:
         conn.execute(
             "INSERT INTO governed_evidence_head_floor (install_id, task_id,"
@@ -730,21 +825,6 @@ def _evidence_floor_cas(conn: sqlite3.Connection, install_id: str, task_id: str,
         )
         return "bootstrapped"
 
-    highest = row["highest_head_sequence"]
-    if (highest < 1 or row["event_count"] < 1 or row["last_sequence"] < 1
-            or row["last_sequence"] != row["event_count"]
-            or len(row["final_event_hash"]) != 64):
-        raise Corrupt("evidence_head_floor")
-
-    if head_sequence < highest:
-        raise StaleEvidence("head_sequence %d below durable floor %d" % (head_sequence, highest))
-    if head_sequence == highest:
-        identical = (event_count == row["event_count"]
-                     and last_sequence == row["last_sequence"]
-                     and final_event_hash == row["final_event_hash"])
-        if identical:
-            return "idempotent"
-        raise EvidenceFork("equal head_sequence with divergent chain content")
     conn.execute(
         "UPDATE governed_evidence_head_floor SET highest_head_sequence = ?, event_count = ?,"
         " last_sequence = ?, final_event_hash = ?, updated_at_ms = ?"
@@ -969,6 +1049,23 @@ def load_attestation_state(conn: sqlite3.Connection, run_id: str,
     )
 
 
+def load_acceptance_by_challenge(conn: sqlite3.Connection,
+                                 challenge_handle: str) -> Optional[sqlite3.Row]:
+    """The acceptance row for a CHALLENGE, or ``None`` — the key §4.10(d) arrives holding.
+
+    A sibling of :func:`load_acceptance` rather than a second query shape: the trigger
+    message carries ``(install_id, request_nonce, challenge_handle)`` and no
+    ``execution_attempt_id`` (§4.10(d) mints none), so the only durable key it can look an
+    attempt up by is the challenge's content address. ``UNIQUE (challenge_handle)`` makes
+    that at most one row, which is what lets a replayed trigger find the ORIGINAL attempt
+    instead of starting a second one.
+    """
+    return conn.execute(
+        "SELECT * FROM governed_turn_acceptance WHERE challenge_handle = ?",
+        (challenge_handle,),
+    ).fetchone()
+
+
 def load_lease(conn: sqlite3.Connection, execution_attempt_id: str) -> Optional[sqlite3.Row]:
     """The durable lease bindings for an attempt (used to re-return the SAME lease on an
     idempotent ``accept-open`` retry rather than minting a second one)."""
@@ -1000,6 +1097,7 @@ __all__ = [
     "Conflict", "Corrupt", "EvidenceFork", "IllegalTransition", "InvalidHead",
     "LedgerError", "NotFound", "StaleEvidence",
     "accept_prepare", "advance", "apply_schema", "canonical_bytes", "gate_and_start",
+    "load_acceptance_by_challenge",
     "lease_launch_gate", "load_attestation_state", "load_lease", "load_lease_by_nonce",
     "mark_executing", "mark_lease_ready", "open_ledger", "record_completion",
     "reuse_or_prepare", "validate_completion_facts",

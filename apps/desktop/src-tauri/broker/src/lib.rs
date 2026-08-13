@@ -26,3 +26,8 @@ pub mod tcb_probe;
 /// The broker's production `TurnResolver` — fail-closed by default; the real manifest resolution when a
 /// trusted manifest is provisioned.
 pub mod manifest_resolver;
+
+/// The rev-30 §4.10(g) SIDECAR LADDER: the broker-side governed turn whose three artifact digests are
+/// derived from the actual conversation rather than read out of deployment config. It is the caller
+/// `brops_core::governed_submit::governed_turn_submit_prepared` never had.
+pub mod ladder_executor;

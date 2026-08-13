@@ -8,7 +8,8 @@ import time
 import uuid
 from typing import Any, Iterator
 
-from bro_orchestration_runtime import DurableOrchestrationRuntime, OrchestrationRuntimeError
+from bro_orchestration_runtime import (_HELD_CLAIM_TOKENS, DurableOrchestrationRuntime,
+                                       OrchestrationRuntimeError)
 
 DEFAULT_LEASE_SECONDS = 300
 MAX_LEASE_SECONDS = 86400
@@ -104,9 +105,17 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
                 if time.monotonic() >= deadline:
                     raise OrchestrationRuntimeError("claim lock acquisition timed out")
                 time.sleep(0.01)
+        # This OVERRIDE is the guard the V1 runtime actually acquires, so it — not only the
+        # base implementation — has to record the token. `_guard_held_by_this_process` answers
+        # from that record now (audit round 2, `:380`: pid equality was wrong because pids are
+        # recycled), and a V1 acquisition that did not register would make every base method
+        # it delegates into try to re-acquire a lock this process already holds, and time out.
+        key = str(self.claim_lock)
+        _HELD_CLAIM_TOKENS[key] = token
         try:
             yield
         finally:
+            _HELD_CLAIM_TOKENS.pop(key, None)
             # Release "my lock", not "the lock". An overrunning holder whose lock
             # was already broken and retaken must not delete the new holder's,
             # which would put two processes inside the guard at once.

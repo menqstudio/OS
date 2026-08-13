@@ -47,6 +47,94 @@ REQUIRED_CLAUSES = (
     "execution_attempt_id        TEXT PRIMARY KEY NOT NULL",
     "CREATE TABLE IF NOT EXISTS governed_evidence_head_floor",
     "PRAGMA foreign_keys = ON",
+    # §2.4 / §4.10(a0) pre-accept staging. The two triggers are the reason an
+    # `INPUTS_READY` row cannot be conjured: one forbids any INSERT that is not
+    # `VERIFYING`, the other forbids any edge that is not VERIFYING->UPLOADING or
+    # UPLOADING->INPUTS_READY. Deleting either from both copies in one commit would
+    # restore exactly the "declare the end state, publish nothing" hole.
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging",
+    "trg_governed_turn_staging_insert_state",
+    "RAISE(ABORT, 'staging row must be created VERIFYING')",
+    # A row born VERIFYING may still have been born with its three `*_handle` columns
+    # already filled: VERIFYING says nothing about them, and pre-set handles that already
+    # equal the committed digests pass the handle-binding trigger on every later UPDATE.
+    # Without this the row could walk to INPUTS_READY having published nothing -- exactly
+    # the "declare the end state, do nothing" hole the SESSION insert trigger closes, and
+    # exactly the state the §4.10(d) evidence-request gate reads as proof of upload.
+    "trg_governed_turn_staging_insert_handles",
+    "RAISE(ABORT, 'staging row must be created with no published input handles')",
+    "trg_governed_turn_staging_transition",
+    "RAISE(ABORT, 'illegal staging state transition')",
+    "trg_governed_turn_staging_immutable_binding",
+    "RAISE(ABORT, 'staging row binding is immutable')",
+    # §4.10(a)(b)(c) chunked staging upload. Each of these is a rule that, if it
+    # lived only in Python, a writer bypassing the handlers could ignore -- which is
+    # exactly how a "finished" upload could be declared over bytes nobody sent:
+    #   * the session is born empty, so ARTIFACT_READY cannot be an INSERT;
+    #   * the cursor advances by exactly one recorded chunk, so `byte_count` is
+    #     provably SUM(chunk_len) and `next_seq` provably their count;
+    #   * a chunk is recorded only AT the cursor and never UPDATEd, so the sequence
+    #     is gapless and an already-counted chunk cannot be re-described;
+    #   * a published input handle must BE the challenge-committed digest, and
+    #     INPUTS_READY cannot be reached until all three are set -- which is what
+    #     makes §4.10(d)'s reading of that state true rather than merely asserted
+    #     (the gate re-derives none of it; the DDL refuses to produce a state it could
+    #     misread).
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging_session",
+    "CREATE TABLE IF NOT EXISTS governed_turn_staging_chunk",
+    "artifact           TEXT NOT NULL CHECK (artifact IN (",
+    "next_seq           INTEGER NOT NULL CHECK (next_seq >= 0 AND next_seq <= 46)",
+    "chunk_len >= 1 AND chunk_len <= 184320",
+    "seq                INTEGER NOT NULL CHECK (seq >= 0 AND seq <= 45)",
+    "UNIQUE (challenge_handle, artifact)",
+    "trg_governed_turn_staging_session_insert_state",
+    "RAISE(ABORT, 'staging session must be created empty and UPLOADING')",
+    "trg_governed_turn_staging_session_transition",
+    "RAISE(ABORT, 'illegal staging session state transition')",
+    "trg_governed_turn_staging_session_cursor",
+    "RAISE(ABORT, 'staging cursor must advance by exactly one recorded chunk')",
+    "trg_governed_turn_staging_session_immutable",
+    "RAISE(ABORT, 'staging session binding is immutable')",
+    "trg_governed_turn_staging_chunk_gapless",
+    "RAISE(ABORT, 'staging chunk must be recorded at the current cursor')",
+    "trg_governed_turn_staging_chunk_immutable",
+    "RAISE(ABORT, 'recorded staging chunks are immutable')",
+    # The two cascades are what make the §2.4 sweep a reclaim rather than a leak. The sweep
+    # deletes ONE row per expired turn and the DDL takes that turn's sessions and their
+    # chunks with it; `count_install_sessions` counts sessions THROUGH the parent row, so a
+    # commit that deleted these clauses from both copies would leave every swept session as
+    # a parentless row -- invisible to the per-install cap while its `session_dir` stayed on
+    # disk. That is the one way a fail-CLOSED quota fails open, so the clauses are named
+    # here and the sweep refuses to run on a connection with `foreign_keys` off.
+    "REFERENCES governed_turn_staging (challenge_handle) ON DELETE CASCADE",
+    "REFERENCES governed_turn_staging_session (staging_session_id) ON DELETE CASCADE",
+    "trg_governed_turn_staging_handle_binding",
+    "RAISE(ABORT, 'published input handle must be the challenge-committed digest')",
+    "trg_governed_turn_staging_inputs_ready",
+    "RAISE(ABORT, 'INPUTS_READY requires all three published input handles')",
+    # §4.10(f) governed output streams -- the ONLY egress. Everything above guards
+    # what may ENTER; these guard the one way anything leaves, and each is a rule
+    # the design states that Python alone could not make true:
+    #   * the row is INSERT-ONCE, so the two timestamps a read verdict is DERIVED
+    #     from cannot be moved after commit -- a live capability can never be
+    #     renewed and an expired one never revived;
+    #   * the lifetime FOLLOWS from `created_at_ms` rather than being chosen, so a
+    #     row that would read LIVE forever cannot be minted at all;
+    #   * the digest IS the handle (Appendix B), so the bytes served and the digest
+    #     announced in the §4.10(e) summary cannot be two different things;
+    #   * the two UNIQUEs ARE §4.10(f)'s "minted exactly once" create-if-absent key,
+    #     so a COMPLETED retry re-reads its token instead of minting a second one.
+    "CREATE TABLE IF NOT EXISTS governed_output_streams",
+    "length(output_stream_id) = 43",
+    "receipt_id           TEXT NOT NULL UNIQUE",
+    "execution_attempt_id TEXT NOT NULL UNIQUE",
+    "output_bytes >= 0 AND output_bytes <= 8388608",
+    "trg_governed_output_streams_immutable",
+    "RAISE(ABORT, 'output stream rows are insert-once')",
+    "trg_governed_output_streams_lifetime",
+    "RAISE(ABORT, 'output stream lifetime must be the fixed TTL + retention')",
+    "trg_governed_output_streams_digest",
+    "RAISE(ABORT, 'output stream digest must be the handle it serves from')",
 )
 
 

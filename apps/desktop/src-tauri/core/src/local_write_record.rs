@@ -48,7 +48,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::domain::{CoreError, CoreResult};
-use crate::receipt::sha256_hex;
+use crate::receipt::{jcs_bytes, sha256_hex};
 
 /// Protocol tag persisted on every record and bound into `record_sha256`. Bumping it is
 /// a forward migration, never an in-place edit of existing rows.
@@ -177,14 +177,12 @@ pub enum ChainIntegrity {
 // Canonical digests
 // ---------------------------------------------------------------------------
 
-/// Canonical bytes for a flat `string -> string` envelope: `serde_json`'s compact
-/// serialization of a `BTreeMap` emits sorted keys, no whitespace and minimal escaping,
-/// which for this restricted ASCII-key shape *is* RFC 8785 JCS — the same construction
-/// `receipt.rs` uses for the governed request envelope, so the two never diverge in
-/// style.
-fn jcs_bytes(map: &BTreeMap<String, String>) -> Vec<u8> {
-    serde_json::to_vec(map).expect("a BTreeMap<String,String> always serializes")
-}
+// The canonical bytes for a flat `string -> string` envelope are NOT re-spelled here.
+// This module used to carry its own `jcs_bytes` whose body was character-for-character
+// `receipt.rs`'s, with a doc comment promising "the two never diverge in style" — a
+// promise nothing enforced. It is now the SAME function: `crate::receipt::jcs_bytes`,
+// imported above. Editing the formula in one place and not the other is no longer
+// expressible, so the promise is structural instead of aspirational.
 
 /// Digest of a **memory entry**'s attestable fields. `id`, `created_at` and `updated_at`
 /// are deliberately excluded: `updated_at` moves on every write (it would make the

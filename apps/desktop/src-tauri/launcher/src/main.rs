@@ -13,13 +13,28 @@
 //! Any failure ⇒ no exec, non-zero exit, **no receipt/evidence/record**.
 //!
 //! This crate does NOT re-implement those rules. The three verdicts come from `brops-core`
-//! (`fd_lifecycle::verify_launcher_fd_set`, `privilege_drop::verify_order`,
+//! (`fd_lifecycle::verify_launcher_fd_set`, `privilege_drop::verify_performed_drop`,
 //! `privilege_drop::verify_final_state`) so the launcher and the recorder-side checks share ONE source of
-//! truth. The composition of those three verdicts — [`evaluate_launch`] — plus the pure `/proc` parsers are
-//! host-independent and unit-tested on any platform (mirroring how `fd_lifecycle`/`privilege_drop` keep a
-//! pure, tested core). The real `dup2`/`fcntl`/`setresuid`/`capset`/`fexecve` syscalls are Linux-only and
-//! gated behind `#[cfg(target_os = "linux")]`; on every other host `main` prints the platform-unsupported
-//! banner and exits non-zero (governed real-mode disabled — fail closed).
+//! truth. The pure `/proc` parsers are host-independent and unit-tested on any platform (mirroring how
+//! `fd_lifecycle`/`privilege_drop` keep a pure, tested core). The real
+//! `dup2`/`fcntl`/`setresuid`/`capset`/`fexecve` syscalls are Linux-only and gated behind
+//! `#[cfg(target_os = "linux")]`; on every other host `main` prints the platform-unsupported banner and
+//! exits non-zero (governed real-mode disabled — fail closed).
+//!
+//! **On step 2 and what checks it.** The drop order used to be "checked" by
+//! `verify_order(CANONICAL_SEQUENCE)` — the checker fed the constant it is written against, which cannot
+//! fail — while `drop_privileges` issued the real syscalls and recorded nothing. The order is now
+//! executed by the single recording driver `privilege_drop::perform_drop`, which appends each step to a
+//! [`brops_core::privilege_drop::DropJournal`] as it COMPLETES, and the JOURNAL is what
+//! `verify_performed_drop` judges immediately before `fexecve`. Reordering or deleting a syscall changes
+//! the recorded trace, and `brops-core`'s unit tests read that trace through a recording fake — so the
+//! drop's order is testable on any host, not only on a privileged Linux box.
+//!
+//! **[`evaluate_launch`] is reachable only from tests.** It composes the three verdicts, but the real
+//! `run()` calls `verify_launcher_fd_set`, `verify_performed_drop` and `verify_final_state` directly and
+//! at the points in the sequence where each is meaningful (the FD set before any drop; the journal only
+//! once there IS a journal). It is retained as the host-independent statement of the composed predicate;
+//! do not mistake a green `evaluate_launch` test for evidence about a real launch.
 
 use brops_core::fd_lifecycle::{
     verify_launcher_fd_set, verify_store_inputs_unchanged, FdFacts, FdViolation, InodeIdentity,
@@ -28,8 +43,9 @@ use brops_core::fd_lifecycle::{
 use brops_core::privilege_drop::{
     verify_final_state, verify_order, CapSets, FinalState, OrderViolation, PrivViolation, Step,
 };
-// `CANONICAL_SEQUENCE` is referenced only by the Linux real path and the tests, so it is qualified at
-// those two sites rather than imported here (keeps the non-Linux bin build import-clean).
+// `CANONICAL_SEQUENCE` is referenced only by the tests, so it is qualified there rather than imported
+// here (keeps the non-Linux bin build import-clean). The REAL path deliberately no longer names it: a
+// check fed the constant it checks against cannot fail — see `privilege_drop::perform_drop`.
 
 // ---------------------------------------------------------------------------------------------------
 // Exit codes (fail-closed): success never returns (a good `fexecve` replaces this image).
@@ -524,6 +540,9 @@ fn run() -> i32 {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    // The recorded-drop machinery is used only by the real path, so it is imported here rather than at
+    // the crate root (keeps the non-Linux bin build import-clean).
+    use brops_core::privilege_drop::{verify_performed_drop, DropJournal, DropSyscalls};
     use std::ffi::{CStr, CString};
     use std::fs;
     use std::io::Read;
@@ -598,8 +617,22 @@ mod linux {
         //      holding the same bytes after the drop, the `/proc` reads and the image hash.
         let pinned_inputs = verify_store_input_bindings(&lease)?;
 
-        // (3) Verify the planned drop order is the load-bearing canonical order (§2.7 step ordering).
-        verify_order(brops_core::privilege_drop::CANONICAL_SEQUENCE)?;
+        // (5a) Open the drop JOURNAL. From here on every step this process completes is appended to it,
+        //      and the journal — not a constant — is what step (9c) verifies.
+        //
+        //      AUDIT: this used to be `verify_order(CANONICAL_SEQUENCE)?` right here, which handed the
+        //      checker the very constant the checker is written against, so it could not fail (indeed
+        //      `privilege_drop.rs` asserts exactly that in a unit test). `drop_privileges` then issued
+        //      the real syscalls and recorded NOTHING, so reordering or deleting one changed no checked
+        //      value and failed no test, while the comment beside it claimed the order was "verified in
+        //      step 3". Nothing was verified about this process.
+        //
+        //      NOTE the honest gap this exposes: `Step::CgroupSetup` is NOT recorded, because the
+        //      launcher does not perform it — placing the process into the lease-authorized leaf cgroup
+        //      is still the explicit TODO at step (1). The constant claimed that step; the journal does
+        //      not, because it happened. `MANDATORY_PERFORMED_STEPS` therefore does not require it yet.
+        let mut journal = DropJournal::new();
+        journal.record(Step::VerifyEntry);
 
         // (4) Neutralize stdio: set FD_CLOEXEC on 0/1/2 so the inert endpoints do NOT cross fexecve — only
         //     the four data FDs 3–6 survive into the executor (§2.7 launcher step 3).
@@ -608,14 +641,17 @@ mod linux {
         }
 
         // (5) Perform the locked privilege drop (groups/gid → bounding+ambient → uid → capset zero →
-        //     no_new_privs). Order matches CANONICAL_SEQUENCE (verified in step 3).
-        drop_privileges(exec_uid, exec_gid)?;
+        //     no_new_privs) through the single recording driver in `brops-core`. There is exactly one
+        //     call site per syscall, in a function whose order IS the contract, and each step lands in
+        //     the journal only after its syscall reported success.
+        drop_privileges(exec_uid, exec_gid, &mut journal)?;
 
         // (6) Fail-closed final-state verification: fully dropped, empty groups, all five cap sets empty,
         //     no_new_privs set. Any residual ⇒ abort, no exec (§2.7 step 8).
         let status = fs::read_to_string("/proc/self/status").map_err(|_| Refusal::Proc("status"))?;
         let post = parse_status(&status).ok_or(Refusal::Proc("status-parse"))?;
         verify_final_state(&post, exec_uid, exec_gid)?;
+        journal.record(Step::VerifyUnprivileged);
 
         // (9) Open the executor image O_RDONLY|O_NOFOLLOW|O_CLOEXEC (NOT one of 3–6), then bind exec-time
         //     integrity to THAT exact fd: fstat it (regular, TCB-owned, non-writable) AND re-hash its bytes
@@ -631,6 +667,23 @@ mod linux {
         //      the same root-owned pins, not merely self-consistent.
         let recheck = verify_store_input_bindings(&lease)?;
         verify_store_inputs_unchanged(&pinned_inputs, &recheck)?;
+
+        // (9c) §2.7 step ordering, judged against what THIS process did. `fexecve` is recorded here
+        //      because the very next statement issues it and nothing can intervene — every other entry
+        //      in the journal was appended after its operation completed. `verify_performed_drop`
+        //      requires every mandatory step, once each, in the load-bearing order; a syscall that was
+        //      reordered, deleted, or that failed leaves a journal that does not satisfy it, and the
+        //      launcher refuses with no exec. This is the check the old `verify_order(CANONICAL_SEQUENCE)`
+        //      pretended to be.
+        //
+        //      `Fexecve` is the ONE entry recorded before its operation rather than after, because the
+        //      operation never returns on success — it replaces this image. It is recorded here, with
+        //      the verification and the exec as the next two statements and nothing between them, so
+        //      "recorded" and "issued" cannot come apart. Because the journal is append-only and
+        //      `verify_performed_drop` requires `Fexecve` to be strictly last, no step can be recorded
+        //      after it either.
+        journal.record(Step::Fexecve);
+        verify_performed_drop(journal.steps())?;
 
         fexecve_pinned(image_fd, executor_image)?; // returns ONLY on failure
         Err(Refusal::Syscall("fexecve"))
@@ -931,40 +984,71 @@ mod linux {
         Ok(())
     }
 
-    fn drop_privileges(uid: u32, gid: u32) -> Result<(), Refusal> {
-        // Clear all supplementary groups (must precede the UID drop).
-        if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
-            return Err(Refusal::Syscall("setgroups"));
+    /// The real Linux privilege-drop syscalls behind `brops_core`'s [`DropSyscalls`] seam.
+    ///
+    /// Each method performs EXACTLY ONE operation and reports success. It must stay that way: the
+    /// driver (`privilege_drop::perform_drop`) records a step the moment the corresponding method
+    /// returns `true`, so a method that quietly did a second step's work would put a false entry in the
+    /// journal. The ORDER lives in the driver, which is host-independent and unit-tested — that is what
+    /// makes reordering the drop something a test can see, on any machine.
+    struct RealDropSyscalls;
+
+    impl DropSyscalls for RealDropSyscalls {
+        fn set_groups_empty(&mut self) -> bool {
+            // Clear all supplementary groups (must precede the UID drop).
+            // SAFETY: setgroups with count 0 and a NULL list is the documented "clear" form.
+            unsafe { libc::setgroups(0, std::ptr::null()) == 0 }
         }
-        if unsafe { libc::setresgid(gid, gid, gid) } != 0 {
-            return Err(Refusal::Syscall("setresgid"));
+
+        fn set_res_gid(&mut self, gid: u32) -> bool {
+            // SAFETY: plain integer arguments.
+            unsafe { libc::setresgid(gid, gid, gid) == 0 }
         }
-        // Drop the capability bounding set (needs CAP_SETPCAP, still root here) and clear ambient.
-        for cap in 0..=63i32 {
-            // EINVAL for non-existent cap numbers is benign; a real drop failure surfaces at capget-verify.
+
+        fn drop_bounding_and_ambient_caps(&mut self) -> bool {
+            // Drop the capability bounding set (needs CAP_SETPCAP, still root here) and clear ambient.
+            for cap in 0..=63i32 {
+                // EINVAL for non-existent cap numbers is benign; a real drop failure surfaces at the
+                // capget-verify in `verify_final_state`.
+                // SAFETY: prctl with constant options and an integer capability number.
+                unsafe {
+                    libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0);
+                }
+            }
+            // SAFETY: prctl with constant options.
             unsafe {
-                libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0);
+                libc::prctl(libc::PR_CAP_AMBIENT, libc::PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) == 0
             }
         }
-        if unsafe { libc::prctl(libc::PR_CAP_AMBIENT, libc::PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) } != 0
-        {
-            return Err(Refusal::Syscall("prctl(PR_CAP_AMBIENT)"));
+
+        fn set_res_uid(&mut self, uid: u32) -> bool {
+            // Drop the UID (loses the effective/permitted caps root implied).
+            // SAFETY: plain integer arguments.
+            unsafe { libc::setresuid(uid, uid, uid) == 0 }
         }
-        // Drop the UID (loses the effective/permitted caps root implied).
-        if unsafe { libc::setresuid(uid, uid, uid) } != 0 {
-            return Err(Refusal::Syscall("setresuid"));
+
+        fn clear_all_cap_sets(&mut self) -> bool {
+            // Belt-and-suspenders: zero effective/permitted/inheritable capability sets.
+            capset_zero()
         }
-        // Belt-and-suspenders: zero effective/permitted/inheritable capability sets.
-        if !capset_zero() {
-            return Err(Refusal::Syscall("capset"));
+
+        fn set_no_new_privs(&mut self) -> bool {
+            // Locks further privilege gain BEFORE the final verify, so `verify_final_state`'s
+            // no_new_privs check holds. Stricter than, and compatible with, the canonical ordering:
+            // no_new_privs still precedes fexecve.
+            // SAFETY: prctl with constant options.
+            unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0 }
         }
-        // Lock further privilege gain BEFORE the final verify so verify_final_state's no_new_privs check
-        // holds (stricter than, and compatible with, the canonical ordering: no_new_privs still precedes
-        // fexecve).
-        if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
-            return Err(Refusal::Syscall("prctl(PR_SET_NO_NEW_PRIVS)"));
-        }
-        Ok(())
+    }
+
+    /// Run the locked drop and RECORD what it performed into `journal`.
+    ///
+    /// The ordering is not written here any more — it is `privilege_drop::perform_drop`'s, which is the
+    /// only place it exists, is exercised by a recording fake in `brops-core`'s unit tests, and appends
+    /// to the journal that step (9c) verifies before any exec.
+    fn drop_privileges(uid: u32, gid: u32, journal: &mut DropJournal) -> Result<(), Refusal> {
+        brops_core::privilege_drop::perform_drop(&mut RealDropSyscalls, uid, gid, journal)
+            .map_err(|failed| Refusal::Syscall(failed.name()))
     }
 
     fn capset_zero() -> bool {

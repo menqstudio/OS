@@ -167,7 +167,8 @@ class AcceptOpenValidTests(unittest.TestCase):
         # F-01: everything the later attestation is rebuilt from is copied here, out of the
         # payload whose signature just verified, plus supervisor-owned values.
         payload = _valid_payload()
-        result = _accept(_signed_doc(payload))
+        doc = _signed_doc(payload)
+        result = _accept(doc)
         a = result.acceptance
         self.assertEqual(a.run_id, payload["run_id"])
         self.assertEqual(a.task_id, payload["task_id"])
@@ -187,9 +188,17 @@ class AcceptOpenValidTests(unittest.TestCase):
         self.assertEqual(a.supervisor_id, "sup-1")
         self.assertTrue(a.receipt_id)
         self.assertNotIn(a.receipt_id, (a.lease_id, a.execution_attempt_id))
-        # The challenge handle is the supervisor's OWN content address of the exact bytes
-        # it verified — the ledger's UNIQUE on it is what makes a replay buy nothing.
-        self.assertEqual(a.challenge_handle, hashlib.sha256(_canonical(payload)).hexdigest())
+        # The challenge handle is the supervisor's OWN content address of the exact signed
+        # DOCUMENT it verified — `SHA256(JCS({payload, sig}))`, the rev-30 §3/§4.10(a0)/Appendix B
+        # form. It used to be the digest of `JCS(payload)` ALONE, which §5's summary table
+        # described; that half was wrong and both were corrected on 2026-08-10 (see
+        # `governed_supervisor.challenge_handle_for`). The ledger's UNIQUE on this is what makes
+        # a replay buy nothing; that the §4.10(a0) staging row now carries the SAME digest is
+        # proved end-to-end in `test_challenge_handle_agreement`.
+        self.assertEqual(
+            a.challenge_handle,
+            hashlib.sha256(_canonical({"payload": payload, "sig": doc["sig"]})).hexdigest(),
+        )
         # And the attempt id in the record IS the one in the lease handed to the caller.
         self.assertEqual(a.execution_attempt_id, result.lease.execution_attempt_id)
 

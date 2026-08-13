@@ -12,6 +12,7 @@ import pathlib
 import tempfile
 import unittest
 
+import check_action_pins
 from check_action_pins import check
 
 NODE = "39370e3970a6d050c480ffad4ff0ed4d3fdee5af"
@@ -70,10 +71,50 @@ class ActionPinGateTests(unittest.TestCase):
             any("not pinned to a 40-hex commit SHA" in p for p in check(root)), check(root)
         )
 
-    def test_the_declared_floating_exception_is_allowed(self):
-        # tauri-action is the ONE declared exception (audit F-15, owner-gated).
+    def test_tauri_action_is_no_longer_exempt_from_the_pin_rule(self):
+        # This test used to assert the OPPOSITE: tauri-action was the one declared exception
+        # (audit F-15), so `tauri-apps/tauri-action@v0` was accepted. That exception is gone —
+        # release.yml pins the SHA `@v0` resolved to — and the carve-out is deleted rather than
+        # left standing. The step holds the Tauri signing key, four Apple secrets and a
+        # contents:write token, so a mutable tag there must now be RED like any other.
         root = _tree({"release.yml": _job("tauri-apps/tauri-action@v0")})
-        self.assertEqual(check(root), [])
+        self.assertTrue(
+            any("not pinned to a 40-hex commit SHA" in p for p in check(root)), check(root)
+        )
+
+    def test_no_action_is_exempt_from_the_pin_rule(self):
+        self.assertEqual(
+            check_action_pins.FLOATING_ALLOWED, {},
+            "an entry here is a standing permission for a mutable tag — adding one must be a "
+            "deliberate, reviewed act, not a way to make this gate go quiet",
+        )
+
+    def test_a_declared_exception_would_still_be_honoured(self):
+        # The mechanism still works — it simply has no members. Proven by declaring one for the
+        # length of this test, so removing the last entry did not silently delete the feature.
+        root = _tree({"ci.yml": _job("some-org/some-action@v3")})
+        self.assertTrue(any("not pinned" in p for p in check(root)), check(root))
+        original = dict(check_action_pins.FLOATING_ALLOWED)
+        check_action_pins.FLOATING_ALLOWED["some-org/some-action"] = "test exception"
+        try:
+            self.assertEqual(check(root), [])
+        finally:
+            check_action_pins.FLOATING_ALLOWED.clear()
+            check_action_pins.FLOATING_ALLOWED.update(original)
+
+    def test_the_real_repository_pins_tauri_action_to_a_sha(self):
+        # The gate is a rule; this is the fact. Reads the ACTUAL release.yml, so reintroducing
+        # `@v0` on the signing step fails here even if someone re-adds the carve-out above.
+        repo = pathlib.Path(__file__).resolve().parents[1]
+        text = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        uses = [l.strip() for l in text.splitlines() if "tauri-apps/tauri-action@" in l]
+        self.assertEqual(len(uses), 1, uses)
+        self.assertRegex(
+            uses[0],
+            r"uses: tauri-apps/tauri-action@[0-9a-f]{40} # v\d",
+            "the release signing step must resolve an immutable commit, with the version in a "
+            "trailing comment so the pin stays reviewable",
+        )
 
     def test_a_sha_with_no_version_comment_is_red(self):
         root = _tree({"ci.yml": _job(f"actions/setup-node@{NODE}")})

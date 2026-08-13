@@ -95,8 +95,13 @@ def main(argv: list[str]) -> int:
     # account cannot write, so the rule runs in full and passes on its merits. Popping it
     # rather than leaving it alone matters: an inherited value from the calling environment
     # would silently restore exactly the hole this round exists to close.
+    # BOTH names: the acknowledgement gained a production FILE form when the raw variable
+    # was brought under the `BRO_ENV=ci` gate its sibling anchors already had, and popping
+    # only the raw one would leave an inherited file declaration silently restoring exactly
+    # the hole this round exists to close.
     for stale in ("BRO_OPERATOR_ROOT_PUBKEY", "BRO_OPERATOR_REGISTRY_MIN", "BRO_ENV",
-                  "BRO_OPERATOR_ROOT_PIN_SELF_OWNED"):
+                  "BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+                  "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE"):
         os.environ.pop(stale, None)
 
     import bro_audit_log

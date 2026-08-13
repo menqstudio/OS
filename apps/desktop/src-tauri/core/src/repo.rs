@@ -576,6 +576,34 @@ pub mod approvals {
         sha256_hex(&format!("{request_digest}:{nonce}:{method}"))
     }
 
+    /// The ONE principal that may confirm an approval: the renderer-independent native
+    /// OS authority. Any `webview:*` principal — the requester's own or another
+    /// window's — is refused.
+    ///
+    /// **Why this constant exists (independent audit F-30, remediation round 2).** The
+    /// self-approval defence used to be a single equality: refuse when
+    /// `origin_principal == confirmer_principal`. That comparison could not fail on the
+    /// only production path. `confirm_approval` passes the literal `"native"`, and the
+    /// only writer of `origin_principal` writes `format!("webview:{label}")`, so
+    /// `Some("webview:main") == Some("native")` was evaluated on every approval and was
+    /// never true. Worse, the two tests that claimed to lock the property drove it with
+    /// `"webview:main"` as the confirmer — a value no shipped caller emits — so they
+    /// stayed green while the production path was unguarded, and a mutation of the
+    /// production call site killed nothing.
+    ///
+    /// The equality is replaced by two checks that CAN fail, at the two ends:
+    ///
+    ///   * [`approve_confirmed`] accepts this principal and no other, so no webview
+    ///     principal can confirm ANYTHING — strictly stronger than the old check, which
+    ///     still let `webview:a` confirm `webview:b`'s request;
+    ///   * [`create`] refuses to record this principal as an `origin_principal`, so a
+    ///     requester cannot borrow the native authority's name.
+    ///
+    /// Composed, no row can exist whose origin equals the only accepted confirmer, so
+    /// "the requester cannot approve its own request" still holds — and it holds because
+    /// two checks enforce it, not because a third was computed and could not fire.
+    pub const NATIVE_CONFIRMER_PRINCIPAL: &str = "native";
+
     /// Create a pending approval, optionally linked to the entity that needs it.
     /// T-011: the caller supplies the durable `origin_principal` (stable enforcement
     /// identity, restart-safe), a forensic `origin_session_id`, and a one-time
@@ -595,6 +623,16 @@ pub mod approvals {
         origin_session_id: &str,
         nonce: &str,
     ) -> CoreResult<Approval> {
+        // F-30: the requester may not record itself under the native authority's name.
+        // This is one half of the composition that replaced the unsatisfiable
+        // self-approval equality; see [`NATIVE_CONFIRMER_PRINCIPAL`]. It is checked
+        // BEFORE the transaction because it depends on nothing in the database.
+        if origin_principal == NATIVE_CONFIRMER_PRINCIPAL {
+            return Err(CoreError::Invalid {
+                field: "origin_principal",
+                value: "a requester may not claim the native confirmation authority".into(),
+            });
+        }
         let id = id();
         super::atomic(conn, |tx| {
             // An approval may only point at an entity that actually exists — a
@@ -624,9 +662,11 @@ pub mod approvals {
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
     }
 
-    /// T-011 approve: record a native-confirmed approval. In ONE atomic transaction
-    /// it enforces pending-only (replay-safe), refuses self-approval by the durable
-    /// `origin_principal` (restart-safe — read from the DB, not process memory), and
+    /// T-011 approve: record a native-confirmed approval. It first refuses any
+    /// confirmer that is not [`NATIVE_CONFIRMER_PRINCIPAL`] — that, with `create`'s
+    /// refusal to store the same name as an origin, is what bars self-approval; the old
+    /// `origin == confirmer` equality was unsatisfiable in production and is gone. Then,
+    /// in ONE atomic transaction, it enforces pending-only (replay-safe) and
     /// rechecks the `request_digest` against the CURRENT entity state (a request that
     /// changed after it was raised is refused). The caller performs the
     /// renderer-independent native confirmation BEFORE calling this; the nonce is
@@ -640,6 +680,15 @@ pub mod approvals {
         expected_nonce: &str,
         expected_request_digest: &str,
     ) -> CoreResult<Approval> {
+        // F-30: only the renderer-independent native authority may confirm. Checked
+        // before anything is read, so it depends on no row and therefore cannot be used
+        // to probe which approval ids exist. See [`NATIVE_CONFIRMER_PRINCIPAL`].
+        if confirmer_principal != NATIVE_CONFIRMER_PRINCIPAL {
+            return Err(CoreError::Invalid {
+                field: "approver",
+                value: "only the native confirmation authority may approve".into(),
+            });
+        }
         super::atomic(conn, |tx| {
             let a: Approval = tx
                 .query_row("SELECT * FROM approvals WHERE id = ?1", [id], map)
@@ -656,13 +705,11 @@ pub mod approvals {
                     value: "approval nonce was spent or changed (replay)".into(),
                 });
             }
-            // Self-approval, restart-safe: compare the persisted principal.
-            if a.origin_principal.as_deref() == Some(confirmer_principal) {
-                return Err(CoreError::Invalid {
-                    field: "approver",
-                    value: "the requesting principal cannot approve its own request".into(),
-                });
-            }
+            // (The self-approval equality that used to sit here compared the persisted
+            //  `origin_principal` against `confirmer_principal`. It could not fail on
+            //  the only production path — see [`NATIVE_CONFIRMER_PRINCIPAL`] — so it was
+            //  deleted rather than shipped, and the property it advertised is now
+            //  enforced by the confirmer check above plus the `create` check.)
             // The stored digest must equal the digest confirmed before the dialog…
             if a.request_digest.as_deref() != Some(expected_request_digest) {
                 return Err(CoreError::Invalid {
@@ -678,7 +725,12 @@ pub mod approvals {
                     value: "the request changed since it was raised".into(),
                 });
             }
-            let conf_digest = confirmation_digest(&current, expected_nonce, "native");
+            // Bound to the principal that actually confirmed, not to a second hardcoded
+            // literal. The value is unchanged (the check above proves it is
+            // `NATIVE_CONFIRMER_PRINCIPAL`), but the parameter is now load-bearing in
+            // the stored evidence instead of being read only by a check that could not
+            // fail.
+            let conf_digest = confirmation_digest(&current, expected_nonce, confirmer_principal);
             let changed = tx.execute(
                 "UPDATE approvals SET status = 'approved', decision_note = ?1, decided_at = ?2, \
                  confirmed_at = ?2, confirmed_by = ?3, confirmation_method = 'native', \
@@ -941,31 +993,108 @@ pub mod chat {
         })
     }
 
-    /// SQL projection (Wave 3a slice 3 + demonstration): a message's trust-badge receipt = the outcome of its
-    /// accepted verification attempt (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the
-    /// honest `demonstration_verified` when the reply was produced + verified in-process under the DEMONSTRATION
-    /// anchor (a separate additive table — never the production trust records). A real production receipt always
-    /// wins (it is the first COALESCE arm). A `blocked` verdict has no message, so it never appears here. Every
-    /// message SELECT that feeds `map_message` must include this `AS receipt` column and alias `messages` as `m`.
-    const MESSAGE_RECEIPT_PROJECTION: &str = "COALESCE(\
-         (SELECT a.outcome \
+    /// The badge string the demonstration arm of [`MESSAGE_TRUST_COLUMNS`] emits and
+    /// [`substantiated_receipt`] gates. Named once so the SQL and the Rust check cannot drift apart
+    /// into a guard that silently matches nothing.
+    const DEMONSTRATION_VERIFIED: &str = "demonstration_verified";
+
+    /// The two trust columns every message SELECT must project, aliased `receipt` and
+    /// `demonstration_body_sha256`, over `messages` aliased as `m`. [`map_message`] reads both.
+    ///
+    /// `receipt` = the outcome of the message's accepted verification attempt
+    /// (`development_untrusted` | `trusted_verified`); else, as a FALLBACK, the honest
+    /// `demonstration_verified` when the reply was produced + verified in-process under the
+    /// DEMONSTRATION anchor (a separate additive table — never the production trust records). A real
+    /// production receipt always wins (it is the first COALESCE arm). A `blocked` verdict has no
+    /// message, so it never appears here.
+    ///
+    /// The accepted-attempt arm is an AGGREGATE, not `LIMIT 1`. It used to be
+    /// `SELECT a.outcome ... LIMIT 1` with no `ORDER BY`, over a `message_id`
+    /// column that carried no UNIQUE constraint and no index — so if a message
+    /// ever had two accepted attempts, the badge this paints in the shipped chat
+    /// was whichever row SQLite happened to return first. A green
+    /// `trusted_verified` badge decided by a query plan is not a trust signal.
+    /// Migration 0023 makes that state impossible (a partial UNIQUE index on
+    /// `message_id`); this query stops depending on it anyway, and where two
+    /// accepted attempts disagree it takes the WEAKER answer. Over-claiming
+    /// trust is the failure that matters, so ambiguity resolves down, never up.
+    ///
+    /// `WHEN COUNT(*) = 0 THEN NULL` is load-bearing: an aggregate subquery over
+    /// zero rows still returns one row, so without it a message with NO accepted
+    /// attempt would fall through to the `ELSE` arm and be painted
+    /// `trusted_verified`.
+    ///
+    /// The demonstration arm is deliberately UNGATED here and its stored digest is projected beside
+    /// it, because SQLite cannot hash: the binding is decided in exactly one place,
+    /// [`substantiated_receipt`], which [`map_message`] applies to every row this projection
+    /// produces. See migration 0024 for why a flag row was not enough.
+    ///
+    /// This arm briefly also carried `AND d.body_sha256 IS NOT NULL`. It was deleted rather than
+    /// shipped: it could not change any outcome — a NULL digest fails the Rust comparison anyway —
+    /// and the two guards MASKED each other, so deleting either one on its own left every test green.
+    /// Two checks that each hide the other's absence are worth less than one check that can fail, and
+    /// `a_flag_row_with_no_body_digest_paints_no_badge` now fails if the remaining one is weakened.
+    const MESSAGE_TRUST_COLUMNS: &str = "COALESCE(\
+         (SELECT CASE \
+                   WHEN COUNT(*) = 0 THEN NULL \
+                   WHEN SUM(a.outcome = 'development_untrusted') > 0 \
+                     THEN 'development_untrusted' \
+                   ELSE 'trusted_verified' \
+                 END \
             FROM receipt_verification_attempts a \
             WHERE a.message_id = m.id \
-              AND a.outcome IN ('development_untrusted', 'trusted_verified') \
-            LIMIT 1), \
+              AND a.outcome IN ('development_untrusted', 'trusted_verified')), \
          (SELECT 'demonstration_verified' \
             FROM demonstration_verified_messages d \
-            WHERE d.message_id = m.id))";
+            WHERE d.message_id = m.id)) AS receipt, \
+         (SELECT d.body_sha256 FROM demonstration_verified_messages d \
+           WHERE d.message_id = m.id) AS demonstration_body_sha256";
+
+    /// Keep a `demonstration_verified` badge only if the row that claims it carries the SHA-256 of
+    /// the body it is painted on.
+    ///
+    /// **What this replaces.** `demonstration_verified_messages` was `(message_id, recorded_at)` —
+    /// a flag. `commands::demonstration_verified_reply` runs the in-process governed chain in a temp
+    /// directory and then `remove_dir_all`s it, so the receipt, the envelope and the signature that
+    /// justified the green were destroyed before the row was written. Nothing connected the badge to
+    /// any bytes, so the projection painted it on whatever text the message held: a row pointed at
+    /// the wrong message, or a body edited afterwards, kept the green. It is the ONLY green badge the
+    /// shipped app can currently display, so "there is a row" was the entire evidence a user had.
+    ///
+    /// Now the writer records the digest of the exact bytes the chain bound, in the same transaction
+    /// as the message, and this recomputes it from the stored body. A mismatch — or an absent digest,
+    /// which is every row written before migration 0024 — is not a downgrade to a weaker badge: it is
+    /// NO badge, because the claim was that this text was verified and that claim is unsupported.
+    ///
+    /// Production receipts (`trusted_verified` / `development_untrusted`) are NOT touched here: they
+    /// are backed by `receipt_verification_attempts`, which stores the envelope and signature and is
+    /// re-verifiable on its own terms.
+    fn substantiated_receipt(
+        receipt: Option<String>,
+        attested_body_sha256: Option<&str>,
+        body: &str,
+    ) -> Option<String> {
+        if receipt.as_deref() != Some(DEMONSTRATION_VERIFIED) {
+            return receipt;
+        }
+        match attested_body_sha256 {
+            Some(digest) if digest == crate::governed_message_store::sha256_hex(body.as_bytes()) => receipt,
+            _ => None,
+        }
+    }
 
     fn map_message(r: &Row) -> rusqlite::Result<Message> {
+        let body: String = r.get("body")?;
+        let receipt: Option<String> = r.get("receipt")?;
+        let attested: Option<String> = r.get("demonstration_body_sha256")?;
         Ok(Message {
             id: r.get("id")?,
             conversation_id: r.get("conversation_id")?,
             role: r.get("role")?,
             author: r.get("author")?,
-            body: r.get("body")?,
+            receipt: substantiated_receipt(receipt, attested.as_deref(), &body),
+            body,
             created_at: r.get("created_at")?,
-            receipt: r.get("receipt")?,
         })
     }
 
@@ -1028,7 +1157,7 @@ pub mod chat {
     ) -> CoreResult<Vec<Message>> {
         let (limit, offset) = super::page(limit, offset);
         let sql = format!(
-            "SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m \
+            "SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m \
              WHERE m.conversation_id = ?1 \
              ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?2 OFFSET ?3"
         );
@@ -1067,22 +1196,33 @@ pub mod chat {
             super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
             Ok(())
         })?;
-        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
         conn.query_row(&sql, [id.clone()], map_message)
             .map_err(not_found(&id))
     }
 
     /// Record that a message's reply was produced + verified IN-PROCESS under the DEMONSTRATION anchor, so
-    /// [`MESSAGE_RECEIPT_PROJECTION`] derives its badge to `demonstration_verified`. Idempotent
+    /// [`MESSAGE_TRUST_COLUMNS`] derives its badge to `demonstration_verified`. Idempotent
     /// (`INSERT OR IGNORE`). This is NEVER production trust — the caller writes it ONLY after the in-process
     /// governed chain returns trusted_verified for THIS exact message, and this demonstration table is separate
     /// from the CHECK-constrained production trust records (`receipt_verification_attempts`).
-    pub fn record_demonstration_verified(conn: &Connection, message_id: &str) -> CoreResult<()> {
+    ///
+    /// `verified_body` is the EXACT reply bytes the chain bound; its SHA-256 is stored with the row and
+    /// [`substantiated_receipt`] re-checks it against the persisted body on every read. Passing anything
+    /// other than the bytes that were verified produces a row that paints no badge — which is the point:
+    /// the caller can no longer assert the badge, only evidence it.
+    pub fn record_demonstration_verified(
+        conn: &Connection,
+        message_id: &str,
+        verified_body: &str,
+    ) -> CoreResult<()> {
         let now = now();
+        let digest = crate::governed_message_store::sha256_hex(verified_body.as_bytes());
         super::atomic(conn, |tx| {
             tx.execute(
-                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
-                rusqlite::params![message_id, now],
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at, body_sha256) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![message_id, now, digest],
             )?;
             Ok(())
         })?;
@@ -1112,14 +1252,21 @@ pub mod chat {
                 "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now, input.conversation_id],
             )?;
+            // The digest of the bytes just written, in the SAME transaction as the message — so the
+            // badge and the body it attests can never be recorded apart (migration 0024).
             tx.execute(
-                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at) VALUES (?1, ?2)",
-                rusqlite::params![id, now],
+                "INSERT OR IGNORE INTO demonstration_verified_messages(message_id, recorded_at, body_sha256) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    id,
+                    now,
+                    crate::governed_message_store::sha256_hex(input.body.as_bytes())
+                ],
             )?;
             super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
             Ok(())
         })?;
-        let sql = format!("SELECT m.*, {MESSAGE_RECEIPT_PROJECTION} AS receipt FROM messages m WHERE m.id = ?1");
+        let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
         conn.query_row(&sql, [id.clone()], map_message).map_err(not_found(&id))
     }
 

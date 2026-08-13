@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "$comment": [
+    "Permission to work a roadmap phase AHEAD of the first phase that is still open.",
+    "Read by tools/check_roadmap_order.py.",
+    "",
+    "This file is the exemption mechanism precisely BECAUSE it is committed. A session that",
+    "wants to skip ahead cannot do it with a session-local flag or an environment variable -",
+    "it has to write an entry here, name an approver, give a reason of real length, and put",
+    "that in a commit where a reviewer sees it. The escape hatch is not closed; it is made",
+    "loud. Silent skipping is what actually happened, and silence is the part being removed.",
+    "",
+    "Shape, keyed by phase number as a string:",
+    "  \"7\": {",
+    "    \"reason\": \"<at least 60 characters saying why this cannot wait for the open phase>\",",
+    "    \"approved_by\": \"<the human who approved it>\",",
+    "    \"expires_at_epoch\": 1770000000        // optional; past epoch = no longer valid",
+    "  }",
+    "",
+    "Empty is the correct default state. An empty exemptions object means: work the first",
+    "open phase, or declare 'meta' for repository governance and tooling."
+  ],
+  "exemptions": {}
+}

@@ -26,6 +26,24 @@ MAX_LEASE_SECONDS = 86400
 LOCK_TIMEOUT_SECONDS = 10
 STALE_LOCK_SECONDS = 30
 
+#: The claim-lock owner tokens THIS PROCESS currently holds, keyed by the resolved lock path
+#: (audit round 2, ``bro_orchestration_runtime.py:380``).
+#:
+#: ``_guard_held_by_this_process`` used to answer by comparing the pid recorded in the lock
+#: file to ``os.getpid()``. A lock file left behind by a process that died inside the guard
+#: keeps its pid on disk forever, and pids are RECYCLED — the default ``pid_max`` on Linux is
+#: 32768. An unrelated later process that happens to be handed that pid reads the stale file,
+#: concludes it already holds the guard, and ``_mutation_guard`` yields WITHOUT acquiring
+#: anything, while any other process is free to break the stale lock and take it for real.
+#: Two writers inside a guard whose entire purpose is that there is only ever one.
+#:
+#: A token minted per acquisition cannot be recycled: it is compared against the token in the
+#: file, so "I hold it" now means "the lock on disk is the one I took", not "someone with my
+#: pid took a lock once". Module-level rather than an instance attribute because the
+#: reentrancy it answers for is a V1 wrapper delegating into a base method — same process and
+#: same lock file, not necessarily the same object.
+_HELD_CLAIM_TOKENS: dict[str, str] = {}
+
 # --------------------------------------------------------------------------- #
 # The lifecycle actor is PROVEN, never claimed (the O-4 defect, in the runtime).
 #
@@ -519,9 +537,12 @@ class DurableOrchestrationRuntime:
                 if time.monotonic() >= deadline:
                     raise OrchestrationRuntimeError("claim lock acquisition timed out")
                 time.sleep(0.01)
+        key = str(self.claim_lock)
+        _HELD_CLAIM_TOKENS[key] = token
         try:
             yield
         finally:
+            _HELD_CLAIM_TOKENS.pop(key, None)
             # Release "my lock", not "the lock". An overrunning holder whose lock
             # was already broken and retaken must not delete the new holder's,
             # which would put two processes inside the guard at once.
@@ -529,18 +550,26 @@ class DurableOrchestrationRuntime:
                 self.claim_lock.unlink(missing_ok=True)
 
     def _guard_held_by_this_process(self) -> bool:
-        """True when the claim lock is currently held by THIS process.
+        """True when the claim lock on disk is the one THIS process is holding.
 
-        The lock payload records its holder's pid, so a wrapper that already
-        acquired the guard (the V1 runtime's lease-checked entry points) can be
-        told apart from an unrelated holder in another process. The check is
-        process-granular, matching the file lock itself.
+        A wrapper that already acquired the guard (the V1 runtime's lease-checked entry
+        points) must be told apart from an unrelated holder, so ``_mutation_guard`` can be
+        reentrant without deadlocking on a file lock that is not.
+
+        **audit round 2, ``:380``.** This used to compare the pid recorded in the lock file
+        against ``os.getpid()``. See :data:`_HELD_CLAIM_TOKENS`: a lock file orphaned by a
+        process that died inside the guard keeps that pid on disk, pids are recycled, and the
+        unrelated process that inherits one is told it holds a guard it never took — so
+        ``_mutation_guard`` yields with no lock at all. It answers now by comparing the token
+        this process actually minted at acquisition against the token in the file, so the two
+        ways the old answer could be wrong are both closed: an orphaned lock is not ours
+        (no token in :data:`_HELD_CLAIM_TOKENS`), and a lock broken and retaken while we
+        overran is not ours either (the token on disk is somebody else's).
         """
-        try:
-            payload = json.loads(self.claim_lock.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, AttributeError):
+        held = _HELD_CLAIM_TOKENS.get(str(self.claim_lock))
+        if held is None:
             return False
-        return isinstance(payload, dict) and payload.get("pid") == os.getpid()
+        return self._lock_owner() == held
 
     @contextlib.contextmanager
     def _mutation_guard(self) -> Iterator[None]:

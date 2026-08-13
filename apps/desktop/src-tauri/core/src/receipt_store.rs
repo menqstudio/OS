@@ -1608,6 +1608,105 @@ mod tests {
     }
 
     #[test]
+    fn a_second_accepted_attempt_on_one_message_is_refused_by_the_schema() {
+        // The badge invariant, stated in the schema (migration 0023) rather than left as
+        // a property of the one call site that happens to create the message and the
+        // attempt in the same transaction.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv_id = seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
+        let msgs = crate::repo::chat::list_messages(&conn, &conv_id, None, None).unwrap();
+        let msg_id = msgs.iter().find(|m| m.role == "agent").expect("agent message").id.clone();
+
+        let err = conn
+            .execute(
+                "INSERT INTO receipt_verification_attempts
+                   (id, wire_envelope_jcs_b64, wire_signature_b64, receipt_id, key_id,
+                    outcome, message_id, verified_at)
+                 VALUES ('a-2', 'x', 'y', 'receipt-2', 'key-dev-1',
+                         'trusted_verified', ?1, '1')",
+                [&msg_id],
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("unique"),
+            "a second accepted attempt on one message must violate the 0023 unique index, got: {err}"
+        );
+
+        // The partial predicate still lets EVERY message-less accepted/blocked row through:
+        // 0016 leaves `message_id` NULL for 'blocked' and 'development_untrusted_held'.
+        for (id, outcome) in [("a-3", "blocked"), ("a-4", "development_untrusted_held"), ("a-5", "blocked")] {
+            conn.execute(
+                "INSERT INTO receipt_verification_attempts
+                   (id, wire_envelope_jcs_b64, wire_signature_b64, outcome, message_id, verified_at)
+                 VALUES (?1, 'x', 'y', ?2, NULL, '1')",
+                rusqlite::params![id, outcome],
+            )
+            .expect("NULL message_id rows are not constrained by the partial unique index");
+        }
+    }
+
+    #[test]
+    fn two_accepted_attempts_project_the_weaker_badge_deterministically() {
+        // Defense in depth behind the 0023 unique index: even on a database where that
+        // index is absent (an older file, a manual restore), the projection must not
+        // paint whichever outcome SQLite returns first. It used to — `LIMIT 1` with no
+        // `ORDER BY` over an unindexed, non-unique `message_id`. Ambiguity must resolve
+        // DOWN to the weaker claim, never up to the green badge.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-A");
+        let conv_id = seed_turn(&conn, &fx, now);
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-1"));
+        vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
+        let msgs = crate::repo::chat::list_messages(&conn, &conv_id, None, None).unwrap();
+        let msg_id = msgs.iter().find(|m| m.role == "agent").expect("agent message").id.clone();
+
+        // Simulate the pre-0023 database the projection has to survive.
+        conn.execute_batch("DROP INDEX idx_receipt_attempts_message_unique;").unwrap();
+        // Order matters, and it is the whole point. The genuine attempt is promoted to
+        // 'trusted_verified' and the contesting 'development_untrusted' row is inserted
+        // AFTER it, so the contested pair sits in the table with the STRONGER claim first.
+        // That is the arrangement `LIMIT 1` (no ORDER BY) resolves in favour of the green
+        // badge — the defect, made to bite rather than left to the query planner's mood.
+        conn.execute(
+            "UPDATE receipt_verification_attempts SET outcome = 'trusted_verified'
+              WHERE message_id = ?1",
+            [&msg_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO receipt_verification_attempts
+               (id, wire_envelope_jcs_b64, wire_signature_b64, receipt_id, key_id,
+                outcome, message_id, verified_at)
+             VALUES ('a-2', 'x', 'y', 'receipt-2', 'key-dev-1', 'development_untrusted', ?1, '1')",
+            [&msg_id],
+        )
+        .unwrap();
+
+        // The weaker claim wins regardless of which row the plan reaches first.
+        let msgs = crate::repo::chat::list_messages(&conn, &conv_id, None, None).unwrap();
+        let agent = msgs.iter().find(|m| m.role == "agent").unwrap();
+        assert_eq!(
+            agent.receipt.as_deref(),
+            Some("development_untrusted"),
+            "a contested badge must never resolve to trusted_verified"
+        );
+
+        // And a message with NO accepted attempt still carries no badge — the aggregate
+        // returns one row over zero matches, so the zero-row arm has to be explicit.
+        let plain = crate::repo::chat::post_message(
+            &conn,
+            NewMessage { conversation_id: conv_id, role: "user".into(), author: "gev".into(), body: "hi".into() },
+        )
+        .unwrap();
+        assert_eq!(plain.receipt, None);
+    }
+
+    #[test]
     fn unknown_key_id_is_blocked_with_decoded_evidence() {
         let conn = db();
         let now = 1_000_000u64;

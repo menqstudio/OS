@@ -9,6 +9,8 @@
 //! never a fabricated committed turn.
 
 use brops_core::broker_client::{send_governed_turn, BrokerConn, TransportError};
+use std::io::Read;
+use std::time::Duration;
 
 /// The broker service socket path (Linux): a dedicated, non-world-writable runtime path owned by the
 /// broker service principal (§0 role #2 / §2.6 provisioning).
@@ -24,8 +26,124 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// Per-read/write deadline on the broker socket (audit F-32/F-36). A governed turn is buffered by
 /// design and can legitimately take a while upstream, but a silent socket must eventually surface as
 /// a transport failure the renderer renders as `blocked` — never as a wedged command.
+///
+/// "Buffered by design" is a settled decision rather than an accident of this slice, and as of
+/// 2026-08-09 the roadmap agrees with it: MASTER_EXECUTION_ROADMAP Phase 1 **descopes** governed
+/// delta-streaming. The desktop's sole authority over a governed reply is the isolated signer's
+/// envelope, and that envelope binds `output_bytes` + `output_sha256` over the WHOLE output. There
+/// is no per-delta signature and no contract that could produce one, so a streamed delta would be
+/// unverified content displayed before any verdict exists — the exact inverse of "no verified
+/// signature ⇒ no result". The channel underneath says the same thing structurally: one framed
+/// request, one framed reply.
+///
+/// Do not read the rev-30 §4.10(f) output pull as the streaming that is missing here. §4.10(f) is a
+/// chunked PULL of the COMPLETED output of a buffered turn, for when the bytes are too large to ride
+/// the reply frame; it moves finished bytes, checked against the same whole-output digest, and it
+/// carries no deltas by construction. Its supervisor half exists in the engine
+/// (`engine/runtime/governed_output_read.py` + `governed_output_stream.py`, served to the sidecar
+/// principal from the supervisor front door). The `brops_core::governed_output_stream` ladder that
+/// used to be named here was DELETED on 2026-08-10: it had zero production callers and its table
+/// diverged from the design it cited.
+///
+/// The DESKTOP half now exists too, and it is still NOT WIRED: the sidecar's
+/// `bridge.governed-turn-output-read.v1` branch (`bridge/engine_sidecar.py`), the loop + reassembly +
+/// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`), and the internal
+/// `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers that drive it over a one-shot
+/// sidecar. **Nothing calls them**: the pull needs an `output_stream_id`. The §4.10(e) `signed` frame
+/// that mints one has a supervisor-side producer, and as of 2026-08-10 §4.6's
+/// `bridge.governed-turn-result.v1` — the only frame that carries the token across the sidecar boundary —
+/// exists on both hops (`bridge/governed_turn_result_bridge.py`, `brops_core::governed_bridge_result`).
+/// The gap moved one hop further out again on 2026-08-10 rather than closing: §4.6 is the REPLY to
+/// §4.10(g)'s `bridge.governed-turn-submit.v1`, whose SIDECAR half now exists
+/// (`bridge/governed_turn_submit.py` + the dispatch branch in `bridge/engine_sidecar.py`).
+///
+/// **Updated 2026-08-12: the PRODUCER now exists too** — `brops_core::governed_prepare` and
+/// `brops_core::governed_submit::governed_turn_submit_prepared`, in the broker-side crate where §0 puts
+/// it. Two things still keep a §4.6 frame off any live path: its subprocess spawn is an injected seam
+/// (`governed_submit::SubmitTransport`) that no production code implements, and nothing calls the
+/// helper — the broker's one production `GovernedExecutor` drives the same hops over direct AF_UNIX and
+/// spawns the recorder rather than a sidecar.
+/// `config/reachability-declarations.json` carries the declarations and `governed_output_pull`'s and
+/// `governed_bridge_result`'s module docs carry the reasoning. This command is not where it would start
+/// either: a thin proxy carrying `{conversation_id, agent?}` never sees a stream token, an envelope or
+/// a receipt id — §7.1 puts the pull in the broker SERVICE, on the far side of this hop.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const IO_TIMEOUT_MS: u64 = 120_000;
+
+/// Total wall-clock budget for ONE broker exchange, measured from the moment the connection is
+/// handed back — the bound [`IO_TIMEOUT_MS`] does not provide.
+///
+/// **`IO_TIMEOUT_MS` is per SYSCALL, and that is not a bound on the command.** `SO_RCVTIMEO` restarts
+/// on every byte that arrives, so a peer that answers one byte every 119 seconds never times out.
+/// With [`MAX_REPLY_BYTES`] = 8256 the previous read loop would sit there for 8256 × 120 s ≈ **11.5
+/// days**, holding a synchronous Tauri command, and every check in the file was satisfied throughout:
+/// the per-read deadline was armed, the ingress cap was armed, and neither could fire. That is the
+/// audit's F-32/F-36 remediation being true and not sufficient (remediation audit R-38).
+///
+/// This is the budget for the whole exchange, not for a step of it, so no number of well-timed
+/// dribbles can extend it. It is deliberately the same 120 s: an exchange that has not completed in
+/// the time one read was already allowed to take is a transport failure, and a transport failure the
+/// renderer renders as `blocked` is the honest outcome. A wedged command is not.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const EXCHANGE_BUDGET_MS: u64 = 120_000;
+
+/// How long the NEXT socket operation may block, given how much of the budget is already spent.
+///
+/// `None` means the budget is gone and the caller must fail the exchange. **Returning `None` at
+/// exactly zero is load-bearing, not a rounding preference:** POSIX `SO_RCVTIMEO` reads a zero
+/// timeout as "block forever", and `std` rejects `Duration::ZERO` for that reason — so a caller that
+/// armed the remainder without this guard would either error out or, worse, arm no timeout at all at
+/// the precise moment the budget ran out. Every `Some` is strictly positive.
+///
+/// Pure, and deliberately outside the `#[cfg(target_os = "linux")]` module below: the previous
+/// version of this bound lived entirely inside that module, where no test on any other platform could
+/// reach it, so breaking it changed nothing that any suite could observe.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn next_io_timeout(elapsed: Duration, budget: Duration) -> Option<Duration> {
+    let remaining = budget.checked_sub(elapsed)?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining)
+}
+
+/// Read one framed broker reply: bounded in BYTES by `max_bytes` and in TIME by `budget`, with the
+/// remaining budget re-armed on the socket before every read.
+///
+/// Generic over the reader and over both effects (`arm_timeout`, `elapsed`) so the loop that enforces
+/// the deadline is ordinary, platform-independent code that a test can drive with a fake clock and a
+/// dribbling reader. The Linux socket implementation below is then a three-line adapter with no logic
+/// of its own to get wrong.
+///
+/// A read returning `Ok(0)` is the peer closing the stream, which is how a complete framed reply
+/// ends here (one request, one reply, then EOF).
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn read_bounded<R: Read>(
+    reader: &mut R,
+    mut arm_timeout: impl FnMut(Duration) -> std::io::Result<()>,
+    mut elapsed: impl FnMut() -> Duration,
+    budget: Duration,
+    max_bytes: u64,
+) -> Result<Vec<u8>, TransportError> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        // The budget is checked BEFORE arming, so an expired exchange fails here rather than being
+        // handed to the kernel as "no timeout".
+        let remaining = next_io_timeout(elapsed(), budget).ok_or(TransportError::Io)?;
+        arm_timeout(remaining).map_err(|_| TransportError::Io)?;
+        let n = reader.read(&mut chunk).map_err(|_| TransportError::Io)?;
+        if n == 0 {
+            return Ok(buf);
+        }
+        if buf.len() as u64 + n as u64 >= max_bytes {
+            // At the cap we cannot tell a legal maximal frame from a truncated flood, so refuse:
+            // a reply this large is not one the bounded framing can produce.
+            return Err(TransportError::Io);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+}
 
 /// Stable machine prefix: **no broker IPC transport exists on this host at all** — the governed
 /// broker path is not implemented here. This is a PLATFORM fact, decided at compile time, not a
@@ -113,7 +231,6 @@ fn connect_broker() -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::net::UnixStream;
-        use std::time::Duration;
         let cause = |what: &str, e: std::io::Error| {
             // `io::ErrorKind` is Debug-only, so the kind is formatted with `{:?}`; the full
             // `e` follows in parentheses for the human-readable cause.
@@ -127,7 +244,7 @@ fn connect_broker() -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
             .map_err(|e| cause("set_read_timeout", e))?;
         s.set_write_timeout(Some(Duration::from_millis(IO_TIMEOUT_MS)))
             .map_err(|e| cause("set_write_timeout", e))?;
-        Ok(Box::new(linux::UnixBrokerConn(s)) as Box<dyn BrokerConn>)
+        Ok(Box::new(linux::UnixBrokerConn::new(s)) as Box<dyn BrokerConn>)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -138,31 +255,56 @@ fn connect_broker() -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::os::unix::net::UnixStream;
+    use std::time::Instant;
 
-    /// A `BrokerConn` over a Unix-domain stream: one framed request out, the full framed reply back.
-    pub struct UnixBrokerConn(pub UnixStream);
+    /// A `BrokerConn` over a Unix-domain stream: one framed request out, the full framed reply back —
+    /// the whole exchange inside a single [`EXCHANGE_BUDGET_MS`] budget started at `opened`.
+    pub struct UnixBrokerConn {
+        stream: UnixStream,
+        opened: Instant,
+    }
+
+    impl UnixBrokerConn {
+        pub fn new(stream: UnixStream) -> UnixBrokerConn {
+            UnixBrokerConn { stream, opened: Instant::now() }
+        }
+
+        /// Whatever is left of the exchange budget, or a transport failure.
+        fn remaining(&self) -> Result<Duration, TransportError> {
+            next_io_timeout(self.opened.elapsed(), Duration::from_millis(EXCHANGE_BUDGET_MS))
+                .ok_or(TransportError::Io)
+        }
+    }
 
     impl BrokerConn for UnixBrokerConn {
         fn send_all(&mut self, frame: &[u8]) -> Result<(), TransportError> {
-            self.0.write_all(frame).map_err(|_| TransportError::Io)?;
-            self.0.flush().map_err(|_| TransportError::Io)
+            let remaining = self.remaining()?;
+            self.stream.set_write_timeout(Some(remaining)).map_err(|_| TransportError::Io)?;
+            self.stream.write_all(frame).map_err(|_| TransportError::Io)?;
+            self.stream.flush().map_err(|_| TransportError::Io)
         }
         fn recv_all(&mut self) -> Result<Vec<u8>, TransportError> {
             // Audit F-32/F-36: this was an unbounded `read_to_end`. `ipc_framing` documents that the
             // declared length is checked against the cap BEFORE any read, but that check runs in
             // `decode_one` — i.e. AFTER these bytes are already resident — so the bound protected
             // nothing on the direction the desktop actually reads. Cap ingress here, at the read.
-            let mut buf = Vec::new();
-            let mut limited = (&mut self.0).take(MAX_REPLY_BYTES);
-            limited.read_to_end(&mut buf).map_err(|_| TransportError::Io)?;
-            if buf.len() as u64 >= MAX_REPLY_BYTES {
-                // At the cap we cannot tell a legal maximal frame from a truncated flood, so refuse:
-                // a reply this large is not one the bounded framing can produce.
-                return Err(TransportError::Io);
-            }
-            Ok(buf)
+            //
+            // Remediation audit R-38: the byte cap and the per-read deadline together still allowed a
+            // dribbling peer ~11.5 days. The loop, the deadline arithmetic and the cap now live in
+            // `read_bounded` / `next_io_timeout` above — outside this Linux-only module, where a test
+            // on any platform can drive them — and this is the socket adapter.
+            let opened = self.opened;
+            let socket = &self.stream;
+            let mut reader = &self.stream;
+            read_bounded(
+                &mut reader,
+                |remaining| socket.set_read_timeout(Some(remaining)),
+                || opened.elapsed(),
+                Duration::from_millis(EXCHANGE_BUDGET_MS),
+                MAX_REPLY_BYTES,
+            )
         }
     }
 }
@@ -170,6 +312,136 @@ mod linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- The exchange budget (remediation audit R-38) ------------------------------------------
+    //
+    // These run on EVERY platform. The bound they lock used to live inside `mod linux`, where no
+    // suite on any other host could reach it: deleting it there was invisible to `cargo test` on
+    // Windows and macOS, and the Linux job that could see it had no test to fail.
+
+    /// A reader that hands back one byte per call, forever — the drip peer R-38 describes.
+    struct Dribble;
+    impl Read for Dribble {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            buf[0] = b'x';
+            Ok(1)
+        }
+    }
+
+    /// A reader that returns `body` once and then EOF — a well-behaved broker.
+    struct OneShot(Vec<u8>);
+    impl Read for OneShot {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let n = self.0.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0.drain(..n);
+            Ok(n)
+        }
+    }
+
+    /// A clock that advances by `step` every time it is asked — one tick per socket read, so a peer
+    /// that answers just before each per-read deadline is exactly the caller who never times out.
+    fn ticking_clock(step: Duration) -> impl FnMut() -> Duration {
+        let mut now = Duration::ZERO;
+        move || {
+            let t = now;
+            now += step;
+            t
+        }
+    }
+
+    #[test]
+    fn a_dribbling_peer_is_cut_off_by_the_exchange_budget_not_after_eleven_days() {
+        let budget = Duration::from_millis(EXCHANGE_BUDGET_MS);
+        // The peer answers one byte just inside every per-read deadline. Under the per-syscall bound
+        // alone this loop runs until MAX_REPLY_BYTES bytes have arrived — 8256 × 120 s ≈ 11.5 days.
+        let mut reads = 0usize;
+        let mut r = Dribble;
+        let out = read_bounded(
+            &mut r,
+            |_| Ok(()),
+            ticking_clock(Duration::from_millis(EXCHANGE_BUDGET_MS / 4)),
+            budget,
+            MAX_REPLY_BYTES,
+        );
+        assert!(out.is_err(), "a peer that never finishes must fail the exchange");
+        // And it gave up on TIME, long before the byte cap: at a quarter of the budget per read the
+        // exchange dies after a handful of reads, not after 8256 of them.
+        let mut r = Dribble;
+        let _ = read_bounded(
+            &mut r,
+            |_| {
+                reads += 1;
+                Ok(())
+            },
+            ticking_clock(Duration::from_millis(EXCHANGE_BUDGET_MS / 4)),
+            budget,
+            MAX_REPLY_BYTES,
+        );
+        assert!(
+            reads <= 5,
+            "the budget must end the exchange in a few reads, not {reads} (cap is {MAX_REPLY_BYTES})"
+        );
+    }
+
+    #[test]
+    fn a_prompt_broker_reply_is_read_whole() {
+        let body = b"{\"status\":\"blocked\"}".to_vec();
+        let mut r = OneShot(body.clone());
+        let got = read_bounded(
+            &mut r,
+            |_| Ok(()),
+            ticking_clock(Duration::from_millis(1)),
+            Duration::from_millis(EXCHANGE_BUDGET_MS),
+            MAX_REPLY_BYTES,
+        )
+        .expect("a broker that answers promptly is not a transport failure");
+        assert_eq!(got, body);
+    }
+
+    #[test]
+    fn a_reply_at_the_ingress_cap_is_refused() {
+        let mut r = OneShot(vec![b'x'; (MAX_REPLY_BYTES as usize) + 1]);
+        let got = read_bounded(
+            &mut r,
+            |_| Ok(()),
+            ticking_clock(Duration::from_millis(1)),
+            Duration::from_millis(EXCHANGE_BUDGET_MS),
+            MAX_REPLY_BYTES,
+        );
+        assert!(got.is_err(), "a reply larger than the framing can produce must be refused");
+    }
+
+    /// `SO_RCVTIMEO` reads zero as "block forever", so the one value this must never hand a socket is
+    /// `Duration::ZERO` — the exact value naive `budget - elapsed` produces at the instant the budget
+    /// runs out, i.e. the moment the bound is most needed.
+    #[test]
+    fn the_remaining_budget_is_never_armed_as_zero() {
+        let budget = Duration::from_millis(EXCHANGE_BUDGET_MS);
+        assert_eq!(next_io_timeout(budget, budget), None, "a spent budget must refuse, not arm 0");
+        assert_eq!(next_io_timeout(budget + Duration::from_secs(1), budget), None);
+        for spent_ms in [0u64, 1, EXCHANGE_BUDGET_MS / 2, EXCHANGE_BUDGET_MS - 1] {
+            let left = next_io_timeout(Duration::from_millis(spent_ms), budget)
+                .expect("budget remains at {spent_ms}ms spent");
+            assert!(!left.is_zero(), "armed a zero timeout at {spent_ms}ms spent");
+        }
+        let mut armed_zero = false;
+        let mut r = Dribble;
+        let _ = read_bounded(
+            &mut r,
+            |remaining| {
+                armed_zero |= remaining.is_zero();
+                Ok(())
+            },
+            ticking_clock(Duration::from_millis(EXCHANGE_BUDGET_MS / 3)),
+            Duration::from_millis(EXCHANGE_BUDGET_MS),
+            MAX_REPLY_BYTES,
+        );
+        assert!(!armed_zero, "the read loop armed a zero (= infinite) socket timeout");
+    }
 
     /// Audit finding: `governed_turn_execute` returned the bare string `broker_unavailable` for BOTH
     /// "this platform has no broker client at all" and "the broker client exists and the connect

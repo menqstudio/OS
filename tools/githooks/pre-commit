@@ -1,0 +1,27 @@
+#!/bin/sh
+# Canonical update law, at the moment of the commit.
+#
+# INSTALL (once per clone -- .git/hooks is not tracked, so nothing installs itself):
+#
+#     git config core.hooksPath tools/githooks
+#
+# That is one command, and it is the honest cost of local enforcement: a fresh clone
+# has no hook until somebody runs it, and `git commit --no-verify` removes it again on
+# a clone that has. Which is why this is only HALF the law -- the CI job runs the same
+# check where it cannot be skipped. Local gives you the refusal in the same second;
+# CI gives you the refusal that counts.
+#
+# There is no environment bypass. The older .claude/hooks/coordination_stop_guard.py
+# honours BRO_SKIP_DOC_SYNC and [no-doc-sync]; that hook is a reminder and stays as
+# one. This is the rule.
+set -e
+
+for py in python python3 py; do
+  if command -v "$py" >/dev/null 2>&1; then
+    exec "$py" tools/check_canonical_sync.py --staged
+  fi
+done
+
+echo "pre-commit: no python interpreter found; cannot run the canonical update law." >&2
+echo "The commit is REFUSED rather than passed unchecked." >&2
+exit 1

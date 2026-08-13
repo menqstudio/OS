@@ -20,18 +20,23 @@ These exercise the normative wiring behaviours:
     ``{facts: …}`` protocol rather than silently ignoring it.
 """
 
+import contextlib
 import hashlib
 import hmac
+import io
 import json
 import pathlib
+import socket
 import sqlite3
 import sys
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 import governed_supervisor_ledger as gsl  # noqa: E402
+import governed_supervisor_server as gss  # noqa: E402
 from governed_supervisor import (  # noqa: E402
     CHALLENGE_PROTOCOL,
     LEASE_DURATION_MS,
@@ -45,6 +50,7 @@ from governed_supervisor import (  # noqa: E402
 )
 from governed_supervisor_server import (  # noqa: E402
     LENGTH_PREFIX_BYTES,
+    MAX_ERROR_CHARS,
     MAX_FRAME_BYTES,
     OP_ACCEPT_OPEN,
     OP_ATTEST_RUN,
@@ -56,9 +62,13 @@ from governed_supervisor_server import (  # noqa: E402
     REFUSE_ILLEGAL_STATE,
     REFUSE_NO_TERMINAL_RUN,
     REFUSE_UNKNOWN_ATTEMPT,
+    FrameError,
     dispatch,
     handle_connection,
+    _try_write,
     read_frame,
+    recv_budget_s,
+    recv_exactly_bounded,
     serve_forever,
 )
 
@@ -222,8 +232,18 @@ def _clock(now=NOW):
     return lambda: now
 
 
-def _frame(obj) -> bytes:
-    body = json.dumps(obj).encode("utf-8")
+def _frame(obj, *, ensure_ascii: bool = True) -> bytes:
+    """Length-prefix a request the way a real peer would put it on the wire.
+
+    `ensure_ascii` is EXPLICIT because it decides which check a test reaches.
+    `json.dumps` defaults to True, expanding every non-ASCII character into a
+    6-byte ``\\uXXXX`` escape — so a payload built to exercise a handler can
+    silently balloon past MAX_FRAME_BYTES and be refused by `read_frame` before
+    the handler is ever entered. (That is exactly what had happened to the
+    amplified-error test below.) A peer that wants those bytes THROUGH the frame
+    bound sends them as raw UTF-8, i.e. ensure_ascii=False.
+    """
+    body = json.dumps(obj, ensure_ascii=ensure_ascii).encode("utf-8")
     return len(body).to_bytes(LENGTH_PREFIX_BYTES, "big") + body
 
 
@@ -347,12 +367,82 @@ class FrameBoundTests(unittest.TestCase):
         # A hostile op whose repr() expands ~4x used to produce a reply too large to frame,
         # and the FrameError escaped the handler and killed the supervisor (audit F-11).
         # The error text is bounded now, and _try_write degrades instead of raising.
+        #
+        # This test used to frame the payload with json.dumps' DEFAULT ensure_ascii=True,
+        # which turned 3000 U+0080 characters into 18010 wire bytes against an 8192-byte
+        # MAX_FRAME_BYTES. `read_frame` refused the length prefix, the bounds check alone
+        # satisfied both assertions, and neither `_bounded_error` nor `_try_write`'s
+        # FrameError branch was ever entered — it passed identically on the unfixed code.
+        # To reach the amplifier the frame must be one the supervisor ACCEPTS: raw UTF-8.
         hostile = {"op": "" * 3_000}
-        conn = FakeConn(BROKER_UID, inbound=_frame(hostile))
+        framed = _frame(hostile, ensure_ascii=False)
+
+        # Guard 1 — the request really does get past the frame bound. Without this the
+        # test can silently rot back into a length-prefix test that proves nothing.
+        declared = int.from_bytes(framed[:LENGTH_PREFIX_BYTES], "big")
+        self.assertLessEqual(
+            declared, MAX_FRAME_BYTES,
+            "the hostile frame must be ACCEPTED, or read_frame answers and the "
+            "error-bounding path under test is never reached")
+
+        # Guard 2 — un-bounded, this op's error text really would be un-framable, so the
+        # bounding below is doing work rather than describing an already-small reply.
+        unbounded = json.dumps({"ok": False, "error": "unknown op %r" % (hostile["op"],)},
+                               separators=(",", ":")).encode("utf-8")
+        self.assertGreater(
+            len(unbounded), MAX_FRAME_BYTES,
+            "premise of this test: the un-bounded error reply must exceed the frame bound")
+
+        conn = FakeConn(BROKER_UID, inbound=framed)
+        reply = _handle(conn)
+
+        self.assertFalse(reply["ok"])
+        # The refusal is about the OP — proof the frame was read and dispatch was entered,
+        # not that the length prefix was rejected.
+        self.assertIn("unknown op", reply["error"])
+        self.assertNotIn("exceeds bound", reply["error"])
+        # `_bounded_error` ran: the text is capped, and it says so.
+        self.assertLessEqual(len(reply["error"]), MAX_ERROR_CHARS + 32)
+        self.assertTrue(reply["error"].endswith("(truncated)"))
+        # A real framed reply reached the peer and the connection survived.
+        self.assertTrue(conn.out, "a reply was still written")
+        self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
+        self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_error_bounding_holds_at_the_largest_frame_a_peer_may_send(self):
+        # The bound must hold at the WORST legal input, not one hand-picked size: a peer
+        # may send a full MAX_FRAME_BYTES frame, and repr() expands non-printables ~4x.
+        op = "" * ((MAX_FRAME_BYTES - 32) // 2)
+        framed = _frame({"op": op}, ensure_ascii=False)
+        self.assertLessEqual(int.from_bytes(framed[:LENGTH_PREFIX_BYTES], "big"),
+                             MAX_FRAME_BYTES)
+        conn = FakeConn(BROKER_UID, inbound=framed)
         reply = _handle(conn)
         self.assertFalse(reply["ok"])
+        self.assertIn("unknown op", reply["error"])
+        self.assertTrue(reply["error"].endswith("(truncated)"))
+        self.assertTrue(conn.out)
         self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
-        self.assertTrue(conn.out, "a reply was still written")
+
+    def test_try_write_degrades_instead_of_raising_on_an_unframable_reply(self):
+        # The F-11 belt itself, driven directly. If a reply is over-bound for ANY reason,
+        # `_try_write` must emit the minimal typed refusal rather than let FrameError
+        # escape `handle_connection` and kill the process that mints every lease. Nothing
+        # else in this suite enters that branch.
+        conn = FakeConn(BROKER_UID)
+        _try_write(conn, {"ok": False, "error": "x" * (MAX_FRAME_BYTES * 2)})
+        self.assertTrue(conn.out, "_try_write must still answer the peer")
+        self.assertLessEqual(len(conn.out), MAX_FRAME_BYTES + LENGTH_PREFIX_BYTES)
+        self.assertEqual(conn.decoded_reply(),
+                         {"ok": False, "error": "reply exceeded frame bound"})
+
+    def test_try_write_swallows_a_dead_peer(self):
+        # The other half of the belt: a peer that has gone away must not raise either.
+        class DeadConn(FakeConn):
+            def send_all(self, data):
+                raise OSError("peer gone")
+
+        _try_write(DeadConn(BROKER_UID), {"ok": True})  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -793,6 +883,207 @@ class ServeLoopTests(unittest.TestCase):
         )
         self.assertTrue(reply["ok"])
         self.assertEqual(reply["lease"]["lease_expires_at_ms"], NOW + LEASE_DURATION_MS)
+
+
+# ---------------------------------------------------------------------------
+# The front door must survive its peers (audit R1 `governed_supervisor_server.py:626`
+# and `:183`). This loop IS the availability of every governed turn on the install.
+# ---------------------------------------------------------------------------
+
+
+def _deeply_nested_frame(depth: int) -> bytes:
+    """A syntactically valid JSON body that fits the 8 KiB frame bound and nests far past
+    CPython's recursion limit. ``[[[[…]]]]`` costs 2 bytes per level."""
+    body = (b"[" * depth) + (b"]" * depth)
+    assert len(body) <= MAX_FRAME_BYTES, "the attack must fit inside the legal frame bound"
+    return len(body).to_bytes(LENGTH_PREFIX_BYTES, "big") + body
+
+
+class HostileFrameDoesNotKillTheSupervisorTests(unittest.TestCase):
+    """One frame from an authorized peer must not end the process that issues every lease.
+
+    The defect was that `handle_connection` listed its exception classes explicitly and
+    `serve_forever` had no `except` at all, so any class nobody remembered — `RecursionError`
+    is a `RuntimeError`, reachable from a deeply nested body inside the legal 8 KiB frame —
+    escaped both and killed the process.
+
+    WHICH exception a hostile body produces is a platform fact, not a property. The first
+    version of this class asserted `RecursionError` by name; it passed on Windows and failed
+    on Linux CI with an **empty** stderr, meaning the same body was refused there by the
+    listed-exception branch, which does not log. The backstop is correct on both. So the
+    backstop is now witnessed deterministically by injection, and the real hostile frame is
+    asserted only on what holds everywhere.
+    """
+
+    def test_an_unlisted_exception_is_caught_logged_and_bounded(self):
+        """The backstop itself, with no dependence on how any parser behaves.
+
+        `MemoryError` stands in for "a class nobody listed": it is not in the explicit tuple,
+        and unlike `RecursionError` it is raised identically on every platform.
+        """
+        conn = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(8))
+
+        def explode(*_args, **_kwargs):
+            raise MemoryError("in no explicit except tuple")
+
+        with mock.patch.object(gss, "read_frame", explode):
+            with contextlib.redirect_stderr(io.StringIO()) as logged:
+                reply = _handle(conn)
+
+        # The operator DOES get the detail...
+        self.assertIn("MemoryError", logged.getvalue())
+        # ...and the peer does not: nothing about the fault beyond that there was one.
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["error"], "internal supervisor fault")
+        self.assertEqual(conn.decoded_reply(), reply)
+
+    def test_deeply_nested_json_becomes_a_refusal_not_an_escape(self):
+        """The real hostile frame, asserted on what is true on every platform.
+
+        Deliberately silent about which branch catches it: on Windows it is the backstop
+        (`RecursionError`), on Linux CI it was the listed branch. Both are refusals, and
+        pinning the mechanism is what made this test platform-dependent.
+        """
+        conn = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(3900))
+        with contextlib.redirect_stderr(io.StringIO()):
+            reply = _handle(conn)
+
+        self.assertFalse(reply["ok"])
+        self.assertEqual(conn.decoded_reply(), reply)
+        # Whatever the branch, the reply stays framable and leaks no internals.
+        self.assertLessEqual(len(reply["error"]), MAX_ERROR_CHARS + 32)
+        self.assertNotIn("Traceback", reply["error"])
+        self.assertNotIn("engine/runtime", reply["error"])
+
+    def test_serve_forever_survives_the_frame_and_keeps_serving(self):
+        hostile = FakeConn(BROKER_UID, inbound=_deeply_nested_frame(3900))
+        healthy = FakeConn(
+            BROKER_UID,
+            inbound=_frame({"op": OP_ACCEPT_OPEN,
+                            "challenge_doc": _signed_doc(_valid_payload())}),
+        )
+        conns = [hostile, healthy]
+        served = list(conns)
+
+        def accept_one():
+            return conns.pop(0) if conns else None
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            serve_forever(
+                accept_one, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
+                ledger_conn=_ledger(), publish_artifact=_publish,
+                read_run_evidence=lambda attempt: _run_evidence("d" * 64),
+            )
+
+        # The loop reached the SECOND connection at all, and answered it correctly.
+        self.assertTrue(served[0].closed)
+        self.assertTrue(served[1].closed)
+        self.assertTrue(served[1].decoded_reply()["ok"])
+
+    def test_an_exploding_handler_does_not_end_the_accept_loop(self):
+        """The backstop in ``serve_forever`` is separate from the one in
+        ``handle_connection``, so it needs its own witness: a connection whose very first
+        attribute access raises is not inside the handler's try block at all."""
+
+        class Exploding:
+            closed = False
+
+            @property
+            def peer_uid(self):
+                raise MemoryError("in no explicit except tuple")
+
+            def close(self):
+                type(self).closed = True
+
+        healthy = FakeConn(
+            BROKER_UID,
+            inbound=_frame({"op": OP_ACCEPT_OPEN,
+                            "challenge_doc": _signed_doc(_valid_payload())}),
+        )
+        conns = [Exploding(), healthy]
+
+        def accept_one():
+            return conns.pop(0) if conns else None
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            serve_forever(
+                accept_one, BROKER_UID, _config(), _verify_sig, _recompute, _clock(NOW),
+                ledger_conn=_ledger(), publish_artifact=_publish,
+                read_run_evidence=lambda attempt: _run_evidence("d" * 64),
+            )
+
+        self.assertTrue(Exploding.closed)
+        self.assertTrue(healthy.decoded_reply()["ok"])
+
+
+class ConnectionBudgetTests(unittest.TestCase):
+    """The TOTAL deadline that bounds one connection (audit R1 `:183`).
+
+    ``SocketPeerConn`` cannot be constructed on a non-Linux host (``read_peercred_uid``
+    refuses), so the arithmetic that decides the refusal is tested where it lives — a pure
+    function plus a seam-driven read loop — rather than in a branch no runner here reaches.
+    """
+
+    def test_budget_is_the_remaining_time(self):
+        self.assertEqual(recv_budget_s(100.0, 40.0), 60.0)
+
+    def test_an_exhausted_budget_is_none_and_never_zero(self):
+        # settimeout(0) is NON-BLOCKING, and the POSIX SO_RCVTIMEO it maps to reads 0 as
+        # INFINITE. Returning 0.0 as the deadline lands would arm the opposite of a
+        # deadline at exactly the moment it matters most.
+        self.assertIsNone(recv_budget_s(100.0, 100.0))
+        self.assertIsNone(recv_budget_s(100.0, 100.5))
+
+    def test_a_drip_peer_is_cut_off_by_the_total_budget(self):
+        """One byte per call, forever. A per-recv timeout would never fire — it restarts on
+        every byte that arrives — so only a TOTAL budget can end this."""
+        clock = {"t": 0.0}
+        armed = []
+
+        def now():
+            return clock["t"]
+
+        def arm(seconds):
+            armed.append(seconds)
+
+        def recv(_n):
+            clock["t"] += 10.0  # each byte costs ten seconds of the budget
+            return b"x"
+
+        got = recv_exactly_bounded(recv, 1000, deadline=100.0, arm_timeout=arm, now=now)
+
+        self.assertEqual(len(got), 10)          # 100 s of budget at 10 s per byte
+        self.assertLess(len(got), 1000)         # the read did NOT complete
+        self.assertTrue(all(t > 0 for t in armed), armed)
+
+    def test_a_prompt_peer_is_unaffected(self):
+        payload = [b"hello ", b"world"]
+
+        def recv(_n):
+            return payload.pop(0) if payload else b""
+
+        got = recv_exactly_bounded(
+            recv, 11, deadline=100.0, arm_timeout=lambda _s: None, now=lambda: 0.0)
+        self.assertEqual(got, b"hello world")
+
+    def test_a_socket_timeout_ends_the_read_instead_of_escaping(self):
+        def recv(_n):
+            raise socket.timeout("timed out")
+
+        got = recv_exactly_bounded(
+            recv, 8, deadline=100.0, arm_timeout=lambda _s: None, now=lambda: 0.0)
+        self.assertEqual(got, b"")
+
+    def test_read_frame_turns_a_starved_read_into_a_framing_refusal(self):
+        """The budget's OUTCOME, not only its arithmetic: a short read is already a
+        ``FrameError``, so a starved connection is refused rather than hung."""
+
+        class Starved:
+            def recv_exactly(self, n):
+                return b""
+
+        with self.assertRaises(FrameError):
+            read_frame(Starved())
 
 
 if __name__ == "__main__":

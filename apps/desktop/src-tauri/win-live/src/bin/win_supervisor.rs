@@ -49,7 +49,23 @@ mod win {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
             // F-01: where the execution writes its per-run evidence chain.
             evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
+            // audit R-42: the supervisor's OWN durable evidence-head floor. It lives in a
+            // supervisor state directory rather than in the shared store, because the store is
+            // written by the execution and a floor the constrained party can delete is the
+            // engine's L-4 defect ported to Windows.
+            evidence_floor_db: std::path::PathBuf::from(&cfg.store_dir)
+                .join("supervisor-state")
+                .join("evidence-floor.db"),
         });
+        // The floor is not optional. A supervisor that cannot open it does not serve — serving
+        // without one is exactly the platform-shaped hole R-42 recorded.
+        let core = match core {
+            Ok(c) => c,
+            Err(why) => {
+                eprintln!("win_supervisor: {why}");
+                std::process::exit(6);
+            }
+        };
         println!("RESULT: supervisor listening pipe={} broker_sid={}", cfg.pipes.supervisor, cfg.allowed_broker_sid);
         pipe::run_server(&cfg.pipes.supervisor, &cfg.allowed_broker_sid, &core);
     }

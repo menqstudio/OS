@@ -29,6 +29,7 @@ from bro_signature import (
 )
 from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
+import _self_owned_ack
 
 # Every authority that binds at least one REGISTRY artifact type. `audit-anchor` is
 # deliberately absent: its authority is out-of-registry (bro_audit_log.ANCHOR_AUTHORITIES)
@@ -459,7 +460,8 @@ class OperatorRootPinTests(SignatureFixture):
     def _refuse_unacknowledged(self, pin_file):
         """Resolve the pin with the acknowledgement removed; return the refusal raised."""
         with _patch.dict(_os.environ, {}, clear=False):
-            _os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            for _name in _self_owned_ack.NAMES:
+                _os.environ.pop(_name, None)
             with self.assertRaises(SignatureError) as caught:
                 resolve_operator_root_pin({ENV_PIN_FILE: str(pin_file)}, root=ROOT)
         return caught.exception

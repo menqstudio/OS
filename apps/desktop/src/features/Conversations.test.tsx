@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { receiptBadge } from './Conversations';
+import { mergeThread, receiptBadge } from './Conversations';
+import type { Message } from '../domain/entities';
 
 describe('receiptBadge — governed receipt trust badge (Wave 3a slice 3)', () => {
   it('maps development_untrusted to an amber dev badge', () => {
@@ -85,5 +86,46 @@ describe('receiptBadge — governed receipt trust badge (Wave 3a slice 3)', () =
     expect(a).not.toBe(b);
     a.tone = 'success';
     expect(receiptBadge('demonstration_custody')?.tone).toBe('info');
+  });
+});
+
+// ---- mergeThread — the Demo-verify duplicate-render defect (remediation audit) ----------------
+//
+// `MessageThread` renders `mergeThread(history, extra)` with `key={m.id}`. `extra` holds the
+// messages this session streamed in; `history` is the persisted page. Pressing Demo-verify reloads
+// the page, so the persisted copies of those same messages come back — and the previous
+// `[...history, ...extra]` rendered every one of them twice under a colliding React key.
+
+const m = (id: string, receipt: Message['receipt'] = null) => ({
+  id,
+  conversationId: 'c-1',
+  role: 'agent' as const,
+  author: 'Bro',
+  body: `body ${id}`,
+  createdAt: '1700000000000',
+  receipt,
+});
+
+describe('mergeThread', () => {
+  it('renders a message that is in BOTH lists exactly once (the Demo-verify reload)', () => {
+    const streamed = m('msg-1');
+    // After the reload the same message is in the persisted page too.
+    const merged = mergeThread([m('msg-0'), m('msg-1')], [streamed]);
+    expect(merged.map((x) => x.id)).toEqual(['msg-0', 'msg-1']);
+    // The property the React key needs, stated directly.
+    expect(new Set(merged.map((x) => x.id)).size).toBe(merged.length);
+  });
+
+  it('keeps the persisted copy, so a reload never strips a trust badge', () => {
+    // The optimistic copy from the streaming `done` event carries no receipt; the persisted row
+    // carries the server-derived projection. Preferring `extra` would erase the badge.
+    const merged = mergeThread([m('msg-1', 'demonstration_verified')], [m('msg-1', null)]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].receipt).toBe('demonstration_verified');
+  });
+
+  it('still appends a message that has not been persisted yet, in order', () => {
+    const merged = mergeThread([m('msg-0')], [m('msg-1'), m('msg-2')]);
+    expect(merged.map((x) => x.id)).toEqual(['msg-0', 'msg-1', 'msg-2']);
   });
 });

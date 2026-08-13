@@ -6,6 +6,10 @@ use tauri::Manager;
 
 mod ai;
 mod commands;
+// `pub` so `tests/o3_conductor_session.rs` can drive the REAL precedence resolver against
+// the REAL Python engine. A cross-language proof that re-implements the rule it is proving
+// is checking the copy, not the thing the application runs.
+pub mod engine_trust;
 mod governance;
 mod governed_selftest;
 mod governed_turn;
@@ -71,32 +75,32 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// or none, and running with none while pretending otherwise is the failure this whole
 /// path exists to prevent.
 ///
-/// # What is deliberately NOT done here
+/// # What this now RECORDS, and where it is applied
 ///
-/// The environment variables the engine reads (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-/// `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`
-/// — and NOT `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`, which this deployment no longer needs
-/// because the pin is no longer in a directory it can write) are reported by
-/// `Provisioned::engine_env()` and NOT exported into this process. Two reasons, both
-/// concrete:
+/// **Corrected 2026-08-09; the previous version of this comment was the justification for
+/// the O-3 gap.** It said the environment `Provisioned::engine_env()` reports was not
+/// exported because "`bro_signature.load_trusted_keys` reads
+/// `<engine root>/config/trusted-keys.json` and takes no path override". That stopped
+/// being true when O-3's engine half landed: `load_trusted_keys` reads
+/// `resolve_registry_root(root)`, not `root`, and `BRO_TRUSTED_REGISTRY_ROOT`
+/// (`bro_signature.ENV_REGISTRY_ROOT`) names the deployment's registry root under custody
+/// rules at least as strong as the pin's. The comment did not move, so a stale sentence
+/// went on justifying a deployment in which every artifact this module minted verified
+/// perfectly against a registry nothing consulted.
 ///
-/// 1. ~~`bro_signature.load_trusted_keys` reads `<engine root>/config/trusted-keys.json`
-///    and takes no path override.~~ **False since O-3's engine half landed; corrected
-///    2026-08-09.** `load_trusted_keys` reads `resolve_registry_root(root)`, not `root`:
-///    `BRO_TRUSTED_REGISTRY_ROOT` (`bro_signature.ENV_REGISTRY_ROOT`) names the deployment's
-///    registry root, fail-closed, and every caller in that module consults the same store.
-///    The redirect relaxes none of the checks -- the anchor that authenticates the registry
-///    does not move with it. So this reason no longer holds, and it was the stated reason for
-///    not exporting. What remains is that the export needs FIVE variables, not the four
-///    `Provisioned::engine_env()` returns: `BRO_TRUSTED_REGISTRY_ROOT` is not one of them.
-///    Today nothing exports any of the five, which is why the engine still reads the
-///    committed *development* registry -- see `docs/OWNER_ACTION_REQUIRED.md` §3, O-3.
-/// 2. `_resolve_operator_root_pin` hard-fails when a file pin and the CI
-///    `BRO_OPERATOR_ROOT_PUBKEY` disagree, so exporting one unconditionally would break
-///    any environment that already carries the other.
+/// So: `Provisioned::engine_env()` — which now includes `BRO_TRUSTED_REGISTRY_ROOT`, and
+/// still deliberately excludes `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` — is RECORDED here and
+/// applied by `brops_core::engine_trust::apply` to the child process that runs the engine, at
+/// the one seam that launches it (`brops_core::governed_sidecar::GovernedSidecar`, which the
+/// app reaches through `ai::governed_sidecar_call`). It is still not exported into
+/// THIS process: `std::env::set_var` is process-wide and racy, and the host has no
+/// business verifying against a trust root it also holds the keys for.
 ///
-/// Wiring the engine to this store is a deployment decision that needs the registry to
-/// live at the engine's own root; it is not something this startup path can do silently.
+/// The second reason the old comment gave is real and survives: `_resolve_operator_root_pin`
+/// hard-fails when a file pin and the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree, so the export
+/// is not unconditional. `engine_trust` states the precedence rule — whole-set or nothing,
+/// agreement permitted, disagreement refused by name in both directions — and that module's
+/// documentation is where it is argued rather than here.
 fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     // The audit signer's published identity, if this machine has one. It has to be in hand
     // HERE and not later: `provision` destroys the operator root before it returns, which
@@ -113,6 +117,12 @@ fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error
     let root = machine_root()?;
     let anchor = brops_provision::published_anchor_custody(&root)?;
     let provisioned = brops_provision::provision_with_anchor(dir, &root, anchor.as_ref())?;
+    // The wiring line O-3 was open on. Recorded rather than exported: `engine_trust::apply`
+    // decides, per spawn and against the live environment, whether the provisioned set may
+    // be applied to the child that runs the engine — and refuses by name when an inherited
+    // anchor disagrees with it, instead of silently overwriting it or being silently
+    // overwritten by it.
+    engine_trust::record(&provisioned);
     if provisioned.freshly_minted {
         eprintln!(
             "BroPS provisioned its local trust store at {} (install {}).\n\

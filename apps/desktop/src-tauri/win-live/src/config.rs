@@ -122,23 +122,30 @@ pub struct Resolved {
     pub conversation_id: String,
 }
 
+/// The supervisor's OWN provisioning — the identities the isolated signer allowlists (audit F-01),
+/// which the execution must not be able to choose.
+///
+/// **audit F-02 / R-42 — nine fields removed 2026-08-10.** `receipt_id`,
+/// `containment_evidence_handle`, `record_handle`, `lease_handle`, `execution_receipt_handle`,
+/// `evidence_final_event_hash`, `evidence_event_count`, `evidence_last_sequence` and
+/// `evidence_head_sequence` used to live here. F-02 removed them from the PROTOCOL — the supervisor
+/// mints the receipt id, builds and content-addresses the three terminal artifacts itself, and
+/// derives the evidence head from the execution's own chain — but it left the config that used to
+/// supply them in place, still written by `win_provision`, still deserialized, still readable in
+/// `config.json` as if it configured the deployment's evidence head. Nothing read any of them:
+/// the substance was removed and the appearance was kept, which is the shape of defect this
+/// repository keeps finding. `win_provision` also stopped seeding the four placeholder store blobs
+/// their handles addressed.
+///
+/// Serde ignores unknown JSON keys, so a config file written by an older provisioner still loads.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Facts {
-    pub receipt_id: String,
     pub supervisor_id: String,
     pub executor_id: String,
     pub builder_id: String,
     pub policy_id: String,
     pub policy_version: String,
     pub policy_bundle_handle: String,
-    pub containment_evidence_handle: String,
-    pub record_handle: String,
-    pub lease_handle: String,
-    pub execution_receipt_handle: String,
-    pub evidence_final_event_hash: String,
-    pub evidence_event_count: i64,
-    pub evidence_last_sequence: i64,
-    pub evidence_head_sequence: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -586,21 +593,12 @@ mod tests {
                 conversation_id: "c".to_string(),
             },
             facts: Facts {
-                receipt_id: "rc".to_string(),
                 supervisor_id: "sup".to_string(),
                 executor_id: "ex".to_string(),
                 builder_id: "bu".to_string(),
                 policy_id: "p".to_string(),
                 policy_version: "1".to_string(),
                 policy_bundle_handle: String::new(),
-                containment_evidence_handle: String::new(),
-                record_handle: String::new(),
-                lease_handle: String::new(),
-                execution_receipt_handle: String::new(),
-                evidence_final_event_hash: String::new(),
-                evidence_event_count: 0,
-                evidence_last_sequence: 0,
-                evidence_head_sequence: 0,
             },
             supervisor_cfg: SupervisorCfg {
                 launcher_executable_sha256: String::new(),

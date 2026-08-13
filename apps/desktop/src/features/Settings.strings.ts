@@ -84,8 +84,13 @@ export const STR = {
   // which is all it may now say.
   accentNote: { en: 'fixed · not a setting', hy: 'ֆիքսված · կարգավորում չէ', ru: 'фиксированный · не настройка' },
 
-  // — governed-provider toggle —
+  // — governed-provider status (read-only; roadmap Phase 1 states default / on / blocked) —
   governedToggleLabel: { en: 'Governed provider', hy: 'Կառավարվող մատակարար', ru: 'Управляемый провайдер' },
+  governedStateDefault: { en: 'Off', hy: 'Անջատված', ru: 'Выкл.' },
+  governedStateOn: { en: 'On', hy: 'Միացված', ru: 'Вкл.' },
+  // Not "off". The governed provider IS the resolved one and every turn is refused — a state
+  // that reads as "off" would hide a refusing pipeline behind the same word as an absent one.
+  governedStateBlocked: { en: 'Blocked', hy: 'Արգելափակված', ru: 'Заблокировано' },
   governedToggleDesc: {
     en: 'Set by the backend environment under the fail-closed policy. This control is read-only — the desktop app never holds keys or leases and cannot route turns through the wall from here.',
     hy: 'Սահմանվում է backend-ի միջավայրի կողմից՝ fail-closed քաղաքականությամբ։ Այս կարգավորումը միայն կարդալու համար է. desktop ծրագիրը երբեք չի պահում բանալիներ կամ վարձակալություններ և չի կարող այստեղից ուղղորդել շրջադարձերը պատի միջով։',

@@ -20,6 +20,9 @@ from bro_signature import (
 )
 from broctl import build_registry, generate_key
 
+sys.path.insert(0, str(ROOT / "tests"))
+import _self_owned_ack  # noqa: E402
+
 NOW = 1_700_000_000
 YEAR = 365 * 24 * 60 * 60
 AUTHORITIES = ["operator-root", "issuer", "evidence-recorder", "builder",
@@ -47,8 +50,10 @@ class PreflightFixture(unittest.TestCase):
         # is refused by default — correctly, since the reader can rewrite it. A test
         # harness has no second principal, which is the case the acknowledgement exists
         # for; state it rather than weaken the check for everyone.
-        ack = mock.patch.dict(
-            os.environ, {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE})
+        # Declared through the FILE form: the raw variable is honoured only under
+        # `BRO_ENV=ci` now (a test host is not CI), because ungated it handed the pin's own
+        # named adversary the short-circuit for one extra `export`.
+        ack = _self_owned_ack.patch(self.tmp)
         ack.start()
         self.addCleanup(ack.stop)
         self.env = {ENV_PIN_FILE: str(self.pin_file)}

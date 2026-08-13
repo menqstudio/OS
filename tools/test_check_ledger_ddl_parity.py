@@ -14,20 +14,16 @@ import unittest
 
 from check_ledger_ddl_parity import CANONICAL, MIRROR, REQUIRED_CLAUSES, check
 
-# A minimal DDL body that satisfies every REQUIRED_CLAUSES substring. It is not valid
-# standalone SQL — the gate is a text/constraint floor, not a parser — but it lets the
-# tests isolate the two failure modes the gate must catch.
-GOOD = (
-    "PRAGMA foreign_keys = ON;\n"
-    "UNIQUE (install_id, request_nonce)\n"
-    "UNIQUE (challenge_handle)\n"
-    "UNIQUE (execution_attempt_id)\n"
-    "idx_governed_turn_acceptance_receipt\n"
-    "trg_governed_turn_acceptance_transition\n"
-    "RAISE(ABORT, 'illegal acceptance state transition')\n"
-    "CREATE TABLE IF NOT EXISTS governed_turn_completion\n"
-    "execution_attempt_id        TEXT PRIMARY KEY NOT NULL\n"
-    "CREATE TABLE IF NOT EXISTS governed_evidence_head_floor\n"
+# A minimal DDL body that satisfies every REQUIRED_CLAUSES substring. It is DERIVED
+# from that tuple rather than transcribed from it: a hand-written copy silently rots
+# the moment a clause is added (it did — the §2.4 staging triggers were added to the
+# gate and this fixture kept asserting the old floor), and a fixture that disagrees
+# with the gate tests nothing about the gate. It is not valid standalone SQL — the
+# gate is a text/constraint floor, not a parser — but it isolates the failure modes
+# the gate must catch.
+GOOD = "PRAGMA foreign_keys = ON;\n" + "".join(
+    f"{clause}\n" for clause in REQUIRED_CLAUSES
+    if clause != "PRAGMA foreign_keys = ON"
 )
 
 

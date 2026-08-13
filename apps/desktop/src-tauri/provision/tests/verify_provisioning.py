@@ -74,7 +74,14 @@ def main(argv: list[str]) -> int:
     # than asserted in a comment.
     os.environ["BRO_OPERATOR_ROOT_PUBKEY_FILE"] = str(pin_file)
     os.environ["BRO_OPERATOR_REGISTRY_MIN_FILE"] = str(floor_file)
-    os.environ["BRO_OPERATOR_ROOT_PIN_SELF_OWNED"] = "acknowledged"
+    # Declared through the FILE form. The raw variable is honoured only under `BRO_ENV=ci`
+    # now (this harness deliberately pops BRO_ENV two lines down), because ungated it handed
+    # the short-circuit for every custody rule in the runtime to anyone who could set this
+    # process's environment — the very adversary the pin exists to stop.
+    _ack = anchor / "self-owned-acknowledgement"
+    _ack.write_text("acknowledged", encoding="utf-8")
+    os.environ["BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE"] = str(_ack)
+    os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
     os.environ.pop("BRO_OPERATOR_ROOT_PUBKEY", None)
     os.environ.pop("BRO_OPERATOR_REGISTRY_MIN", None)
     os.environ.pop("BRO_ENV", None)

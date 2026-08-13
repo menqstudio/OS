@@ -19,7 +19,7 @@
 > **⏱️ IMPLEMENTATION STATUS (2026-07-27 — facts only, locked scope UNCHANGED; machine mirror [`config/current_state.json`](./config/current_state.json)).**
 > - **Phase 0:** done. **Phase 1:** in progress. **Phases 2–10:** not done. The whole app is NOT finished; the security spine below is a subset.
 > - **The self-asserted `receipt.verified: bool` contract described in the Phase-1 spine below is SUPERSEDED** by the cryptographic receipt chain delivered in **Wave 3a** (Ed25519-signed receipt the desktop verifies via RFC 8785 JCS + `verify_strict`; one-time challenge nonce bound to `request_sha256`; `receipt_verification_attempts` evidence; `receipt_ids_seen` replay ledger; tri-state `trusted_verified | development_untrusted | blocked`, migrations through **0014**). Read every "adapter sets `verified=true`" clause below as historical: the real contract is "no *verified signature* ⇒ no result," fail-closed. The boolean is not the authority.
-> - **Phase-1 wired vs unwired (real state):** the governed provider path + fail-closed verify-seam + receipt-plumbing are **WIRED** (Wave 3a / T-016, PR #28 `8a580028`): every governed turn `issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`. Production **"Verified"** (`trusted_verified`) is **UNWIRED** — it awaits the Wave 3b isolated signer + signed manifest (Wave 3b-0 design merged PR #30; Wave 3b-1 in progress on PR #31/#32, not merged). Governed **streaming** is intentionally **not** implemented (governed turns are buffered by design). The old "+ Settings governed toggle" clause is stale (the toggle was removed in Wave 1 / PR #15; provider status is read-only).
+> - **Phase-1 wired vs unwired (real state):** the governed provider path + fail-closed verify-seam + receipt-plumbing are **WIRED** (Wave 3a / T-016, PR #28 `8a580028`): every governed turn `issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`. Production **"Verified"** (`trusted_verified`) is **UNWIRED** — it awaits the Wave 3b isolated signer + signed manifest (Wave 3b-0 design merged PR #30; Wave 3b-1 in progress on PR #31/#32, not merged). Governed **delta-streaming** is **DESCOPED** as of 2026-08-09, not merely unimplemented: a governed turn is buffered *by construction*, because the desktop's authority is a signature over the whole output and there is no per-delta signature to show one against (Phase 1 §Scope carries the ruling; `governed_turn.rs` says the same thing). Do not read the §4.10(f) output pull as that streaming — it is the chunked **pull** of a *completed* output. Its supervisor hop landed 2026-08-10 in the engine; the `core/src/governed_output_stream.rs` ladder that used to be named here was deleted in the same change (zero production callers, divergent table), and `rust_symbols` in `config/reachability-declarations.json` is now empty. The old "+ Settings governed toggle" clause is stale (the toggle was removed in Wave 1 / PR #15; provider status is read-only — and Phase 1's UI/UX section was amended on 2026-08-09 to specify the read-only three-state control instead of promising a switch).
 > - **Not every AI entry point is governed yet** (Phase-2.3 work): only the main chat streaming seam runs the governed pipeline today; run-steps / Ask Bro / conversation-reply and other execution surfaces are not yet wired to the governed receipt chain. This is tracked, not done.
 > ---
 >
@@ -67,7 +67,7 @@ phase. That is the whole onboarding for *building*.
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Foundation | ✅ **Locked (done)** |
-| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. |
+| 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull** — whose SUPERVISOR hop landed 2026-08-10 in the engine, while its DESKTOP hop does not exist; the `core/src/governed_output_stream.rs` ladder that used to sit here uncalled was deleted in that change rather than wired, because its table diverged from the design it cited. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
 | 3 | Desktop Integration | 🔨 **Shell complete.** 23 routes, a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, and route-change focus management. |
 | 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
@@ -476,8 +476,31 @@ ungoverned `claude` spawn in `apps/desktop/src-tauri/src/ai.rs`.
 
 **Scope.** In: the `bridge/` adapter, the request/result contracts, an **opt-in** governed provider
 (default OFF), and a proven one-turn round-trip. Out (later slices): removing the direct `claude` path,
-streaming through the governed path, multi-turn runs. **No engine/security code is touched** — the
-entrypoint is `bridge/engine_adapter.py` with no engine-core change (Architect-approved).
+multi-turn runs. **No engine/security code is touched** — the entrypoint is `bridge/engine_adapter.py`
+with no engine-core change (Architect-approved).
+
+**Out — DESCOPED 2026-08-09: governed delta-streaming ("slice 3").** Not deferred; **descoped by
+construction**, and the decision is now stated in one place rather than contradicted in three. The
+desktop's sole authority over a governed reply is the isolated signer's envelope, which binds
+`output_bytes` + `output_sha256` over the **whole** output; there is no per-delta signature and no
+contract that could produce one. A streamed delta would therefore be unverified content rendered
+*before any verdict exists* — the exact inverse of this phase's rule, "no verified signature ⇒ no
+result". The transport says the same thing structurally: the renderer→broker channel is one framed
+request and one framed reply (`governed_turn.rs`, `broker/src/main.rs`), and both call a governed turn
+**buffered by design**. What remains genuinely open is a *different* thing that was being mistaken for
+this one: the rev-30 §4.10(f) chunked **output pull**, which moves the COMPLETED output of a buffered
+turn when it is too large to ride the reply frame, checked against that same whole-output digest.
+**Its SUPERVISOR hop landed 2026-08-10** in the engine: `brops.governed-turn-output-read.v1` served to
+the sidecar principal (`engine/runtime/governed_output_read.py`), the durable `governed_output_streams`
+table in the canonical `supervisor_ledger.sql`, and a mint with a real production caller in the §5
+`complete-run` op. The `core/src/governed_output_stream.rs` ladder that used to be described here — a
+one-shot token, TTL tombstone, sweep, per-install cap and nine unit tests, with **zero production
+callers** and a table that diverged from the design it cited — was DELETED in that change rather than
+wired, because wiring it was a rewrite and because its `CREATE TABLE IF NOT EXISTS` ran on the same
+connection one line before `supervisor_ledger::create_schema`. What is STILL open is the DESKTOP hop:
+`bridge.governed-turn-output-read.v1` and the internal helper that would drive the loop and apply the
+§4.6/§7.1 whole-output digest. The `rust_symbols` section of `config/reachability-declarations.json` is
+now empty, and the gate turns RED if a declaration outlives the file it describes.
 
 **Architecture.** Subprocess/sidecar boundary (Rust → `python bro_supervisor`), per the resolved
 decision. Trust root = an **operator-provisioned local supervisor sidecar** + localhost authenticated
@@ -486,9 +509,25 @@ engine supervisor (authorize → issue lease into a separate builder → 🧱 wa
 signed receipt + evidence → adapter verifies → Tauri returns result (+ receipt id)`.
 
 **UI/UX work.** Minimal but real (UI is first-class even here):
-- **Governed-provider toggle** (Settings, dev-visible): reproduces a settings row; `BROPS_AI_PROVIDER=engine`
-  behind it; **default OFF**. States: `default`(off) / `on` / `blocked`(sidecar unavailable → shows the
-  fail-closed reason). Keyboard: toggle focusable, `Space` flips, `aria-checked`.
+- **Governed-provider status control** (Settings). **AMENDED 2026-08-09 — it reports; it does not set.**
+  The original text asked for an opt-in *toggle* carrying `BROPS_AI_PROVIDER`, default OFF. That was
+  written before the provider policy landed, and it is not honestly buildable today.
+  `ai.rs::resolve_provider` resolves the provider from the **backend process environment**
+  (`BROPS_AI_PROVIDER` + `BROPS_ALLOW_GOVERNED_ENGINE` + `BROPS_ALLOW_UNGOVERNED`), and this phase's own
+  Security gates say *"Desktop never holds lease/key/env"*: a webview-writable control would hand the
+  renderer the choice of whether its own turns are governed — **including the downgrade direction** —
+  which is the one authority this architecture refuses it (ARCHITECTURE principle 2: mirrors, never
+  decides). A second and independent reason: the flip could not change an outcome in either direction,
+  because `commands.rs::governed_verification_unconfigured()` returns `Some(...)` unconditionally, so a
+  governed turn is blocked before the model is called. Switching it "on" would replace a working
+  ungoverned chat with a uniformly refusing one — a *different refusal*, never the governed behaviour
+  the row promised. **What ships, and what this criterion now means:** a read-only control reporting all
+  three named states from the real `ai_status` — `default` (no governed provider resolved) / `on`
+  (governed and ready) / `blocked` (governed, sidecar never became ready → the fail-closed reason is
+  shown). Keyboard: focusable and announced (`role=switch` + `aria-checked` + `aria-disabled`, and
+  **never** the `disabled` attribute, which drops the state out of the tab order); activation is inert
+  by construction. *If the trust root moves so that a provider choice can be made outside the renderer
+  and merely **requested** from it, this reverts to a real toggle — as a new slice, not this one.*
 - **Receipt indicator on the chat turn**: a small verified-receipt badge on each governed AI message
   (reproduces a `mark`/`pill` element). States: `pending` (turn running, shimmer), `verified` (mint check
   + receipt id on hover), `unverified/blocked` (danger — and per contract **no result is shown**), `error`.
@@ -539,21 +578,152 @@ no engine/security diff; Owner approval.
 flag it as a separate audited engine task; do not edit engine code inside this PR. If key/trust-root
 provisioning is unresolved → stop and escalate to Owner/Architect (do not hardcode keys).
 
+> **Nine ticks, six facts — read this before counting.** The Definition of Done and the Task checklist
+> restate the same work: the adapter + its 10 tests, the `bridge` CI job, and the badge + provider control
+> each appear twice. A reader scanning nine `[x]` boxes saw roughly 50% more delivered than exists.
+> Reduced honestly, of the six distinct facts: **two are true and reached** (the `task-request` contract is
+> validated at runtime; the `bridge` CI job exists and passes), **two are true but dead** (the adapter and
+> the governed-provider transport are built and tested and nothing can invoke them), **one is true but
+> hollow** (the UI ships and a user reaches it, but it can only paint a Windows-only demonstration badge),
+> and **one was false** (the end-to-end governed round-trip — see its row). Checked against the code on
+> 2026-08-10, not against the commit messages the boxes cite.
+
 **Definition of Done.**
-- [x] `task-request` + `bridge-result` contracts defined and tested.
-- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`).
-- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8, slice 2).
-- [x] One governed round-trip proven end-to-end — **done**: the fail-closed governed round-trip (`issue_challenge → verify_and_record_receipt(&NoTrustedManifest) → Blocked`) landed in Wave 3a / T-016 (PR #28); verify-seam + receipt-plumbing are wired. Production **"Verified"** (`trusted_verified`) still pending Wave 3b (isolated signer + signed manifest).
-- [ ] Governed streaming path — **slice 3**.
-- [x] Bridge CI leg added and green (PR #3, merged to `main`).
-- [x] Chat receipt badge + settings toggle shipped in the cockpit UI — **transport** (PR #8).
+- [x] `task-request` + `bridge-result` contracts defined and tested — **but only `task-request` is
+      enforced at runtime.** `bridge/engine_adapter.py:120` validates against it. `bridge-result.schema.json`
+      is loaded in exactly one place, `bridge/tests/test_engine_sidecar.py:19`; `engine_sidecar.py` emits its
+      result without checking it and `ai.rs` parses it with serde. It is a **test-only** contract, and the
+      unqualified word "tested" above was hiding that.
+- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`) — re-run
+      2026-08-10, still 10. **Built, correct, and not reached:** its only caller is
+      `bridge/engine_sidecar.py:485`, entered only from `ai.rs::governed_engine`, which no turn can start
+      (see the round-trip row below).
+- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8,
+      slice 2). Default-OFF holds (`ai.rs:405-460`; governed needs `BROPS_ALLOW_GOVERNED_ENGINE=1`), and
+      the transport is real (`ai.rs:2880` spawns `bridge/engine_sidecar.py`). **No turn can use it:** all
+      three callers of `ai::governed_turn` — `commands.rs:1385`, `:1865`, `:2077` — sit *after* the
+      unconditional refusal at `commands.rs:1152`. "Transport shipped" is carrying the whole sentence.
+- [ ] One governed round-trip proven end-to-end. **This box read `[x]` and said "done", and it was
+      false — corrected 2026-08-10 by checking the claim against the code instead of against its own
+      commit message.** The box had already narrowed "round-trip" to a *fail-closed* one ending in
+      `Blocked`; it is false even on those narrowed terms. The production order at
+      `commands.rs:1338-1428` is `issue_challenge` (:1370) → `governed_unconfigured_block` (:1379) →
+      **early `return`** (:1382) → and only *then*, unreached, `ai::governed_turn` (:1385) and
+      `verify_and_record_receipt` (:1424). The gate is unconditional (`governed_verification_unconfigured`,
+      `commands.rs:1152`, `Some(...)` with no condition), and the same shape guards the other two
+      governed surfaces at `:1854` and `:2061`. So nothing is sent, no receipt is produced, and no
+      signature is examined: `verify_and_record_receipt` and `verify_and_record_held_answer` have **zero
+      runtime-reachable production callers**. The 23 green `receipt_store` tests exercise the seam in
+      isolation, which is not the same claim.
+      **What IS proven, and is a different seam:** `engine/ci/live/run_live_turn.sh`, driven by the
+      `live-governed-turn` job (`ci.yml:72-119`), runs a real end-to-end governed turn — through
+      `broker_orchestrator::run_governed_turn` + `governed_verification::verify_and_accept`, which never
+      touches the chat path or the bridge adapter. Citing that run under this box would be the same
+      substitution the box already made once. **The refusal itself is deliberate and stays:** the gate
+      is the Owner's standing constraint, and this row is open because the roadmap was describing a
+      round-trip the gate forbids — not because the gate is wrong.
+- [ ] Governed output delivery through the wall. **Delta-streaming is DESCOPED** (see Scope — a governed
+      turn is buffered by construction, because the desktop's authority is a signature over the whole
+      output). What this box now tracks is the thing that was being mistaken for it and is genuinely
+      unbuilt: the rev-30 §4.10(f) chunked **output pull**. **HALF of it landed 2026-08-10** — the
+      SUPERVISOR hop. `brops.governed-turn-output-read.v1` is served from the supervisor front door to
+      the sidecar principal (`engine/runtime/governed_output_read.py`), the durable
+      `governed_output_streams` table is in the canonical `supervisor_ledger.sql` with INSERT-ONCE /
+      fixed-lifetime / digest-binding triggers, and the mint has a real production caller in the §5
+      `complete-run` op. The `core/src/governed_output_stream.rs` ladder this box used to point at was
+      **DELETED** in the same change: it had zero production callers, its table diverged from the
+      design, and its `CREATE TABLE IF NOT EXISTS` ran on the same connection one line before
+      `supervisor_ledger::create_schema`, so keeping it would have made the canonical DDL a no-op.
+      **STILL OPEN — but not for the reason this row carried until 2026-08-13.** It said the DESKTOP
+      hop "does not exist". That sentence was written 2026-08-10; Slice 3 landed 2026-08-12 and this row
+      was never updated, which is the standing docs row below doing its damage in the one place a cold
+      reader would trust. The hop **exists**: the `protocol`-keyed branch is `_bridge_output_read`
+      (`bridge/engine_sidecar.py:730`) behind `BRIDGE_OUTPUT_READ_PROTOCOL` (`:574`), and the pull loop is
+      `brops_core::governed_output_pull`, driven end to end by the `ladder-governed-turn` job. The helper
+      this row named, `governed_turn_output_read`, is in no file — the same class of error as the
+      `platform_governed_execution_supported()` these documents watched for weeks.
+      **What is actually left is the wiring, and only that:** the shipped broker still reads the
+      recorder's output with `std::fs::read(&report_path)`
+      (`apps/desktop/src-tauri/broker/src/chain_executor.rs:882`) and never touches the egress, so nothing
+      in the product drives the pull, reassembles the bytes, or applies the §4.6/§7.1 whole-output digest
+      check. Built and proven in CI; unreached by the app. **Open.**
+- [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
+      `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
+      tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
+      the job does not set it (nothing in `bridge/` reads it, so it is cosmetic drift, not a hole); and
+      the job **runs** but is not a **required** check — `main` has no branch protection, which is the
+      Owner's to enable and is tracked in `docs/OWNER_ACTION_REQUIRED.md`.
+- [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **shipped and
+      reachable, and it can only ever paint a demonstration badge.** The badge renders at
+      `Conversations.tsx:535/548` on the `chat` route, and the control at `Settings.tsx:282-293`; 19
+      vitest cases pass. But the badge is driven by `MESSAGE_RECEIPT_PROJECTION` (`core/src/repo.rs:966`),
+      and `trusted_verified` / `development_untrusted` need an accepted row in
+      `receipt_verification_attempts`, which needs the round-trip row above — impossible today. The only
+      badge a user can actually produce is `demonstration_verified`, via `demonstration_verified_reply`
+      (`commands.rs:2454`), which is `#[cfg(windows)]`-only and needs `BROPS_SELFTEST_MODEL_CMD`. Also
+      short of the UI/UX spec: it names four badge states (`pending` shimmer / `verified` /
+      `unverified-blocked` / `error`) and `receiptBadge` returns three tones or `null` — **no `pending`
+      and no `blocked`/`error` state ships**. Shipped as **transport**
+      (PR #8); control **amended 2026-08-09** to the read-only three-state row the UI/UX section now
+      specifies (`default`/`on`/`blocked`, focusable, `aria-disabled`, inert), because a webview-writable
+      provider switch contradicts this phase's own "Desktop never holds lease/key/env" gate and could not
+      change an outcome anyway.
 
 **Task checklist.**
-- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`).
-- [ ] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence.
-- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`).
-- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider toggle (per UI/UX above) — **transport** (PR #8).
-- [ ] Slice 3 — governed streaming (deltas through the wall), receipt at end.
+- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`). *Same
+      fact as the adapter row in the Definition of Done above; kept because it is the task ledger, but it
+      is not a second delivery.*
+- [x] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence — **done
+      2026-08-12, on a real Linux runner, and worded deliberately.** `engine/ci/live/run_ladder_turn.sh`
+      + CI job `ladder-governed-turn` drive ONE `bridge.governed-turn-submit.v1` frame through the real
+      one-shot sidecar from a seventh `brops-sidecar` principal, against the real
+      `OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService` and the real §5
+      `AcceptanceDriver`, reaching the **real §6.1 step-5 contained execution** — privileged recorder →
+      setuid launcher → contained executor, six uids, `caps_all_zero`, `no_new_privs`. No stand-in.
+      Verbatim from run 31606043144 at `59dc394`:
+      `RESULT: ladder-round-trip ok=true reason=none attempt=58d4358… output_sha256=8e30d8db…`,
+      `POSITIVE: GREEN — one submit frame became one §4.6 frame whose envelope verifies`, and
+      `NEGATIVE: GREEN — refused with digest_mismatch, and the harness exited non-zero (1)`.
+      **The negative half is not decoration:** every run drives the same verifier over an artifact the
+      challenge never committed and requires a non-zero exit naming `digest_mismatch`, because both of
+      this repository's PowerShell proofs were found unable to report PASS at all, through three audit
+      rounds. `ladder_evidence.py` records the §4.6 frame, the §4.9 envelope, the digests and the
+      `SO_PEERCRED` uid of every hop, and uploads them as a CI artifact.
+      **What this box does NOT say.** It does not say the shipped app takes this path — it does not.
+      `governed_turn_submit_prepared` has a transport and **no caller**, `ChainExecutor` still drives
+      direct AF_UNIX, and `governed_verification_unconfigured` still returns `Some(...)`
+      unconditionally. This is the **adapter ↔ supervisor** round trip, proven; the product's own path
+      is the open row above it.
+- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`) — job `bridge`, one of
+      `ci.yml`'s 19 jobs. *Same fact as the Bridge-CI row above.*
+- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX
+      above) — **transport** (PR #8); control amended to read-only three-state 2026-08-09. *Same fact as
+      the badge row above.* The three states are honestly derived from a real `ai_status`, and every
+      install shows `default`, because `on`/`blocked` need a governed provider no turn can use.
+- [x] Slice 3 — the §4.10(f) chunked output pull — **done 2026-08-12, on a real Linux runner.**
+      Delta-streaming stays DESCOPED (a governed turn is buffered by construction: the desktop's
+      authority is a signature over the whole output). What this row tracked was the pull, and it is
+      now driven end to end by `ladder-governed-turn`. Verbatim from run 31621209556 at `5090e53`:
+      `pull=ok chunks=1 served_to_uid=5003 negatives=digest_mismatch,length_mismatch,`
+      `refused:stream_binding_mismatch,refused:stream_unknown` and `PULL: GREEN`.
+      The supervisor hop is `governed_output_read.py` + `governed_output_stream.py` + the
+      `governed_output_streams` DDL, minted from `complete-run`; the desktop hop is the
+      `bridge.governed-turn-output-read.v1` branch and `brops_core::governed_output_pull`, driven by
+      `core/src/bin/ladder_output_pull.rs`. The uncalled `core/src/governed_output_stream.rs` ladder
+      was **deleted** rather than wired — its table diverged from the design it cited, and its
+      `create_schema` ran one line before the canonical one with `CREATE TABLE IF NOT EXISTS`, which
+      would have made the canonical DDL a silent no-op.
+      **Four negatives are driven every run and refused by name**, plus a sign-flip control that
+      requires the positive to report `digest_mismatch` — because both of this repository's
+      PowerShell proofs were found unable to report PASS at all, through three audit rounds.
+      **Three limits, stated in the box rather than found later.** The live pull is **single-chunk**:
+      the executor's output is a fixed 322 bytes, so `seq` never exceeds 0 on the runner; a forced
+      400000-byte output gives 3 reads locally, so the striding loop is proven but not by CI. The
+      driver runs as the script's **root** orchestrator (it must `sudo -u` the sidecar), so it proves
+      nothing about who may read the store — that the bytes came through the egress rests entirely on
+      the supervisor's `SO_PEERCRED` hop log, which `check_pull` refuses to proceed without. And this
+      is a **CI proof, not a product path**: the shipped broker still reads the recorder's output with
+      `std::fs::read(&report_path)` and never touches this egress. That is the open row above.
 - [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
 
 ---

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
@@ -8,7 +9,7 @@ import shlex
 import stat
 import subprocess
 import time
-from typing import Any
+from typing import Any, Iterator
 
 from bro_authority import AuthorityError, validate_verifier_assignment
 # R-06's custody rule is the same rule the operator-root pin enforces (audit F-06), and it
@@ -483,6 +484,50 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
     principal separation. Without the env var the marks sit beside the external evidence store,
     which needs no new configuration; that placement is weaker by construction and the
     acknowledgement rule applies there too.
+
+    .. warning::
+
+       **The escape route in the paragraph above cannot be configured. This is an open design
+       contradiction, not a documentation nit.** ``_advance_head_floor`` writes the mark in the
+       very process the mark polices. A directory that process cannot write therefore fails the
+       ADVANCE — the temp-file write and the rename over the mark need exactly the capability
+       custody is refusing — and a directory it CAN write fails custody here. The two
+       requirements have no intersection, so the only satisfiable posture is
+       ``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged``, which ``bro_custody`` short-circuits
+       EVERY rule in the runtime on, not just this one.
+
+       Both postures are driven against a real directory by
+       ``test_completion_head_binding.HeadFloorConfigurationContradictionTests``; read that class
+       before changing anything here. Resolving it means moving the WRITE to a second principal
+       -- a floor-writer service or a setuid helper -- which is an Owner/Architect decision about
+       deployment topology, not a change to this function.
+
+       DO NOT reach for the supervisor's durable ledger. This text used to name it as a candidate,
+       on the grounds that it "already holds an equivalent floor written by the supervisor uid".
+       That sentence sent an agent down the route on 2026-08-10, and it is wrong on four counts,
+       each of which was established by RUNNING it rather than by reading it:
+
+       1. It measures a different number. The ledger counter is per INSTALL
+          (``evidence-head-sequence.json``) and, since bb26822, deliberately an install-wide
+          ceiling; this floor is per TASK, and every task's first anchor is 1. Offering two real
+          signed heads -- task-1 seq 1 and task-2 seq 1 -- to the ledger refuses the second with
+          ``EvidenceFork``. Routing completion there would make the SECOND task in any deployment
+          permanently un-completable.
+       2. It is not reachable from here. No module on the completion path imports
+          ``governed_supervisor_ledger``; the DB is opened only by ``run_supervisor.py`` running as
+          the supervisor account, and its only door is ``governed_supervisor_server`` -- AF_UNIX +
+          SO_PEERCRED, Linux-only, allowlisting the broker uid alone, with an op set documented as
+          exhaustive. Opening that sqlite file directly from here would delete the second principal
+          and reproduce this exact contradiction in sqlite instead of JSON.
+       3. It does not exist on Windows -- the platform the desktop ships on, and the host where
+          this contradiction was proven. ``win-live/src/servers.rs`` keeps supervisor state in a
+          ``Mutex<BTreeMap<..>>`` and ``complete_run`` performs no cross-run head comparison. That
+          is open finding R-42.
+       4. It cannot carry what this floor carries. ``evidence_head_sha256`` -- the digest of the
+          signed head document, which drives the "same sequence, different signed head" refusal --
+          has no column in that table, and the ``_index.json`` roster,
+          ``_require_establishable_mark`` and the owner-signed ``evidence-floor-anchor`` bootstrap
+          have no equivalent there at all.
     """
     directory = (
         _external_dir("BRO_EVIDENCE_HEAD_FLOOR")
@@ -518,7 +563,7 @@ def _refuse_self_owned_floor(directory: pathlib.Path) -> None:
         # account cannot escape by pre-creating the directory, because the checks below then
         # apply to what it created.
         return
-    if self_owned_acknowledged():
+    if self_owned_acknowledged(error=CompletionError):
         return
     if platform_name() == "posix":
         info = directory.stat()
@@ -649,6 +694,114 @@ def _load_head_floor(store: pathlib.Path, task_id: str) -> tuple[int, str | None
     return recorded, digest
 
 
+#: The file whose byte 0 every floor writer locks before touching a mark or the roster.
+#: An advisory lock rather than a lock FILE: the kernel drops it when the holder dies, so a
+#: crash mid-advance cannot leave the floor permanently unwritable — which a `O_CREAT|O_EXCL`
+#: lock file would, and which would be a self-inflicted denial of every future completion.
+_FLOOR_LOCK = "_index.json.lock"
+
+
+@contextlib.contextmanager
+def _floor_write_lock(directory: pathlib.Path) -> Iterator[None]:
+    """Serialize the floor's load-compare-write against every other process (audit R1
+    ``bro_completion.py:271``).
+
+    ``_advance_head_floor`` reads the current mark, compares, and only then writes. Between
+    the read and the write another completion could do the same, and the two outcomes were
+    decided by whichever `os.replace` landed last — not by which head was higher. Two real
+    consequences, both of which defeat the thing the floor is FOR:
+
+      * **the mark goes DOWN.** Turn A (head 5) and turn B (head 3) both read a mark of 0,
+        both pass the ``head_sequence <= current`` test, and if B's rename lands second the
+        recorded floor is 3. The docstring's "never lowers the mark" was true of the
+        comparison and false of the operation.
+      * **a roster entry disappears.** The ``_index.json`` enrolment is a read-modify-write of
+        ONE file shared by every task, staged through ONE shared temp name. Two tasks
+        enrolling concurrently each write ``{"tasks": [me]}`` and the loser is simply not in
+        the file. A task missing from the roster is, by ``_load_head_floor``'s own rule, a
+        task that has never been seen — so deleting its mark afterwards reads as a first
+        sighting and returns ``(0, None)``. That is precisely the R-06 rollback the roster
+        exists to catch, reachable with no attacker capability at all, only timing.
+
+    The lock is held across BOTH, so the compare and the write are one step.
+
+    A platform with neither locking primitive REFUSES, for the same reason
+    ``_refuse_self_owned_floor`` does: "no check here" is what produced this finding.
+    """
+    path = directory / _FLOOR_LOCK
+    with open(path, "a+b") as handle:
+        # A zero-length file cannot be byte-range locked on Windows; one byte is enough.
+        if os.fstat(handle.fileno()).st_size == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if platform_name() == "posix":
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        elif platform_name() == "nt":
+            import msvcrt
+
+            try:
+                # LK_LOCK retries for ~10 s and then raises. A writer that cannot take the
+                # lock must NOT proceed unlocked — that is the defect, not the fallback.
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            except OSError as exc:
+                raise CompletionError(
+                    f"cannot serialize the evidence head floor at {directory}: another writer "
+                    f"holds it ({exc}). Refusing rather than advancing the floor unlocked"
+                ) from exc
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            raise CompletionError(
+                f"the evidence head floor at {directory} cannot be locked on "
+                f"{platform_name()}: this runtime has no way to serialize two writers there, "
+                "and an unserialized floor can be lowered by a concurrent turn")
+
+
+def _floor_lock_is_held(directory: pathlib.Path) -> bool:
+    """True when SOMEBODY currently holds :func:`_floor_write_lock` on ``directory``.
+
+    A non-blocking probe on a SECOND file description. Both primitives conflict across
+    descriptions even inside one process, so this answers honestly for a caller that is
+    checking whether the code under test took the lock — which is the only way to witness
+    "the compare happened inside the lock" without a second process and a race.
+    """
+    path = directory / _FLOOR_LOCK
+    if not path.exists():
+        return False
+    with open(path, "a+b") as handle:
+        handle.seek(0)
+        if platform_name() == "posix":
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return False
+        if platform_name() == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return True
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return False
+    raise CompletionError(f"cannot probe the evidence head floor lock on {platform_name()}")
+
+
 def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
                         head_digest: str) -> None:
     """Raise the recorded mark to ``head_sequence``, and enrol the task in the index.
@@ -656,28 +809,50 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
     Never lowers the mark, and never removes a task from the index — a task that has been
     measured once must stay measurable, or deleting its mark would be a way back to zero.
     The digest of the head the mark was taken against is recorded with it (**O-5**).
-    """
-    if head_sequence <= _load_head_floor(store, task_id)[0]:
-        return
-    directory = _head_floor_dir(store)
-    try:
-        final = directory / f"{task_id}.floor.json"
-        temporary = directory / f"{task_id}.floor.json.tmp"
-        temporary.write_text(
-            json.dumps({"task_id": task_id, "head_sequence": head_sequence,
-                        "evidence_head_sha256": head_digest}),
-            encoding="utf-8")
-        # Rename over the old mark so a crash mid-write cannot leave a truncated file
-        # that the loader above would (correctly) refuse forever.
-        temporary.replace(final)
 
-        known = _load_floor_index(directory)
-        if task_id not in known:
-            index = directory / _FLOOR_INDEX
-            index_tmp = directory / (_FLOOR_INDEX + ".tmp")
-            index_tmp.write_text(
-                json.dumps({"tasks": sorted(known | {task_id})}), encoding="utf-8")
-            index_tmp.replace(index)
+    .. warning::
+
+       **This function is the other half of the contradiction documented on
+       ``_head_floor_dir``.** It writes the mark AS the account the mark polices, so the write
+       below needs precisely the capability ``_refuse_self_owned_floor`` exists to refuse: a
+       floor this process cannot write raises ``CompletionError`` here, and a floor it can write
+       is refused there. There is no directory that satisfies both. Do not "fix" this by
+       widening either rule — the write has to move to a second principal, and that is an
+       Owner/Architect decision. See
+       ``test_completion_head_binding.HeadFloorConfigurationContradictionTests``.
+
+    The whole load-compare-write runs under :func:`_floor_write_lock`. The compare used to
+    sit OUTSIDE any lock, so two concurrent completions could both pass it and the last
+    rename won regardless of which head was higher — see that function for what that costs.
+    """
+    directory = _head_floor_dir(store)
+    # Refuse an unprovisioned floor BEFORE creating anything in it, with the same message
+    # and from the same function as before — the lock must not become a way for an absent
+    # floor to acquire a file and start looking provisioned.
+    _load_floor_index(directory)
+    try:
+        with _floor_write_lock(directory):
+            # Read INSIDE the lock. Reading outside it is the defect: the value compared
+            # would be one another writer is free to have replaced before the rename lands.
+            if head_sequence <= _load_head_floor(store, task_id)[0]:
+                return
+            final = directory / f"{task_id}.floor.json"
+            temporary = directory / f"{task_id}.floor.json.tmp"
+            temporary.write_text(
+                json.dumps({"task_id": task_id, "head_sequence": head_sequence,
+                            "evidence_head_sha256": head_digest}),
+                encoding="utf-8")
+            # Rename over the old mark so a crash mid-write cannot leave a truncated file
+            # that the loader above would (correctly) refuse forever.
+            temporary.replace(final)
+
+            known = _load_floor_index(directory)
+            if task_id not in known:
+                index = directory / _FLOOR_INDEX
+                index_tmp = directory / (_FLOOR_INDEX + ".tmp")
+                index_tmp.write_text(
+                    json.dumps({"tasks": sorted(known | {task_id})}), encoding="utf-8")
+                index_tmp.replace(index)
     except OSError as exc:
         raise CompletionError(
             f"cannot record the evidence head floor for {task_id}: {exc}") from exc

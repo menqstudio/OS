@@ -244,7 +244,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// whitespace, and RFC 8785-compatible minimal string escaping — which for this
 /// restricted shape *is* RFC 8785 JCS. (Validity relies on ASCII keys so UTF-8 byte
 /// order equals UTF-16 code-unit order; asserted by a test over `RECEIPT_FIELDS`.)
-fn jcs_bytes(map: &BTreeMap<String, String>) -> Vec<u8> {
+///
+/// `pub(crate)` since 2026-08-12: `governed_prepare` needs the SAME primitive for the §4.10(g)
+/// governed `generation_config` object, and §4.10(g) names this function as the one to build on
+/// ("This rides the EXACT proven string→string primitive"). A second serializer in that module would
+/// be a second spelling of a formula whose whole value is that Rust and Python agree on it. It stays
+/// crate-private: nothing outside `brops-core` can reach it.
+pub(crate) fn jcs_bytes(map: &BTreeMap<String, String>) -> Vec<u8> {
     serde_json::to_vec(map).expect("a BTreeMap<String,String> always serializes")
 }
 

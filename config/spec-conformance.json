@@ -138,13 +138,192 @@
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
+    "§4.10(a)": {
+      "status": "implemented",
+      "reason": "`brops.governed-staging-open.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_open`, reached from the supervisor front door for the sidecar principal only. The durable half is the `governed_turn_staging_session` CAS in `governed_staging_ledger.open_session`, over the `UNIQUE (challenge_handle, artifact)` and the per-install session/byte quotas. All ten reasons in the closed refusal set are reachable by name from a request a hostile sidecar could send, and each has a test that produces it.",
+      "tests": [
+        "test_digest_mismatch_when_declared_sha256_is_not_the_committed_digest",
+        "test_oversize_boundary_the_exact_ceiling_is_admitted",
+        "test_quota_sessions_on_the_seventh_concurrent_session",
+        "test_quota_bytes_when_the_declared_reservation_exceeds_the_install_cap",
+        "test_an_identical_reopen_returns_the_same_session_and_the_current_cursor",
+        "test_a_session_may_only_be_created_empty_and_uploading"
+      ]
+    },
+    "§4.10(b)": {
+      "status": "implemented",
+      "reason": "`brops.governed-staging-chunk.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_chunk`. The four-way order predicate, the deterministic chunk length, the two independent size caps and the ACK-after-commit ordering are implemented; the immutable `<seq>.chunk` file is written with the frozen `brops_evidence_store` os.link/O_EXCL create-if-absent primitive, and the gapless sequence plus the `byte_count == SUM(chunk_len)` cursor rule are enforced by triggers in the canonical ledger DDL, not in Python. All ten reasons in the closed refusal set are reachable by name and tested.",
+      "tests": [
+        "test_nondeterministic_chunk_on_a_short_chunk_that_still_fits",
+        "test_oversize_chunk_one_byte_over_the_decoded_cap",
+        "test_oversize_frame_on_a_256_kib_decoded_chunk",
+        "test_too_many_chunks_at_and_above_the_cardinality_cap",
+        "test_a_replayed_chunk_acks_without_re_appending",
+        "test_rule_a_a_durable_chunk_with_no_db_row_is_adopted_by_an_identical_retry",
+        "test_the_cursor_advances_by_exactly_one_recorded_chunk",
+        "test_a_chunk_may_only_be_recorded_at_the_cursor"
+      ]
+    },
+    "§4.10(c)": {
+      "status": "implemented",
+      "reason": "`brops.governed-staging-final.v1` is served by `engine/runtime/governed_staging_upload.handle_staging_final`. The artifact is reassembled from the immutable `<seq>.chunk` files in strict order with SHA-256 and length recomputed from byte zero (no stored running hash), asserted against `declared_len`/`declared_sha256` and against the digest the signed challenge committed to, then published through the idempotent `EvidenceStore.publish`. The handle is recorded on the turn and the turn advances to `INPUTS_READY` when all three are in — both gated by triggers in the canonical ledger DDL. All nine reasons in the closed refusal set are reachable by name and tested; two of them (`publish_divergent` and one arm of `handle_not_challenge`) are reachable from a faulty or tampered STORE rather than from a sidecar frame, and their tests say so.",
+      "tests": [
+        "test_sha_mismatch_when_the_uploaded_bytes_are_not_the_declared_bytes",
+        "test_len_mismatch_when_the_sender_finals_before_the_declared_bytes_arrive",
+        "test_handle_not_challenge_when_the_store_returns_a_different_handle",
+        "test_publish_divergent_when_the_store_refuses_the_publish",
+        "test_an_identical_final_retry_re_returns_the_same_reply",
+        "test_a_zero_byte_artifact_sends_no_chunk_and_publishes_the_empty_bytes",
+        "test_inputs_ready_is_unreachable_until_all_three_handles_are_published",
+        "test_a_published_input_handle_must_be_the_challenge_committed_digest"
+      ]
+    },
+    "§4.10(d)": {
+      "status": "implemented",
+      "reason": "`brops.governed-evidence-request.v1` is served by `engine/runtime/governed_evidence_request.handle_evidence_request`, reached from the supervisor front door for the sidecar principal only (it is the fifth and last name in `SIDECAR_PROTOCOLS`). What is implemented is the PRE-ACCEPTANCE GATE and only that: the peer check, the exhaustive four-field shape, and the join of the request triple to the `INPUTS_READY` `governed_turn_staging` row over its two UNIQUEs. It writes nothing - every statement it issues is a SELECT, asserted through the connection's own trace callback - and mints no `execution_attempt_id`, lease, acceptance row, nonce consume or clock read. All five reasons in the closed refusal set are reachable by name and tested; four of them from a request a hostile sidecar could send, and `session_corrupt` only from already-tampered durable state (the staging root is 0700 supervisor-only), which its test class says in its name. The property the gate READS is enforced by five triggers in the canonical ledger DDL, not in Python; each is proved in isolation with raw SQL. The §5 continuation the gate hands a passing turn to now HAS a production supplier: `governed_acceptance.AcceptanceDriver` (2026-08-10), which drives §5 acceptance -> lease -> execution -> record -> the isolated signer and returns a §4.10(e) frame. It is still INJECTED, and a supervisor constructed without one refuses every evidence-request `peer_denied` - the fail-closed direction is unchanged. Nothing in `engine/ci/live/run_supervisor.py` constructs an `EvidenceRequestService`, so the sidecar-facing surface remains unconfigured on every deployment in this tree. What the seam is now HELD TO is fixed: §4.10(e) landed, and the continuation's reply must be a valid `brops.governed-turn-result.v1` frame (`governed_turn_result.validate_turn_result`) or the supervisor faults - it is no longer relayed unexamined.",
+      "tests": [
+        "test_a_ready_turn_reaches_the_acceptance_continuation",
+        "test_the_gated_turn_is_read_off_the_row_not_off_the_request",
+        "test_the_gate_issues_only_select_statements",
+        "test_a_passing_gate_creates_no_acceptance_row",
+        "test_no_inputs_ready_while_the_row_is_still_uploading",
+        "test_retry_conflict_when_the_nonce_names_a_different_challenge",
+        "test_retry_conflict_when_the_challenge_is_open_under_another_nonce",
+        "test_session_corrupt_when_an_upload_session_is_terminally_corrupt",
+        "test_a_row_cannot_be_inserted_carrying_published_handles",
+        "test_the_gate_never_sees_the_row_that_hole_would_have_produced",
+        "test_inputs_ready_is_unreachable_while_any_handle_is_null",
+        "test_an_over_cap_frame_is_refused_on_the_bytes_that_arrived",
+        "test_a_continuation_answering_in_the_pre_acceptance_namespace_is_a_fault",
+        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault",
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_driver_never_answers_in_the_pre_acceptance_namespace"
+      ]
+    },
+    "§4.10(e)": {
+      "status": "implemented",
+      "tests": [
+        "test_the_signed_arm_carries_exactly_the_sixteen_design_fields",
+        "test_the_refused_arm_carries_exactly_the_four_design_fields",
+        "test_containment_evidence_is_the_one_nullable_member_of_the_signed_arm",
+        "test_a_missing_field_is_refused_by_name",
+        "test_output_stream_id_must_be_exactly_the_43_char_capability",
+        "test_output_stream_id_must_be_canonical_base64url",
+        "test_the_two_jcs_documents_are_bounded_on_their_ENCODED_length",
+        "test_a_reason_outside_the_closed_union_is_a_supervisor_fault",
+        "test_the_ratified_twelve_are_the_FROZEN_schema_enum_verbatim",
+        "test_the_literal_maximum_signed_frame_fits",
+        "test_the_length_checks_already_pin_the_decoded_byte_counts",
+        "test_a_frozen_document_fed_to_the_new_validator_is_refused",
+        "test_the_frozen_document_is_refused_on_TWO_independent_grounds",
+        "test_the_module_imports_no_clock_no_entropy_and_no_database",
+        "test_the_signed_builder_supplies_no_identifier_of_its_own",
+        "test_a_continuation_that_answers_outside_the_result_union_is_a_fault",
+        "test_a_signed_verdict_is_relayed_verbatim"
+      ],
+      "reason": "`brops.governed-turn-result.v1` is built and validated by `engine/runtime/governed_turn_result.py`: the COMPLETE tagged union, both arms, the exhaustive field sets, the §4.6 encoded-byte caps, the canonical-base64url requirement on all five b64 fields, and the closed `GOVERNED_REFUSAL_REASONS` union embedded verbatim (its ratified twelve compared against the FROZEN engine/contracts/brops-sign-result.v1.schema.json enum, in order). The builders run the validator over what they build, so producer and consumer cannot disagree. The §4.10(e) frame cap carries NO check because none could fire: the literal maximum instance is 74472 bytes against MAX_FRAME_BYTES 262144, constructed and asserted in `test_the_literal_maximum_signed_frame_fits`, and the transport's own `encode_frame` is the same bound. What is NOT here, deliberately: no PRODUCTION producer exists - §5 acceptance is a later ordered piece and `drive_acceptance` is still an injected seam with no supplier - and no sidecar re-frame into §4.6's `bridge.governed-turn-result.v1` exists (that is §4.10(g)/(h)). No member of GOVERNED_REFUSAL_REASONS is DECIDED anywhere in this tree; every producing gate §4.5 names is a §5/§7 gate, and `TheClosedUnionIsNotDecidedHereTests` says so by name rather than leaving a green suite to imply otherwise. The one place the frame is ENFORCED today is §4.10(d)'s continuation guard: once the pre-acceptance gate passes, the §5 continuation's reply must BE a §4.10(e) frame or the supervisor faults. §2.2 also names a file `engine/contracts/brops-governed-turn-result.v1.schema.json`; it does not exist, and neither do the equivalent files for §4.10(a0)/(a)/(b)/(c)/(d) - the governed family's shapes are Python modules in this tree, and adding a JSON schema would be a second source of truth for the same shape."
+    },
     "§4.10(f)": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "missing": "The SUPERVISOR hop is implemented (2026-08-10). `brops.governed-turn-output-read.v1` is served by engine/runtime/governed_output_read.handle_output_read, reached from the supervisor front door for the sidecar principal only (it is the sixth and last name in SIDECAR_PROTOCOLS); the durable `governed_output_streams` table is in the canonical supervisor_ledger.sql with INSERT-ONCE, fixed-lifetime and digest-binding triggers; the capability is 32 secrets-derived bytes as 43 base64url chars; the three-phase verdict is derived synchronously from the row (absent -> expired -> binding -> range, that exact order); the per-install quota FIFO-evicts rather than refusing; and the mint has a real production caller in the §5 `complete-run` op, which MEASURES output_bytes from the digest-verified store rather than accepting it from the wire. The DESKTOP hop is now implemented too (2026-08-10, second pass), and is NOT WIRED. What exists: the protocol-keyed `bridge.governed-turn-output-read.v1` branch in bridge/engine_sidecar.py, which forwards the caller's four fields UNCHANGED under the supervisor's protocol const and relays the verdict verbatim, so all five closed reasons (including `malformed`) are the supervisor's and none is originated locally; the pure loop, reassembly and §4.6/§7.1 whole-output length+digest gate in apps/desktop/src-tauri/core/src/governed_output_pull.rs, driven by the SIGNED envelope.output_bytes and gated against the SIGNED envelope.output_sha256 (there is no API shape that admits §4.10(e)'s TRANSPORT-ONLY echo of either); and the internal `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers, which are NOT `#[tauri::command]`s and are absent from `generate_handler!`. What is NOT WIRED, and why: nothing calls the loop. The §4.10(e) `signed` frame that mints the `output_stream_id` now HAS a supervisor-side producer (`governed_acceptance.AcceptanceDriver`, landed concurrently and uncommitted as this was written), and as of 2026-08-10 §4.6's `bridge.governed-turn-result.v1` exists on BOTH hops AND is produced by a real ladder: §4.10(g)'s sidecar orchestrator (`bridge/governed_turn_submit.py`) drives §4.10(a0)/(a)(b)(c)/(d) in one subprocess and re-frames the §4.10(e) reply. The token can now be MINTED and CARRIED, and as of 2026-08-12 a submit frame can be WRITTEN too: `prepare_governed_turn_v1b` and `governed_turn_submit_prepared` exist in apps/desktop/src-tauri/core/src/governed_prepare.rs and core/src/governed_submit.rs. The pull is STILL unreachable, for two reasons that are now sharper than 'nothing produces the token'. First, nothing calls `governed_turn_submit_prepared` and its subprocess spawn is an injected seam no production code implements, so no §4.6 frame reaches a live path. Second - and this survives fixing the first - the pull adapters `ai::governed_pull_output` / `ai::governed_turn_output_read` are in the RENDERER-HOSTING app crate, which §0's LOCKED terminology binding says is the wrong process: `governed_turn_execute` and every step below it, including this pull, are BROKER-SERVICE operations. They were placed there by following §4.10(f)'s literal 'a private function of the `governed_turn_execute` command' one layer too low. The synchronous broker binary cannot call an async tokio function in a crate it does not depend on, and moving them requires deciding where the engine_trust::apply spawn seam lives. So the residual is no longer 'the token never arrives' but 'the token arrives in another process'. Declared with written reasons in config/reachability-declarations.json `rust_symbols`. A second, larger gap sits behind it: the broker's Linux execution reads the recorder's output off the local filesystem (`chain_executor.rs::LinuxGovernedExecution`, `std::fs::read(&report_path)`) instead of through this egress at all, so even a supplied token would not by itself put the pull on the live path. Also absent: any startup/interval driver for the sweep (sweep_streams has tests and no scheduler), and the live kit (engine/ci/live/run_supervisor.py) supplies no output_read_service, exactly as it supplies no open/staging/evidence-request service.",
+      "tests": [
+        "test_the_expiry_boundary_is_inclusive_at_the_instant",
+        "test_a_valid_token_with_the_wrong_receipt_is_caught_server_side",
+        "test_a_zero_byte_output_has_exactly_one_legal_read",
+        "test_the_chunk_boundary_is_exact_at_184320",
+        "test_all_five_reasons_are_reachable_and_none_is_a_stub",
+        "test_the_literal_maximum_reply_frame_fits",
+        "test_a_maximum_size_chunk_reply_reaches_the_peer_intact",
+        "test_completing_a_run_mints_its_output_stream",
+        "test_no_update_of_any_column_is_permitted",
+        "test_a_row_cannot_be_minted_with_a_lifetime_it_chose",
+        "test_a_served_read_returns_the_exact_bytes_under_the_bridge_protocol",
+        "test_malformed_is_the_supervisors_word_not_the_sidecars",
+        "test_an_unprovisioned_socket_emits_no_governed_frame",
+        "test_the_literal_maximum_reply_fits_the_socket_on_the_supervisor_leg",
+        "test_neither_framed_ipc_bound_could_ever_carry_a_chunk",
+        "a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate",
+        "a_truncated_chunk_fails_the_length_gate",
+        "an_eof_that_disagrees_with_the_signed_length_blocks",
+        "a_zero_byte_output_is_one_read_and_verifies",
+        "the_output_pull_is_not_reachable_from_the_webview"
+      ],
+      "source": "Wave 3b-1B step 5 (§4.10(f)), 2026-08-10; DESKTOP hop (bridge branch + governed_output_pull + ai helpers), 2026-08-10"
     },
     "§4.10(g)": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "reason": "The SIDECAR half is implemented (2026-08-10). `bridge.governed-turn-submit.v1` has a strict ingress validator and a real orchestrator: `bridge/governed_turn_submit.py`, reached from the protocol-keyed branch in `bridge/engine_sidecar.py::_dispatch`, drives §4.10(a0) `brops.governed-turn-open.v1` → §4.10(a)(b)(c) staging upload of the three canonical artifacts → §4.10(d) `brops.governed-evidence-request.v1` over `brops_socket` inside ONE one-shot subprocess, and re-frames the §4.10(e) reply through `governed_turn_result_bridge.reframe_turn_result` into a §4.6 `bridge.governed-turn-result.v1` — the first production caller that module has ever had. The §4.10(g) OBJECT form of `generation_config` is implemented as `brops_canonical.governed_generation_config_bytes` (validate-then-JCS, ADDITIVE beside the frozen raw-string `generation_config_bytes`, which is untouched); its canonicalization of the five frozen literal defaults hashes to the exact `generation_config_sha256` the design prints. The ladder is proven END TO END against the REAL `OpenService`/`StagingService`/`EvidenceRequestService`, a real durable ledger, four real Ed25519 keypairs, the real §5 `AcceptanceDriver` and the real `isolated_signer`, returning a §4.6 frame whose envelope verifies and whose echoes equal it. Three checks are deliberately NOT written, because each would make a supervisor verdict unreachable through the only client there is: the challenge document is forwarded VERBATIM (so `noncanonical` stays the supervisor's), the staged digests are never compared against the challenge's committed `*_sha256` (so `digest_mismatch` and `handle_not_challenge` stay the supervisor's), and `inputs_ready` is not asserted (so `no_inputs_ready` stays §4.10(d)'s).",
+      "tests": [
+        "test_one_submit_frame_becomes_one_signed_bridge_governed_turn_result",
+        "test_the_hops_are_driven_in_the_locked_order_and_no_output_is_pulled",
+        "test_the_three_artifacts_are_published_under_the_challenges_own_digests",
+        "test_the_exact_signed_document_bytes_reach_the_store_unaltered",
+        "test_the_same_submit_frame_can_never_run_a_second_turn",
+        "test_a_system_the_challenge_did_not_commit_is_refused_digest_mismatch",
+        "test_a_staging_open_before_the_turn_open_is_refused_no_staging_row",
+        "test_a_turn_whose_inputs_never_became_ready_is_refused_no_inputs_ready",
+        "test_a_governed_verdict_refusal_is_relayed_as_a_4_6_frame_not_an_exception",
+        "test_the_governed_generation_config_hashes_to_the_digest_the_design_publishes",
+        "test_the_object_form_is_not_the_frozen_raw_string_form",
+        "test_every_generation_config_rejection_the_design_names",
+        "test_the_generation_config_boundary_values_are_accepted",
+        "test_this_subprocess_never_issues_an_output_read",
+        "test_a_multi_chunk_artifact_uses_the_deterministic_stride",
+        "test_an_idempotent_reopen_resumes_from_the_SUPERVISORS_cursor",
+        "test_every_literal_in_all_five_closed_sets_is_relayed_with_its_own_stage",
+        "test_an_ack_that_does_not_advance_the_cursor_is_refused_rather_than_looped",
+        "test_the_maximum_staging_chunk_frame_fits_and_it_is_the_LOAD_BEARING_bound",
+        "test_the_execution_hop_budget_does_NOT_fit_the_deadline_this_subprocess_runs_under",
+        "test_a_submit_frame_never_touches_the_frozen_execution_path",
+        "test_the_live_supervisor_constructs_none_of_the_three_services",
+        "the_frozen_defaults_canonicalize_to_the_exact_bytes_and_digest_the_design_prints",
+        "the_governed_digest_is_not_the_frozen_raw_string_digest",
+        "the_jcs_is_the_receipt_primitive_and_never_a_json_number",
+        "the_widest_expressible_config_is_349_bytes_against_a_65536_cap",
+        "the_caps_that_can_fire_are_the_two_caller_sized_ones",
+        "the_conversation_cap_fires_on_the_canonical_bytes_not_on_the_content_sum",
+        "the_field_rules_accept_and_refuse_exactly_the_designs_examples",
+        "the_field_set_is_closed_in_both_directions",
+        "an_unset_or_empty_override_yields_the_frozen_literal_default",
+        "each_of_the_four_overridable_fields_can_be_overridden_and_engine_id_cannot",
+        "a_set_but_invalid_override_fails_closed_and_never_silently_defaults",
+        "preparation_derives_every_downstream_value_from_the_one_object",
+        "the_history_canonicalization_matches_the_shipped_cross_language_fixture",
+        "a_role_outside_the_closed_enum_is_refused_before_any_digest_exists",
+        "the_nonce_is_minted_once_per_preparation_and_never_repeats",
+        "the_frame_carries_exactly_the_six_designed_fields",
+        "the_frame_carries_the_exact_prepared_bytes_and_the_verbatim_document",
+        "the_generation_config_rides_as_five_strings_and_hashes_to_the_committed_digest",
+        "a_task_id_the_challenge_did_not_sign_is_a_terminal_cross_binding_block",
+        "a_run_id_the_challenge_did_not_sign_is_a_terminal_cross_binding_block",
+        "a_config_digest_the_challenge_did_not_commit_is_a_terminal_cross_binding_block",
+        "a_request_binding_the_challenge_did_not_sign_is_a_terminal_cross_binding_block",
+        "the_challenge_document_cap_is_the_4096_from_section_4_10_a0",
+        "a_document_missing_what_the_cross_bindings_read_is_refused_by_field_name",
+        "a_signed_reply_yields_the_metadata_only_result_and_its_output_stream_token",
+        "this_hop_writes_exactly_one_frame_and_it_is_the_submit_frame",
+        "a_governed_refusal_is_relayed_verbatim_and_never_becomes_a_success",
+        "a_local_spawn_failure_is_a_transport_error_and_never_a_verdict",
+        "a_cross_binding_failure_produces_no_frame_and_makes_no_call",
+        "the_frame_overhead_is_measured_and_the_ceiling_is_stdin_only",
+        "the_governed_history_digest_equals_the_broker_side_formula",
+        "the_governed_ingress_caps_equal_the_ones_this_module_applies",
+        "the_frozen_string_preparation_and_the_governed_object_one_produce_different_digests",
+        "the_document_is_carried_byte_for_byte_even_when_it_is_not_canonically_ordered",
+        "an_eight_digit_token_count_is_refused_by_the_REGEX_not_by_the_range",
+        "system_is_hashed_raw_with_no_trim_and_no_normalization",
+        "the_conversation_cap_is_exact_at_the_canonical_byte",
+        "a_desynchronized_prepared_object_cannot_reach_the_frame",
+        "the_config_binding_recomputes_from_the_object_rather_than_re_reading_a_stored_digest",
+        "an_empty_payload_id_is_refused_by_field_name",
+        "history_content_rides_the_frame_byte_for_byte_with_no_normalization"
+      ],
+      "missing": "The WIRING, and one design contradiction. Updated 2026-08-12: the trusted-side SUBMIT-FRAME WRITER now exists, so the previous text of this field ('what does not exist anywhere in the tree ... prepare_governed_turn_v1b, PreparedGovernedTurnV1B, GovernedGenerationConfig, resolve_governed_generation_config_v1b, governed_turn_submit_prepared') is HISTORY. WHAT EXISTS on the trusted side now: the thin frontend proxy `governed_turn_execute` (apps/desktop/src-tauri/src/governed_turn.rs, registered in generate_handler!); the renderer<->broker IPC (core/src/broker_client.rs, core/src/governed_turn_ipc.rs, core/src/ipc_framing.rs); the payload-aware idempotency store (core/src/broker_turns.rs); the orchestration control flow (core/src/broker_orchestrator.rs); the commit-readback persistence (core/src/governed_message_store.rs); AND, new in this pass and in the BROKER-side crate where §0's LOCKED terminology binding puts them, core/src/governed_prepare.rs (`GovernedGenerationConfig` with the §4.10(g) per-field regex + integer-range validation, `resolve_governed_generation_config_v1b` with the exact four-variable BROPS_GOVERNED_* trusted-host override contract, `PreparedGovernedTurnV1B` with private fields and read-only accessors, and `prepare_governed_turn_v1b` producing every downstream value in one pass) and core/src/governed_submit.rs (`ChallengeDocument` carrying the authority's EXACT bytes verbatim, `GovernedTurnExecutionV1B`, `submit_frame`, and `governed_turn_submit_prepared`, which asserts the §4.10(g) cross-bindings BEFORE writing the frame and strict-decodes the §4.6 reply through `governed_bridge_result::BridgeTurnResult::parse_frame`). The Rust half of the governed SHA256(JCS(flat string->string object)) formula is built on receipt.rs::jcs_bytes (made pub(crate); the already-parity-proven BTreeMap<String,String> primitive) and reproduces §4.10(g)'s printed digest 732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22 byte-for-byte, with the frozen raw-string digest 963be7a4... asserted UNEQUAL to it on both sides of the boundary. WHAT IS STILL MISSING, each named rather than summarised: (1) THE SPAWN. `governed_turn_submit_prepared`'s subprocess call is an INJECTED seam (`governed_submit::SubmitTransport`) and NO production code implements it. The tree's one bridge-spawn seam, ai::governed_sidecar_call, is async tokio in the renderer-hosting app crate and carries engine_trust::apply (the provisioned trust environment); the broker binary is synchronous and does not depend on that crate. A second spawn implementation is the half-wired export that seam's own comment warns about, so it was not written. (2) THE CALLER. Nothing calls `governed_turn_submit_prepared`, `prepare_governed_turn_v1b` or `resolve_governed_generation_config_v1b` - all three are declared in config/reachability-declarations.json rust_symbols. §4.10(g) steps 1-3 of `governed_turn_execute` (prepare -> receipt_challenges pre-store -> authority create-pending/issue) are not written on the broker side, and the broker's one production GovernedExecutor (broker/src/chain_executor.rs::ChainExecutor) implements a DIFFERENT architecture for the same hops: it talks AF_UNIX directly to the challenge-authority and supervisor and spawns the recorder, never a sidecar. Its ProductionResolver (broker/src/manifest_resolver.rs) supplies system_sha256 / history_sha256 / generation_config_sha256 from STATIC deployment config rather than from a prepared turn - its own doc comment calls the per-conversation facts 'a follow-up protocol slice'. Choosing between the two architectures is an Architect's call, and wiring either would move the shipped broker off its fail-closed executor, which the Owner's standing constraint forbids until an independent audit passes. (3) A NONCE-AUTHORITY COLLISION. §4.10(g) step 1 makes prepare_governed_turn_v1b the mint of request_nonce; broker_orchestrator::run_governed_turn already mints one via BrokerIds and writes it into a durable broker_turns row BEFORE the executor runs. Both cannot be the authority. The design is followed in the new code (prepare mints) and the collision is recorded rather than resolved locally. (4) NO COUNTERPARTY on the live supervisor: engine/ci/live/run_supervisor.py constructs no OpenService/StagingService/EvidenceRequestService/OutputReadService, so its socket serves none of the five protocols this ladder speaks (asserted by test_the_live_supervisor_constructs_none_of_the_three_services). (5) §4.10(h) Carrier 1 is still not built - an upstream internal refusal reaches the desktop as the protocol-less bridge.op.v1 document carrying stage+reason in its error TEXT, so its provenance is lost. (6) The §4.10(g)/§2.2 schema FILE bridge/contracts/bridge-governed-turn-submit.schema.json was still not created; validation is code on both sides (Python validate_submit_request, Rust submit_frame + GovernedGenerationConfig::validate), following the precedent of §4.6, whose schema file was also never created. An unconsumed schema that could disagree with two implementations is worse than none. (7) A CONTRADICTION rather than a gap: ai.rs::governed_sidecar_call kills this subprocess at 120 s while the single §4.10(d) round trip inside it waits for an execution budgeted EXECUTION_TIMEOUT_MS = 120000, so the part cannot fit inside the whole; it needs an Architect ruling. (8) A SECOND, NEWLY MEASURED gap: nothing bounds the submit frame itself. §4.10(g) caps the three ARTIFACTS and never the frame; the writer's measured minimum is 1233 bytes and its ceiling is 8651985 (1056x the renderer<->broker IPC's MAX_FRAME_PAYLOAD_BYTES = 8192 and 116x the §4.6 reply's MAX_BRIDGE_TURN_RESULT_BYTES = 74236, which is what makes it stdin-only), and NEITHER ai::governed_sidecar_call's stdin write NOR engine_sidecar.run's bare stdin.read() applies any cap. The numbers are pinned by the_frame_overhead_is_measured_and_the_ceiling_is_stdin_only; no cap was invented, because a bound one side enforces and the other does not is a refusal on a wire the peer would have accepted.",
+      "source": "Wave 3b-1B step 6 (§4.10(g)); SIDECAR hop 2026-08-10; TRUSTED-side submit-frame writer (core/src/governed_prepare.rs + core/src/governed_submit.rs) 2026-08-12, built and deliberately NOT wired"
+    },
+    "§4.10(h)": {
+      "status": "not_implemented",
+      "reason": "A later ordered piece of the Wave 3b-1B implementation order. NOTHING in this tree serves it: no protocol handler, no table, no caller. It is cited only where the §4.10(a0) code has to say what happens NEXT to the state it creates, and every citation is marked NOT IMPLEMENTED so a reader cannot mistake the reference for a claim that the section holds."
     },
     "§4.2": {
       "status": "unreviewed",
@@ -159,9 +338,42 @@
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
+    "§4.5": {
+      "status": "partial",
+      "missing": "The `brops.governed-sign-result.v1` FRAME itself: no builder, no validator, no producer, no consumer, no schema file. What exists of §4.5 is exactly one thing - the closed `GOVERNED_REFUSAL_REASONS` union, defined ONCE in `engine/runtime/governed_turn_result.py` because §4.10(e)'s `refused` arm embeds it verbatim and §4.5's relay literal-embed rule forbids a second copy. §4.5's producing gates (the §5 acceptance-time members `challenge_replay`, `acceptance_conflict`, `lease_not_ready`, the §7 members `evidence_fork`, `stale_evidence`, and the rest) are NOT IMPLEMENTED: not one member is decided by anything in this tree. The isolated signer's own `brops.sign-result.v1` is a DIFFERENT, frozen protocol and is untouched.",
+      "reason": "Raised from not_implemented when §4.10(e) landed. The §4.5 citations that describe the closed union now describe something real; the citation in `governed_turn_result.py` that names the frame carries the NOT IMPLEMENTED marker."
+    },
     "§4.6": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "tests": [
+        "test_the_signed_arm_becomes_the_five_field_outer_object",
+        "test_every_receipt_field_is_copied_byte_for_byte_from_the_supervisors_frame",
+        "test_the_receipt_key_set_is_derived_from_the_engines_not_typed_out",
+        "test_the_capability_token_is_lifted_to_the_top_level_where_the_pull_reads_it",
+        "test_the_refused_arm_relays_the_reason_and_the_receipt_id",
+        "test_every_member_of_the_closed_union_is_reachable_by_name_through_this_hop",
+        "test_a_reason_outside_the_union_never_reaches_the_desktop",
+        "test_the_frozen_schema_rejects_a_governed_frame_on_the_unknown_protocol_key",
+        "test_the_governed_validator_rejects_a_frozen_bridge_result",
+        "test_the_discrimination_is_not_via_envelope_jcs_b64",
+        "test_the_literal_maximum_frame_is_the_number_this_module_publishes",
+        "test_the_carried_and_uncarried_receipt_fields_are_exactly_the_designs_28",
+        "test_status_is_a_homonym_and_the_two_meanings_are_kept_apart",
+        "a_signed_frame_yields_the_decoded_signed_material",
+        "a_refused_frame_is_an_error_so_no_caller_reaches_success_by_forgetting_an_arm",
+        "every_member_of_the_closed_union_is_reachable_by_name",
+        "a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason",
+        "a_frozen_bridge_result_is_rejected_and_not_on_envelope_jcs_b64",
+        "each_encoded_byte_cap_is_one_stride_from_refusing",
+        "each_altered_echo_blocks_by_name",
+        "the_echoes_have_no_accessor_so_no_gate_can_be_aimed_at_them",
+        "the_lease_id_is_carried_and_deliberately_unchecked",
+        "the_token_this_frame_carries_is_the_one_the_pull_binds_to_an_envelope",
+        "no_cap_on_this_frames_path_could_fire",
+        "no_framed_ipc_path_in_this_tree_could_carry_this_frame"
+      ],
+      "missing": "TWO gaps, and the first is a DESIGN contradiction rather than an unbuilt piece. (1) §4.6's `receipt` object lists 28 fields; its only producer is the sidecar re-framer and its only input is the §4.10(e) `signed` arm, which supplies 11 of them. Seven of the other 17 - `status`, `exit_code`, `evidence[]` (the frozen `bridge.result.receipt` shape, built from a `SupervisorResult` the governed path never produces) and `challenge_registry_handle`/`_hash`/`_epoch`/`_root_key_id` (resolved by the supervisor 'from its own supervisor state', §4.10(a0), and never returned on any reply the sidecar receives) - have no source anywhere the sidecar can reach, so §4.6 as written is not constructible by its own producer. The implemented frame is the INTERSECTION of §4.6's receipt keys with §4.10(e)'s signed arm; the other 17 are named in `bridge/governed_turn_result_bridge.UNSOURCED_RECEIPT_FIELDS`, and `test_the_carried_and_uncarried_receipt_fields_are_exactly_the_designs_28` asserts the union is exactly §4.6's list, so the gap is machine-checked. It needs an Architect ruling. (2) NOTHING CONSUMES THE FRAME IN PRODUCTION — and as of 2026-08-10 something PRODUCES it: §4.10(g)'s sidecar orchestrator (`bridge/governed_turn_submit.py`) drives the whole ladder and calls `reframe_turn_result`, proven end to end against the real supervisor services in `engine/tests/test_governed_turn_submit_e2e.py`. The remaining gap is one hop out and is stated under §4.10(g): nothing WRITES a `bridge.governed-turn-submit.v1` frame, because `governed_turn_submit_prepared`/`prepare_governed_turn_v1b` exist nowhere and the broker's one production executor spawns the recorder rather than a sidecar. The superseded wording follows. §4.6 is the REPLY to §4.10(g)'s `bridge.governed-turn-submit.v1`, which is NOT IMPLEMENTED - no submit branch in `bridge/engine_sidecar.py`'s `_dispatch`, no orchestrator driving §4.10(a0)/(a)/(b)/(c)/(d) inside one one-shot subprocess - so no sidecar ever holds a §4.10(e) reply to re-frame, and no desktop caller can obtain a §4.6 document to parse. Both Rust entry points and §7.1's echo equality are declared caller-less with written reasons in `config/reachability-declarations.json`. Also NOT created: the schema file §2.2 names, `bridge/contracts/bridge-governed-turn-result.schema.json` - consistent with §4.10(a0)/(e)/(f), none of which has one either; the shape lives in a Python validator and a Rust parser, and the §2.2 disjointness tests run against the REAL frozen `bridge/contracts/bridge-result.schema.json` with `jsonschema`.",
+      "reason": "Raised from unreviewed on 2026-08-10 when the frame was built on BOTH hops: the re-framer in `bridge/governed_turn_result_bridge.py` (which imports §4.10(e)'s field sets, encoded-byte caps and the closed `GOVERNED_REFUSAL_REASONS` union rather than restating any of them, so the §4.10(e) module stays the single definition) and the strict parser in `apps/desktop/src-tauri/core/src/governed_bridge_result.rs`. What holds: the top-level `protocol` const as the ONE discriminator in both directions (never `receipt.envelope_jcs_b64`, which §4.6 warns is a REQUIRED key of the frozen `bridge.result` too, and §2.2's compatibility rule is tested against the real frozen schema); the three biconditionals (`output_stream_id`/`receipt` non-null iff ok==true, `error` non-null iff ok==false), both halves of each; every §4.6 encoded-byte cap with canonical-base64url decoding on all five b64 fields; the closed 29-member refusal union with every member reachable BY NAME on both hops; and §7.1's echo equality against the VERIFIED envelope. What is deliberately absent: any size check (the literal maximum frame is 74206 bytes compact / 74236 as the sidecar writes it, against `ai.rs::MAX_STDOUT_BYTES = 9437184` - a factor of 127, so no cap on the path could fire) and any accessor for the TRANSPORT-ONLY `output_bytes`/`output_sha256` echoes, which are readable ONLY through `check_echoes` so no output gate can be aimed at them."
     },
     "§4.7": {
       "status": "partial",
@@ -173,16 +385,33 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§5": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "reason": "The durable acceptance state machine is real and now has TWO production drivers over one ledger: the broker's five §5 v2 wire ops (`governed_supervisor_server.dispatch`) and the §4.10(d) in-process supplier `governed_acceptance.AcceptanceDriver`, which walks the same attempt through accept -> lease -> gate -> execute -> record -> attest -> sign and answers a §4.10(e) frame. The CAS, the three UNIQUEs, the closed state CHECK, the BEFORE-UPDATE transition trigger, the write-once completion PK and the evidence-head floor are all in the canonical `supervisor_ledger.sql` and are the enforcement. `execution_attempt_id` is minted exactly once at the step-4 CAS, the acceptance clock is read exactly once at step 2, and the supervisor-side nonce consume is that same CAS.",
+      "missing": "(1) Step 6's SIGNED lease. No lease-issuer key exists anywhere in the tree, so the lease document is published unsigned and `lease_handle` is `SHA256(JCS(payload))` rather than §3/Appendix B's `SHA256(JCS({payload, signature}))` - the same shape of contradiction the 2026-08-10 CORRECTION closed for `challenge_handle`, still open for `lease_handle`. (2) The `governed_turn_outbox` table exists in the DDL and has zero readers and zero writers; the terminal publish is create-if-absent into the content-addressed store instead. (3) Crash recovery is driven by the NEXT trigger rather than by a restart sweep: nothing scans the ledger at startup for a `LEASE_READY` row to re-gate or an `EXECUTION_STARTING` row to move to `RECOVERY_REQUIRED`. (4) Step 9's fsync'd immutable launch-start marker is optional in the design and is not produced. (5) The contained execution itself (§6.1 step 5) is an injected seam whose default binding refuses `platform_unsupported`.",
+      "tests": [
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_execution_attempt_id_exists_for_the_first_time_at_the_acceptance_cas",
+        "test_the_acceptance_clock_is_read_exactly_once_and_is_the_persisted_instant",
+        "test_the_nonce_is_consumed_by_the_acceptance_cas_and_nowhere_earlier",
+        "test_a_second_trigger_for_a_completed_turn_returns_the_identical_frame",
+        "test_an_attempt_left_in_executing_by_a_crash_is_never_relaunched",
+        "test_the_launch_gate_boundary_proceeds_at_exactly_min_launch_remaining"
+      ]
     },
     "§6": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§6.1": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "reason": "Steps 3-4 (acceptance ledger + lease publication), 5 (the launch gate and the ONE-TIME CAS to `EXECUTION_STARTING`), 8-9 (supervisor verification of the recorder chain and the terminal record publish), 10 (the attested `brops.run-attestation.v1`) and the supervisor half of 13 (the §4.10(e) metadata-only summary) are driven end to end by `governed_acceptance.AcceptanceDriver`, proved offline against real Ed25519 keys, a real durable ledger and the real isolated signer.",
+      "missing": "Step 0 (the broker-service orchestration and the §4.10(g) ingress), the RECORDER half of steps 6-7 and the contained execution of step 5 (an injected seam that refuses by default here), the TRANSPORT for steps 11-12 (the isolated signer's front door allowlists ONLY the broker uid and there is no supervisor->signer client in the tree, so the signing hop is a typed seam with no production binding), the sidecar re-frame in step 13 (§4.6's `bridge.governed-turn-result.v1` does not exist), and step 14's broker final acceptance including the §4.10(f) desktop pull loop.",
+      "tests": [
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict",
+        "test_the_signer_is_handed_the_exact_attested_bytes",
+        "test_a_signer_refusal_is_relayed_by_name",
+        "test_an_unreachable_signer_is_a_fault_not_a_refusal"
+      ]
     },
     "§6.3": {
       "status": "unreviewed",
@@ -195,7 +424,7 @@
     },
     "§7.1": {
       "status": "partial",
-      "missing": "Freshness (the §7.1 time window) is still absent. The replay half is now DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart on Linux and Windows.",
+      "missing": "Freshness IS now implemented: governed_verification::check_receipt_freshness bounds the envelope's challenge_accepted_at_ms and completed_at_ms against the broker's injected wall clock under the §1-LOCKED FreshnessWindow{future_skew_ms:60000,max_age_ms:300000}, and chain_executor reads that clock via SystemWallClock at acceptance. What is STILL absent from §7.1: the §4.10(f) chunked output pull/reassemble ON THIS PATH (the shipped broker runs the turn in-process and the output arrives inline, so there is no pull loop to verify; §4.10(f)'s supervisor hop landed 2026-08-10 and its desktop half — the bridge frame, the loop, the reassembly and the whole-output gate — landed the same day; what is still absent is a CALLER, because the §4.10(e) `signed` frame that carries the `output_stream_id` has no producer, and because the shipped broker reads the output off the local filesystem instead of pulling it) and the bridge/sign-result ECHO-equality step (no bridge frame exists on this path to echo). The replay half is DURABLE: receipt-id global uniqueness and the one-time nonce consume are a BEGIN IMMEDIATE CAS over SQLite rather than InMemoryLedger, so both survive a restart.",
       "source": "apps/desktop/AUDIT/ round-3 spec-conformance pass"
     },
     "§7.1(c)": {
@@ -213,6 +442,23 @@
     "§9.2": {
       "status": "unreviewed",
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+    },
+    "§5(f)": {
+      "status": "implemented",
+      "reason": "\"The signer sees the attested bytes\": `governed_acceptance.AcceptanceDriver._attest_and_sign` builds the `brops.sign-request.v1` by parsing the evidence object back out of the exact `evidence_jcs` the supervisor just signed (`json.loads(attestation.evidence_jcs)`), never by rebuilding it beside the attestation. The signer's re-hash and the envelope's `attestation_evidence_sha256` are therefore over identical bytes by construction, and the §4.10(e) frame carries those same bytes as `attestation_evidence_jcs_b64`.",
+      "tests": [
+        "test_the_signer_is_handed_the_exact_attested_bytes",
+        "test_an_admitted_turn_becomes_a_signed_4_10_e_verdict"
+      ]
+    },
+    "§5(j)": {
+      "status": "partial",
+      "reason": "The consumer half is implemented: the containment artifact is read from the content-addressed store by the handle the completion recorded, carried into the §4.10(e) frame as `containment_evidence_b64`, and a missing or empty report is a REFUSAL (`containment_missing`) rather than a null or a fallback.",
+      "missing": "The PRODUCER. §5(j) says the recorder writes a `brops.containment-evidence.v1` document stating what IT observed (pinned image digests, lease file and digest, cgroup, the §2.7 descriptor contract, its own uid/gid, the launcher exit, the output length). Nothing in this tree writes that document: it comes out of the §6.1 step-5 execution seam, whose default binding refuses. So the shape of the report is not validated anywhere, only its presence.",
+      "tests": [
+        "test_containment_missing_when_the_report_cannot_be_read",
+        "test_containment_missing_when_the_report_is_empty"
+      ]
     }
   }
 }

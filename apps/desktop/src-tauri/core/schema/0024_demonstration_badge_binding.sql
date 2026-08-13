@@ -1,0 +1,20 @@
+-- Bind the DEMONSTRATION badge to the bytes it was earned over (remediation audit R2:
+-- "the demonstration badge is a bare flag row").
+--
+-- 0018 created `demonstration_verified_messages(message_id, recorded_at)`. That is the whole record:
+-- a message id and a timestamp. The in-process governed chain that justified the badge runs in a
+-- temp directory the command deletes on its way out, so by the time anything could look, every
+-- artifact that substantiated the green is gone and what remains is a flag. Nothing tied the badge
+-- to the body it is painted beside, so the projection painted `demonstration_verified` on whatever
+-- text that row's message happened to hold.
+--
+-- `body_sha256` is the SHA-256 of the exact reply bytes the chain bound and verified, recorded in the
+-- same transaction as the message. The read path recomputes it from the stored body and refuses to
+-- paint the badge unless the two agree, so the badge is a check that can fail rather than a row that
+-- exists.
+--
+-- NULLABLE on purpose. Rows written before this migration carry no digest, and there is nothing to
+-- reconstruct one from -- so they read as unsubstantiated and lose the badge. Back-filling them from
+-- the body they now sit next to would manufacture exactly the evidence this migration exists to
+-- require. A demonstration reply is one button press away; an unbacked green is not worth keeping.
+ALTER TABLE demonstration_verified_messages ADD COLUMN body_sha256 TEXT;

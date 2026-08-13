@@ -42,15 +42,248 @@
 #   * The host-independent half of the chain (challenge -> lease -> attest -> sign -> verify_and_accept)
 #     is proven separately and reproducibly by `cargo test -p brops-win-live`, which needs no Windows.
 #
+# ---------------------------------------------------------------------------------------------------
+# AUDIT: THIS SCRIPT USED TO EXIT 0 REGARDLESS OF THE ANSWER
+# ---------------------------------------------------------------------------------------------------
+# `Invoke-Turn` ended with `Write-Output ("{0}: {1}" -f $label, $out.Trim())` — it printed whatever
+# win_live_turn said and never compared it to what the case REQUIRED, nor looked at the exit code. The
+# script then ended after the POSITIVE and NEGATIVE calls, so a completed run exited 0 whether the
+# positive case came back `blocked`, whether the negative case came back `trusted_verified` (the peer-SID
+# gate having failed open — the exact thing this harness exists to disprove), or whether the driver
+# printed no RESULT line at all. Printing an expectation beside an unexamined result is a transcript,
+# not a proof.
+#
+# `Test-TurnResult` below now DECIDES, and the script exits 1 on any failing case. The decision is a
+# pure function of the driver's output + exit code, so it is testable without the offline root key:
+#
+#     .\win_live_proof.ps1 -SelfTest
+#
+# runs it against synthetic driver outputs (including the ones the old script waved through) and fails
+# if the comparison is not doing its job. That self-test needs no key, no elevation and no build; the
+# real run needs all three.
+#
 # Requires the workspace built: cargo build -p brops-win-live --bins
 param(
   [string]$Dbg  = "$PSScriptRoot\..\..\target\debug",
   [string]$Root = "C:\ProgramData\brops-live-selfproof",
   [string]$RootKey,
   [ValidateSet("external","kit_generated","demonstration")]
-  [string]$RootProvenance = "external"
+  [string]$RootProvenance = "external",
+  # Exercise the verdict logic against synthetic driver outputs and exit. No key/hardware required.
+  [switch]$SelfTest
 )
 $ErrorActionPreference = "Stop"
+
+# ---------------------------------------------------------------------------------------------------
+# The verdict. Pure: the driver's stdout + exit code in, pass/fail + reasons out.
+#
+# win_live_turn prints exactly one line —
+#   RESULT: <trust_state> production_verified=<bool> bound=<bool> root_anchor=<provenance>
+# — and exits 0 only when production_verified AND bound; every refusal path prints
+#   RESULT: blocked reason=<why> production_verified=false bound=false
+# and exits 1. Both halves are checked here: a RESULT line that disagrees with the exit code means the
+# driver is not the thing it claims to be, and neither is this proof.
+# ---------------------------------------------------------------------------------------------------
+function Test-TurnResult {
+  param(
+    [string]$Label,
+    # `completes` = the governed chain must run end to end; `blocked` = it must refuse.
+    [ValidateSet("completes","blocked")][string]$Expect,
+    [string]$Output,
+    $ExitCode,
+    [ValidateSet("external","kit_generated","demonstration")][string]$RootProvenance = "external"
+  )
+  $problems = New-Object System.Collections.Generic.List[string]
+
+  $m = [regex]::Match(($Output | Out-String), '(?m)^\s*RESULT:\s*(.+)$')
+  $result = if ($m.Success) { $m.Groups[1].Value.Trim() } else { $null }
+  if (-not $result) {
+    $problems.Add("no RESULT line — the driver did not reach a verdict (build/config/pipe failure?)")
+  }
+
+  $isBlocked  = $result -and ($result -like "blocked*")
+  $isTrusted  = $result -and ($result -like "trusted_verified*")
+  $prodTrue   = $result -and ($result -match 'production_verified=true')
+  $boundTrue  = $result -and ($result -match 'bound=true')
+
+  if ($Expect -eq "completes") {
+    if ($isBlocked)      { $problems.Add("chain was BLOCKED but this case requires it to complete: $result") }
+    elseif (-not $isTrusted -and $result) { $problems.Add("RESULT is neither trusted_verified nor blocked: $result") }
+    if ($result -and -not $boundTrue) { $problems.Add("bound=false — the committed row does not match the envelope") }
+    # Only an `external` (offline) anchor can render a PRODUCTION verdict. Under any other custody the
+    # honest outcome is a completed chain with production_verified=false and a non-zero exit, so this
+    # case must NOT demand exit 0 there — nor accept production_verified=true, which would mean the
+    # custody classification is lying.
+    if ($RootProvenance -eq "external") {
+      if ($result -and -not $prodTrue) { $problems.Add("production_verified=false under an EXTERNAL root anchor") }
+      if ($null -eq $ExitCode -or [int]$ExitCode -ne 0) { $problems.Add("driver exited $ExitCode (expected 0)") }
+    } else {
+      if ($prodTrue) { $problems.Add("production_verified=true under $RootProvenance custody — the verdict is not honest") }
+      if ($result -and $result -notmatch 'demonstration_custody') {
+        $problems.Add("expected demonstration custody to be named in the verdict under $RootProvenance")
+      }
+    }
+  }
+  else {  # blocked
+    if (-not $isBlocked -and $result) {
+      $problems.Add("chain COMPLETED but this case requires a refusal — the peer-SID gate failed open: $result")
+    }
+    if ($prodTrue)  { $problems.Add("production_verified=true on a case that must be refused") }
+    if ($boundTrue) { $problems.Add("bound=true on a case that must be refused") }
+    if ($null -eq $ExitCode -or [int]$ExitCode -eq 0) { $problems.Add("driver exited 0 on a case that must be refused") }
+  }
+
+  [pscustomobject]@{
+    Label    = $Label
+    Expect   = $Expect
+    Result   = $result
+    ExitCode = $ExitCode
+    Pass     = ($problems.Count -eq 0)
+    Problems = @($problems)
+  }
+}
+
+# ---------------------------------------------------------------------------------------------------
+# The RUN's verdict, as opposed to one case's. Pure: the collected case results in, the lines to print
+# and the process exit code out.
+#
+# AUDIT (2026-08-10): the round that gave this harness a comparison also made it impossible to PASS,
+# and nothing caught it, because the self-test called `Test-TurnResult` directly and never went near
+# the collection. `Invoke-Turn` ended with
+#     Write-Output ("{0}: {1}" -f $label, $out.Trim())      # the transcript
+#     Test-TurnResult ...                                   # the verdict
+# and PowerShell puts BOTH on the function's success stream, so `$results += Invoke-Turn ...` appended
+# a [string] AND a [pscustomobject] per case. `$results.Count` was 4 against `$expectedCases = 2`, the
+# arity guard fired on every run, and `RESULT: PASS` was unreachable. It failed in the SAFE direction
+# -- but a proof that cannot pass is the same defect as a check that cannot fail, and this file's own
+# header describes that defect in the other direction.
+#
+# So the transcript travels ON the result object now and is printed by the caller, and this function
+# rejects a results array containing anything that is not a case result BY NAME. A bare count said
+# "4 case(s) evaluated" for a run that evaluated two, which sends the reader looking in the wrong
+# place.
+# ---------------------------------------------------------------------------------------------------
+function Resolve-ProofOutcome {
+  param(
+    [object[]]$Results,
+    [int]$ExpectedCases,
+    [string]$PassLine
+  )
+  $lines = New-Object System.Collections.Generic.List[string]
+
+  # A case result is recognised by the field the decision reads. A [string] on the success stream --
+  # the defect above -- is caught here and NAMED, rather than silently inflating a count.
+  $stray = @($Results | Where-Object {
+    $null -eq $_ -or -not ($_.PSObject.Properties.Name -contains 'Pass')
+  })
+  if ($stray.Count -gt 0) {
+    $lines.Add("RESULT: FAIL -- $($stray.Count) non-result object(s) reached the results array;")
+    $lines.Add("        a case function wrote to the success stream (put it in Transcript, not Write-Output).")
+    return [pscustomobject]@{ Lines = @($lines); ExitCode = 1 }
+  }
+
+  $cases = @($Results)
+  foreach ($r in $cases) {
+    if ($r.Pass) { $lines.Add(("PASS  {0}  ->  {1}" -f $r.Label, $r.Result)) }
+    else         { $lines.Add(("FAIL  {0}: {1}" -f $r.Label, ($r.Problems -join "; "))) }
+  }
+  if ($cases.Count -ne $ExpectedCases) {
+    $lines.Add("RESULT: FAIL -- $($cases.Count) case(s) evaluated, expected $ExpectedCases")
+    return [pscustomobject]@{ Lines = @($lines); ExitCode = 1 }
+  }
+  $failed = @($cases | Where-Object { -not $_.Pass })
+  if ($failed.Count -gt 0) {
+    $lines.Add("RESULT: FAIL -- the governed turn did not behave as both cases require")
+    return [pscustomobject]@{ Lines = @($lines); ExitCode = 1 }
+  }
+  $lines.Add($PassLine)
+  [pscustomobject]@{ Lines = @($lines); ExitCode = 0 }
+}
+
+# ---------------------------------------------------------------------------------------------------
+# -SelfTest: drive the verdict with synthetic driver outputs. Every vector marked $false was accepted
+# (exit 0) by this script before the comparison existed.
+# ---------------------------------------------------------------------------------------------------
+if ($SelfTest) {
+  # The `gitleaks:allow` below sits at the END of the offending line, not above it. A first attempt
+  # put it on its own lines here and CI stayed red: gitleaks only honours the marker on the SAME
+  # line as the finding, which is how the Rust call sites in broker/src/manifest_resolver.rs already
+  # write it. What is exempted is a key IDENTIFIER, published in the trusted-key registry, inside a
+  # synthetic test vector -- not key material. The scanner reads `key=<token>` in a string literal as
+  # a credential and cannot know the difference, and `.github/supply-chain/gitleaks.toml` is
+  # owner-owned (audit F-47), so the exemption belongs here in the diff rather than in a config
+  # nobody reviews.
+  $good = "RESULT: trusted_verified(production key=brops-live-signer-1 epoch=2 root=brops-root-1) production_verified=true bound=true root_anchor=external"  # gitleaks:allow (test vector: key ID, not key material)
+  $demo = "RESULT: trusted_verified(demonstration_custody key=k epoch=1 root=r root_provenance=demonstration) production_verified=false bound=true root_anchor=demonstration"
+  $blk  = "RESULT: blocked reason=chain:PeerDenied production_verified=false bound=false"
+  $vectors = @(
+    @{ n="POSITIVE completes under external root";   L="POS"; e="completes"; o=$good; x=0; p="external";      want=$true  },
+    @{ n="NEGATIVE is blocked";                      L="NEG"; e="blocked";   o=$blk;  x=1; p="external";      want=$true  },
+    @{ n="POSITIVE came back BLOCKED";               L="POS"; e="completes"; o=$blk;  x=1; p="external";      want=$false },
+    @{ n="NEGATIVE COMPLETED (gate failed open)";    L="NEG"; e="blocked";   o=$good; x=0; p="external";      want=$false },
+    @{ n="POSITIVE not production under external";   L="POS"; e="completes"; o=$demo; x=1; p="external";      want=$false },
+    @{ n="POSITIVE bound=false (row mismatch)";      L="POS"; e="completes"; o=($good -replace 'bound=true','bound=false'); x=0; p="external"; want=$false },
+    @{ n="driver printed no RESULT line";            L="POS"; e="completes"; o="win_live_turn: --config required"; x=2; p="external"; want=$false },
+    @{ n="POSITIVE said production but exited 1";    L="POS"; e="completes"; o=$good; x=1; p="external";      want=$false },
+    @{ n="demonstration custody: honest completion"; L="POS"; e="completes"; o=$demo; x=1; p="demonstration"; want=$true  },
+    @{ n="demonstration custody claiming PRODUCTION";L="POS"; e="completes"; o=$good; x=0; p="demonstration"; want=$false },
+    @{ n="NEGATIVE blocked but exited 0";            L="NEG"; e="blocked";   o=$blk;  x=0; p="external";      want=$false }
+  )
+  $bad = 0
+  foreach ($v in $vectors) {
+    $r = Test-TurnResult -Label $v.L -Expect $v.e -Output $v.o -ExitCode $v.x -RootProvenance $v.p
+    $ok = ($r.Pass -eq $v.want)
+    if (-not $ok) { $bad++ }
+    $mark = if ($ok) { "ok  " } else { "BAD " }
+    Write-Output ("{0} {1,-46} verdict-says-pass={2,-5} expected={3,-5} {4}" -f `
+      $mark, $v.n, $r.Pass, $v.want, ($r.Problems -join "; "))
+  }
+  # ---- and the RUN-level decision, which nothing covered until 2026-08-10 --------------------------
+  # The self-test used to stop at the line above. That is why a harness whose PASS line was
+  # unreachable self-tested green for four days: every vector exercised the case verdict, and the
+  # defect was in the collection between the case verdict and the exit code. These vectors drive
+  # `Resolve-ProofOutcome` — including the exact shape the defect produced, a transcript string mixed
+  # in among the case results.
+  $okCase   = [pscustomobject]@{ Label="POS"; Result="trusted_verified"; Pass=$true;  Problems=@() }
+  $badCase  = [pscustomobject]@{ Label="NEG"; Result="blocked";          Pass=$false; Problems=@("nope") }
+  $runVectors = @(
+    @{ n="two passing cases PASS";              r=@($okCase,$okCase);            c=2; want=0 },
+    @{ n="one failing case FAILS";              r=@($okCase,$badCase);           c=2; want=1 },
+    @{ n="a missing case FAILS";                r=@($okCase);                    c=2; want=1 },
+    @{ n="an extra case FAILS";                 r=@($okCase,$okCase,$okCase);    c=2; want=1 },
+    @{ n="no cases at all FAILS";               r=@();                           c=2; want=1 },
+    # THE regression vector: `$results += Invoke-Turn ...` where the case function also wrote the
+    # transcript to the success stream. Two real verdicts, both passing, and the run must still FAIL.
+    @{ n="transcript leaked onto the stream";   r=@("POS: RESULT: ...",$okCase,"NEG: RESULT: ...",$okCase); c=2; want=1; say="non-result object(s) reached the results array" },
+    @{ n="a null in the results FAILS";         r=@($okCase,$null);              c=2; want=1; say="non-result object(s) reached the results array" },
+    # The stray check and the count check are NOT the same check, and this vector is what proves it:
+    # four entries against ExpectedCases=4, so the COUNT is satisfied and only the stray check can
+    # refuse. Without it, deleting either guard would change no outcome and the pair would be the
+    # mutually-masking arrangement this file's history is full of.
+    @{ n="strays that satisfy the count FAIL";  r=@("leak",$okCase,"leak",$okCase); c=4; want=1; say="non-result object(s) reached the results array" },
+    @{ n="a missing case says WHICH problem";   r=@($okCase);                    c=2; want=1; say="1 case(s) evaluated, expected 2" },
+    @{ n="a failing case names its problems";   r=@($okCase,$badCase);           c=2; want=1; say="FAIL  NEG: nope" }
+  )
+  # `say` is asserted, not decorative. The stray check and the failing-case check BOTH refuse a
+  # leaked transcript (a [string] has no `Pass`, so it reads as a failed case), so on exit code alone
+  # deleting the stray check changes no outcome and the two would mask each other — the arrangement
+  # the desktop sweep had to collapse a fortnight ago. What the stray check actually contributes is
+  # the CAUSE: without it the run reports two mystery case failures with empty problem lists, which
+  # is precisely how this defect survived four days of green self-tests. So the message is the
+  # asserted outcome.
+  foreach ($v in $runVectors) {
+    $o = Resolve-ProofOutcome -Results $v.r -ExpectedCases $v.c -PassLine "RESULT: PASS -- selftest"
+    $ok = ($o.ExitCode -eq $v.want)
+    if ($ok -and $v.ContainsKey('say')) { $ok = (($o.Lines -join "`n") -like "*$($v.say)*") }
+    if (-not $ok) { $bad++ }
+    $mark = if ($ok) { "ok  " } else { "BAD " }
+    Write-Output ("{0} run: {1,-41} exit={2} expected={3}" -f $mark, $v.n, $o.ExitCode, $v.want)
+  }
+
+  if ($bad -gt 0) { Write-Output "SELFTEST: FAIL ($bad vector(s) wrong)"; exit 1 }
+  Write-Output "SELFTEST: PASS (the case comparison AND the run decision accept only honest outcomes)"
+  exit 0
+}
 
 function Fail-Loudly([string[]]$lines) {
   Write-Host ""
@@ -101,7 +334,7 @@ $me       = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $mySid    = $me.User.Value
 $myAccount = $me.Name
 
-function Invoke-Turn([string]$brokerSid, [string]$prefix, [string]$label) {
+function Invoke-Turn([string]$brokerSid, [string]$prefix, [string]$label, [string]$expect) {
   & (Join-Path $bin "win_provision.exe") --root-dir $Root --allowed-broker-sid $brokerSid `
       --executor-path (Join-Path $bin "win_executor.exe") --pipe-prefix $prefix `
       --root-key $RootKey --root-provenance $RootProvenance `
@@ -140,11 +373,35 @@ function Invoke-Turn([string]$brokerSid, [string]$prefix, [string]$label) {
     }
   }
   $out = & (Join-Path $bin "win_live_turn.exe") --config $cfg 2>&1 | Out-String
+  $turnExit = $LASTEXITCODE
   Stop-Process -Id $a.Id,$s.Id,$g.Id -Force -ErrorAction SilentlyContinue
-  Write-Output ("{0}: {1}" -f $label, $out.Trim())
+  # JUDGE it, and return EXACTLY ONE object. The transcript rides on the result rather than being
+  # written to the success stream: `Write-Output` here made every call return two objects, so
+  # `$results += Invoke-Turn ...` collected four for two cases and the run could never pass. See
+  # `Resolve-ProofOutcome`.
+  $verdict = Test-TurnResult -Label $label -Expect $expect -Output $out -ExitCode $turnExit `
+                             -RootProvenance $RootProvenance
+  $verdict | Add-Member -NotePropertyName Transcript -NotePropertyValue ("{0}: {1}" -f $label, $out.Trim())
+  $verdict
 }
 
 Write-Host "NOTE: same-account harness -- all four processes run as $myAccount." -ForegroundColor Yellow
 Write-Host "      The broker shares the servers' principal, so no cross-account isolation is shown here." -ForegroundColor Yellow
-Invoke-Turn $mySid                         "brops-pos" "POSITIVE (correct broker SID)"
-Invoke-Turn "S-1-5-21-0-0-0-9999"          "brops-neg" "NEGATIVE (wrong broker SID)"
+$results = @()
+$results += Invoke-Turn $mySid                "brops-pos" "POSITIVE (correct broker SID)" "completes"
+$results += Invoke-Turn "S-1-5-21-0-0-0-9999" "brops-neg" "NEGATIVE (wrong broker SID)"   "blocked"
+
+# The transcripts, printed here rather than from inside the case function (see `Resolve-ProofOutcome`).
+Write-Host ""
+foreach ($r in $results) { if ($r.PSObject.Properties.Name -contains 'Transcript') { Write-Output $r.Transcript } }
+
+# BOTH directions must have been evaluated and matched. One alone shows nothing: a chain that always
+# completes and a chain that always refuses each satisfy exactly one of these cases.
+$passLine = if ($RootProvenance -eq "external") {
+  "RESULT: PASS -- production trusted_verified with the correct broker SID; blocked with a wrong one"
+} else {
+  "RESULT: PASS -- chain completed under $RootProvenance custody (NOT production) with the correct broker SID; blocked with a wrong one"
+}
+$outcome = Resolve-ProofOutcome -Results $results -ExpectedCases 2 -PassLine $passLine
+foreach ($l in $outcome.Lines) { Write-Output $l }
+exit $outcome.ExitCode

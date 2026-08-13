@@ -1,6 +1,19 @@
 # Wave 3b-1B — authoritative execution→receipt binding · ARCHITECT ADDENDUM (design-lock, rev 30 — closes the rev-29 Architect design RED: 1 P0 + 3 P1)
 
-> **STATUS: ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
+> **STATUS: OWNER-APPROVED 2026-08-10 — rev-30, by the Owner, NOT by an Architect audit.**
+> Gev ruled rev-30 approved and authorised 3b-1B implementation to proceed. That is a waiver of the
+> DESIGN-ONLY clause below, granted by the person who holds the repository, and it is recorded as
+> exactly that: **no Architect re-audit of rev-30 has taken place, and this line is not a substitute
+> for one.** An independent audit of the resulting code is still required before any production gate
+> opens, and the standing verdict on the last independent audit is RED.
+>
+> Why this had to be written rather than toggled: `config/current_state.json` carried
+> `CURRENT_DESIGN_GATE: GREEN` while this banner said RED, and §0 of this document says that where
+> any other file disagrees with it, **this document wins**. So the state file had been asserting a
+> verdict the normative source denied. The disagreement is resolved by naming who decided, not by
+> letting a token stand in for a verdict that never happened.
+>
+> **The superseded verdict, kept because it is the record:** ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
 > HEAD `1a79bc28ba89d78fc547b9f17b4fb94cdea81abe`; CI run 30297820594 9/9 GREEN — CI ≠ design GREEN).
 > CURRENT candidate = rev-30 = PENDING re-audit (the remediation below; it does NOT inherit the rev-29
 > verdict). No Architect-approved or merged 3b-1B implementation exists; PR #32 holds UNAPPROVED
@@ -105,6 +118,47 @@
 > **This document is the single normative source for the 3b-1B contracts; where any other
 > file (including the 3b-1 map) and this document disagree, THIS document wins and the other
 > is a bug to fix.**
+
+> ### CORRECTION 2026-08-10 (rev-30) — `challenge_handle` covers `{payload, sig}`, NOT the payload alone
+>
+> **This document contradicted itself and one half of it was WRONG.** §3's artifact matrix (row 1),
+> §4.10(a0) and Appendix B's handle matrix all define
+> `challenge_handle = SHA256(JCS({payload, sig}))`. §5's summary table for the `accept-open` op instead
+> said the handle was `SHA256` of `JCS(payload)` — the payload ALONE. Two digests of different byte
+> strings were specified for the same field of the same turn.
+>
+> **Which half won: §3 / §4.10(a0) / Appendix B. §5's table was the error and is corrected in place.**
+>
+> **Why.** Three reasons, in increasing order of force:
+> 1. §3 and §4.10(a0) *define* the field; §5's table was *describing* what the shipped
+>    `governed_supervisor.accept_open` happened to compute. A definition outranks a description of an
+>    implementation, and §0 says this document wins over code.
+> 2. `{payload, sig}` is the strictly stronger binding: two distinct signatures over one payload get two
+>    distinct handles.
+> 3. **Decisive:** §7's challenge predicate fetches the stored document BY `challenge_handle` and
+>    re-hashes the exact stored bytes — `SHA256(bytes) == challenge_handle` AND
+>    `bytes == canonical_bytes({payload, sig})`. The stored document *is* the signed `{payload, sig}`
+>    envelope (§2.1.1 `issued_challenge_document`, §6 step-1 publish). Under the payload-only form that
+>    predicate could never pass for any turn, so §5's table was not a weaker alternative — it was
+>    incompatible with §7.
+>
+> **What this changed in the tree.** `governed_supervisor.accept_open` now computes the `{payload, sig}`
+> form via the single new definition `governed_supervisor.challenge_handle_for`, and the win-live kit's
+> `servers.rs::accept_open` was corrected the same way. The §4.10(a0) open path already computed it
+> correctly (it hashes the canonicality-gated document bytes) and is unchanged. §4.10(d)'s join of the
+> `INPUTS_READY` staging row to its acceptance row on `(install_id, request_nonce, challenge_handle)` is
+> now satisfiable; it was not before.
+>
+> **Nothing durable was invalidated.** No committed fixture, receipt, attestation, evidence row or
+> recorded proof under `apps/desktop/AUDIT/` or `win-live/proof/` contains a `challenge_handle` VALUE at
+> all — established by grepping every tracked file for a `"challenge_handle"` JSON field with a 64-hex
+> value (no hits) and every 64-hex literal in those directories (5 hits, all `supervisor_ledger.sql` or
+> `output_handle` digests). `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:166` *describes* the old
+> formula in prose; it is a historical record of the code at `219c763` and is deliberately left as written.
+>
+> This correction is recorded rather than applied silently because this document is the normative source
+> (§0), and a silent edit to it is indistinguishable from the contradiction it fixes. The decision was the
+> Architect's; see `docs/OWNER_ACTION_REQUIRED.md` §1c.
 
 ---
 
@@ -2758,7 +2812,7 @@ reply enum literal appears in exactly one routing row.
 >
 > | op | request | effect |
 > |---|---|---|
-> | `accept-open` | `{challenge_doc}` | two-phase verify + **Phase C**: the challenge's signed `supervisor_id` must be THIS supervisor (else `supervisor_mismatch`) → CAS an acceptance row keyed on the supervisor's own `challenge_handle = sha256(JCS(payload))` → `LEASE_READY`. A replayed challenge returns the **ORIGINAL** lease; it never mints a second attempt. |
+> | `accept-open` | `{challenge_doc}` | two-phase verify + **Phase C**: the challenge's signed `supervisor_id` must be THIS supervisor (else `supervisor_mismatch`) → CAS an acceptance row keyed on the supervisor's own `challenge_handle = SHA256(JCS({payload, sig}))` (**CORRECTED 2026-08-10** — this cell used to read `sha256(JCS(payload))`, the payload alone, which contradicted §3/§4.10(a0)/Appendix B and was unsatisfiable under §7's re-hash predicate; see the CORRECTION block at the head of this document) → `LEASE_READY`. A replayed challenge returns the **ORIGINAL** lease; it never mints a second attempt. |
 > | `launch-gate` | `{execution_attempt_id}` | the §5 step-8a budget gate against the lease window the **supervisor persisted** → `EXECUTION_STARTING`, or durably `EXPIRED` with the gate reason. The caller presents no lease and cannot choose the expiry it is judged against (also closes audit F-23). |
 > | `execution-started` | `{execution_attempt_id, process_group_id, cgroup_id, execution_started_marker}` | `EXECUTION_STARTING → EXECUTING`. |
 > | `complete-run` | `{execution_attempt_id, produced}` | write-once completion + evidence floor → `COMPLETED`. `produced` carries ONLY run-produced values; every id, nonce, identity and acceptance timestamp is rejected as an unknown field. |

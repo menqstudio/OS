@@ -73,8 +73,11 @@ claim was right for a vendor-signs/customer-verifies fleet and wrong for a produ
 > **On a shipped install the ledger carries no signed head, and here is the chain of facts.**
 > `bro_audit_log.append()` anchors only when `anchor_custody_configured()`, which is true only when
 > `BRO_AUDIT_ANCHOR_SIGNER` or `BRO_AUDIT_ANCHOR_KEY_ID` is set. **Nothing in the shipped product
-> sets either** — every occurrence in the tree is a test harness or a document; `Provisioned::engine_env()`
-> *returns* them and the startup path deliberately does not export them (`src-tauri/src/lib.rs`);
+> sets either** — every occurrence in the tree is a test harness or a document; they are **not** part of
+> `Provisioned::engine_env()` and cannot be (that list is the registry/pin/floor/session set, which IS
+> exported since 2026-08-09). They come from `AnchorEnv::engine_env()`, which only exists after
+> `audit_signer::verify_installed` has MEASURED an installed signer — an unmeasured
+> `BRO_AUDIT_ANCHOR_SIGNER` would be an audit anchor claimed rather than proved;
 > the `brops-audit-signer` service and the `brops-anchor-relay` shim are built by the workspace but
 > appear in no installer (`tauri.conf.json` declares no `externalBin` and no `resources`); and
 > `register::apply` has no caller outside tests. So `append()` takes its unconfigured path: it writes
@@ -163,6 +166,177 @@ verifying key independently (so the comparison has two sources and can fail), or
 construction as the property and delete the guard rather than keep a check that reads as one. Doing
 neither leaves a keystone blocker open, which is where it stands today.
 
+## 1b. The engine's head floor has no posture that satisfies its own two rules
+
+**What you have to decide: where the write happens.** Not a patch — a deployment topology choice.
+
+`bro_completion`'s anti-rollback floor asks two things of the directory holding its marks: `bro_custody`
+refuses a directory the polices account can rewrite, and the code has to be able to write a mark into it.
+Every posture was driven against a real directory on Windows, and none satisfies both:
+
+| posture | result |
+|---|---|
+| writable, self-owned | custody REFUSES — "can be rewritten by the very account it polices" |
+| DENY ACE on WD/AD/DC | the write REFUSES `[Errno 13]`, **and custody still refuses**, because the process owns the directory and so holds `WRITE_DAC` |
+| `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` declared | it advances — with every custody rule in the runtime switched off |
+
+The reason is structural: **the builder is the writer.** The floor exists to stop the builder rolling
+evidence back, and the builder is the only principal that ever writes it. On POSIX the weaker form holds —
+creating `<task>.floor.json.tmp` and renaming needs `w+x` on the directory, which the custody rule refuses.
+
+**What was already tried and is now closed off.** On 2026-08-10 the obvious escape — "route it to the
+supervisor's durable ledger, which already has a floor written by a different uid" — was investigated and
+**disproved by execution**, not by argument. The two floors measure different numbers: the ledger counts per
+INSTALL and, deliberately, as an install-wide ceiling; this one counts per TASK with every task's first
+anchor at 1. Offering two real signed heads (task-1 seq 1, task-2 seq 1) to the ledger refuses the second
+with `EvidenceFork` — so routing completion there would make **the second task in any deployment permanently
+un-completable**. It is also unreachable from the completion path (Linux-only AF_UNIX + `SO_PEERCRED`,
+broker uid only), **absent entirely on Windows** (open finding R-42), and has no column for
+`evidence_head_sha256`, which drives the "same sequence, different signed head" refusal. The docstrings that
+recommended that route have been corrected so the next reader does not repeat it.
+
+**The real options, both needing your call:**
+1. **A floor-writer service** — a small always-on principal that owns the marks directory and accepts
+   append-only advance requests from the builder.
+2. **A setuid helper** — the same idea without a resident service; the repo already ships a setuid launcher
+   pattern for the Linux live kit.
+
+Until one of them exists, the floor's custody rule is satisfiable only by the acknowledgement, which
+switches off every custody rule at once. That is recorded in the code as a contradiction rather than papered
+over: `HeadFloorConfigurationContradictionTests` asks both rules of a real directory and skips by name where
+a posture needs elevation, and both `_head_floor_dir` and `_advance_head_floor` carry warnings saying the
+escape route in their own text cannot be configured.
+
+## 1c. RESOLVED 2026-08-10 — `challenge_handle` covers `{payload, sig}` (Architect decision, taken)
+
+**This is closed. It is kept on this page as the record of what was decided and on what grounds, not as
+something waiting on you.** No Owner action is required for 1c.
+
+**The contradiction.** rev-30 defined one field two ways. §3's artifact matrix, §4.10(a0) and Appendix B's
+handle matrix all said `challenge_handle = SHA256(JCS({payload, sig}))`. The shipped
+`governed_supervisor.accept_open` computed `SHA256(JCS(payload))` — the payload alone — and §5's own summary
+table recorded that as correct. The §4.10(a0) open path landed on 2026-08-10 followed the §3 half, so for one
+and the same turn the staging row's handle and the acceptance row's handle were digests of DIFFERENT byte
+strings and §4.10(d)'s join on `(install_id, request_nonce, challenge_handle)` could not succeed.
+
+**The ruling: §3 / §4.10(a0) / Appendix B are normative. `accept_open` was wrong and is corrected; §5's
+summary table is corrected to match.**
+
+**Why, in increasing order of force.**
+
+1. §3 and §4.10(a0) *define* the field. §5's table was *describing* what the code happened to do. A
+   definition outranks a description, and §0 says the design document wins over the code.
+2. `{payload, sig}` is the strictly stronger binding — two distinct signatures over one payload get two
+   distinct handles, which is the property a content address should have.
+3. **Decisive, and it is not an argument from authority.** §7's challenge predicate fetches the stored
+   document BY `challenge_handle` and re-hashes the exact stored bytes: `SHA256(bytes) == challenge_handle`
+   AND `bytes == canonical_bytes({payload, sig})`. The stored document *is* the signed `{payload, sig}`
+   envelope (§2.1.1 `issued_challenge_document`, §6 step-1 publish). Under the payload-only form that
+   predicate could never pass for ANY turn. §5's half was therefore not a weaker-but-workable alternative;
+   it was incompatible with §7, and no reading of the document makes it work.
+
+**What the §5 form bought, and why losing it costs nothing.** Hashing the payload alone made two different
+signatures over one payload collapse to ONE handle, so a re-signed replay hit `UNIQUE(challenge_handle)` and
+was served the original lease. Under the `{payload, sig}` form it misses that lookup — and then collides on
+`UNIQUE(install_id, request_nonce)` and is refused `nonce_rebound_to_different_turn`
+(`governed_supervisor_ledger._prepare_locked`). It still buys **zero** additional execution attempts. The only
+change is that a re-signed document is refused instead of quietly served the original lease, which is the
+fail-closed direction. This was checked by reading the CAS path, not assumed.
+
+**Blast radius, established by searching before anything was changed.** Producers of `challenge_handle`:
+`governed_turn_open.verify_open_request` (§4.10(a0), already the `{payload, sig}` form — unchanged),
+`governed_supervisor.accept_open` (corrected), and the win-live kit's `servers.rs::accept_open` (corrected the
+same way). Consumers: the two `supervisor_ledger.sql` copies' `UNIQUE(challenge_handle)` and the staging
+table's, `governed_supervisor_ledger.reuse_or_prepare` / `_prepare_locked` / `_BOUND_FIELDS`,
+`governed_staging_ledger.load_staging_by_handle`, `build_terminal_record`, `core/src/supervisor_ledger.rs`,
+and the win-live terminal record — every one of them is opaque to the formula and takes the handle as given.
+
+**No durable artifact was invalidated.** No committed fixture, receipt, attestation, evidence row or recorded
+proof under `apps/desktop/AUDIT/` or `apps/desktop/src-tauri/win-live/proof/` contains a `challenge_handle`
+VALUE at all. Established by grepping every tracked file for a `"challenge_handle"` JSON field with a 64-hex
+value (no hits) and every 64-hex literal in those directories (5 hits: 4 are the `supervisor_ledger.sql`
+digest, 1 is an `output_handle`). `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:166` *describes* the old
+formula in prose — it is a historical record of the code at `219c763` and is deliberately left as written.
+
+**Nothing was unlocked by this.** `governed_verification_unconfigured()`, `UpstreamBlockedExecutor` and
+`connect_broker()` are untouched; no governed surface became reachable and no production `trusted_verified`
+can be produced. §4.10(d) itself is still NOT IMPLEMENTED — this only makes the join it will need
+satisfiable.
+
+## 1d. RESOLVED 2026-08-12 — §4.10(g) is the real path; the direct-AF_UNIX one is retired
+
+**The Owner's decision, taken 2026-08-12: the §4.10(g) sidecar ladder is the production path, and the
+broker's direct-AF_UNIX `GovernedChain` is removed rather than kept beside it.**
+
+The decisive fact, and the reason this was not a matter of taste. `broker/src/manifest_resolver.rs`'s
+`ProductionResolver` supplies `system_sha256`, `history_sha256` and `generation_config_sha256` from
+**static deployment config** — its own doc comment calls per-conversation facts "a follow-up protocol
+slice". So on the shipped path the signed envelope binds *what the config says*, not what the user typed.
+A "Verified" badge over that would claim a binding to the conversation that does not exist. The §4.10(g)
+ladder computes all three from the actual conversation.
+
+Two supporting reasons. The ladder is **proven end to end on a real Linux runner** — seven principals,
+`SO_PEERCRED`, the setuid launcher, the real contained execution, the §4.10(f) pull, and four negatives
+refused by name (runs 31606043144 and 31621209556). And keeping two implementations of one contract is the
+defect this repository found **eight times in three days**; the decision that ends the pair is worth more
+than either implementation.
+
+**What this decision does NOT authorise.** The shipped gate stays shut. `main()` keeps
+`UpstreamBlockedExecutor`, `governed_verification_unconfigured` keeps returning `Some(...)`
+unconditionally, and no production `trusted_verified` becomes producible. Building the broker's new path
+and *serving* it are separate steps: the second still requires every blocker closed, a **separate**
+independent audit, and the Owner's approval. That constraint is unchanged by this decision and is not
+implied by it.
+
+**The superseded question is kept below as the record.**
+
+## 1d (superseded). Who spawns the recorder — the broker egress is a topology decision, not a bug
+
+**What you have to decide: which principal runs the model, and therefore who publishes its output.**
+
+I sent an agent to make the broker *pull* its output through §4.10(f) instead of reading it off the disk.
+It stopped before changing anything and proved the change is not available. Five independent blockers, each
+sufficient alone:
+
+1. **There is no sidecar principal.** The live kit provisions six accounts — broker, challenge, supervisor,
+   recorder, signer, executor. No `brops-sidecar` exists, and nothing proxies anything.
+2. **The supervisor serves no reads and mints no streams.** `run_supervisor.py` constructs no
+   `OutputReadService`, and without one every output-read is refused **and** `complete-run` mints no token.
+   The two are deliberately paired in the code.
+3. **The broker's uid is refused by construction** even if it were configured: the read gate requires the
+   *sidecar* uid, and §2.6 requires broker and sidecar to be distinct principals. A broker-direct read is a
+   permanent refusal.
+4. **The ordering is circular.** The token reaches a client only through the §4.10(e) frame, which is
+   reached only through a sidecar-gated evidence request the live path never knocks on — and the mint
+   happens *inside* `complete-run`, which requires the output's own digest. So at the line where the read
+   sits, no stream can exist yet; and after `complete-run` there is no token to present.
+5. **The broker binary has no sidecar spawn and cannot acquire one locally.** Its only `Command::new` is
+   the recorder; the one hardened spawn in the tree lives in a *binary* crate that cannot be depended on.
+
+**And the honest correction to how I described this.** "The broker reads output off disk" reads worse than
+it is. `verify_and_accept` still applies the §7.1 length-and-digest gate against the signed envelope, and
+`complete-run` cross-checks the output handle against the recorder's own evidence chain — so this is a
+**confinement** divergence, not an output-integrity hole. The sharper violation is the one neither I nor the
+audit named: **the broker is a member of `brops-store` and writes the signer's inputs**, performing the
+recorder's own §2.3 publication duty inside the protected store. §2.3 says the broker is in neither
+`brops-store` nor any owner group.
+
+**The two real options:**
+1. **Build the designed topology** — a 7th `brops-sidecar` principal with its sudoers and ACLs, a running
+   sidecar server, the supervisor's four services wired, §4.10(g) implemented, and a supervisor-side
+   `ExecutionService` so the *supervisor* spawns the recorder rather than the broker. The Python half of
+   that already exists (`governed_acceptance.ExecutionService`) and its only non-refusing implementation is
+   a test fake; the privileged execution exists solely as the broker's Rust `LinuxGovernedExecution`. The
+   two halves of §6.1 step 5 live in different processes on different sides of this divergence.
+2. **Take the narrow confinement fix first** — remove the broker from `brops-store` and stop it writing the
+   signer's store, by moving the output and containment publication to the recorder, which already writes
+   both. That is a live-kit and recorder change, not an egress change, and it closes the §2.3 violation
+   without waiting on the topology.
+
+Option 2 is available now and is strictly smaller. Option 1 is what §4.10(f) actually describes. **Neither
+was taken without your decision**, because the change is "who spawns the recorder", and that is not a
+Builder's call.
+
 ## 2. The independent audit, then your approval
 
 The gate does not open when these settle. It needs an audit of the whole chain **by someone who did
@@ -188,13 +362,17 @@ Recorded so nothing reads as closed that is not. These are being worked.
   read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
   carried the anchor along would have handed over the whole thing. Proven in both directions against
   the real verifier, including that a token accepted by *a* provisioned registry is still refused by
-  *this* deployment's. What remains is one line in the app's startup — and it must export **five**
-  variables, not one: the four `Provisioned::engine_env()` returns (`BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID`) **plus**
-  `BRO_TRUSTED_REGISTRY_ROOT`, which `engine_env()` does **not** compute. Today nothing exports any
-  of them, which is why the engine still reads the committed *development* registry. *(This bullet
-  said "the variable ... it already writes", which reads as one remaining export of something the app
-  hands over already; corrected 2026-08-09.)*
+  *this* deployment's. **The startup wiring landed on 2026-08-09.** `Provisioned::engine_env()` now
+  returns all **five** variables — `BRO_TRUSTED_REGISTRY_ROOT` plus `BRO_OPERATOR_ROOT_PUBKEY_FILE`,
+  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID` — and
+  `apps/desktop/src-tauri/src/engine_trust.rs` applies the set to the engine child at the one seam
+  that launches it, whole or not at all, refusing by name when an inherited anchor disagrees.
+  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves it against the real Python:
+  accepted with the export, refused without it and refused pointed elsewhere. What is left is **not**
+  an export — it is that the desktop's engine entry point (the bridge sidecar's real mode) is itself
+  fail-closed until Wave 3b, so a desktop turn does not yet reach `authorize_conductor_stop`.
+  *(This bullet has been corrected twice: it once said "the variable ... it already writes", then
+  said nothing exported any of the five. Neither is true now.)*
 - **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
   `production: false`, carries no private half anywhere in the tree, and a real deployment with a
   file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the

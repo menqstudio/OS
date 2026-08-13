@@ -34,7 +34,7 @@
 //! The pure orchestration types + the trait-driven flow are cross-platform (they compile and unit-test on
 //! any host); only the real AF_UNIX transport + the privileged spawn are `#[cfg(target_os = "linux")]`.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
@@ -43,12 +43,12 @@ use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::production_trust::TrustState;
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::{
-    verify_and_accept, AcceptanceLedger, BrokerContext, PinnedKeys, ReceiptEnvelope,
-    SupervisorAttestation,
+    verify_and_accept, AcceptanceLedger, BrokerContext, Freshness, OwnedReceiptEnvelope,
+    PinnedKeys, SupervisorAttestation,
 };
 use brops_core::receipt::IssuedRequest;
 
-use crate::chain_hops::{hop_roundtrip, HopConn, HopError, Principal};
+use crate::chain_hops::{hop_roundtrip, parse_reply, HopConn, HopError, Principal};
 
 /// The full authority→supervisor→launcher→executor→signer→verification sub-chain for ONE governed turn,
 /// abstracted to its one contract: given the validated request + the broker-minted ids, either produce the
@@ -233,6 +233,46 @@ pub struct ExecutionArtifacts {
     pub attestation_signature_b64: String,
 }
 
+// =================================================================================================
+// The acceptance clock (§7.1 freshness)
+// =================================================================================================
+//
+// The final acceptance needs to know what time it is, and the pure verifier deliberately does not read
+// a clock. So the clock is a seam here, exactly like the sockets and the execution: production reads
+// the host wall clock, a test injects a fixed reading. Two properties are worth stating because both
+// were live risks:
+//
+//  * **Fail-closed, not zero.** A `SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(0)` returns 0
+//    on a machine whose clock is set before 1970, and a freshness window around 0 admits every
+//    1970-stamped receipt. [`SystemWallClock`] returns `None` there instead, and a `None` clock Blocks
+//    the turn.
+//  * **The default is the real one.** `GovernedChain::new` installs [`SystemWallClock`]; a fixed clock
+//    is only ever reachable through [`GovernedChain::with_clock`]. A test suite that injected a clock
+//    everywhere would leave the shipped configuration unexercised, so
+//    `the_shipped_chain_reads_the_real_clock_and_refuses_a_stale_receipt` drives `new` itself.
+
+/// The broker's wall clock at acceptance time, in epoch milliseconds.
+///
+/// `None` means "this machine could not give me a usable reading" — never a substitute value. The
+/// caller turns that into a Block, because a verifier with no clock has no freshness opinion and
+/// "no opinion" must not read as "fresh".
+pub trait WallClock: Send + Sync {
+    fn now_ms(&self) -> Option<i64>;
+}
+
+/// The production clock: the host wall clock, epoch ms, `None` if it is unreadable or absurd.
+pub struct SystemWallClock;
+
+impl WallClock for SystemWallClock {
+    fn now_ms(&self) -> Option<i64> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|d| i64::try_from(d.as_millis()).ok())
+    }
+}
+
 /// The privileged recorder → setuid launcher → executor chain, abstracted (§6). Given the lease-authorized
 /// plan it runs the real execution and returns the output bytes + the attestation/evidence the broker
 /// forwards to the isolated signer. A unit test injects a fake; the real Linux impl spawns the setuid chain
@@ -264,6 +304,9 @@ where
     /// test injects an in-memory one. Behind a `Mutex` so `run_verified(&self, …)` can consume it without
     /// two concurrent turns sharing a borrow.
     ledger: Mutex<L>,
+    /// The §7.1 acceptance clock. `new` installs the real [`SystemWallClock`]; only
+    /// [`with_clock`](GovernedChain::with_clock) can replace it.
+    clock: Arc<dyn WallClock>,
 }
 
 impl<C, R, E, L> GovernedChain<C, R, E, L>
@@ -279,27 +322,43 @@ where
             resolver,
             execution,
             ledger: Mutex::new(ledger),
+            clock: Arc::new(SystemWallClock),
         }
+    }
+
+    /// Replace the §7.1 acceptance clock. The ONLY reason this exists is that a freshness test needs a
+    /// deterministic "now"; every production construction goes through [`new`](GovernedChain::new) and
+    /// gets [`SystemWallClock`].
+    pub fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// One framed request→reply roundtrip to `principal` over a fresh connection. Fails CLOSED on connect
     /// failure, frame/transport error, malformed reply, or any principal refusal (`ok:false` / a `reason`).
     /// Returns the parsed success reply object.
+    ///
+    /// The reply predicate itself lives in [`chain_hops::parse_reply`](crate::chain_hops::parse_reply) and
+    /// is NOT restated here. It used to be: this function open-coded the `ok` check while `chain_hops`
+    /// carried a second, DIFFERENT parser that read a `status` field no server has ever sent. Two parsers
+    /// for one hop is exactly the defect this chain has been bitten by; there is now one, and it is the
+    /// one the production path calls, so its tests cannot be green against a shape the deployment never
+    /// produces.
     fn hop(&self, principal: Principal, request: &Value) -> Result<Value, TurnReason> {
+        // The op is taken from the request we are about to send, so the echo check can never be
+        // satisfied by a constant that drifted away from the request builder.
+        let op = request
+            .get("op")
+            .and_then(Value::as_str)
+            .ok_or(TurnReason::UpstreamBlocked)?
+            .to_string();
         let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
         let mut conn = self
             .connector
             .connect(principal)
             .map_err(|e| e.to_turn_reason())?;
         let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
-        let value: Value = serde_json::from_slice(&reply).map_err(|_| TurnReason::UpstreamBlocked)?;
-        // A principal reply is a success ONLY if it says so; `ok:false` (with its typed `reason`) or a
-        // missing/false `ok` is a fail-closed refusal — never a fabricated success.
-        let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
-        if !ok {
-            return Err(TurnReason::UpstreamBlocked);
-        }
-        Ok(value)
+        parse_reply(&op, &reply).map_err(|e| e.to_turn_reason())
     }
 }
 
@@ -389,7 +448,14 @@ where
             .and_then(Value::as_str)
             .ok_or(TurnReason::UpstreamBlocked)?
             .to_string();
-        let env = OwnedEnvelope::from_payload(payload)?;
+        // The 23-key payload -> owned fields -> a borrowed `ReceiptEnvelope`. The mapping lives in
+        // `brops_core::governed_verification::OwnedReceiptEnvelope`, beside the type it produces: it
+        // moved there on 2026-08-12 when the §4.10(f) live pull driver needed the same 23 keys to turn
+        // a real §4.6 frame's `envelope_jcs` into the envelope `pull_output` reads its SIGNED length and
+        // digest off. Two deserializers for one signed payload are two things that can drift, and drift
+        // in a deserializer stays invisible until the day the two disagree about which key holds the
+        // output digest.
+        let env = OwnedReceiptEnvelope::from_payload(payload)?;
 
         // (7) FINAL ACCEPTANCE — the broker-owned predicate over its OWN pinned keys + trusted Expected. The
         //     envelope + its signature came from the wire; EVERY trust anchor (keys, request binding) is the
@@ -427,8 +493,15 @@ where
             // attempt no longer passes on a matching nonce + output alone.
             expected_run_id: &resolved.run_id,
             expected_task_id: &resolved.task_id,
-            expected_execution_attempt_id: &lease.execution_attempt_id,
+            // `Some`: THIS path obtained the lease itself, so it holds an attempt id the receipt
+            // did not supply. The §4.10(g) ladder does not, and passes `None` — see
+            // `BrokerContext::expected_execution_attempt_id`.
+            expected_execution_attempt_id: Some(&lease.execution_attempt_id),
         };
+        // §7.1 freshness: read the wall clock HERE, at acceptance, not at turn start — the receipt
+        // ages while the turn executes, and the question is how old it is when it is committed. An
+        // unreadable clock is a Block, never a zero.
+        let now_ms = self.clock.now_ms().ok_or(TurnReason::UpstreamBlocked)?;
         let mut ledger = self.ledger.lock().map_err(|_| TurnReason::UpstreamBlocked)?;
         verify_and_accept(
             &expected,
@@ -439,6 +512,7 @@ where
             &artifacts.output,
             &ctx,
             &mut *ledger,
+            &Freshness::at(now_ms),
         )
     }
 }
@@ -533,109 +607,6 @@ pub fn verify_resolved_matches_lease(
         return Err(TurnReason::UpstreamBlocked);
     }
     Ok(())
-}
-
-/// The isolated-signer's flat 23-key `brops.governed-receipt-envelope.v1` payload parsed into OWNED fields
-/// so the borrowed [`ReceiptEnvelope`] can point at it for the verify call. A missing/mistyped key fails
-/// closed BEFORE any signature check (verify_and_accept re-checks the identity fields regardless).
-struct OwnedEnvelope {
-    artifact_type: String,
-    key_id: String,
-    receipt_id: String,
-    run_id: String,
-    execution_attempt_id: String,
-    task_id: String,
-    workspace_id: String,
-    install_id: String,
-    request_nonce: String,
-    request_sha256: String,
-    record_handle: String,
-    lease_handle: String,
-    execution_receipt_handle: String,
-    output_sha256: String,
-    evidence_final_event_hash: String,
-    supervisor_attestation_key_id: String,
-    attestation_evidence_sha256: String,
-    output_bytes: u64,
-    challenge_accepted_at_ms: i64,
-    completed_at_ms: i64,
-    evidence_event_count: i64,
-    evidence_last_sequence: i64,
-    evidence_head_sequence: i64,
-}
-
-impl OwnedEnvelope {
-    fn from_payload(p: &Value) -> Result<Self, TurnReason> {
-        let s = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        let i = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_i64)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        let u = |k: &str| {
-            p.get(k)
-                .and_then(Value::as_u64)
-                .ok_or(TurnReason::UpstreamBlocked)
-        };
-        Ok(OwnedEnvelope {
-            artifact_type: s("artifact_type")?,
-            key_id: s("key_id")?,
-            receipt_id: s("receipt_id")?,
-            run_id: s("run_id")?,
-            execution_attempt_id: s("execution_attempt_id")?,
-            task_id: s("task_id")?,
-            workspace_id: s("workspace_id")?,
-            install_id: s("install_id")?,
-            request_nonce: s("request_nonce")?,
-            request_sha256: s("request_sha256")?,
-            record_handle: s("record_handle")?,
-            lease_handle: s("lease_handle")?,
-            execution_receipt_handle: s("execution_receipt_handle")?,
-            output_sha256: s("output_sha256")?,
-            evidence_final_event_hash: s("evidence_final_event_hash")?,
-            supervisor_attestation_key_id: s("supervisor_attestation_key_id")?,
-            attestation_evidence_sha256: s("attestation_evidence_sha256")?,
-            output_bytes: u("output_bytes")?,
-            challenge_accepted_at_ms: i("challenge_accepted_at_ms")?,
-            completed_at_ms: i("completed_at_ms")?,
-            evidence_event_count: i("evidence_event_count")?,
-            evidence_last_sequence: i("evidence_last_sequence")?,
-            evidence_head_sequence: i("evidence_head_sequence")?,
-        })
-    }
-
-    fn as_receipt_envelope(&self) -> ReceiptEnvelope<'_> {
-        ReceiptEnvelope {
-            artifact_type: &self.artifact_type,
-            key_id: &self.key_id,
-            receipt_id: &self.receipt_id,
-            run_id: &self.run_id,
-            execution_attempt_id: &self.execution_attempt_id,
-            task_id: &self.task_id,
-            workspace_id: &self.workspace_id,
-            install_id: &self.install_id,
-            request_nonce: &self.request_nonce,
-            request_sha256: &self.request_sha256,
-            record_handle: &self.record_handle,
-            lease_handle: &self.lease_handle,
-            execution_receipt_handle: &self.execution_receipt_handle,
-            output_sha256: &self.output_sha256,
-            output_bytes: self.output_bytes,
-            challenge_accepted_at_ms: self.challenge_accepted_at_ms,
-            completed_at_ms: self.completed_at_ms,
-            evidence_final_event_hash: &self.evidence_final_event_hash,
-            evidence_event_count: self.evidence_event_count,
-            evidence_last_sequence: self.evidence_last_sequence,
-            evidence_head_sequence: self.evidence_head_sequence,
-            supervisor_attestation_key_id: &self.supervisor_attestation_key_id,
-            attestation_evidence_sha256: &self.attestation_evidence_sha256,
-        }
-    }
 }
 
 /// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via
@@ -743,8 +714,12 @@ pub mod linux {
         pub lease_file: String,
         /// The launcher's third argv token (cgroup path).
         pub cgroup_arg: String,
-        /// The content-addressed protected store the isolated signer reads (`<store_dir>/<sha256hex>`).
-        pub store_dir: String,
+        // The protected store's path is deliberately ABSENT here (rev-30 §2.3). The broker neither
+        // publishes into the isolated signer's store nor reads it: `store/rec/` is the RECORDER's
+        // namespace ("recorder writes: output, containment") and `desktop` — this service — is "in
+        // NEITHER `brops-store` nor any owner". The recorder publishes both blobs itself, addressed
+        // under the path in its OWN root-owned policy, so there is nothing here for a caller to steer
+        // and no field a later change can quietly start writing through.
         /// A world-writable staging dir for the recorder's `--out` report (owned by the recorder uid, read by
         /// the broker uid). Trust for the bytes is the isolated-signer envelope, not this path.
         pub report_dir: String,
@@ -768,8 +743,9 @@ pub mod linux {
     }
 
     /// The REAL privileged execution (§6/§2.7): it delegates the recorder → setuid launcher → executor spawn
-    /// to the recorder identity, content-addresses the executor's exact output into the signer's protected
-    /// store, then drives the supervisor `attest-run` to obtain the `brops.run-attestation.v1` over the run
+    /// to the recorder identity — which publishes the output + containment blobs into the protected store
+    /// ITSELF (§2.3) — content-addresses the bytes it captured, then drives the supervisor `attest-run`
+    /// to obtain the `brops.run-attestation.v1` over the run
     /// evidence. It returns the output bytes + the `sign-request` the isolated signer strict-validates + the
     /// EXACT attested evidence JCS + the supervisor's detached signature. Fail-closed on ANY launcher/executor
     /// refusal, missing output, or supervisor refusal — it never fabricates output or an attestation.
@@ -908,39 +884,45 @@ pub mod linux {
                 return Err(TurnReason::UpstreamBlocked);
             }
 
-            // (2) Content-address the exact output into the signer's protected store (`<store>/<sha256hex>`),
-            //     so the isolated signer RE-DERIVES output_sha256/output_bytes from the bytes THIS run
-            //     produced — never a caller-supplied hash.
+            // (2) NAME what this run produced — do not publish it.
+            //
+            //     This step used to `std::fs::write` the output blob into the isolated signer's
+            //     protected store and `chmod 0644` it, and the same again for the containment report.
+            //     That is the RECORDER's §2.3 publication duty ("`store/rec/` … recorder writes:
+            //     output, containment") performed by the party the store exists to constrain, inside
+            //     the directory the signer treats as authoritative. rev-30 §2.3 also puts `desktop`
+            //     — this broker service — in "NEITHER `brops-store` nor any owner". The recorder now
+            //     publishes both blobs from its own uid, addressed under the store path in its
+            //     ROOT-OWNED policy, so the broker cannot choose where a blob lands and no longer
+            //     holds a path into the store at all.
+            //
+            //     What remains here is content-ADDRESSING the bytes the broker legitimately holds:
+            //     `complete-run` must name what was produced, and the final acceptance length- and
+            //     digest-gates these exact bytes against the signed envelope. Naming is not
+            //     authority. The supervisor refuses a completion whose `output_handle` disagrees with
+            //     the recorder's own evidence chain, and the isolated signer re-derives
+            //     `output_sha256`/`output_bytes` — and resolves the containment artifact — by READING
+            //     the store, so a handle that addresses nothing yields no envelope and the turn Blocks.
+            //
+            //     There is deliberately NO fallback write. A recorder that cannot publish exits
+            //     non-zero and is caught by the `status.success()` gate above; a recorder that
+            //     published nothing leaves the signer with an unresolvable handle. A "write it just in
+            //     case" arm would put the violation straight back while making the turn look governed,
+            //     which is worse than not having moved the duty at all.
             let output_handle = sha256_hex(&output);
-            let output_blob = format!("{}/{}", cfg.store_dir, output_handle);
-            std::fs::write(&output_blob, &output).map_err(|_| TurnReason::UpstreamBlocked)?;
-            // The isolated signer (a DIFFERENT uid) reads this blob by handle; make it group/other-readable
-            // regardless of the broker's umask. Integrity is the content address, not the mode.
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&output_blob, std::fs::Permissions::from_mode(0o644));
-            }
 
-            // (2b) F-02: content-address the recorder's CONTAINMENT REPORT for this run. Its absence
-            //      is a refusal, not a fallback — a turn whose containment cannot be evidenced must
-            //      not be attested, and the isolated signer's §1.5 containment gate would otherwise
-            //      be satisfied by a constant the provisioner wrote once.
+            // (2b) F-02: the recorder's CONTAINMENT REPORT for this run. Its absence is a refusal, not
+            //      a fallback — a turn whose containment cannot be evidenced must not be attested, and
+            //      the isolated signer's §1.5 containment gate would otherwise be satisfied by a
+            //      constant the provisioner wrote once. Read from the shared REPORT directory
+            //      (group `brops-report`, which the recorder writes and the broker reads), never from
+            //      the store.
             let containment =
                 std::fs::read(&containment_path).map_err(|_| TurnReason::UpstreamBlocked)?;
             if containment.is_empty() {
                 return Err(TurnReason::UpstreamBlocked);
             }
             let containment_handle = sha256_hex(&containment);
-            let containment_blob = format!("{}/{}", cfg.store_dir, containment_handle);
-            std::fs::write(&containment_blob, &containment)
-                .map_err(|_| TurnReason::UpstreamBlocked)?;
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &containment_blob,
-                    std::fs::Permissions::from_mode(0o644),
-                );
-            }
 
             // (3) `complete-run` — report ONLY what this run actually produced, once. Every id,
             //     nonce, identity and acceptance timestamp is deliberately absent: the supervisor
@@ -1081,11 +1063,43 @@ mod tests {
     const ISO_KEY_ID: &str = "iso-signer-1";
     const SUP_KEY_ID: &str = "sup-att-1";
 
+    // ---- the fixture's time-chain (§1), in REAL epoch-ms. Not 1000/2000: with a toy clock the §7.1
+    // stale limit `now - 300000` goes negative and no freshness test over this fixture could ever
+    // exercise the stale branch, so the orchestration tests would stay green over an unguarded path.
+    const T_REQUESTED_MS: i64 = 1_754_000_000_000; // 2025-08-01T00:53:20Z
+    const REQUESTED_AT_STR: &str = "1754000000000";
+    /// The broker's clock for the fixture turn: 1 s after it completed.
+    const T_NOW_MS: i64 = T_REQUESTED_MS + 3_000;
+
+    /// One turn's two signed `_ms` fields. Carried explicitly (not as constants) because the
+    /// attestation and the envelope must agree on them, and a freshness test moves them.
+    #[derive(Clone, Copy)]
+    struct Times {
+        accepted: i64,
+        completed: i64,
+    }
+    const FIXTURE_TIMES: Times = Times { accepted: T_REQUESTED_MS, completed: T_REQUESTED_MS + 2_000 };
+
+    /// A deterministic acceptance clock for the orchestration tests.
+    struct FixedClock(i64);
+    impl WallClock for FixedClock {
+        fn now_ms(&self) -> Option<i64> {
+            Some(self.0)
+        }
+    }
+    /// A clock this machine could not read (§7.1 fail-closed).
+    struct UnreadableClock;
+    impl WallClock for UnreadableClock {
+        fn now_ms(&self) -> Option<i64> {
+            None
+        }
+    }
+
     /// The §4.6 attested evidence the supervisor would build for THIS fixture's turn — the full
     /// frozen 29-key record, not a stub. `verify_and_accept` step 4c parses these bytes and requires
     /// them to agree with the isolated signer's envelope AND with the broker's own resolution, so a
     /// placeholder blob here would make every orchestration test refuse for the wrong reason.
-    fn evidence_bytes() -> Vec<u8> {
+    fn evidence_bytes(t: Times) -> Vec<u8> {
         let mut m: Map<String, Value> = Map::new();
         let strings: [(&str, String); 23] = [
             ("run_id", "run-1".into()),
@@ -1116,9 +1130,9 @@ mod tests {
             m.insert(k.to_string(), Value::String(v));
         }
         let ints: [(&str, i64); 6] = [
-            ("requested_at", 1000),
-            ("challenge_accepted_at_ms", 1000),
-            ("completed_at", 2000),
+            ("requested_at", T_REQUESTED_MS),
+            ("challenge_accepted_at_ms", t.accepted),
+            ("completed_at", t.completed),
             ("evidence_event_count", 3),
             ("evidence_last_sequence", 12),
             ("evidence_head_sequence", 12),
@@ -1258,14 +1272,14 @@ mod tests {
             &hx(0x55),
             &hx(0x66),
             &hx(0x44),
-            "1000",
+            REQUESTED_AT_STR,
         )
     }
 
     /// Build the flat 23-key envelope payload the isolated signer would return, matching the fixture's
     /// Expected + output + attestation, and sign its JCS with the isolated-signer key. `to_vec` of a sorted
     /// `Map` is byte-identical to `ReceiptEnvelope::payload_jcs`, so the signature verifies in the broker.
-    fn signed_payload(out_bytes: u64, out_sha: &str) -> (Value, String) {
+    fn signed_payload(out_bytes: u64, out_sha: &str, t: Times) -> (Value, String) {
         let mut m = Map::new();
         let strings = [
             ("artifact_type", RECEIPT_ENVELOPE_ARTIFACT_TYPE),
@@ -1290,12 +1304,12 @@ mod tests {
         m.insert("output_sha256".to_string(), Value::String(out_sha.to_string()));
         m.insert(
             "attestation_evidence_sha256".to_string(),
-            Value::String(sha256_hex(&evidence_bytes())),
+            Value::String(sha256_hex(&evidence_bytes(t))),
         );
         let ints: [(&str, u64); 6] = [
             ("output_bytes", out_bytes),
-            ("challenge_accepted_at_ms", 1000),
-            ("completed_at_ms", 2000),
+            ("challenge_accepted_at_ms", t.accepted as u64),
+            ("completed_at_ms", t.completed as u64),
             ("evidence_event_count", 3),
             ("evidence_last_sequence", 12),
             ("evidence_head_sequence", 12),
@@ -1378,10 +1392,10 @@ mod tests {
                 system_sha256: hx(0x55),
                 history_sha256: hx(0x66),
                 generation_config_sha256: hx(0x44),
-                requested_at: "1000".into(),
+                requested_at: REQUESTED_AT_STR.into(),
                 run_id: "run-1".into(),
                 task_id: "task-1".into(),
-                requested_at_ms: 1000,
+                requested_at_ms: T_REQUESTED_MS,
                 author: "Bro".into(),
             })
         }
@@ -1391,6 +1405,7 @@ mod tests {
 
     struct FakeExecution {
         tamper: bool,
+        times: Times,
     }
     impl GovernedExecution for FakeExecution {
         fn execute(&self, plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason> {
@@ -1410,7 +1425,7 @@ mod tests {
             if self.tamper {
                 output[0] ^= 0x01; // same length, different bytes ⇒ digest gate fails downstream
             }
-            let evidence = evidence_bytes();
+            let evidence = evidence_bytes(self.times);
             let evidence_sig = sign_b64(&signing_key(9), &evidence);
             Ok(ExecutionArtifacts {
                 output,
@@ -1439,6 +1454,11 @@ mod tests {
     /// A connector primed for a full happy path (create-pending → issue → accept-open → launch-gate →
     /// sign-result). The signer payload binds the given output.
     fn happy_connector() -> FakeConnector {
+        happy_connector_at(FIXTURE_TIMES)
+    }
+
+    /// The same happy path for a turn that happened at `t` — every signature recomputed.
+    fn happy_connector_at(t: Times) -> FakeConnector {
         let c = FakeConnector::new();
         c.push(
             Principal::ChallengeAuthority,
@@ -1456,7 +1476,7 @@ mod tests {
             Principal::Supervisor,
             json!({"ok": true, "op": "launch-gate", "proceed": true, "lease": lease_obj()}),
         );
-        let (payload, sig) = signed_payload(OUTPUT.len() as u64, &sha256_hex(OUTPUT));
+        let (payload, sig) = signed_payload(OUTPUT.len() as u64, &sha256_hex(OUTPUT), t);
         c.push(
             Principal::IsolatedSigner,
             json!({"ok": true, "op": "sign-result", "artifact_type": RECEIPT_ENVELOPE_ARTIFACT_TYPE,
@@ -1465,11 +1485,24 @@ mod tests {
         c
     }
 
+    /// A chain with a DETERMINISTIC acceptance clock, set to the fixture turn's `now`. Production
+    /// constructions use `GovernedChain::new`, whose clock is the real one — see
+    /// `the_shipped_chain_reads_the_real_clock_and_refuses_a_stale_receipt`.
     fn chain(
         connector: FakeConnector,
         tamper: bool,
     ) -> GovernedChain<FakeConnector, FakeResolver, FakeExecution, InMemoryLedger> {
-        GovernedChain::new(connector, FakeResolver, FakeExecution { tamper }, InMemoryLedger::new())
+        chain_at(connector, tamper, FIXTURE_TIMES, Arc::new(FixedClock(T_NOW_MS)))
+    }
+
+    fn chain_at(
+        connector: FakeConnector,
+        tamper: bool,
+        times: Times,
+        clock: Arc<dyn WallClock>,
+    ) -> GovernedChain<FakeConnector, FakeResolver, FakeExecution, InMemoryLedger> {
+        GovernedChain::new(connector, FakeResolver, FakeExecution { tamper, times }, InMemoryLedger::new())
+            .with_clock(clock)
     }
 
     #[test]
@@ -1481,7 +1514,7 @@ mod tests {
         let m = r.message.expect("committed message present");
         assert_eq!(m.body.as_bytes(), OUTPUT);
         assert_eq!(m.trust_state, TRUSTED_VERIFIED);
-        assert_eq!(m.created_at_ms, 2000); // envelope completed_at_ms
+        assert_eq!(m.created_at_ms, FIXTURE_TIMES.completed); // envelope completed_at_ms
         assert_eq!(r.broker_turn_id, "bt-1");
     }
 
@@ -1700,5 +1733,165 @@ mod tests {
             verify_resolved_matches_lease(&r, "not a lease at all"),
             Err(TurnReason::UpstreamBlocked)
         );
+    }
+
+    // =============================================================================================
+    // §7.1 FRESHNESS at the SHIPPED caller.
+    //
+    // The core unit tests prove `verify_and_accept` refuses a stale receipt. These prove the broker
+    // actually asks it to: that the shipped construction reads a real clock, that an unreadable clock
+    // Blocks, and that the freshness verdict reaches `run_governed_turn`'s committed/blocked answer.
+    // =============================================================================================
+
+    /// The shipped configuration — `GovernedChain::new`, no injected clock — verifying a receipt whose
+    /// signed `_ms` fields are from 2025. Delete the freshness step and this commits a governed reply
+    /// today from a receipt minted years ago.
+    #[test]
+    fn the_shipped_chain_reads_the_real_clock_and_refuses_a_stale_receipt() {
+        let ch = GovernedChain::new(
+            happy_connector(),
+            FakeResolver,
+            FakeExecution { tamper: false, times: FIXTURE_TIMES },
+            InMemoryLedger::new(),
+        );
+        let req = ValidatedRequest::decode(&raw()).unwrap();
+        assert_eq!(
+            ch.run_verified(&req, "bt-1", NONCE).err(),
+            Some(TurnReason::UpstreamBlocked),
+            "a 2025-stamped receipt must be refused by the real clock"
+        );
+    }
+
+    /// ...and the shipped configuration is not simply "always block": the SAME chain, over a turn
+    /// whose timestamps are minted from this machine's clock right now, is accepted. Together with the
+    /// test above this pins the real clock as the thing making the difference.
+    #[test]
+    fn the_shipped_chain_accepts_a_genuinely_fresh_turn() {
+        let now = SystemWallClock.now_ms().expect("this host has a readable wall clock");
+        let t = Times { accepted: now - 1_000, completed: now - 500 };
+        let ch = GovernedChain::new(
+            happy_connector_at(t),
+            FakeResolver,
+            FakeExecution { tamper: false, times: t },
+            InMemoryLedger::new(),
+        );
+        let req = ValidatedRequest::decode(&raw()).unwrap();
+        let accepted = ch.run_verified(&req, "bt-1", NONCE).expect("a fresh turn must be accepted");
+        assert_eq!(accepted.accepted_body.as_bytes(), OUTPUT);
+        assert_eq!(accepted.created_at_ms, t.completed);
+    }
+
+    /// A clock the host could not read is a Block, not a zero. (`SystemWallClock` returns `None` for a
+    /// pre-1970 clock; the pre-existing `unwrap_or(0)` shape elsewhere in this repository would instead
+    /// hand the verifier a window around the epoch, in which every 1970-stamped receipt is fresh.)
+    #[test]
+    fn an_unreadable_clock_blocks_the_turn() {
+        let ch = chain_at(happy_connector(), false, FIXTURE_TIMES, Arc::new(UnreadableClock));
+        let req = ValidatedRequest::decode(&raw()).unwrap();
+        assert_eq!(
+            ch.run_verified(&req, "bt-1", NONCE).err(),
+            Some(TurnReason::UpstreamBlocked),
+            "no clock reading ⇒ no freshness opinion ⇒ Block"
+        );
+    }
+
+    /// The freshness refusal travels all the way out as a blocked turn with no message and no durable
+    /// row — the same terminal shape every other upstream refusal has.
+    #[test]
+    fn a_stale_receipt_blocks_the_whole_turn_with_no_message_and_no_row() {
+        let db = conn();
+        // The turn is genuine; the broker's clock is simply a full max_age_ms + 1 later.
+        let late = T_NOW_MS + 300_000 + 1;
+        let ch = chain_at(happy_connector(), false, FIXTURE_TIMES, Arc::new(FixedClock(late)));
+        let exec = ChainExecutor::with_custody(ch, Box::new(TestCustody));
+        let r = run_governed_turn(&db, &raw(), &FixedIds, &exec, 1);
+        assert_eq!(r.status, "blocked");
+        assert_eq!(r.reason, Some(TurnReason::UpstreamBlocked));
+        assert!(r.message.is_none(), "a stale receipt commits no message");
+        let rows: i64 = c_count(&db);
+        assert_eq!(rows, 0, "and no durable governed_messages row");
+    }
+
+    fn c_count(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM governed_messages", [], |x| x.get(0)).unwrap()
+    }
+
+    // =============================================================================================
+    // rev-30 §2.3 — the broker is not a writer of the isolated signer's protected store
+    // =============================================================================================
+    //
+    // The live privileged execution lives in `mod linux`, which does not compile on a non-Linux
+    // host, so NO behavioural test on a Windows or macOS box can witness what that module does.
+    // These two can, because they read the source rather than run it. That is a real limitation and
+    // it is why they assert the ABSENCE of a capability rather than the presence of a check: a check
+    // that the broker "does not write the wrong thing" would be unfalsifiable here, while "the
+    // broker holds no path into the store" is decidable from the text.
+
+    /// The production half of this file, with `//` line comments removed.
+    ///
+    /// Both assertions below are about what the CODE does. Without this, either of them could be
+    /// satisfied — or broken — by prose: the comment that explains why the store write was removed
+    /// necessarily names the thing it removed. The test module itself is excluded for the same
+    /// reason (it names both tokens in its own failure messages).
+    fn broker_production_code() -> String {
+        let source = include_str!("chain_executor.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("chain_executor.rs must still delimit its test module with #[cfg(test)]")
+            .0;
+        let code: String =
+            production.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        // A stripper that ate the code would make every assertion below vacuously true — the exact
+        // shape of "a check that cannot fail". Anchor it on two things the production half must
+        // always contain.
+        assert!(code.contains("fn execute("), "comment stripping removed the execution path itself");
+        assert!(
+            code.contains("recorder_store_dir"),
+            "comment stripping removed the recorder's store-INPUT directory"
+        );
+        code
+    }
+
+    /// rev-30 §2.3 gives `store/rec/` to the RECORDER ("recorder writes: output, containment") and
+    /// puts `desktop` — the broker service, per §0's locked terminology — in "NEITHER `brops-store`
+    /// nor any owner". `LinuxGovernedExecution` used to `std::fs::write` the output blob and the
+    /// containment report into `ExecutionConfig`'s protected-store path and `chmod 0644` them: the
+    /// recorder's publication duty, performed by the party the store exists to constrain, inside the
+    /// directory the isolated signer treats as authoritative.
+    ///
+    /// The fix is structural rather than behavioural — the broker no longer holds a path into the
+    /// store at all — so this asserts the absence of that path. The recorder's read-only INPUT
+    /// directory (fd 3/4/5) is a different thing and must stay.
+    #[test]
+    fn the_broker_holds_no_path_into_the_protected_store() {
+        let code = broker_production_code();
+        assert_eq!(
+            code.matches("store_dir").count(),
+            code.matches("recorder_store_dir").count(),
+            "the broker's execution config names a protected-store directory that is not the \
+             recorder's read-only input directory. rev-30 §2.3 puts this service in neither \
+             `brops-store` nor any owner; publishing the output and containment blobs is the \
+             RECORDER's duty (governed_recorder.rs::publish_store_blob) and the broker must not \
+             hold a path it could write through."
+        );
+    }
+
+    /// The second half of the same property, and the one a "fallback" would break first: the
+    /// governed execution writes NO file. It reads the recorder's report and containment out of the
+    /// shared `brops-report` directory and content-addresses them; a `write` reintroduced anywhere
+    /// on this path — even to a different directory, even guarded by "only if the recorder did not"
+    /// — is the violation coming back while the deployment looks fixed.
+    #[test]
+    fn the_governed_execution_writes_no_file_of_its_own() {
+        let code = broker_production_code();
+        for forbidden in ["fs::write", "set_permissions", "File::create", "OpenOptions"] {
+            assert_eq!(
+                code.matches(forbidden).count(),
+                0,
+                "the broker's governed execution calls `{forbidden}`. It publishes nothing: the \
+                 recorder writes the report, the containment evidence and both store blobs, and a \
+                 turn whose artifacts did not appear must Block, never be written into existence."
+            );
+        }
     }
 }

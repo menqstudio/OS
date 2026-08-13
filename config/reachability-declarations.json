@@ -14,6 +14,57 @@
     "and asks you to DELETE the entry - deliberately, so an exception cannot silently outlive",
     "the condition it described.",
     "",
+    "`rust_symbols` covers apps/desktop/src-tauri/** the same way `engine_symbols` covers the",
+    "python engine. It needs `module` as well as `defined_in`, because a Rust caller must NAME",
+    "the symbol (`module::name(`): a bare-name scan would count any unrelated function of the",
+    "same name as a caller, and names like `create_schema` / `resolve` / `sweep` are shared by",
+    "half a dozen sibling modules in brops-core. rustc never warns about an uncalled `pub fn`",
+    "in a library crate, which is why this whole class was invisible here until 2026-08-09.",
+    "",
+    "`rust_symbols` holds SIX entries as of 2026-08-12, in three groups, and the distinction between",
+    "them is the point. TWO are the ai-side halves of the 4.10(f) desktop pull that are still unreached",
+    "(governed_pull_output, governed_turn_output_read). THREE are",
+    "the §4.10(g) submit-frame writer (governed_prepare::prepare_governed_turn_v1b,",
+    "::resolve_governed_generation_config_v1b, governed_submit::governed_turn_submit_prepared) - built,",
+    "tested, and deliberately not wired, because wiring it would move the shipped broker off its",
+    "fail-closed executor. And ONE, `governed_output_pull::pull_output`, is now must_have_caller rather",
+    "than declared_unreachable: on 2026-08-12 the live §4.10(f) pull driver",
+    "(apps/desktop/src-tauri/core/src/bin/ladder_output_pull.rs) gave it a real named caller, and this",
+    "gate's own message says to flip rather than excuse. That caller is a CI PROOF, not a product path;",
+    "the gate cannot tell those apart, so the entry says so in prose and the two production blockers it",
+    "used to record are written there rather than deleted with it.",
+    "",
+    "TWO entries were DELETED in that same change - governed_bridge_result::parse and ::check_echoes -",
+    "because the pull driver calls both and NEITHER call is one this gate can see: `parse` is reached as",
+    "the inherent `BridgeTurnResult::parse(` and `check_echoes` as the method `.check_echoes(`, while the",
+    "gate matches `module::name(`. They could not be flipped to must_have_caller (that would go RED on a",
+    "caller that exists), and leaving them declared_unreachable would have been a declaration that had",
+    "become false while the gate stayed green. That is the same hand-deletion, for the same blind spot,",
+    "as `parse_frame` earlier the same day - and it is worth restating that a stale declared_unreachable",
+    "on live code is the one failure this file cannot be trusted to catch.",
+    "",
+    "2026-08-12, later the same day: the bridge SPAWN moved from apps/desktop/src-tauri/src/ai.rs into",
+    "apps/desktop/src-tauri/core/src/governed_sidecar.rs, together with the trust environment it applies",
+    "(core/src/engine_trust.rs). None of the entries below changed expectation as a result. Two things",
+    "about this gate are worth recording. First, the new seam is reached as an INHERENT associated call",
+    "- `GovernedSidecar::as_calling_principal(` from ai.rs and `GovernedSidecar::as_distinct_principal(`",
+    "from broker/src/main.rs (it was a single `GovernedSidecar::new(` until 2026-08-12, when the 2.6",
+    "principal became a constructor-level choice) - together with `.round_trip(`, the blind spot named",
+    "below - so if any of them were",
+    "ever declared here, the declaration could go stale without turning the gate red. Second,",
+    "`SubmitTransport for GovernedSidecar` is a trait impl with no constructor of its own; a trait impl",
+    "cannot be expressed in `rust_symbols` at all, so the fact that it is reachable only through",
+    "governed_turn_submit_prepared (which has no caller) is recorded in that entry's prose rather than",
+    "enforced here. Neither is a hole this change opened; both are the gate's stated limits, restated",
+    "where they now apply.",
+    "",
+    "A SIXTH pull-side entry, governed_bridge_result::parse_frame, was DELETED on 2026-08-12 when",
+    "governed_turn_submit_prepared gave it a real production caller. That deletion was made by hand rather",
+    "than forced by the gate, and the gap is worth naming: the gate matches `module::name(`, and an",
+    "inherent associated call reads as `BridgeTurnResult::parse_frame(`, so it would have stayed green on a",
+    "declaration that had become false. A stale `declared_unreachable` on live code is the one failure this",
+    "file cannot be trusted to catch, which is why an entry costs a sentence somebody has to keep true.",
+    "",
     "Reasons: capability-denied | superseded | governed-wall | backend-only | not-yet-wired.",
     "'not-yet-wired' is an honest OPEN gap and must name where it is tracked.",
     "",
@@ -95,6 +146,74 @@
       },
       "reason": "A policy KEY, not a function, so `defined_in` is null and the flag is 'called' by being read. It is read through the named constant CONDUCTOR_SESSION_POLICY_KEY rather than as a bare literal, so the declaration states that one hop and the gate verifies the binding is real before following it - an undeclared indirection would otherwise read as zero readers. IMPORTANT LIMIT, and the reason this entry is worth reading twice: the gate proves the flag is READ by the enforcement path and proves NOTHING about whether it is SET. That second half is residual item O-3 (MEDIUM), needs an operator-signed conductor-session artifact only the Owner can mint, and is outside this gate by construction.",
       "observed": "2026-08-07: engine/runtime/bro_policy.py binds CONDUCTOR_SESSION_POLICY_KEY to the flag and reads it in conductor_session_token_required, which now treats an UNDECLARED requirement as a REQUIRED one (an uncommitted concurrent change - the previous code defaulted to False). Still absent from engine/.bro/policy.json."
+    }
+  },
+  "rust_symbols": {
+    "pull_output": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_output_pull.rs",
+      "module": "governed_output_pull",
+      "expectation": "must_have_caller",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The rev-30 §4.10(f) DESKTOP pull loop: it drives the chunked read, reassembles into a bounded buffer, and applies the §4.6/§7.1 whole-output length+digest gate against the SIGNED envelope (never §4.10(e)'s TRANSPORT-ONLY echo of the same two values). FLIPPED from declared_unreachable to must_have_caller on 2026-08-12, on this gate's own instruction, when `apps/desktop/src-tauri/core/src/bin/ladder_output_pull.rs` gave it a real named caller. Read the flip precisely, because it does NOT say the pull is wired into the product. The caller is a CI PROOF DRIVER: a binary in the crate that owns the loop, built and run only by `engine/ci/live/run_ladder_turn.sh`, which drives one live §4.10(f) pull (and four negative controls) against the real supervisor from the real sidecar principal. It exists in this crate rather than beside the ladder because `pull_output` takes a `ReceiptEnvelope` and has no parameter for the expected length or digest - deliberately, so no caller can aim the gate at the transport echo - so a Python driver would have had to re-implement the loop AND the gate, which is the duplicate-implementation defect this repository has now found seven times. What the flip buys is the thing a declared_unreachable entry could not: this gate now turns RED if that driver is ever deleted, i.e. if the one thing that has ever exercised the loop end to end goes away. PRODUCTION IS STILL UNWIRED, and by the same two named blockers as before. (1) The subprocess spawn on the submit side is an injected seam (`governed_submit::SubmitTransport`) that no production code implements: the tree's one bridge-spawn seam, `governed_sidecar::GovernedSidecar`, is async tokio reached from the renderer-hosting app crate, while the broker binary is synchronous. (2) Nothing calls `governed_turn_submit_prepared`: the broker's one production `GovernedExecutor` (`broker/src/chain_executor.rs::ChainExecutor`) drives the same §4.10(a0)/(a)(b)(c)/(d) hops over DIRECT AF_UNIX and reads the recorder's output off the local filesystem with `std::fs::read(&report_path)` rather than through this egress at all - so even a delivered token would not by itself put the pull on the live path. Reconciling those two architectures is an Architect's call. Neither blocker is expressible as a rust_symbols entry, which is why they are written here.",
+      "observed": "2026-08-10: zero callers outside governed_output_pull.rs and its #[cfg(test)] module. 2026-08-10 (§4.10(g) sidecar half) and 2026-08-12 (the submit-frame writer): re-derived by the gate in the same run - still zero. 2026-08-12 (the live pull driver): ONE non-test caller, apps/desktop/src-tauri/core/src/bin/ladder_output_pull.rs, which is a CI proof binary and not a product path; the gate cannot tell those apart, so the distinction is stated in `reason` and the entry is must_have_caller rather than deleted."
+    },
+    "governed_pull_output": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/src/ai.rs",
+      "module": "ai",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The async half of the same hop: it turns `governed_output_pull::OutputPull` into round trips over one-shot sidecar subprocesses, one per chunk, and maps a local sidecar failure to a TRANSPORT error rather than to one of the five stream reasons (4.10(f) P1-5). The pull needs an `output_stream_id`, and rev-30 4.10(f) permits exactly one source for it: the 4.10(e) `brops.governed-turn-result.v1` `signed` frame. That frame NOW HAS a supervisor-side producer - `engine/runtime/governed_acceptance.py::AcceptanceDriver`, which requires an OutputReadService and carries the minted token; it landed in this same tree from a concurrent change and was uncommitted when this entry was written, so read the citation as of that moment. 4.6's `bridge.governed-turn-result.v1` - the only frame that moves that token across the sidecar boundary - now EXISTS on both hops (2026-08-10): the re-framer in bridge/governed_turn_result_bridge.py and the strict parser in apps/desktop/src-tauri/core/src/governed_bridge_result.rs. What is still missing is one hop further out: 4.6 is the REPLY to 4.10(g)'s `bridge.governed-turn-submit.v1`, and 4.10(g) is NOT IMPLEMENTED - no submit branch in engine_sidecar._dispatch and no orchestrator that drives 4.10(a0)/(a)/(b)/(c)/(d) inside one one-shot subprocess - so nothing ever holds a 4.10(e) reply to re-frame, and wiring a caller today would still mean inventing a token, which is the single thing 4.10(f) says may never happen. The dependency is typed rather than described: `OutputStreamCapability` can only be built from a verified 4.9 envelope plus a 43-char token, so the day a 4.6 frame delivers one the compiler names every place it has to reach. A second, larger disagreement would survive fixing that: the broker's Linux execution (`broker/src/chain_executor.rs::LinuxGovernedExecution`) reads the recorder's output off the local filesystem with `std::fs::read(&report_path)` instead of through this egress at all, so even a delivered token would not by itself put the pull on the live path. It is deliberately NOT a `#[tauri::command]` and is absent from `generate_handler!`, because 4.10(f) requires the pull to be an internal backend helper that never round-trips the webview; an ai.rs test asserts both of those against the sources so the attribute cannot be added quietly. UPDATED 2026-08-12 (the §4.10(g) submit-frame WRITER): the sentence 'nothing writes a submit frame' is now HISTORY too. `prepare_governed_turn_v1b`, `PreparedGovernedTurnV1B`, `GovernedGenerationConfig` and `resolve_governed_generation_config_v1b` exist in `apps/desktop/src-tauri/core/src/governed_prepare.rs`, and `governed_turn_submit_prepared` exists in `core/src/governed_submit.rs`: it asserts the §4.10(g) cross-bindings, builds the `bridge.governed-turn-submit.v1` frame, and strict-decodes the §4.6 reply. It is the Rust half of the governed `SHA256(JCS(flat string->string object))` formula whose Python half already shipped, and it reproduces §4.10(g)'s printed digest 732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22 byte-for-byte. What blocks a caller is now TWO named things rather than an absence. (1) The subprocess spawn is an INJECTED seam (`governed_submit::SubmitTransport`) and NO production code implements it: the tree's one bridge-spawn seam, `ai::governed_sidecar_call`, is async tokio in the renderer-hosting app crate and carries `engine_trust::apply`, while the broker binary is synchronous and does not depend on that crate; a second spawn implementation is the half-wired export that seam's own comment warns about. (2) Nothing CALLS `governed_turn_submit_prepared`: the broker's one production `GovernedExecutor` (`broker/src/chain_executor.rs::ChainExecutor`) drives the same §4.10(a0)/(a)(b)(c)/(d) hops over DIRECT AF_UNIX and spawns the recorder rather than a sidecar, and its `ProductionResolver` supplies the three artifact digests from static deployment config instead of from a prepared turn - so wiring the writer means reconciling two architectures for the same hops, which is an Architect's call and not this change's. The live-supervisor blocker above is unchanged. The `parse_frame` entry that used to sit beside these was DELETED in the same change, because `governed_turn_submit_prepared` gives it a real production caller and a stale `declared_unreachable` on live code is a lie this gate cannot catch - it matches `governed_bridge_result::parse_frame(`, and an inherent associated call reads as `BridgeTurnResult::parse_frame(`.",
+      "observed": "2026-08-10: zero callers outside ai.rs; referenced from its own #[cfg(test)] module by the_output_pull_is_never_spawned_without_the_provisioned_trust_environment, which proves `engine_trust::apply` is on this path and that a failed spawn arrives as Transport. 2026-08-10 (§4.10(g) sidecar half): re-derived by the gate in the same run — still zero production callers. 2026-08-12 (the submit-frame writer): re-derived in the same run - still zero production callers, and the reason is now the two named blockers above rather than a missing producer."
+    },
+    "governed_turn_output_read": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/src/ai.rs",
+      "module": "ai",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "One `bridge.governed-turn-output-read.v1` round trip - the single stdin request / single stdout reply of a fresh one-shot sidecar. It has no caller of its own outside ai.rs because its only caller is `governed_pull_output` in the same module, and that function is itself unreached for the reason recorded above. It is listed separately rather than folded into that entry so the gate keeps reporting BOTH halves: if the loop ever gains a caller and this does not, the pull has grown a second spawn implementation, which is exactly the half-wired export `governed_sidecar_call`'s own comment warns about. The gap it inherits MOVED on 2026-08-10: 4.6's `bridge.governed-turn-result.v1` now exists on both hops (bridge/governed_turn_result_bridge.py + apps/desktop/src-tauri/core/src/governed_bridge_result.rs), so the missing hop is now 4.10(g)'s `bridge.governed-turn-submit.v1`, not the result frame. UPDATED 2026-08-12 (the §4.10(g) submit-frame WRITER): the sentence 'nothing writes a submit frame' is now HISTORY too. `prepare_governed_turn_v1b`, `PreparedGovernedTurnV1B`, `GovernedGenerationConfig` and `resolve_governed_generation_config_v1b` exist in `apps/desktop/src-tauri/core/src/governed_prepare.rs`, and `governed_turn_submit_prepared` exists in `core/src/governed_submit.rs`: it asserts the §4.10(g) cross-bindings, builds the `bridge.governed-turn-submit.v1` frame, and strict-decodes the §4.6 reply. It is the Rust half of the governed `SHA256(JCS(flat string->string object))` formula whose Python half already shipped, and it reproduces §4.10(g)'s printed digest 732b58634d0a83e9b7fdf1ca69db78df145bd9dd79ac8922fed3e79cf5faab22 byte-for-byte. What blocks a caller is now TWO named things rather than an absence. (1) The subprocess spawn is an INJECTED seam (`governed_submit::SubmitTransport`) and NO production code implements it: the tree's one bridge-spawn seam, `ai::governed_sidecar_call`, is async tokio in the renderer-hosting app crate and carries `engine_trust::apply`, while the broker binary is synchronous and does not depend on that crate; a second spawn implementation is the half-wired export that seam's own comment warns about. (2) Nothing CALLS `governed_turn_submit_prepared`: the broker's one production `GovernedExecutor` (`broker/src/chain_executor.rs::ChainExecutor`) drives the same §4.10(a0)/(a)(b)(c)/(d) hops over DIRECT AF_UNIX and spawns the recorder rather than a sidecar, and its `ProductionResolver` supplies the three artifact digests from static deployment config instead of from a prepared turn - so wiring the writer means reconciling two architectures for the same hops, which is an Architect's call and not this change's. The live-supervisor blocker above is unchanged. The `parse_frame` entry that used to sit beside these was DELETED in the same change, because `governed_turn_submit_prepared` gives it a real production caller and a stale `declared_unreachable` on live code is a lie this gate cannot catch - it matches `governed_bridge_result::parse_frame(`, and an inherent associated call reads as `BridgeTurnResult::parse_frame(`.",
+      "observed": "2026-08-10: zero callers outside ai.rs; reaches the engine only through governed_sidecar_call, the one seam in the application that spawns the bridge. 2026-08-10 (§4.10(g) sidecar half): re-derived by the gate in the same run — still zero production callers. 2026-08-12 (the submit-frame writer): re-derived in the same run - still zero production callers, and the reason is now the two named blockers above rather than a missing producer."
+    },
+    "prepare_governed_turn_v1b": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_prepare.rs",
+      "module": "governed_prepare",
+      "expectation": "must_have_caller",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The 4.10(g) v1b single-pass preparation: it validates and caps `system`/`history`, canonicalizes the generation-config OBJECT, computes all three artifact digests ONCE from the bytes that are actually sent, mints the `request_nonce` ONCE, and is the sole source of the pre-store request, the create-pending facts, the submit frame and the final `Expected`. FLIPPED from declared_unreachable to must_have_caller on 2026-08-12 when `broker/src/ladder_executor.rs` called it -- which is the whole substance of that change, because the path it replaced read `system_sha256`/`history_sha256`/`generation_config_sha256` out of `$BROPS_BROKER_CONFIG` and therefore attested the same three digests for every conversation the deployment ever ran. The arithmetic is a test, not a claim: `ladder_executor::tests::the_history_digest_follows_the_conversation_not_the_config` fails if the digest stops moving with the conversation. Same caveat as its sibling entry: a caller is not a reachable user path, and the three fail-closed refusals above it are unchanged.",
+      "observed": "2026-08-12 (the 4.10(g) broker caller): ONE non-test caller, apps/desktop/src-tauri/broker/src/ladder_executor.rs, re-derived by the gate in the same run that flipped this entry. It is production broker code, not a CI driver and not a test; what still gates it is the DEPLOYMENT, not the code -- see `reason`."
+    },
+    "resolve_governed_generation_config_v1b": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_prepare.rs",
+      "module": "governed_prepare",
+      "expectation": "must_have_caller",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Resolves the five frozen generation-config fields from the environment into a validated `GovernedGenerationConfig`, which is the only way to obtain one and therefore the only way to reach `prepare_governed_turn_v1b`. FLIPPED from declared_unreachable to must_have_caller on 2026-08-12 with the two entries above, and for the same reason: `broker/src/ladder_executor.rs::LadderChain::run_verified` calls it once per turn so the config the challenge commits to is the config that was validated, rather than a digest copied from somewhere else. It is deliberately re-resolved per turn rather than cached at broker start: the five values are environment-supplied, and a cache would let a turn attest a profile the process no longer runs under.",
+      "observed": "2026-08-12 (the 4.10(g) broker caller): ONE non-test caller, apps/desktop/src-tauri/broker/src/ladder_executor.rs, re-derived by the gate in the same run that flipped this entry. It is production broker code, not a CI driver and not a test; what still gates it is the DEPLOYMENT, not the code -- see `reason`."
+    },
+    "governed_turn_submit_prepared": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/governed_submit.rs",
+      "module": "governed_submit",
+      "expectation": "must_have_caller",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The 4.10(g) submit hop: it asserts the four cross-bindings, writes the `bridge.governed-turn-submit.v1` frame, drives ONE one-shot sidecar through a `SubmitTransport`, and strict-decodes the 4.6 reply. FLIPPED from declared_unreachable to must_have_caller on 2026-08-12, on this gate's own instruction, when `broker/src/ladder_executor.rs::LadderChain::run_verified` gave it a real named caller inside the broker service -- the process 4.10(g)'s Principal binding names. Read the flip precisely. It does NOT say a user can reach a governed turn. The three refusals that hold that line are untouched and byte-identical: `commands.rs::governed_verification_unconfigured` still returns `Some(...)` unconditionally before the model is invoked, `connect_broker` still refuses off Linux, and `main.rs::build_governed_executor` still returns the fail-closed `UpstreamBlockedExecutor` whenever `$BROPS_BROKER_CONFIG` is absent, malformed, TCB-violating, missing a manifest, missing a conversation source, or unable to resolve the 2.6 sidecar principal -- which is every shipped install, because nothing in the product writes that config. (Updated 2026-08-12: 'or carrying an unresolved sidecar trust environment' was one of the refusals in that list and is now GONE, deliberately. That refusal was permanent rather than provisional -- the provisioned set's conductor-session token binds agent_id bro-000 / role bro, the CONDUCTOR's identity, and the broker is 0 role #2 -- and it was aimed at the wrong thing: the two frames this transport relays, `bridge.governed-turn-submit.v1` and `bridge.governed-turn-output-read.v1`, reach no reader of the five provisioned variables. The broker now passes `SidecarTrust::RelayFramesOnly`, whose door refuses any request whose own top-level `protocol` is not one of those two, before a process exists. Read the consequence precisely: the broker's ladder was previously unreachable UNCONDITIONALLY, and is now unreachable for the remaining config reasons above, which is every shipped install for the same reason as before. The three refusals named at the top of this entry are still untouched and byte-identical.) The executor it builds is also `ChainExecutor::new`, i.e. no custody resolver, so `persist_committed` refuses the commit even on a fully verified turn. What the flip buys is what a declared_unreachable entry could not: the gate now turns RED if that caller is deleted, i.e. if the shipped broker silently goes back to a path whose three artifact digests come from deployment config rather than from the conversation.",
+      "observed": "2026-08-12 (the 4.10(g) broker caller): ONE non-test caller, apps/desktop/src-tauri/broker/src/ladder_executor.rs, re-derived by the gate in the same run that flipped this entry. It is production broker code, not a CI driver and not a test; what still gates it is the DEPLOYMENT, not the code -- see `reason`."
+    }
+  },
+  "tools_gates": {
+    "$comment": [
+      "Gates under tools/ that NO workflow executes, each with a written reason.",
+      "Enforced by check_reachability.py section 5. Same contract as tauri_commands: the",
+      "gate re-derives the state every run, and if a workflow later starts running an entry",
+      "listed here the gate turns RED and asks you to delete it."
+    ],
+    "tools/check_prior_art.py": {
+      "reason": "Not a CI gate and deliberately not run as one: it answers a per-SESSION question (has this session recorded what it searched for before creating a new file?) against a receipt that lives in the OS temp directory and never exists on a CI runner. Its caller is .claude/hooks/canonical_law_gate.py at PreToolUse. Running it in CI could only ever pass vacuously, and a check that cannot fail is worse than an absent one because it reads as coverage. Its self-tests DO run, in the ci.yml canonical-law job.",
+      "observed": "2026-08-09: invoked from .claude/hooks/canonical_law_gate.py; self-tests run by ci.yml job canonical-law."
     }
   }
 }

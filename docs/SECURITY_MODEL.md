@@ -126,12 +126,19 @@ made on the strength of it.
   literal is being revised — read the constant, not a path copied out of a document), mode 0755,
   ancestors likewise, provisioning
   run once as that account by the installer) and **that branch has never executed**.
-- **Nothing exports the provisioned environment into the engine.** `Provisioned::engine_env()` *returns*
-  `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and
-  `BRO_SESSION_ID`; `provision_local_trust` deliberately does not apply them, and the list does not include
-  `BRO_TRUSTED_REGISTRY_ROOT` at all. So the engine still reads the committed development registry at
-  `engine/config/trusted-keys.json` (`production: false`, with its DEVELOPMENT REGISTRY warning intact).
-  Wiring it is one deployment decision, not a silent startup side effect.
+- **The provisioned environment now reaches the engine — at one seam, and only there.** *(This bullet said
+  "Nothing exports the provisioned environment into the engine" until 2026-08-09. That was true, and it was
+  the whole of O-3.)* `Provisioned::engine_env()` returns five variables — `BRO_TRUSTED_REGISTRY_ROOT`
+  first, then `BRO_OPERATOR_ROOT_PUBKEY_FILE`, `BRO_OPERATOR_REGISTRY_MIN_FILE`,
+  `BRO_CONDUCTOR_SESSION_TOKEN`, `BRO_SESSION_ID` — `provision_local_trust` records them, and
+  `apps/desktop/src-tauri/src/engine_trust.rs` applies them to the child in `ai::governed_sidecar_call`,
+  which is the only place this application launches the engine or the bridge. The set is applied **whole or
+  not at all**, and an ambient anchor that disagrees is a **named refusal in both directions** rather than a
+  silent winner — `resolve_operator_root_pin` has no precedence order and neither does this.
+  **What this does NOT say:** it does not say a desktop AI turn now exercises
+  `verify_conductor_session_token`. That check is reached through `bro_hook` ->
+  `bro_completion.authorize_conductor_stop`, and the bridge sidecar's real mode is still fail-closed
+  (Wave 3b). What is proved is that the engine reads the provisioned registry when this application runs it.
 - **The audit signer is in no installer.** The crate exists and builds two binaries
   (`brops-audit-signer`, `brops-anchor-relay`), and `audit-signer/src/register.rs` holds the elevated
   registration and prints the `sc.exe` plan — but `register::apply` has no binary entry point and no caller
@@ -246,17 +253,22 @@ landed against every one of them. What each item is *now*:
   the anchor is worth its signature only under a principal the writer cannot become. On Windows that
   principal is designed and built as a service (`brops-audit-signer` under a virtual service account, reached
   over the peer-authenticated pipe by `brops-anchor-relay`) but is **in no installer**; on POSIX it is
-  specified and has never run. **State the consequence, because the paragraph above states only the mechanism:** custody is configured by `BRO_AUDIT_ANCHOR_SIGNER`/`BRO_AUDIT_ANCHOR_KEY_ID`, **nothing in the shipped product sets either** (every occurrence in the tree is a test harness or a document; the startup path deliberately does not export `Provisioned::engine_env()`; `tauri.conf.json` declares no `externalBin`/`resources`, so neither signer binary is installed; `register::apply` has no caller outside tests). So on a shipped install `append()` takes its unconfigured path: it writes the record, rewrites the **plaintext** `.head` itself, and produces no `.head.sig`. **The audit ledger is therefore not tamper-evident against its own writer on any real deployment** — a party who can write it can drop records, recompute the chain and rewrite the head, and an unkeyed `verify()` reports it intact. A keyed `verify()` refuses, but with `AuditAnchorMissing`, which it raises for every ledger this deployment has ever written, so it cannot separate “never anchored” from “tampered”; `bro_monitor` asks for the keyed check and reports that as a blind spot. This is the property O-2 exists for and it has never run outside a test.
+  specified and has never run. **State the consequence, because the paragraph above states only the mechanism:** custody is configured by `BRO_AUDIT_ANCHOR_SIGNER`/`BRO_AUDIT_ANCHOR_KEY_ID`, **nothing in the shipped product sets either** (every occurrence in the tree is a test harness or a document; the two anchor variables are NOT part of `Provisioned::engine_env()` and cannot be — they come from `AnchorEnv::engine_env()`, which only exists after `audit_signer::verify_installed` has MEASURED an installed signer, and nothing has installed one; `tauri.conf.json` declares no `externalBin`/`resources`, so neither signer binary is installed; `register::apply` has no caller outside tests). So on a shipped install `append()` takes its unconfigured path: it writes the record, rewrites the **plaintext** `.head` itself, and produces no `.head.sig`. **The audit ledger is therefore not tamper-evident against its own writer on any real deployment** — a party who can write it can drop records, recompute the chain and rewrite the head, and an unkeyed `verify()` reports it intact. A keyed `verify()` refuses, but with `AuditAnchorMissing`, which it raises for every ledger this deployment has ever written, so it cannot separate “never anchored” from “tampered”; `bro_monitor` asks for the keyed check and reports that as a blind spot. This is the property O-2 exists for and it has never run outside a test.
 - **O-3 (MED)** — conductor session token: **fail-closed and set.** `require_conductor_session_token` is
   `true` in `engine/.bro/policy.json`, `bro_policy` treats an absent key, a wrong type or an unreadable
   policy as REQUIRED, and `verify_conductor_session_token` is called from `bro_completion`. First-launch
   provisioning mints the `conductor-session` artifact, so **no Owner-minted artifact is needed**, and
-  `BRO_TRUSTED_REGISTRY_ROOT` lets the engine read the registry that admits its key. **Still open:** one line
-  in the app's startup — exporting the four variables `engine_env()` computes **plus
-  `BRO_TRUSTED_REGISTRY_ROOT`, which it does not**. §1.3 above says so explicitly ("the list does not
-  include `BRO_TRUSTED_REGISTRY_ROOT` at all") and §5.5 below says so too; this bullet used to say
-  "the variables `engine_env()` already computes", which contradicted both and understated the work by
-  the one variable that decides which registry the engine trusts.
+  `BRO_TRUSTED_REGISTRY_ROOT` lets the engine read the registry that admits its key. **The export has
+  landed (2026-08-09):** `engine_env()` now includes `BRO_TRUSTED_REGISTRY_ROOT`, and `engine_trust::apply`
+  sets the whole set on the engine child at `ai::governed_sidecar_call`.
+  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` drives the real resolver into the real Python and
+  requires acceptance with it and refusal without it (or pointed at another install).
+  **Still open, and named rather than folded into "closed":** (a) the desktop's own engine entry point is
+  the bridge sidecar, whose real mode is fail-closed until Wave 3b, so a desktop turn does not yet reach
+  `authorize_conductor_stop`; (b) `BRO_ROLE`/`BRO_AGENT_ID` are deliberately **not** exported — the token
+  binds the conductor identity and a process that does not claim it is refused on the binding, which is
+  correct, because stamping `BRO_ROLE=bro` on every engine subprocess would assert the conductor privilege
+  everywhere.
 - **O-4 (LOW)** — control-room actor: **no longer self-asserted.** `_prove_command_actor` routes by actor: a
   conductor command must present the operator-signed `conductor-session`; an **owner** command must present a
   `control-room-command` artifact bound to this exact `command_id`, `task_id` and `command`, so a stolen
@@ -264,9 +276,11 @@ landed against every one of them. What each item is *now*:
   `ARTIFACT_AUTHORITY` against the delegated `control-room` authority, and
   `schemas/control-room-command.schema.json` **does** carry `artifact_type` / `key_id` / `signature`.
   Provisioning retains the `control-room` key and `mint_control_room_command` signs one, so **no
-  Owner-minted artifact is needed**. **Still open:** the *committed* registry pins no key for the type, and a
-  flawless artifact signed by an ungranted key still refuses — pointing the engine at the provisioned
-  registry is what closes it, and that is the same unexported-environment decision as O-3.
+  Owner-minted artifact is needed**. **The registry half is now done:** the engine reads the provisioned
+  registry, which pins the delegated `control-room` key for the type (O-3's export). **Still open, and it is
+  not the registry:** nothing in the shipped product ever calls `mint_control_room_command` — its only
+  callers are tests — so no owner command is accompanied by an artifact for `_prove_command_actor` to
+  verify. Exporting the environment was a precondition for O-4, not its closure.
 - **O-5 (LOW)** — evidence high-water: the head digest and sequence are **required** and travel into a
   hash-chained record in a different store, so a rollback is visible from signed bytes after the evidence
   store is wiped. `mint_floor_anchor` signs the `evidence-floor-anchor` with the retained delegated
@@ -289,9 +303,11 @@ All of the following, then an **independent** audit, then **Owner** approval:
    restricted token + `STARTUPINFOEX` handle list wired to the output-producing spawn, CNG key custody.
 4. **Anti-rollback real closure** — provisioning-enforced deploy-dir ACL + per-deploy sealed floor key + TPM
    monotonic counter.
-5. **The provisioned trust actually reaching the engine** — export `engine_env()` plus
-   `BRO_TRUSTED_REGISTRY_ROOT` from a deployment that has decided where the registry lives; ship and register
-   the audit signer; and answer how a **production** registry is minted at all, since `broctl` cannot.
+5. **The provisioned trust actually reaching the engine** — the export itself is **done**
+   (`engine_trust::apply` at `ai::governed_sidecar_call`, `BRO_TRUSTED_REGISTRY_ROOT` included, proved
+   against the real Python by `tests/o3_conductor_session.rs`). What is left under this heading: ship and
+   register the audit signer so `BRO_AUDIT_ANCHOR_SIGNER`/`_KEY_ID` can be MEASURED rather than claimed, and
+   answer how a **production** registry is minted at all, since `broctl` cannot.
 6. **O-1 … O-5** closed or owner-signed-deferred, per `docs/PHASE_10_PRODUCTION_ITEMS.md`.
 7. **Independent Architect CODE-audit** on the exact head + **Owner approval**.
 

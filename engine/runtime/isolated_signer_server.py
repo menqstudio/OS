@@ -40,9 +40,15 @@ import json
 import socket
 import struct
 import sys
+import traceback
 from typing import Any, Dict, Mapping, Optional
 
-from isolated_signer import IsolatedSigner
+from isolated_signer import (
+    ENVELOPE_ARTIFACT_TYPE,
+    IsolatedSigner,
+    REFUSAL_ARTIFACT_TYPE,
+    SignerError,
+)
 
 # ---------------------------------------------------------------------------
 # Wire framing constants (§7 signing channel)
@@ -270,12 +276,35 @@ def handle_connection(
         raw = read_frame(conn)
         request = json.loads(raw.decode("utf-8"))
         reply = dispatch(request, signer)
-    except (FrameError, SignerServerError, ValueError, UnicodeDecodeError) as exc:
+    except (
+        FrameError,
+        SignerServerError,
+        SignerError,
+        ValueError,
+        UnicodeDecodeError,
+    ) as exc:
+        # ``SignerError`` is a SIBLING of ``SignerServerError``, not a subclass:
+        # it is defined in ``isolated_signer`` and the signer core raises it for
+        # a broken seam (``read_verified`` on a blob whose digest no longer
+        # matches its handle, a ``sign_fn`` returning junk, a ``clock_ms`` that
+        # is not an int). Omitting it here let it escape the whole front door and
+        # tear down ``serve_forever`` with no refusal frame written.
         reply = {"ok": False, "error": str(exc)}
         # Surface a typed reason if the raised error carried one.
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+    except Exception:  # noqa: BLE001 - the fail-closed backstop, see below
+        # The docstring above promises this function never raises. An explicit
+        # tuple can only ever promise that for the classes someone remembered to
+        # list, and this front door sits on a trust boundary where an escape is
+        # a denial-of-service on the signing authority. So ANY other exception —
+        # a latent ``TypeError``/``KeyError``, an injected seam that raised
+        # something new — becomes a fail-closed reply too. The detail is written
+        # to the operator's stderr and NOT to the broker: an unexpected internal
+        # fault must not become an information channel.
+        traceback.print_exc(file=sys.stderr)
+        reply = {"ok": False, "error": "internal signer fault"}
 
     _try_write(conn, reply)
     return reply
@@ -284,8 +313,11 @@ def handle_connection(
 def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
     try:
         write_frame(conn, _encode_reply(reply))
-    except OSError:
-        pass  # peer already gone; nothing to do, connection is closed by loop
+    except (OSError, FrameError, TypeError, ValueError):
+        # peer already gone, or a reply we could not frame/encode. Either way the
+        # connection is closed by the loop; never let the write path raise back
+        # into ``handle_connection``'s contract.
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -312,11 +344,121 @@ def serve_forever(
             return
         try:
             handle_connection(conn, allowed_broker_uid, signer)
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # Belt to ``handle_connection``'s braces: the accept loop IS the
+            # availability of the signing authority, so nothing a single peer can
+            # do may end it. If the handler somehow still raises, log and move on.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 conn.close()
-            except OSError:
+            except Exception:  # noqa: BLE001 - a failing close must not end the loop
                 pass
+
+
+# --------------------------------------------------------------------------- #
+# The CLIENT half of `sign-result` — §6.1 steps 11-12, the supervisor's seam
+#
+# WHY THIS EXISTS, AND WHAT IT COST TO NOT HAVE IT
+# ------------------------------------------------
+# `governed_acceptance.AcceptanceDriver.sign_result` is documented as "handed a
+# `brops.sign-request.v1`; must return the isolated signer's own reply", and until now this
+# module was its ONLY transport while implementing NEITHER half of that sentence:
+#
+#   * the wire REQUEST is not the sign-request. It is `{"op": "sign-result",
+#     "sign_request": {...}}` — `dispatch` routes on `op` and hands the NESTED object to the
+#     signer, so a caller that sends the bare sign-request is answered `unknown op None`;
+#   * the wire REPLY is not the signer's reply. `dispatch` FLATTENS it into the broker's op
+#     shape: `signature` rather than `signature_b64`, `ok` rather than `status`, and the
+#     refusal arm carries `error` beside `reason`. `governed_verification.rs` decodes exactly
+#     those names, so the flattening is correct and must not change.
+#
+# Both halves were invisible to every test, because every test that drives the driver wires
+# `sign_result` to `IsolatedSigner.sign_result` IN-PROCESS. That is the defect class this
+# repository has now found several times — the writer exists, and it found a second
+# architecture for the same hop — and here it cost a live CI run to surface: the §4.10(g)
+# ladder reached the real contained execution, ran it to completion, and then died at the
+# signer with `SupervisorError: the isolated signer seam returned neither a §4.9 envelope nor
+# a typed refusal`, wrapped in an op-shaped reply that told the sidecar only that the reply
+# protocol was `None`.
+#
+# So the translation lives HERE, beside the `dispatch` it must agree with, rather than in a
+# deployment script — one place knows the wire shape, and one test pins the two together. It
+# confers NOTHING: every value it returns came out of the signer, the signature is over bytes
+# the signer recomputed from the protected store, and a reply this decoder does not recognise
+# raises rather than being repaired into one.
+
+
+def sign_result_request(sign_request: Any) -> Dict[str, Any]:
+    """The wire frame carrying one ``brops.sign-request.v1`` to this server's single op.
+
+    The sign-request travels NESTED and untouched: ``dispatch`` hands it to the signer
+    verbatim and the signer's own strict validator is the sole door for turn facts, so merging
+    the routing key into it would be refused as an unknown top-level key — and would also make
+    this function a second author of the document the signer is about to act on.
+    """
+    return {"op": OP_SIGN_RESULT, "sign_request": sign_request}
+
+
+def sign_result_reply(wire: Any) -> Dict[str, Any]:
+    """Decode this server's op reply back into the SIGNER'S OWN reply shape.
+
+    The two arms are the two ``IsolatedSigner.sign_result`` returns and nothing else:
+
+      * signed  -> ``{"artifact_type": ENVELOPE, "status": "signed", "payload", "signature_b64"}``
+      * refused -> ``{"artifact_type": REFUSAL,  "status": "refused", "reason"}``
+
+    Anything else — a peer denial (``{"ok": false, "error": "peer not authorized"}``), an
+    ``unknown op``, the fail-closed ``internal signer fault``, or a signed arm missing its
+    payload — raises :class:`SignerServerError`. It is deliberately NOT translated into a
+    refusal: a typed refusal is a decision the SIGNER made about a turn, and manufacturing one
+    here out of a transport failure would put a verdict in the caller's own mouth. The caller
+    gets a supervisor-side fault, which is what it is.
+    """
+    if not isinstance(wire, Mapping):
+        raise SignerServerError("the signer reply is not a JSON object")
+    artifact_type = wire.get("artifact_type")
+    if artifact_type == REFUSAL_ARTIFACT_TYPE:
+        reason = wire.get("reason")
+        if not isinstance(reason, str) or not reason:
+            raise SignerServerError("the signer refusal carries no reason")
+        return {"artifact_type": REFUSAL_ARTIFACT_TYPE, "status": "refused", "reason": reason}
+    if artifact_type != ENVELOPE_ARTIFACT_TYPE or wire.get("ok") is not True:
+        raise SignerServerError(
+            "the signer answered neither a §4.9 envelope nor a typed refusal: %s"
+            % _bounded_detail(wire.get("error") or wire.get("artifact_type")))
+    payload = wire.get("payload")
+    signature = wire.get("signature")
+    if not isinstance(payload, Mapping) or not isinstance(signature, str) or not signature:
+        raise SignerServerError("the signed signer reply carries no payload/signature")
+    return {
+        "artifact_type": ENVELOPE_ARTIFACT_TYPE,
+        "status": "signed",
+        "payload": dict(payload),
+        # The ONE rename the wire performs, undone. `dispatch` emits `signature`; the signer
+        # and every consumer of its reply say `signature_b64`.
+        "signature_b64": signature,
+    }
+
+
+def _bounded_detail(value: Any, limit: int = 200) -> str:
+    text = str(value)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def request_sign_result(socket_path: str, sign_request: Any, *,
+                        timeout: float = 20.0) -> Dict[str, Any]:
+    """One ``sign-result`` round trip over the signer's AF_UNIX socket.
+
+    This is the production binding for ``AcceptanceDriver.sign_result``. ``brops_socket`` is
+    imported lazily so the pure translation above stays importable — and testable — on a host
+    with no AF_UNIX at all, which is exactly where the request/reply mismatch above needed to
+    be caught and was not.
+    """
+    import brops_socket
+
+    return sign_result_reply(
+        brops_socket.request(socket_path, sign_result_request(sign_request), timeout=timeout))
 
 
 def bind_listener(socket_path: str) -> "socket.socket":

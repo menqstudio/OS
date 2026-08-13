@@ -27,6 +27,7 @@ import json
 import socket
 import struct
 import sys
+import traceback
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from challenge_authority import (
@@ -245,6 +246,20 @@ def handle_connection(
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+    except Exception:  # noqa: BLE001 - the fail-closed backstop
+        # Every EXPLICIT raise in ``challenge_authority`` is a
+        # ``ChallengeAuthorityError`` (and ``FrameError`` subclasses it), so —
+        # unlike ``isolated_signer_server`` — no sibling exception class of the
+        # core is missing from the tuple above. What the tuple still cannot
+        # promise is the docstring's "never raises": the INJECTED seams
+        # (``sign_fn``, ``clock_ms``, ``id_fn``) may raise anything at all, and a
+        # latent ``TypeError``/``KeyError`` would escape the same way. Either
+        # tears down ``serve_forever`` with no refusal frame written, which is a
+        # denial of service on the challenge authority. So anything else becomes
+        # a fail-closed reply, with the detail going to the operator's stderr and
+        # NOT to the broker.
+        traceback.print_exc(file=sys.stderr)
+        reply = {"ok": False, "error": "internal authority fault"}
 
     _try_write(conn, reply)
     return reply
@@ -253,8 +268,11 @@ def handle_connection(
 def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
     try:
         write_frame(conn, _encode_reply(reply))
-    except OSError:
-        pass  # peer already gone; nothing to do, connection is closed by loop
+    except (OSError, FrameError, TypeError, ValueError):
+        # peer already gone, or a reply we could not frame/encode. Either way the
+        # connection is closed by the loop; never let the write path raise back
+        # into ``handle_connection``'s contract.
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -284,10 +302,15 @@ def serve_forever(
             return
         try:
             handle_connection(conn, allowed_broker_uid, store, config, sign_fn, clock_ms)
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # Belt to ``handle_connection``'s braces: the accept loop IS the
+            # availability of the challenge authority, so nothing a single peer
+            # can do may end it.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 conn.close()
-            except OSError:
+            except Exception:  # noqa: BLE001 - a failing close must not end the loop
                 pass
 
 

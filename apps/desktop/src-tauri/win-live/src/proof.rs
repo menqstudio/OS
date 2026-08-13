@@ -160,7 +160,6 @@ fn seed(store: &Path, content: &[u8]) -> String {
 fn init_schema(conn: &Connection) -> Result<(), String> {
     brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;
     brops_core::governed_message_store::create_schema(conn).map_err(|e| format!("{e}"))?;
-    brops_core::governed_output_stream::create_schema(conn).map_err(|e| format!("{e}"))?;
     brops_core::supervisor_ledger::create_schema(conn).map_err(|e| format!("{e:?}"))?;
     Ok(())
 }
@@ -298,7 +297,14 @@ where
         store_dir: store_dir.to_path_buf(),
             // F-01: where the execution writes its per-run evidence chain.
             evidence_dir: store_dir.to_path_buf().join("run-evidence"),
-    }));
+            // audit R-42: the supervisor's OWN durable anti-rollback floor. It lives under the
+            // proof's own directory, which both shipped callers make fresh per invocation, so this
+            // proof BOOTSTRAPS the floor rather than ordering against a previous app run. The floor
+            // and the execution's head-sequence counter below MUST share a lifetime — a floor that
+            // outlived its counter would refuse every later turn as `evidence_fork`, which is why
+            // both are rooted at `store_dir`.
+            evidence_floor_db: store_dir.join("supervisor-evidence-floor.db"),
+    })?);
     let signer: Arc<dyn DispatchCore> = Arc::new(Signer::new(SignerConfig {
         receipt_key_id: signer_key_id.clone(),
         supervisor_attestation_key_id: sup_attest_key_id.clone(),
@@ -347,7 +353,14 @@ where
         // proof writes its chain beside the store; in the in-process proof that is a shape check,
         // and in the cross-account deployment the directory belongs to the executor principal.
         evidence_dir: store_dir.join("run-evidence"),
-        head_sequence: 3,
+        // audit R-42: this was the literal `3`. `head_sequence` is the ONE field in the evidence
+        // chain that orders two runs against each other, so a constant made the supervisor's floor
+        // compare a constant against itself — the exact defect F-02 was closed for on the four
+        // `evidence_*` values, still live on the fifth. It is now allocated from a durable counter
+        // that cannot re-issue a number it has handed out.
+        head_sequence: crate::head_sequence::next_head_sequence(
+            &store_dir.join("recorder-state"),
+        )?,
     };
     let exec = GovernedExecutionCore::new(params, exec_produce, supervisor_op, now_ms);
 
@@ -451,11 +464,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brops_broker::chain_executor::{SystemWallClock, WallClock};
+
+    /// This host's REAL wall clock, in epoch ms.
+    ///
+    /// These tests used to pin `1_900_000_000_000` ("a fixed, plausible wall clock" — the year 2030).
+    /// That worked only while nothing in the chain consulted a clock it did not receive as an argument.
+    /// §7.1 freshness now bounds the receipt's signed `_ms` fields against the broker's own reading, so
+    /// a run declaring 2030 to every core while the machine says otherwise is exactly the skewed receipt
+    /// the check exists to refuse. Using the real clock is also what the two SHIPPED callers of
+    /// `in_process_turn_produce` do (`governed_trust_selftest`, the demonstration-chat command), so the
+    /// tests now exercise the configuration that ships.
+    fn now() -> i64 {
+        SystemWallClock.now_ms().expect("this host must have a readable wall clock")
+    }
 
     #[test]
     fn full_governed_turn_reaches_trusted_verified_in_process() {
         let dir = std::env::temp_dir().join(format!("brops-winlive-proof-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64; // a fixed, plausible wall clock
+        let now = now();
         let outcome = in_process_turn(&dir, now).expect("governed turn must commit");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(outcome.bound, "committed body must be trusted_verified: {}", outcome.trust_str);
@@ -481,7 +508,7 @@ mod tests {
         // The live seam: an arbitrary reply (what a model produced) is what gets signed and bound —
         // trusted_verified is over the REAL answer, not a fixed demo string. (Custody is still demo.)
         let dir = std::env::temp_dir().join(format!("brops-winlive-live-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let reply = b"Bro: here is the verified live answer to your question.";
         let outcome = in_process_turn_output(&dir, now, reply).expect("live governed turn must commit");
         let _ = std::fs::remove_dir_all(&dir);
@@ -490,10 +517,25 @@ mod tests {
         assert!(!outcome.production_verified, "custody is demo, not production: {}", outcome.trust_str);
     }
 
+    /// §7.1 freshness reaches THIS harness too. `in_process_turn_produce` hands its `now_ms` to every
+    /// core, so a caller can stamp the whole turn with any time it likes — but the acceptance clock is
+    /// the broker's own [`SystemWallClock`], not that argument. A run declaring a clock the host does
+    /// not agree with therefore cannot commit, in either direction.
+    #[test]
+    fn a_turn_run_under_a_fabricated_clock_cannot_commit() {
+        const TEN_YEARS_MS: i64 = 10 * 365 * 24 * 60 * 60 * 1000;
+        for (name, now) in [("far future", now() + TEN_YEARS_MS), ("far past", now() - TEN_YEARS_MS)] {
+            let dir = std::env::temp_dir().join(format!("brops-winlive-clock-{}", brops_core::id()));
+            let r = in_process_turn(&dir, now);
+            let _ = std::fs::remove_dir_all(&dir);
+            assert!(r.is_err(), "{name}: a fabricated wall clock must not produce a committed turn");
+        }
+    }
+
     #[test]
     fn empty_live_output_fails_closed() {
         let dir = std::env::temp_dir().join(format!("brops-winlive-empty-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let r = in_process_turn_output(&dir, now, b"");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "an empty output must never produce a committed/verified turn");
@@ -506,7 +548,7 @@ mod tests {
         // and that the bytes it produced are what got bound + verified.
         use std::sync::atomic::{AtomicBool, Ordering};
         let dir = std::env::temp_dir().join(format!("brops-winlive-produce-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let called = AtomicBool::new(false);
         let outcome = in_process_turn_produce(&dir, now, || {
             called.store(true, Ordering::SeqCst);
@@ -536,11 +578,43 @@ mod tests {
         );
     }
 
+    /// **audit R-42, end to end.** Two governed turns over ONE store must both commit.
+    ///
+    /// That reads like a liveness test and is really the anti-rollback test. `head_sequence` was the
+    /// literal `3` here, so with the supervisor's floor armed the SECOND turn presents a head the
+    /// install has already attested and is refused `evidence_fork`. Reverting the counter to any
+    /// constant fails this test; so does a counter that is not durable, because a second turn would
+    /// re-issue 1.
+    ///
+    /// It is deliberately driven through the SHIPPED entry point rather than the supervisor core, so
+    /// it also covers the wiring — the floor and the counter being rooted at the same directory. The
+    /// two prior rounds both found a decision that was tested and a call site that was not.
+    #[test]
+    fn two_turns_over_one_store_advance_the_evidence_head() {
+        let dir = std::env::temp_dir().join(format!("brops-winlive-twoturn-{}", brops_core::id()));
+        let t = now();
+        let first = in_process_turn_output(&dir, t, b"first governed reply")
+            .expect("the first governed turn must commit");
+        let second = in_process_turn_output(&dir, t + 2_000, b"second governed reply").expect(
+            "a SECOND governed turn over the same store must commit — a constant or non-durable \
+             head_sequence makes the supervisor's anti-rollback floor read it as evidence_fork",
+        );
+        // ...and the head really did move, rather than the floor having been switched off.
+        let seq = std::fs::read_to_string(dir.join("recorder-state/evidence-head-sequence.json"))
+            .expect("the execution must keep a durable head-sequence counter");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(first.bound && second.bound, "{} / {}", first.trust_str, second.trust_str);
+        assert!(
+            seq.contains("\"head_sequence\":2"),
+            "two turns must have consumed two head sequences, got {seq}"
+        );
+    }
+
     #[test]
     fn produce_failure_fails_closed() {
         // If the executor closure fails (e.g. the model invocation errored), the turn must NOT commit.
         let dir = std::env::temp_dir().join(format!("brops-winlive-pfail-{}", brops_core::id()));
-        let now = 1_900_000_000_000i64;
+        let now = now();
         let r = in_process_turn_produce(&dir, now, || Err(()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(r.is_err(), "a failed produce must never yield a committed/verified turn");

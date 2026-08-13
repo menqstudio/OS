@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -15,6 +16,7 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import _self_owned_ack
 from bro_contracts import canonical_json_sha256
 from bro_evidence import event_hash
 from bro_orchestration_runtime import (ACTOR_ASSIGNEE_LEASE, ACTOR_PROVEN_BY_SESSION,
@@ -56,7 +58,12 @@ def build_evidence(store: pathlib.Path, keys: dict, task_id: str, count: int) ->
     # (The refusal is POSIX-only, so it fired on Linux CI while every local Windows run passed —
     # the same "the test is skipped on the platform you develop on" blind spot the remediation
     # audit found 22 instances of. Recorded here so the next reader knows why it is set.)
-    os.environ.setdefault("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", "acknowledged")
+    # Declared through the FILE form. The raw variable is honoured only under `BRO_ENV=ci`
+    # now: ungated, it handed the short-circuit for every custody rule in the runtime to
+    # anyone who could set this process's environment — the very adversary the pin exists to
+    # stop. `declare_for_process` is a no-op when a declaration is already in the environment,
+    # so a suite that wants to exercise the refusal can still unset it.
+    _self_owned_ack.declare_for_process()
 
     previous, ids, digest = None, [], ""
     for sequence in range(1, count + 1):
@@ -676,6 +683,90 @@ class DurableVerificationCompletionTests(DurableRuntimeTests):
         refs = build_evidence(self.store, self.keys, "task-noverif", 2)
         result = self.runtime.complete_task("task-noverif", actor_id=AGENT, now_epoch=now + 2, evidence_refs=refs)
         self.assertEqual(result["state"], "completed")
+
+
+class ClaimGuardReentrancyTests(unittest.TestCase):
+    """The claim guard must be reentrant for the process that HOLDS it, and for nobody else
+    (audit round 2, ``bro_orchestration_runtime.py:380``).
+
+    The reentrancy answer used to be pid equality against the pid recorded in the lock file.
+    An orphaned lock — written by a process that died inside the guard — keeps that pid on
+    disk forever, and pids are recycled (default ``pid_max`` 32768 on Linux). The unrelated
+    process that inherits the pid was told it already held the guard, and ``_mutation_guard``
+    then yielded holding NOTHING while any other process was free to break the stale lock and
+    take it for real: two writers inside a guard whose whole purpose is that there is one.
+    """
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        base = pathlib.Path(self.temporary.name)
+        self.runtime = DurableOrchestrationRuntime(base / "state", ROOT)
+        self.lock = self.runtime.claim_lock
+        self.lock.parent.mkdir(parents=True, exist_ok=True)
+
+    def _orphan_lock_from_a_recycled_pid(self):
+        """The lock a dead holder left behind, carrying OUR pid — which is exactly what a
+        recycled pid looks like from the inside."""
+        self.lock.write_text(
+            json.dumps({"owner_token": uuid.uuid4().hex, "pid": os.getpid(),
+                        "created_at_epoch": int(time.time())}),
+            encoding="utf-8")
+
+    def test_an_orphaned_lock_carrying_our_pid_is_not_ours(self):
+        self._orphan_lock_from_a_recycled_pid()
+        self.assertFalse(self.runtime._guard_held_by_this_process())
+
+    def test_the_mutation_guard_does_not_walk_through_an_orphaned_lock(self):
+        """The consequence, not just the predicate: with the lock held by somebody else the
+        guard must WAIT and then refuse — never pass straight through unlocked."""
+        import bro_orchestration_runtime as bor
+
+        self._orphan_lock_from_a_recycled_pid()
+        with unittest.mock.patch.object(bor, "LOCK_TIMEOUT_SECONDS", 0.05):
+            with self.assertRaises(OrchestrationRuntimeError) as caught:
+                with self.runtime._mutation_guard():
+                    self.fail("entered the guard without holding the claim lock")
+        self.assertIn("claim lock acquisition timed out", str(caught.exception))
+
+    def test_the_real_holder_is_still_reentrant(self):
+        """The property the pid check existed to provide, kept."""
+        with self.runtime._claim_guard():
+            self.assertTrue(self.runtime._guard_held_by_this_process())
+            with self.runtime._mutation_guard():   # would deadlock if not reentrant
+                pass
+        self.assertFalse(self.runtime._guard_held_by_this_process())
+
+    def test_the_v1_override_registers_its_token_too(self):
+        """The V1 runtime OVERRIDES ``_claim_guard`` with its own near-copy, and that copy is
+        the one its callers actually acquire. If only the base implementation records the
+        token, every base method V1 delegates into re-enters ``_mutation_guard``, finds the
+        guard "not ours", tries to acquire a lock this process already holds, and times out.
+
+        This is the wiring, not the decision — the class above tests the decision and passed
+        while this was broken. It was caught by the full suite (six red tests across
+        ``test_control_room_api`` and ``test_reconciler``), which is exactly the gap the
+        previous sweeps recorded: deleting a call site leaves the unit tests green.
+        """
+        from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
+
+        base = pathlib.Path(self.temporary.name) / "v1-state"
+        v1 = DurableOrchestrationRuntimeV1(base, ROOT)
+        with v1._claim_guard():
+            self.assertTrue(v1._guard_held_by_this_process())
+            with v1._mutation_guard():   # would time out if the token were not registered
+                pass
+        self.assertFalse(v1._guard_held_by_this_process())
+
+    def test_a_lock_broken_and_retaken_while_we_overran_is_not_ours(self):
+        with self.runtime._claim_guard():
+            self.assertTrue(self.runtime._guard_held_by_this_process())
+            # Somebody else broke our stale lock and took it.
+            self.lock.write_text(
+                json.dumps({"owner_token": "another-holders-token", "pid": os.getpid(),
+                            "created_at_epoch": int(time.time())}),
+                encoding="utf-8")
+            self.assertFalse(self.runtime._guard_held_by_this_process())
 
 
 if __name__ == "__main__":

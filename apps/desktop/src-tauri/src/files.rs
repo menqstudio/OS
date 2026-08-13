@@ -184,35 +184,60 @@ fn is_sensitive(path: &Path) -> bool {
 /// `root` after resolving `..` and symlinks — rejecting path-traversal and
 /// symlink escapes. An empty `raw` resolves to the root itself. Split out from
 /// [`confine`] so tests can pass an explicit root without touching env vars.
+/// The ONE refusal a path can earn from the confinement gate.
+///
+/// Every reason a path is refused — it does not exist, it exists but cannot be
+/// canonicalized, it canonicalizes outside the workspace root, or it is on the
+/// sensitive-path denylist — returns this exact string. That is the whole point:
+/// the gate previously answered "path not found or not accessible" for a path
+/// that does not exist and "path is outside the allowed workspace" for one that
+/// does, which made `read_file`/`list_dir` a whole-filesystem existence oracle
+/// for a compromised renderer — hand it any absolute path and the WORDING of the
+/// refusal reported whether that path is there. The denylist added a third
+/// distinguishable answer, probing existence inside the root (where `list_dir`
+/// deliberately hides sensitive children).
+///
+/// The operator still gets the real reason: every branch logs the specific cause
+/// and the real path to stderr before returning this. Only the renderer is told
+/// nothing it could not already know.
+const PATH_REFUSED: &str = "path is not accessible in this workspace";
+
 fn confine_in(root: &Path, raw: &str) -> Result<PathBuf, String> {
     if raw.is_empty() {
         return Ok(root.to_path_buf());
     }
-    // One generic error for both "does not exist" and "not accessible" — a
-    // renderer must not be able to distinguish them (existence probing), and the
-    // raw io error / canonical path is logged internally only.
+    // One generic error for "does not exist", "not accessible" AND "outside the
+    // root" — a renderer must not be able to distinguish them (existence
+    // probing), and the raw io error / canonical path is logged internally only.
     let canon = fs::canonicalize(raw).map_err(|e| {
         eprintln!("[brops] files: cannot resolve {raw}: {e}");
-        "path not found or not accessible".to_string()
+        PATH_REFUSED.to_string()
     })?;
     // Component-wise containment (not string-prefix): "/home/gev2" is NOT inside
     // "/home/gev".
     if !canon.starts_with(root) {
         eprintln!("[brops] files: {} is outside the allowed files root", canon.display());
-        return Err("path is outside the allowed workspace".to_string());
+        return Err(PATH_REFUSED.to_string());
     }
     Ok(canon)
+}
+
+/// [`confine_in`] plus the sensitive-path denylist, against an explicit root.
+/// Split out of [`confine`] so the denylist refusal can be tested against a
+/// scratch root without touching the process-global `BROPS_FILES_ROOT`.
+fn confine_under(root: &Path, raw: &str) -> Result<PathBuf, String> {
+    let p = confine_in(root, raw)?;
+    if is_sensitive(&p) {
+        eprintln!("[brops] files: sensitive path blocked: {}", p.display());
+        return Err(PATH_REFUSED.to_string());
+    }
+    Ok(p)
 }
 
 /// Production confinement against the configured [`files_root`], plus the
 /// sensitive-path denylist.
 fn confine(raw: &str) -> Result<PathBuf, String> {
-    let p = confine_in(&files_root()?, raw)?;
-    if is_sensitive(&p) {
-        eprintln!("[brops] files: sensitive path blocked: {}", p.display());
-        return Err("access to this path is blocked".to_string());
-    }
-    Ok(p)
+    confine_under(&files_root()?, raw)
 }
 
 // --- listing ----------------------------------------------------------------
@@ -284,7 +309,7 @@ pub fn list_dir(path: Option<String>) -> Result<DirListing, String> {
     // so a `.ssh`/`.aws` directory can't even be enumerated.
     if is_sensitive(&dir) {
         eprintln!("[brops] files: sensitive path blocked in listing: {}", dir.display());
-        return Err("access to this path is blocked".to_string());
+        return Err(PATH_REFUSED.to_string());
     }
     let mut listing = read_listing(&dir).map_err(|e| {
         eprintln!("[brops] files: cannot list {}: {e}", dir.display());
@@ -526,6 +551,40 @@ mod tests {
         // a non-existent path → rejected (canonicalize fails)
         assert!(confine_in(&root, base.join("nope").to_str().unwrap()).is_err());
 
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The confinement gate must not be an existence oracle: for any path a
+    /// compromised renderer hands it, the refusal must be byte-identical whether
+    /// the path exists or not, whether it is inside or outside the root, and
+    /// whether it is on the sensitive denylist. Previously the three branches
+    /// answered with three different strings, so the WORDING alone reported
+    /// whether an arbitrary absolute path exists on the machine.
+    #[test]
+    fn confinement_refusals_are_indistinguishable() {
+        let base = scratch("oracle");
+        fs::create_dir_all(base.join("inside")).unwrap();
+        fs::write(base.join("inside/id_rsa"), b"k").unwrap();
+        let root = fs::canonicalize(&base).unwrap();
+
+        // (a) an absolute path that EXISTS but is outside the root.
+        let outside_existing = std::env::temp_dir().join(format!("brops_oracle_{}", std::process::id()));
+        fs::write(&outside_existing, b"x").unwrap();
+        let a = confine_in(&root, outside_existing.to_str().unwrap()).unwrap_err();
+
+        // (b) an absolute path that DOES NOT exist, in the same directory.
+        let outside_missing = outside_existing.with_extension("absent");
+        assert!(!outside_missing.exists());
+        let b = confine_in(&root, outside_missing.to_str().unwrap()).unwrap_err();
+
+        // (c) a path INSIDE the root that the sensitive denylist blocks.
+        let c = confine_under(&root, base.join("inside/id_rsa").to_str().unwrap()).unwrap_err();
+
+        assert_eq!(a, b, "an existing path outside the root is distinguishable from an absent one");
+        assert_eq!(b, c, "a denylisted path is distinguishable from an absent one");
+        assert_eq!(a, PATH_REFUSED);
+
+        let _ = fs::remove_file(&outside_existing);
         let _ = fs::remove_dir_all(&base);
     }
 

@@ -51,8 +51,12 @@ import json
 import socket
 import struct
 import sys
+import time
+import traceback
+from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Callable, Dict, Mapping, Optional
 
+import governed_output_stream as output_streams
 import governed_supervisor_ledger as ledger
 from challenge_authority import peer_is_broker
 from governed_supervisor import (
@@ -68,6 +72,59 @@ from governed_supervisor import (
     build_terminal_record,
     recompute_request_sha256 as default_recompute_request_sha256,
 )
+from governed_output_read import (
+    OUTPUT_READ_PROTOCOL,
+    OutputReadService,
+    REFUSE_MALFORMED as OUTPUT_READ_PEER_DENIED,
+    output_read_refused,
+)
+from governed_evidence_request import (
+    EVIDENCE_REQUEST_PROTOCOL,
+    REFUSE_PEER_DENIED as EVIDENCE_REFUSE_PEER_DENIED,
+    EvidenceRequestService,
+    evidence_request_refused,
+    frame_cap_refusal as evidence_frame_cap_refusal,
+)
+from governed_staging_upload import (
+    MAX_SIDECAR_FRAME_BYTES,
+    STAGING_PROTOCOLS,
+    StagingService,
+    frame_cap_refusal as staging_frame_cap_refusal,
+)
+from governed_turn_open import (
+    OPEN_PROTOCOL,
+    REFUSE_PEER_DENIED,
+    OpenService,
+    peer_is_sidecar,
+    refused as open_refused,
+)
+
+#: Every protocol the SIDECAR principal is allowed to speak on this socket: the §4.10(a0)
+#: open, the three §4.10(a)(b)(c) staging messages, the §4.10(d) execute/finalize trigger,
+#: and the §4.10(f) output read. It is a closed tuple rather than a prefix match, so widening
+#: the sidecar's door is an edit to this line and cannot happen by a new protocol merely
+#: being named `brops.governed-*`.
+#:
+#: §4.10(f) is the only one of the six that carries anything OUT. The other five are ingress
+#: or control; this is the single egress, which is why it is the one whose reply is large
+#: enough to have exposed the write-bound defect fixed in `handle_connection` below.
+SIDECAR_PROTOCOLS = ((OPEN_PROTOCOL,) + STAGING_PROTOCOLS
+                     + (EVIDENCE_REQUEST_PROTOCOL, OUTPUT_READ_PROTOCOL))
+
+
+def frame_cap_refusal(protocol: Any, frame_len: int) -> Optional[Dict[str, Any]]:
+    """The per-protocol frame bound for whichever sidecar protocol this is.
+
+    The transport has to read up to the LARGEST cap any sidecar protocol declares (a
+    staging chunk is 240 KiB of base64url), so every tighter bound has to be re-imposed on
+    the bytes that actually arrived. Each protocol family owns its own table and its own
+    over-cap reason, because the reason has to come from that protocol's published closed
+    set; this composes them instead of building a third table that could disagree with both.
+    An unknown protocol yields ``None`` — whether the sidecar may send it at all is the
+    door's question, not this one's.
+    """
+    return (staging_frame_cap_refusal(protocol, frame_len)
+            or evidence_frame_cap_refusal(protocol, frame_len))
 
 # ---------------------------------------------------------------------------
 # Wire framing constants (§5 supervisor front door — same shape as §2.1)
@@ -86,16 +143,15 @@ OP_EXECUTION_STARTED = "execution-started"
 OP_COMPLETE_RUN = "complete-run"
 OP_ATTEST_RUN = "attest-run"
 
-# The exhaustive field set of a wire lease (mirrors governed_supervisor.Lease). The
-# supervisor only ever WRITES this shape now — it is never parsed back off the wire
-# (see the §5 v2 note in the module docstring).
-LEASE_FIELDS = (
-    "lease_id",
-    "execution_attempt_id",
-    "lease_expires_at_ms",
-    "launcher_executable_sha256",
-    "executor_executable_sha256",
-)
+# The exhaustive field set of a wire lease, DERIVED from ``governed_supervisor.Lease`` rather
+# than retyped. It used to be a hand-written tuple whose comment said it "mirrors
+# governed_supervisor.Lease" — and which nothing in the tree read, so a field added to the
+# dataclass would have left this list silently short with no test to notice. Deriving it means
+# the mirror cannot be stale, and ``_lease_to_dict`` marshals THROUGH it, so the wire shape and
+# the dataclass are the same fact instead of two statements of it.
+# (The supervisor only ever WRITES this shape; it is never parsed back off the wire — see the
+# §5 v2 note in the module docstring.)
+LEASE_FIELDS: tuple = tuple(f.name for f in dataclass_fields(Lease))
 
 # ---------------------------------------------------------------------------
 # Typed refusal reasons this layer adds on top of the pure core's REFUSE_* set.
@@ -167,6 +223,75 @@ def read_peercred_uid(sock: "socket.socket") -> int:
 # ---------------------------------------------------------------------------
 
 
+#: TOTAL wall-clock budget for ONE connection, both directions (audit R1 `:183`, the
+#: supervisor twin of F-31).
+#:
+#: The front door had **no timeout of any kind** and a SERIAL accept loop, so one peer that
+#: connected and then sent nothing held the supervisor — and therefore every governed turn on
+#: the install — for as long as it liked. The two halves matter together: a per-recv timeout
+#: alone is not a bound, because it restarts on every byte that arrives, so a peer dripping one
+#: byte per timeout holds the loop indefinitely while never once timing out. This is a budget
+#: for the WHOLE exchange, armed at the first read and never re-armed.
+#:
+#: 120 s is deliberately generous: both peers are local (AF_UNIX), the broker's frames are
+#: 8 KiB and the sidecar's largest is 240 KiB, so no legitimate exchange comes within two
+#: orders of magnitude of it. The number that matters is that it is finite.
+CONNECTION_BUDGET_S = 120.0
+
+
+def recv_budget_s(deadline: float, now: float) -> Optional[float]:
+    """The timeout to arm for the next read, or ``None`` when the budget is spent.
+
+    Lifted OUT of :class:`SocketPeerConn` on purpose. That class cannot be constructed on
+    this box — ``read_peercred_uid`` refuses off Linux — so a bound expressed only inside its
+    read loop would sit in a branch no test here can reach, which is how the previous rounds
+    shipped unwitnessed changes. The arithmetic that decides the refusal lives here, where a
+    test drives it directly.
+
+    **Never returns 0.0.** ``socket.settimeout(0)`` puts the socket in NON-BLOCKING mode
+    (and the POSIX ``SO_RCVTIMEO`` it maps to reads 0 as *infinite*), so arming zero at the
+    exact moment the budget expires is the opposite of a deadline. Exhaustion is ``None``,
+    and the caller stops reading.
+    """
+    remaining = deadline - now
+    if remaining <= 0.0:
+        return None
+    return remaining
+
+
+def recv_exactly_bounded(
+    recv: Callable[[int], bytes],
+    n: int,
+    *,
+    deadline: float,
+    arm_timeout: Callable[[float], None],
+    now: Callable[[], float] = time.monotonic,
+) -> bytes:
+    """Read up to ``n`` bytes, giving up when the connection budget is exhausted.
+
+    Returns whatever arrived. A short return is the caller's signal: :func:`read_frame`
+    already turns one into a ``FrameError``, so a starved read is a framing refusal rather
+    than a hang. Pure with respect to the socket: ``recv``/``arm_timeout``/``now`` are seams,
+    which is what makes the deadline testable without a socket at all.
+    """
+    chunks = []
+    remaining = n
+    while remaining > 0:
+        budget = recv_budget_s(deadline, now())
+        if budget is None:
+            break  # budget spent; caller sees the short read
+        arm_timeout(budget)
+        try:
+            chunk = recv(remaining)
+        except (socket.timeout, TimeoutError):
+            break
+        if not chunk:
+            break  # peer closed early; caller detects the short read
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 class SocketPeerConn:
     """Adapter around a live accepted socket exposing the duck-typed shape the
     server loop consumes: ``peer_uid``, ``recv_exactly``, ``send_all``,
@@ -174,24 +299,29 @@ class SocketPeerConn:
 
     The peer uid is captured ONCE, at accept time, from the kernel — it is not
     caller-supplied and cannot be spoofed over the wire.
+
+    The connection also carries a TOTAL deadline (:data:`CONNECTION_BUDGET_S`), armed at
+    construction and shared by both directions, so no peer can hold the serial accept loop.
     """
 
-    def __init__(self, sock: "socket.socket") -> None:
+    def __init__(self, sock: "socket.socket", *,
+                 budget_s: float = CONNECTION_BUDGET_S) -> None:
         self._sock = sock
         self.peer_uid = read_peercred_uid(sock)
+        self._deadline = time.monotonic() + budget_s
 
     def recv_exactly(self, n: int) -> bytes:
-        chunks = []
-        remaining = n
-        while remaining > 0:
-            chunk = self._sock.recv(remaining)
-            if not chunk:
-                break  # peer closed early; caller detects the short read
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        return recv_exactly_bounded(
+            self._sock.recv, n,
+            deadline=self._deadline, arm_timeout=self._sock.settimeout)
 
     def send_all(self, data: bytes) -> None:
+        budget = recv_budget_s(self._deadline, time.monotonic())
+        if budget is None:
+            # The budget is spent. Writing under no timeout here would hand back, on the
+            # write side, exactly the unbounded hold the read side just refused.
+            raise FrameError("connection budget exhausted before the reply could be written")
+        self._sock.settimeout(budget)
         self._sock.sendall(data)
 
     def close(self) -> None:
@@ -206,11 +336,19 @@ class SocketPeerConn:
 # ---------------------------------------------------------------------------
 
 
-def read_frame(conn: Any) -> bytes:
-    """Read exactly one length-prefixed frame, bounded to ``MAX_FRAME_BYTES``.
+def read_frame(conn: Any, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    """Read exactly one length-prefixed frame, bounded to ``max_bytes``.
 
     Fail-closed on a short header, a zero/oversize declared length, or a
     truncated body.
+
+    The bound is a parameter because the two principals on this socket carry different
+    traffic (§2.4/§4.10(b)). The broker's ``op`` frames stay at the deliberately tight
+    8 KiB; the sidecar's staging chunk is 240 KiB of base64url by design and cannot be made
+    smaller without breaking the design's own frame-sizing proof. Raising the module
+    constant instead would have widened the broker's surface to buy the sidecar's, so the
+    two are separated rather than merged — and the sidecar's larger read is immediately
+    narrowed again per-protocol by ``governed_staging_upload.frame_cap_refusal``.
     """
     header = conn.recv_exactly(LENGTH_PREFIX_BYTES)
     if len(header) != LENGTH_PREFIX_BYTES:
@@ -218,9 +356,9 @@ def read_frame(conn: Any) -> bytes:
     length = int.from_bytes(header, "big")
     if length == 0:
         raise FrameError("empty frame rejected")
-    if length > MAX_FRAME_BYTES:
+    if length > max_bytes:
         raise FrameError(
-            "frame length %d exceeds bound %d" % (length, MAX_FRAME_BYTES)
+            "frame length %d exceeds bound %d" % (length, max_bytes)
         )
     body = conn.recv_exactly(length)
     if len(body) != length:
@@ -228,11 +366,11 @@ def read_frame(conn: Any) -> bytes:
     return body
 
 
-def write_frame(conn: Any, payload: bytes) -> None:
+def write_frame(conn: Any, payload: bytes, max_bytes: int = MAX_FRAME_BYTES) -> None:
     """Write one length-prefixed frame. The reply is supervisor-built and small;
     an over-bound reply is a programming error, not attacker input, so we still
     refuse it rather than emit an un-framable blob."""
-    if len(payload) > MAX_FRAME_BYTES:
+    if len(payload) > max_bytes:
         raise FrameError("reply exceeds frame bound")
     conn.send_all(len(payload).to_bytes(LENGTH_PREFIX_BYTES, "big") + payload)
 
@@ -247,13 +385,10 @@ def _encode_reply(reply: Mapping[str, Any]) -> bytes:
 
 
 def _lease_to_dict(lease: Lease) -> Dict[str, Any]:
-    return {
-        "lease_id": lease.lease_id,
-        "execution_attempt_id": lease.execution_attempt_id,
-        "lease_expires_at_ms": lease.lease_expires_at_ms,
-        "launcher_executable_sha256": lease.launcher_executable_sha256,
-        "executor_executable_sha256": lease.executor_executable_sha256,
-    }
+    """The wire lease, marshalled through [LEASE_FIELDS] — which is itself derived from the
+    ``Lease`` dataclass. A field added to the dataclass appears on the wire; a field removed
+    disappears from it. Neither is a place a human has to remember to edit."""
+    return {name: getattr(lease, name) for name in LEASE_FIELDS}
 
 
 def _b64url_nopad(data: bytes) -> str:
@@ -359,8 +494,26 @@ def dispatch(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
+    evidence_request_service: Optional[EvidenceRequestService] = None,
+    output_read_service: Optional[OutputReadService] = None,
+    peer_uid: Any = None,
 ) -> Dict[str, Any]:
     """Route one decoded request into the pure supervisor core + the durable ledger.
+
+    **Two disjoint frame families, discriminated by their own top-level key.** The §5 ops
+    below are keyed on ``op`` and come from the BROKER. ``brops.governed-turn-open.v1``
+    (§4.10(a0)) is keyed on ``protocol`` and comes from the SIDECAR — a different principal,
+    a different reply shape, and a different refusal vocabulary. Routing on the key each
+    family actually carries keeps them from ever being confusable: an ``op`` frame can never
+    be answered with a governed-turn-open verdict, and vice versa.
+
+    ``open_service`` is the §4.10(a0) binding; without it that protocol is served by nobody
+    and every such request is ``peer_denied`` — a supervisor with no configured sidecar
+    principal, store publish or registry anchor admits no turn. ``staging_service`` and
+    ``evidence_request_service`` are the §4.10(a)(b)(c) and §4.10(d) bindings and fail
+    closed the same way.
 
     The §5 v2 op set, in lifecycle order — each one moves the SAME durable attempt forward:
 
@@ -396,6 +549,48 @@ def dispatch(
         raise ServerError("request body must be a JSON object")
     if conn is None:
         raise SupervisorError("supervisor requires a durable ledger connection")
+
+    # §4.10(a0) — the sidecar's protocol-keyed frame. Checked FIRST and by its own key, so a
+    # frame carrying both `protocol` and `op` is answered as the open it declares itself to
+    # be rather than smuggling an op through the sidecar's door.
+    if request.get("protocol") == OPEN_PROTOCOL:
+        if open_service is None:
+            return open_refused(REFUSE_PEER_DENIED)
+        return open_service.handle(request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms)
+
+    # §4.10(a)(b)(c) — the three staging-upload protocols, keyed the same way. Without a
+    # `staging_service` they are served by nobody: the handlers are reached through an
+    # UNCONFIGURABLE peer uid, so every such request refuses on the peer check rather than
+    # this layer inventing a verdict in a vocabulary that is not its own.
+    if request.get("protocol") in STAGING_PROTOCOLS:
+        if staging_service is None:
+            return _staging_unconfigured(request)
+        return staging_service.handle(
+            request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms
+        )
+
+    # §4.10(d) - the execute/finalize trigger, keyed the same way. Without an
+    # `evidence_request_service` it is served by nobody: the supervisor has not been told
+    # what happens when a turn is admitted to execute, so it admits none. The reply is that
+    # protocol's own `peer_denied`, the §4.10(a0) precedent - an unconfigured principal is
+    # not a peer this supervisor serves. It takes no clock: §4.10(d) reads none.
+    if request.get("protocol") == EVIDENCE_REQUEST_PROTOCOL:
+        if evidence_request_service is None:
+            return evidence_request_refused(EVIDENCE_REFUSE_PEER_DENIED)
+        return evidence_request_service.handle(request, peer_uid=peer_uid, conn=conn)
+
+    # §4.10(f) - the output-read pull, keyed the same way. Without an `output_read_service`
+    # it is served by nobody, and that same absence means `complete-run` mints no stream: a
+    # supervisor that cannot serve a read must not create rows only it could have read. The
+    # reply is this protocol's own least-informative published literal, because §4.10(f)'s
+    # closed set has no `peer_denied` (the §4.10(b)/(c) precedent).
+    if request.get("protocol") == OUTPUT_READ_PROTOCOL:
+        if output_read_service is None:
+            return output_read_refused(OUTPUT_READ_PEER_DENIED)
+        return output_read_service.handle(
+            request, peer_uid=peer_uid, conn=conn, clock_ms=clock_ms
+        )
+
     op = request.get("op")
 
     if op == OP_ATTEST_RUN:
@@ -409,9 +604,39 @@ def dispatch(
     if op == OP_EXECUTION_STARTED:
         return _op_execution_started(request, conn, clock_ms)
     if op == OP_COMPLETE_RUN:
-        return _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence)
+        return _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence,
+                                output_read_service)
 
     raise ServerError("unknown op %r" % (op,))
+
+
+def _staging_unconfigured(request: Mapping[str, Any]) -> Dict[str, Any]:
+    """A staging message on a supervisor with no ``StagingService``.
+
+    The reply is produced by the protocol's OWN handler with an impossible sidecar uid
+    (``None``, which ``peer_is_sidecar`` refuses fail-closed), rather than assembled here.
+    That way this layer never has to know which reason each of the three closed sets uses
+    for "you are not allowed to send this" — it asks the module that owns the set.
+    """
+    from governed_staging_upload import (
+        STAGING_CHUNK_PROTOCOL,
+        STAGING_FINAL_PROTOCOL,
+        STAGING_OPEN_PROTOCOL,
+        staging_open_refused,
+        chunk_refused,
+        final_refused,
+        REFUSE_MALFORMED,
+        REFUSE_PEER_DENIED as STAGING_PEER_DENIED,
+    )
+
+    protocol = request.get("protocol")
+    if protocol == STAGING_OPEN_PROTOCOL:
+        return staging_open_refused(STAGING_PEER_DENIED)
+    if protocol == STAGING_CHUNK_PROTOCOL:
+        return chunk_refused(REFUSE_MALFORMED, 0)
+    if protocol == STAGING_FINAL_PROTOCOL:
+        return final_refused(REFUSE_MALFORMED)
+    raise ServerError("unknown staging protocol %r" % (protocol,))
 
 
 def _op_accept_open(request, config, conn, verify_sig, recompute_request_sha256, clock_ms):
@@ -506,7 +731,136 @@ def _op_execution_started(request, conn, clock_ms):
     return {"ok": True, "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt}
 
 
-def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence):
+class CompletionRefused(ServerError):
+    """A completion the supervisor will not record, carrying the typed wire reason.
+
+    It exists because :func:`complete_governed_run` is shared by TWO callers with different
+    reply shapes — the broker's ``complete-run`` op, which answers an ``ok:false`` frame, and
+    the §4.10(d) acceptance driver, which answers a §4.10(e) ``refused`` verdict. Neither can
+    build the other's reply, so the shared body raises the REASON and each caller renders it.
+    A ledger fault is NOT wrapped in this: :class:`governed_supervisor_ledger.LedgerError`
+    already carries its own typed classification and both callers map it themselves.
+    """
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__("%s: %s" % (reason, detail))
+        self.reason = reason
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class CompletedRun:
+    """What recording one completion produced.
+
+    It deliberately does NOT carry the ``governed_output_streams`` row. One was carried out
+    of here and mutation testing found nothing that read it: the §4.10(d) driver needs that
+    row on BOTH its paths — a fresh completion and a ``COMPLETED`` retry, which has no
+    ``CompletedRun`` at all — so it reads it once, from
+    ``governed_output_stream.load_stream_for_attempt``. Two sources for one row is two things
+    that can disagree; this is the one that could be deleted, so it was.
+    """
+
+    produced: Dict[str, Any]
+    derived: Dict[str, Any]
+    recorded: str
+    stream_outcome: str
+
+
+def complete_governed_run(conn: Any, row: Any, produced_request: Any,
+                          clock_ms: Callable[[], int], *,
+                          publish_artifact: Callable[[bytes], str],
+                          read_run_evidence: Callable[[str], Optional[bytes]],
+                          output_read_service: Optional[OutputReadService]) -> CompletedRun:
+    """The §5 ``complete-run`` body: derive, publish, record write-once, mint the stream.
+
+    Extracted from ``_op_complete_run`` when §4.10(d) gained a production supplier, because
+    that supplier walks the SAME durable attempt through the SAME completion and a second
+    implementation of this sequence would be two supervisors disagreeing about what a
+    completed run is. The op keeps the wire marshalling; this owns the decision.
+
+    Raises :class:`CompletionRefused` (a typed refusal each caller renders in its own
+    vocabulary) or a :class:`governed_supervisor_ledger.LedgerError` subclass. It never
+    returns a partial completion.
+    """
+    attempt = row["execution_attempt_id"]
+    produced = ledger.validate_completion_facts(produced_request)
+
+    # (audit F-01) Read the RECORDER's evidence chain for this attempt — from a directory only
+    # the recorder can write, never from the wire and never from the content-addressed store,
+    # because a store handle the caller names addresses bytes the caller can also have written.
+    # This is the first point in the protocol where the supervisor looks at something the
+    # executing chain did not choose. It yields the evidence head, and it refuses outright if the
+    # reply digest the completion reports is not the digest the recorder actually captured.
+    try:
+        chain_bytes = read_run_evidence(attempt)
+    except Exception as exc:
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "could not read the run evidence chain: %s" % exc)
+    if not chain_bytes:
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "no run evidence chain for attempt %r; a run whose execution the "
+                                "supervisor cannot observe must not be recorded" % (attempt,))
+    try:
+        evidence = ledger.derive_evidence_from_chain(chain_bytes, produced["output_handle"])
+    except ledger.EvidenceMismatch as exc:
+        raise CompletionRefused(REFUSE_EVIDENCE_MISMATCH, str(exc))
+
+    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
+    # to the protected store, then names their content addresses in the evidence. These were
+    # deployment-static constants the broker copied out of a world-readable config, which made
+    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
+    try:
+        derived = dict(evidence)
+        derived.update({
+            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
+            "record_handle": publish_artifact(build_terminal_record(row, produced)),
+            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
+        })
+    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
+        raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                "could not publish terminal artifacts: %s" % exc)
+
+    outcome = ledger.record_completion(conn, attempt, produced_request, clock_ms(),
+                                       derived=derived)
+
+    # §4.10(f): the output stream is "durably committed BEFORE the §4.10(e) result summary is
+    # returned", and "a completing turn's stream is ALWAYS created". This is that mint, and it
+    # runs AFTER the completion rather than before it on purpose: the completion is the fact
+    # that decides whether an egress is owed, so minting first would be able to leave a stream
+    # bound to an attempt whose completion the ledger then refused. Both halves are idempotent
+    # — `record_completion` on its write-once PK, `mint_stream` on `UNIQUE(execution_attempt_
+    # id)` — so a failure here is resolved by re-sending the byte-identical `complete-run`,
+    # which re-reads the completion and re-attempts only the missing mint.
+    #
+    # `output_bytes` is MEASURED from the stored artifact, never reported: `produced` carries
+    # `{output_handle, containment_evidence_handle, completed_at_ms}` and admits nothing else
+    # (audit F-01), and the store re-verifies `sha256(bytes) == handle` as it reads. So the
+    # length bound into the row is the length of bytes that content-address to the digest the
+    # recorder's own evidence chain committed to.
+    stream_outcome = "unconfigured"
+    if output_read_service is not None:
+        try:
+            output_bytes = output_read_service.measure_output(produced["output_handle"])
+        except SupervisorError as exc:
+            raise CompletionRefused(REFUSE_MALFORMED_STATE,
+                                    "could not mint the output stream: %s" % exc)
+        stream_outcome, _row = output_read_service.mint_for_completion(
+            conn,
+            output_streams.NewStream(
+                install_id=row["install_id"],
+                receipt_id=row["receipt_id"],
+                execution_attempt_id=attempt,
+                output_handle=produced["output_handle"],
+                output_bytes=output_bytes,
+            ),
+            clock_ms(),
+        )
+    return CompletedRun(produced=produced, derived=derived, recorded=outcome,
+                        stream_outcome=stream_outcome)
+
+
+def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidence,
+                     output_read_service=None):
     _require_exact_fields(request, OP_COMPLETE_RUN, ("execution_attempt_id", "produced"))
     attempt = _require_str(request, "execution_attempt_id")
     if publish_artifact is None:
@@ -525,54 +879,18 @@ def _op_complete_run(request, conn, clock_ms, publish_artifact, read_run_evidenc
         return _refusal(OP_COMPLETE_RUN, REFUSE_UNKNOWN_ATTEMPT,
                         "no acceptance row for attempt %r" % (attempt,))
     try:
-        produced = ledger.validate_completion_facts(request["produced"])
-    except ledger.LedgerError as exc:
-        return _ledger_refusal(OP_COMPLETE_RUN, exc)
-
-    # (audit F-01) Read the RECORDER's evidence chain for this attempt — from a directory only
-    # the recorder can write, never from the wire and never from the content-addressed store,
-    # because a store handle the caller names addresses bytes the caller can also have written.
-    # This is the first point in the protocol where the supervisor looks at something the
-    # executing chain did not choose. It yields the evidence head, and it refuses outright if the
-    # reply digest the completion reports is not the digest the recorder actually captured.
-    try:
-        chain_bytes = read_run_evidence(attempt)
-    except Exception as exc:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "could not read the run evidence chain: %s" % exc)
-    if not chain_bytes:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "no run evidence chain for attempt %r; a run whose execution the "
-                        "supervisor cannot observe must not be recorded" % (attempt,))
-    try:
-        evidence = ledger.derive_evidence_from_chain(chain_bytes, produced["output_handle"])
-    except ledger.EvidenceMismatch as exc:
-        return _refusal(OP_COMPLETE_RUN, REFUSE_EVIDENCE_MISMATCH, str(exc))
-    except ledger.LedgerError as exc:
-        return _ledger_refusal(OP_COMPLETE_RUN, exc)
-
-    # F-02: the supervisor BUILDS its terminal artifacts from its own rows and publishes them
-    # to the protected store, then names their content addresses in the evidence. These were
-    # deployment-static constants the broker copied out of a world-readable config, which made
-    # the isolated signer's protected-chain check a tautology over bytes anyone had written once.
-    try:
-        derived = dict(evidence)
-        derived.update({
-            "lease_handle": publish_artifact(bytes(row["lease_payload_bytes"])),
-            "record_handle": publish_artifact(build_terminal_record(row, produced)),
-            "execution_receipt_handle": publish_artifact(build_execution_receipt(row, produced)),
-        })
-    except Exception as exc:  # a store failure must refuse the completion, never fake a handle
-        return _refusal(OP_COMPLETE_RUN, REFUSE_MALFORMED_STATE,
-                        "could not publish terminal artifacts: %s" % exc)
-
-    try:
-        outcome = ledger.record_completion(conn, attempt, request["produced"], clock_ms(),
-                                           derived=derived)
+        completed = complete_governed_run(
+            conn, row, request["produced"], clock_ms,
+            publish_artifact=publish_artifact,
+            read_run_evidence=read_run_evidence,
+            output_read_service=output_read_service,
+        )
+    except CompletionRefused as exc:
+        return _refusal(OP_COMPLETE_RUN, exc.reason, exc.detail)
     except ledger.LedgerError as exc:
         return _ledger_refusal(OP_COMPLETE_RUN, exc)
     return {"ok": True, "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
-            "recorded": outcome}
+            "recorded": completed.recorded, "output_stream": completed.stream_outcome}
 
 
 def _op_attest_run(request, config, conn, sign_attestation, supervisor_attestation_key_id):
@@ -628,6 +946,10 @@ def handle_connection(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
+    evidence_request_service: Optional[EvidenceRequestService] = None,
+    output_read_service: Optional[OutputReadService] = None,
 ) -> Dict[str, Any]:
     """Authenticate the peer, read one bounded frame, dispatch, and write the
     framed reply. Returns the reply object (also useful for tests). Never raises
@@ -636,17 +958,91 @@ def handle_connection(
     ``ledger_conn`` is the supervisor's durable ledger; every lifecycle op needs it.
     ``sign_attestation`` + ``supervisor_attestation_key_id`` enable the ``attest-run`` op;
     omit them and only the lifecycle ops are served.
+
+    **Two principals, two disjoint surfaces (§2.6 / §4.10(a0)).** The broker uid drives the
+    §5 ``op`` lifecycle. The sidecar uid — supplied only via ``open_service`` /
+    ``staging_service`` / ``evidence_request_service`` / ``output_read_service``, and DENIED
+    entirely when none is present — may send exactly the six protocols in
+    ``SIDECAR_PROTOCOLS``: the §4.10(a0) open, the three §4.10(a)(b)(c) staging messages, the
+    §4.10(d) execute/finalize trigger, and the §4.10(f) output read. A sidecar-authenticated
+    connection presenting an ``op`` frame is refused as an unauthorized peer, so admitting the
+    sidecar to this socket widens the door by exactly six protocol names and not by one op.
+
+    **Two frame bounds, not one — in BOTH directions (§4.10(b), §4.10(f)).** The broker's
+    read stays at the tight 8 KiB. The sidecar's read is the largest cap any of its protocols
+    declares (262144, the staging chunk), and the exact bytes that arrived are then re-checked
+    against that protocol's OWN cap — so a 200 KiB `governed-staging-open` is still refused
+    even though the transport was willing to read it, and the §4.10(a0) "frame ≤ 8 KiB"
+    survives the widening.
+
+    The WRITE bound now follows the same rule, and until §4.10(f) it did not. Every reply was
+    written at the broker's 8192-byte default, because until §4.10(f) every sidecar reply was
+    a few hundred bytes and nothing in the suite could tell the difference. A §4.10(f) chunk
+    reply is **up to 245940 bytes** — a full 184320-byte range as 245760 base64url characters
+    plus a 180-byte envelope — so it would have been refused by this service's OWN writer and
+    degraded to the minimal ``{"ok": false, "error": "reply exceeded frame bound"}``, which is
+    not a §4.10(f) frame at all: the pull could never have completed, and the failure would
+    have read as a transport fault rather than as a bound. A peer that may send 262144 bytes
+    may be answered with 262144; the broker's tighter bound is unchanged.
+
+    A configuration where the broker uid EQUALS the sidecar uid is refused outright rather
+    than served: that is the §2.6 single-UID collapse, and under it every ACL in this design
+    means nothing. It fails closed at the door, before a frame is read, because a supervisor
+    cannot detect the collapse later from anything a peer sends.
     """
     peer_uid = getattr(conn, "peer_uid", None)
-    # Allowlist ONLY the broker uid; refuse BEFORE reading any frame.
-    if not peer_is_broker(peer_uid, allowed_broker_uid):
+    configured = [
+        service.allowed_sidecar_uid
+        for service in (open_service, staging_service, evidence_request_service,
+                        output_read_service)
+        if service is not None
+    ]
+
+    # Two services naming DIFFERENT sidecar uids is a mis-provisioned supervisor, not a
+    # richer one: it would mean one principal may open turns, another may upload their
+    # inputs and a third may trigger execution, which no part of §2.6 describes. Refuse at
+    # the door rather than pick one.
+    if len(set(configured)) > 1:
+        reply = {"ok": False, "error": "principal split: the sidecar services name different sidecar uids"}
+        _try_write(conn, reply)
+        return reply
+    sidecar_uid = configured[0] if configured else None
+
+    if sidecar_uid is not None and peer_is_broker(sidecar_uid, allowed_broker_uid):
+        reply = {"ok": False, "error": "principal collapse: sidecar uid equals broker uid"}
+        _try_write(conn, reply)
+        return reply
+
+    broker_peer = peer_is_broker(peer_uid, allowed_broker_uid)
+    sidecar_peer = sidecar_uid is not None and peer_is_sidecar(peer_uid, sidecar_uid)
+    # Refuse an unknown peer BEFORE reading any frame.
+    if not (broker_peer or sidecar_peer):
         reply = {"ok": False, "error": "peer not authorized"}
         _try_write(conn, reply)
         return reply
 
+    # ONE bound per peer, used for BOTH directions of this connection.
+    frame_bound = MAX_FRAME_BYTES if broker_peer else MAX_SIDECAR_FRAME_BYTES
+
     try:
-        raw = read_frame(conn)
+        raw = read_frame(conn, frame_bound)
         request = json.loads(raw.decode("utf-8"))
+        # The sidecar's grant is four protocol names wide. Anything else it sends is refused
+        # here, in the transport, so the op handlers below never see a non-broker caller.
+        if not broker_peer and (
+            not isinstance(request, dict) or request.get("protocol") not in SIDECAR_PROTOCOLS
+        ):
+            reply = {"ok": False, "error": "peer not authorized"}
+            _try_write(conn, reply)
+            return reply
+        # The per-protocol frame cap, applied to the bytes that actually arrived. The
+        # transport had to read up to the largest of them to reach this line; this is where
+        # the tighter ones are re-imposed.
+        if not broker_peer:
+            over = frame_cap_refusal(request.get("protocol"), len(raw))
+            if over is not None:
+                _try_write(conn, over)
+                return over
         reply = dispatch(
             request,
             config,
@@ -658,6 +1054,11 @@ def handle_connection(
             read_run_evidence=read_run_evidence,
             sign_attestation=sign_attestation,
             supervisor_attestation_key_id=supervisor_attestation_key_id,
+            open_service=open_service,
+            staging_service=staging_service,
+            evidence_request_service=evidence_request_service,
+            output_read_service=output_read_service,
+            peer_uid=peer_uid,
         )
     except (FrameError, ServerError, SupervisorError, ValueError, UnicodeDecodeError) as exc:
         reply = {"ok": False, "error": _bounded_error(str(exc))}
@@ -666,8 +1067,48 @@ def handle_connection(
         reason = getattr(exc, "reason", None)
         if isinstance(reason, str) and reason:
             reply["reason"] = reason
+        # ...and, for ONE of these classes, say so on the operator's stderr as well.
+        #
+        # The reply above is not a refusal in any protocol this door speaks: it is the
+        # broker's op shape, carrying no `protocol`, and a SIDECAR peer receives it for a
+        # §4.10 frame it can only read as a transport failure. §4.10(h) (**NOT IMPLEMENTED**)
+        # is the diagnostic carrier that would let those be told apart; until it exists this
+        # string is the ONLY account of the fault, and the one client in the tree keeps just
+        # the protocol name from it.
+        #
+        # WHICH class, and why only that one. `FrameError`, `ServerError`, `ValueError` and
+        # `UnicodeDecodeError` are PEER-ATTRIBUTABLE: an authorized-but-hostile peer produces
+        # them at will with a malformed frame or an unknown op, so printing them is a
+        # log-flooding vector and the reply already says everything there is to say.
+        # `SupervisorError` is not peer-attributable — it means this supervisor's own
+        # machinery or one of its INJECTED SEAMS disagreed with itself. That is a broken
+        # deployment, an operator's problem, and invisible until now.
+        #
+        # Not hypothetical: the first live §4.10(g) run drove the whole ladder, ran a REAL
+        # contained execution to completion, then raised exactly this class out of the
+        # isolated-signer seam — and left nothing behind anywhere. No traceback, and a
+        # sidecar error text that said only `protocol None`. Diagnosing it cost a CI round
+        # trip. The text is already going to the peer, so stderr is strictly less exposure
+        # than the wire, and this changes no verdict.
+        if isinstance(exc, SupervisorError):
+            traceback.print_exc(file=sys.stderr)
+    except Exception:  # noqa: BLE001 - the fail-closed backstop (audit R1 `:626`)
+        # An explicit tuple can only promise "never raises" for the classes somebody
+        # remembered to list, and the class that was missing was reachable from the wire:
+        # ``json.loads`` raises ``RecursionError`` — a ``RuntimeError``, in none of the
+        # branches above — on a deeply nested body that fits inside the 8 KiB frame bound
+        # (``[[[[…]]]]`` nests ~4000 deep in 8000 bytes, against a default recursion limit
+        # of 1000). It escaped this function AND ``serve_forever``, so ONE well-formed-size
+        # frame from either authorized peer killed the process that issues every lease and
+        # produces every attestation. Same defect, same fix, as the isolated signer's front
+        # door — which already had this backstop, and is the twin this one is meant to match.
+        #
+        # The detail goes to the operator's stderr and NOT to the peer: an unexpected
+        # internal fault must not become an information channel.
+        traceback.print_exc(file=sys.stderr)
+        reply = {"ok": False, "error": "internal supervisor fault"}
 
-    _try_write(conn, reply)
+    _try_write(conn, reply, frame_bound)
     return reply
 
 
@@ -684,8 +1125,16 @@ def _bounded_error(text: str) -> str:
     return text[:MAX_ERROR_CHARS] + "… (truncated)"
 
 
-def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
+def _try_write(conn: Any, reply: Mapping[str, Any],
+               max_bytes: int = MAX_FRAME_BYTES) -> None:
     """Write the framed reply, never letting a reply problem escape.
+
+    ``max_bytes`` defaults to the BROKER's tight 8 KiB, because the two call sites that run
+    before the peer has been classified (the §2.6 principal-split and principal-collapse
+    refusals) are one short sentence each and must not widen anything. Once the peer IS known,
+    ``handle_connection`` passes the same bound it read with — a §4.10(f) chunk reply is up to
+    245940 bytes, and a writer stuck at the broker's bound would have turned every one of them
+    into ``reply exceeded frame bound``.
 
     A `FrameError` here would otherwise propagate out of `handle_connection` — past the
     try/except above, which has already closed — and out of `serve_forever`, killing the
@@ -694,14 +1143,15 @@ def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
     over-bound reply degrades to a minimal typed refusal, and a dead peer is ignored.
     """
     try:
-        write_frame(conn, _encode_reply(reply))
+        write_frame(conn, _encode_reply(reply), max_bytes)
         return
     except OSError:
         return  # peer already gone; nothing to do, connection is closed by loop
     except FrameError:
         pass  # fall through to the minimal reply below
     try:
-        write_frame(conn, _encode_reply({"ok": False, "error": "reply exceeded frame bound"}))
+        write_frame(conn, _encode_reply({"ok": False, "error": "reply exceeded frame bound"}),
+                    max_bytes)
     except (OSError, FrameError):
         pass  # nothing further is possible; the loop closes the connection
 
@@ -724,6 +1174,10 @@ def serve_forever(
     read_run_evidence: Optional[Callable[[str], Optional[bytes]]] = None,
     sign_attestation: Optional[Callable[[bytes], str]] = None,
     supervisor_attestation_key_id: Optional[str] = None,
+    open_service: Optional[OpenService] = None,
+    staging_service: Optional[StagingService] = None,
+    evidence_request_service: Optional[EvidenceRequestService] = None,
+    output_read_service: Optional[OutputReadService] = None,
 ) -> None:
     """Drive the accept loop. ``accept_one`` returns the next connection (any
     object with ``peer_uid`` / ``recv_exactly`` / ``send_all`` / ``close``) or
@@ -750,11 +1204,22 @@ def serve_forever(
                 read_run_evidence=read_run_evidence,
                 sign_attestation=sign_attestation,
                 supervisor_attestation_key_id=supervisor_attestation_key_id,
+                open_service=open_service,
+                staging_service=staging_service,
+                evidence_request_service=evidence_request_service,
+                output_read_service=output_read_service,
             )
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # Belt to ``handle_connection``'s braces (audit R1 `:626`). This loop IS the
+            # availability of every governed turn on the install: no lease is issued and no
+            # attestation is produced without it, so nothing a single peer can do may end it.
+            # Before this it had no ``except`` at all — only ``finally: conn.close()`` — so
+            # ANY escape from the handler propagated straight out of ``serve_forever``.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 conn.close()
-            except OSError:
+            except Exception:  # noqa: BLE001 - a failing close must not end the loop
                 pass
 
 
@@ -783,8 +1248,15 @@ def accept_socket_conn(listener: "socket.socket") -> SocketPeerConn:
 # ``default_recompute_request_sha256`` is re-exported as the natural default
 # binding seam for a real deployment (the supervisor's OWN canonical recompute).
 __all__ = [
+    "CompletedRun",
+    "CompletionRefused",
+    "complete_governed_run",
+    "CONNECTION_BUDGET_S",
     "LENGTH_PREFIX_BYTES",
     "MAX_FRAME_BYTES",
+    "MAX_SIDECAR_FRAME_BYTES",
+    "SIDECAR_PROTOCOLS",
+    "frame_cap_refusal",
     "OP_ACCEPT_OPEN",
     "OP_LAUNCH_GATE",
     "OP_EXECUTION_STARTED",
@@ -808,6 +1280,8 @@ __all__ = [
     "dispatch",
     "handle_connection",
     "read_frame",
+    "recv_budget_s",
+    "recv_exactly_bounded",
     "serve_forever",
     "write_frame",
 ]

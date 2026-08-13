@@ -76,14 +76,50 @@ def _hardlink_unsupported(exc: OSError) -> bool:
 _STORE = "the evidence store dir"
 
 
-def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
-    """Create the store dir privately, or validate that an existing one is not world-reachable.
+def posix_forbidden_mode(allow_group: bool) -> int:
+    """The POSIX permission bits a directory under this policy may NOT carry.
 
-    A *group*-accessible dir is allowed on purpose: the store is shared by the two dedicated
-    principals (the supervisor writes, the signer reads) via a shared group (design §4.0), so
-    it may be group-readable — but NEVER world-accessible, and never reachable by the
-    sidecar/desktop login identity. (The private-key dirs stay strictly owner-only; only this
-    shared store permits a group.)
+    A pure function, deliberately: the rule it states is the whole difference between the
+    evidence store's custody and §2.4 staging custody, and expressing it inline inside a
+    ``platform_name() == "posix"`` branch made it unreachable — and therefore untestable —
+    on any non-POSIX host. A rule that cannot be exercised is indistinguishable from a rule
+    that is not there, which is exactly how this module once shipped a Windows branch that
+    checked nothing.
+
+    ``allow_group=True``  -> other is forbidden (the store is shared with the signer group).
+    ``allow_group=False`` -> group AND other are forbidden (§2.4: staging is supervisor-only,
+    the sidecar and executor have no read at all).
+    """
+    return stat.S_IRWXO if allow_group else (stat.S_IRWXO | stat.S_IRWXG)
+
+
+def harden_private_dir(directory: pathlib.Path, *, allow_group: bool = True) -> pathlib.Path:
+    """Public entry point for :func:`_harden_dir` — the ONE implementation of "create this
+    directory privately, or prove an existing one is not reachable by identities that must
+    not reach it".
+
+    ``allow_group=True`` is the evidence store's own policy (a shared group of two dedicated
+    principals). ``allow_group=False`` is the STRICTER policy rev-30 §2.4 requires of the
+    staging root and every ``session_dir``: those are supervisor-only, with the sidecar and
+    executor holding *no read at all*, so a group-readable staging dir is a real weakening
+    and not merely an unused permission.
+
+    The parameter exists so the second caller can state a different policy instead of growing
+    a second copy of the create/validate logic — which is how this repository acquired
+    duplicate custody machinery before.
+    """
+    return _harden_dir(directory, allow_group=allow_group)
+
+
+def _harden_dir(directory: pathlib.Path, *, allow_group: bool = True) -> pathlib.Path:
+    """Create the dir privately, or validate that an existing one is not world-reachable.
+
+    A *group*-accessible dir is allowed when ``allow_group`` is set, and for the evidence
+    store it is allowed on purpose: the store is shared by the two dedicated principals (the
+    supervisor writes, the signer reads) via a shared group (design §4.0), so it may be
+    group-readable — but NEVER world-accessible, and never reachable by the sidecar/desktop
+    login identity. (The private-key dirs stay strictly owner-only; so does rev-30 §2.4
+    staging, which passes ``allow_group=False``.)
 
     Both platforms answer the same two questions, and neither may decline to answer:
 
@@ -113,9 +149,11 @@ def _harden_dir(directory: pathlib.Path) -> pathlib.Path:
         raise EvidenceStoreError(f"evidence store path is not a directory: {resolved}")
     elif platform_name() == "posix":
         mode = resolved.stat().st_mode
-        if mode & stat.S_IRWXO:
+        forbidden = posix_forbidden_mode(allow_group)
+        if mode & forbidden:
+            reach = "world-accessible" if mode & stat.S_IRWXO else "group-accessible"
             raise EvidenceStoreError(
-                f"evidence store dir {resolved} is world-accessible; refusing"
+                f"evidence store dir {resolved} is {reach}; refusing"
             )
     elif platform_name() == "nt":
         windows_refuse_world_accessible(resolved, _STORE, EvidenceStoreError)
@@ -141,6 +179,57 @@ def _fsync_dir(directory: pathlib.Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def atomic_link_or_create(tmp: pathlib.Path, target: pathlib.Path, data: bytes) -> bool:
+    """Create ``target`` exactly once from the already-fsync'd ``tmp``. Returns True if THIS
+    call created it, False if it was already there.
+
+    This is the design's named create-if-absent primitive (§2.4: "the exact frozen
+    ``brops_evidence_store.py`` ``os.link`` create-if-absent no-overwrite primitive, with the
+    ``O_EXCL`` fallback; NOT ``rename`` and NOT ``renameat2``"). ``os.link`` is atomic: it
+    creates ``target`` iff it does not exist and raises ``EEXIST`` otherwise, so there is no
+    check-then-act race, and a concurrent writer of the same target always loses to ``EEXIST``.
+
+    It was extracted from :meth:`EvidenceStore._atomic_publish` — which now calls it — because
+    §2.4 requires the SAME primitive for the immutable ``<seq>.chunk`` files under a
+    DIFFERENT idempotency rule: the store re-verifies an existing target against a content
+    handle, while staging re-verifies it against the exact bytes the sender re-sent. Returning
+    "did I create it?" and leaving the verification to the caller is what lets both share one
+    implementation instead of the tree growing a second copy of the EEXIST /
+    hardlink-unsupported / ``O_EXCL``-fallback reasoning.
+
+    EEXIST is the ONLY "already present" signal; every other ``OSError`` that is not a
+    "this volume cannot hardlink" errno propagates, and is never conflated with it.
+    """
+    try:
+        os.link(tmp, target)  # atomic create-if-absent (POSIX + NTFS)
+        return True
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        # Distinguish "hardlinks unsupported here" (fall back) from a real error.
+        if not _hardlink_unsupported(exc):
+            raise
+    # Hardlink-unsupported fallback (e.g. some Windows / FAT volumes): atomically CREATE the
+    # target itself with O_EXCL — still create-if-absent, no clobber, no check-then-act. A
+    # crash mid-write leaves a partial target, which every reader in this design re-hashes
+    # and rejects — fail-closed, never a silent bad artifact.
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "wb") as out:
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+    return True
+
+
+def fsync_dir(directory: pathlib.Path) -> None:
+    """Public name for :func:`_fsync_dir` — the directory-durability step §2.4 requires after
+    linking each ``<seq>.chunk`` into place, shared rather than re-derived."""
+    _fsync_dir(directory)
 
 
 class EvidenceStore:
@@ -211,31 +300,15 @@ class EvidenceStore:
 
     def _atomic_publish(self, tmp: pathlib.Path, target: pathlib.Path, data: bytes, handle: str) -> bool:
         """Create `target` exactly once from the fsync'd temp. Returns True if `tmp` was
-        consumed (must not be unlinked by the caller). Idempotent on EEXIST."""
-        try:
-            os.link(tmp, target)  # atomic create-if-absent (POSIX + NTFS)
-            return False  # tmp still present; caller unlinks it
-        except FileExistsError:
+        consumed (must not be unlinked by the caller). Idempotent on EEXIST.
+
+        The create-if-absent mechanics live in :func:`atomic_link_or_create`; what stays here
+        is this store's OWN idempotency rule — an already-present target must content-address
+        to `handle`.
+        """
+        if not atomic_link_or_create(tmp, target, data):
             self._verify_idempotent(target, handle)
-            return False
-        except OSError as exc:
-            # Distinguish "hardlinks unsupported here" (fall back) from a real error.
-            if not _hardlink_unsupported(exc):
-                raise
-        # Hardlink-unsupported fallback (e.g. some Windows / FAT volumes): atomically
-        # CREATE the target itself with O_EXCL — still create-if-absent, no clobber, no
-        # check-then-act. A crash mid-write leaves a partial target, which `read()`
-        # rejects (sha mismatch) — fail-closed, never a silent bad artifact.
-        try:
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
-        except FileExistsError:
-            self._verify_idempotent(target, handle)
-            return False
-        with os.fdopen(fd, "wb") as out:
-            out.write(data)
-            out.flush()
-            os.fsync(out.fileno())
-        return False
+        return False  # tmp still present in both branches; caller unlinks it
 
     def _verify_idempotent(self, target: pathlib.Path, handle: str) -> None:
         """An already-present digest must content-address to `handle` (a content-address

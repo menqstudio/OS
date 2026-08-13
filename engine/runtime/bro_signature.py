@@ -83,6 +83,7 @@ from typing import Any
 # from here because callers and tests import them from this module.
 from bro_custody import (
     ENV_PIN_SELF_OWNED_ACK,
+    ENV_PIN_SELF_OWNED_ACK_FILE,
     PIN_SELF_OWNED_ACK_VALUE,
     WINDOWS_DIRECTORY_REWRITE_RIGHTS,
     WINDOWS_DIRECTORY_WRITE_MASK,
@@ -418,7 +419,7 @@ def _refuse_non_owner_writable_windows(path: pathlib.Path, env_name: str) -> Non
     """
     refuse_windows_writable(
         path, env_name, SignatureError,
-        ask_self=not _self_owned_pin_acknowledged(),
+        ask_self=not _self_owned_pin_acknowledged(error=SignatureError),
         on_rewrite=lambda right, principal: (
             f"{env_name} can be rewritten by the very account reading it: this "
             f"process's token is granted {right} on it through {principal}. An "
@@ -491,7 +492,7 @@ def _pin_from_file(raw_path: str, root: pathlib.Path,
         # (an owner can also chmod the mode bits back afterwards). The anchor must belong
         # to a principal this process cannot impersonate. Running as root fails this too,
         # and correctly so: root can rewrite any file, so no file pin is an anchor for it.
-        if not _self_owned_pin_acknowledged():
+        if not _self_owned_pin_acknowledged(error=SignatureError):
             # "Is the owner literally me?" is only a PROXY for the real question — "can the
             # account reading this pin rewrite it?" — and the same blind spot the Windows
             # branch had (audit F-06) exists here in two further forms the proxy answers no
@@ -689,7 +690,7 @@ def _refuse_writable_registry_root(directory: pathlib.Path, env_name: str) -> No
     single-user desktop that provisions its own trust into its own app data directory
     does not. It must say so here rather than be silently exempted.
     """
-    if _self_owned_pin_acknowledged():
+    if _self_owned_pin_acknowledged(error=SignatureError):
         return
     if platform_name() == "posix":
         info = directory.stat()

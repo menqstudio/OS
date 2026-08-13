@@ -20,6 +20,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import stat
 import tempfile
@@ -37,6 +38,7 @@ from broctl import build_registry, sign_payload
 # EvidenceFixture carries no test methods, so importing it does not re-run another
 # module's suite under this one's name.
 from test_evidence_chain import YEAR, EvidenceFixture
+import _self_owned_ack
 
 TASK = {
     "task_id": "task-1",
@@ -78,8 +80,9 @@ class HeadBindingFixture(EvidenceFixture):
         # weaken the rule. This is load-bearing on EVERY platform now: the rule used to
         # return early unless `os.name == "posix"`, so on Windows it refused nothing and
         # this acknowledgement was decorative. `FloorCustodyTests` below pins that.
-        ack = unittest.mock.patch.dict(
-            os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"})
+        # Through the FILE form: the raw variable is honoured only under `BRO_ENV=ci` now,
+        # and a test host is not CI.
+        ack = _self_owned_ack.patch(self.tmp)
         ack.start()
         self.addCleanup(ack.stop)
 
@@ -412,10 +415,9 @@ class FloorCustodyTests(unittest.TestCase):
         # acknowledgement at IMPORT time, so in a single discovery process it leaks in here
         # and turns every refusal below into a silent pass — which is precisely the failure
         # mode under test, one level up. Remove it explicitly and restore on cleanup.
-        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env = _self_owned_ack.suppress()
         env.start()
         self.addCleanup(env.stop)
-        os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
 
     def refusal(self, directory=None):
         with self.assertRaises(self.completion.CompletionError) as caught:
@@ -454,8 +456,7 @@ class FloorCustodyTests(unittest.TestCase):
         to a platform where it never ran, must not narrow what a site with genuinely no second
         principal can declare. Same verdict on both platforms: admitted, silently.
         """
-        with unittest.mock.patch.dict(
-                os.environ, {"BRO_OPERATOR_ROOT_PIN_SELF_OWNED": "acknowledged"}):
+        with _self_owned_ack.patch(self.base):
             self.completion._refuse_self_owned_floor(self.floor)  # must NOT raise
 
     def test_a_floor_that_does_not_exist_is_left_to_the_index_to_refuse(self):
@@ -588,6 +589,297 @@ class FloorCustodyTests(unittest.TestCase):
         self.assertIn("rename the whole floor away", message)
         self.assertIn(str(self.base), message)
         self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+
+
+class HeadFloorConfigurationContradictionTests(unittest.TestCase):
+    """**No floor directory satisfies both halves of the design.** This is a contradiction
+    pinned as executable fact, NOT a regression test for a fix — there is no fix here.
+
+    `_advance_head_floor` writes the mark **in the process the mark polices**, and any write
+    failure raises. `_refuse_self_owned_floor` refuses any floor directory that process owns
+    or can write. Those two requirements have no intersection:
+
+    * a floor the builder CAN write fails custody;
+    * a floor the builder CANNOT write fails the advance (opening `_index.json.lock`, creating
+      `<task>.floor.json.tmp` and renaming it over the mark all need exactly the capability
+      custody refuses — the serialization lock added for audit R1 `:271` needs the same write
+      capability as the mark it protects, so it neither widens nor narrows this contradiction);
+    * so the only satisfiable posture is the acknowledgement
+      (`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE`, or the raw variable under `BRO_ENV=ci`),
+      which `bro_custody` describes as short-circuiting **every rule in that module** — the
+      operator-root pin, the redirected registry root, the evidence store and this floor. The
+      desktop's `engine_trust::resolve` refuses to export any engine trust material at all
+      while that variable is present, for exactly that reason.
+
+    `_head_floor_dir`'s own docstring offers the escape route "a deployment that can put the
+    marks under a principal the builder cannot write should do exactly that". That deployment
+    cannot be configured: the builder IS the writer.
+
+    Closing it needs a second principal to perform the write -- a floor-writer service or a
+    setuid helper. **That is an Owner/Architect decision about where the write happens, not a
+    patch**, so this class states the contradiction rather than hiding it: any change that claims
+    to resolve it has to come here and say which posture now satisfies both rules.
+
+    DO NOT reach for the supervisor's durable ledger. This text used to name it as a candidate,
+    on the grounds that it "already holds an equivalent floor written by the supervisor uid".
+    That sentence sent an agent down the route on 2026-08-10, and it is wrong on four counts,
+    each of which was established by RUNNING it rather than by reading it:
+
+    1. It measures a different number. The ledger counter is per INSTALL
+       (``evidence-head-sequence.json``) and, since bb26822, deliberately an install-wide
+       ceiling; this floor is per TASK, and every task's first anchor is 1. Offering two real
+       signed heads -- task-1 seq 1 and task-2 seq 1 -- to the ledger refuses the second with
+       ``EvidenceFork``. Routing completion there would make the SECOND task in any deployment
+       permanently un-completable.
+    2. It is not reachable from here. No module on the completion path imports
+       ``governed_supervisor_ledger``; the DB is opened only by ``run_supervisor.py`` running as
+       the supervisor account, and its only door is ``governed_supervisor_server`` -- AF_UNIX +
+       SO_PEERCRED, Linux-only, allowlisting the broker uid alone, with an op set documented as
+       exhaustive. Opening that sqlite file directly from here would delete the second principal
+       and reproduce this exact contradiction in sqlite instead of JSON.
+    3. It does not exist on Windows -- the platform the desktop ships on, and the host where
+       this contradiction was proven. ``win-live/src/servers.rs`` keeps supervisor state in a
+       ``Mutex<BTreeMap<..>>`` and ``complete_run`` performs no cross-run head comparison. That
+       is open finding R-42.
+    4. It cannot carry what this floor carries. ``evidence_head_sha256`` -- the digest of the
+       signed head document, which drives the "same sequence, different signed head" refusal --
+       has no column in that table, and the ``_index.json`` roster,
+       ``_require_establishable_mark`` and the owner-signed ``evidence-floor-anchor`` bootstrap
+       have no equivalent there at all.
+
+    Each test asks BOTH rules of a real directory on the host running the suite. Where a
+    posture cannot be constructed without elevation the test SKIPS with that reason rather
+    than passing on whatever the ambient account happens to be.
+    """
+
+    DIGEST = "e" * 64
+
+    def setUp(self):
+        import bro_completion
+        self.completion = bro_completion
+        self.store = pathlib.Path(
+            tempfile.mkdtemp(prefix="bro-floor-contradiction-")).resolve()
+        self.addCleanup(shutil.rmtree, self.store, ignore_errors=True)
+        self.floor = self.store / "head-floor"
+        self.floor.mkdir()
+        if os.name == "posix":
+            os.chmod(self.floor, 0o700)  # see FloorCustodyTests.setUp on the ambient umask
+        (self.floor / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+                     "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE", "BRO_EVIDENCE_HEAD_FLOOR"):
+            os.environ.pop(name, None)
+
+    # -- the two rules, each reported as "did it refuse, and why" -----------------------
+
+    def _custody_refusal(self):
+        try:
+            self.completion._refuse_self_owned_floor(self.floor)
+        except self.completion.CompletionError as exc:
+            return str(exc)
+        return None
+
+    def _advance_refusal(self):
+        """Drive ONLY the write half: the acknowledgement is set so custody cannot be the
+        thing that refuses, which is what makes this an independent measurement of the write.
+        """
+        with _self_owned_ack.patch(self.store):
+            try:
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            except self.completion.CompletionError as exc:
+                return str(exc)
+        return None
+
+    def _make_unwritable(self):
+        """Take this process's ability to create entries in the floor away, for real.
+
+        Returns False when the posture could not be constructed (an account that writes
+        regardless — root, or a token no DENY ACE binds), so the caller skips instead of
+        asserting against a directory that is still writable.
+        """
+        if os.name == "posix":
+            os.chmod(self.floor, 0o500)
+            self.addCleanup(os.chmod, self.floor, 0o700)
+        elif os.name == "nt":
+            domain, user = os.environ.get("USERDOMAIN"), os.environ.get("USERNAME")
+            if not domain or not user:
+                return False
+            principal = "%s\\%s" % (domain, user)
+            # WD/AD/DC: create a file, create a subdirectory, delete a child — the three
+            # rights `_advance_head_floor`'s write-temp-then-rename needs.
+            if subprocess.run(["icacls", str(self.floor), "/deny", principal + ":(WD,AD,DC)"],
+                              capture_output=True, text=True).returncode != 0:
+                return False
+            self.addCleanup(lambda: subprocess.run(
+                ["icacls", str(self.floor), "/remove:d", principal],
+                capture_output=True, text=True))
+        else:
+            return False
+        probe = self.floor / "writability-probe"
+        try:
+            probe.write_text("x", encoding="utf-8")
+        except OSError:
+            return True
+        probe.unlink()
+        return False
+
+    # -- the postures -------------------------------------------------------------------
+
+    def test_a_floor_the_builder_can_write_is_refused_by_custody(self):
+        message = self._custody_refusal()
+        self.assertIsNotNone(message, "a self-owned floor was admitted")
+        self.assertIn("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", message)
+        # ...and it is exactly the posture in which the write half works.
+        self.assertIsNone(self._advance_refusal())
+        self.assertTrue((self.floor / "task-1.floor.json").exists())
+
+    def test_a_floor_the_builder_cannot_write_cannot_be_advanced(self):
+        if not self._make_unwritable():
+            self.skipTest("this account writes the floor regardless (root, or a token no DENY "
+                          "ACE binds), so the un-writable posture cannot be constructed here")
+        message = self._advance_refusal()
+        self.assertIsNotNone(
+            message, "the mark was written to a directory this process cannot write")
+        self.assertIn("cannot record the evidence head floor for task-1", message)
+
+    def test_no_posture_satisfies_both_rules_without_the_acknowledgement(self):
+        """THE contradiction. Both reachable postures, both rules, one verdict each."""
+        self.assertIsNotNone(self._custody_refusal(), "posture 1 (writable) passed custody")
+        self.assertIsNone(self._advance_refusal(), "posture 1 (writable) failed the write")
+        (self.floor / "task-1.floor.json").unlink()
+
+        if not self._make_unwritable():
+            self.skipTest("the un-writable posture cannot be constructed under this account")
+        self.assertIsNotNone(self._advance_refusal(), "posture 2 (un-writable) wrote the mark")
+        # Custody on posture 2 is deliberately not asserted: on Windows this process still
+        # OWNS the directory, so it holds WRITE_DAC and custody refuses that posture as well —
+        # i.e. on this platform NEITHER posture passes both rules, the contradiction in its
+        # strongest form. On POSIX a floor owned by a second principal would pass custody and
+        # still fail the write, the contradiction in its weakest form. Either way, no posture
+        # passes both.
+
+    def test_the_only_satisfiable_posture_disables_every_custody_rule(self):
+        import bro_custody
+        with _self_owned_ack.patch(self.store):
+            self.completion._refuse_self_owned_floor(self.floor)      # custody: admitted
+            self.completion._advance_head_floor(                      # write: succeeds
+                self.store, "task-1", 5, self.DIGEST)
+            # The price. This is not a floor-scoped knob: the same predicate short-circuits
+            # the operator-root pin, the redirected registry root and the evidence store.
+            self.assertTrue(bro_custody.self_owned_acknowledged())
+        self.assertTrue((self.floor / "task-1.floor.json").exists())
+        self.assertFalse(bro_custody.self_owned_acknowledged())
+
+
+class HeadFloorAdvanceIsSerialisedTests(unittest.TestCase):
+    """The load-compare-write must be ONE step (audit R1 ``bro_completion.py:271``).
+
+    The compare used to sit outside any lock, so two concurrent completions could both read
+    the same mark, both pass ``head_sequence <= current``, and the recorded floor was decided
+    by whichever ``os.replace`` landed last rather than by which head was higher. The same
+    window loses ``_index.json`` roster entries — and a task missing from the roster is, by
+    ``_load_head_floor``'s own rule, a task never seen, so deleting its mark afterwards reads
+    as a first sighting and the anti-rollback floor restarts at zero. That is R-06 again,
+    needing no attacker capability, only timing.
+    """
+
+    DIGEST = "f" * 64
+
+    def setUp(self):
+        import bro_completion
+        self.completion = bro_completion
+        self.store = pathlib.Path(
+            tempfile.mkdtemp(prefix="bro-floor-lock-")).resolve()
+        self.addCleanup(shutil.rmtree, self.store, ignore_errors=True)
+        self.floor = self.store / "head-floor"
+        self.floor.mkdir()
+        if os.name == "posix":
+            os.chmod(self.floor, 0o700)
+        (self.floor / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        env = unittest.mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED",
+                     "BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE", "BRO_EVIDENCE_HEAD_FLOOR"):
+            os.environ.pop(name, None)
+
+    def test_the_lock_excludes_a_second_holder_and_releases(self):
+        self.assertFalse(self.completion._floor_lock_is_held(self.floor))
+        with self.completion._floor_write_lock(self.floor):
+            # A SECOND file description, which is what another process would hold.
+            self.assertTrue(self.completion._floor_lock_is_held(self.floor))
+        self.assertFalse(self.completion._floor_lock_is_held(self.floor))
+
+    def test_the_compare_is_read_while_the_lock_is_held(self):
+        """The whole property, in one assertion: if the mark that is compared is read
+        outside the lock, another writer is free to have replaced it before the rename
+        lands, and the comparison decides nothing."""
+        observed = []
+        original = self.completion._load_head_floor
+
+        def spy(store, task_id):
+            observed.append(self.completion._floor_lock_is_held(self.floor))
+            return original(store, task_id)
+
+        with _self_owned_ack.patch(self.store):
+            with unittest.mock.patch.object(self.completion, "_load_head_floor", spy):
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+
+        self.assertEqual(observed, [True], "the mark was compared outside the lock")
+        self.assertEqual(
+            json.loads((self.floor / "task-1.floor.json").read_text(encoding="utf-8")
+                       )["head_sequence"], 5)
+
+    def test_enrolling_a_second_task_does_not_drop_the_first(self):
+        """``_index.json`` is ONE file every task read-modify-writes through ONE shared
+        staging name, so it is the half that silently loses entries — and a task missing
+        from the roster is a task never seen, which is the R-06 rollback.
+
+        This is the black-box form of the property: the rewrite must be computed from the
+        roster as it stands at that moment, under the lock, not from anything read earlier
+        or assumed. An enrolment that does not re-read cannot preserve what it never saw.
+        """
+        with _self_owned_ack.patch(self.store):
+            self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            self.completion._advance_head_floor(self.store, "task-2", 7, self.DIGEST)
+
+            self.assertEqual(
+                json.loads((self.floor / "_index.json").read_text(encoding="utf-8"))["tasks"],
+                ["task-1", "task-2"])
+            # ...and both marks survive, so neither can later read as a first sighting.
+            for task, sequence in (("task-1", 5), ("task-2", 7)):
+                self.assertEqual(
+                    self.completion._load_head_floor(self.store, task)[0], sequence)
+
+    def test_every_roster_read_after_the_provisioning_check_is_under_the_lock(self):
+        observed = []
+        original = self.completion._load_floor_index
+
+        def spy(directory):
+            observed.append(self.completion._floor_lock_is_held(self.floor))
+            return original(directory)
+
+        with _self_owned_ack.patch(self.store):
+            with unittest.mock.patch.object(self.completion, "_load_floor_index", spy):
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+
+        # The first read is the deliberate pre-lock provisioning check; every read that
+        # feeds a decision or a rewrite must be inside.
+        self.assertEqual(observed[0], False, "the provisioning check should precede the lock")
+        self.assertTrue(observed[1:], "the roster was never re-read under the lock")
+        self.assertTrue(all(observed[1:]), observed)
+
+    def test_an_unprovisioned_floor_still_refuses_and_the_lock_creates_nothing(self):
+        """The lock must not become the way an absent floor acquires a file and starts
+        looking provisioned — an absent floor must not read as 'no floor required' (R-06)."""
+        shutil.rmtree(self.floor)
+        with _self_owned_ack.patch(self.store):
+            with self.assertRaises(self.completion.CompletionError) as caught:
+                self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+        self.assertIn("not provisioned", str(caught.exception))
+        self.assertFalse(self.floor.exists())
 
 
 if __name__ == "__main__":

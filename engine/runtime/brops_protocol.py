@@ -14,6 +14,7 @@ bound, and no strict/duplicate-key/unknown-field/base64url validation.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import struct
@@ -99,6 +100,31 @@ def is_base64url(value: Any) -> bool:
     """True iff `value` is a base64url (no-padding) string. Runtime validation for wire
     signature/envelope fields (design §4)."""
     return isinstance(value, str) and bool(_B64URL_RE.match(value))
+
+
+def decode_base64url(value: Any) -> bytes:
+    """Strict base64url (no padding) -> exact bytes. Fail-closed on anything else.
+
+    "Strict" is two rules, and the second is the one that matters. `base64.urlsafe_b64decode`
+    silently TOLERATES characters outside the alphabet and tolerates a wrong padding length,
+    so a decode that merely succeeds does not mean the bytes decoded are the bytes sent. This
+    checks the alphabet up front (reusing `is_base64url`) and then re-encodes and compares:
+    a value that does not round-trip is not a canonical encoding of anything and is refused.
+
+    It lives here rather than beside either caller because the governed control plane now has
+    two of them — the §4.10(a0) challenge document and the §4.10(b) staging chunk — and two
+    copies of "how strict is base64url" is exactly the drift this module exists to prevent.
+    """
+    if not is_base64url(value):
+        raise ProtocolError("value is not a base64url (no-padding) string")
+    padding = "=" * (-len(value) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(value + padding)
+    except (ValueError, TypeError) as exc:
+        raise ProtocolError(f"value is not decodable base64url: {exc}")
+    if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != value.rstrip("="):
+        raise ProtocolError("value is not the canonical base64url encoding of its bytes")
+    return decoded
 
 
 def validate(obj: dict[str, Any], schema: dict[str, Any]) -> None:

@@ -310,6 +310,116 @@ pub fn accept_prepare(
     }
 }
 
+/// Every column [`accept_prepare`] INSERTs from caller-supplied data — the durable request binding
+/// of one accepted turn, read back for the idempotent-vs-conflict decision.
+///
+/// **This exists because the comparison it replaces was not what its own comment said it was.** That
+/// comment read "the comparison is deliberately exhaustive over the durable request binding", and it
+/// listed sixteen columns by hand while `accept_prepare` INSERTs twenty-four. The five it never
+/// looked at were `challenge_accepted_at_ms` and the four `challenge_registry_*` columns — the
+/// supervisor's accept clock (which §7.1 step 4c later binds the signed envelope against) and the
+/// provenance of the challenge-key registry snapshot that authorized the challenge (its content
+/// address, its hash, its anti-rollback **epoch**, and the root key id that signed it). A retry that
+/// re-presented the same nonce under a ROLLED-BACK registry epoch was therefore answered
+/// [`AcceptOutcome::Idempotent`] — "the same turn" — by a check that could not see the field that
+/// differed.
+///
+/// Deriving `PartialEq` is the point: a column added to the INSERT and to this struct is compared
+/// automatically, so the exhaustiveness claim is enforced by the compiler's field list rather than by
+/// a hand-maintained `&&` chain that drifted for as long as this function has existed.
+///
+/// `lease_payload_bytes` is represented by `lease_payload_sha256`, which is its SHA-256 — comparing
+/// the digest is comparing the bytes.
+#[derive(Debug, PartialEq, Eq)]
+struct DurableBinding {
+    challenge_handle: String,
+    run_id: String,
+    task_id: String,
+    workspace_id: String,
+    execution_attempt_id: String,
+    challenge_accepted_at_ms: i64,
+    challenge_registry_handle: String,
+    challenge_registry_hash: String,
+    challenge_registry_epoch: i64,
+    challenge_registry_root_key_id: String,
+    lease_payload_sha256: String,
+    lease_id: String,
+    lease_issued_at_ms: i64,
+    lease_expires_at_ms: i64,
+    receipt_id: String,
+    supervisor_id: String,
+    requested_at_ms: i64,
+    request_sha256: String,
+    system_handle: String,
+    history_handle: String,
+    generation_config_handle: String,
+}
+
+/// The columns [`DurableBinding`] reads, in one place so the SELECT and the reader cannot drift.
+const DURABLE_BINDING_COLUMNS: &str =
+    "challenge_handle, run_id, task_id, workspace_id, execution_attempt_id, \
+     challenge_accepted_at_ms, challenge_registry_handle, challenge_registry_hash, \
+     challenge_registry_epoch, challenge_registry_root_key_id, lease_payload_sha256, \
+     lease_id, lease_issued_at_ms, lease_expires_at_ms, receipt_id, supervisor_id, \
+     requested_at_ms, request_sha256, system_handle, history_handle, generation_config_handle";
+
+impl DurableBinding {
+    /// Read the stored binding of an existing acceptance row (columns by NAME, so a reordered
+    /// SELECT cannot silently compare the wrong pair).
+    fn from_row(r: &rusqlite::Row) -> rusqlite::Result<DurableBinding> {
+        Ok(DurableBinding {
+            challenge_handle: r.get("challenge_handle")?,
+            run_id: r.get("run_id")?,
+            task_id: r.get("task_id")?,
+            workspace_id: r.get("workspace_id")?,
+            execution_attempt_id: r.get("execution_attempt_id")?,
+            challenge_accepted_at_ms: r.get("challenge_accepted_at_ms")?,
+            challenge_registry_handle: r.get("challenge_registry_handle")?,
+            challenge_registry_hash: r.get("challenge_registry_hash")?,
+            challenge_registry_epoch: r.get("challenge_registry_epoch")?,
+            challenge_registry_root_key_id: r.get("challenge_registry_root_key_id")?,
+            lease_payload_sha256: r.get("lease_payload_sha256")?,
+            lease_id: r.get("lease_id")?,
+            lease_issued_at_ms: r.get("lease_issued_at_ms")?,
+            lease_expires_at_ms: r.get("lease_expires_at_ms")?,
+            receipt_id: r.get("receipt_id")?,
+            supervisor_id: r.get("supervisor_id")?,
+            requested_at_ms: r.get("requested_at_ms")?,
+            request_sha256: r.get("request_sha256")?,
+            system_handle: r.get("system_handle")?,
+            history_handle: r.get("history_handle")?,
+            generation_config_handle: r.get("generation_config_handle")?,
+        })
+    }
+
+    /// The binding the CALLER is presenting — built from the same `NewAcceptance` the INSERT uses.
+    fn presented(a: &NewAcceptance, lease_payload_sha256: &str) -> DurableBinding {
+        DurableBinding {
+            challenge_handle: a.challenge_handle.clone(),
+            run_id: a.run_id.clone(),
+            task_id: a.task_id.clone(),
+            workspace_id: a.workspace_id.clone(),
+            execution_attempt_id: a.execution_attempt_id.clone(),
+            challenge_accepted_at_ms: a.challenge_accepted_at_ms,
+            challenge_registry_handle: a.challenge_registry_handle.clone(),
+            challenge_registry_hash: a.challenge_registry_hash.clone(),
+            challenge_registry_epoch: a.challenge_registry_epoch,
+            challenge_registry_root_key_id: a.challenge_registry_root_key_id.clone(),
+            lease_payload_sha256: lease_payload_sha256.to_string(),
+            lease_id: a.lease_id.clone(),
+            lease_issued_at_ms: a.lease_issued_at_ms,
+            lease_expires_at_ms: a.lease_expires_at_ms,
+            receipt_id: a.receipt_id.clone(),
+            supervisor_id: a.supervisor_id.clone(),
+            requested_at_ms: a.requested_at_ms,
+            request_sha256: a.request_sha256.clone(),
+            system_handle: a.system_handle.clone(),
+            history_handle: a.history_handle.clone(),
+            generation_config_handle: a.generation_config_handle.clone(),
+        }
+    }
+}
+
 /// On a UNIQUE collision, load the existing row for this `(install_id, request_nonce)` and decide
 /// idempotent-vs-conflict. If no row is found on `(install_id, request_nonce)` the collision was on
 /// `challenge_handle` or `execution_attempt_id` reused with a DIFFERENT nonce ⇒ hard conflict.
@@ -318,60 +428,20 @@ fn reconcile_conflict(
     a: &NewAcceptance,
     lease_payload_sha256: &str,
 ) -> Result<AcceptOutcome, LedgerError> {
-    // ONE row read carrying every bound field, compared as a whole. Adding a binding column to the
-    // table without adding it here would silently widen what counts as "the same turn", so the
-    // comparison is deliberately exhaustive over the durable request binding.
-    type BoundRow = (
-        String, String, String, String, String, // challenge_handle, run_id, task_id, workspace_id, attempt
-        String,                                 // lease_payload_sha256
-        String, i64, i64,                       // lease_id, lease_issued_at_ms, lease_expires_at_ms
-        String, String,                         // receipt_id, supervisor_id
-        i64, String,                            // requested_at_ms, request_sha256
-        String, String, String,                 // system/history/generation_config handles
+    // ONE row read carrying every bound field, compared as a whole — see [`DurableBinding`] for why
+    // the comparison is a derived `PartialEq` over a named struct and not a hand-written `&&` chain.
+    let sql = format!(
+        "SELECT {DURABLE_BINDING_COLUMNS} \
+         FROM governed_turn_acceptance WHERE install_id = ?1 AND request_nonce = ?2"
     );
-    let existing: Option<BoundRow> = conn
-        .query_row(
-            "SELECT challenge_handle, run_id, task_id, workspace_id, execution_attempt_id, \
-                    lease_payload_sha256, lease_id, lease_issued_at_ms, lease_expires_at_ms, \
-                    receipt_id, supervisor_id, requested_at_ms, request_sha256, \
-                    system_handle, history_handle, generation_config_handle \
-             FROM governed_turn_acceptance WHERE install_id = ?1 AND request_nonce = ?2",
-            params![a.install_id, a.request_nonce],
-            |r| {
-                Ok((
-                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
-                    r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?,
-                    r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?,
-                    r.get(15)?,
-                ))
-            },
-        )
+    let existing: Option<DurableBinding> = conn
+        .query_row(&sql, params![a.install_id, a.request_nonce], DurableBinding::from_row)
         .optional()?;
-    let Some((
-        ch, run, task, ws, attempt, lease_sha, lease_id, lease_issued, lease_expires, receipt_id,
-        supervisor_id, requested_at, request_sha, system_h, history_h, gencfg_h,
-    )) = existing
-    else {
+    let Some(stored) = existing else {
         // Nonce is unused but challenge_handle / execution_attempt_id was reused elsewhere.
         return Err(LedgerError::Conflict("challenge_or_attempt_reused"));
     };
-    let identical = ch == a.challenge_handle
-        && run == a.run_id
-        && task == a.task_id
-        && ws == a.workspace_id
-        && attempt == a.execution_attempt_id
-        && lease_sha == lease_payload_sha256
-        && lease_id == a.lease_id
-        && lease_issued == a.lease_issued_at_ms
-        && lease_expires == a.lease_expires_at_ms
-        && receipt_id == a.receipt_id
-        && supervisor_id == a.supervisor_id
-        && requested_at == a.requested_at_ms
-        && request_sha == a.request_sha256
-        && system_h == a.system_handle
-        && history_h == a.history_handle
-        && gencfg_h == a.generation_config_handle;
-    if identical {
+    if stored == DurableBinding::presented(a, lease_payload_sha256) {
         Ok(AcceptOutcome::Idempotent)
     } else {
         Err(LedgerError::Conflict("nonce_rebound_to_different_turn"))
@@ -797,16 +867,37 @@ pub enum FloorDecision {
 
 /// The durable evidence-head-floor CAS (§5 step 11 / §7 P1-7). In ONE `BEGIN IMMEDIATE` (write-lock up
 /// front; a nested/outer transaction is refused so the read-then-write cannot be rolled back under it)
-/// it reads the current floor for `(install_id, task_id)` keyed on the `head_sequence` epoch +
-/// `final_event_hash` identity and decides:
+/// it decides against the floor for the **install**, keyed on the `head_sequence` epoch +
+/// `final_event_hash` identity:
 ///
-/// - **no row** ⇒ INSERT the validated head ([`FloorDecision::Bootstrapped`]);
-/// - **`head_sequence < highest`** ⇒ refuse [`LedgerError::StaleEvidence`] (a retained older signed
-///   head always carries a LOWER re-anchor number);
-/// - **`head_sequence == highest`** ⇒ identical content is an idempotent re-sign
-///   ([`FloorDecision::Idempotent`]); ANY content difference is a same-head fork
-///   ([`LedgerError::EvidenceFork`]);
-/// - **`head_sequence > highest`** ⇒ advance the floor (every field) + commit ([`FloorDecision::Advanced`]).
+/// - **this task already holds this exact `head_sequence`** ⇒ identical content is an idempotent
+///   re-sign ([`FloorDecision::Idempotent`]); ANY content difference is a same-head fork
+///   ([`LedgerError::EvidenceFork`]). Decided FIRST, so a byte-identical retry is not read as a
+///   rollback merely because another task advanced past it;
+/// - **`head_sequence` below the highest recorded ANYWHERE on this install** ⇒ refuse
+///   [`LedgerError::StaleEvidence`] (a retained older signed head always carries a LOWER re-anchor
+///   number);
+/// - **`head_sequence` equal to it** ⇒ [`LedgerError::EvidenceFork`]: one install has one counter, so
+///   the same value cannot legitimately be minted twice;
+/// - otherwise INSERT ([`FloorDecision::Bootstrapped`]) or advance ([`FloorDecision::Advanced`]) the
+///   `(install_id, task_id)` row.
+///
+/// # The scope is the INSTALL, not `(install_id, task_id)`
+///
+/// This used to read and compare ONLY the `(install_id, task_id)` row, so the `no row ⇒ bootstrap`
+/// branch handed a free pass to anyone presenting a rolled-back head under a task_id that had no row
+/// yet. `task_id` is not a supervisor secret: it arrives on the wire, the challenge authority accepts
+/// any bounded string for it, and the supervisor copies it out of the challenge payload — so the scope
+/// of the anti-rollback defence was a value the attacker chose. Driven against the Python twin,
+/// `(task-1, head 99)` recorded, `(task-1, head 3)` was refused `StaleEvidence`, and
+/// `(task-FRESH, head 3)` — the SAME rolled-back head — recorded and produced attestation state.
+///
+/// Install scope is also what the number MEANS. `head_sequence` is minted by ONE per-recorder counter
+/// (`governed_recorder`'s `next_head_sequence` read-increments a single
+/// `<evidence_state_dir>/evidence-head-sequence.json`), so it is monotonic across every run of a
+/// deployment regardless of task. A per-task partition could never have matched the counter it
+/// polices; it could only create buckets to hide in. The `(install_id, task_id)` row is KEPT (the DDL
+/// is unchanged) as the per-task detail record and as the idempotency key.
 ///
 /// The floor is committed BEFORE any envelope is minted, closing the TOCTOU on the `(install_id,
 /// task_id)` PK; a crash after commit re-hits the equal-head idempotent branch and re-signs identically.
@@ -851,7 +942,55 @@ fn evidence_floor_cas_body(
         )
         .optional()?;
 
-    let Some((highest, ec, ls, feh)) = stored else {
+    // Fail closed on a corrupt stored row (startup-integrity, scoped to the rows we touch).
+    fn refuse_corrupt(highest: i64, ec: i64, ls: i64, feh: &str) -> Result<(), LedgerError> {
+        if highest < 1 || ec < 1 || ls < 1 || ls != ec || feh.len() != 64 {
+            return Err(LedgerError::Corrupt("evidence_head_floor"));
+        }
+        Ok(())
+    }
+
+    // (1) The exact row this task holds decides the idempotent re-sign, BEFORE the install-wide
+    // ceiling: a byte-identical retry writes nothing and must not read as a rollback just because
+    // another task advanced past it in the meantime.
+    if let Some((highest, ec, ls, feh)) = stored.as_ref() {
+        refuse_corrupt(*highest, *ec, *ls, feh)?;
+        if head.head_sequence == *highest {
+            let identical =
+                head.event_count == *ec && head.last_sequence == *ls && head.final_event_hash == *feh;
+            return if identical {
+                Ok(FloorDecision::Idempotent)
+            } else {
+                Err(LedgerError::EvidenceFork)
+            };
+        }
+    }
+
+    // (2) The FLOOR: the highest head this install has recorded in ANY task bucket. `task_id` is
+    // caller-chosen, so it may not select which floor the head is measured against.
+    let ceiling: Option<(String, i64, i64, i64, String)> = conn
+        .query_row(
+            "SELECT task_id, highest_head_sequence, event_count, last_sequence, final_event_hash \
+             FROM governed_evidence_head_floor WHERE install_id = ?1 \
+             ORDER BY highest_head_sequence DESC, task_id ASC LIMIT 1",
+            params![head.install_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    if let Some((_, highest, ec, ls, feh)) = ceiling.as_ref() {
+        refuse_corrupt(*highest, *ec, *ls, feh)?;
+        if head.head_sequence < *highest {
+            return Err(LedgerError::StaleEvidence);
+        }
+        if head.head_sequence == *highest {
+            // One install, one counter: the same head_sequence cannot be minted twice. Equal-and-
+            // identical for THIS task already returned above, so this is a different task claiming
+            // a taken counter value.
+            return Err(LedgerError::EvidenceFork);
+        }
+    }
+
+    if stored.is_none() {
         conn.execute(
             "INSERT INTO governed_evidence_head_floor (\
                 install_id, task_id, highest_head_sequence, event_count, last_sequence, \
@@ -867,25 +1006,8 @@ fn evidence_floor_cas_body(
             ],
         )?;
         return Ok(FloorDecision::Bootstrapped);
-    };
-
-    // Fail closed on a corrupt stored floor row (startup-integrity, scoped to the row we touch).
-    if highest < 1 || ec < 1 || ls < 1 || ls != ec || feh.len() != 64 {
-        return Err(LedgerError::Corrupt("evidence_head_floor"));
     }
 
-    if head.head_sequence < highest {
-        return Err(LedgerError::StaleEvidence);
-    }
-    if head.head_sequence == highest {
-        let identical =
-            head.event_count == ec && head.last_sequence == ls && head.final_event_hash == feh;
-        return if identical {
-            Ok(FloorDecision::Idempotent)
-        } else {
-            Err(LedgerError::EvidenceFork)
-        };
-    }
     // Strictly-higher head_sequence: advance the floor (every field) and commit.
     conn.execute(
         "UPDATE governed_evidence_head_floor SET highest_head_sequence = ?3, event_count = ?4, \
@@ -1197,6 +1319,86 @@ mod tests {
         ));
     }
 
+    /// EVERY value `accept_prepare` binds into an acceptance row, mutated one at a time: a retry
+    /// that differs in any of them is a different turn and must be `Conflict`, never `Idempotent`.
+    ///
+    /// This is a table over the WHOLE binding rather than one test per column because the defect it
+    /// locks was an OMISSION, and an omission is invisible to a test written per remembered column.
+    /// `reconcile_conflict` compared sixteen values and its own comment called the comparison
+    /// "deliberately exhaustive over the durable request binding"; the five it never looked at were
+    /// `challenge_accepted_at_ms` — the supervisor's accept clock, which §7.1 step 4c later binds the
+    /// signed envelope against — and the four `challenge_registry_*` columns, which are the
+    /// provenance and the anti-rollback EPOCH of the challenge-key registry snapshot that authorized
+    /// the challenge. A retry presenting a rolled-back registry epoch was answered "the same turn".
+    ///
+    /// Deleting any one field from `DurableBinding` turns this test red on that field's row.
+    #[test]
+    fn every_bound_value_of_a_retry_is_compared_not_just_the_ones_someone_listed() {
+        type Mutate = fn(&mut NewAcceptance);
+        let mutations: &[(&str, Mutate)] = &[
+            ("install_id", |a| a.install_id = "install-OTHER".into()),
+            ("request_nonce", |a| a.request_nonce = "nonce-OTHER".into()),
+            ("challenge_handle", |a| a.challenge_handle = "chal-OTHER".into()),
+            ("run_id", |a| a.run_id = "run-OTHER".into()),
+            ("task_id", |a| a.task_id = "task-OTHER".into()),
+            ("workspace_id", |a| a.workspace_id = "ws-OTHER".into()),
+            ("execution_attempt_id", |a| a.execution_attempt_id = "att-OTHER".into()),
+            // ---- the five the hand-written comparison skipped ----
+            ("challenge_accepted_at_ms", |a| a.challenge_accepted_at_ms += 1),
+            ("challenge_registry_handle", |a| a.challenge_registry_handle = "reg-h-OTHER".into()),
+            ("challenge_registry_hash", |a| a.challenge_registry_hash = "reg-hash-OTHER".into()),
+            ("challenge_registry_epoch", |a| a.challenge_registry_epoch -= 1),
+            ("challenge_registry_root_key_id", |a| a.challenge_registry_root_key_id = "root-OTHER".into()),
+            // ------------------------------------------------------
+            ("lease_payload_bytes", |a| a.lease_payload_bytes = b"other-lease-payload".to_vec()),
+            ("lease_id", |a| a.lease_id = "lease-OTHER".into()),
+            ("lease_issued_at_ms", |a| a.lease_issued_at_ms += 1),
+            ("lease_expires_at_ms", |a| a.lease_expires_at_ms += 1),
+            ("receipt_id", |a| a.receipt_id = "receipt-OTHER".into()),
+            ("supervisor_id", |a| a.supervisor_id = "supervisor-OTHER".into()),
+            ("requested_at_ms", |a| a.requested_at_ms += 1),
+            ("request_sha256", |a| a.request_sha256 = H64_B.into()),
+            ("system_handle", |a| a.system_handle = H64_B.into()),
+            ("history_handle", |a| a.history_handle = H64.into()),
+            ("generation_config_handle", |a| a.generation_config_handle = H64_B.into()),
+        ];
+        // Every field of `NewAcceptance` is exercised: if one is added and not listed here, this
+        // count is the tripwire.
+        assert_eq!(mutations.len(), 23, "a NewAcceptance field is missing from the mutation table");
+
+        for (field, mutate) in mutations {
+            let conn = store();
+            assert_eq!(
+                accept_prepare(&conn, &new_acceptance("att-1"), 10).unwrap(),
+                AcceptOutcome::Created
+            );
+            let mut retry = new_acceptance("att-1");
+            mutate(&mut retry);
+            let outcome = accept_prepare(&conn, &retry, 20);
+            assert!(
+                matches!(outcome, Err(LedgerError::Conflict(_))),
+                "a retry differing in `{field}` must be refused as a conflict, got {outcome:?}"
+            );
+            // ...and it created no second attempt.
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM governed_turn_acceptance", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 1, "a conflicting retry on `{field}` must not insert a second row");
+        }
+    }
+
+    /// The positive half, so the test above cannot pass by refusing everything: the UNCHANGED retry
+    /// — the one real crash-retry the supervisor must tolerate — is still `Idempotent`.
+    #[test]
+    fn an_unmutated_retry_is_still_idempotent() {
+        let conn = store();
+        accept_prepare(&conn, &new_acceptance("att-1"), 10).unwrap();
+        assert_eq!(
+            accept_prepare(&conn, &new_acceptance("att-1"), 20).unwrap(),
+            AcceptOutcome::Idempotent
+        );
+    }
+
     // ---- Lease-expiry launch gate (§5 step 8a) ----------------------------
 
     #[test]
@@ -1414,17 +1616,83 @@ mod tests {
         conn.execute_batch("ROLLBACK;").unwrap();
     }
 
+    /// This test used to assert the DEFECT. It read:
+    ///
+    /// ```text
+    /// // A DIFFERENT task_id is an independent floor — bootstraps, unaffected by task-1's floor.
+    /// let mut other = head(1, 1, H64_B);
+    /// other.task_id = "task-2".into();
+    /// assert_eq!(evidence_floor_cas(&conn, &other, 110).unwrap(), FloorDecision::Bootstrapped);
+    /// ```
+    ///
+    /// — head 1 accepted after head 5 was recorded, because it arrived under another caller-chosen
+    /// `task_id`. It passed for four releases while the anti-rollback floor did nothing.
     #[test]
-    fn floor_scopes_by_install_and_task() {
+    fn floor_scopes_by_install_not_by_a_caller_chosen_task_id() {
         let conn = store();
         evidence_floor_cas(&conn, &head(5, 3, H64), 100).unwrap();
-        // A DIFFERENT task_id is an independent floor — bootstraps, unaffected by task-1's floor.
-        let mut other = head(1, 1, H64_B);
-        other.task_id = "task-2".into();
+        // A DIFFERENT task_id is NOT a fresh floor: `head_sequence` comes from one per-recorder
+        // counter, so a head below the install's high-water mark is a rollback whatever it is
+        // filed under.
+        let mut rewound = head(1, 1, H64_B);
+        rewound.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &rewound, 110),
+            Err(LedgerError::StaleEvidence)
+        ));
+        // Equal to the install's high-water mark under another task is a fork: one install, one
+        // counter, so that value cannot be minted twice.
+        let mut taken = head(5, 3, H64_B);
+        taken.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &taken, 111),
+            Err(LedgerError::EvidenceFork)
+        ));
+        // A genuinely new task still bootstraps its own row — above the install-wide mark.
+        let mut fresh = head(6, 4, H64_B);
+        fresh.task_id = "task-2".into();
         assert_eq!(
-            evidence_floor_cas(&conn, &other, 110).unwrap(),
+            evidence_floor_cas(&conn, &fresh, 112).unwrap(),
             FloorDecision::Bootstrapped
         );
+        // And an interleaved byte-identical re-sign of task-1's own head is still idempotent.
+        assert_eq!(
+            evidence_floor_cas(&conn, &head(5, 3, H64), 113).unwrap(),
+            FloorDecision::Idempotent
+        );
+    }
+
+    #[test]
+    fn floor_still_scopes_by_install_id() {
+        // Narrowed to the install, not below it: another install is another recorder with another
+        // counter, and is unaffected.
+        let conn = store();
+        evidence_floor_cas(&conn, &head(99, 3, H64), 100).unwrap();
+        let mut other_install = head(1, 1, H64_B);
+        other_install.install_id = "install-2".into();
+        assert_eq!(
+            evidence_floor_cas(&conn, &other_install, 110).unwrap(),
+            FloorDecision::Bootstrapped
+        );
+    }
+
+    #[test]
+    fn floor_refuses_a_corrupt_row_in_another_bucket() {
+        // The install-wide ceiling can be a row this task never touches; a corrupt one must
+        // refuse rather than be silently skipped.
+        let conn = store();
+        evidence_floor_cas(&conn, &head(99, 3, H64), 100).unwrap();
+        conn.execute_batch(
+            "UPDATE governed_evidence_head_floor SET final_event_hash = 'short' \
+             WHERE task_id = 'task-1'",
+        )
+        .unwrap();
+        let mut other = head(100, 3, H64_B);
+        other.task_id = "task-2".into();
+        assert!(matches!(
+            evidence_floor_cas(&conn, &other, 110),
+            Err(LedgerError::Corrupt("evidence_head_floor"))
+        ));
     }
 
     #[test]

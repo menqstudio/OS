@@ -55,6 +55,7 @@ import bro_signature
 from bro_signature import (
     ENV_PIN_FILE,
     ENV_PIN_SELF_OWNED_ACK,
+    ENV_PIN_SELF_OWNED_ACK_FILE,
     ENV_REGISTRY_MIN_FILE,
     ENV_REGISTRY_ROOT,
     PIN_SELF_OWNED_ACK_VALUE,
@@ -68,6 +69,7 @@ from bro_policy import (CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE,
                         State, verify_conductor_session_token)
 from broctl import build_registry, generate_key, sign_payload
 from _operator_pin import use_operator_pin
+import _self_owned_ack
 
 SESSION = "s-conductor-provisioned"
 
@@ -90,9 +92,13 @@ def _acknowledge_no_principal_separation(test_case) -> None:
     custody rule refuses it — correctly, and `CustodyTests` pins that default. A test
     process has no second principal, which is exactly the case the acknowledgement
     exists for, so it says so rather than being silently exempt.
+
+    Declared through the FILE form: the raw variable is honoured only under `BRO_ENV=ci`
+    now, because an ungated environment variable that short-circuits every custody rule in
+    the runtime cost the pin's own named adversary one extra `export`. A test host is not
+    CI, so it declares the posture the way a production single-principal deployment does.
     """
-    patcher = patch.dict(
-        os.environ, {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE})
+    patcher = _self_owned_ack.patch(tempfile.mkdtemp(prefix="bro-ack-"))
     patcher.start()
     test_case.addCleanup(patcher.stop)
 
@@ -274,7 +280,8 @@ class CustodyTests(unittest.TestCase):
 
     def test_a_root_this_account_can_rewrite_is_refused_by_default(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            for _name in _self_owned_ack.NAMES:
+                os.environ.pop(_name, None)
             if os.name not in {"posix", "nt"}:
                 self.skipTest(
                     f"no custody model on os.name={os.name!r}; the code refuses there "
@@ -296,9 +303,71 @@ class CustodyTests(unittest.TestCase):
                                       r"is writable by the account reading it)")
 
     def test_the_acknowledgement_admits_it_and_does_not_pretend_otherwise(self) -> None:
-        with patch.dict(os.environ,
-                        {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE}):
+        with _self_owned_ack.patch(tempfile.mkdtemp(prefix="bro-ack-")):
             self.assertEqual(self.resolve(), self.provisioned)
+
+    def test_the_raw_acknowledgement_is_refused_outside_ci(self) -> None:
+        """The gate the two sibling anchors always had, applied to the one that escaped it.
+
+        `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` used to be an ungated read of the ambient
+        environment. The adversary the pin exists to stop is one who can set the verifying
+        process's environment — that is the capability the original F-06 attack already
+        needed — so the fix cost it a single extra `export`. It is now honoured only when the
+        CI system marked the environment, exactly like the raw operator-root pin and the raw
+        registry floor, and the refusal says which form to use instead.
+        """
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENV_PIN_SELF_OWNED_ACK_FILE, None)
+            os.environ["BRO_ENV"] = "not-ci"
+            with patch.dict(os.environ,
+                            {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE}):
+                with self.assertRaises(SignatureError) as caught:
+                    self.resolve()
+        message = str(caught.exception)
+        self.assertIn("honoured only in CI", message)
+        self.assertIn(ENV_PIN_SELF_OWNED_ACK_FILE, message)
+
+    def test_the_raw_acknowledgement_is_honoured_when_ci_marked_the_environment(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENV_PIN_SELF_OWNED_ACK_FILE, None)
+            with patch.dict(os.environ, {ENV_PIN_SELF_OWNED_ACK: PIN_SELF_OWNED_ACK_VALUE,
+                                         "BRO_ENV": "ci"}):
+                self.assertEqual(self.resolve(), self.provisioned)
+
+    def test_a_declaration_file_that_says_something_else_is_not_a_declaration(self) -> None:
+        # The posture is stated in full, or not at all. Accepting any non-empty file would
+        # make an unrelated file the operator happens to point at switch off every custody
+        # rule in the runtime.
+        declaration = pathlib.Path(tempfile.mkdtemp(prefix="bro-ack-")) / "ack"
+        declaration.write_text("yes please", encoding="utf-8")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            with patch.dict(os.environ,
+                            {ENV_PIN_SELF_OWNED_ACK_FILE: str(declaration)}):
+                with self.assertRaises(SignatureError) as caught:
+                    self.resolve()
+        self.assertIn("is not exactly", str(caught.exception))
+
+    def test_an_unreadable_declaration_file_refuses_rather_than_reading_as_absent(self) -> None:
+        # Fail closed: "the declaration cannot be read" must not silently become "there is
+        # no declaration", which would surface three frames away as an unrelated custody
+        # refusal about the directory.
+        missing = pathlib.Path(tempfile.mkdtemp(prefix="bro-ack-")) / "never-written"
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            with patch.dict(os.environ, {ENV_PIN_SELF_OWNED_ACK_FILE: str(missing)}):
+                with self.assertRaises(SignatureError) as caught:
+                    self.resolve()
+        self.assertIn("cannot be read", str(caught.exception))
+
+    def test_a_caller_that_curates_its_mapping_can_suppress_the_acknowledgement(self) -> None:
+        """The asymmetry the audit named: `_env_is_ci` took the caller's mapping, so a
+        hardened caller could curate it; the acknowledgement read `os.environ` by deliberate
+        design and no caller could suppress it at all."""
+        import bro_custody
+        with _self_owned_ack.patch(tempfile.mkdtemp(prefix="bro-ack-")):
+            self.assertTrue(bro_custody.self_owned_acknowledged())
+            self.assertFalse(bro_custody.self_owned_acknowledged(env={}))
 
     def test_a_platform_with_no_custody_model_refuses(self) -> None:
         """"No permission model here" is not "no permission requirement".
@@ -308,7 +377,8 @@ class CustodyTests(unittest.TestCase):
         executed — which is how the evidence floor's Windows no-op survived (R-06).
         """
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            for _name in _self_owned_ack.NAMES:
+                os.environ.pop(_name, None)
             with patch.object(bro_signature, "platform_name", lambda: "riscos"):
                 with self.assertRaises(SignatureError) as caught:
                     self.resolve()
@@ -323,7 +393,8 @@ class CustodyTests(unittest.TestCase):
         _provision(shared, "shared")
         os.chmod(shared, 0o777)
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop(ENV_PIN_SELF_OWNED_ACK, None)
+            for _name in _self_owned_ack.NAMES:
+                os.environ.pop(_name, None)
             with self.assertRaises(SignatureError) as caught:
                 resolve_registry_root(ROOT, env={ENV_REGISTRY_ROOT: str(shared)})
         self.assertIn("writable", str(caught.exception))

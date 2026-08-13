@@ -61,7 +61,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Tuple, Union
 
-from governed_supervisor_ledger import AttestationState, NewAcceptance
+from governed_supervisor_ledger import (
+    LEASE_DURATION_MS,
+    MIN_LAUNCH_REMAINING_MS,
+    AttestationState,
+    NewAcceptance,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (rev-30 §5 — mirror supervisor_ledger.rs exactly).
@@ -70,12 +75,21 @@ from governed_supervisor_ledger import AttestationState, NewAcceptance
 # The signed document the challenge authority issues (challenge_authority.py).
 CHALLENGE_PROTOCOL = "brops.governed-turn-challenge.v1"
 
-# Full lease duration (§5 step 4 / §4.7): ~30000 pre-launch + 180000 in-window.
-LEASE_DURATION_MS = 210_000
-
-# Minimum remaining lease budget required to launch (§5 step 8a). Exact-180000
-# remaining PROCEEDS; 179999 refuses. Matches supervisor_ledger.rs.
-MIN_LAUNCH_REMAINING_MS = 180_000
+# The lease budget constants are IMPORTED from ``governed_supervisor_ledger`` (above), not
+# restated. They used to be a second pair of literals here, beside a comment claiming they
+# "mirror supervisor_ledger.rs exactly" — a claim nothing checked, in a module that already
+# imports from the ledger that owns the durable window. The ledger enforces the gate; this
+# module stamps the expiry; both must be the same number or a lease is issued for a window the
+# gate will not honour. They are re-exported so existing importers of
+# ``governed_supervisor.LEASE_DURATION_MS`` keep working — but there is now ONE literal.
+#
+#   * ``LEASE_DURATION_MS``       — full lease duration (§5 step 4 / §4.7): ~30000 pre-launch
+#                                   + 180000 in-window.
+#   * ``MIN_LAUNCH_REMAINING_MS`` — minimum remaining budget to launch (§5 step 8a). Exact
+#                                   180000 remaining PROCEEDS; 179999 refuses.
+#
+# The Rust half (``core/src/supervisor_ledger.rs``) is a THIRD site in another language; it is
+# pinned against these by ``tests/test_one_standard_pins.py``.
 
 # Governed challenge TTL is capped at 30000 ms by the issuer; the supervisor
 # re-checks the cap so a challenge claiming a longer life than policy is malformed.
@@ -321,6 +335,43 @@ def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
     ``attestation_evidence_sha256`` (and the Rust broker checks in
     governed_verification.rs)."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def challenge_handle_for(payload: Mapping[str, Any], sig: str) -> str:
+    """The ONE definition of ``challenge_handle`` — ``SHA256(JCS({payload, sig}))``.
+
+    **rev-30 correction (2026-08-10).** This used to be ``SHA256(JCS(payload))`` — the
+    payload ALONE — inline in :func:`accept_open`, while the §4.10(a0) open path hashed the
+    exact signed document bytes. rev-30 contradicted itself about which was right (§3's
+    artifact matrix, §4.10(a0) and Appendix B's handle matrix all define the
+    ``{payload, sig}`` form; §5's summary table merely *described* the shipped payload-only
+    behaviour). The Architect declared §3/§4.10(a0) normative and the addendum's §5 table is
+    corrected to match; see ``docs/OWNER_ACTION_REQUIRED.md`` §1c.
+
+    Two independent reasons the payload-only form was the wrong half:
+
+      * §7's challenge predicate fetches the stored document BY this handle and re-hashes the
+        exact stored bytes (``SHA256(bytes) == challenge_handle`` AND
+        ``bytes == canonical_bytes({payload, sig})``). The stored document is the signed
+        ``{payload, sig}`` envelope (§2.1.1 ``issued_challenge_document``, §6 step-1 publish),
+        so under the payload-only form that predicate could never pass for ANY turn.
+      * §4.10(d) joins the ``INPUTS_READY``
+        staging row to its acceptance row on
+        ``(install_id, request_nonce, challenge_handle)``. Two different digests of the same
+        turn make that join unsatisfiable.
+
+    The ``{payload, sig}`` form is also the strictly stronger binding: two distinct signatures
+    over one payload get two distinct handles. Nothing regresses — a re-signed replay misses
+    the handle lookup, then collides on ``UNIQUE(install_id, request_nonce)`` and is refused
+    ``nonce_rebound_to_different_turn`` (``governed_supervisor_ledger._prepare_locked``), so it
+    still buys zero additional execution attempts; it is refused rather than served the
+    original lease, which is the fail-closed direction.
+
+    ``sort_keys=True`` in :func:`_canonical_bytes` sorts recursively and ``"payload" < "sig"``,
+    so these bytes are byte-identical to the canonicality-gated ``document_bytes`` that
+    ``governed_turn_open`` hashes for the staging row.
+    """
+    return hashlib.sha256(_canonical_bytes({"payload": payload, "sig": sig})).hexdigest()
 
 
 def recompute_request_sha256(payload: Mapping[str, Any]) -> str:
@@ -596,10 +647,13 @@ def accept_open(
             )
 
         # ---- All phases passed: mint the lease AND its durable acceptance record ----
-        # `challenge_handle` is the supervisor's OWN content address of the exact payload it
-        # just verified — the ledger's UNIQUE on it is what makes a replayed challenge unable
-        # to mint a second attempt.
-        challenge_handle = hashlib.sha256(message).hexdigest()
+        # `challenge_handle` is the supervisor's OWN content address of the exact signed
+        # DOCUMENT it just verified — `SHA256(JCS({payload, sig}))`, §3/§4.10(a0)/Appendix B.
+        # The ledger's UNIQUE on it is what makes a replayed challenge unable to mint a
+        # second attempt. NOT `sha256(message)`: `message` is `JCS(payload)` ALONE, which is
+        # what §5's summary table used to describe and what this line used to compute — see
+        # `challenge_handle_for` for which half of rev-30 won and why.
+        challenge_handle = challenge_handle_for(payload, sig)
         lease = Lease(
             lease_id=config.mint_id(),
             execution_attempt_id=config.mint_id(),
