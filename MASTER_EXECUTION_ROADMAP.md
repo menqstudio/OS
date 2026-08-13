@@ -634,11 +634,19 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       **DELETED** in the same change: it had zero production callers, its table diverged from the
       design, and its `CREATE TABLE IF NOT EXISTS` ran on the same connection one line before
       `supervisor_ledger::create_schema`, so keeping it would have made the canonical DDL a no-op.
-      **STILL OPEN, and this is the whole of what is left:** the DESKTOP hop —
-      `bridge.governed-turn-output-read.v1` in the sidecar and the internal `governed_turn_output_read`
-      helper — does not exist, so nothing on the desktop side drives the pull, reassembles the bytes, or
-      applies the §4.6/§7.1 whole-output digest check. Nothing delivers output through the wall yet.
-      **Open.**
+      **STILL OPEN — but not for the reason this row carried until 2026-08-13.** It said the DESKTOP
+      hop "does not exist". That sentence was written 2026-08-10; Slice 3 landed 2026-08-12 and this row
+      was never updated, which is the standing docs row below doing its damage in the one place a cold
+      reader would trust. The hop **exists**: the `protocol`-keyed branch is `_bridge_output_read`
+      (`bridge/engine_sidecar.py:730`) behind `BRIDGE_OUTPUT_READ_PROTOCOL` (`:574`), and the pull loop is
+      `brops_core::governed_output_pull`, driven end to end by the `ladder-governed-turn` job. The helper
+      this row named, `governed_turn_output_read`, is in no file — the same class of error as the
+      `platform_governed_execution_supported()` these documents watched for weeks.
+      **What is actually left is the wiring, and only that:** the shipped broker still reads the
+      recorder's output with `std::fs::read(&report_path)`
+      (`apps/desktop/src-tauri/broker/src/chain_executor.rs:882`) and never touches the egress, so nothing
+      in the product drives the pull, reassembles the bytes, or applies the §4.6/§7.1 whole-output digest
+      check. Built and proven in CI; unreached by the app. **Open.**
 - [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
       `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
       tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
