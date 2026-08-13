@@ -99,6 +99,15 @@ REQUIRED_CLAUSES = (
     "RAISE(ABORT, 'staging chunk must be recorded at the current cursor')",
     "trg_governed_turn_staging_chunk_immutable",
     "RAISE(ABORT, 'recorded staging chunks are immutable')",
+    # The two cascades are what make the §2.4 sweep a reclaim rather than a leak. The sweep
+    # deletes ONE row per expired turn and the DDL takes that turn's sessions and their
+    # chunks with it; `count_install_sessions` counts sessions THROUGH the parent row, so a
+    # commit that deleted these clauses from both copies would leave every swept session as
+    # a parentless row -- invisible to the per-install cap while its `session_dir` stayed on
+    # disk. That is the one way a fail-CLOSED quota fails open, so the clauses are named
+    # here and the sweep refuses to run on a connection with `foreign_keys` off.
+    "REFERENCES governed_turn_staging (challenge_handle) ON DELETE CASCADE",
+    "REFERENCES governed_turn_staging_session (staging_session_id) ON DELETE CASCADE",
     "trg_governed_turn_staging_handle_binding",
     "RAISE(ABORT, 'published input handle must be the challenge-committed digest')",
     "trg_governed_turn_staging_inputs_ready",

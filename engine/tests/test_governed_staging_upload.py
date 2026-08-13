@@ -1796,5 +1796,305 @@ class SupervisorFaultTests(_Case):
             self.call({"protocol": "brops.governed-turn-open.v1"})
 
 
+# ---------------------------------------------------------------------------
+# §2.4's sweep — the thing that returns the quota, and the reason there IS a third turn
+# ---------------------------------------------------------------------------
+
+
+class StagingSweepTests(_Case):
+    """The §2.4 sweep, and the ceiling it exists to lift.
+
+    Before it was built, `count_install_sessions` counted every session row an install had
+    ever opened and nothing in the tree ever deleted one, so an install completed exactly two
+    governed turns and refused the third `quota_sessions` — measured on the live kit, with six
+    `ARTIFACT_READY` sessions under two challenge handles. §2.4 gives the "expired rows are not
+    counted whether or not the sweep has unlinked them" tolerance to the TURN cap alone and
+    says of the others that the cleanup deadline is what lets "the per-install byte/file quotas
+    rely on expired rows being gone". So the fix is the sweep, and these tests are about what
+    it takes AND what it must leave.
+    """
+
+    def complete_turn(self, turn):
+        """One completing governed turn: three artifacts uploaded, published, INPUTS_READY."""
+        for artifact, data in (("system", SYSTEM_BYTES),
+                               ("generation_config", GENCFG_BYTES),
+                               ("history", HISTORY_BYTES)):
+            _sid, reply = self.upload(artifact, data, turn=turn)
+            self.assertEqual(reply["status"], "published", reply)
+        self.assertEqual(self.turn_row(turn)["state"], gsl.INPUTS_READY)
+        return turn
+
+    def sweep(self, now_ms=None):
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+        return gsu.sweep_staging(self.conn, str(self.staging_root),
+                                 self.clock if now_ms is None else now_ms)
+
+    def sessions(self, install="inst-1"):
+        return gsl.count_install_sessions(self.conn, install)
+
+    def chunk_rows(self):
+        return self.conn.execute(
+            "SELECT COUNT(*) AS n FROM governed_turn_staging_chunk").fetchone()["n"]
+
+    # ---- the defect, and the fix, in one test ---------------------------------------
+
+    def test_the_third_turn_is_refused_quota_sessions_before_the_sweep_and_admitted_after(self):
+        """The whole finding. Two completing turns fill the six-session budget; a third is
+        refused `quota_sessions` BY NAME while their directories are still on disk — the cap
+        doing its job — and admitted once the sweep has reclaimed them.
+
+        Both halves are load-bearing. Without the refusal this test would pass against a build
+        that simply removed the ceiling, which is not a fix; without the admission it would
+        pass against the ceiling itself.
+        """
+        self.complete_turn(self.turn)
+        self.complete_turn(self.new_turn(nonce="nonce-2"))
+        self.assertEqual(self.sessions(), gsl.MAX_STAGING_SESSIONS_PER_INSTALL)
+
+        # Past both challenges: the TURN cap already tolerates this (live-count rule), so the
+        # third turn is admitted to staging and it is the SESSION cap that stops it.
+        self.clock = EXPIRES + 1
+        third = self.new_turn(nonce="nonce-3", expires=self.clock + 30_000, now=self.clock)
+        self.assertEqual(
+            self.call(self.open_request("system", turn=third))["reason"], "quota_sessions")
+
+        report = self.sweep()
+        self.assertEqual((report.rows, report.sessions, report.dirs_removed), (2, 6, 6))
+        self.assertEqual(self.sessions(), 0)
+
+        reply = self.call(self.open_request("system", turn=third))
+        self.assertEqual(reply["status"], "opened", reply)
+        _sid, published = self.upload("generation_config", GENCFG_BYTES, turn=third)
+        self.assertEqual(published["status"], "published")
+
+    def test_the_session_cap_is_the_turn_cap_times_the_uploadable_artifacts(self):
+        """§2.4's "(= 2 turns x 3 artifacts)" as arithmetic rather than a second literal —
+        and still exactly the LOCKED 6, which is what the derivation has to reproduce."""
+        self.assertEqual(gsl.MAX_STAGING_SESSIONS_PER_INSTALL, 6)
+        self.assertEqual(
+            gsl.MAX_STAGING_SESSIONS_PER_INSTALL,
+            gsl.MAX_CONCURRENT_GOVERNED_TURNS * len(gsl.STAGING_ARTIFACTS))
+
+    # ---- what it must NOT take ------------------------------------------------------
+
+    def test_a_live_turn_is_not_swept_and_its_sessions_are_still_counted(self):
+        """A reclaim that reclaims too much is worse than the ceiling. The live turn keeps its
+        row, its sessions, its chunk rows and its directory — and keeps CHARGING for them."""
+        self.complete_turn(self.turn)
+        live = self.new_turn(nonce="nonce-2", expires=EXPIRES + 60_000)
+        live_sid = self.open_session("system", SYSTEM_BYTES, turn=live)
+        live_dir = self.session_dir(live_sid)
+        self.assertEqual(self.sessions(), 4)
+
+        report = self.sweep(EXPIRES + 1)
+
+        self.assertEqual((report.rows, report.sessions), (1, 3))
+        self.assertEqual(report.failures, ())
+        self.assertIsNotNone(self.turn_row(live))
+        self.assertIsNotNone(self.session_row(live_sid))
+        self.assertTrue(live_dir.is_dir())
+        self.assertEqual(self.sessions(), 1)
+
+    def test_the_published_artifacts_outlive_the_staging_that_carried_them(self):
+        """The bytes are in the content-addressed store under the handle the challenge
+        committed to; staging is the courier, not the custodian. The sweep performs no store
+        operation at all — it is never told where the store is."""
+        self.complete_turn(self.turn)
+        self.clock = EXPIRES + 1
+        self.sweep()
+        for data in (SYSTEM_BYTES, HISTORY_BYTES, GENCFG_BYTES):
+            self.assertEqual(self.store.blobs[sha(data)], data)
+
+    def test_a_foreign_file_in_the_staging_root_is_reported_and_left_alone(self):
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+        stranger = self.staging_root / "not-a-session.txt"
+        stranger.write_bytes(b"x")
+        report = self.sweep(EXPIRES + 1)
+        self.assertTrue(stranger.exists())
+        self.assertEqual(len(report.failures), 1)
+        self.assertIn("not a session directory", report.failures[0])
+
+    def test_a_session_dir_outside_the_staging_root_is_refused_not_followed(self):
+        """The stored path is a supervisor-minted string, so one pointing outside the root is
+        a fault — and the sweep is the one component that must be unable to act on it."""
+        outside = self.base / "not-staging"
+        outside.mkdir()
+        (outside / "keep-me").write_bytes(b"x")
+        self.conn.execute(
+            "INSERT INTO governed_turn_staging_session (staging_session_id, challenge_handle,"
+            " artifact, declared_len, declared_sha256, next_seq, byte_count, session_dir,"
+            " state, published_handle) VALUES (?,?,?,?,?,0,0,?,?,NULL)",
+            ("escaped", self.turn.challenge_handle, "system", 0, sha(b""), str(outside),
+             gsl.SESSION_UPLOADING))
+        report = self.sweep(EXPIRES + 1)
+        self.assertTrue((outside / "keep-me").exists())
+        self.assertEqual(report.rows, 1)
+        self.assertEqual(len(report.failures), 1)
+        self.assertIn("not a session directory under", report.failures[0])
+
+    # ---- the boundary, and the two predicates that must stay complements ------------
+
+    def test_the_sweep_boundary_is_the_live_predicates_complement(self):
+        """§2.4's live rule is `challenge_expires_at_ms >= now_ms` INCLUSIVE, so the last
+        millisecond of a challenge is live and unsweepable, and the next one is neither."""
+        sid = self.open_session("system", SYSTEM_BYTES)
+        self.assertEqual(self.sweep(EXPIRES).rows, 0)
+        self.assertIsNotNone(self.session_row(sid))
+        self.assertEqual(self.sweep(EXPIRES + 1).rows, 1)
+        self.assertIsNone(self.session_row(sid))
+
+    def test_live_and_sweepable_partition_every_row(self):
+        """The two predicates are written once and derived from each other; this is the
+        property that makes that worth doing. No row may be both counted and collected, and
+        with `EXPIRED_SESSION_RETENTION_MS = 0` none may be neither."""
+        self.assertEqual(gsl.EXPIRED_SESSION_RETENTION_MS, 0)
+        for offset in (-2, -1, 0, 1, 2, 30_000):
+            expires = NOW + offset
+            live = self.conn.execute(
+                "SELECT (%s) AS ok" % gsl.LIVE_STAGING_PREDICATE_SQL.replace(
+                    "challenge_expires_at_ms", str(expires)), (NOW,)).fetchone()["ok"]
+            sweepable = self.conn.execute(
+                "SELECT (%s) AS ok" % gsl.SWEEPABLE_STAGING_PREDICATE_SQL.replace(
+                    "challenge_expires_at_ms", str(expires)), (NOW,)).fetchone()["ok"]
+            self.assertEqual(bool(live), not bool(sweepable),
+                             "expiry %d is both or neither at now=%d" % (expires, NOW))
+
+    # ---- crash between the halves, and the orphans it leaves ------------------------
+
+    def test_an_orphan_directory_from_an_interrupted_sweep_is_collected_next_pass(self):
+        """The ledger half commits first, so a crash before the unlink leaves a directory with
+        no row. The same pass that would have removed it by name removes it as an orphan —
+        which is why the staging root converges from either side of a crash."""
+        sid = self.open_session("system", SYSTEM_BYTES)
+        session_dir = self.session_dir(sid)
+        self.clock = EXPIRES + 1
+        swept = gsl.sweep_expired_staging(self.conn, self.clock)   # the ledger half alone
+        self.assertEqual(swept.session_dirs, (str(session_dir),))
+        self.assertTrue(session_dir.is_dir())
+
+        report = self.sweep()
+        self.assertEqual((report.rows, report.orphan_dirs_removed), (0, 1))
+        self.assertFalse(session_dir.exists())
+
+    def test_an_orphan_temp_is_unlinked_only_once_no_write_could_own_it(self):
+        """§2.4 names orphan `.tmp-*.part` separately from the whole-`session_dir` unlink, so
+        they are collected inside LIVE sessions too — bounded by the cleanup deadline, because
+        unlinking a temp an in-flight `os.link` still owns would break that chunk for nothing.
+        """
+        import os as _os
+        sid = self.open_session("system", SYSTEM_BYTES)
+        session_dir = self.session_dir(sid)
+        stale = session_dir / (gsu.TEMP_CHUNK_PREFIX + "old" + gsu.TEMP_CHUNK_SUFFIX)
+        fresh = session_dir / (gsu.TEMP_CHUNK_PREFIX + "new" + gsu.TEMP_CHUNK_SUFFIX)
+        stale.write_bytes(b"half a chunk")
+        fresh.write_bytes(b"half a chunk")
+        old_s = (NOW - gsl.STAGING_CLEANUP_DEADLINE_MS - 1) / 1000.0
+        _os.utime(stale, (old_s, old_s))
+        _os.utime(fresh, (NOW / 1000.0, NOW / 1000.0))
+
+        report = self.sweep(NOW)
+
+        self.assertEqual((report.rows, report.temps_removed), (0, 1))
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+
+    # ---- the two ways this could fail OPEN ------------------------------------------
+
+    def test_the_sweep_refuses_a_connection_whose_cascade_is_off(self):
+        """Without the cascade the DELETE would leave sessions with no parent — rows that
+        `count_install_sessions` (which counts THROUGH the parent) can no longer see, while
+        their directories stay on disk. That is this cap failing OPEN, so it is refused."""
+        sid = self.open_session("system", SYSTEM_BYTES)
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        # By NAME: the refusal must be the PRE-flight one, which happens before a row is
+        # deleted. The post-DELETE orphan assertion inside the transaction would also refuse
+        # this state (and roll back), so a test that accepted any `Corrupt` here could not
+        # tell the guard from the assertion behind it — and would go green with the guard
+        # removed.
+        with self.assertRaisesRegex(gsl.Corrupt, "PRAGMA foreign_keys = ON"):
+            gsl.sweep_expired_staging(self.conn, EXPIRES + 1)
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.assertIsNotNone(self.session_row(sid))
+        self.assertIsNotNone(self.turn_row())
+
+    def test_the_cascade_takes_the_sessions_and_their_chunks(self):
+        sid, _reply = self.upload("history", HISTORY_BYTES)
+        self.assertEqual(self.chunk_rows(), 2)
+        self.assertEqual(self.sweep(EXPIRES + 1).rows, 1)
+        self.assertEqual(self.chunk_rows(), 0)
+        self.assertIsNone(self.session_row(sid))
+
+    def test_the_sweep_does_not_consume_the_challenge_nonce(self):
+        """§2.4: the sweep reclaims "WITHOUT consuming the challenge nonce", so the same signed
+        challenge may be re-staged under the same `(install_id, request_nonce)`. The authority's
+        nonce store is not reachable from this module at all — what is proved here is the half
+        the sweep owns: the UNIQUE slot in the supervisor's own table is FREE afterwards."""
+        self.complete_turn(self.turn)
+        self.sweep(EXPIRES + 1)
+        outcome, row = gsl.open_staging(
+            self.conn,
+            gsl.NewStaging(
+                install_id=self.turn.install_id, request_nonce=self.turn.request_nonce,
+                challenge_handle=self.turn.challenge_handle, run_id="run-1", task_id="task-1",
+                workspace_id="ws-1", system_sha256=sha(SYSTEM_BYTES),
+                history_sha256=sha(HISTORY_BYTES),
+                generation_config_sha256=sha(GENCFG_BYTES),
+                challenge_expires_at_ms=EXPIRES + 60_000),
+            EXPIRES + 2)
+        self.assertEqual(outcome, gsl.CREATED)
+        self.assertEqual(row["state"], gsl.UPLOADING)
+
+    # ---- the schedule ---------------------------------------------------------------
+
+    def test_sweep_forever_sweeps_before_it_ever_waits(self):
+        """§2.4's "(plus a startup pass)" is not a special case: it is the first iteration, so
+        a deployment that starts the loop cannot forget it."""
+        self.complete_turn(self.turn)
+        self.clock = EXPIRES + 1
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+        passes_seen = []
+
+        class _StopAfterFirst:
+            def wait(self, seconds):
+                passes_seen.append(seconds)
+                return True
+
+        reports = []
+        passes = gsu.sweep_forever(
+            conn=self.conn, staging_root=str(self.staging_root), clock_ms=lambda: self.clock,
+            stop=_StopAfterFirst(), on_pass=reports.append)
+        self.assertEqual(passes, 1)
+        self.assertEqual(passes_seen, [gsl.STAGING_SWEEP_INTERVAL_MS / 1000.0])
+        self.assertEqual(reports[0].rows, 1)
+        self.assertEqual(self.sessions(), 0)
+
+    def test_a_failing_pass_is_reported_and_the_schedule_survives_it(self):
+        """The SLA is the reason: one bad pass must not retire the only thing that returns
+        staging quota."""
+        reports = []
+
+        class _StopAfterTwo:
+            def __init__(self):
+                self.n = 0
+
+            def wait(self, seconds):
+                self.n += 1
+                return self.n >= 2
+
+        passes = gsu.sweep_forever(
+            conn=self.conn, staging_root=str(self.base / "does-not-exist"),
+            clock_ms=lambda: self.clock, stop=_StopAfterTwo(), on_pass=reports.append)
+        self.assertEqual(passes, 2)
+        self.assertEqual(len(reports), 2)
+        for report in reports:
+            self.assertEqual(len(report.failures), 1)
+            self.assertIn("sweep pass failed", report.failures[0])
+
+    def test_a_non_positive_sweep_interval_is_refused(self):
+        with self.assertRaises(SupervisorError):
+            gsu.sweep_forever(conn=self.conn, staging_root=str(self.staging_root),
+                              clock_ms=lambda: self.clock, stop=None, interval_ms=0)
+
+
 if __name__ == "__main__":
     unittest.main()

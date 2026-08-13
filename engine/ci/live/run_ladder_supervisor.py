@@ -47,6 +47,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -713,6 +714,39 @@ def main() -> int:
     def accept_one():
         return gss.accept_socket_conn(listener)
 
+    # ---- §2.4's background sweep, with its startup pass -------------------------------
+    # The supervisor is the principal that owns the staging root and the ledger, so it is the
+    # principal that reclaims them. Without this thread the §2.4 session and byte quotas never
+    # come back: `count_install_sessions` counts every row an install holds (the LIVE-count
+    # tolerance is granted to `MAX_CONCURRENT_GOVERNED_TURNS` alone), so six sessions — two
+    # completing turns — are the install's whole budget for the life of the deployment. That was
+    # measured on this kit before the sweep existed, not inferred, and `run_ladder_turn.sh` now
+    # drives a THIRD completing turn that only this thread can make possible.
+    #
+    # It gets its OWN connection: `sqlite3` objects belong to the thread that made them, and
+    # `open_ledger` sets the busy timeout that makes two writers on one WAL file wait instead
+    # of fail. It is a daemon thread because the sweep must never hold the supervisor open —
+    # nothing it does is unsafe to interrupt, since the ledger commits before the unlink and
+    # the next pass collects whatever a kill left behind.
+    sweep_stop = threading.Event()
+
+    def sweep_loop():
+        conn = gsl.open_ledger(cfg["supervisor"]["ledger_db"])
+        try:
+            gsu.sweep_forever(
+                conn=conn, staging_root=ladder["staging_root"], clock_ms=services.clock_ms,
+                stop=sweep_stop,
+                on_pass=lambda report: hop("staging.sweep", None, report.as_detail()),
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    sweeper = threading.Thread(target=sweep_loop, name="staging-sweep", daemon=True)
+    sweeper.start()
+
     try:
         gss.serve_forever(
             accept_one,
@@ -732,6 +766,7 @@ def main() -> int:
             output_read_service=services.output_read_service,
         )
     finally:
+        sweep_stop.set()
         try:
             services.ledger_conn.close()
         except Exception:  # noqa: BLE001

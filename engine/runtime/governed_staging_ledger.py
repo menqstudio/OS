@@ -98,6 +98,21 @@ ALL_STAGING_STATES = frozenset({VERIFYING, UPLOADING, INPUTS_READY})
 #: ``MAX_CONCURRENT_GENERATIONS = 2``). A 3rd LIVE row on open ⇒ ``quota_turns``.
 MAX_CONCURRENT_GOVERNED_TURNS = 2
 
+#: §2.4 P1-3, LOCKED: "an expired staging row/`session_dir` (now past
+#: `challenge_expires_at_ms`) has ZERO retention: it is eligible for unlink the instant it
+#: expires, never preserved". Staging holds no post-expiry value and the sweep does not
+#: consume the challenge nonce, so nothing is lost by reclaiming it immediately.
+EXPIRED_SESSION_RETENTION_MS = 0
+
+#: §2.4 P1-3, LOCKED: the background sweep cadence (plus a startup pass).
+STAGING_SWEEP_INTERVAL_MS = 60_000
+
+#: §2.4 P1-3, LOCKED: "fully unlinked (row + `session_dir` + temps) within
+#: `2 x STAGING_SWEEP_INTERVAL_MS` of its expiry (one missed-sweep tolerance)". DERIVED from
+#: the interval, because the design derives it: a deployment that slows the sweep down and
+#: leaves a hand-written deadline behind would be promising an SLA it no longer meets.
+STAGING_CLEANUP_DEADLINE_MS = 2 * STAGING_SWEEP_INTERVAL_MS
+
 # ---------------------------------------------------------------------------
 # Outcomes
 # ---------------------------------------------------------------------------
@@ -181,6 +196,22 @@ def load_staging_by_handle(conn: sqlite3.Connection,
     return row
 
 
+#: The ONE §2.4 liveness predicate, as SQL, with ``?`` bound to ``now_ms``. Both halves of
+#: the rule read it: the live count that enforces ``MAX_CONCURRENT_GOVERNED_TURNS``, and —
+#: as its exact complement below — the sweep that reclaims what is no longer live. Written
+#: once so the two cannot drift into a row that is neither counted nor collected, or one
+#: that is both counted and collected.
+LIVE_STAGING_PREDICATE_SQL = "challenge_expires_at_ms >= ?"
+
+#: The complement, offset by the LOCKED zero retention: a row is sweepable exactly when it
+#: is not live. ``EXPIRED_SESSION_RETENTION_MS`` appears in the SQL rather than being folded
+#: away at 0, so a future non-zero retention changes the collected set and NOT the counted
+#: one — which is the direction that stays fail-closed.
+SWEEPABLE_STAGING_PREDICATE_SQL = (
+    "challenge_expires_at_ms + %d < ?" % EXPIRED_SESSION_RETENTION_MS
+)
+
+
 def count_live_turns(conn: sqlite3.Connection, install_id: str, now_ms: int) -> int:
     """The §2.4 LIVE-count rule, exactly: rows whose ``challenge_expires_at_ms >= now_ms``.
 
@@ -188,12 +219,16 @@ def count_live_turns(conn: sqlite3.Connection, install_id: str, now_ms: int) -> 
     is load-bearing — counting rows the sweep has merely not reached yet would let an
     expired (or replayed-expired) challenge pin a concurrency slot for up to
     ``STAGING_CLEANUP_DEADLINE_MS``, which is the P1-3 vector this rule closes.
+
+    §2.4 grants that tolerance to THIS cap and to no other. The session and byte caps count
+    what is still on disk (see :func:`count_install_sessions`), and the sweep — not a
+    predicate — is what returns their quota.
     """
     if not _is_u64_ms(now_ms):
         raise LedgerError("now_ms must be an epoch-ms int")
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM governed_turn_staging "
-        "WHERE install_id = ? AND challenge_expires_at_ms >= ?",
+        "WHERE install_id = ? AND " + LIVE_STAGING_PREDICATE_SQL,
         (install_id, now_ms),
     ).fetchone()
     return int(row["n"])
@@ -342,8 +377,19 @@ ARTIFACT_READY = "ARTIFACT_READY"
 #: §2.4 P1-4, terminal and fail-closed: a durable chunk file is missing, unreadable, or
 #: no longer hashes to its recorded digest. Every later open/chunk/final for this session
 #: refuses `session_corrupt`; the supervisor never finalizes, publishes, or advances the
-#: turn. Recovery is operator-sweep only, and the sweep does NOT consume the challenge
-#: nonce — so a corrupt session costs the desktop a re-issue, never the turn.
+#: turn. Recovery is sweep-only (`sweep_expired_staging`), and the sweep does NOT consume
+#: the challenge nonce — so a corrupt session costs the desktop a re-issue, never the turn.
+#:
+#: What the sweep does NOT do is delete a corrupt session out from under a turn whose
+#: challenge is still live, and that is a REFUSAL to choose rather than an omission. §2.4
+#: says both "EVERY later `governed-staging-open` (reopen), `-chunk`, and `-final` for that
+#: `staging_session_id` ... returns `session_corrupt`" (LOCKED) and, of the recovery, that
+#: the sweep "deletes the row ... the desktop then re-issues a fresh staging session against
+#: the still-valid signed challenge". A deleted row cannot answer `session_corrupt` — it
+#: answers `session_unknown` — so those two sentences cannot both hold for a live challenge.
+#: The expiry-driven sweep satisfies the second without breaking the first (an expired
+#: challenge has no later messages to answer), and the design owes the difference an answer
+#: before anything here reclaims more.
 SESSION_CORRUPT = "SESSION_CORRUPT"
 
 #: The closed domain the session `state` column may hold — identical to the SQL CHECK.
@@ -364,9 +410,20 @@ ARTIFACT_HANDLE_COLUMN = {a: "%s_handle" % a for a in STAGING_ARTIFACTS}
 #: `history <= 8 MiB` ceiling. Mirrors the `next_seq <= 46` / `seq <= 45` SQL CHECKs.
 MAX_STAGING_CHUNKS = 46
 
-#: §2.4 P1-3: concurrent `governed_turn_staging_session` rows per install
-#: (= MAX_CONCURRENT_GOVERNED_TURNS 2 turns x 3 artifacts). Over ⇒ `quota_sessions`.
-MAX_STAGING_SESSIONS_PER_INSTALL = 6
+#: §2.4 P1-3: concurrent `governed_turn_staging_session` rows per install, written by the
+#: design as "(= 2 turns x 3 artifacts)" and DERIVED from those two here rather than
+#: restated as a literal 6. The arithmetic is the rule: one turn may hold one session per
+#: artifact (the DDL's `UNIQUE (challenge_handle, artifact)` makes that a database fact),
+#: and an install may hold MAX_CONCURRENT_GOVERNED_TURNS turns. A future edit that raises
+#: the turn cap or adds a fourth uploadable artifact moves this with it; an edit that moves
+#: this alone has to say so in the arithmetic. Over ⇒ `quota_sessions`.
+#:
+#: It counts EVERY session row of the install, live parent or not — deliberately, and see
+#: `sweep_expired_staging`. §2.4 gives the LIVE-count rule to `MAX_CONCURRENT_GOVERNED_TURNS`
+#: alone; the session and byte caps are the ones it says the cleanup SLA exists for ("so the
+#: per-install byte/file quotas can rely on expired rows being GONE"). They bound DISK, and a
+#: session the sweep has not reached still owns its `session_dir`.
+MAX_STAGING_SESSIONS_PER_INSTALL = MAX_CONCURRENT_GOVERNED_TURNS * len(STAGING_ARTIFACTS)
 
 #: §2.4 P1-3: total decoded staging bytes per install, 17 MiB = 2 x the 8.5 MiB per-turn
 #: request ceiling. Over ⇒ `quota_bytes`.
@@ -735,6 +792,130 @@ def finalize_session(conn: sqlite3.Connection, staging_session_id: str, handle: 
         return final, inputs_ready
 
 
+# ---------------------------------------------------------------------------
+# The §2.4 sweep — the ONLY DELETE in this module
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SweptStaging:
+    """What one sweep pass removed from the ledger, and what the caller must now unlink.
+
+    ``session_dirs`` is the whole point of returning anything: the rows are gone by the time
+    this is handed back, so the directories they named would be unreachable if they were not
+    carried out of the transaction.
+    """
+
+    turns: Tuple[str, ...]
+    sessions: Tuple[str, ...]
+    session_dirs: Tuple[str, ...]
+
+    @property
+    def rows_deleted(self) -> int:
+        return len(self.turns)
+
+
+def sweep_expired_staging(conn: sqlite3.Connection, now_ms: int) -> SweptStaging:
+    """§2.4's sweep, ledger half: DELETE every staging row past its challenge's expiry.
+
+    §2.4 specifies this sweep and names everything about it — the trigger ("a
+    ``STAGING_SWEEP_INTERVAL_MS = 60000`` background sweep (plus a startup pass)"), the
+    subject ("orphan ``.tmp-*.part`` + the whole ``session_dir``", "deletes expired/abandoned
+    staging rows"), the retention (``EXPIRED_SESSION_RETENTION_MS = 0``), the completion SLA
+    (``STAGING_CLEANUP_DEADLINE_MS``), and the one thing it may NOT do: it reclaims
+    "**WITHOUT consuming the challenge nonce** — the desktop may re-issue against the same
+    signed challenge until the challenge itself expires (this denies the sidecar a
+    nonce-burning DoS)".
+
+    That last promise is kept structurally rather than carefully. The challenge nonce lives
+    in the challenge authority's own protected store, behind its own principal and its own
+    channel; this module has no handle on it, imports nothing that does, and could not
+    consume one if it tried. What the DELETE frees here is the ``UNIQUE (install_id,
+    request_nonce)`` slot in the SUPERVISOR's staging table — which is what "may re-issue"
+    means for this table.
+
+    Nor does it touch the published bytes. Every artifact an ``ARTIFACT_READY`` session
+    published is in the content-addressed store under a handle the challenge committed to,
+    and a turn that reached ``INPUTS_READY`` has been read by §4.10(d) into an acceptance row
+    that outlives staging entirely. This function performs no filesystem operation at all —
+    the same shape ``governed_output_stream.sweep_streams`` takes, for the same reason: it is
+    not that the sweep declines to unlink the store, it is that it cannot.
+
+    **What may be deleted, exactly:** rows matching
+    :data:`SWEEPABLE_STAGING_PREDICATE_SQL`, the complement of the live predicate the
+    concurrency cap reads. A LIVE turn is never swept, however long it has sat there, and a
+    caller that wants something else gone cannot ask for it — the predicate is in the SQL,
+    not in an argument. Sessions and chunks follow through the DDL's ``ON DELETE CASCADE``;
+    deleting them with separate statements would be a second statement of the same rule, and
+    one that could disagree with the first.
+
+    **Order, and what a crash between the halves leaves:** the rows commit here FIRST and the
+    directories are unlinked afterwards by the filesystem half, so an interrupted sweep leaves
+    a ``session_dir`` with no row — an orphan the next pass collects. The other order would
+    leave a ROW whose immutable chunks are missing, which the §2.4 restart-recovery rule (b)
+    must read as ``SESSION_CORRUPT``: a fail-closed state, but a worse one to manufacture on
+    purpose.
+
+    Returns what was removed. A pass that removed nothing returns empty tuples rather than
+    ``None``: "nothing was expired" and "the sweep did not run" must not look alike.
+    """
+    if not _is_u64_ms(now_ms):
+        raise LedgerError("now_ms must be an epoch-ms int")
+
+    # The cascade is this sweep's entire mechanism for sessions and chunks, and SQLite
+    # enforces foreign keys only when the pragma is on — `apply_schema` sets it, but it is
+    # per-CONNECTION, so a caller that opened the ledger some other way would silently orphan
+    # every session it swept. Checked before the transaction and refused rather than worked
+    # around: an orphan session keeps its directory AND drops out of `count_install_sessions`
+    # (which counts THROUGH the parent), and that is this fail-closed cap failing open.
+    enabled = conn.execute("PRAGMA foreign_keys").fetchone()
+    if not enabled or not int(enabled[0]):
+        raise Corrupt(
+            "staging sweep requires PRAGMA foreign_keys = ON: without the cascade it would "
+            "orphan sessions instead of collecting them"
+        )
+
+    with _Tx(conn) as tx:
+        doomed = tx.execute(
+            "SELECT challenge_handle FROM governed_turn_staging WHERE "
+            + SWEEPABLE_STAGING_PREDICATE_SQL,
+            (now_ms,),
+        ).fetchall()
+        sessions = tx.execute(
+            "SELECT s.staging_session_id AS id, s.session_dir AS dir"
+            " FROM governed_turn_staging_session s"
+            " JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+            " WHERE t." + SWEEPABLE_STAGING_PREDICATE_SQL,
+            (now_ms,),
+        ).fetchall()
+        deleted = tx.execute(
+            "DELETE FROM governed_turn_staging WHERE " + SWEEPABLE_STAGING_PREDICATE_SQL,
+            (now_ms,),
+        ).rowcount
+        if deleted != len(doomed):
+            raise Corrupt(
+                "staging sweep deleted %d rows for the %d it selected" % (deleted, len(doomed))
+            )
+        orphans = tx.execute(
+            "SELECT COUNT(*) AS n FROM governed_turn_staging_session s"
+            " LEFT JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+            " WHERE t.challenge_handle IS NULL"
+        ).fetchone()
+        if int(orphans["n"]):
+            # Unreachable while the FK and its cascade are in the DDL, and asserted anyway:
+            # this is the exact state in which the quota count would report less than the
+            # disk actually holds.
+            raise Corrupt(
+                "staging sweep left %d parentless session rows behind" % int(orphans["n"])
+            )
+
+    return SweptStaging(
+        turns=tuple(row["challenge_handle"] for row in doomed),
+        sessions=tuple(row["id"] for row in sessions),
+        session_dirs=tuple(row["dir"] for row in sessions),
+    )
+
+
 __all__ = [
     "ALL_SESSION_STATES",
     "ALL_STAGING_STATES",
@@ -742,8 +923,10 @@ __all__ = [
     "ARTIFACT_HANDLE_COLUMN",
     "ARTIFACT_READY",
     "CREATED",
+    "EXPIRED_SESSION_RETENTION_MS",
     "IDEMPOTENT",
     "INPUTS_READY",
+    "LIVE_STAGING_PREDICATE_SQL",
     "MAX_CONCURRENT_GOVERNED_TURNS",
     "MAX_STAGING_BYTES_PER_INSTALL",
     "MAX_STAGING_CHUNKS",
@@ -758,9 +941,13 @@ __all__ = [
     "SESSION_CORRUPT",
     "SESSION_UPLOADING",
     "STAGING_ARTIFACTS",
+    "STAGING_CLEANUP_DEADLINE_MS",
+    "STAGING_SWEEP_INTERVAL_MS",
+    "SWEEPABLE_STAGING_PREDICATE_SQL",
     "SessionCorrupt",
     "SessionQuotaExceeded",
     "StagingQuotaExceeded",
+    "SweptStaging",
     "UPLOADING",
     "VERIFYING",
     "apply_schema",
@@ -778,4 +965,5 @@ __all__ = [
     "open_staging",
     "record_chunk",
     "sum_install_declared_bytes",
+    "sweep_expired_staging",
 ]

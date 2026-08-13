@@ -8,6 +8,77 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The design named the reclaimer and nobody built it (2026-08-13)
+
+An install supported exactly **two** completing governed turns, ever. It now supports as many as the
+deployment runs, and that is proven by **three consecutive completing turns on one `install_id`**, run for
+real in WSL with `KIT_EXIT=0`.
+
+**The obvious fix would have deleted the cap while appearing to repair it.** §2.4 gives the liveness
+tolerance to the *turn* cap **explicitly and to nothing else** — "the count includes only rows with
+`challenge_expires_at_ms ≥ now_ms`" — while for the session and byte caps it says the opposite: the
+`STAGING_CLEANUP_DEADLINE_MS` SLA exists *"so the per-install byte/file quotas can rely on expired rows
+being gone"*. So `count_install_sessions` counting every row is the **design**, not a bug. A liveness
+predicate would also have made `quota_sessions` **structurally unreachable** — at most 2 live turns ×
+`UNIQUE (challenge_handle, artifact)` is at most 6 live sessions, always. That alternative was written as
+mutant **M6** and is killed by the negative.
+
+**What was actually missing is the thing §2.4 specifies by name**: a `STAGING_SWEEP_INTERVAL_MS = 60000`
+background sweep plus a startup pass, which unlinks orphan temps and the whole `session_dir` and deletes
+expired rows **without consuming the challenge nonce** — so the desktop may re-issue against the same
+signed challenge, which is what denies the sidecar a nonce-burning DoS. The authority is the supervisor,
+the subject is expired rows, `EXPIRED_SESSION_RETENTION_MS = 0`. **The design named the reclaimer, and
+nobody built it.**
+
+**The predicate lives in the SQL as the exact complement of the one the turn cap reads**, so "counted" and
+"collected" cannot drift into a row that is both or neither. The sweep refuses to run on a connection with
+`foreign_keys` off — that state orphans sessions, which drops them out of the JOIN-through-parent count,
+and is the one way this fail-closed cap fails **open**. `_remove_session_tree` refuses any path that is not
+`staging_root/<session-id>` and refuses to recurse. Two constants became **derived**:
+`MAX_STAGING_SESSIONS_PER_INSTALL = MAX_CONCURRENT_GOVERNED_TURNS * len(STAGING_ARTIFACTS)` — §2.4's own
+"2 turns × 3 artifacts", still exactly 6 — and `STAGING_CLEANUP_DEADLINE_MS = 2 * STAGING_SWEEP_INTERVAL_MS`.
+
+**One §2.4 self-contradiction, named and not resolved by a Builder.** For `SESSION_CORRUPT` it says both
+that every later message for that session id returns `session_corrupt` (LOCKED) *and* that recovery deletes
+the row so the desktop re-issues against the still-valid challenge. A deleted row answers
+`session_unknown`, not `session_corrupt`, so both cannot hold while the challenge is live. Only the
+expiry-driven sweep was implemented — which satisfies the recovery clause without breaking the terminal one,
+since an expired challenge has no later messages to answer — and the contradiction is written into the code
+beside `SESSION_CORRUPT`.
+
+**The live proof, verbatim:**
+
+```
+§2.4 staging sessions charged to install-live-1: 6 of 6 (the sweep has not reached them)
+  waiting for the §2.4 sweep before third-turn (6 of 6 sessions charged, 20s)
+  SWEEP: 3 of 6 sessions charged after 30s — the budget for third-turn is back
+RESULT: ladder-turn outcome=committed expected=committed met=true
+  the supervisor recorded 2 sweep pass(es); 1 reclaimed something: rows=2 sessions=3 dirs=3
+```
+
+The "6 of 6 … the sweep has not reached them" line is the **unswept-is-still-counted** proof, and the
+post-condition proves the sweep did not take too much: every live `INPUTS_READY` turn must still hold all
+three of its sessions — and one must exist, so it cannot pass vacuously.
+
+**The cap still bites, by name.** A new test fills the budget with two completing turns, requires a third to
+be refused `quota_sessions` **while their directories are still on disk**, and requires it to be admitted
+only after the sweep. Both halves are load-bearing: without the refusal it would pass against a build that
+removed the ceiling; without the admission it would pass against the ceiling itself.
+
+**11 mutants, 11 killed, plus a kit-level mutant that removes the sweeper thread — also killed**, with the
+kit reporting `rc=1` and naming the SLA it breached. One mutant survived its first run because a *different*
+assertion caught the same state; the test was changed to assert the refusal **by name**, which is what
+killed it. And raising the cap to 600 is killed.
+
+Zero Rust and zero SQL bytes changed — the two `ON DELETE CASCADE` clauses simply became load-bearing in the
+parity gate. The LOCKED literals are untouched and no second `install_id` was taken.
+
+Re-run on Windows here: engine **1995 OK (43 skipped)** from 1979, `brops-core --lib` 471, parity gate GREEN
+at 55 clauses, spec-references, reachability and coordination GREEN. The agent's own environment showed four
+pre-existing failures (root can write anywhere; GTK dev packages absent) which it verified against an
+untouched HEAD tree in the same environment rather than asserting.
+
+
 ### Two governed turns per install, ever (2026-08-13)
 
 `proof/src/bin/ladder_turn.rs` drives the **same** `LadderChain` the broker builds — same

@@ -923,6 +923,205 @@ def _assemble(conn: Any, session: Any) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# §2.4 — the sweep, filesystem half
+# ---------------------------------------------------------------------------
+
+#: The prefix/suffix ``_write_immutable_chunk`` gives its ``mkstemp`` temp, and therefore the
+#: exact shape §2.4 means by "orphan ``.tmp-*.part``". Derived from the writer rather than
+#: re-typed: a sweep that hunted a pattern the writer no longer produces would report zero
+#: orphans forever and read as healthy.
+TEMP_CHUNK_PREFIX = ".tmp-"
+TEMP_CHUNK_SUFFIX = ".part"
+
+
+@dataclass(frozen=True)
+class StagingSweep:
+    """One pass of the §2.4 sweep, in numbers — including what it could NOT reclaim.
+
+    ``failures`` exists because the alternative is a sweep that stops at the first bad path
+    and silently stops meeting its SLA for every session behind it. One unreadable directory
+    must not hold the whole install's quota hostage, and it must not disappear either.
+    """
+
+    rows: int
+    sessions: int
+    dirs_removed: int
+    orphan_dirs_removed: int
+    temps_removed: int
+    failures: Tuple[str, ...] = ()
+
+    def as_detail(self) -> Dict[str, Any]:
+        return {"rows": self.rows, "sessions": self.sessions,
+                "dirs_removed": self.dirs_removed,
+                "orphan_dirs_removed": self.orphan_dirs_removed,
+                "temps_removed": self.temps_removed,
+                "failures": list(self.failures)}
+
+
+def _remove_session_tree(staging_root: pathlib.Path, session_dir: Any) -> int:
+    """Unlink one ``session_dir`` and every flat file in it. Returns the files removed.
+
+    Two containment rules, both refusals rather than best-effort:
+
+      * the directory MUST be a direct child of ``staging_root`` whose name is a valid
+        session id — the same predicate ``_session_dir`` used to build it, so a stored path
+        that could send this anywhere else is a supervisor fault and is refused, not walked;
+      * it is NOT a recursive delete. A session directory holds flat ``<seq>.chunk`` and
+        ``.tmp-*.part`` files and nothing else, so a subdirectory inside one means something
+        this sweep does not understand put it there. It is left, named, and reported.
+
+    A sweep is the one component whose whole job is deletion; it is worth it being unable to
+    express a deletion outside the tree it owns.
+    """
+    directory = pathlib.Path(session_dir)
+    if directory.parent != staging_root or not _SESSION_ID_RE.match(directory.name):
+        raise SupervisorError(
+            "refusing to sweep %s: not a session directory under %s" % (directory, staging_root)
+        )
+    removed = 0
+    for entry in sorted(directory.iterdir()):
+        if entry.is_dir() and not entry.is_symlink():
+            raise SupervisorError("refusing to sweep %s: it holds a subdirectory" % directory)
+        entry.unlink()
+        removed += 1
+    directory.rmdir()
+    return removed
+
+
+def _sweep_orphan_temps(session_dir: pathlib.Path, now_ms: int) -> int:
+    """Unlink the ``.tmp-*.part`` files of a LIVE session that no write can still own.
+
+    §2.4 names orphan temps separately from the whole-``session_dir`` unlink, so they are
+    collected inside surviving sessions too — but an age bound is what makes that safe. A
+    temp is only orphaned once no in-flight ``_write_immutable_chunk`` could still be holding
+    it, and unlinking one that IS held would break that chunk's ``os.link`` for no reason.
+
+    ``STAGING_CLEANUP_DEADLINE_MS`` is the bound, and it is not arbitrary: a session's whole
+    life is bounded by the 30 s challenge TTL, so a temp older than the two-sweep cleanup
+    deadline cannot belong to a live write — its session is already past sweeping.
+    """
+    removed = 0
+    for entry in sorted(session_dir.iterdir()):
+        name = entry.name
+        if not (name.startswith(TEMP_CHUNK_PREFIX) and name.endswith(TEMP_CHUNK_SUFFIX)):
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            continue
+        age_ms = now_ms - int(entry.stat().st_mtime * 1000)
+        if age_ms < staging.STAGING_CLEANUP_DEADLINE_MS:
+            continue
+        entry.unlink()
+        removed += 1
+    return removed
+
+
+def sweep_staging(conn: Any, staging_root: Any, now_ms: int) -> StagingSweep:
+    """One §2.4 sweep pass: reclaim every expired turn's row, sessions, chunks and bytes.
+
+    This is the mechanism the §2.4 session and byte quotas are written against — "a provable
+    completion SLA so the per-install byte/file quotas can rely on expired rows being gone" —
+    and until 2026-08-13 it did not exist in this tree, which is what made an install support
+    exactly two completing governed turns for the life of the deployment.
+
+    The order is the ledger first (:func:`governed_staging_ledger.sweep_expired_staging`,
+    which commits the DELETE and hands back the directories the rows named), then the
+    filesystem. A crash between them leaves directories with no row, and the SAME pass that
+    would have removed them collects them next time as orphans — so the staging root converges
+    on "exactly the directories of sessions that still exist" from either side of a crash.
+
+    What it will not do: touch the published store (it never learns a store path), consume a
+    challenge nonce (see the ledger half), remove a LIVE turn's row, session or directory, or
+    delete anything outside ``staging_root``.
+    """
+    root = pathlib.Path(staging_root)
+    if not root.is_dir():
+        raise SupervisorError("staging root is not a directory: %s" % root)
+
+    swept = staging.sweep_expired_staging(conn, now_ms)
+
+    failures = []
+    dirs_removed = 0
+    for session_dir in swept.session_dirs:
+        try:
+            _remove_session_tree(root, session_dir)
+            dirs_removed += 1
+        except FileNotFoundError:
+            # The row named a directory that is not there: a crash between the row commit
+            # and the mkdir, or a previous pass that got this far. Reclaimed either way.
+            dirs_removed += 1
+        except (SupervisorError, OSError) as exc:
+            failures.append("%s: %s" % (session_dir, exc))
+
+    # Everything still on disk that no surviving session names. This is the half that
+    # survives a crash in the middle of the pass above, and the half that collects a
+    # directory whose row was deleted by a cascade rather than by name.
+    live_dirs = {
+        pathlib.Path(row["session_dir"]).name
+        for row in conn.execute(
+            "SELECT session_dir FROM governed_turn_staging_session"
+        ).fetchall()
+    }
+    orphan_dirs_removed = 0
+    temps_removed = 0
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink():
+            # The supervisor's private 0700 root holds session directories. Anything else is
+            # not this sweep's to delete, and is reported rather than removed or ignored.
+            failures.append("%s: not a session directory" % entry)
+            continue
+        try:
+            if entry.name in live_dirs:
+                temps_removed += _sweep_orphan_temps(entry, now_ms)
+                continue
+            _remove_session_tree(root, entry)
+            orphan_dirs_removed += 1
+        except (SupervisorError, OSError) as exc:
+            failures.append("%s: %s" % (entry, exc))
+
+    return StagingSweep(
+        rows=swept.rows_deleted,
+        sessions=len(swept.sessions),
+        dirs_removed=dirs_removed,
+        orphan_dirs_removed=orphan_dirs_removed,
+        temps_removed=temps_removed,
+        failures=tuple(failures),
+    )
+
+
+def sweep_forever(*, conn: Any, staging_root: Any, clock_ms: Callable[[], int], stop: Any,
+                  interval_ms: int = staging.STAGING_SWEEP_INTERVAL_MS,
+                  on_pass: Optional[Callable[[Any], None]] = None) -> int:
+    """§2.4's "background sweep (plus a startup pass)": sweep, wait, repeat. Returns passes.
+
+    The startup pass is not a special case — it is the first iteration, which is why it
+    cannot be forgotten by a deployment that starts the loop.
+
+    ``stop`` is any object with ``wait(seconds) -> bool`` (``threading.Event`` is the one the
+    deployment passes), so the schedule is drivable in a test without a clock or a thread.
+    This function creates no thread itself: WHERE the sweep runs is a deployment decision and
+    belongs to the process that owns the supervisor's lifetime.
+
+    A pass that raises does not end the loop. The SLA is the reason: one bad pass must not
+    silently retire the only thing that returns staging quota, and the fault has to reach
+    ``on_pass`` where the deployment logs it.
+    """
+    if interval_ms <= 0:
+        raise SupervisorError("staging sweep interval must be positive")
+    passes = 0
+    while True:
+        try:
+            report: Any = sweep_staging(conn, staging_root, clock_ms())
+        except Exception as exc:  # noqa: BLE001 — reported, never fatal to the schedule
+            report = StagingSweep(rows=0, sessions=0, dirs_removed=0, orphan_dirs_removed=0,
+                                  temps_removed=0, failures=("sweep pass failed: %s" % exc,))
+        passes += 1
+        if on_pass is not None:
+            on_pass(report)
+        if stop.wait(interval_ms / 1000.0):
+            return passes
+
+
+# ---------------------------------------------------------------------------
 # The supervisor-side binding
 # ---------------------------------------------------------------------------
 
@@ -1028,6 +1227,9 @@ __all__ = [
     "STATUS_PUBLISHED",
     "STATUS_REFUSED",
     "StagingService",
+    "StagingSweep",
+    "TEMP_CHUNK_PREFIX",
+    "TEMP_CHUNK_SUFFIX",
     "chunk_ack",
     "chunk_refused",
     "expected_chunk_len",
@@ -1041,4 +1243,6 @@ __all__ = [
     "n_chunks",
     "staging_open_refused",
     "staging_opened",
+    "sweep_forever",
+    "sweep_staging",
 ]

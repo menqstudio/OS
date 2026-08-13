@@ -203,6 +203,14 @@ def open_ledger(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = FULL")
+    # Every operation below owns a `BEGIN IMMEDIATE` precisely because a SECOND writer is
+    # expected -- a second supervisor process, and now the §2.4 background sweep, which holds
+    # its own connection to this file. SQLite's default busy timeout is ZERO, which turns that
+    # expected contention into an immediate `database is locked` fault: the write lock would be
+    # taken correctly and the loser would fail rather than wait microseconds for it. Each
+    # transaction here is one short read-decide-write, so waiting is the correct answer and this
+    # bound is a fault ceiling rather than a design assumption.
+    conn.execute("PRAGMA busy_timeout = 5000")
     apply_schema(conn)
     return conn
 

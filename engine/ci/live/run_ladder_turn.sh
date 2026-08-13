@@ -642,7 +642,7 @@ mkdir -p "$SANDBOX"; chown 0:0 "$SANDBOX"; chmod 0755 "$SANDBOX"
 mkdir -p "$DRIVERDIR/evidence"; chown 0:0 "$DRIVERDIR/evidence"; chmod 0755 "$DRIVERDIR/evidence"
 # One evidence directory per run, owned by the principal that writes it (the same "one owner each"
 # discipline audit F-07/F-28 imposed on the rest of this kit).
-for d in positive rollback rollback-sign-flip floor-unwritable floor-sign-flip \
+for d in positive third-turn rollback rollback-sign-flip floor-unwritable floor-sign-flip \
          no-authority; do
   mkdir -p "$DRIVERDIR/$d"; chown "$BROKER_USER": "$DRIVERDIR/$d"; chmod 0755 "$DRIVERDIR/$d"
 done
@@ -1012,39 +1012,40 @@ print("  CUSTODY: committed as `demonstration_custody` under a kit_generated anc
       "production_verified=false, bound=true — a complete chain run, not a production claim")
 PYCUSTODY
 
-# ----- MEASURED LIMIT, and why there is exactly ONE opening run above ---------------------------
-# §2.4 caps `governed_turn_staging_session` rows at MAX_STAGING_SESSIONS_PER_INSTALL = 6 per
-# install, and `count_install_sessions` counts them through the parent staging row with NO liveness
-# predicate. `governed_staging_ledger.py` contains no `DELETE` at all — §2.4 makes staging recovery
-# "operator-sweep only" and no sweeper is implemented anywhere in this tree — so a session is
-# consumed for the LIFE of the deployment. A completing turn stages three artifacts, so this kit
-# supports exactly TWO completing governed turns per install, ever.
+# ----- MEASURED LIMIT, MEASURED FIX ------------------------------------------------------------
+# §2.4 caps `governed_turn_staging_session` rows at MAX_STAGING_SESSIONS_PER_INSTALL = 6 per install
+# (= 2 turns x 3 artifacts), and `count_install_sessions` counts every one an install holds. That
+# count has no liveness predicate on purpose — §2.4 grants the "expired rows are not counted whether
+# or not the sweep has unlinked them" tolerance to MAX_CONCURRENT_GOVERNED_TURNS alone, and says of
+# these caps the opposite: the cleanup deadline exists "so the per-install byte/file quotas can rely
+# on expired rows being GONE". What returns this quota is the sweep, not a predicate.
 #
-# That was measured here, not read: the second live run of this phase reported
-# `staging-open refused the governed turn: quota_sessions` on its second opening run, with the
-# supervisor's ledger holding 6 ARTIFACT_READY sessions under two challenge handles — the Python
-# POSITIVE above, and the driver POSITIVE. (The Python NEGATIVE consumes none: `staging-open` refuses
-# the tampered `system` before a session row exists.)
+# Until 2026-08-13 that sweep did not exist anywhere in the tree, and `governed_staging_ledger.py`
+# held no `DELETE` at all. So a session was consumed for the LIFE of the deployment and this kit
+# supported exactly TWO completing governed turns per install, ever. That was measured here, not
+# read: the second live run of this phase reported `staging-open refused the governed turn:
+# quota_sessions` on its second opening run, with the supervisor's ledger holding 6 ARTIFACT_READY
+# sessions under two challenge handles — the Python POSITIVE above, and the driver POSITIVE. (The
+# Python NEGATIVE consumes none: `staging-open` refuses the tampered `system` before a session row
+# exists.)
 #
-# So the driver's remaining controls are the ones that do NOT open a turn. A §4.5 supervisor verdict
-# reached through the whole ladder — `model_profile_unknown`, via §4.10(g)'s trusted-host
-# `BROPS_GOVERNED_*` override putting a `generation_config` outside this supervisor's §2 execution
-# allowlist — was written, driven, and reached `quota_sessions` instead. It is NOT in this script,
-# because there is no honest way to run it here: a second `install_id` would be a claim that another
-# installation ran the turn, and raising the LOCKED §2.4 literal would edit the rule the control
-# exists to respect. Naming what cannot run beats a control that quietly proves something else.
-#
-# What that costs, stated rather than left to be discovered: nothing in this phase drives a §4.6
-# `ok:false` frame, so `ladder_turn`'s `governed_refusal` extractor is UNEXERCISED here. A mutation
-# pass confirmed it — deleting that extractor survives every control in this script. It is the one
-# seam of the driver whose behaviour rests on the engine suite rather than on this kit.
-python3 -c 'import sqlite3,sys
-c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
-n = c.execute("SELECT COUNT(*) FROM governed_turn_staging_session s JOIN governed_turn_staging t"
-              " ON t.challenge_handle = s.challenge_handle WHERE t.install_id = ?",
-              (sys.argv[2],)).fetchone()[0]
-print("  §2.4 staging sessions consumed by %s: %d of 6 (never swept: the ledger has no DELETE)"
-      % (sys.argv[2], n))' "$SUP_LEDGER" "$INSTALL_ID" || true
+# `governed_staging_upload.sweep_staging` is that sweep, and `run_ladder_supervisor.py` runs it on
+# §2.4's schedule (a startup pass, then every STAGING_SWEEP_INTERVAL_MS = 60000 ms) inside the
+# supervisor that owns the ledger and the staging root. The THIRD completing turn below is what
+# proves it, and the count printed here — read from the SUPERVISOR's own 0700 ledger, by root, with
+# the ledger's own JOIN — is what proves the cap still bites in between: six of six, still charged,
+# while the rows the sweep has not yet reached are still on disk.
+staging_session_count() {
+  python3 -c 'import sqlite3,sys
+try:
+    c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+    print(c.execute("SELECT COUNT(*) FROM governed_turn_staging_session s"
+                    " JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+                    " WHERE t.install_id = ?", (sys.argv[2],)).fetchone()[0])
+except Exception:
+    print(-1)' "$SUP_LEDGER" "$INSTALL_ID"
+}
+echo "  §2.4 staging sessions charged to $INSTALL_ID: $(staging_session_count) of 6 (the sweep has not reached them)"
 
 # NEGATIVE 1 — anti-rollback. A floor above the manifest's epoch. `check_and_advance` refuses before
 # a hop is made, and the refusal is named by the stage that made it.
@@ -1073,6 +1074,133 @@ run_driver_sign_flip rollback-sign-flip "$DRIVER_CONFIG_ROLLBACK" \
   committed blocked:keys:anti_rollback
 run_driver_sign_flip floor-sign-flip "$DRIVER_CONFIG_ROOTFLOOR" \
   blocked:keys:anti_rollback blocked:keys:floor_not_persisted
+
+# ----- THE THIRD COMPLETING TURN, and the sweep that makes it possible ---------------------------
+# TWO completing turns was the ceiling: the Python POSITIVE and the driver POSITIVE together hold
+# all six §2.4 sessions, and before the sweep existed nothing on this box could ever return one. So
+# THREE is the proof, and it has to be reached the way a deployment reaches it — by waiting for the
+# supervisor's own background sweep, on its own schedule, with no test hook and no second install_id.
+#
+# Two bounded waits, each naming what it is waiting for:
+#
+#   * a §2.4 turn slot — `MAX_CONCURRENT_GOVERNED_TURNS = 2` LIVE rows, where LIVE is
+#     `challenge_expires_at_ms >= now`. These turns are SEQUENTIAL, so this is just the 30 s
+#     challenge TTL running out on turns that finished long ago.
+#   * the §2.4 sweep — `STAGING_CLEANUP_DEADLINE_MS = 120000` is the design's own SLA: an expired
+#     session MUST be fully unlinked within 2 x STAGING_SWEEP_INTERVAL_MS of its expiry. So the wait
+#     is bounded by the SLA plus the TTL that has to elapse first, and a miss is RED — this kit
+#     measures the promise rather than trusting it.
+wait_for_staging_reclaim() {  # <label>
+  local label="$1" waited=0 charged budget
+  budget=3   # one turn's three artifacts: system, history, generation_config
+  while :; do
+    charged=$(staging_session_count)
+    if [ "$charged" = "-1" ]; then
+      echo "  (the supervisor ledger is unreadable from here; not waiting before $label)"
+      return 0
+    fi
+    [ "$charged" -le "$((6 - budget))" ] && {
+      echo "  SWEEP: $charged of 6 sessions charged after ${waited}s — the budget for $label is back"
+      return 0
+    }
+    if [ "$waited" -ge 150 ]; then
+      echo "  SWEEP $label: RED — $charged of 6 §2.4 sessions still charged after ${waited}s."
+      echo "    §2.4's STAGING_CLEANUP_DEADLINE_MS = 120000 says an expired session is unlinked"
+      echo "    within 120 s of its expiry (30 s challenge TTL + that deadline = the 150 s bound)."
+      return 1
+    fi
+    echo "  waiting for the §2.4 sweep before $label ($charged of 6 sessions charged, ${waited}s)"
+    sleep 10; waited=$((waited + 10))
+  done
+}
+
+wait_for_turn_slot third-turn || DRIVER_RC=1
+wait_for_staging_reclaim third-turn || DRIVER_RC=1
+run_driver third-turn "$DRIVER_CONFIG" committed
+
+# What the sweep must NOT have done. A reclaim that reclaims too much would be worse than the
+# ceiling, and "three turns completed" alone cannot tell the two apart: a sweep that deleted every
+# staging row it could see would also produce three green turns. So the SUPERVISOR's own ledger is
+# read again, by root, and three things must hold at once:
+#
+#   * every LIVE turn that reached INPUTS_READY still holds all THREE of its sessions — nothing was
+#     taken from a turn the sweep was not entitled to touch (the turn that just ran is one of them,
+#     and its presence is required, so this cannot pass vacuously);
+#   * no EXPIRED row is still charged past §2.4's STAGING_CLEANUP_DEADLINE_MS — the sweep is not
+#     merely gentle, it meets the SLA the byte/file quotas depend on;
+#   * the supervisor's own hop log records the sweep passes that did it. That file is written by the
+#     supervisor process and by nothing else in this kit, so it is the half no driver could author.
+THIRD_TURN_RC=1
+python3 - "$SUP_LEDGER" "$INSTALL_ID" "$LADDER/hops.jsonl" <<'PYSWEEP' && THIRD_TURN_RC=0 || THIRD_TURN_RC=$?
+import json, sqlite3, sys, time
+
+db, install, hop_log = sys.argv[1:4]
+DEADLINE_MS = 120000            # §2.4 STAGING_CLEANUP_DEADLINE_MS = 2 x STAGING_SWEEP_INTERVAL_MS
+conn = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+now = int(time.time() * 1000)
+rows = conn.execute(
+    "SELECT t.challenge_handle AS h, t.state AS state, t.challenge_expires_at_ms AS exp,"
+    " COUNT(s.staging_session_id) AS n"
+    " FROM governed_turn_staging t"
+    " LEFT JOIN governed_turn_staging_session s ON s.challenge_handle = t.challenge_handle"
+    " WHERE t.install_id = ? GROUP BY t.challenge_handle", (install,)).fetchall()
+charged = conn.execute(
+    "SELECT COUNT(*) FROM governed_turn_staging_session s"
+    " JOIN governed_turn_staging t ON t.challenge_handle = s.challenge_handle"
+    " WHERE t.install_id = ?", (install,)).fetchone()[0]
+live = [r for r in rows if r[2] >= now]
+expired = [r for r in rows if r[2] < now]
+print("  after the third turn: %d staging row(s) for %s — %d live, %d expired-not-yet-swept, "
+      "%d session(s) charged" % (len(rows), install, len(live), len(expired), charged))
+
+bad = []
+ready = [r for r in live if r[1] == "INPUTS_READY"]
+if not ready:
+    bad.append("no LIVE INPUTS_READY staging row: the turn that just completed is not there, so "
+               "this check would be proving nothing")
+for handle, state, exp, n in ready:
+    if n != 3:
+        bad.append("live INPUTS_READY turn %s holds %d of its 3 sessions: the sweep took what it "
+                   "must not" % (handle[:12], n))
+for handle, state, exp, n in expired:
+    if now - exp > DEADLINE_MS:
+        bad.append("turn %s expired %d ms ago and is still charged: past §2.4's "
+                   "STAGING_CLEANUP_DEADLINE_MS = %d" % (handle[:12], now - exp, DEADLINE_MS))
+
+# The supervisor's own account of the sweep. `run_ladder_supervisor.py` logs one `staging.sweep`
+# hop per pass with what it removed; a kit that read only the ledger could not tell a sweep from a
+# turn that simply never staged.
+passes = []
+try:
+    with open(hop_log, encoding="utf-8") as fh:
+        for line in fh:
+            record = json.loads(line)
+            if record.get("protocol") == "staging.sweep":
+                passes.append(record.get("detail") or {})
+except OSError as exc:
+    bad.append("the supervisor hop log is unreadable (%s)" % exc)
+reclaiming = [d for d in passes if d.get("rows")]
+print("  the supervisor recorded %d sweep pass(es); %d reclaimed something: %s"
+      % (len(passes), len(reclaiming),
+         ", ".join("rows=%s sessions=%s dirs=%s" % (d.get("rows"), d.get("sessions"),
+                                                    d.get("dirs_removed"))
+                   for d in reclaiming) or "none"))
+if not reclaiming:
+    bad.append("the supervisor's hop log records no sweep pass that removed a row, so whatever "
+               "freed the budget above, it was not the §2.4 sweep")
+for detail in passes:
+    if detail.get("failures"):
+        bad.append("a sweep pass reported failures: %r" % (detail["failures"],))
+
+if bad:
+    for line in bad:
+        print("  THIRD TURN: RED — %s" % line, file=sys.stderr)
+    raise SystemExit(1)
+print("  THIRD TURN: GREEN — three completing governed turns on ONE install_id; the §2.4 sweep")
+print("    reclaimed the expired turns inside its own SLA and left every live turn's three")
+print("    sessions exactly where they were")
+PYSWEEP
+[ "$THIRD_TURN_RC" = "0" ] || DRIVER_RC=1
 
 # ----- ONE verifier judges the driver's turn too -------------------------------------------------
 # The same `ladder_evidence.py`, in the same mode, on the frames the DRIVER recorded. It verifies
@@ -1203,8 +1331,10 @@ fi
 if [ "$DRIVER_RC" = "0" ] && [ "$DRIVER_EV_RC" = "0" ] && [ "$DRIVER_DERIVE_RC" = "0" ] \
    && [ "$DRIVER_CUSTODY_RC" = "0" ]; then
   echo "DRIVER: GREEN — the REAL brops_broker::ladder_executor::LadderChain (driven by"
-  echo "  brops-governed-live/ladder_turn, which is NOT the brops-broker binary) took one governed"
-  echo "  turn to a committed row through the real services and the real contained execution;"
+  echo "  brops-governed-live/ladder_turn, which is NOT the brops-broker binary) took TWO governed"
+  echo "  turns to committed rows through the real services and the real contained execution —"
+  echo "  the second AFTER the §2.4 sweep returned the staging budget, making three completing"
+  echo "  turns on one install_id where six sessions was once the whole deployment's supply;"
   echo "  its three artifact digests were DERIVED from a SQLite conversation row and two frozen"
   echo "  literals and hash to the bytes this kit staged and the launcher's lease pins; three"
   echo "  negatives were refused BY NAME (anti_rollback, floor_not_persisted, and the §4.1 hop"
