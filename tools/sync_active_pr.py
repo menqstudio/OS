@@ -178,7 +178,8 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
     STATE.write_text(text, encoding="utf-8")
     return True
 
-def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -> int:
+def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
+           banner: str | None = None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
 
     `check_repo_state` refuses a snapshot that still names a merged carrier, because the reader it
@@ -220,13 +221,23 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None) -
 
     last = (data.get("current_workflow_pr") or {}).get("number")
     tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
-    rewrite_banners(
-        "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`, and the only thing open is the pull request that records it.** PR #"
-        + ((str(pr) + " on `" + branch + "` is that pull request") if pr and branch
-           else "nothing is open at all")
-        + ". Start from "
+    # The lead clause and the carrier reference are BOTH conditional, and `--banner` is honoured
+    # here as the flag has always promised. Until 2026-08-14 the clause "and the only thing open is
+    # the pull request that records it" was hard-coded and the literal "PR #" was emitted before
+    # the conditional, so `--settled` with no carrier rendered:
+    #     "...the only thing open is the pull request that records it.** PR #nothing is open at all."
+    # -- a sentence contradicted by its own second half, stamped into all three canonical documents
+    # at once. `--banner` could not be used to work around it either: main() parsed the flag and
+    # never passed it to this function. A banner that reads as nonsense is not a smaller failure
+    # than one that reads as a lie; it is the first thing a cold reader meets in every state file.
+    carrier = ((" The only thing open is PR #" + str(pr) + " on `" + branch
+                + "`, the pull request that records it.") if pr and branch
+               else " Nothing is open.")
+    rewrite_banners(banner or (
+        "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
+        + " Start from "
         "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> " + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
+        + tail + "\n>\n> " + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY."))
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -249,7 +260,7 @@ def main() -> int:
 
     head = live_main_head()
     if args.settled:
-        return settle(head, args.next_up, args.pr, args.branch)
+        return settle(head, args.next_up, args.pr, args.branch, args.banner)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
