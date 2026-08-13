@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE: PR #85 · branch `tip-pointer-fix`** (base `main`, tip `ffd6109`, task T-017).
+> **✅ SETTLED — `main` is at `a9ad4fd`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> Revert the tip pointer cd42cdb rewrote: 5a72258 is main's head and the merge-base, so the header names the BASE tip, not the at-main-2 tip.
+> **Next:** Re-run the independent audit on main a9ad4fd. The standing verdict is still the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0), and it is now older than the code. Only then the two Owner decisions in docs/OWNER_ACTION_REQUIRED.md: 1b the head-floor write principal, 1c which half of rev-30 defines challenge_handle.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
