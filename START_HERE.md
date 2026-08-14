@@ -119,8 +119,16 @@ rather than quietly re-rolling.
 builder's own unverified claim*. Never promote your own work to ✅.
 
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check` — 15 gates, all expected GREEN. The engine
-suite needs `BRO_ENV=ci` or operator-pin gating denies and the tests error rather than run.
+`python tools/generate_agent_definitions.py --check`. **19 `check_*.py` files exist; 18 are wired
+into workflows** (the one that is not, `check_prior_art.py`, is session-side by design). Three of
+the 19 need arguments and print usage instead of a verdict when that loop runs them bare:
+`check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
+Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
+wants a Vite manifest from `npm run build`, and `check_runbook_snippets.py` fails closed unless
+`cryptography` imports. Both are green in CI. *(This paragraph said "15 gates, all expected GREEN"
+until 2026-08-14, which set up a reader to treat five non-verdicts as failures — or worse, to stop
+counting.)* The engine suite needs `BRO_ENV=ci` or operator-pin gating denies and the tests error
+rather than run.
 
 ---
 
