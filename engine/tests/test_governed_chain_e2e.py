@@ -206,6 +206,7 @@ class GovernedChainE2E(unittest.TestCase):
 
         # ---- service configs ----
         self.authority_config = AuthorityConfig(
+            install_id="e2e-install-1",
             challenge_key_id=CHALLENGE_KEY_ID, supervisor_id=SUPERVISOR_ID
         )
         self.supervisor_config = SupervisorConfig(
@@ -720,6 +721,7 @@ class GovernedChainE2E(unittest.TestCase):
 
     def test_a_challenge_for_another_supervisor_is_refused(self):
         other_authority = AuthorityConfig(
+            install_id="e2e-install-1",
             challenge_key_id=CHALLENGE_KEY_ID, supervisor_id="some-other-supervisor"
         )
         row = {

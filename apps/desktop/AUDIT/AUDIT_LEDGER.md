@@ -74,6 +74,16 @@ The distinction is not bureaucratic. Both RED verdicts came from rows marked ✅
 that wrote the fix, and in the worst case (F-02) the ✅ was written while the defect was still
 live on the only platform where the Owner had ever been shown a `production_verified=true`.
 
+## Findings of the THIRD independent audit (2026-08-14) — status
+
+| Finding | Status |
+|---|---|
+| **`A-01` (P2, both platforms)** — the evidence-head anti-rollback floor is scoped by `install_id`, which the broker chooses | ◑ **Builder claims closed 2026-08-14; NOT independently re-checked.** `AuthorityConfig` now **requires** `install_id`, and the authority **refuses** a `create-pending` whose `install_id` is not this deployment's (`challenge_authority.py`, `challenge_authority_server.py`). **Validated, not substituted:** overwriting the caller's value would keep the floor honest and break the supervisor's independent `request_sha256` recompute — `governed_turn_open` already refuses when request and payload disagree (`:487-488`), so a silent substitution turns a misconfiguration into a failure three hops away. Production source is `cfg["resolved"]["install_id"]`, the same block the desktop (`ladder_desktop.py:108`) and the ladder's own gate (`run_ladder_turn.sh:905`) read, so the three cannot drift. **Mutation-verified:** with the check deleted `test_foreign_install_id_in_create_pending_is_refused` FAILS; restored, it passes. Engine suite **1997 OK / 43 skipped**. **◑ and not ✅ because the session that wrote the fix is the one claiming it** — precisely what both prior RED rounds punished. |
+| **`A-02`** — the run-evidence chain's hash link is written and never checked; `final_event_hash` decides `EvidenceFork` and is an unverified field | 🔴 **OPEN** |
+| **`A-03`** — the ledger claims the self-owned-pin acknowledgement file is custody-checked; the module that would do it does not | 🔴 **OPEN** |
+| **`A-04`** — a ledger row a later sweep proved false is still in the file, uncorrected | 🔴 **OPEN** |
+| **`A-05`** — Linux computes the payload digest with JCS, Windows with `serde_json::to_vec`, under one document asserting the two are byte-compatible | 🔴 **OPEN** |
+
 ## Promotions from the THIRD independent audit (2026-08-14, `main` @ `e0dd969`)
 
 **These are ✅ under this file's own legend** — an independent auditor looked, **tried to break them, and

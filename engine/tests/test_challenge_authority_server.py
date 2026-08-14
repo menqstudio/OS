@@ -62,7 +62,7 @@ NOW = 1_000_000
 
 
 def _config():
-    return AuthorityConfig(challenge_key_id="key-2026-07", supervisor_id="sup-1")
+    return AuthorityConfig(install_id="install-xyz", challenge_key_id="key-2026-07", supervisor_id="sup-1")
 
 
 def _frame(obj) -> bytes:
@@ -238,6 +238,32 @@ class DispatchTests(unittest.TestCase):
         reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
         self.assertFalse(reply["ok"])
         self.assertIn("request_sha256", reply["error"])
+
+    def test_foreign_install_id_in_create_pending_is_refused(self):
+        """Audit A-01: the install_id scopes the evidence-head anti-rollback floor, so a
+        caller that can choose it can bootstrap a fresh bucket and re-present a
+        rolled-back head. The authority pins it from its own config and refuses.
+
+        This is the negative that deleting the check cannot pass: the fields are
+        otherwise VALID_FIELDS, so nothing else in the pipeline objects to them.
+        """
+        bad = {"op": OP_CREATE_PENDING, **VALID_FIELDS, "install_id": "install-SOMEONE-ELSE"}
+        conn = FakeConn(BROKER_UID, inbound=_frame(bad))
+        reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
+        self.assertFalse(reply["ok"])
+        self.assertIn("install_id", reply["error"])
+        # The configured value is NOT disclosed: the caller learns that its own value was
+        # refused, not what would have been accepted.
+        self.assertNotIn("install-xyz", reply["error"])
+
+    def test_matching_install_id_still_creates_a_pending_row(self):
+        """The other half of the pair — the check refuses a foreign id without refusing
+        the deployment's own. Without this, deleting `VALID_FIELDS` would pass the
+        negative above by refusing everything."""
+        conn = FakeConn(BROKER_UID, inbound=_frame({"op": OP_CREATE_PENDING, **VALID_FIELDS}))
+        reply = handle_connection(conn, BROKER_UID, PendingStore(), _config(), _sign_fn, _clock)
+        self.assertTrue(reply["ok"])
+        self.assertIn("pending_challenge_id", reply)
 
 
 class ServeLoopTests(unittest.TestCase):

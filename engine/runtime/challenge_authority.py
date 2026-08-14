@@ -437,6 +437,7 @@ class AuthorityConfig:
         self,
         challenge_key_id: str,
         supervisor_id: str,
+        install_id: str,
         challenge_ttl_ms: int = MAX_CHALLENGE_TTL_MS,
         workspace_id: Optional[str] = None,
     ) -> None:
@@ -444,6 +445,29 @@ class AuthorityConfig:
             raise ChallengeAuthorityError("challenge_key_id must be a non-empty string")
         if not _nonempty_str(supervisor_id):
             raise ChallengeAuthorityError("supervisor_id must be a non-empty string")
+        # ``install_id`` is REQUIRED, and it is required for a security reason rather
+        # than a schema one (audit A-01, 2026-08-14).
+        #
+        # The evidence-head anti-rollback floor is SCOPED by install_id
+        # (``governed_supervisor_ledger._install_floor_ceiling``). Until this field
+        # existed the caller supplied it: the broker put an install_id in
+        # ``create-pending``, this authority signed it, and every downstream check
+        # bound the request to the payload -- so the signature laundered the choice
+        # rather than replacing it. Driving the repository's own ledger:
+        #
+        #     install-A / task-1     / head 99  -> BOOTSTRAPPED
+        #     install-A / task-FRESH / head 3   -> REFUSED (StaleEvidence)
+        #     install-B / task-FRESH / head 3   -> BOOTSTRAPPED   <- same rollback
+        #
+        # This is the R-07/R-10 defect surviving one level up: the fix that moved the
+        # floor off ``task_id`` argued, at ``governed_supervisor_ledger.py:762-765``,
+        # that "A defence whose scope the attacker chooses is not a defence" -- and
+        # then left the new scope key in the same hands.
+        #
+        # Made REQUIRED, not optional-with-default: an optional pin is not a pin, and
+        # a deployment that forgot it would keep the hole while looking configured.
+        if not _nonempty_str(install_id):
+            raise ChallengeAuthorityError("install_id must be a non-empty string")
         if not isinstance(challenge_ttl_ms, int) or isinstance(challenge_ttl_ms, bool):
             raise ChallengeAuthorityError("challenge_ttl_ms must be an int")
         if not (0 < challenge_ttl_ms <= MAX_CHALLENGE_TTL_MS):
@@ -458,6 +482,7 @@ class AuthorityConfig:
             raise ChallengeAuthorityError("workspace_id must be a non-empty string")
         self.challenge_key_id = challenge_key_id
         self.supervisor_id = supervisor_id
+        self.install_id = install_id
         self.challenge_ttl_ms = challenge_ttl_ms
         self.workspace_id = workspace_id
 
