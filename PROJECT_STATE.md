@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `a346847`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `a346847`.** The only thing open is PR #87 on `fix-empty-diff-vs-git-failure`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Re-run the independent audit on main. The standing verdict is still the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0), and it is older than the code. Then the two Owner decisions in docs/OWNER_ACTION_REQUIRED.md: 1b the head-floor write principal, 1c which half of rev-30 defines challenge_handle. Still unguarded: tools/sync_active_pr.py has no test file.
 >
