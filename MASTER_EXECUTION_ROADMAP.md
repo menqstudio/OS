@@ -635,7 +635,16 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       the transport is real (`ai.rs:2880` spawns `bridge/engine_sidecar.py`). **No turn can use it:** all
       three callers of `ai::governed_turn` — `commands.rs:1385`, `:1865`, `:2077` — sit *after* the
       unconditional refusal at `commands.rs:1152`. "Transport shipped" is carrying the whole sentence.
-- [ ] One governed round-trip proven end-to-end. **This box read `[x]` and said "done", and it was
+- [ ] One governed round-trip proven end-to-end. **Still open, and an independent auditor has now
+      confirmed WHY.** The third audit (`apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`)
+      read the three refusals rather than trusting the prose and found all three **closed** at
+      `e0dd969`: `governed_verification_unconfigured()` is `Some(...)` with no branch
+      (`commands.rs:1161-1164`), `connect_broker` is `#[cfg(target_os = "linux")]`
+      (`governed_turn.rs:225-232`), and `build_governed_executor` returns `fail_closed()` unless
+      `$BROPS_BROKER_CONFIG` is set and parses (`broker/src/main.rs:266-280`). **The gate is shut, on
+      purpose, and confirmed shut by someone who did not build it.** That is what keeps this row
+      open — not a missing implementation. It closes when an audit passes and the Owner approves, in
+      that order. *(Its previous correction, kept:)* **This box read `[x]` and said "done", and it was
       false — corrected 2026-08-10 by checking the claim against the code instead of against its own
       commit message.** The box had already narrowed "round-trip" to a *fail-closed* one ending in
       `Blocked`; it is false even on those narrowed terms. The production order at
@@ -770,7 +779,13 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       the supervisor's `SO_PEERCRED` hop log, which `check_pull` refuses to proceed without. And this
       is a **CI proof, not a product path**: the shipped broker still reads the recorder's output with
       `std::fs::read(&report_path)` and never touches this egress. That is the open row above.
-- [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands.
+- [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands. **Standing — never permanently
+      checked**, and it is the row whose neglect produced eleven corrections on 2026-08-14: five
+      documents claiming the Builder could not merge while it merged, an audit figure (`122`) that
+      appears in no audit report, `SCHEMA_VERSION` two migrations behind, and two canonical design
+      docs disagreeing about whether three merged slices exist. Most recently satisfied for the
+      **third independent audit** cycle — report committed, nine claims promoted, three stale rows
+      corrected, five findings answered. Detail: **`T-018`** in [`TASKS.md`](./TASKS.md).
 
 ---
 
