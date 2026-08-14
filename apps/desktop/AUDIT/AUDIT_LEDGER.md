@@ -80,8 +80,8 @@ live on the only platform where the Owner had ever been shown a `production_veri
 |---|---|
 | **`A-01` (P2, both platforms)** — the evidence-head anti-rollback floor is scoped by `install_id`, which the broker chooses | ◑ **Builder claims closed 2026-08-14; NOT independently re-checked.** `AuthorityConfig` now **requires** `install_id`, and the authority **refuses** a `create-pending` whose `install_id` is not this deployment's (`challenge_authority.py`, `challenge_authority_server.py`). **Validated, not substituted:** overwriting the caller's value would keep the floor honest and break the supervisor's independent `request_sha256` recompute — `governed_turn_open` already refuses when request and payload disagree (`:487-488`), so a silent substitution turns a misconfiguration into a failure three hops away. Production source is `cfg["resolved"]["install_id"]`, the same block the desktop (`ladder_desktop.py:108`) and the ladder's own gate (`run_ladder_turn.sh:905`) read, so the three cannot drift. **Mutation-verified:** with the check deleted `test_foreign_install_id_in_create_pending_is_refused` FAILS; restored, it passes. Engine suite **1997 OK / 43 skipped**. **◑ and not ✅ because the session that wrote the fix is the one claiming it** — precisely what both prior RED rounds punished. |
 | **`A-02`** — the run-evidence chain's hash link is written and never checked; `final_event_hash` decides `EvidenceFork` and is an unverified field | 🔴 **OPEN** |
-| **`A-03`** — the ledger claims the self-owned-pin acknowledgement file is custody-checked; the module that would do it does not | 🔴 **OPEN** |
-| **`A-04`** — a ledger row a later sweep proved false is still in the file, uncorrected | 🔴 **OPEN** |
+| **`A-03`** — the ledger claims the self-owned-pin acknowledgement file is custody-checked; the module that would do it does not | ✅ **CLOSED 2026-08-14 — the row is corrected, in this file.** Both halves of the `bro_signature.py:263` row are now stated as the code behaves: raw form CI-gated (true, and a good fix), file form a **disclosed, deliberately un-custodied posture declaration**. The circularity that justifies stopping there is recorded rather than dropped. **A documentation finding closes by correcting the document** — there is no code to re-verify, and the code was never the thing that was wrong. |
+| **`A-04`** — a ledger row a later sweep proved false is still in the file, uncorrected | ✅ **CLOSED 2026-08-14 — the false clause is struck, in this file.** *"Already declared with written reasons in `config/reachability-declarations.json`"* is struck through with the reason beside it: `windows_broker` appears **zero** times in that file. The module is recorded as **unreachable-AND-undeclared**, which is what it is. Whether to declare the symbol or leave it undeclared is a separate decision and is not made here. |
 | **`A-05`** — Linux computes the payload digest with JCS, Windows with `serde_json::to_vec`, under one document asserting the two are byte-compatible | 🔴 **OPEN** |
 
 ## Promotions from the THIRD independent audit (2026-08-14, `main` @ `e0dd969`)
@@ -263,8 +263,16 @@ silently edited, because a ledger that quietly repairs itself is the failure thi
   Deleting it removes a fail-closed guard for a future caller, and "fixing" it means inventing a second
   source. Left with the honest comment.
 * **`windows_broker.rs:272` unreachable, and `governed_output_stream.rs` §4.10(f)** — wiring either makes
-  a governed surface reachable, which is forbidden. Already declared with written reasons in
-  `config/reachability-declarations.json`.
+  a governed surface reachable, which is forbidden. ~~Already declared with written reasons in
+  `config/reachability-declarations.json`.~~ **STRUCK 2026-08-14 — that clause was FALSE** (audit `A-04`).
+  `windows_broker` appears **zero** times in `config/reachability-declarations.json`; its `rust_symbols`
+  block holds exactly six entries — `pull_output`, `governed_pull_output`, `governed_turn_output_read`,
+  `prepare_governed_turn_v1b`, `resolve_governed_generation_config_v1b`, `governed_turn_submit_prepared` —
+  and names no symbol in `windows_broker.rs`. The Windows sweep below recorded this as false and chose to
+  report rather than silently edit; the row it contradicts stayed, and **a reader hits the false one
+  first.** By that config file's own vocabulary the module is *unreachable-AND-undeclared* — the state it
+  calls the one nobody can diagnose. **`governed_output_stream.rs` is gone entirely** (deleted 2026-08-12,
+  zero production callers), so only the `windows_broker` half of this row survives at all.
 * **`governed_verification.rs:276`** — §7.1's mandatory freshness step really is absent;
   `verify_and_accept` is documented "no clock" and `FreshnessWindow` exists only on the v1
   `receipt_store` path. Fixing it changes the signature and the caller in `broker/src/chain_executor.rs`,
@@ -568,7 +576,7 @@ including the anti-rollback `epoch`, are compared. Recorded here rather than sil
 | P3 R3 `governed_supervisor.py:688` | §4.7 execution receipt is not implemented | `build_execution_receipt` builds `brops.execution-receipt.v1` from the acceptance + completion rows; its handle is in `DERIVED_HANDLE_FIELDS`, which a caller cannot supply |
 | P3 R3 `challenge_authority_server.py:239` | `brops_protocol` has no deployed caller | imported by `brops_socket`, `governed_turn_open`, `governed_staging_upload`, `governed_output_read`, `governed_turn_result` |
 | P3 R3 `brops_evidence_store.py:76` | §2.3 runtime store-ACL enforcement is unimplemented | `posix_forbidden_mode` is a pure rule with a real `nt` branch, and `harden_private_dir` is the single entry point |
-| P2 R1 `bro_signature.py:263` | `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is an ungated ambient env var | the raw variable is honoured only under `BRO_ENV=ci`; otherwise a `_FILE` form under a principal this process cannot rewrite, checked through `bro_custody` on both platforms |
+| P2 R1 `bro_signature.py:263` | `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` is an ungated ambient env var | **CORRECTED 2026-08-14 (audit `A-03`).** *First half, TRUE and a good fix:* the raw variable is honoured **only** under `BRO_ENV=ci`, refused loudly and by name otherwise (`bro_custody.py:151-165`) — the gate `R-14` asked for. *Second half, FALSE as written:* the `_FILE` form gets **no custody check of any kind**. `self_owned_acknowledged` reads the path and compares its content to `"acknowledged"` (`bro_custody.py:131-149`) — no owner check, no mode check, no `bro_custody` call on that path; **any file the process can read will do.** The module says so itself at `:73-81`: *"What the file form is NOT: a custody-checked artifact… It raises the cost from one `export` to an `export` plus a file the operator wrote… nothing more."* **The code is honest; this row was not.** Its reasoning for stopping there is sound and is kept: making the acknowledgement unforgeable means making it operator-signed, and verifying that signature needs the very pin whose custody rule the acknowledgement suppresses. **Accurate statement:** raw form CI-gated; file form is a **disclosed, deliberately un-custodied posture declaration**, with the circularity recorded. |
 | R2 desktop-sweep handoff, `_BOUND_FIELDS` | the Python idempotency comparison omits five bound columns | derived from `NewAcceptance`; see above |
 
 ### ◑ Fixed in this sweep (5)
