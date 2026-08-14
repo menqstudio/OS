@@ -26,7 +26,7 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 
 **Roles · Դերեր:** [`OWNERS.md`](./OWNERS.md) — 👑 Gev = Owner · 📐 ChatGPT = Architect/Auditor · 🔨 Claude = Builder.
 **Canonical files (read every session) · Canonical ֆայլեր:** `NEXT_CHAT.md` · `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
-**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); merge only after the Owner approves. **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.**
+**Work rule:** no direct `main`; every task = branch + PR (uses the PR template); **the Builder merges, and only once every required check is green on the exact head that merges** (delegated 2026-08-14 — roadmap §B.5, Owner waiver). **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.** Release and tagging are not delegated.
 
 > **⚠ The standing independent-audit verdict is RED.** Two independent audits have run. The second
 > — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](./apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
@@ -167,9 +167,10 @@ cd engine && BRO_ENV=ci python -m unittest discover -s tests   # 1282 tests, 43 
 
 - **`cargo` MUST run from PowerShell, never the Bash tool.** The Bash tool is Git Bash, whose coreutils `link` shadows the MSVC `link.exe`; every cargo build then fails with a bogus *"extra operand"* linker error. PowerShell has no such shadow. MSVC C++ Build Tools (VCTools workload) are installed.
 - **Engine tests need `BRO_ENV=ci`** — without it the operator-pin gating (an M-1 hardening) denies, and many tests error rather than run.
-- **The permission classifier BLOCKS `git push` and `gh pr merge` for the AI.** The model prepares commits locally and hands Gev the exact command; **Gev runs push / merge / PR himself.** Never try to work around this.
+- **The Builder pushes and merges (since 2026-08-14).** This bullet said the permission classifier *blocks* both and that Gev runs them himself; it was still saying that while the Builder merged #87–#90. The delegation is roadmap §B.5 (Owner waiver, no Architect audit), and the classifier does allow both once the settings carry the rule. **What is not delegated: merging before every required check is green on the exact head that merges** — #84 merged with `Repo-state` red and #85/#86 merged mid-run, so the landed head was never the checked one. Release and tagging stay the Owner's. Do not work around *that*.
 - **Commit identity:** `user.name "menqstudio"`, `user.email "ohanyan.88@gmail.com"`. End every commit message with:
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+  *(This line said `Opus 4.8` while Opus 5 was writing the commits — the trailer is the author, so the file was naming the wrong one.)*
 - **Enforcement-hook wedge:** `engine/` (Bro) ships `.claude/settings.json` hooks (`bro_hook.py`). On Windows they can crash with a cp1252 `UnicodeEncodeError` and **fail-closed-cascade the entire session** — this genuinely happened and froze every tool. If a session wedges: set `PYTHONUTF8=1` and relaunch, or disable the hooks (rename `settings.json`). Opening OS at the root does **not** activate the wall — hooks load from the repo root only, not from a nested `engine/`. The OS root *does* now have its own `.claude/settings.json`, but it is **not** the wall: it wires exactly one `Stop` hook, `.claude/hooks/coordination_stop_guard.py`, which checks coordination-document consistency. The wall is `engine/.claude/settings.json`, nine events (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `InstructionsLoaded`).
 - **GitHub Actions:** billing was failing (jobs wouldn't start — a red account flag, unrelated to code); resolved. Public repos get free runners. CI triggers on push→`main` and on `pull_request`; a feature-branch push alone does **not** run CI until a PR exists. A merge-conflicted (`DIRTY`) PR also won't run checks until the conflict is pushed-resolved.
 - **Toolchain present:** cargo 1.96, node 24, npm 11, python 3.13, Pillow. The Tauri Windows build needs `icons/icon.ico` (already generated for the cockpit).
@@ -193,7 +194,7 @@ Both halves were audited (multi-agent) and fixed before landing here.
 ## 7. Rules for AI sessions
 
 1. **Do not start execution without Gev's explicit go** ("սկսի" / "start"). He often front-loads context across several messages first — *collect, don't act.*
-2. **You cannot push or merge** — hand Gev the exact command and let him run it.
+2. **You push and merge** (§B.5, delegated 2026-08-14) — but **only on an all-green exact head**: `gh run watch --exit-status`, then `gh pr checks`, then merge. Never mid-run. This rule read "You cannot push or merge" until 2026-08-14.
 3. **Verify before claiming green** — run the real test/build from the correct shell (§4–§5); never assume.
 4. **When you fan out sub-agents, assign disjoint files** to avoid write conflicts, then reconcile the cross-file seams yourself and verify.
 5. **Keep this file current** — if you change state, land the edit in `CLAUDE.md` in the same commit.
@@ -299,9 +300,10 @@ cd engine && BRO_ENV=ci python -m unittest discover -s tests   # 1282 test, 43 s
 
 - **`cargo`-ն ՊԱՐՏԱԴԻՐ PowerShell-ից, երբեք Bash tool-ից։** Bash tool-ը Git Bash ա, որի coreutils `link`-ը shadow ա անում MSVC `link.exe`-ը; ամեն cargo build հետո fail ա անում կեղծ *"extra operand"* linker error-ով։ PowerShell-ում էդ shadow-ը չկա։ MSVC C++ Build Tools (VCTools) installed են։
 - **Engine test-երը պահանջում են `BRO_ENV=ci`** — առանց դրա operator-pin gating-ը (M-1 hardening) deny ա անում, ու շատ test-եր error են, ոչ run։
-- **Permission classifier-ը блокирует `git push` ու `gh pr merge` AI-ի համար։** Model-ը լոկալ commit ա պատրաստում ու Gev-ին տալիս ա հստак կոմանդը; **Gev-ն ա push / merge / PR անում ինքը։** Երբեք մի փորձիր շրջանցել։
+- **Builder-ն ա push ու merge անում (2026-08-14-ից)։** Այս տողը գրում էր որ classifier-ը երկուսն էլ արգելում ա ու Gev-ն ա անում — ու շարունակում էր գրել, մինչ Builder-ը merge էր անում #87–#90-ը։ Պատվիրակումը roadmap §B.5-ն ա (Owner waiver, առանց Architect audit)։ **Չպատվիրակվածը՝ merge անել մինչև ամեն ստուգում կանաչ լինի հենց այն head-ի վրա որ merge ա լինելու** — #84-ը merge եղավ `Repo-state` կարմիրով, #85/#86-ը՝ run-ի ընթացքում։ Release-ը ու tag-ը մնում են Owner-ինը։ **Դա** մի շրջանցի։
 - **Commit identity:** `user.name "menqstudio"`, `user.email "ohanyan.88@gmail.com"`։ Ամեն commit message-ի վերջում՝
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+  *(Այս տողը գրում էր `Opus 4.8`, մինչդեռ commit-երը Opus 5-ն էր գրում։)*
 - **Enforcement-hook wedge:** `engine/`-ը (Bro) ունի `.claude/settings.json` hooks (`bro_hook.py`)։ Windows-ում կարան crash անեն cp1252 `UnicodeEncodeError`-ով ու **fail-closed-cascade անեն ամբողջ session-ը** — սա իրական պատահել ա ու ամեն tool սառեցրել։ Եթե session wedge լինի՝ դիր `PYTHONUTF8=1` ու relaunch, կամ disable արա hooks-ը (`settings.json`-ը rename)։ OS-ը root-ից բացելը **չի** ակտիվացնում wall-ը — hook-երը բեռնվում են միայն repo root-ից, ոչ nested `engine/`-ից։ OS-ի root-ն **արդեն ունի** իր `.claude/settings.json`-ը, բայց դա wall-ը **չի**․ այն միացնում ա ուղիղ մեկ `Stop` hook՝ `.claude/hooks/coordination_stop_guard.py`, որ ստուգում ա coordination փաստաթղթերի համաձայնությունը։ Wall-ը `engine/.claude/settings.json`-ն ա՝ ինը event (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `InstructionsLoaded`)։
 - **GitHub Actions:** billing-ը fail էր (job-երը չէին ստարտում — account-level red flag, կոդի հետ կապ չուներ); լուծված ա։ Public repo-ները ձրի runner ունեն։ CI trigger՝ push→`main` ու `pull_request`; feature-branch-ի պարզ push-ը **չի** run անում CI մինչև PR-ը լինի։ Merge-conflict (`DIRTY`) PR-ն էլ check չի run անում մինչև conflict-ը push-լուծված լինի։
 - **Toolchain:** cargo 1.96, node 24, npm 11, python 3.13, Pillow։ Tauri Windows build-ը պահանջում ա `icons/icon.ico` (արդեն generate արված cockpit-ի համար)։
@@ -323,7 +325,7 @@ cd engine && BRO_ENV=ci python -m unittest discover -s tests   # 1282 test, 43 s
 ## 7. Կանոններ AI session-ների համար
 
 1. **Մի սկսիր execution առանց Gev-ի հստակ go-ի** («սկսի» / «start»)։ Ինքը հաճախ մի քանի message-ով նախ context ա տալիս — *հավաքիր, մի գործիր*։
-2. **Չես կարա push կամ merge անես** — տուր Gev-ին հստակ կոմանդը, ինքը կ‑run անի։
+2. **Push ու merge անում ես դու** (§B.5, պատվիրակված 2026-08-14) — բայց **միայն ամբողջովին կանաչ ու ճշգրիտ head-ի վրա**՝ `gh run watch --exit-status`, հետո `gh pr checks`, նոր merge։ Երբեք run-ի ընթացքում։ Այս կանոնը մինչև 2026-08-14 գրում էր «չես կարա push կամ merge անես»։
 3. **Verify արա green ասելուց առաջ** — run արա իսկական test/build ճիշտ shell-ից (§4–§5); երբեք մի ենթադրի։
 4. **Երբ sub-agent-ներ ես fan-out անում՝ բաժանիր disjoint ֆայլեր** որ write-conflict չլինի, հետո ինքդ reconcile արա cross-file seam-երը ու verify։
 5. **Պահիր այս ֆայլը թարմ** — եթե վիճակ ես փոխում, edit-ը դիր `CLAUDE.md`-ում նույն commit-ում։
