@@ -1,6 +1,6 @@
 # TASKS — the coordination board · координация board
 
-> **✅ SETTLED — `main` is at `7d73cfc`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `7d73cfc`.** The only thing open is PR #95 on `fix-audit-finding-count`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763; it assessed a head that no longer exists, every finding closed since is the Builder's own claim, and a green CI is not an audit. ONE Owner decision is open: 1b, the head-floor write principal. Observed and unresolved: current_state.json design_gate says Architect DESIGN GREEN for rev-30 while status_tokens says OWNER_APPROVED_NOT_ARCHITECT_AUDITED.
 >
