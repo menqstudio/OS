@@ -112,8 +112,11 @@ These apply to **every phase**. A phase section never repeats them; it only name
 - **`cargo` MUST run from PowerShell, never the Bash tool** (Git Bash `link` shadows MSVC `link.exe` →
   bogus *"extra operand"*). MSVC C++ Build Tools present.
 - **Engine tests need `BRO_ENV=ci`** (without it operator-pin gating denies and tests error).
-- **The permission classifier BLOCKS `git push` and `gh pr merge` for the AI.** Prepare the exact
-  command and hand it to Gev. Never try to work around this.
+- **The Builder pushes and merges** (§B.5, delegated 2026-08-14 by Owner waiver). This bullet said the
+  permission classifier *blocks* both and that the command must be handed to Gev — it was the **fifth**
+  place in this file saying that, and #88 amended the other four and missed it. The classifier allows
+  both once the settings carry the rule. **Never merge before every required check is green on the exact
+  head that merges**, and never mid-run: that is the clause §B.5 does not delegate.
 - **Enforcement-hook wedge:** the engine ships `.claude/settings.json` hooks (`bro_hook.py`) that can
   crash on Windows with a cp1252 `UnicodeEncodeError` and fail-closed-cascade the session. If it wedges:
   set `PYTHONUTF8=1` and relaunch, or rename `settings.json`. Hooks load from the repo **root** only.
