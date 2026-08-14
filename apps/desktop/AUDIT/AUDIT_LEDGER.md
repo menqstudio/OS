@@ -74,6 +74,32 @@ The distinction is not bureaucratic. Both RED verdicts came from rows marked ✅
 that wrote the fix, and in the worst case (F-02) the ✅ was written while the defect was still
 live on the only platform where the Owner had ever been shown a `production_verified=true`.
 
+## Promotions from the THIRD independent audit (2026-08-14, `main` @ `e0dd969`)
+
+**These are ✅ under this file's own legend** — an independent auditor looked, **tried to break them, and
+failed**. Nine claims, reproduced as the auditor grouped them, with what was actually attacked. The full
+text is [§3 of the report](./2026-08-14-zero-trust-audit-e0dd969.md). Fourteen `◑` claims were attacked;
+these nine survived.
+
+| # | Claim | ✅ what the auditor did |
+|---|---|---|
+| 1 | **The three production-gate refusals** | Read, not trusted: `governed_verification_unconfigured()` is `Some(...)` with **no branch** (`commands.rs:1161-1164`); `connect_broker` is `#[cfg(target_os = "linux")]`, every other host `UnsupportedPlatform` (`governed_turn.rs:225-232`); `build_governed_executor` returns `fail_closed()` unless `$BROPS_BROKER_CONFIG` is set and parses (`broker/src/main.rs:266-280`). **The gate is closed at this head.** |
+| 2 | **F-01's second half — the `output_handle` sign-oracle** | **The previous round's P0.** Attacked the mechanism, not the wording, and **could not reopen it, on either platform.** Supervisor derives the head from the recorder's chain and refuses a completion whose `output_handle` the recorder did not capture (`governed_supervisor_ledger.py:624-685`, check at `:661-666`), on the only path to `COMPLETED`. Recorder no longer takes `--launcher/--executor/--store/--lease` from the broker's argv — root-owned policy at a compile-time path, argv disagreement refused. Windows twin refuses `evidence_mismatch`. Covered by a **real end-to-end negative**, not an assertion (`test_governed_chain_e2e.py:657-684`). |
+| 3 | **`R-04` / F-08's OUTER equality** | *"a real gap"* — was asserted only by a deployment-time shell check. Now a runtime comparison: `verify_lease_matches_attested_request` refuses per-slot (`launcher/src/main.rs:491-505`), called before any drop or exec (`:592`), attested config read from a **compile-time** path so the broker cannot redirect it (`:586-591`). |
+| 4 | **`R-03`'s store-input custody** | fds 3/4/5 are no longer "a regular file ≤ 8 MiB": each must be a regular inode owned by root/brops-admin with no group or other write bit (`launcher/src/main.rs:600-605`). |
+| 5 | **The 45-skipped-test gap (§5.4) — 22 dead enforcement tests** | *"the cleanest fix in the wave."* `engine/tests/_engine_git_root.py:158-194` **manufactures** the precondition instead of skipping. Reproduced empirically: the previous audit measured **909 ran / 45 skipped**; this one measures **1995 ran / 43 skipped**, and the git-root skip is not among them. The two `skipUnless` lines a grep still finds are inside docstrings. |
+| 6 | **The CI wiring claims** | Read from `ci.yml`, not from this ledger. `governed-crates` really tests all six production crates (`:68-70`); `engine-windows` really runs the engine suite on `windows-latest` (`:226-258`); the F-08 negative is real and wired — `run_live_turn.sh` tampers with a pinned store input and asserts the **cause** of the refusal (`:431-449`, `:465-482`), with two further negatives beside it. |
+| 7 | **The DDL parity gate** | `check_ledger_ddl_parity.py` GREEN at this head, and the job is wired. |
+| 8 | **The repository's own gates** | Ran all 19. Sixteen GREEN; three print usage (they take arguments); one RED for the documented reason (`check_bundle_budget` wants a Vite manifest). *"This matches `START_HERE.md`'s description exactly, including its correction of the older '15 gates, all green' sentence."* |
+| 9 | **"The two F-01 regression tests assert only that an unknown attempt id is refused"** | The engine sweep declined to judge this. **They do not.** The module carries **16** tests — the substituted-reply negative, a no-chain-at-all negative, a smuggled-field negative, and an F-27 clock test pinning accept-at-T−2000 against complete-at-T. |
+
+> **Two of the three "not verified deeply enough to claim either way" items stay unknown** and are NOT
+> promoted: `build_tcb_pin_manifest.py` coverage-by-name, and `run_supervisor.py`'s §0.1 gate. The auditor
+> drove neither. See §6 of the report for what this audit does **not** cover — chiefly that the **Linux
+> live kit was not run** (Windows host), so every deployment-custody claim above is a **static read**.
+
+---
+
 ## Round-2 remediation audit (2026-08-06) — RED, and what has been done about it
 
 The SECOND audit of the remediation returned RED again. No new P0 was found, but the ground under
@@ -99,12 +125,12 @@ several "closed" verdicts was softer than it looked. Addressed here:
 | **F-08's enforcement had zero tests** | ◑ **Builder's claim; NOT independently confirmed.** *(Was `✅ CLOSED`, written by the fixing session, in a table whose own header says every such mark was demoted on 2026-08-07. Three rows were missed; corrected 2026-08-09.)*  The four cited tests covered the lease parser and the fd→pin map; the digest-and-compare that IS F-08 had none, so deleting the check left every suite green. The decision is now a pure `verify_store_inputs` with 4 tests (per-slot mismatch, transposition, unreadable input), AND the live CI job runs a NEGATIVE case: it tampers with a pinned store input and requires the launcher to refuse. That is the test deleting the enforcement cannot pass. |
 | **52 tests in the production crates run in no CI job** | ◑ **Builder's claim; NOT independently confirmed.** *(Same missed demotion; corrected 2026-08-09.)*  New `governed-crates` job tests launcher, executor, broker, live driver and both Windows crates. `brops-executor` was never compiled by CI at all. The Tauri host crate still is not built (webkit2gtk) — stated, not papered over. |
 | Windows machine-proof script rejected by its own provisioner (exit 3) | ⚠️ OPEN |
-| `bound` is a tautology (`CommittedMessage::new` hardcodes trust_state) | ⚠️ OPEN |
+| `bound` is a tautology (`CommittedMessage::new` hardcodes trust_state) | ✅ **WRONG ROW — corrected 2026-08-14 by the third independent audit** ([`2026-08-14-zero-trust-audit-e0dd969.md`](./2026-08-14-zero-trust-audit-e0dd969.md) §4). *"`trust_state` is a parameter (`core/src/governed_turn_ipc.rs:239-245`). The sweep recorded the correction and the row was never changed; it should be."* The finding was never true at this head. |
 | `production_verified` never asks WHICH root anchor verified the manifest | ◑ **Builder claims closed; NOT independently re-checked.** `resolve_trust_state` now REQUIRES a `VerifiedManifestRoot` token, requires it to cover THIS manifest, and splits the verdict on `root.provenance()` (`core/src/production_trust.rs`). |
 | **F-29 — the “bound-to-verifying-key” guard is a tautology** | ⚠️ **OPEN, and stated by the code itself.** Two rounds of fix left the comparison in `resolve_trust_state` unable to fail: every call site derives `envelope_verifying_key_hex` from `verifying_key_hex(...)` over bytes that the SAME `resolve_production_key` lookup produced. The check is KEPT as fail-closed defence in depth for a future call site that obtains its key another way; what is corrected is the claim. The property that holds today holds by CONSTRUCTION (one source, not two agreeing ones) — weaker than a check. `NEXT_CHAT.md` listed this CLOSED until 2026-08-09; it is a live keystone finding. |
-| NULL DACL makes `FILE_FLAG_FIRST_PIPE_INSTANCE` inert | ⚠️ OPEN |
+| NULL DACL makes `FILE_FLAG_FIRST_PIPE_INSTANCE` inert | ✅ **CLOSED — independently confirmed 2026-08-14** ([third audit](./2026-08-14-zero-trust-audit-e0dd969.md) §4). *"`win-live/src/pipe.rs` builds a real DACL (`:62`, `:146-150`) and a test asserts the pipe must **not** have a NULL DACL (`:572`), with a note that a regression restores it (`:470`)."* Marked ⚠️ OPEN here while the code was closed. |
 | A failed model call is replaced by a hardcoded constant the chain then signs | ◑ **Builder's claim; NOT independently confirmed.** *(Same missed demotion; corrected 2026-08-09.)*  The fallback itself is legitimate — the self-test exists to prove the CHAIN, with or without a model — but it was INVISIBLE: no `BROPS_SELFTEST_MODEL_CMD` (the default), a spawn failure, a non-zero exit or empty output all silently became a built-in constant that the chain bound and the UI showed beside `trusted_verified`. The receipt was honest about custody and the screen was misleading about what answered. `AnswerSource` now travels with the answer (model / no-model-configured / model-failed), the UI renders **NO MODEL RAN** and says which of the two reasons, and 3 tests cover all three cases. |
-| Windows kit: no §2.5 floor, no anti-rollback floor | ⚠️ OPEN |
+| Windows kit: no §2.5 floor, no anti-rollback floor | ✅ **BOTH HALVES EXIST — independently confirmed 2026-08-14** ([third audit](./2026-08-14-zero-trust-audit-e0dd969.md) §4). *"`win-live/src/tcb_floor.rs` is 834 lines; the anti-rollback floor runs through `brops_core::supervisor_ledger::evidence_floor_cas` with `head_sequence` from the durable counter in `win-live/src/head_sequence.rs`."* **Read with `A-01`/`A-02`** — those are defects **in** the floor, not its absence, and they are open. |
 
 ## Keystone soundness-blockers (independent audit 2026-08-06) — the gate depends on these
 
