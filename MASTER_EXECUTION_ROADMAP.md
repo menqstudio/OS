@@ -674,11 +674,25 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       `brops_core::governed_output_pull`, driven end to end by the `ladder-governed-turn` job. The helper
       this row named, `governed_turn_output_read`, is in no file — the same class of error as the
       `platform_governed_execution_supported()` these documents watched for weeks.
-      **What is actually left is the wiring, and only that:** the shipped broker still reads the
-      recorder's output with `std::fs::read(&report_path)`
-      (`apps/desktop/src-tauri/broker/src/chain_executor.rs:882`) and never touches the egress, so nothing
-      in the product drives the pull, reassembles the bytes, or applies the §4.6/§7.1 whole-output digest
-      check. Built and proven in CI; unreached by the app. **Open.**
+      **The "wiring" sentence this row carried on 2026-08-14 is also corrected, same day, by reading the
+      broker instead of the note about it.** It said the shipped broker "still reads the recorder's output
+      with `std::fs::read(&report_path)` (`chain_executor.rs:882`) and never touches the egress". That
+      cites the **direct AF_UNIX chain, which `build_governed_executor` no longer builds** — the Owner
+      retired it on 2026-08-12 (`docs/OWNER_ACTION_REQUIRED.md` §1d RESOLVED) and `main.rs:246-252` says
+      so in its own doc comment. The only governed executor the broker constructs is the §4.10(g) ladder
+      (`main.rs:541`, `LadderChain::new`), and **the ladder pulls**: `governed_output_pull::pull_output`,
+      imported at `ladder_executor.rs:63` and called at `:330`, listed as step 5 of the ladder at `:34`.
+      The pull IS driven by the product's own executor.
+      **So what actually keeps this row open is not a missing pull — it is the same gate as the row
+      above.** `build_governed_executor` returns `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG`
+      names a deployment config with a TCB-root-signed manifest, and **nothing in the shipped app sets
+      that variable** — every occurrence in the tree is a doc, a config sample or a comment. The ladder,
+      and therefore the pull, is built only in a deployment that configures it.
+      **Both open rows in this Definition of Done now reduce to one fact, and it is the Owner's:** the
+      product path does not reach the governed machinery because the gate deliberately forbids it. No
+      Builder change closes either row; an independent audit passing and the Owner approving does.
+      Built, proven in CI, wired into the only executor the broker builds — and unreached by the shipped
+      app **by design**. **Open.**
 - [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
       `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
       tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
