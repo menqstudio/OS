@@ -432,6 +432,28 @@ fn derive_evidence(dir: &std::path::Path, attempt: &str) -> Option<DerivedEviden
     {
         return None;
     }
+    // Verify the LINK, not only the summary fields (audit A-02, 2026-08-14). Until this ran, this
+    // parser checked real properties of the chain -- protocol, one output-captured event, that
+    // event's payload against its own digest, the counts -- and never that the events are actually
+    // chained. `final_event_hash` was taken straight off the document, while being the
+    // discriminator `supervisor_ledger.rs:958-966` raises EvidenceFork on: the fork detector's
+    // identity was a field nothing bound to the events it summarises.
+    //
+    // The rule is the recorder's own (`execution.rs:159-176`): event_hash = sha256(canonical(event))
+    // over the WHOLE event object -- which contains that event's own `previous_event_hash`, so
+    // altering any earlier event changes every digest after it -- and `final_event_hash` is the
+    // last of them. The first event claims no predecessor.
+    let mut previous: Option<String> = None;
+    for event in events {
+        let claimed = event.get("previous_event_hash").and_then(Value::as_str);
+        if claimed != previous.as_deref() {
+            return None;
+        }
+        previous = Some(crypto::sha256_hex(&crypto::jcs(event.as_object()?)));
+    }
+    if previous.as_deref() != chain.get("final_event_hash").and_then(Value::as_str) {
+        return None;
+    }
     let i = |k: &str| -> Option<i64> { chain.get(k)?.as_i64().filter(|n| *n > 0) };
     let derived = DerivedEvidence {
         final_event_hash: chain.get("final_event_hash")?.as_str()?.to_string(),
@@ -2524,6 +2546,45 @@ mod evidence_tests {
         let raw = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, raw.replace(&"ab".repeat(32), &"ff".repeat(32))).unwrap();
         assert!(derive_evidence(&dir, "att-3").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_chain_whose_link_is_broken_yields_nothing() {
+        // audit A-02. Every OTHER property stays valid — protocol, one output-captured event, the
+        // payload against its own digest, the counts — so only the link check can refuse these.
+        let dir = tmp();
+
+        // 1. An event re-pointed at a digest that is not its predecessor's.
+        chain(&dir, "att-link", &"ab".repeat(32), 3);
+        let path = dir.join("att-link.evidence.json");
+        let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        doc["events"][1]["previous_event_hash"] = Value::String("bb".repeat(32));
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert!(derive_evidence(&dir, "att-link").is_none(), "broken link must refuse");
+
+        // 2. A first event claiming a predecessor — a chain presented with its head cut off.
+        chain(&dir, "att-head", &"ab".repeat(32), 3);
+        let path = dir.join("att-head.evidence.json");
+        let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        doc["events"][0]["previous_event_hash"] = Value::String("cc".repeat(32));
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert!(derive_evidence(&dir, "att-head").is_none(), "cut-off head must refuse");
+
+        // 3. final_event_hash that is not the digest of the last event — the field EvidenceFork
+        //    compares, and the reason this finding is not cosmetic.
+        chain(&dir, "att-final", &"ab".repeat(32), 3);
+        let path = dir.join("att-final.evidence.json");
+        let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        doc["final_event_hash"] = Value::String("dd".repeat(32));
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert!(derive_evidence(&dir, "att-final").is_none(), "wrong final hash must refuse");
+
+        // The positive control: untouched, the same builder's chain still derives. Without it the
+        // three above could be satisfied by an arm that refuses everything.
+        chain(&dir, "att-ok", &"ab".repeat(32), 3);
+        assert!(derive_evidence(&dir, "att-ok").is_some(), "an honest chain must still derive");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

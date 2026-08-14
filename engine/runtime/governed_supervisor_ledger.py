@@ -682,6 +682,34 @@ def derive_evidence_from_chain(chain_bytes: bytes, output_handle: str) -> Dict[s
         raise InvalidHead("last_sequence != event_count")
     if len(events) != derived["evidence_event_count"]:
         raise InvalidHead("event_count does not match the number of events in the chain")
+
+    # Verify the LINK, not only the summary fields (audit A-02, 2026-08-14).
+    #
+    # Until this ran, nothing recomputed ``previous_event_hash`` and ``final_event_hash`` was taken
+    # straight off the document with only a format check (:669, :674-675) -- while
+    # ``final_event_hash`` is the discriminator ``_evidence_floor_cas`` raises ``EvidenceFork`` on
+    # (:793-799). The fork detector's identity was a field nothing bound to the events it
+    # summarises, with the ``payload_sha256`` check twenty lines up showing the authors knew how to
+    # bind one.
+    #
+    # The rule is the recorder's own: ``event_hash = sha256(canonical(event))`` over the WHOLE event
+    # object -- which contains that event's ``previous_event_hash``, so altering any earlier event
+    # changes every digest after it -- and ``final_event_hash`` is the last of them. The first
+    # event's ``previous_event_hash`` is null. See ``win-live/src/execution.rs:159-176`` for the
+    # writer and ``bro_evidence.py:157`` for the same check on the engine's OTHER chain, which has
+    # always had it.
+    previous = None
+    for index, event in enumerate(events):
+        if not isinstance(event, Mapping):
+            raise LedgerError("run evidence chain event %d is not an object" % index)
+        if event.get("previous_event_hash") != previous:
+            raise InvalidHead(
+                "run evidence chain link is broken at event %d: previous_event_hash does not match "
+                "the digest of the event before it" % index)
+        previous = _sha256_hex(canonical_bytes(event))
+    if previous != derived["evidence_final_event_hash"]:
+        raise InvalidHead(
+            "final_event_hash is not the digest of the last event in the chain")
     return derived
 
 
