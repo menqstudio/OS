@@ -35,6 +35,10 @@ mod win {
         let core = Authority::new(AuthorityConfig {
             challenge_key_id: cfg.key_ids.challenge.clone(),
             supervisor_id: cfg.facts.supervisor_id.clone(),
+            // SINGLE source, the deployment config — the same block the Linux authority reads
+            // (`run_authority.py`: `cfg["resolved"]["install_id"]`), so the twins cannot drift on
+            // the value that scopes the anti-rollback floor. Re-audit `B-01`.
+            install_id: cfg.resolved.install_id.clone(),
             challenge_signing_seed: seed,
         });
         println!("RESULT: authority listening pipe={} broker_sid={}", cfg.pipes.authority, cfg.allowed_broker_sid);

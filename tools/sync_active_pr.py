@@ -47,7 +47,15 @@ STATE = ROOT / "config" / "current_state.json"
 #: verdict the repository has. Change this string when -- and only when -- an independent audit
 #: actually returns a different one.
 AUDIT_POSITION_SENTENCE = (
-    "**The last independent audit returned RED -- for materially fewer reasons.** The THIRD "
+    "**The last independent audit returned RED -- now for one platform rather than one mechanism.** "
+    "The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit "
+    "of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the "
+    "auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved "
+    "three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was "
+    "fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 "
+    "pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the "
+    "authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside "
+    "the 1b decision. Superseding: the THIRD "
     "independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ "
     "`e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** "
     "(A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and "

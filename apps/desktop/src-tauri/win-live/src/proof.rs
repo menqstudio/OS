@@ -278,6 +278,7 @@ where
     let authority: Arc<dyn DispatchCore> = Arc::new(Authority::new(AuthorityConfig {
         challenge_key_id: challenge_key_id.clone(),
         supervisor_id: supervisor_id.clone(),
+        install_id: "install-live-1".to_string(),
         challenge_signing_seed: challenge_seed,
     }));
     let supervisor: Arc<Supervisor> = Arc::new(Supervisor::new(SupervisorConfig {
