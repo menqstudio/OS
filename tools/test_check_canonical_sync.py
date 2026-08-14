@@ -11,7 +11,9 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
+import check_canonical_sync
 from check_canonical_sync import LAW, check, load_law
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -90,6 +92,45 @@ class UpdateLawTests(unittest.TestCase):
 
     def test_the_real_law_refuses_an_engine_only_commit(self):
         self.assertTrue(check(REPO_ROOT, ["engine/runtime/bro_policy.py"]))
+
+
+class BaseDiffSourceTests(unittest.TestCase):
+    """`main()`'s `--base` source, where an EMPTY diff and a FAILED git call must not be confused.
+
+    `_git` returns `[]` for "nothing changed" and `None` for "git could not answer". The selector
+    was `first or second`, which treats both as "try the fallback". An already-merged pull request
+    has a legitimately empty `origin/main...HEAD`, so it fell through to the bare `main...HEAD`
+    form -- and a bare `main` resolves in no actions/checkout workspace, since only
+    `refs/remotes/origin/main` is fetched. The gate then reported "could not determine the changed
+    files" at #84, #85 and #86, every time CI landed after the merge, against diffs that were fine.
+    """
+
+    def test_empty_first_diff_is_an_answer_and_the_fallback_does_not_run(self):
+        with mock.patch.object(check_canonical_sync, "_git", return_value=[]) as git:
+            code = check_canonical_sync.main(["--root", str(_tree()), "--base", "main"])
+        self.assertEqual(code, 0)
+        self.assertEqual(git.call_count, 1,
+                         "an empty diff IS an answer; falling back to the bare ref is the bug")
+
+    def test_failed_first_diff_still_falls_back(self):
+        """The fallback keeps the case it was written for: no `origin` remote at all."""
+        with mock.patch.object(check_canonical_sync, "_git", side_effect=[None, []]) as git:
+            code = check_canonical_sync.main(["--root", str(_tree()), "--base", "main"])
+        self.assertEqual(code, 0)
+        self.assertEqual(git.call_count, 2)
+
+    def test_both_forms_failing_is_still_red(self):
+        """Fail-closed is preserved: unknown must never read as "nothing changed"."""
+        with mock.patch.object(check_canonical_sync, "_git", side_effect=[None, None]):
+            code = check_canonical_sync.main(["--root", str(_tree()), "--base", "main"])
+        self.assertEqual(code, 1)
+
+    def test_a_real_substantive_diff_is_still_judged(self):
+        """The empty-diff fix must not make the gate blind to an unlawful change."""
+        with mock.patch.object(check_canonical_sync, "_git",
+                               return_value=["engine/runtime/bro_policy.py"]):
+            code = check_canonical_sync.main(["--root", str(_tree()), "--base", "main"])
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

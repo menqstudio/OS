@@ -119,8 +119,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.staged:
         changed = _git(root, ["diff", "--cached", "--name-only"])
     elif args.base:
-        changed = (_git(root, ["diff", "--name-only", f"origin/{args.base}...HEAD"])
-                   or _git(root, ["diff", "--name-only", f"{args.base}...HEAD"]))
+        # `is None`, NOT truthiness. `_git` returns None when git FAILED and [] when the diff is
+        # genuinely EMPTY, and `or` cannot tell those apart -- it treats both as "try the fallback".
+        #
+        # An empty first diff is the normal state of an ALREADY-MERGED pull request: once the
+        # branch is in `main`, `origin/main...HEAD` is legitimately []. The `or` then fell through
+        # to the bare `{base}...HEAD` form, and a bare `main` is not resolvable in an
+        # actions/checkout workspace -- only `refs/remotes/origin/main` is fetched, and
+        # gitrevisions never maps `main` onto it. So the fallback failed, `changed` became None,
+        # and the gate reported "could not determine the changed files" against a PR whose diff was
+        # fine.
+        #
+        # It fired on #84, #85 and #86 within one day -- every time CI landed after the merge --
+        # and each red was read as a problem with the change. The fallback still exists for the
+        # case it was written for (no `origin` remote at all, e.g. a local run), but it is now
+        # reached only when the first form could not be COMPUTED.
+        changed = _git(root, ["diff", "--name-only", f"origin/{args.base}...HEAD"])
+        if changed is None:
+            changed = _git(root, ["diff", "--name-only", f"{args.base}...HEAD"])
     elif args.changed_files == "-":
         changed = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
     else:
