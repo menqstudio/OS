@@ -47,12 +47,18 @@ STATE = ROOT / "config" / "current_state.json"
 #: verdict the repository has. Change this string when -- and only when -- an independent audit
 #: actually returns a different one.
 AUDIT_POSITION_SENTENCE = (
-    "**The last independent audit returned RED, and none has been run since.** The Owner's SECOND "
-    "independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` "
-    "AFTER the first round's remediation -- confirmed 4 of 18 blockers closed, left 14 not fully "
-    "closed (2 still open, 12 partial), and recorded 45 surviving findings (1 P0, 5 P1, 13 P2, "
-    "26 P3). It has never been re-run, on that head or on any later one, so **RED is the standing "
-    "verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`."
+    "**The last independent audit returned RED -- for materially fewer reasons.** The THIRD "
+    "independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ "
+    "`e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** "
+    "(A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and "
+    "**confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder "
+    "claims and could not refute **9**, which it recommends for the independently-confirmed mark; it "
+    "also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback "
+    "floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect "
+    "surviving one level up rather than closing, on both platforms, demonstrated against the "
+    "repository's own ledger code. **RED is the standing verdict of record and the gate stays "
+    "shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is "
+    "`2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`)."
 )
 #: This constant said "122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds"
 #: until 2026-08-14. That figure is in NEITHER audit report. The remediation audit's own verdict
