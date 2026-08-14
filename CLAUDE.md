@@ -31,7 +31,7 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 > **⚠ The standing independent-audit verdict is RED.** Two independent audits have run. The second
 > — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](./apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
 > of `main` @ `219c763` AFTER the first round's remediation — confirmed **4 of 18** blockers closed
-> and left **122 surviving findings** (1 P0, 7 P1, 32 P2, 82 P3), and **has never been re-run** on any
+> and left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3), and **has never been re-run** on any
 > later head. Nothing merged since is independently confirmed. The index is
 > [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) — read it before
 > believing any ✅ in these documents; ◑ there means *the Builder's unverified claim*. Until
@@ -42,7 +42,7 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 > **⚠ Գործող անկախ աուդիտի վճիռը RED ա։** Երկու անկախ աուդիտ ա անցել։ Երկրորդը —
 > `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, `main` @ `219c763`-ի վրա, առաջին փուլի
 > ուղղումներից հետո — հաստատել ա **18-ից 4** blocker-ի փակումը ու թողել **122 գտած** (1 P0,
-> 7 P1, 32 P2, 82 P3), ու **երբեք չի կրկնվել** որևէ ավելի ուշ head-ի վրա։ Դրանից հետո merge
+> 5 P1, 13 P2, 26 P3), ու **երբեք չի կրկնվել** որևէ ավելի ուշ head-ի վրա։ Դրանից հետո merge
 > արվածը անկախ հաստատված չի։ Ցուցակը՝ `apps/desktop/AUDIT/AUDIT_LEDGER.md` — կարդա համարով
 > այս փաստաթղթերի որևէ ✅-ին հավատալուց առաջ; ◑-ը նշանակում ա *builder-ի չստուգված պնդում*։
 

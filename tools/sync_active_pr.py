@@ -49,11 +49,23 @@ STATE = ROOT / "config" / "current_state.json"
 AUDIT_POSITION_SENTENCE = (
     "**The last independent audit returned RED, and none has been run since.** The Owner's SECOND "
     "independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` "
-    "AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving "
-    "findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that "
-    "head or on any later one, so **RED is the standing verdict of record.** The index is "
-    "`apps/desktop/AUDIT/AUDIT_LEDGER.md`."
+    "AFTER the first round's remediation -- confirmed 4 of 18 blockers closed, left 14 not fully "
+    "closed (2 still open, 12 partial), and recorded 45 surviving findings (1 P0, 5 P1, 13 P2, "
+    "26 P3). It has never been re-run, on that head or on any later one, so **RED is the standing "
+    "verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`."
 )
+#: This constant said "122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds"
+#: until 2026-08-14. That figure is in NEITHER audit report. The remediation audit's own verdict
+#: table says 45 (P0 1 / P1 5 / P2 13 / P3 26) and the document carries exactly 45 R-numbered
+#: rows, R-01..R-45, whose priorities sum to the same split. Every occurrence of "122" in that
+#: report is a line number or a line count. "across its three rounds" was invented with it.
+#:
+#: It mattered because THIS constant is what stamps the audit position into NEXT_CHAT.md,
+#: PROJECT_STATE.md and TASKS.md at once -- the same generator that stamped the false
+#: "the broker hands out UpstreamBlockedExecutor" sentence into three canonical files before
+#: 2026-08-09. The one file that had it right was apps/desktop/AUDIT/AUDIT_LEDGER.md, which is
+#: the file every reader is sent to for the audit position, and which said 45 while six other
+#: documents said 122. Where this sentence and the report disagree, the report wins: read it.
 
 FAIL_CLOSED_SENTENCE = (
     "**The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns "
