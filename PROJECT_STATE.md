@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `56352d7`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `56352d7`.** The only thing open is PR #97 on `fix-wave3-design-status`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Re-run the independent audit on main. RED of 2026-08-06 at 219c763; 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3) per the report's own verdict table. ONE Owner decision is open: 1b, the head-floor write principal. Observed and unresolved: current_state.json design_gate says Architect DESIGN GREEN for rev-30 while status_tokens says OWNER_APPROVED_NOT_ARCHITECT_AUDITED.
+> **Next:** Re-run the independent audit on main. RED of 2026-08-06 at 219c763; 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3). ONE Owner decision is open: 1b, the head-floor write principal. Observed and unresolved: current_state.json design_gate says Architect DESIGN GREEN for rev-30 while status_tokens says OWNER_APPROVED_NOT_ARCHITECT_AUDITED.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed, left 14 not fully closed (2 still open, 12 partial), and recorded 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3). It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
