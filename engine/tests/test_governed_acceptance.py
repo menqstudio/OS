@@ -397,7 +397,7 @@ class _Case(unittest.TestCase):
         }
         return issue_challenge(
             row,
-            AuthorityConfig(challenge_key_id=CHALLENGE_KEY_ID, supervisor_id=SUPERVISOR_ID),
+            AuthorityConfig(install_id="install-1", challenge_key_id=CHALLENGE_KEY_ID, supervisor_id=SUPERVISOR_ID),
             self.challenge_key.sign,
             (lambda: NOW) if issued is None else (lambda: issued),
         )
@@ -932,7 +932,8 @@ class RefusalsAreReachableTests(_Case):
             "generation_config_sha256": sha(GENCFG_BYTES), "requested_at_ms": NOW - 5_000,
         }
         document = issue_challenge(
-            row, AuthorityConfig(challenge_key_id=CHALLENGE_KEY_ID,
+            row, AuthorityConfig(
+                                 install_id="install-1",challenge_key_id=CHALLENGE_KEY_ID,
                                  supervisor_id="a-different-supervisor"),
             self.challenge_key.sign, lambda: NOW)
         # §4.10(a0) refuses this at open, so the staging row is planted the only other way a

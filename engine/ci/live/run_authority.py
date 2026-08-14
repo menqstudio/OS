@@ -47,6 +47,14 @@ def main() -> int:
     # attest the turn, and that supervisor refuses a challenge addressed to anyone else
     # (governed_supervisor `supervisor_mismatch`), so the two must not be able to drift.
     supervisor_id = cfg["supervisor"]["supervisor_id"]
+    # SINGLE source, and for the same class of reason (audit A-01, 2026-08-14). The install_id
+    # scopes the evidence-head anti-rollback floor, so the authority pins it from the deployment
+    # config and refuses a create-pending that names a different one. It used to arrive on the
+    # wire, which made the floor's scope the caller's choice: `install-B / task-FRESH / head 3`
+    # bootstrapped the very head `install-A` refused. Same block the desktop reads
+    # (`ladder_desktop.py:108`) and the ladder's own gate reads (`run_ladder_turn.sh:905`), so the
+    # three cannot drift.
+    install_id = cfg["resolved"]["install_id"]
 
     with open(cfg["keys"]["challenge_priv"], "rb") as f:
         challenge_priv = lc.load_private(f.read())
@@ -63,6 +71,7 @@ def main() -> int:
     config = AuthorityConfig(
         challenge_key_id=challenge_key_id,
         supervisor_id=supervisor_id,
+        install_id=install_id,
     )
 
     if os.path.exists(sock_path):

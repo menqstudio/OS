@@ -65,7 +65,7 @@ NOW = 1_000_000
 
 
 def _config():
-    return AuthorityConfig(challenge_key_id="key-2026-07", supervisor_id="sup-1")
+    return AuthorityConfig(install_id="install-xyz", challenge_key_id="key-2026-07", supervisor_id="sup-1")
 
 
 class ValidateCreatePendingTests(unittest.TestCase):
@@ -297,7 +297,7 @@ class IssueTests(unittest.TestCase):
         doc1 = issue_challenge_document(store, pid, _config(), lambda b: "sig-A", lambda: NOW)
         doc2 = issue_challenge_document(
             store, pid,
-            AuthorityConfig(challenge_key_id="OTHER-KEY", supervisor_id="OTHER-SUP"),
+            AuthorityConfig(install_id="install-xyz", challenge_key_id="OTHER-KEY", supervisor_id="OTHER-SUP"),
             lambda b: "sig-B",
             lambda: NOW + 1,
         )
@@ -359,6 +359,7 @@ class IssueTests(unittest.TestCase):
     def test_ttl_cannot_exceed_cap(self):
         with self.assertRaises(ChallengeAuthorityError):
             AuthorityConfig(
+                install_id="install-xyz",
                 challenge_key_id="k",
                 supervisor_id="s",
                 challenge_ttl_ms=MAX_CHALLENGE_TTL_MS + 1,

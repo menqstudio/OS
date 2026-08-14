@@ -191,6 +191,23 @@ def dispatch(
         # cannot ride in past the trust door (§2.1).
         fields = {k: v for k, v in request.items() if k != "op"}
         validated = validate_create_pending(fields)
+        # The install_id is CHECKED against the authority's own trusted config, not
+        # taken on trust (audit A-01, 2026-08-14). It scopes the evidence-head
+        # anti-rollback floor, so a caller that can choose it can bootstrap a fresh
+        # bucket and re-present a rolled-back head.
+        #
+        # VALIDATED, not substituted. Overwriting the caller's value would keep the
+        # floor honest and break something else: the supervisor recomputes
+        # request_sha256 over the payload and `governed_turn_open` refuses when the
+        # request's install_id differs from the signed one (`:487-488`), so a silent
+        # substitution turns a deployment misconfiguration into a confusing failure
+        # three hops away. This refuses at the door, by name, with the two values
+        # withheld from the message -- the caller already knows what it sent, and the
+        # configured value is not a fact it is entitled to learn by probing.
+        if validated["install_id"] != config.install_id:
+            raise ChallengeAuthorityError(
+                "create-pending install_id does not match this deployment's configured install_id"
+            )
         now = clock_ms()
         pending_id, pending_expires_at_ms = store.create_pending(validated, now)
         return {
