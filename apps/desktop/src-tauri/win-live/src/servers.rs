@@ -109,6 +109,16 @@ const CREATE_PENDING_FIELDS: [&str; 9] = [
 pub struct AuthorityConfig {
     pub challenge_key_id: String,
     pub supervisor_id: String,
+    /// The deployment's own install id — the authority's, never the caller's (re-audit `B-01`).
+    ///
+    /// `A-01` pinned this on the Python/Linux authority and **left this twin untouched**, while the
+    /// ledger row was titled "(P2, both platforms)" and marked closed with no platform caveat. That
+    /// is precisely the `F-02` failure the ledger header cites as the reason the file exists:
+    /// marking a finding CLOSED on one platform's evidence. Fixed here, and the row is corrected.
+    ///
+    /// It scopes the evidence-head anti-rollback floor (`EvidenceHead { install_id, .. }`), so a
+    /// caller that chooses it can bootstrap a fresh bucket and re-present a rolled-back head.
+    pub install_id: String,
     pub challenge_signing_seed: [u8; 32],
 }
 
@@ -172,6 +182,14 @@ impl Authority {
             _ => return refuse("create-pending", "malformed"),
         };
         let install_id = get_str(o, "install_id").unwrap();
+        // CHECKED against this deployment's own install id, not taken on trust (re-audit `B-01`).
+        // Validated rather than substituted, for the same reason as the Linux twin: the supervisor
+        // recomputes `request_sha256` over the payload, so silently rewriting the caller's value
+        // would turn a misconfiguration into a failure several hops away. The configured value is
+        // not echoed back — the caller learns its own value was refused, not what would be taken.
+        if install_id != self.cfg.install_id {
+            return refuse("create-pending", "install_id_mismatch");
+        }
         let request_nonce = get_str(o, "request_nonce").unwrap();
 
         // Recompute request_sha256 from the validated facts (requested_at = decimal string of the ms).
@@ -1629,6 +1647,7 @@ mod terminal_artifact_tests {
             authority: Authority::new(AuthorityConfig {
                 challenge_key_id: "ck-1".into(),
                 supervisor_id: SUP_ID.into(),
+                install_id: "in-1".into(),
                 challenge_signing_seed: challenge_seed,
             }),
             supervisor: Supervisor::new(SupervisorConfig {
@@ -1762,6 +1781,37 @@ mod terminal_artifact_tests {
     /// (docs/OWNER_ACTION_REQUIRED.md 1c) and section 5's table was corrected. Without this test the
     /// Rust half of the correction had no executable guard at all: every consumer of the handle is
     /// opaque to the formula, so a revert here would break nothing that runs.
+    #[test]
+    fn a_foreign_install_id_in_create_pending_is_refused() {
+        // Re-audit B-01. A-01 pinned this on the Python authority and left this twin taking the
+        // caller's value straight off the wire, feeding the scope of the anti-rollback floor
+        // (`EvidenceHead { install_id, .. }`). Everything else in the request is the same request
+        // the honest tests send, so only the pin can refuse it.
+        let now = 1_700_000_000_000i64;
+        let kit = kit();
+        let req = |install: &str| {
+            json!({
+                "op": "create-pending",
+                "run_id": "run-1", "task_id": "task-1", "workspace_id": "ws-1",
+                "install_id": install, "request_nonce": format!("n-{now}-{install}"),
+                "system_sha256": "aa".repeat(32), "history_sha256": "bb".repeat(32),
+                "generation_config_sha256": "cc".repeat(32), "requested_at_ms": now,
+            })
+        };
+
+        let foreign = kit.authority.dispatch(&req("in-SOMEONE-ELSE"), now);
+        assert_eq!(foreign["ok"], json!(false), "{foreign}");
+        assert_eq!(foreign["reason"], json!("install_id_mismatch"), "{foreign}");
+        // The configured value is not disclosed: the caller learns its own value was refused, not
+        // what would have been accepted.
+        assert!(!foreign.to_string().contains("in-1"), "{foreign}");
+
+        // The positive control — without it, an arm that refuses every create-pending would pass
+        // the assertion above.
+        let honest = kit.authority.dispatch(&req("in-1"), now);
+        assert_eq!(honest["ok"], json!(true), "{honest}");
+    }
+
     #[test]
     fn challenge_handle_addresses_the_signed_document_not_the_payload_alone() {
         let now = 1_700_000_000_000i64;
