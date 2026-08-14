@@ -19,7 +19,7 @@
 >   **P1-5** durable manifest snapshot persisted atomically with the floor + semantic
 >   uniqueness (§1.6, §4.3). Architect design **YELLOW** (architecture approved; 5
 >   contract redlines).
-> - **rev 4** (this) — closes rev-3's 5 contract redlines: **P1-1** normative
+> - **rev 4** — closes rev-3's 5 contract redlines: **P1-1** normative
 >   per-artifact canonical-bytes table matching the merged desktop formulas + all-formula
 >   parity (§4.0a); **P1-2** the nonce schema now matches the merged `brops_core::id()`
 >   UUIDv4 string, not `hex(32B)` (§4.1); **P1-3** the durable forensic-attestation
@@ -29,7 +29,8 @@
 >   with 4 same-user-isolation acceptance tests (§3, §5); **P1-5** the protected-store
 >   atomic publish algorithm (§4.0). Architect design **YELLOW** (architecture approved;
 >   1 final contract redline — the supervisor-attestation key authority).
-> - **rev 5** (this) — closes rev-4's final redline: the desktop resolves the
+> - **rev 5** (this document's revision; rev 4 above carried "(this)" as well until 2026-08-14, so
+>   the history claimed two current revisions at once) — closes rev-4's final redline: the desktop resolves the
 >   **supervisor-attestation key from the root-signed manifest snapshot** (not signer
 >   config), via an explicit **`key_usage`** discriminator (`receipt_signing` |
 >   `supervisor_attestation`) with **enforced type separation** — a receipt-signing key
