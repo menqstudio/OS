@@ -1,8 +1,11 @@
 //! End-to-end schema/migration test for `brops-core`.
 //!
-//! Applies every migration (0001..0023) in order to a fresh SQLite database and
-//! asserts the resulting shape: `SCHEMA_VERSION == 23`, the ledger is contiguous
-//! 1..=23, the key tables/columns exist, and the constraints introduced across
+//! Applies every migration (0001..0024) in order to a fresh SQLite database and
+//! asserts the resulting shape: `SCHEMA_VERSION == 24`, the ledger is contiguous
+//! 1..=24, the key tables/columns exist, and the constraints introduced across
+//! (This header said 0023 / `== 23` / 1..=23 while the assertion 71 lines below
+//! required 24 — the file contradicted itself inside one scroll. That is the
+//! defect START_HERE.md names first: a comment that was true when written.)
 //! the migrations (status-guard triggers, the run_steps position uniqueness, and
 //! the Wave-3a receipt tables' CHECK/PK/one-time-consume invariants) actually
 //! bite. Migrations are forward-only (no down scripts), so the "down/idempotency"

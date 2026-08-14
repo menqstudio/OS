@@ -114,8 +114,11 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 > Phase 3 and is finalized in Phase 10.
 
 > **⚠ This table is a PLAN, not a status board — corrected 2026-08-09.** Until today it showed Phase 2
-> as “ready” and Phases 3–9 as “blocked / not started”, while migrations `0020`–`0022` (automation runs,
-> store-write records, integration `auth_ref`) exist with passing tests, `SCHEMA_VERSION = 22`, the
+> as “ready” and Phases 3–9 as “blocked / not started”, while migrations through **`0024`** (automation
+> runs, store-write records, integration `auth_ref`, then receipt-attempt uniqueness and
+> demonstration-badge binding) exist with passing tests and **`SCHEMA_VERSION = 24`**
+> (`core/src/db.rs:31`; `core/tests/schema_migrations.rs:75` asserts it) — this clause said
+> `0020`–`0022` and `22` until 2026-08-14, two migrations after that stopped being true — the
 > 22-page cockpit is built, and group chat and automations shipped. The status column now restates
 > [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)'s phase-status table, which is the
 > single source — read it there, and treat anything here that disagrees as this table being stale
@@ -249,8 +252,10 @@ OS/
 > *Contracts dedupe* → սկսվում է Phase 3-ում, ավարտվում Phase 10-ում։
 
 > **⚠ Այս աղյուսակը ՊԼԱՆ ա, ոչ վիճակի տաբլո — ուղղված 2026-08-09։** Մինչև այսօր ցույց էր տալիս Phase 2-ը
-> «ready», իսկ Phase 3–9-ը՝ «blocked», մինչդեռ `0020`–`0022` migration-ները կան ու թեստերը անցնում են,
-> `SCHEMA_VERSION = 22` ա, 22-էջանոց cockpit-ը կառուցված ա, իսկ group chat-ը ու automation-ները հանված են։
+> «ready», իսկ Phase 3–9-ը՝ «blocked», մինչդեռ migration-ները հասել են **`0024`**-ի ու թեստերը անցնում են,
+> **`SCHEMA_VERSION = 24`** ա (`core/src/db.rs:31`) — այս տողը գրում էր `0020`–`0022` ու `22` մինչև
+> 2026-08-14, երկու migration այն բանից հետո ինչ դա դադարեց ճիշտ լինելուց — 22-էջանոց cockpit-ը
+> կառուցված ա, իսկ group chat-ը ու automation-ները հանված են։
 > Վիճակի սյունը այժմ կրկնում ա [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)-ինը՝ միակ աղբյուրը։
 > «Կառուցված» երբեք չի նշանակում «վստահելի»՝ production դարպասը բոլոր տողի վրա էլ փակ ա։
 
