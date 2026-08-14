@@ -769,15 +769,28 @@ class CompletionMintTests(unittest.TestCase):
         return conn, store, handle, output
 
     def _complete(self, conn, store, handle, *, service):
+        # A REAL chain, by the recorder's own rule (audit A-02, 2026-08-14). This fixture used to
+        # carry `final_event_hash: "d" * 64` and an event with no `previous_event_hash` and no
+        # `sequence` — a chain no recorder would write, which passed because nothing verified the
+        # link. That is the finding, standing in a test: the fork detector's discriminator was a
+        # value a fixture could invent.
+        def _canon(obj):
+            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+        payload = {"output_sha256": handle}
+        event = {
+            "event_type": "output-captured",
+            "payload": payload,
+            "payload_sha256": hashlib.sha256(_canon(payload)).hexdigest(),
+            "previous_event_hash": None,
+            "sequence": 1,
+        }
         chain = {
             "protocol": "brops.run-evidence-chain.v1",
-            "final_event_hash": "d" * 64, "event_count": 1, "last_sequence": 1,
+            "final_event_hash": hashlib.sha256(_canon(event)).hexdigest(),
+            "event_count": 1, "last_sequence": 1,
             "head_sequence": 1,
-            "events": [{"event_type": "output-captured",
-                        "payload": {"output_sha256": handle},
-                        "payload_sha256": hashlib.sha256(
-                            json.dumps({"output_sha256": handle}, sort_keys=True,
-                                       separators=(",", ":")).encode()).hexdigest()}],
+            "events": [event],
         }
         return gss.dispatch(
             {"op": "complete-run", "execution_attempt_id": "attempt-1",

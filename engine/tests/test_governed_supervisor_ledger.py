@@ -680,5 +680,77 @@ class LifecycleTests(unittest.TestCase):
             conn.execute("ROLLBACK")
 
 
+class EvidenceChainLinkTests(unittest.TestCase):
+    """audit **A-02**: the chain's hash link is verified, not merely written.
+
+    Before 2026-08-14 both consumers checked real properties of the chain — the protocol tag,
+    exactly one ``output-captured`` event, that event's payload against its own
+    ``payload_sha256``, the counts — and never the LINK. ``final_event_hash`` was copied off the
+    document with only a format check, while being the discriminator ``_evidence_floor_cas``
+    raises ``EvidenceFork`` on. The fork detector's identity was a field nothing bound to the
+    events it summarised.
+    """
+
+    OUT = "a" * 64
+
+    def _chain(self, *, break_link_at=None, wrong_final=False):
+        """A chain by the recorder's own rule: event_hash = sha256(canonical(event)), chained."""
+        import json as _j
+        payloads = [
+            ("lease-validated", {"execution_attempt_id": "att-1"}),
+            ("execution-launched", {"containment_mode": "test"}),
+            ("output-captured", {"launcher_exit": 0, "output_sha256": self.OUT}),
+        ]
+        previous, events = None, []
+        for sequence, (event_type, payload) in enumerate(payloads, start=1):
+            event = {
+                "event_type": event_type,
+                "payload": payload,
+                "payload_sha256": gsl._sha256_hex(gsl.canonical_bytes(payload)),
+                "previous_event_hash": previous,
+                "sequence": sequence,
+            }
+            previous = gsl._sha256_hex(gsl.canonical_bytes(event))
+            events.append(event)
+        if break_link_at is not None:
+            # Re-point one event at a digest that is not its predecessor's. Everything else about
+            # the chain stays valid, so nothing but the link check can refuse it.
+            events[break_link_at]["previous_event_hash"] = "b" * 64
+        doc = {
+            "event_count": len(events),
+            "events": events,
+            "final_event_hash": ("c" * 64) if wrong_final else previous,
+            "head_sequence": 7,
+            "last_sequence": len(events),
+            "protocol": "brops.run-evidence-chain.v1",
+        }
+        return _j.dumps(doc).encode("utf-8")
+
+    def test_an_honest_chain_still_derives(self):
+        """The positive half. Without it the negatives below could be satisfied by an arm that
+        refuses every chain."""
+        derived = gsl.derive_evidence_from_chain(self._chain(), self.OUT)
+        self.assertEqual(derived["evidence_event_count"], 3)
+        self.assertEqual(derived["evidence_head_sequence"], 7)
+        self.assertEqual(len(derived["evidence_final_event_hash"]), 64)
+
+    def test_a_broken_link_is_refused(self):
+        for index in (1, 2):
+            with self.subTest(event=index):
+                with self.assertRaises(gsl.InvalidHead):
+                    gsl.derive_evidence_from_chain(self._chain(break_link_at=index), self.OUT)
+
+    def test_a_first_event_claiming_a_predecessor_is_refused(self):
+        """The head of the chain must claim no predecessor; otherwise a chain can be presented
+        with its beginning cut off and the remainder still self-consistent."""
+        with self.assertRaises(gsl.InvalidHead):
+            gsl.derive_evidence_from_chain(self._chain(break_link_at=0), self.OUT)
+
+    def test_a_final_event_hash_that_is_not_the_last_digest_is_refused(self):
+        """The one that matters: this field is what EvidenceFork compares."""
+        with self.assertRaises(gsl.InvalidHead):
+            gsl.derive_evidence_from_chain(self._chain(wrong_final=True), self.OUT)
+
+
 if __name__ == "__main__":
     unittest.main()
