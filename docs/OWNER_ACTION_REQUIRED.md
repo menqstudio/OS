@@ -9,7 +9,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > **The standing audit verdict is RED, and it is older than the code.** Two independent audits have
 > run. The second — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
 > of `main` @ `219c763`, AFTER the first round's remediation — confirmed **4 of 18** blockers closed
-> and left **122 surviving findings** (1 P0, 7 P1, 32 P2, 82 P3). Its P0 was that the supervisor
+> and left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3). Its P0 was that the supervisor
 > still copied the executing chain's own `output_handle` into the attestation it signed: the F-01
 > signing oracle surviving a fix that addressed F-01's symptom. **It has never been re-run**, on that
 > head or on any of the later ones, so nothing since is independently confirmed. The index is
@@ -346,7 +346,7 @@ A green CI is not an audit. CI runs the tests we wrote. Audits on this repositor
 on rows the builder had marked closed — which is why a tick in these documents means *independently
 confirmed* and a half-tick means *the builder's unverified claim*.
 
-**Concretely, as of 2026-08-09:** the last independent audit returned **RED** with 122 surviving
+**Concretely, as of 2026-08-09:** the last independent audit returned **RED** with 45 surviving
 findings, it assessed `main` @ `219c763`, and `main` is now `b3010f6` — so a large part of that
 verdict describes code that has since changed, in both directions, and **nobody who did not build
 this has looked at any of it.** Findings closed since are the Builder's claims. This is the item on
