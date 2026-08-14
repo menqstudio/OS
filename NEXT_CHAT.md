@@ -1,8 +1,8 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `ea37112`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `ea37112`.** The only thing open is PR #98 on `fix-phase1-box2-reason`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Phase 1's two open DoD rows both reduce to the Owner's gate: the product path does not reach the governed machinery because build_governed_executor returns UpstreamBlockedExecutor unless BROPS_BROKER_CONFIG is set, and nothing in the shipped app sets it. No Builder change closes either row. What does: the independent audit passing on main, then the Owner approving. The standing verdict is the RED of 2026-08-06 at 219c763 - 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3). ONE Owner decision is also open: 1b, the head-floor write principal.
+> **Next:** Phase 1's two open DoD rows both reduce to the Owner's gate: the product path does not reach the governed machinery because build_governed_executor returns UpstreamBlockedExecutor unless BROPS_BROKER_CONFIG is set, and nothing in the shipped app sets it. No Builder change closes either row. What does: the independent audit passing on main, then the Owner approving. Standing verdict: RED of 2026-08-06 at 219c763, 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3). ONE Owner decision is also open: 1b, the head-floor write principal.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed, left 14 not fully closed (2 still open, 12 partial), and recorded 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3). It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
