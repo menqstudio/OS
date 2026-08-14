@@ -39,8 +39,9 @@
 2. Open this roadmap. Find the **first phase** whose *Definition of Done* is not fully checked.
 3. Inside that phase, take the **first unchecked task** in its task checklist. Confirm no one else holds
    it (`TASKS.md`), then claim it there and on the task line here.
-4. Do the work on a **feature branch**, open a **draft PR**, satisfy the phase's *Merge gate*, hand Gev
-   the exact push/merge command. **You never push or merge** (see §B.5).
+4. Do the work on a **feature branch**, open a **PR**, satisfy the phase's *Merge gate*, and merge it
+   yourself — **but only once every required check is green on the exact head that will merge**
+   (amended 2026-08-14 by Owner waiver; the full rule, and why that clause is load-bearing, is §B.5).
 5. When you finish a task, check its box **in the same commit**. When every box in a phase is checked and
    the *Merge gate* is green, mark the phase ✅ in the roadmap table below.
 
@@ -96,7 +97,7 @@ These apply to **every phase**. A phase section never repeats them; it only name
 ### B.1 Roles
 | Who | Role | Owns |
 |---|---|---|
-| 👑 **Gev** (`menqstudio`) | Owner / Final Approver | Approves & merges every PR; the only push/merge authority; final architecture calls. |
+| 👑 **Gev** (`menqstudio`) | Owner / Final Approver | Final architecture calls; owns this roadmap. **Push/merge delegated to the Builder 2026-08-14** (§B.5, Owner waiver, revocable by editing that line). |
 | 📐 **ChatGPT** | Architect / Auditor | Architecture, security review, sign-off gates, coordination. |
 | 🔨 **Claude** | Builder / Executor | Code, tests, commits, PRs, docs. Executes this roadmap. |
 
@@ -143,12 +144,39 @@ python engine/tools/bro_validate.py               # SST + registry validation
 ```
 
 ### B.5 Push / release rule
-The AI never pushes or merges. For every completed task the Builder prepares:
+
+> **AMENDED 2026-08-14 — Owner decision, recorded as an Owner waiver.** No Architect audit was
+> performed, and this line says so rather than letting the amendment read as audited — the same
+> form as the rev-30 `OWNER_APPROVED_NOT_ARCHITECT_AUDITED` token. This rule read *"The AI never
+> pushes or merges"* until now, and it was the standing rule on the day #84, #85 and #86 merged.
+> The Owner's stated reason for amending it: this roadmap is already the standing instruction, and
+> a human pressing the merge button adds no information to it.
+
+**The Builder may push, open pull requests, and merge them.** Three things do NOT move:
+
+1. **A merge requires every required check GREEN on the EXACT head being merged.** Not "green
+   earlier", not "green on the parent" — the head that merges. #84 merged with `Repo-state · live
+   GitHub truth verifier` **red**; #85 and #86 merged while their runs were still in flight, so the
+   head that landed was never the one the checks passed on; all three carried an
+   `AUDIT_CANDIDATE_HEAD` marker that no longer named the merged head. This clause is the property
+   those three violated, and delegating the button does not relax it — it moves who is answerable
+   for it.
+2. **The Owner stays Final Approver** and can revoke this delegation by editing this line.
+3. **Nothing about the product gate changes.** The governed surfaces stay fail-closed and the
+   standing independent verdict stays RED. Who may press merge and what may ship are different
+   questions; this amendment answers only the first.
+
+For every completed task the Builder runs, in this order:
 ```bash
-git add -A && git commit -m "<message>"      # local only
-# Then hand Gev exactly:
+git add -A && git commit -m "<message>"
 git push -u origin <branch>
-gh pr create --draft --title "<t>" --body "<b>"   # or: gh pr ready / gh pr merge  (Gev runs)
+gh pr create --title "<t>" --body "<b>"        # body carries AUDIT_CANDIDATE_HEAD: <40-hex>
+python tools/sync_active_pr.py --pr <n> --branch <branch> --summary "<s>"
+git commit -am "..." && git push               # the carrier move is its own commit
+gh pr edit <n> --body-file <f>                 # marker := the head that will merge
+gh run watch <run-id> --exit-status            # WAIT. do not merge in flight
+gh pr checks <n>                               # every check pass, none pending
+gh pr merge <n> --merge                        # only now
 ```
 
 ---
@@ -327,7 +355,8 @@ These override the per-phase row whenever a task falls into the class — regard
 | Trust-boundary / key / secret handling | 🔨 | 📐 **mandatory** | 🛑 | Desktop never holds keys/leases/secrets. |
 | Contract / schema change (`bridge/`, `contracts/`, engine schemas) | 🔨 | 📐 **mandatory** | ✅ | Versioned; consumers updated same PR. |
 | Execution-order / dependency-graph change (§E) | 🔨 (proposal) | 📐 **mandatory** | 🛑 | This is a §I Change-Control event. |
-| `git push` / `gh pr merge` / release | — | — | ✅ **Gev only** | The AI is blocked from push/merge by the classifier (§B.5). |
+| `git push` / `gh pr merge` | 🔨 | — | delegated | Builder may merge, and **only on an all-green exact head** (§B.5, Owner waiver 2026-08-14). Was "Gev only, the AI is blocked by the classifier" — which was the rule while #84 merged red. |
+| Release / tag / publish | — | — | ✅ **Gev only** | Not covered by the §B.5 delegation. Shipping is a separate question from merging, and the production gate stays fail-closed regardless. |
 | UI/copy/docs-only, no arch/security/order impact | 🔨 | 📐 (light) | ✅ | Normal PR flow. |
 
 ---
