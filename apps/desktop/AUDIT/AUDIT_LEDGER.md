@@ -8,9 +8,36 @@
 > status it cannot back — anything not individually re-verified is marked so, with the independent audit
 > as the live source of truth for current-code behaviour.
 
-**Authoritative current assessment:** [`2026-08-06-remediation-audit.md`](./2026-08-06-remediation-audit.md)
+**Authoritative current assessment:** [`2026-08-14-zero-trust-audit-e0dd969.md`](./2026-08-14-zero-trust-audit-e0dd969.md)
+— the **THIRD** independent audit, of `main` @ `e0dd969`, commissioned by the Owner and run
+**auditor-role-only, READ-ONLY on the tree**. **Verdict: RED — for materially fewer reasons than
+2026-08-06.**
+
+| | |
+|---|---|
+| New findings | **5** — `A-01`…`A-05` (P2 1 · P3 4) |
+| ◑ claims attacked | 14 |
+| ◑ claims it could **not** refute → recommended ✅ | **9** |
+| ◑/⚠️ rows found **STALE** (open here, closed in the code) | 4 |
+| Rows found **false** at this head | 2 |
+| Previous round's **P0** | **closed on both platforms; could not be reopened** |
+| The gate's three refusals | **confirmed closed** at this head |
+
+**The promotions in §3 of that report are not applied in this file yet.** Doing so is the next
+Builder task and it must copy the auditor's own row list, not a summary of it.
+
+**Prior assessment:** [`2026-08-06-remediation-audit.md`](./2026-08-06-remediation-audit.md)
 — the Owner's SECOND independent audit, of `main` @ `219c763` AFTER the remediation. **Verdict: RED.**
-4 of 18 blockers CONFIRMED CLOSED, 2 STILL OPEN, 12 PARTIALLY CLOSED, 45 surviving findings (1 P0).
+4 of 18 blockers CONFIRMED CLOSED, 2 STILL OPEN, 12 PARTIALLY CLOSED, 45 surviving findings
+(1 P0 · 5 P1 · 13 P2 · 26 P3).
+
+> **The new headline finding, because it is the one that moves.** **A-01 (P2, both platforms):** the
+> anti-rollback floor is scoped by `install_id`, and the broker chooses it. The defect the ledger
+> records as closed (R-07/R-10, floor moved off `task_id`) moved **up one level** rather than closing:
+> `install-B / task-FRESH / head 3` bootstraps the same rolled-back head that `install-A` refuses.
+> `governed_supervisor_ledger.py:762-765` states the rule it breaks — *"A defence whose scope the
+> attacker chooses is not a defence."* `supervisor_id` is config-pinned
+> (`governed_acceptance.py:405`); `install_id` is not.
 
 > **That audit's target is not the current tree.** It assessed `main` @ `219c763`. Nine PRs have
 > merged since (`2debb71`, `e81f50c`, `bfd55da`, `327519c`, `153a32f`, `8ac57c9`, `c139bde`,
