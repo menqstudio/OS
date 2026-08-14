@@ -6,14 +6,21 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 **Նոր session? Ասե՞լ են «գնա ռեպո կարդա ՄԴները»։ Սա ամբողջ onboarding-ն ա։
 Արա ԱՌԱՋԻՆԸ, բացառություն չկա — հետո պատրաստ ես, ավել բացատրություն պետք չի։**
 
-> **Where things stand (2026-08-09).** `main` = `b3010f6` — a **baseline at the time of writing**;
+> **Where things stand (2026-08-14).** `main` = `0a0be37` — a **baseline at the time of writing**;
 > resolve the live HEAD yourself every session, and never trust this line over `git log`. The machine
 > mirror is `config/current_state.json.settled_at_main_head`, which `tools/check_repo_state.py`
 > compares against live GitHub — so *that* cannot quietly drift. **This sentence can, and did:** it
-> said `c1e0aca` and "#80 was the last" one merge after both stopped being true.
-> **Open pull requests: 1** — #82 on `settle/after-81`, which is the pull request that records the
-> settle and carries this correction; nothing else is open. PRs #71–#81 all merged; #81 was the
-> last of them and its branch is gone.
+> said `c1e0aca` and "#80 was the last" one merge after both stopped being true, then sat at
+> `b3010f6` and "#82 is open" through **seven** further merges (#83–#89) — five of them on 2026-08-14
+> alone. Nothing checks it. Treat every head and PR number on this page as a date-stamped guess.
+> **Open pull requests: 1** — the one carrying this correction. #84–#89 all merged and their branches
+> are gone.
+>
+> **Push and merge were delegated to the Builder on 2026-08-14** (roadmap §B.5, Owner waiver, no
+> Architect audit — it says so in its own text). One clause is not delegated with it: a merge needs
+> **every** required check green **on the exact head that merges**. #84 merged with `Repo-state` red,
+> and #85/#86 merged while their runs were still going, so the head that landed was never the head
+> the checks passed on. Release and tagging stay the Owner's.
 > The wave before them closed thirty-odd findings of one shape: *something was built and nothing
 > could reach it, or something was displayed and nothing established it.* The #71–#81 wave has a
 > different shape: a deployment runbook and a trust ceremony that were **written and never run**,
