@@ -1,15 +1,24 @@
 # Wave 3b-1 re-scope — implementation index (3b-1A + 3b-1B)
 
-> **STATUS (2026-07-25):** **3b-1A is Architect Code GREEN** (@ `dffd164`; latest exact-head
-> CI 8/8 GREEN — query GitHub Checks for the current HEAD's run); **3b-1B is design-lock RED**
-> — the Architect reviewed the consolidated **rev 25** (@ `bcd24fe`; exact-head CI #132 8/8 SUCCESS;
-> CI GREEN ≠ design GREEN), CONFIRMED CLOSED the rev-24 model-identity P0 + issued-row-cleanup P1, and returned the
-> FINAL CONSOLIDATED remediation Design RED with 2 P0 · 3 P1 (refusal-plumbing / immutable-identity /
-> authority-constants / output-stream / staging-expiry), mandating a **parallel fan-out (Tracks A–F) + one
-> integrator + a fresh independent red-team over the whole §0–§9**; the addendum is now **rev 26 (CONSOLIDATED)** —
-> a proposed design-GREEN candidate, **not yet Architect-GREEN, no code** (rev-25 reviewed HEAD `bcd24fe`, exact-head
-> CI #132 8/8 GREEN — evidence only; resolve the live tip + Checks from GitHub). See
-> `NEXT_CHAT.md` §0/§3 for the authoritative current state, STOP gates, and next action.
+> **STATUS — deliberately not restated here (rewritten 2026-08-14).** This block used to carry a
+> dated snapshot: *"3b-1B is design-lock RED … the addendum is now **rev 26** … not yet
+> Architect-GREEN, **no code**"*, dated **2026-07-25** and still saying it three weeks later. Every
+> clause had stopped being true: the candidate is **rev-30**, the implementation landed, and the
+> pull request this file names four times — **#31** — was superseded and closed. A snapshot in a
+> file nothing checks is a snapshot that will be wrong again by the time it is read.
+>
+> **Read the state from the two sources that cannot quietly drift:**
+> [`NEXT_CHAT.md`](../../NEXT_CHAT.md) for the handoff, and
+> [`config/current_state.json`](../../config/current_state.json) for the machine mirror —
+> `tools/check_repo_state.py` verifies the latter against live GitHub on every pull request.
+> Its `status_tokens` are the short answer: as of this rewrite
+> `CURRENT_DESIGN_CANDIDATE = rev-30`, `CURRENT_DESIGN_GATE = OWNER_APPROVED_NOT_ARCHITECT_AUDITED`,
+> `CURRENT_CODE_AUDIT = ARCHITECT_PENDING`, `CURRENT_PRODUCTION_VERIFIED = false`.
+>
+> **What has not changed since this file was written, and is the part worth keeping:** design-GREEN
+> is not code-GREEN, an Owner approval is not an Architect audit, and **production
+> `trusted_verified` stays fail-closed** until the chain is exact-head zero-trust GREEN, an
+> independent audit passes, and the Owner approves. The standing independent verdict is **RED**.
 >
 > **This file is a concise IMPLEMENTATION INDEX, not a schema source.** The single normative
 > source for every 3b-1B contract (artifact matrix, exact schemas, time model, capability
@@ -20,10 +29,12 @@
 
 ## 1. Re-scope
 
-After the 2nd code-audit RED (PR #31), 3b-1 was split into **3b-1A** (isolated
+After the 2nd code-audit RED (on the then-active PR #31), 3b-1 was split into **3b-1A** (isolated
 signing-boundary completion — ✅ Architect Code GREEN) + **3b-1B** (authoritative
-execution→receipt binding — design-lock in progress). Both on PR #31. **3b-2 does not
-start** until 3b-1 is exact-head zero-trust GREEN and merged.
+execution→receipt binding). *(This paragraph said "Both on PR #31"; that pull request was
+superseded and the consolidated work landed via PR #48 and the pull requests after it. The split
+itself is the durable fact — the carrier is not, and is in `config/current_state.json`.)*
+**3b-2 does not start** until 3b-1 is exact-head zero-trust GREEN and merged.
 
 ## 2. Existing engine primitives 3b-1B REUSES (no parallel executor)
 
@@ -65,6 +76,10 @@ that wrap them (the base functions below are NOT used verbatim for the governed 
 
 ## 4. Order + non-goals
 
-3b-1A (CI GREEN, done) → 3b-1B (design-GREEN → implement) → then 3b-2/3b-3. All on PR #31.
-STOP: `NoTrustedManifest` unchanged, no production "Verified", PR #31 not merged until 3b-1B
-is design-GREEN + implemented + code-audit GREEN + exact-head CI GREEN.
+3b-1A (CI GREEN, done) → 3b-1B (design-GREEN → implement) → then 3b-2/3b-3. *(This line said "All
+on PR #31" and gated on that pull request not being merged; #31 was superseded and closed long
+before this was read. The ORDER is the durable content; the carrier is in
+`config/current_state.json`.)*
+**STOP, and this part has not moved:** `NoTrustedManifest` unchanged, **no production "Verified"**,
+and nothing advances to 3b-2 until 3b-1B is design-GREEN + implemented + **code-audit GREEN** +
+exact-head CI GREEN. `CURRENT_CODE_AUDIT` is `ARCHITECT_PENDING`, so that gate is still shut.
