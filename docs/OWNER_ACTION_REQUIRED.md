@@ -166,9 +166,48 @@ verifying key independently (so the comparison has two sources and can fail), or
 construction as the property and delete the guard rather than keep a check that reads as one. Doing
 neither leaves a keystone blocker open, which is where it stands today.
 
-## 1b. The engine's head floor has no posture that satisfies its own two rules
+## 1b. RESOLVED 2026-08-14 — a floor-writer service owns the marks; not a setuid helper
 
-**What you have to decide: where the write happens.** Not a patch — a deployment topology choice.
+**The Owner's decision, taken 2026-08-14: option 1, the floor-writer service.** A small always-on
+principal owns the marks directory and accepts append-only advance requests from the builder. The
+setuid helper is not taken.
+
+**Why, in the order the reasons decided it.**
+
+1. **`setuid` does not exist on Windows** — and Windows is where this problem was found. Every posture
+   in the table below was driven against a real Windows directory. Choosing the helper solves Linux
+   and leaves the platform that surfaced the defect needing a service anyway: **two mechanisms for one
+   contract**, which is the defect that made you retire the direct AF_UNIX chain on 2026-08-12
+   (§1d RESOLVED — *"keeping two implementations of one contract is the defect this repository found
+   eight times in three days"*).
+2. **The transport already exists and is green in CI on both platforms** — AF_UNIX + `SO_PEERCRED` on
+   Linux, the named-pipe peer-auth broker on Windows (`§0.W broker syscall proof`). A floor-writer is a
+   small append-only op over paths that are already gated.
+3. **`A-01` argues for it, and this reason is newer than the question.** The third audit
+   ([`2026-08-14-zero-trust-audit-e0dd969.md`](../apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md))
+   found the floor's **scope key** (`install_id`) is chosen by the party the floor constrains. 1b is
+   about the floor's **writer** being that same party. They are two faces of one defect: *the floor is
+   controlled by its own subject.* A resident principal that **owns** the marks directory is the
+   natural place to pin `install_id` from trusted config as well — one principal, one trusted config,
+   both defects closed at the same boundary. A setuid helper cannot do that: it is invoked **by** the
+   builder, so the scope key stays in the caller's hand.
+
+**Constraints that travel with the decision.**
+
+- **Fail closed.** If the service is down, completion refuses. An unavailable floor must never read as
+  "no floor required" — that exact coercion is what audit R-06 closed for the directory case.
+- **Not inside the broker.** The broker runs the builder's work; giving it the floor write recreates
+  the defect one level up, exactly as `task_id` → `install_id` did.
+- **§I change-control.** This is a deployment-topology change, so: Owner approval (given, here) →
+  Architect audit → implement. **No implementation lands on this decision alone.**
+
+**The analysis that produced the question is kept below as the record.**
+
+---
+
+## 1b (superseded). The engine's head floor has no posture that satisfies its own two rules
+
+**What had to be decided: where the write happens.** Not a patch — a deployment topology choice.
 
 `bro_completion`'s anti-rollback floor asks two things of the directory holding its marks: `bro_custody`
 refuses a directory the polices account can rewrite, and the code has to be able to write a mark into it.
@@ -195,11 +234,12 @@ broker uid only), **absent entirely on Windows** (open finding R-42), and has no
 `evidence_head_sha256`, which drives the "same sequence, different signed head" refusal. The docstrings that
 recommended that route have been corrected so the next reader does not repeat it.
 
-**The real options, both needing your call:**
-1. **A floor-writer service** — a small always-on principal that owns the marks directory and accepts
-   append-only advance requests from the builder.
-2. **A setuid helper** — the same idea without a resident service; the repo already ships a setuid launcher
-   pattern for the Linux live kit.
+**The real options — decided 2026-08-14, option 1 taken (see the RESOLVED block above):**
+1. ✅ **A floor-writer service** — a small always-on principal that owns the marks directory and accepts
+   append-only advance requests from the builder. **TAKEN.**
+2. ❌ **A setuid helper** — the same idea without a resident service; the repo already ships a setuid launcher
+   pattern for the Linux live kit. **Not taken:** `setuid` does not exist on Windows, which is the platform
+   every posture in the table above was driven against, so it would have required the service anyway.
 
 Until one of them exists, the floor's custody rule is satisfiable only by the acknowledgement, which
 switches off every custody rule at once. That is recorded in the code as a contradiction rather than papered
