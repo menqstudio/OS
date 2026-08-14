@@ -1,6 +1,6 @@
 # TASKS — the coordination board · координация board
 
-> **✅ SETTLED — `main` is at `806b7a5`.** The only thing open is PR #93 on `fix-security-md-staleness`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `2cb4dc5`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0); it assessed a head that no longer exists, every finding closed since is the Builder's own claim, and a green CI is not an audit. ONE Owner decision is open: 1b, the head-floor write principal (1c RESOLVED 2026-08-10, 1d RESOLVED 2026-08-12). Builder items named and unbuilt: tools/sync_active_pr.py has no test file, and a canonical full-read receipt is required before any new file can be declared.
 >
