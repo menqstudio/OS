@@ -1,8 +1,8 @@
 # TASKS — the coordination board · координация board
 
-> **✅ SETTLED — `main` is at `a9ad4fd`.** The only thing open is PR #86 on `settle-after-85`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `a346847`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Re-run the independent audit on main a9ad4fd. The standing verdict is still the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0), and it is now older than the code. Only then the two Owner decisions in docs/OWNER_ACTION_REQUIRED.md: 1b the head-floor write principal, 1c which half of rev-30 defines challenge_handle.
+> **Next:** Re-run the independent audit on main. The standing verdict is still the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0), and it is older than the code. Then the two Owner decisions in docs/OWNER_ACTION_REQUIRED.md: 1b the head-floor write principal, 1c which half of rev-30 defines challenge_handle. Still unguarded: tools/sync_active_pr.py has no test file.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
