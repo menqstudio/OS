@@ -1,8 +1,8 @@
 # TASKS — the coordination board · координация board
 
-> **✅ SETTLED — `main` is at `2cb4dc5`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `2cb4dc5`.** The only thing open is PR #94 on `fix-3b1-map-staleness`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0); it assessed a head that no longer exists, every finding closed since is the Builder's own claim, and a green CI is not an audit. ONE Owner decision is open: 1b, the head-floor write principal (1c RESOLVED 2026-08-10, 1d RESOLVED 2026-08-12). Builder items named and unbuilt: tools/sync_active_pr.py has no test file, and a canonical full-read receipt is required before any new file can be declared.
+> **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0); it assessed a head that no longer exists, every finding closed since is the Builder's own claim, and a green CI is not an audit. ONE Owner decision is open: 1b, the head-floor write principal. Observed and unresolved: current_state.json design_gate says Architect DESIGN GREEN for rev-30 while status_tokens says OWNER_APPROVED_NOT_ARCHITECT_AUDITED - the Owner knows which is right.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
