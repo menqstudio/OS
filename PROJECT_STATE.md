@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `b1fd31e`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `b1fd31e`.** The only thing open is PR #102 on `fix-a01-install-id-pin`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Four of the third audit's five findings remain: A-02 (the run-evidence chain hash link is written and never checked; final_event_hash decides EvidenceFork), A-05 (Linux JCS vs Windows serde_json::to_vec under one byte-compatible claim), A-03 and A-04 (two ledger claims the code does not make). A-01 is Builder-closed and marked circle-half, NOT confirmed - it needs a re-audit by someone who did not write it. 1b is decided (floor-writer service) and needs an Architect audit before implementation. NO Owner decision is open.
 >
