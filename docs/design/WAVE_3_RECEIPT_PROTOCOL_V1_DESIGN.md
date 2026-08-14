@@ -7,13 +7,22 @@
 > same-epoch-different-hash**. **No product code** ships until this is Architect-GREEN.
 > Builds on merged T-010 + T-011.
 >
-> **Implementation status (2026-07-22):** this design is **APPROVED + merged** (PR #23, `35a6ab5`).
-> **Slice 1 (protocol core, `brops-core::receipt`)** is **DONE + merged** — PR #24, zero-trust
-> GREEN (approved HEAD `c51031e`, merge commit `6c920d0`) after three RED rounds. **Slice 2**
-> (storage & atomicity: migration 0014, atomic verify→consume→persist, one-time nonce, freshness)
-> is the next task, **not started**; slice 3 (transport + UI) and Wave 3b (isolated signer +
-> manifest + production "Verified") follow. Exact live state: root
-> [`NEXT_CHAT.md`](../../NEXT_CHAT.md). This document remains the design spec.
+> **Implementation status — corrected 2026-08-14, and deliberately no longer a snapshot.** This
+> design is **APPROVED + merged** (PR #23, `35a6ab5`), and **Wave 3a slices 1–3 are all merged**:
+> slice 1 `6c920d0` (PR #24), slice 2 `9b214e5` (PR #26, migration 0014), slice 3 `8a580028`
+> (PR #28).
+>
+> This block said, from **2026-07-22** until today, that *"**Slice 2** … is the next task, **not
+> started**"* — three weeks and two merges after it stopped being true, while its sibling on the
+> same canonical read manifest,
+> [`WAVE_3B_ISOLATED_SIGNER_DESIGN.md`](./WAVE_3B_ISOLATED_SIGNER_DESIGN.md), opened with *"Builds
+> on Wave 3a (slices 1–3, merged: `6c920d0`, `9b214e5`, `8a580028`)"*. Two documents a session is
+> told to read in full, disagreeing about whether the same three slices exist.
+>
+> **Where Wave 3b actually stands is not restated here** — that is
+> [`NEXT_CHAT.md`](../../NEXT_CHAT.md) and `config/current_state.json`, the second of which is
+> checked against live GitHub every pull request. What has not changed: **production "Verified"
+> stays fail-closed**, and this document remains the design spec, not a status board.
 
 ## 0. The defect (audit P0-2)
 

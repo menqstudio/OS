@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `7c663ad`.** The only thing open is PR #96 on `fix-schema-version-claims`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `56352d7`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** Re-run the independent audit on main. RED of 2026-08-06 at 219c763; 45 surviving findings (1 P0, 5 P1, 13 P2, 26 P3) per the report's own verdict table. ONE Owner decision is open: 1b, the head-floor write principal. Observed and unresolved: current_state.json design_gate says Architect DESIGN GREEN for rev-30 while status_tokens says OWNER_APPROVED_NOT_ARCHITECT_AUDITED.
 >
