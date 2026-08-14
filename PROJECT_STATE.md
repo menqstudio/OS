@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `ecadc4d`.** Nothing is open. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `ecadc4d`.** The only thing open is PR #89 on `fix-stale-owner-decision-count`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0). It assessed a head that no longer exists, every finding closed since is the Builder's own claim, and docs/OWNER_ACTION_REQUIRED.md section 2 is explicit that a green CI is not an audit and nothing else on that page substitutes for this. ONE Owner decision is open: 1b, the head-floor write principal. 1c was RESOLVED 2026-08-10 and 1d on 2026-08-12 - these banners said 'two Owner decisions, 1b and 1c' until 2026-08-14. Also unguarded: tools/sync_active_pr.py has no test file.
+> **Next:** Re-run the independent audit on main. The standing verdict is the RED of 2026-08-06 at 219c763 (4 of 18 blockers closed, 122 surviving findings, 1 P0). It assessed a head that no longer exists, every finding closed since is the Builder's own claim, and docs/OWNER_ACTION_REQUIRED.md section 2 is explicit that a green CI is not an audit and nothing else on that page substitutes for this. ONE Owner decision is open: 1b, the head-floor write principal. 1c was RESOLVED 2026-08-10 and 1d on 2026-08-12. Also unguarded: tools/sync_active_pr.py has no test file.
 >
 > **The last independent audit returned RED, and none has been run since.** The Owner's SECOND independent audit -- `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, of `main` @ `219c763` AFTER the first round's remediation -- confirmed 4 of 18 blockers closed and left 122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds. It has never been re-run, on that head or on any later one, so **RED is the standing verdict of record.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`.
 >
