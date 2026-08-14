@@ -383,6 +383,12 @@ struct DerivedEvidence {
 
 /// Read + parse `brops.run-evidence-chain.v1` for one attempt. Byte-compatible with the Linux
 /// recorder's chain, so both platforms derive the head the same way from the same document.
+///
+/// That claim was not true when it was written: this function digested the `output-captured`
+/// payload with `serde_json::to_vec` while the Linux twin used JCS
+/// (`governed_supervisor_ledger.py:655`). Corrected 2026-08-14 (audit `A-05`) — both are JCS now.
+/// **Nothing enforces the claim**: no test feeds a Linux-written chain to this parser. Until one
+/// does, this sentence is a Builder's assertion, which is the shape the audit was pointing at.
 fn derive_evidence(dir: &std::path::Path, attempt: &str) -> Option<DerivedEvidence> {
     // The attempt id reaches the filesystem. It is supervisor-minted, but the supervisor does not
     // get to assume its own inputs — a traversal here would let a caller point at any file.
@@ -409,7 +415,19 @@ fn derive_evidence(dir: &std::path::Path, attempt: &str) -> Option<DerivedEviden
     }
     let payload = captured[0].get("payload")?;
     // The event commits to its payload by digest; check that before believing the payload.
-    if crypto::sha256_hex(&serde_json::to_vec(payload).ok()?)
+    //
+    // JCS, not `serde_json::to_vec` (audit A-05, 2026-08-14). The Linux twin digests
+    // `canonical_bytes(payload)` -- JCS -- at `governed_supervisor_ledger.py:655`, while this line
+    // used plain serde serialization, so the two platforms computed the SAME document's digest by
+    // two different rules under a doc comment asserting they were byte-compatible. The canonical
+    // helper was available and in use thirty lines away, for the record and receipt documents
+    // (`:949`, `:971`).
+    //
+    // It failed in the safe direction -- for the payloads this chain carries the two encodings
+    // agree, and a divergence refuses the turn rather than accepting a forgery -- which is exactly
+    // why nothing caught it. `as_object()` yields None for a non-object payload, so a malformed
+    // chain still refuses.
+    if crypto::sha256_hex(&crypto::jcs(payload.as_object()?))
         != captured[0].get("payload_sha256").and_then(Value::as_str)?
     {
         return None;
