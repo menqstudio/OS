@@ -12,11 +12,11 @@ for the final dedupe milestone"*. Nothing moves in Phase 3. The milestone that m
 
 ## 1. What is actually there
 
-Four homes, not two.
+Four homes, not two. Counts are of `*.schema.json`; `engine/schemas/` also holds `registry.json`, which is an index and not a schema — the first version of this table read `21` there against schema counts elsewhere, conflating two units in one column (fifth audit).
 
 | Home | Files | Owner | Consumed how |
 |---|---|---|---|
-| `engine/schemas/` | 21 | Python engine | loaded at runtime by the engine; **hand-mirrored** in Rust |
+| `engine/schemas/` | 20 schemas + `registry.json` | Python engine | loaded at runtime by the engine; **hand-mirrored** in Rust |
 | `engine/contracts/` | 3 (`brops-*.v1`) | the signer wire protocol | loaded by the signer/supervisor |
 | `bridge/contracts/` | 4 | the desktop ↔ sidecar bridge | `task-request` is **loaded at runtime by Rust** (`governed_sidecar.rs`) |
 | `contracts/` | 0 + a README | — | nothing consumes it |

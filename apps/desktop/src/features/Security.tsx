@@ -438,7 +438,22 @@ const SEC_STYLE = `
    checking tone. It is applied by the sigbreathe class, which the component adds only
    in "checking" — the pulse means "this surface is reading the chain right now", which
    is a fact, and not "the chain is alive", which the desktop cannot establish. */
-.v-security .mani.sigbreathe { --tone-rgb: var(--cyan-rgb); animation: sigbreathe 2.6s cubic-bezier(.4,0,.2,1) infinite; }
+/* THE ENTRANCE ANIMATION MUST STAY IN THE LIST. This instrument carries the "reveal" class,
+   which is "opacity:0; transform:translateY(14px); animation:reveal var(--enter) forwards"
+   (aios.css) - the entrance animation is the ONLY thing that makes it visible. The first
+   version of this rule used the animation SHORTHAND at higher specificity, which REPLACES the
+   animation list, so reveal never ran and the instrument rendered at opacity:0, displaced 14px,
+   for the whole of "checking". Measured in a real browser by the fifth independent audit
+   (A-01); no test in this repository could see it, because vitest runs with css:false and
+   Security.test.tsx asserts the class name, not the paint. tools/check_c1_tokens.py checks it
+   statically now, and putting the shorthand back turns that gate RED.
+   The delay is restated because the shorthand resets animation-delay too, and the reveal class
+   sets it separately on the line below its own shorthand. */
+.v-security .mani.sigbreathe {
+  --tone-rgb: var(--cyan-rgb);
+  animation: reveal var(--enter) forwards, sigbreathe 2.6s cubic-bezier(.4,0,.2,1) infinite;
+  animation-delay: calc(var(--i, 0) * var(--stagger)), 0s;
+}
 .v-security .mc-read { min-width: 0; flex: 1 1 300px; }
 .v-security .mc-detail { color: var(--ink-muted); font-size: var(--t-small); margin: var(--s2) 0 0; max-width: 64ch; }
 .v-security .mc-reason { color: var(--ink-muted); text-transform: none; letter-spacing: .01em; margin: 6px 0 0; }

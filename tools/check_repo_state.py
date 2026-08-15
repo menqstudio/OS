@@ -33,7 +33,10 @@ import subprocess
 import sys
 
 MERGE_MAP = {"open": "OPEN", "merged": "MERGED", "closed": "CLOSED"}
-_GH_FIELDS = "state,isDraft,headRefName,baseRefName,headRefOid"
+#: `mergeCommit` is read so `verify_settled_snapshot` can bound settled_at_main_head from BELOW.
+#: An ancestor-of-main check alone can never go stale (the first commit ever made is an ancestor
+#: of every head), which is A-07 from the fifth audit; the carrier's own merge is the real floor.
+_GH_FIELDS = "state,isDraft,headRefName,baseRefName,headRefOid,mergeCommit"
 _HEX40 = "0123456789abcdef"
 # Live GitHub `state` values we accept for a DURABLE PR. Anything else (null, "", unknown) is RED.
 _LIVE_PR_STATES = ("OPEN", "MERGED", "CLOSED")
@@ -80,18 +83,29 @@ def compare_external_prs(snapshot: dict, live: dict) -> list[str]:
         is_draft = lv.get("isDraft")
         if is_draft not in (True, False):
             failures.append(f"PR #{n}: live GitHub isDraft missing/not boolean: {is_draft!r} (fail-closed)")
-        elif pr.get("draft") is not None and bool(pr.get("draft")) != bool(is_draft):
+        elif pr.get("draft") is None:
+            failures.append(f"PR #{n}: snapshot omits `draft`. It used to be optional, which meant an "
+                            f"entry could satisfy the settled-snapshot rule while anchoring only its "
+                            f"head (A-05, fifth audit) — three of the four claimed anchors were "
+                            f"conditional on the snapshot bothering to state them.")
+        elif bool(pr.get("draft")) != bool(is_draft):
             failures.append(f"PR #{n}: snapshot draft={pr.get('draft')} but GitHub isDraft={is_draft}")
         # headRefName / baseRefName: must be present non-empty strings (missing => RED, not skip).
         head_branch = lv.get("headRefName")
         if not (isinstance(head_branch, str) and head_branch):
             failures.append(f"PR #{n}: live GitHub headRefName missing/empty: {head_branch!r} (fail-closed)")
-        elif pr.get("branch") and pr["branch"] != head_branch:
+        elif not pr.get("branch"):
+            failures.append(f"PR #{n}: snapshot omits `branch` — a reader is told a pull request is "
+                            f"open and not which branch to check out (A-05).")
+        elif pr["branch"] != head_branch:
             failures.append(f"PR #{n}: snapshot branch={pr['branch']!r} but GitHub head branch={head_branch!r}")
         base_branch = lv.get("baseRefName")
         if not (isinstance(base_branch, str) and base_branch):
             failures.append(f"PR #{n}: live GitHub baseRefName missing/empty: {base_branch!r} (fail-closed)")
-        elif pr.get("base") and pr["base"] != base_branch:
+        elif not pr.get("base"):
+            failures.append(f"PR #{n}: snapshot omits `base` — whether a pull request targets main or "
+                            f"stacks on another branch changes what merging it means (A-05).")
+        elif pr["base"] != base_branch:
             failures.append(f"PR #{n}: snapshot base={pr['base']!r} but GitHub base={base_branch!r}")
         # EXACT head: both sides must be 40-hex; drift is a FAILURE (forces re-sync), missing live is RED.
         # NOTE: the PR that CARRIES this snapshot is NOT listed in prs[] — it is the current_workflow_pr,
@@ -265,7 +279,8 @@ def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]
 
 
 def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
-                            open_now: set[int], live_main: str | None, is_ancestor) -> list[str]:
+                            open_now: set[int] | None, live_main: str | None, is_ancestor,
+                            carrier_merge_commit: str | None = None) -> list[str]:
     """The carrier has stopped being OPEN. What must the snapshot then say? Pure/testable.
 
     A carrier that has MERGED is the staleness this gate could not see. The event-context checks only
@@ -291,12 +306,27 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
     single file that holds it shut cannot be edited except through the pull request it refuses. That
     state is reachable from ordinary use -- one design proposal parked open for review while the
     builder keeps working -- and it is where this repository actually arrived, at PR #113 with #112
-    open. Naming an open PR in prs[] is NOT a free pass out of it: every entry there is anchored to an
-    exact live head, branch, base and draft flag, so a parked PR that moves still turns main RED and
-    still forces a deliberate re-sync. Only "named nowhere" is the failure.
+    open. Naming an open PR in prs[] is NOT a free pass out of it: every entry there is anchored to
+    an exact live head, so a parked PR that moves still turns main RED and forces a deliberate
+    re-sync. Only "named nowhere" is the failure.
+
+    THAT SENTENCE USED TO CLAIM FOUR ANCHORS -- "exact live head, branch, base and draft flag" --
+    and three of them were conditional in `compare_external_prs`, so an entry carrying only a
+    number and a head satisfied it (A-05, fifth audit). A defence described as four checks and
+    delivered as one is the same overclaim pattern the audit ledger exists to catch. The three are
+    unconditional now for an OPEN entry, which makes the sentence true rather than trimming it.
+
+    `open_now` is `None` when nothing could determine what is open. That is a REFUSAL, not an
+    empty set: the whole justification for relaxing carrier-identity to naming is that the set of
+    open pull requests is known, and `gh` failing is exactly when it is not.
     """
     if not carrier_state or carrier_state == "OPEN":
         return []
+    if open_now is None:
+        return [f"current_workflow_pr #{carrier_no} is {carrier_state} and the set of open pull "
+                f"requests could not be determined (gh unavailable or failing). This rule permits a "
+                f"merged carrier only when every open pull request is provably named, so it refuses "
+                f"rather than assuming there are none."]
     settled = snapshot.get("settled_at_main_head")
     if not settled:
         return [f"current_workflow_pr #{carrier_no} is {carrier_state}, but the snapshot still names "
@@ -312,6 +342,17 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
         return [f"settled_at_main_head {str(settled)[:7]} is not an ancestor of live main "
                 f"{live_main[:7]} — the snapshot settled at a commit that is not on this main. "
                 f"Re-run: python tools/sync_active_pr.py --settled"]
+    # AND BOUNDED FROM BELOW. An ancestor check alone can never go stale: the repository's very
+    # first commit is an ancestor of every head, so a snapshot recording it would pass forever,
+    # and the live value sat three merges behind HEAD while the gate was content (A-07, fifth
+    # audit). The carrier's own merge commit is the floor that means something -- you cannot have
+    # settled EARLIER than the pull request you are naming as the thing that merged.
+    if carrier_merge_commit and settled != carrier_merge_commit \
+            and not is_ancestor(carrier_merge_commit, settled):
+        return [f"settled_at_main_head {str(settled)[:7]} is older than the merge commit of the "
+                f"carrier it names (#{carrier_no} merged as {carrier_merge_commit[:7]}). An "
+                f"ancestor-of-main check alone passes for the first commit ever made; the carrier's "
+                f"own merge is the floor. Re-run: python tools/sync_active_pr.py --settled"]
     named = {carrier_no} | {pr["number"] for pr in snapshot.get("prs", [])
                             if isinstance(pr, dict) and isinstance(pr.get("number"), int)}
     unnamed = sorted(n for n in open_now if n not in named)
@@ -379,18 +420,34 @@ def _git_is_ancestor(a: str, b: str) -> bool:
         return False
 
 
-def open_prs_now() -> set[int]:
-    """Which pull requests are open right now, or an empty set when gh cannot say.
+def open_prs_now() -> set[int] | None:
+    """Which pull requests are open right now, or None when nothing could find out.
 
-    Empty on failure is deliberate: this feeds a check that must not invent a mismatch out of a
-    network problem. The exact-head anchors above are the ones that fail closed.
+    IT USED TO RETURN AN EMPTY SET ON FAILURE, and called that deliberate -- "must not invent a
+    mismatch out of a network problem". That reasoning fit the old rule, which used the set only to
+    ask whether the carrier was among the open PRs. It stopped fitting the moment the rule was
+    relaxed to "every open pull request must be NAMED", because then an empty set does not mean
+    "no mismatch", it means "no pull requests are open" -- the most permissive answer available,
+    returned precisely when the truth is unknown. A non-zero exit, a rate limit, an expired token
+    or empty stdout all produced a clean GREEN on a snapshot naming nothing (A-05, fifth audit).
+
+    None is the honest answer, and the caller refuses on it. The failure is also PRINTED rather
+    than swallowed, because a gate that quietly degrades is one nobody knows to distrust.
     """
     try:
         out = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "number"],
                              capture_output=True, text=True, timeout=30)
-        return {int(pr["number"]) for pr in json.loads(out.stdout or "[]")}
-    except (subprocess.SubprocessError, OSError, ValueError, KeyError):
-        return set()
+        if out.returncode != 0:
+            print(f"  (gh pr list failed, exit {out.returncode}: {(out.stderr or '').strip()[:200]})",
+                  file=sys.stderr)
+            return None
+        if not (out.stdout or "").strip():
+            print("  (gh pr list returned no output)", file=sys.stderr)
+            return None
+        return {int(pr["number"]) for pr in json.loads(out.stdout)}
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
+        print(f"  (gh pr list unavailable: {exc})", file=sys.stderr)
+        return None
 
 
 def _live_main_head() -> str | None:
@@ -457,8 +514,11 @@ def main(argv: list[str] | None = None) -> int:
     if carrier_no is not None:
         carrier_live = fetch_live([carrier_no]).get(carrier_no) or {}
         carrier_state = str(carrier_live.get("state") or "").upper()
+        merge_commit = ((carrier_live.get("mergeCommit") or {}).get("oid")
+                        if isinstance(carrier_live.get("mergeCommit"), dict) else None)
         failures += verify_settled_snapshot(carrier_no, carrier_state, snap,
-                                            open_prs_now(), _live_main_head(), _git_is_ancestor)
+                                            open_prs_now(), _live_main_head(), _git_is_ancestor,
+                                            merge_commit if _is_sha(merge_commit) else None)
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The

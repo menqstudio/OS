@@ -124,6 +124,139 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn("features/Agents.tsx", f[0])
 
 
+class OverrideBlockTests(unittest.TestCase):
+    """fifth audit, A-04: the gate read the FIRST `:root` and nothing else.
+
+    17 of the 42 §C.1 tokens are redeclared after the first block, so a responsive tier could set
+    `--azure` to red or `--s4` to 99px and the gate stayed GREEN. Worse, the tier that exists to
+    tighten spacing tightened some rungs and not the two added this round, so the ladder ran
+    backwards on a phone.
+    """
+    CSS = (":root{\n  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px;\n"
+           "  --s6:24px; --s7:28px; --s8:32px; --s9:36px; --s10:40px;\n}\n"
+           "@media (max-width:560px){ :root{ --s5:16px; --s6:18px; --s7:21px;"
+           " --s8:24px; --s9:27px; --s10:30px } }\n")
+    NAMES = ["--s%d" % i for i in range(1, 11)]
+
+    def test_every_root_block_is_read_not_only_the_first(self):
+        blocks = c1.root_blocks(self.CSS)
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["--s5"], "20px")
+        self.assertEqual(blocks[1]["--s5"], "16px")
+
+    def test_a_consistent_tier_is_green(self):
+        self.assertEqual(c1.ladder_monotonic(c1.root_blocks(self.CSS), self.NAMES), [])
+
+    def test_the_ORIGINAL_bug_a_tier_that_skips_two_rungs_is_red(self):
+        # --s7 left at 28px while --s8 drops to 24px: 'one step larger' becomes false.
+        broken = self.CSS.replace(" --s7:21px;", "").replace(" --s9:27px;", "")
+        f = c1.ladder_monotonic(c1.root_blocks(broken), self.NAMES)
+        self.assertTrue(any("runs backwards" in p for p in f), f)
+        self.assertTrue(any("--s7" in p for p in f), f)
+
+    def test_a_partial_tier_is_checked_against_the_effective_value(self):
+        # A tier need not restate every rung; what it does restate is compared to base+override.
+        partial = self.CSS.replace("@media (max-width:560px){ :root{ --s5:16px; --s6:18px; --s7:21px;"
+                                   " --s8:24px; --s9:27px; --s10:30px } }",
+                                   "@media (max-width:560px){ :root{ --s10:2px } }")
+        f = c1.ladder_monotonic(c1.root_blocks(partial), self.NAMES)
+        self.assertTrue(any("runs backwards" in p for p in f), f)
+
+    def test_a_non_px_rung_is_reported_rather_than_skipped(self):
+        odd = self.CSS.replace("--s4:16px", "--s4:1rem")
+        f = c1.ladder_monotonic(c1.root_blocks(odd), self.NAMES)
+        self.assertTrue(any("is not a px length" in p for p in f), f)
+
+
+class GateEvasionTests(unittest.TestCase):
+    """fifth audit, A-09: the undeclared-var() half was defeated four ways."""
+    def test_a_declaration_inside_a_COMMENT_does_not_count(self):
+        # Comments were stripped on the reference side and not on the declaring side.
+        refs = c1.referenced_tokens({"a.css": ".x{padding:var(--gone)}"})
+        self.assertTrue(c1.undeclared_references(refs, set(), local_ok=set()))
+
+    def test_uppercase_tokens_are_matched(self):
+        refs = c1.referenced_tokens({"a.css": ".x{color:var(--Brand)}"})
+        self.assertIn("--Brand", refs)
+        self.assertTrue(any("--Brand" in p
+                            for p in c1.undeclared_references(refs, set(), local_ok=set())))
+
+    def test_a_nested_fallback_reports_the_LAST_resort(self):
+        # var(--a, var(--b)): if --a is absent the value is var(--b), so an undeclared --b still
+        # drops the declaration. Reporting --b is correct, and is stated in the docstring.
+        refs = c1.referenced_tokens({"a.css": ".x{color:var(--a, var(--b))}"})
+        self.assertIn("--b", refs)
+        self.assertNotIn("--a", refs)
+
+
+class AnimationClobberTests(unittest.TestCase):
+    """fifth audit, A-01, turned into a check — and A-01's real lesson is in §E of that report:
+    no test in this repository ever loads a stylesheet (`css: false`), so 652 unit tests and the
+    whole axe suite run against a DOM with no CSS. A class name in a className was assertable; the
+    paint was not. This is the static substitute."""
+    TSX = ('const x = <div className={`mani surface reveal ${on ? " sigbreathe" : ""}`} />;\n'
+           'const CSS = `\n'
+           '.v-security .mani.sigbreathe { animation: sigbreathe 2.6s infinite; }\n'
+           '`;')
+    GROUPS = [{"mani", "surface", "reveal", "sigbreathe"}]
+
+    def test_a_shorthand_that_drops_the_entrance_is_reported(self):
+        f = c1.animation_clobber({"Security.tsx": self.TSX}, self.GROUPS)
+        self.assertEqual(len(f), 1, f)
+        self.assertIn(".mani.sigbreathe", f[0])
+        self.assertIn("never becomes visible", f[0])
+
+    def test_keeping_the_entrance_in_the_list_is_green(self):
+        ok = self.TSX.replace("animation: sigbreathe 2.6s infinite;",
+                              "animation: reveal var(--enter) forwards, sigbreathe 2.6s infinite;")
+        self.assertEqual(c1.animation_clobber({"Security.tsx": ok}, self.GROUPS), [])
+
+    def test_a_replacement_that_ENDS_VISIBLE_is_legitimate(self):
+        # dec-reveal ends at opacity:1, so it does the entrance's job and must not be reported.
+        css = ('const x = <div className="led rise" />;\n'
+               'const CSS = `\n'
+               '@keyframes dec-reveal { from { opacity: 0; } to { opacity: 1; transform: none; } }\n'
+               '.v-decisions .led { animation: dec-reveal .3s ease both; }\n`;')
+        self.assertEqual(c1.animation_clobber({"Decisions.tsx": css}, [{"led", "rise"}]), [])
+
+    def test_but_a_final_keyframe_that_OMITS_opacity_is_reported(self):
+        # THE SECOND REAL BUG this check found: an implicit 100% is built from the underlying
+        # value, which is the entrance class's opacity:0 — so the row faded back out.
+        css = ('const x = <div className="led rise" />;\n'
+               'const CSS = `\n'
+               '@keyframes dec-stamp { 0% { opacity: 0; } 60% { opacity: 1; } 100% { transform: none; } }\n'
+               '.v-decisions .led.dec-stamp { animation: dec-stamp .4s both; }\n`;')
+        f = c1.animation_clobber({"Decisions.tsx": css}, [{"led", "rise", "dec-stamp"}])
+        self.assertTrue(any("dec-stamp" in p for p in f), f)
+
+    def test_a_pseudo_element_is_a_different_box(self):
+        css = ('const x = <div className="surface reveal" />;\n'
+               'const CSS = `.surface:hover::after { animation: spin 1s infinite; }`;')
+        self.assertEqual(c1.animation_clobber({"a.tsx": css}, [{"surface", "reveal"}]), [])
+
+    def test_reduced_motion_may_kill_the_animation(self):
+        css = ('const x = <div className="mani reveal sigbreathe" />;\n'
+               'const CSS = `\n@media (prefers-reduced-motion: reduce) {\n'
+               '  .mani.sigbreathe { animation: none; }\n}\n`;')
+        self.assertEqual(c1.animation_clobber({"a.tsx": css}, [{"mani", "reveal", "sigbreathe"}]), [])
+
+    def test_an_unmatched_selector_is_skipped_rather_than_guessed_at(self):
+        css = 'const CSS = `.nothing-renders-this { animation: spin 1s; }`;'
+        self.assertEqual(c1.animation_clobber({"a.tsx": css}, self.GROUPS), [])
+
+    def test_only_the_SUBJECT_compound_is_matched_against_an_element(self):
+        # `.v-security` is an ancestor and never shares a className with `.mani`. Requiring the
+        # whole selector to be in one group is why the first version missed the rule it was for.
+        groups = c1.classname_groups({
+            "a.tsx": 'const x = <div className={`mani surface reveal ${on ? " sigbreathe" : ""}`} />;'})
+        self.assertTrue(any({"mani", "sigbreathe", "reveal"} <= g for g in groups), groups)
+
+    def test_a_conditional_class_is_collected_from_the_interpolation(self):
+        groups = c1.classname_groups({
+            "a.tsx": 'const x = <div className={`a b ${flag ? " lit" : ""}`} />;'})
+        self.assertTrue(any("lit" in g for g in groups), groups)
+
+
 class RealRepositoryTests(unittest.TestCase):
     """The gate against the real files — the regression that keeps the bug closed."""
     def test_the_real_spacing_ladder_is_complete_and_matches_C1(self):

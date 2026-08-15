@@ -101,10 +101,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Plain navigation clears any pending focus so a later manual visit to the
   // same screen doesn't re-trigger a stale deep-link.
-  const setRoute = useCallback((r: RouteId) => { setFocus(null); setRouteState(r); }, []);
+  // Both entry points VALIDATE. `routeFromHash` already refused an unknown slug, which made it
+  // look as though nothing could reach the Generic placeholder — and the roadmap said so. But
+  // `openEntity` is called from the command palette as `ent.route as RouteId`: a cast over a
+  // string the BACKEND supplies. A new entity kind, or a typo in a search result, set the route
+  // to a value no page answers to and `SCREENS[route]` came back undefined (A-08, fifth audit).
+  // A cast is a promise to the compiler, not a check on the value, and this value crosses an IPC
+  // boundary. Falling back to `home` is the rule `routeFromHash` already applies to a URL.
+  const setRoute = useCallback((r: RouteId) => {
+    setFocus(null);
+    setRouteState(isRoute(r) ? r : 'home');
+  }, []);
   const openEntity = useCallback((r: RouteId, kind: string, id: string) => {
     setFocus({ kind, id });
-    setRouteState(r);
+    setRouteState(isRoute(r) ? r : 'home');
   }, []);
   const clearFocus = useCallback(() => setFocus(null), []);
   // Stable identity + an unchanged-value short circuit, so the publishing effect in

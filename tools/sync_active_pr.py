@@ -252,7 +252,21 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     text = text[:start] + '"note": ' + json.dumps(summary) + text[end:]
     changed.append("note")
 
-    json.loads(text)                     # and parse again: never leave it unreadable
+    after = json.loads(text)             # and parse again: never leave it unreadable
+    # THE SLICE ABOVE IS POSITIONAL. It runs from `"note": "` to the block's closing `"\n  },`,
+    # which is correct only while `note` is the LAST key of current_workflow_pr. Add a key after it
+    # and the slice swallows everything in between — and `json.loads` still succeeds, because
+    # deleting whole key/value pairs leaves valid JSON (A-10, fifth audit). A parse guard that
+    # cannot see the damage it was placed to catch is not a guard, so compare the key set instead:
+    # this function is allowed to change the VALUES of current_workflow_pr, never its shape.
+    before_keys = set((data.get("current_workflow_pr") or {}).keys())
+    after_keys = set((after.get("current_workflow_pr") or {}).keys())
+    if before_keys != after_keys:
+        raise SystemExit(
+            "RED: rewriting the note changed the SHAPE of current_workflow_pr — lost "
+            + ", ".join(sorted(before_keys - after_keys) or ["nothing"])
+            + "; gained " + ", ".join(sorted(after_keys - before_keys) or ["nothing"])
+            + ". The note slice assumes `note` is the last key of the block. Nothing was written.")
     STATE.write_text(text, encoding="utf-8")
     return changed
 
