@@ -1,8 +1,8 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #115 · branch `phase2-decisions-routed`** (base `main`, tip `00f881c`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #116 · branch `phase2-sigbreathe-and-t021`** (base `main`, tip `4b0008a`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Phase 2's two Owner decisions (the sigbreathe section-D wording question and the approval-request audited engine task) were flagged beside the boxes they block and never routed to docs/OWNER_ACTION_REQUIRED.md; PR #112's design-review question and B-02 go with them, and section 2 of that page stopped contradicting its own header.
+> Both Phase-2 decisions taken by Owner delegation: section-D's sigbreathe pulse is APPLIED and bound to state (the page was already breathing unconditionally in blocked, which is what the not-applied argument existed to prevent), and the approval-request path is opened as T-021, sequenced behind the standing audit with its contract invariants fixed now. Phase 2 goes from 6 of 11 ticked to 8.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
@@ -76,12 +76,25 @@ forge. That is a real authority, correctly gated, and it is **not** a request ac
 phase pre-authorised this outcome in its own Contracts row: a shape needing an engine schema change
 is *"an audited engine task, flagged, not done here"*. It is now flagged in `governance.rs`'s module
 docs, in the roadmap, and here — rather than left for a reader to infer from an unticked box.
+**DECIDED 2026-08-15 (Owner-delegated): opened as `T-021`, and still not built here.** Building it
+now would add a new input to the engine's trust boundary while the standing verdict is RED; carrying
+it as a note is how an obligation disappears, and this one is in Phase 2's *acceptance criteria*. So
+the task exists, sequenced behind the standing audit, with its five contract invariants fixed now so
+the eventual contract test is not designed by whoever is trying to pass it. Boxes 2 · 7 · 11 stay
+unticked: a capability that does not exist does not tick.
 
-**And `security`'s §D `sigbreathe` integrity pulse is deliberately not applied.** `Security.tsx`
-renders a non-live wire — *"the chain does not flow — nothing is confirmed"* — because the integrity
-posture is `blocked`. Adding the motion would satisfy §D's letter by making the page say something
-the data does not support. That is a §D **wording** question, not a build task, and it is left where
-it belongs rather than resolved by a Builder.
+**And `security`'s §D `sigbreathe` integrity pulse is applied, BOUND TO STATE** — decided
+2026-08-15 by Owner delegation, and it turned out to be a build task after all. The reasoning on
+record was that a breathing instrument would paint liveness onto a chain nothing has confirmed. That
+reasoning is right; the conclusion was wrong, because **the page was already breathing**: `.mc-halo`
+carried an unconditional `secHalo 2.6s infinite`, so the instrument pulsed hardest in `blocked` — the
+exact state the comment two hundred lines above forbade it in. *An honesty argument written in a
+comment is not an honesty property of the page.* The pulse now runs in `checking` (a chain read
+genuinely in flight), takes the faster danger cadence in `broken`, and is **still** in `blocked`. It
+says "this surface is reading the chain right now", never "the chain is alive" — which the desktop
+cannot establish, `RECORDS_ARE_AUTHENTICATED` being permanently `false`. Gating the pulse on a
+*confirmed* chain was rejected for that reason: it would be a branch that can never run. Three
+mutants killed; reduced motion stills all of it.
 
 **One §D gap was closed rather than reported.** §D binds `g` to grant and no `g` handler existed, so
 a keyboard owner driving the queue with ↑/↓ could deny and escalate by keystroke and not grant. `g`
