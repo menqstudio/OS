@@ -6,13 +6,29 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **The standing audit verdict is RED, and it is older than the code.** Two independent audits have
-> run. The second — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
-> of `main` @ `219c763`, AFTER the first round's remediation — confirmed **4 of 18** blockers closed
-> and left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3). Its P0 was that the supervisor
-> still copied the executing chain's own `output_handle` into the attestation it signed: the F-01
-> signing oracle surviving a fix that addressed F-01's symptom. **It has never been re-run**, on that
-> head or on any of the later ones, so nothing since is independently confirmed. The index is
+> **The standing audit verdict is RED — and as of 2026-08-15 it is NOT older than the code.**
+> **Four** independent audits have run. This block said "two", "it is older than the code" and "it
+> has never been re-run" until today, which was true when written and false the moment the third
+> round finished — on the page every banner sends a cold reader to for what is blocked and on whom.
+>
+> * **Third**, [`2026-08-14-zero-trust-audit-e0dd969.md`](../apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md),
+>   of `main` @ `e0dd969`: **RED for materially fewer reasons.** It could **not reopen the second
+>   round's P0** on either platform and **confirmed all three of the gate's refusals closed** at that
+>   head. 5 new findings (`A-01`…`A-05`, P2 1 · P3 4); of 14 Builder claims attacked, **9 survived**
+>   and are the first ✅ this repository's ledger has carried.
+> * **Fourth**, [`2026-08-15-zero-trust-reaudit-0a9a1af.md`](../apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md),
+>   a re-audit of those five fixes against a **pinned snapshot** (`main` moved three times mid-run;
+>   the auditor proved the pin by tree digest): **still RED — now for one platform rather than one
+>   mechanism.** Four of five could not be reopened. `B-01` found the fifth fixed on Linux only while
+>   the ledger row claimed both platforms — closed on Windows the same day. **`B-02` stays OPEN.**
+>
+> **Prior:** [`2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
+> of `main` @ `219c763` — **4 of 18** blockers closed, **45 surviving findings** (1 P0, 5 P1, 13 P2,
+> 26 P3). Its P0 was the supervisor copying the executing chain's own `output_handle` into the
+> attestation it signed: the F-01 signing oracle surviving a fix that addressed F-01's symptom. That
+> P0 is now closed and was attacked twice more without reopening.
+>
+> **What has not changed: the verdict is RED and the gate stays shut.** The index is
 > [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](../apps/desktop/AUDIT/AUDIT_LEDGER.md) and it is now on the
 > canonical read manifest; ◑ there means the Builder believes it closed and nobody else has looked.
 > Until 2026-08-09 that verdict appeared in **no** canonical document, while `NEXT_CHAT.md` opened
