@@ -867,20 +867,54 @@ unchanged (or engine change separately audited); Owner approval.
 **Stop conditions.** Any temptation to let the desktop decide/approve locally, or to cache a key/lease →
 stop. Any needed engine gate change → separate audited task.
 
+> **⚖ Phase 2 was CHECKED AGAINST THE CODE before anything was built (T-019, 2026-08-15).** The
+> exemption in `config/roadmap-order-exemptions.json` unlocked this phase while all four pages
+> already existed, so the first act was verification, not construction. Every box below carries its
+> evidence — file, line, test name — and a box whose surface exists but whose obligation is unmet
+> **stays unticked and says which obligation**. Six of eleven are ticked. The five that are not
+> reduce to **two facts**, and neither is a missing page:
+>
+> 1. **The approval-REQUEST path does not exist, on either side** (boxes 2 · 7 · 11). There is no
+>    `approval-request` schema in `engine/schemas/` (21 schemas; none is one) and no desktop→engine
+>    command. The `approvals` page's grant/deny/escalate drive the **desktop's own** approval system
+>    (T-010/T-011 over local SQLite, behind a native confirmation the webview cannot forge) — a real
+>    authority, correctly gated, but the desktop's, not a request across the wall. This phase's own
+>    **Contracts** row pre-authorised that outcome: an `approval-request` needing an engine schema
+>    change is *"an audited engine task, flagged, not done here"*. It is flagged, in
+>    `governance.rs`'s module docs and here.
+> 2. **`security`'s §D `sigbreathe` integrity pulse is deliberately NOT applied** (boxes 1 · 9).
+>    `Security.tsx:196-197` renders a non-live wire — *"the chain does not flow — nothing is
+>    confirmed"* — because the integrity posture is `blocked` and a breathing pulse would paint
+>    liveness onto a surface that has established nothing. Adding the motion would satisfy §D's
+>    letter by making the page say something the data does not support. **This is a §D wording
+>    question, not a build task**, and it is left for the Owner rather than resolved by a Builder.
+>
+> One §D gap WAS closed rather than reported: §D binds `g` to grant and no `g` handler existed, so a
+> keyboard owner could deny and escalate by keystroke and not grant. `g` now stages the same confirm
+> dialog `d`/`e` stage — §D's own *"all actions confirm before committing"* — instead of committing
+> on one keypress, which would have made the deliberate press-and-hold bypassable by the binding
+> meant to complete it (`Approvals.tsx`; two tests, both mutation-verified).
+>
+> **One stale claim was corrected on the way.** `governance.rs` opened with *"the Phase-2 engine read
+> endpoints do not answer yet"*. They answer: `bro_control_room_api.GOVERNANCE_SURFACES:47` names all
+> four and `governance_read:568` dispatches them. What is still true is narrower — a shipped install
+> reaches `Blocked` because nothing sets `BROPS_GOVERNANCE_STATE_DIR`. The steady state is unchanged;
+> the reason for it is a deployment input, not a missing endpoint.
+
 **Definition of Done.**
-- [ ] `approvals`, `decisions`, `security`, `notifications` pages built to full §D spec.
-- [ ] Read IPC streams engine ledger/evidence/verdicts; approval-**request** path works.
-- [ ] `blocked` + `error` states proven against engine-unreachable and chain-break.
-- [ ] No desktop-side decision authority; no cached keys/leases.
-- [ ] Docs + `PROJECT_STATE.md` synced.
+- [ ] `approvals`, `decisions`, `security`, `notifications` pages built to full §D spec. — **all four exist and are real** (`Approvals.tsx` 531 · `Decisions.tsx` 546 · `Security.tsx` 422 · `Notifications.tsx` 493 lines), every §D state, keyboard map and a11y role verified against the source. **Unticked for exactly one thing:** `security`'s `sigbreathe` pulse, deliberately not applied (see the note above).
+- [ ] Read IPC streams engine ledger/evidence/verdicts; approval-**request** path works. — **the read half is complete and wired end to end**: four commands (`governance.rs:611/619/626/634`), registered (`lib.rs:227-230`), served by the engine (`bro_control_room_api.py:47`, `:568`, `:616-621`), relayed verbatim (`engine_sidecar.py:477`, `:808`), consumed by the renderer (`desktop.ts:344-355`). **The approval-request half does not exist** — no engine schema, no command.
+- [x] `blocked` + `error` states proven against engine-unreachable and chain-break. — unreachable: `governance.rs::unreachable_transport_maps_to_unreachable`, plus `Notifications.chain.test.tsx:76`, `Security.test.tsx:40`, `Approvals.test.tsx:41`. Chain-break, both doors: the engine reporting one (`ok_false_reply_maps_to_blocked`) and a malformed link arriving in the records (`a_broken_chain_link_blocks_the_whole_read_rather_than_showing_part_of_it`, with a positive control and mutant `P1` killed). **The limit is written inside the box:** the desktop does not WALK the chain — it checks `previous_event_hash` is null-or-64-hex and no more. Fork detection is the supervisor's on both platforms; re-deriving a head from records the desktop cannot authenticate would be a check that cannot fail.
+- [x] No desktop-side decision authority; no cached keys/leases. — structural, and now **checked** rather than asserted: `no_governance_command_can_take_a_key_a_lease_or_the_database` reads this module's own source and requires every `#[tauri::command]` to take nothing but an optional `task_id` filter (mutant `P2` — a command growing a `key_id` parameter — killed). The request carries `read_only: true` and no key/lease/nonce/verdict (`governance.rs:586-595`); `RECORDS_ARE_AUTHENTICATED` is `false` and the engine's own `record_authentication` claim is pinned as unable to flip it. CI-enforced at `tools/check_capabilities.py:53-60`, which names all four with written reasons; gate GREEN.
+- [x] Docs + `PROJECT_STATE.md` synced. — `docs/ARCHITECTURE.md` gained the **governance surfaces** section this phase's Documentation row names and that had never been written; `PROJECT_STATE.md` / `NEXT_CHAT.md` / `TASKS.md` / `config/current_state.json` updated in the same commit per the Continuous-Documentation Law.
 
 **Task checklist.**
-- [ ] Build the governance read IPC (ledger/evidence/queue) in Rust; parse tests.
-- [ ] `approvals` page (queue + grant/deny/escalate **request**) per §D.
-- [ ] `decisions` page (ledger + evidence viewer, read-only) per §D.
-- [ ] `security` page (chain integrity + control-plane digest + residual tracker) per §D.
-- [ ] `notifications` page (signal feed) per §D.
-- [ ] Contract test: approval-request carries no key/lease; verdicts render faithfully.
+- [x] Build the governance read IPC (ledger/evidence/queue) in Rust; parse tests. — `apps/desktop/src-tauri/src/governance.rs`, four commands + a fail-closed three-valued `GovernanceRead`, validated against `verifier-receipt.schema.json` and `evidence-event.schema.json`. **29 tests, measured** (`cargo test -p brops --lib governance::` → 29 passed).
+- [ ] `approvals` page (queue + grant/deny/escalate **request**) per §D. — the page is built and its actions are real, but they are the **desktop's** approval commands, not an engine request. Unticked for fact 1 above, not for a missing surface.
+- [x] `decisions` page (ledger + evidence viewer, read-only) per §D. — `Decisions.tsx`: `chamber` (`:464`), `ledger` `role=log` + `aria-readonly` (`:229-245`), `chEvidence` (`:500`), arrow/Home/End navigation and `Enter`-opens-evidence (`:193-203`), `aria-live` announcer (`:557`). `chReweigh` is present and **disabled by design** (`:508`) — reweighing is the engine's. Evidence renders the real `ok`/`blocked`/`unreachable` read and fabricates nothing (`Decisions.evidence.test.tsx`, `Decisions.governance.test.tsx`).
+- [ ] `security` page (chain integrity + control-plane digest + residual tracker) per §D. — all four sections are built (integrity instrument `:158`, posture strip `:210`, control-plane digest `:252` honestly blocked, residual tracker O-1..O-5 `:269`, key/lease registry `:288` blocked by design) with `[`/`]` sectioned tab order and a live region that escalates to `assertive` on a break. Unticked for fact 2 above — the `sigbreathe` pulse.
+- [x] `notifications` page (signal feed) per §D. — `Notifications.tsx`: `role=feed` (`:269`), per-signal `role=article` (`:287`), `aria-live=polite` (`:256`), filter chips (`:247`), `↑/↓` · `Enter` · `x` (`:123-136`). The read-path chain node is earned, never assumed — `Notifications.chain.test.tsx` covers unreachable / blocked / empty-ok / unauthenticated-records / the engine's attributed reason, six tests.
+- [ ] Contract test: approval-request carries no key/lease; verdicts render faithfully. — the second half holds (`parse_verifier_receipt` enforces `verdict == GREEN`, the id and 64-hex patterns and a non-empty evidence list; `Bridge.test.tsx` drives the real command). The **first half is structurally unwritable today**: there is no approval-request, and a test asserting that a nonexistent request carries no key is a check that cannot fail — the shape this repository deletes rather than ships.
 
 ---
 

@@ -1,12 +1,106 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `f652d37`.** The only thing open is PR #108 on `fix-b01-windows-install-id-pin`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `dc967c4`.** The only thing open is PR #109 on `phase2-audit-and-a05-crosswriter`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** B-01 closed on Windows; B-03 closed by the re-auditor's confirmation. B-02 stays OPEN as a topology question beside the 1b decision - the pin is in the authority, the supervisor owns the floor. Still unprotected: verifier is JCS, writers are serde, and no test feeds a Linux-written chain to the Windows parser. Phase 2 is unlocked under a committed exemption; all four pages already exist, so check its eleven boxes against the code before building.
+> **Next:** Phase 2's five open boxes reduce to two facts: the approval-request path exists on neither side (an audited engine task this phase itself defers), and security's SS-D sigbreathe pulse is deliberately not applied because it would paint liveness on a blocked posture. B-02 stays open as a topology question beside 1b. A-05 is fully closed: a Linux-written chain now feeds the Windows parser, and the mutation run found the A-05 fix is byte-neutral today - what it bought is the preserve_order tripwire.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### Phase 2 was checked against the code, and A-05's open half closed (2026-08-15)
+
+The exemption opened Phase 2 while all four of its pages already existed, so the first act was
+**verification, not construction**. Eleven boxes, checked against the source, evidence beside each —
+file, line, test name. **Six are ticked. The five that are not reduce to two facts, and neither is a
+missing page.**
+
+**The approval-REQUEST path exists on neither side.** Phase 2's DoD pairs the read IPC with *"the
+approval-**request** path works"* — the desktop POSTing a request the engine's Ed25519 system
+adjudicates. There is no `approval-request` schema in `engine/schemas/` (21 schemas; none is one) and
+no desktop→engine command. The `approvals` page's grant/deny/escalate drive the **desktop's own**
+approval system — T-010/T-011 over local SQLite, behind a native confirmation the webview cannot
+forge. That is a real authority, correctly gated, and it is **not** a request across the wall. The
+phase pre-authorised this outcome in its own Contracts row: a shape needing an engine schema change
+is *"an audited engine task, flagged, not done here"*. It is now flagged in `governance.rs`'s module
+docs, in the roadmap, and here — rather than left for a reader to infer from an unticked box.
+
+**And `security`'s §D `sigbreathe` integrity pulse is deliberately not applied.** `Security.tsx`
+renders a non-live wire — *"the chain does not flow — nothing is confirmed"* — because the integrity
+posture is `blocked`. Adding the motion would satisfy §D's letter by making the page say something
+the data does not support. That is a §D **wording** question, not a build task, and it is left where
+it belongs rather than resolved by a Builder.
+
+**One §D gap was closed rather than reported.** §D binds `g` to grant and no `g` handler existed, so
+a keyboard owner driving the queue with ↑/↓ could deny and escalate by keystroke and not grant. `g`
+now stages the **same confirm dialog** `d` and `e` stage — §D's own *"all actions confirm before
+committing"* — instead of committing on one keypress, which would have made the deliberate
+press-and-hold bypassable by the very binding meant to complete it. Two tests, including the sign
+flip (a `g` on a non-pending row stages nothing); both mutants killed.
+
+**A stale claim, corrected.** `governance.rs` opened with *"the Phase-2 engine read endpoints do not
+answer yet"*. They answer — `bro_control_room_api.GOVERNANCE_SURFACES:47` names all four,
+`governance_read:568` dispatches them, `engine_sidecar.py:477` relays verbatim. What is still true is
+narrower: a **shipped** install reaches `Blocked` because nothing sets `BROPS_GOVERNANCE_STATE_DIR`.
+The steady state is unchanged; the reason for it is a deployment input, not a missing endpoint, and a
+page saying "the engine has not been built yet" would now be telling the owner the wrong thing.
+
+**Two boxes gained the check they were resting on.** *No desktop-side decision authority* was a
+structural property of four signatures and a paragraph asserting it; it is now read out of the
+module's own source, requiring every command to take nothing but an optional `task_id` filter — a
+mutant that grows a `key_id` parameter is killed. And *chain-break → blocked* had a test only for the
+engine **saying** the chain broke; the other door — a malformed link arriving in the records — now has
+one too, with a positive control. **The limit is written inside that box:** the desktop does not walk
+the chain, and re-deriving a head from records it cannot authenticate would be a check that cannot
+fail. Fork detection stays the supervisor's, on both platforms.
+
+## A-05's second half — the test the audit actually asked for
+
+The ledger's own words: *"No test feeds a Linux-written chain to the Windows parser."* That gap
+mattered because the `A-05` fix **created** a risk while closing one — the verifier is JCS and both
+writers are serde, so a divergence that used to be harmless would now **refuse a genuine turn**.
+
+`servers.rs::linux_written_chain_tests` builds the chain with the **Linux recorder's** event shapes
+and **its own encoder** (`serde_json::to_vec`, never `crypto::jcs` — building the fixture with the
+parser's rule would have made the module a tautology), and feeds it to `derive_evidence`. The fixture
+cannot drift: one test **reads `proof/src/bin/governed_recorder.rs`** and asserts every event type,
+payload key and the serde rule still appear in it. **win-live 107 passed**, from 103.
+
+**6 mutants, 4 killed, 2 named survivors — and the survivors are the finding.** M1/M2 put the parser
+back on `serde_json::to_vec` and **survive**: with serde's `preserve_order` off a `Map` *is* a
+`BTreeMap`, so the two calls are byte-identical for every input. **The A-05 fix changed the rule named
+in the code and not one byte on the wire.** Saying so is better than letting a reader infer a
+behavioural fix.
+
+What the fix genuinely bought is now guarded. **M6 turns `preserve_order` on and kills
+`the_parsers_rule_is_canonical_rather_than_textual` — and only that test** — because `crypto::jcs`
+sorts **one level** and hands the nested `payload` to serde untouched. Its own doc comment says "a
+FLAT object"; an evidence event is not flat. That is the real latent hazard, and it now has a
+tripwire.
+
+**M4 survived its first run, masked by its neighbour.** Editing a payload after the fact breaks the
+link too, so the link check refused first and a deleted payload-digest check went unnoticed. Closed by
+a negative only that check can catch: a recorder that **chains correctly and lies about its own
+`payload_sha256`**.
+
+## B-02 was looked at and deliberately left open
+
+Both Builder moves are wrong in the same way. **Move** the pin into the supervisor and the authority
+stops refusing a foreign `install_id` at the door, so a misconfiguration caught today at
+`create-pending` travels three hops before failing. **Duplicate** it and the deployment gains a second
+site that must agree with the first about which `install_id` is this install's — the *one contract,
+two implementations* shape this repository has now found **eight** times, in the one place where
+disagreement silently widens an anti-rollback scope. Both change **which principal is authoritative**,
+which is §I items 1 and 2, and §I makes bypassing it a stop condition. What settles it is the **1b**
+decision: a floor-writer service that owns the marks directory holds the floor, and the pin belongs
+where the floor does.
+
+**Measured here:** `brops --lib` governance **29** (from 27), `brops-win-live` **107** (from 103),
+Approvals frontend **5** (from 3). All 19 repository gates run: sixteen GREEN, three print usage
+(they take arguments), one RED for the documented reason (`check_bundle_budget` wants a Vite
+manifest). Every mark in this entry is **◑ — the Builder's own claim.** Four independent audits have
+now punished exactly the habit of writing ✅ over one's own fix, and nobody else has looked at this.
+
 
 ### A sudo that exists fails differently from one that does not (2026-08-13)
 

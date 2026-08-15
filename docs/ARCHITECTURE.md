@@ -46,6 +46,47 @@ The distinction matters more than it looks. A proof kit that runs is not a shipp
 | CI | **7 workflows; 33 checks run on every pull request** (2 further jobs, in `release.yml`, run only on a version tag) — frontend, Rust workspace, engine, bridge, a11y, perf budget, design gates, supply chain, and **18** repository gates under `tools/`. *(This cell said 31 checks and 15 gates until 2026-08-14; counted from three consecutive PRs — #89, #90, #91 — at 33 each, and from a digit-safe grep of `tools/check_*.py` invocations across `.github/workflows/`. 19 such files exist; the one not wired is `check_prior_art.py`, which is session-side by design.)* **None of them is a *required* check.** `main` carries no branch protection and no rulesets: `gh api repos/menqstudio/OS/branches/main/protection` returns `404 Branch not protected`, and both `.../rulesets` and `.../rules/branches/main` return `[]` (verified 2026-08-09). The checks run and the Owner reads them; enforcement is convention. **Turning protection on is the Owner's to do** — no Builder change can make a check required. |
 | The wall | **`engine/.claude/settings.json`**, wired for nine events. The OS-root `.claude/` is NOT the wall: it holds the 262 generated specialist definitions and one `Stop` guard for coordination-document consistency. Wiring the wall at the root is an open decision — today it would deny every tool call until a session state directory and an operator-signed workspace binding exist, and `engine/` is not its own git checkout. |
 
+### The governance surfaces — what the cockpit mirrors, and where the mirror stops
+
+Phase 2 gives the cockpit four read-only windows onto engine governance truth. This section exists
+because that phase's own Documentation row names it and it had never been written; the honesty
+constraints below are the load-bearing part, and they are enforced in code, not by this paragraph.
+
+**One channel, four surfaces, one direction.** `apps/desktop/src-tauri/src/governance.rs` registers
+exactly four Tauri commands — `read_decision_ledger`, `read_evidence_chain`, `read_verifier_verdicts`,
+`read_engine_approval_queue` — each of which sends one `brops.governance-read.v1` frame through the
+same governed sidecar the AI turn uses. The engine answers from its own stores
+(`bro_control_room_api.governance_read`), and `bridge/engine_sidecar.py` relays that reply
+**verbatim**, so the three-valued shape survives the hop.
+
+**Three values, and the third is not an error.** A read is `ok` (records, possibly zero), `blocked`
+(the engine was reached and refused) or `unreachable` (no engine). `blocked` and `unreachable` are
+first-class states rather than exceptions, because a fail-closed engine is an honest answer and a page
+that throws turns it into a bug report. An `ok` with zero records is an **empty** surface, never a
+satisfied one — nothing downstream may paint a green node on it.
+
+**A mirrored record is not an authenticated record.** Validation is schema-shape only: both engine
+schemas declare `additionalProperties: false` and neither carries a signature field, and no trusted
+key is reachable from this path. Every `ok` therefore ships `authenticated: false`, and the engine's
+own `record_authentication` claim is deliberately **not** wired into it — that would launder a
+self-assertion into a verified badge. The engine's account of its own store (why a surface is empty,
+its record count, which store it read) travels beside the records as an **attributed** claim.
+
+**Where the mirror stops, stated rather than implied.** The desktop does not walk the evidence chain:
+it checks that `previous_event_hash` is null-or-64-hex and nothing more. Detecting a genuine fork
+belongs to the supervisor on both platforms (`governed_supervisor_ledger.py`,
+`win-live/src/servers.rs`), which re-derives every event digest and refuses a chain whose links or
+head do not match. A desktop that re-derived a head from records it cannot authenticate would be
+running a check that cannot fail.
+
+**And the desktop still cannot ask the engine for a verdict.** Phase 2's design has the desktop POST
+an approval **request** the engine's Ed25519 system adjudicates. That path does not exist on either
+side — no `approval-request` schema in `engine/schemas/`, no desktop→engine command — and the
+`approvals` page's grant/deny/escalate drive the **desktop's own** approval system (T-010/T-011,
+behind a native confirmation the webview cannot forge). That is a real authority, correctly gated,
+but it is the desktop's own and not a request across the wall. Building the missing half needs an
+engine schema, which Phase 2 itself classifies as an audited engine task.
+
 ### What is NOT done yet
 
 - **`contracts/` is still a placeholder** — a README describing intent, no extracted schemas. The

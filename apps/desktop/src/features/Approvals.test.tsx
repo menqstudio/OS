@@ -86,6 +86,38 @@ describe('Approvals — mirror-never-decide honesty invariants', () => {
     expect(await screen.findByText(/Escalated to A3 review:/i)).toBeInTheDocument();
   });
 
+  it('GRANT is reachable by the §D `g` key, and stages a confirm rather than committing', async () => {
+    // The §D keyboard contract is "↑/↓ select, g grant, d deny, e escalate, Enter confirm,
+    // Esc cancel; all actions confirm before committing". `g` was the one binding missing —
+    // a keyboard owner driving the queue could deny and escalate by keystroke but not grant,
+    // because grant existed only as a pointer press-and-hold. Both halves are asserted here:
+    // that `g` reaches the grant path AT ALL, and that it does not commit on the keypress.
+    setup();
+    await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));
+
+    fireEvent.keyDown(window, { key: 'g' });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/native confirmation the app window cannot forge/i)).toBeInTheDocument();
+    // The keypress alone decided nothing — this is the half that fails if `g` ever commits.
+    expect(invokeMock).not.toHaveBeenCalledWith('confirm_approval', expect.anything());
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant' }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('confirm_approval', expect.objectContaining({ id: 'ap-1' })),
+    );
+  });
+
+  it('a `g` on a NON-pending row stages nothing — only pending items are actionable', async () => {
+    // The positive control's sign flip: without it the test above would pass against a build
+    // that opened a grant dialog for anything the owner happened to have selected.
+    setup([{ ...PENDING, status: 'approved' }]);
+    await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));
+
+    fireEvent.keyDown(window, { key: 'g' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('DENY routes through the real fail-safe reject command', async () => {
     setup();
     await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));

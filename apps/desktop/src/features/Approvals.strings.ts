@@ -121,4 +121,18 @@ export const STR = {
     ru: '? Направляется на рассмотрение A3 и уведомляет владельца — не одобряет и не отклоняет.',
   },
   escalate: { en: 'Escalate', hy: 'Բարձրացնել', ru: 'Передать' },
+
+  // The `g` grant path. §D binds a `g` key alongside `d`/`e`, and §D also requires that
+  // "all actions confirm before committing" — so `g` stages this dialog rather than
+  // committing, and the pointer press-and-hold stays the mouse-driven equivalent. Neither
+  // is the real gate: `confirm_approval` is adjudicated behind the native dialog (T-011).
+  confirmGrant:   { en: 'Confirm grant', hy: 'Հաստատե՞լ', ru: 'Подтвердить одобрение' },
+  grantDialogA:   { en: 'Grant “', hy: 'Հաստատե՞լ «', ru: 'Одобрить «' },
+  grantDialogB:   { en: '” on ', hy: '»՝ ', ru: '» на ' },
+  grantDialogC: {
+    en: '? A native confirmation the app window cannot forge decides it.',
+    hy: '-ի վրա։ Որոշում է native հաստատումը, որը app-ի պատուհանը չի կարող կեղծել։',
+    ru: '? Решение принимает нативное подтверждение, которое окно приложения не может подделать.',
+  },
+  grant: { en: 'Grant', hy: 'Հաստատել', ru: 'Одобрить' },
 } as const;

@@ -2647,3 +2647,308 @@ mod evidence_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+mod linux_written_chain_tests {
+    //! audit **`A-05`**, the half the fix left open — in the ledger's own words: *"No test feeds a
+    //! Linux-written chain to the Windows parser — the enforcement the audit actually asked for.
+    //! The existing tests feed the Windows writer to the Windows parser."*
+    //!
+    //! The gap matters because the `A-05` fix created a risk while closing one. `derive_evidence`
+    //! now digests with `crypto::jcs`, while **both** writers — `execution.rs:161` here and
+    //! `proof/src/bin/governed_recorder.rs:945` on Linux — still emit `serde_json::to_vec`. So a
+    //! divergence that used to be harmless (two writers, two readers, each self-consistent) now
+    //! **refuses a genuine turn**: the supervisor would read an honest recorder's chain, recompute a
+    //! different digest, and fail closed on a run nothing was wrong with. That is a liveness defect
+    //! reachable only by feeding one platform's bytes to the other platform's parser, which is
+    //! exactly what nothing did.
+    //!
+    //! `evidence_tests` above covers the Windows shapes. What was never covered is the **Linux
+    //! recorder's** shapes: three different event payloads carrying filesystem paths and cgroup
+    //! names — free-form strings, unlike the fixed digests and small integers the Windows writer
+    //! emits — which is where two JSON encoders would part company if they were going to.
+    //!
+    //! Three properties, none of which can be satisfied by an arm that refuses everything:
+    //!
+    //!  1. the recorder's own bytes derive, and every field equals what it wrote;
+    //!  2. the parser's rule is CANONICAL, not textual — the same document with its keys laid out
+    //!     in a different order derives the identical head, which is the property that actually
+    //!     fails if the two rules diverge;
+    //!  3. a tampered event still refuses, so (1) is not passing vacuously.
+    //!
+    //! And the fixture is held against the writer it models: [`recorder_source`] reads
+    //! `governed_recorder.rs` and every event type and payload key below is asserted to appear in
+    //! it. A hand-built double whose shape was invented rather than derived is the defect this
+    //! repository has now found seven times; this one is derived, and it fails when the writer moves.
+
+    use super::*;
+
+    /// The Linux recorder, relative to this crate's manifest directory. It is a `mod linux` binary
+    /// that cannot be COMPILED on a Windows host — but it can be READ on any host, which is enough
+    /// to keep a model of it honest.
+    const LINUX_RECORDER: &str = "../proof/src/bin/governed_recorder.rs";
+
+    fn recorder_source() -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(LINUX_RECORDER);
+        std::fs::read_to_string(&p)
+            .unwrap_or_else(|e| panic!("cannot read the Linux recorder at {}: {e}", p.display()))
+    }
+
+    /// The three events the Linux recorder writes, with their payload key sets, in its own order.
+    /// Held against the recorder's source by [`the_model_matches_the_writer_it_claims_to_model`].
+    const RECORDER_EVENTS: [(&str, &[&str]); 3] = [
+        ("lease-validated", &["lease_path", "lease_sha256"]),
+        (
+            "execution-launched",
+            &["cgroup", "executor_path", "executor_sha256", "launcher_path", "launcher_sha256"],
+        ),
+        ("output-captured", &["launcher_exit", "output_bytes", "output_sha256"]),
+    ];
+
+    /// One payload, built the way `governed_recorder.rs` builds it. The path strings are
+    /// deliberately POSIX and one of them is non-ASCII: a store under a UTF-8 directory name is an
+    /// ordinary Linux deployment, and string escaping is the one place RFC 8785 and a general JSON
+    /// encoder are entitled to disagree.
+    fn recorder_payload(index: usize, output_sha256: &str, output_bytes: usize) -> Value {
+        match index {
+            0 => json!({
+                "lease_path": "/run/brops/leases/թ-lease.json",
+                "lease_sha256": "11".repeat(32),
+            }),
+            1 => json!({
+                "cgroup": "/sys/fs/cgroup/brops.slice/turn-1",
+                "executor_path": "/usr/lib/brops/brops-executor",
+                "executor_sha256": "22".repeat(32),
+                "launcher_path": "/usr/lib/brops/brops-launcher",
+                "launcher_sha256": "33".repeat(32),
+            }),
+            _ => json!({
+                "launcher_exit": 0,
+                "output_bytes": output_bytes,
+                "output_sha256": output_sha256,
+            }),
+        }
+    }
+
+    /// Build the chain EXACTLY as the Linux recorder builds it — its event object key set, its
+    /// document key set, its sequence numbering, and above all **its encoder**: every digest here
+    /// is over `serde_json::to_vec`, never over `crypto::jcs`. Using the parser's own rule to build
+    /// the fixture would make the whole module a tautology.
+    fn linux_written_chain(output_sha256: &str, output_bytes: usize, head_sequence: i64) -> Vec<u8> {
+        linux_written_chain_with(output_sha256, output_bytes, head_sequence, None)
+    }
+
+    /// As above, but `lying_payload_digest` lets the `output-captured` event record a
+    /// `payload_sha256` that is NOT its payload's — with every link then derived over the lying
+    /// event, so the chain is internally consistent and **only** the payload-digest check can
+    /// refuse it. That is the shape a compromised recorder produces, and it is needed because the
+    /// payload check is otherwise masked by its neighbour: editing a payload after the fact breaks
+    /// the link too, the link check refuses first, and a deleted payload check goes unnoticed.
+    /// Measured, not assumed — mutant `M4` survived until this existed.
+    fn linux_written_chain_with(
+        output_sha256: &str,
+        output_bytes: usize,
+        head_sequence: i64,
+        lying_payload_digest: Option<&str>,
+    ) -> Vec<u8> {
+        let mut previous: Option<String> = None;
+        let mut events: Vec<Value> = Vec::new();
+        for (i, (event_type, _)) in RECORDER_EVENTS.iter().enumerate() {
+            let payload = recorder_payload(i, output_sha256, output_bytes);
+            let payload_bytes = serde_json::to_vec(&payload).expect("payload encodes");
+            let digest = match (lying_payload_digest, *event_type) {
+                (Some(lie), "output-captured") => lie.to_string(),
+                _ => crypto::sha256_hex(&payload_bytes),
+            };
+            let event = json!({
+                "event_type": event_type,
+                "payload": payload,
+                "payload_sha256": digest,
+                "previous_event_hash": previous,
+                "sequence": i as u64 + 1,
+            });
+            previous = Some(crypto::sha256_hex(&serde_json::to_vec(&event).expect("event encodes")));
+            events.push(event);
+        }
+        let doc = json!({
+            "event_count": events.len(),
+            "events": events,
+            "final_event_hash": previous.expect("a three-event chain has a head"),
+            "head_sequence": head_sequence,
+            "last_sequence": events.len(),
+            "protocol": "brops.run-evidence-chain.v1",
+        });
+        serde_json::to_vec(&doc).expect("chain encodes")
+    }
+
+    fn tmp() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("brops-winlive-xplat-{}", brops_core::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn write_chain(dir: &std::path::Path, attempt: &str, bytes: &[u8]) {
+        std::fs::write(dir.join(format!("{attempt}.evidence.json")), bytes).unwrap();
+    }
+
+    #[test]
+    fn the_model_matches_the_writer_it_claims_to_model() {
+        // Without this the module is a fixture asserting agreement with a file it never opened, and
+        // the day the recorder gains a fourth event or renames a payload key it would go on passing
+        // while proving nothing — the "green by construction" shape the one-standard sweep named.
+        let src = recorder_source();
+        assert!(
+            src.contains("brops.run-evidence-chain.v1"),
+            "the Linux recorder no longer writes this protocol"
+        );
+        // The recorder's own encoder. If this stops being true the writers have converged on JCS
+        // and this module's premise — two rules, one document — needs re-reading, not re-running.
+        assert!(
+            src.contains("serde_json::to_vec(&payload)") && src.contains("serde_json::to_vec(&event)"),
+            "the Linux recorder no longer digests with serde_json::to_vec"
+        );
+        for (event_type, keys) in RECORDER_EVENTS {
+            assert!(src.contains(event_type), "recorder has no `{event_type}` event any more");
+            for key in keys {
+                assert!(
+                    src.contains(&format!("\"{key}\"")),
+                    "recorder's `{event_type}` payload no longer names `{key}`"
+                );
+            }
+        }
+        // The event and document key sets the parser walks.
+        for key in [
+            "event_type",
+            "payload_sha256",
+            "previous_event_hash",
+            "sequence",
+            "event_count",
+            "final_event_hash",
+            "head_sequence",
+            "last_sequence",
+        ] {
+            assert!(src.contains(&format!("\"{key}\"")), "recorder no longer writes `{key}`");
+        }
+    }
+
+    #[test]
+    fn a_linux_written_chain_derives_on_the_windows_parser() {
+        // THE test the audit asked for. The bytes below were produced by the Linux recorder's rule;
+        // the parser reading them is the Windows supervisor's.
+        let dir = tmp();
+        let out = "ab".repeat(32);
+        let bytes = linux_written_chain(&out, 322, 7);
+        write_chain(&dir, "att-linux", &bytes);
+
+        let e = derive_evidence(&dir, "att-linux")
+            .expect("a chain an honest Linux recorder wrote must derive on the Windows parser");
+        assert_eq!(e.output_sha256, out);
+        assert_eq!((e.event_count, e.last_sequence, e.head_sequence), (3, 3, 7));
+
+        // Not merely "it parsed": the head the parser derived is the head the WRITER wrote, so the
+        // two encoders agreed on every one of the three events, not just on the last.
+        let doc: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            e.final_event_hash,
+            doc["final_event_hash"].as_str().unwrap(),
+            "the parser derived a different head from the one the recorder recorded"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_parsers_rule_is_canonical_rather_than_textual() {
+        // The property that actually breaks if the two rules diverge. `serde_json::from_slice`
+        // parses into a `Map`, which is a `BTreeMap` while the `preserve_order` feature is off — so
+        // the parser recomputes over SORTED keys no matter how the writer laid the bytes out. Re-emit
+        // the same document with every object's keys reversed and the derived head must not move.
+        //
+        // **This is the `preserve_order` guard, and the reason is narrower than "jcs sorts".**
+        // `crypto::jcs` sorts ONE level: it rebuilds the outer map through a `BTreeMap<&str, &Value>`
+        // and hands the VALUES to serde untouched (its own doc comment says "a FLAT object", and an
+        // evidence event is not flat — it contains `payload`). Today that is sound only because a
+        // `Map` is already a `BTreeMap`. Turn `preserve_order` on anywhere in the dependency graph
+        // and the nested `payload` re-serializes in the order it was PARSED in, so the reversed
+        // layout below derives a different head and this test goes red. Nothing else in the tree
+        // would notice — mutants M1/M2 below put the parser back on `serde_json::to_vec` and both
+        // SURVIVE, because with the feature off the two calls are the same function byte for byte.
+        let dir = tmp();
+        let out = "cd".repeat(32);
+        let bytes = linux_written_chain(&out, 322, 4);
+        write_chain(&dir, "att-sorted", &bytes);
+        let sorted = derive_evidence(&dir, "att-sorted").expect("the recorder's own layout derives");
+
+        write_chain(&dir, "att-reversed", reversed_key_order(&bytes).as_bytes());
+        let reversed = derive_evidence(&dir, "att-reversed")
+            .expect("the same document with a different key layout must still derive");
+
+        assert_eq!(
+            sorted.final_event_hash, reversed.final_event_hash,
+            "the parser's digest followed the byte layout instead of the canonical form"
+        );
+        assert_eq!(sorted.output_sha256, reversed.output_sha256);
+        // And the two really were different bytes, or the assertion above compared a thing to itself.
+        assert_ne!(
+            String::from_utf8(bytes).unwrap(),
+            reversed_key_order(&linux_written_chain(&out, 322, 4)),
+            "the re-layout produced identical text, so this proved nothing"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_tampered_linux_written_chain_is_still_refused() {
+        // The discriminating control. Without it, `a_linux_written_chain_derives_on_the_windows_parser`
+        // would pass just as happily against a parser that accepted anything.
+        let dir = tmp();
+        let out = "ef".repeat(32);
+
+        // 1. An earlier event's payload edited — the link makes every digest after it wrong.
+        let bytes = linux_written_chain(&out, 322, 2);
+        let mut doc: Value = serde_json::from_slice(&bytes).unwrap();
+        doc["events"][1]["payload"]["cgroup"] = json!("/sys/fs/cgroup/attacker.slice");
+        write_chain(&dir, "att-edited", &serde_json::to_vec(&doc).unwrap());
+        assert!(derive_evidence(&dir, "att-edited").is_none(), "an edited event must refuse");
+
+        // 2. A recorder that CHAINS correctly and lies about its own payload digest. Every link
+        //    derives over the lying event, so the link check and `final_event_hash` are satisfied
+        //    and only the payload-digest check at `:448` can refuse this. The obvious version of
+        //    this negative — edit the payload after the fact — is masked by the link check, and
+        //    mutant `M4` survived against it.
+        let lying = linux_written_chain_with(&out, 322, 2, Some(&"ff".repeat(32)));
+        write_chain(&dir, "att-lying-digest", &lying);
+        assert!(
+            derive_evidence(&dir, "att-lying-digest").is_none(),
+            "an event whose payload_sha256 is not its payload's must refuse"
+        );
+
+        // The positive control, on the same builder.
+        write_chain(&dir, "att-honest", &bytes);
+        assert!(
+            derive_evidence(&dir, "att-honest").is_some(),
+            "an untouched Linux-written chain must still derive"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Re-serialize a JSON document with every object's keys emitted in REVERSE sorted order. Used
+    /// only to prove the parser is canonicalizing rather than reading the bytes as laid out; nothing
+    /// in the product emits this form.
+    fn reversed_key_order(bytes: &[u8]) -> String {
+        fn emit(v: &Value) -> String {
+            match v {
+                Value::Object(map) => {
+                    let mut parts: Vec<String> =
+                        map.iter().map(|(k, val)| format!("{}:{}", Value::String(k.clone()), emit(val))).collect();
+                    parts.reverse();
+                    format!("{{{}}}", parts.join(","))
+                }
+                Value::Array(items) => {
+                    format!("[{}]", items.iter().map(emit).collect::<Vec<_>>().join(","))
+                }
+                other => other.to_string(),
+            }
+        }
+        emit(&serde_json::from_slice(bytes).expect("valid JSON"))
+    }
+}
