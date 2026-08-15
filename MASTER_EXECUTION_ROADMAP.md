@@ -70,7 +70,7 @@ phase. That is the whole onboarding for *building*.
 | 0 | Foundation | ✅ **Locked (done)** |
 | 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull** — whose SUPERVISOR hop landed 2026-08-10 in the engine, while its DESKTOP hop does not exist; the `core/src/governed_output_stream.rs` ladder that used to sit here uncalled was deleted in that change rather than wired, because its table diverged from the design it cited. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
-| 3 | Desktop Integration | 🔨 **Shell complete.** 23 routes, a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, and route-change focus management. |
+| 3 | Desktop Integration | ✅ **Done 2026-08-15 — 11/11, verified against the code first.** 23 routes on a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, route-change focus, and a `cmd-dock` that is now a real ARIA dialog. Verification found two live defects: an undeclared `--s7` that silently removed the padding from two empty states, and a modal the keyboard could walk out of. `tools/check_c1_tokens.py` holds the stylesheet to §C.1 so the first cannot recur. |
 | 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
 | 5 | Memory & Knowledge | 🔨 **Recorded, not verified — deliberately.** Every write appends a local record in the same transaction, append-only by database trigger. It is *not* called verified: nothing is signed, and it attests content, never the writer. |
 | 6 | Multi-Agent | 🔨 **Capability model is real.** Three tiers reach the CLI inline via `--agents`; 262 pack-role definitions are generated and drift-gated. Path scope is stated per task and **not enforced** on the desktop route, and every card says so. |
@@ -1027,20 +1027,42 @@ Architect confirms no security regression; Owner approval.
 stop, resolve trust-root provisioning with Owner (do not fall back to ungoverned by default). If shell
 work pressures an engine change → audited task.
 
+> **⚖ Phase 3 was CHECKED AGAINST THE CODE before anything was built (2026-08-15),** the same way
+> Phase 2 was, and under the committed exemption in `config/roadmap-order-exemptions.json` — Phase 1
+> and Phase 2 are both held by the Owner's production gate, so 3 is the first phase with buildable
+> work. The shell, the router, all 23 routes and the three core pages **already existed**. So the
+> first act was verification, and it earned its keep: **two live defects nothing could see.**
+>
+> 1. **`--s7` and `--s9` were never declared**, on a ladder documented as `--s1..--s10`, while
+>    `padding:var(--s7) var(--s5)` shipped on the Agents and Automations empty states. An undeclared
+>    custom property makes the whole declaration invalid at computed-value time, so **those panels
+>    rendered with no padding at all.** §C.1 listed eight values for a ten-name range, which is why
+>    the gap read as deliberate to everyone who checked. Six more bare `var()` references were
+>    dropping their declarations the same way and now carry their base state as a fallback.
+> 2. **The `cmd-dock` was a modal the keyboard could walk out of.** No `role="dialog"`, so a screen
+>    reader announced nothing; no focus trap, so `Tab` left the palette while a scrim still covered
+>    the page; no focus restoration; no `aria-activedescendant`, so the active row was a CSS class
+>    and nothing more. §D nominates this surface as the keyboard route to all 23 pages, which makes
+>    a keyboard-only owner its primary user and made it the surface that served them worst.
+>
+> Both fixed, both mutation-verified, and `tools/check_c1_tokens.py` now holds the stylesheet to
+> §C.1 — 42 tokens — and refuses a bare `var()` that nothing declares. Restoring the `--s7` bug
+> turns that gate RED, so the check catches the defect that created it.
+
 **Definition of Done.**
-- [ ] App shell (nav + stage + `⌘K` dock) with full routing across all 22 registry entries.
-- [ ] `home`, `chat` (governed), `settings` built to full §D spec incl. `blocked`.
-- [ ] Design-token stylesheet reproducing §C.1; `prefers-reduced-motion` honored.
-- [ ] Governed chat fail-closed + verified-receipt-mandatory, badge shown.
-- [ ] `contracts/` dedupe plan recorded; docs + `PROJECT_STATE.md` synced.
+- [x] App shell (nav + stage + `⌘K` dock) with full routing across all 23 registry entries. — `Shell.tsx` (brand · grouped `#nav` with roving tabindex + `aria-current=page` · `main tabindex=-1` · skip link in `App.tsx` · off-canvas drawer under 860px), `routes.tsx` (a **total** `Record<RouteId, …>`, so a route id without a page is a compile error; lazy chunks; a route-level error boundary that prints the real thrown value; focus moved into the new page's heading on every navigation). `CommandPalette.tsx` is the `cmd-dock`: ⌘K/Ctrl+K, ARIA combobox owning a listbox, `aria-activedescendant`, `Tab` trap, focus restored to the opener, ↑/↓/Home/End/Enter/Esc. **23**, not 22 — `bridge` became its own route when it stopped being reachable only from inside `decisions`.
+- [x] `home`, `chat` (governed), `settings` built to full §D spec incl. `blocked`. — `Home.tsx` 562 · `Conversations.tsx` 1053 (which `Chat.tsx` renders as `kind="direct"`, so the delegation surface sits inside the workspace that owns the conversation) · `Settings.tsx` 433. Each carries the real §D state set — `Skeleton`/`EmptyState`/`ErrorState`, `blocked`, `aria-live` — against the real IPC with no fixture layer behind it: outside Tauri every call rejects and each panel renders its own error state.
+- [x] Design-token stylesheet reproducing §C.1; `prefers-reduced-motion` honored. — **now checked, not asserted**: `tools/check_c1_tokens.py` reads §C.1 out of this file and holds `aios.css`'s `:root` to all 42 tokens, positional rows (type scale · radii · spacing) matched by order, with a row whose value count disagrees with its token-name range treated as an **error** rather than a partial read. `prefers-reduced-motion` is honoured globally (`aios.css`) and again per page. `check_token_parity` compares a *different* pair of files for a *different* set of names and never covered this ladder.
+- [x] Governed chat fail-closed + verified-receipt-mandatory, badge shown. — `receiptBadge()` maps only the backend's own vocabulary and **fails closed on everything else**: `trusted_verified` → green, `demonstration_*` → info, `development_untrusted` → warning, and any unrecognised value gets **no badge**, never a promotion. A `blocked` governed turn persists no message at all — it raises a turn-level notice carrying the engine's reason (`Conversations.tsx`), so there is no body to badge. Covered by `Conversations.verified.test.tsx`.
+- [x] `contracts/` dedupe plan recorded; docs + `PROJECT_STATE.md` synced. — [`docs/design/CONTRACTS_DEDUPE_PLAN.md`](docs/design/CONTRACTS_DEDUPE_PLAN.md), measured rather than recalled: **four** schema homes, not two, and **no duplicated schema file exists anywhere in the tree**. The real drift is a Python schema and a hand-written Rust type bound by nothing but a doc comment — so the milestone's first step is a **binding gate**, not a move. It also records that `approval`, named as canonical by both `contracts/README.md` and this phase's Contracts row, **does not exist** — the same absence Phase 2 found from the other end (`T-021`).
 
 **Task checklist.**
-- [ ] Build the app shell + router + `#nav` (22 entries) + `cmd-dock` (`⌘K`).
-- [ ] Ship the design-token stylesheet (colors/type/space/motion) from §C.1.
-- [ ] `home` overview page per §D (incl. first-run empty state).
-- [ ] `chat` page wired to the Phase-1 governed turn + receipt badge, all §D states.
-- [ ] `settings` page (provider toggle, theme, sidecar config, about) per §D.
-- [ ] Placeholder routes for phase-2/4–9 pages; a11y keyboard pass on the shell.
+- [x] Build the app shell + router + `#nav` (23 entries) + `cmd-dock` (`⌘K`). — see DoD row 1; the palette got its **first tests** in the same change (9, six mutants killed).
+- [x] Ship the design-token stylesheet (colors/type/space/motion) from §C.1. — and the two missing rungs of the spacing ladder, which is what made this row worth re-checking instead of ticking.
+- [x] `home` overview page per §D (incl. first-run empty state). — `Home.tsx`; the first-run state is `EmptyState` plus the `Onboarding` overlay mounted in `App.tsx`.
+- [x] `chat` page wired to the Phase-1 governed turn + receipt badge, all §D states. — see DoD row 4.
+- [x] `settings` page (provider toggle, theme, sidecar config, about) per §D. — `Settings.tsx`; theme and language also live in the shell footer, so neither requires leaving the page you are on.
+- [x] Placeholder routes for phase-2/4–9 pages; a11y keyboard pass on the shell. — there are **no placeholders left**: all 23 routes resolve to real pages, and `Generic.tsx` survives only as a fallback the total `Record` makes unreachable. The a11y pass is the `cmd-dock` work above plus the existing roving-tabindex rail, and it is pinned by tests rather than by having been performed once.
 
 ---
 
