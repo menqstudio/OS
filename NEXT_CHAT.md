@@ -1,12 +1,64 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `7e70948`.** The only thing open is PR #110 on `t019-close`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `1db74ef`.** The only thing open is PR #111 on `floor-writer-proposal`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** T-019 is closed. Phase 2's five open boxes reduce to two facts - the approval-request path exists on neither side (an audited engine task the phase itself defers) and security's SS-D sigbreathe pulse is deliberately unapplied. B-02 stays open beside 1b. Nothing in T-019 has been re-audited by anyone who did not write it, so every mark it carries is a circle.
+> **Next:** Open a session AT Desktop\OS so the canonical-law hook fires, then author docs/design/FLOOR_WRITER_SERVICE_DESIGN.md - SS-I step 1, the Builder's, a proposal and not an implementation. 1b was DECIDED 2026-08-14 (floor-writer service) and its own text requires an Architect audit before anything is built; the Architect has nothing to audit because that design does not exist. It closes 1b, A-01's root and B-02 at one boundary.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The wall was off for the session that just used it, and two tenses were wrong (2026-08-15)
+
+Three corrections, all to work landed hours earlier, all found by asking the next question rather than
+by anyone reporting them.
+
+**The canonical-law wall never fired for T-019, and nothing said so.** `.claude/settings.json` wires
+five events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` — and every
+one is addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. That session's project root was
+`Desktop\ԸՆԳԵՐ` while the work happened in `Desktop\OS`, and `CLAUDE_PROJECT_DIR` was empty. So for
+the whole of T-019 there was **no full-read receipt, no roadmap-phase declaration, no prior-art check,
+and no `Stop` coordination guard** — `check_read_receipt.py --verify` answers `RED: no full-read
+receipt for this session`, which is what it should have answered before the first edit rather than
+after the last.
+
+This is the `engine/` bullet's shape one level up: **hooks load from the root the session was opened
+at, and their absence announces itself nowhere.** The three sentences in `START_HERE.md` about reading
+every canonical file were, for that session, prose again — which is precisely the state
+`canonical_law_gate.py` was written to end.
+
+**The CI backstop held, and that is the difference between a gap and an incident.** `check_canonical_sync`
+ran at every commit, `check_coordination` and `check_repo_state` at every push, and 34 checks on the
+exact head that merged. That is exactly the division of labour the gate's own *"SHELL IS NOT GATED"*
+limit describes: the session-side half is a convenience, the commit-and-CI half is the wall. The
+session-side half was simply not there.
+
+**The consequence, taken rather than argued around.** A session that cannot produce a receipt **may
+not create a new canonical file** — rule 4 of that gate wants a recorded prior-art search and rule 1
+wants the receipt. `--record` would have produced one in a keystroke, and the gate's own text names
+that hole: *"an agent with shell access can call `--record` without reading anything."* Calling it here
+would have been forging the proof that this repository's whole read discipline rests on. So the
+floor-writer design proposal — the next thing on the critical path — is **not written by this
+session**. It needs a session opened at `Desktop\OS`, where the hook fires, delivers the canonical
+text, and records the receipt honestly by construction.
+
+**And `1b` is not pending — it was decided, which makes B-02's note wrong by one tense.** The `B-02`
+row written this morning ended *"what would settle it is the **1b** decision itself"*. `1b` was
+**decided on 2026-08-14**: the floor-writer service, option 1, taken. The Owner's own reason 3 already
+answers `B-02` — a resident principal that owns the marks directory *"is the natural place to pin
+`install_id` from trusted config as well — one principal, one trusted config, both defects closed at
+the same boundary"*, and it names `A-01` and `B-02` as two faces of one defect: **the floor is
+controlled by its own subject.** Writing "awaiting a decision" over a decision already taken is this
+repository's characteristic defect wearing a verb tense.
+
+**What is actually missing is §I step 2.** The decision ships with its own process — *"Owner approval
+(given, here) → Architect audit → implement. No implementation lands on this decision alone."* The
+Architect has nothing to audit, because **no floor-writer design exists**: `docs/design/` holds twelve
+documents and none of them is one, and `floor-writer` appears in exactly one file in the repository,
+the page that decided it. Authoring that proposal is the Builder's under the roadmap's ownership
+matrix (🔨 proposal · 📐 mandatory audit · 🛑), and it is the single highest-value next task. It is
+**a proposal, not an implementation** — and per the paragraph above, not one this session may write.
+
 
 ### Phase 2 was checked against the code, and A-05's open half closed (2026-08-15)
 
