@@ -322,29 +322,38 @@ class SettledSnapshotTests(unittest.TestCase):
         self.assertEqual(rs.verify_settled_snapshot(118, "OPEN", self._snap(), None, MAIN, self._yes), [])
 
     # --- fifth audit, A-07: an ancestor check alone can never go stale --------------------------
-    def test_settled_older_than_the_carriers_own_merge_commit_is_red(self):
-        # The repository's first commit is an ancestor of every head, so ancestor-of-main passes
-        # forever. The carrier's merge is the floor: you cannot have settled before the pull
-        # request you are naming as the thing that merged.
-        # Direction-aware stub: settled (MAIN) IS on this main, but the carrier's merge commit
-        # (NEWMAIN) is NOT an ancestor of it — i.e. settled predates the merge it names.
-        def anc(a, b):
-            return not (a == NEWMAIN and b == MAIN)
-        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, anc,
-                                       carrier_merge_commit=NEWMAIN)
-        self.assertTrue(any("older than the merge commit" in p for p in f), f)
+    # `settled_at_main_head` means "the main this carrier merged into", which is EXACTLY the merge
+    # commit's first parent. The audit's own suggestion — "settled must be at or after the merge
+    # commit" — is unsatisfiable for a self-carrier, because the snapshot is written inside the
+    # pull request, before the merge it would have to postdate. That version went red on main
+    # within a minute of shipping; these tests pin the version that is both exact and satisfiable.
+    def test_settled_that_is_not_the_mains_the_carrier_merged_into_is_red(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: "9" * 40)
+        self.assertTrue(any("is not the main that carrier" in p for p in f), f)
 
-    def test_settled_at_the_merge_commit_itself_is_green(self):
-        snap = self._snap(); snap["settled_at_main_head"] = NEWMAIN
-        self.assertEqual(
-            rs.verify_settled_snapshot(118, "MERGED", snap, set(), NEWMAIN, self._yes,
-                                       carrier_merge_commit=NEWMAIN), [])
-
-    def test_settled_after_the_merge_commit_is_green(self):
-        # is_ancestor(merge_commit, settled) is true => settled is at or after it.
+    def test_settled_equal_to_the_merges_first_parent_is_green(self):
         self.assertEqual(
             rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
-                                       carrier_merge_commit=NEWMAIN), [])
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: MAIN), [])
+
+    def test_a_self_carrier_written_before_its_own_merge_is_SATISFIABLE(self):
+        # The regression that matters: the snapshot records the main it branched from, the merge
+        # lands on that same commit, and this must be GREEN. The first version of the rule made
+        # this state impossible to reach and turned main red on every merge.
+        snap = self._snap(); snap["settled_at_main_head"] = MAIN
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", snap, set(), NEWMAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: MAIN), [])
+
+    def test_an_unresolvable_first_parent_does_not_invent_a_failure(self):
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: None), [])
 
     def test_no_merge_commit_available_does_not_invent_a_failure(self):
         self.assertEqual(

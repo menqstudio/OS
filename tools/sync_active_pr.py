@@ -233,6 +233,14 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
 
     swap(f'"baseline_main_head_at_sync": "{data["sync"]["baseline_main_head_at_sync"]}"',
          f'"baseline_main_head_at_sync": "{head}"', "baseline head")
+    # `settled_at_main_head` moves WITH the baseline. Only `--settled` used to touch it, so three
+    # ordinary syncs in a row left it three merges behind while the gate stayed green -- the check
+    # could not see it, because an ancestor-of-main test can never go stale (A-07, fifth audit).
+    # The field means "the main this carrier merged into", which is the same live head the baseline
+    # is being set to, so writing one and not the other was never coherent.
+    if data.get("settled_at_main_head"):
+        swap(f'"settled_at_main_head": "{data["settled_at_main_head"]}"',
+             f'"settled_at_main_head": "{head}"', "settled head")
     swap(f'"snapshot_branch": "{data["sync"]["snapshot_branch"]}"',
          f'"snapshot_branch": "{branch}"', "snapshot branch")
     swap(f'    "branch": "{data["active"]["branch"]}"\n  }},',

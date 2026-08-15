@@ -280,7 +280,7 @@ def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]
 
 def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
                             open_now: set[int] | None, live_main: str | None, is_ancestor,
-                            carrier_merge_commit: str | None = None) -> list[str]:
+                            carrier_merge_commit: str | None = None, first_parent=None) -> list[str]:
     """The carrier has stopped being OPEN. What must the snapshot then say? Pure/testable.
 
     A carrier that has MERGED is the staleness this gate could not see. The event-context checks only
@@ -342,17 +342,28 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
         return [f"settled_at_main_head {str(settled)[:7]} is not an ancestor of live main "
                 f"{live_main[:7]} — the snapshot settled at a commit that is not on this main. "
                 f"Re-run: python tools/sync_active_pr.py --settled"]
-    # AND BOUNDED FROM BELOW. An ancestor check alone can never go stale: the repository's very
-    # first commit is an ancestor of every head, so a snapshot recording it would pass forever,
+    # AND PINNED, not merely bounded. An ancestor check alone can never go stale: the repository's
+    # very first commit is an ancestor of every head, so a snapshot recording it passes forever,
     # and the live value sat three merges behind HEAD while the gate was content (A-07, fifth
-    # audit). The carrier's own merge commit is the floor that means something -- you cannot have
-    # settled EARLIER than the pull request you are naming as the thing that merged.
-    if carrier_merge_commit and settled != carrier_merge_commit \
-            and not is_ancestor(carrier_merge_commit, settled):
-        return [f"settled_at_main_head {str(settled)[:7]} is older than the merge commit of the "
-                f"carrier it names (#{carrier_no} merged as {carrier_merge_commit[:7]}). An "
-                f"ancestor-of-main check alone passes for the first commit ever made; the carrier's "
-                f"own merge is the floor. Re-run: python tools/sync_active_pr.py --settled"]
+    # audit).
+    #
+    # The first attempt at a floor was "settled must be at or after the carrier's merge commit",
+    # which is the shape the audit suggested and is UNSATISFIABLE for a self-carrier: the snapshot
+    # is written INSIDE the pull request, before the merge it would have to postdate. It went red
+    # on main within a minute of shipping, which is the same trap this file already carries a long
+    # comment about. Recorded rather than quietly replaced.
+    #
+    # What `settled_at_main_head` actually means is "the main this carrier merged into", and that
+    # is exactly the merge commit's FIRST PARENT — knowable, exact, and satisfiable by writing the
+    # live main head at sync time, which is what the generator does.
+    if carrier_merge_commit and first_parent is not None:
+        parent = first_parent(carrier_merge_commit)
+        if parent and settled != parent:
+            return [f"settled_at_main_head {str(settled)[:7]} is not the main that carrier "
+                    f"#{carrier_no} merged into ({parent[:7]}, the first parent of merge commit "
+                    f"{carrier_merge_commit[:7]}). The field means 'everything up to here has "
+                    f"merged'; an ancestor-of-main check alone would accept the first commit ever "
+                    f"made. Re-run: python tools/sync_active_pr.py"]
     named = {carrier_no} | {pr["number"] for pr in snapshot.get("prs", [])
                             if isinstance(pr, dict) and isinstance(pr.get("number"), int)}
     unnamed = sorted(n for n in open_now if n not in named)
@@ -450,6 +461,17 @@ def open_prs_now() -> set[int] | None:
         return None
 
 
+def _git_first_parent(sha: str) -> str | None:
+    """The commit a merge landed ON — `<merge>^1`. None when git cannot answer, so the caller
+    stays permissive about the thing it could not measure rather than inventing a failure."""
+    try:
+        out = subprocess.run(["git", "rev-parse", f"{sha}^1"], capture_output=True, text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    value = (out.stdout or "").strip()
+    return value if out.returncode == 0 and _is_sha(value) else None
+
+
 def _live_main_head() -> str | None:
     """origin/main as GitHub has it. None when git cannot answer, so the caller stays permissive
     about the thing it could not measure rather than inventing a failure."""
@@ -518,7 +540,8 @@ def main(argv: list[str] | None = None) -> int:
                         if isinstance(carrier_live.get("mergeCommit"), dict) else None)
         failures += verify_settled_snapshot(carrier_no, carrier_state, snap,
                                             open_prs_now(), _live_main_head(), _git_is_ancestor,
-                                            merge_commit if _is_sha(merge_commit) else None)
+                                            merge_commit if _is_sha(merge_commit) else None,
+                                            _git_first_parent)
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
