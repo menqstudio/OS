@@ -749,9 +749,13 @@ jobs:
         with:
           python-version: "3.12"
       # Offline unit tests of the pure functions (merge->main-push GREEN, exact-head drift RED, ...).
+      # sync_active_pr is tested in the SAME job as the gate that reads its output: it is the
+      # generator that writes config/current_state.json, and every stale-canon incident this
+      # repository has recorded was manufactured there. Tests are wired one-by-one here (there is no
+      # discover over tools/), so a test file that is not named on this line does not run at all.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state
+        run: python -m unittest test_check_repo_state test_sync_active_pr
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.

@@ -24,6 +24,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
 STATE = ROOT / "config" / "current_state.json"
@@ -109,6 +112,112 @@ def live_main_head() -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise SystemExit(f"RED: origin refs/heads/main did not resolve to a 40-hex sha: {line!r}")
     return sha
+
+
+def live_open_prs() -> list[dict]:
+    """Every pull request GitHub says is open right now, with the fields prs[] is anchored on.
+
+    Read live, never assumed. `--settled` used to hard-code "Nothing else is open" into the snapshot
+    note and "The only thing open is PR #N" into all three banners, without ever asking. On
+    2026-08-15 that stamped both sentences while PR #112 -- a parked design proposal -- was open, so
+    the settle that removed three stale claims manufactured a fourth in the same commit. A generator
+    that asserts a fact it never measured is the mechanism behind most of this repository's stale
+    canon; the fix belongs here, not in the file it writes.
+    """
+    out = subprocess.run(
+        ["gh", "pr", "list", "--state", "open", "--json",
+         "number,headRefName,headRefOid,baseRefName,isDraft,title"],
+        # encoding is EXPLICIT: `text=True` decodes with the process locale, which on this Windows
+        # host is cp1252, and a PR title containing an em-dash came back as "â€”" and was written
+        # into the snapshot that way. gh emits UTF-8 on every platform; say so rather than inherit
+        # whatever the console happens to be.
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0:
+        raise SystemExit("RED: `gh pr list` failed, so this tool cannot know what is open and will "
+                         "not guess: " + (out.stderr or "").strip())
+    try:
+        return sorted(json.loads(out.stdout or "[]"), key=lambda p: p["number"])
+    except (ValueError, KeyError) as exc:
+        raise SystemExit(f"RED: could not parse `gh pr list` output: {exc}")
+
+
+def parked_roles(parked: list[dict], pairs: list[str] | None) -> dict[int, str]:
+    """Resolve each parked PR's role from --parked-role, or refuse. Never guessed.
+
+    `check_coordination` holds prs[] to a closed enum of roles, and the role is a claim about what a
+    pull request IS -- a design proposal is not an implementation, and the difference decides who is
+    allowed to merge it. Inferring it from a title or a branch name would be this tool asserting
+    something it cannot measure, which is the failure live_open_prs() exists to stop. So: refuse, and
+    print the exact command. Checked BEFORE anything is written, so a refusal leaves no half-settled
+    file behind.
+    """
+    roles: dict[int, str] = {}
+    for pair in pairs or []:
+        num, _, role = pair.partition("=")
+        try:
+            roles[int(num.strip().lstrip("#"))] = role.strip()
+        except ValueError:
+            raise SystemExit(f"RED: --parked-role expects NUMBER=ROLE, got {pair!r}")
+    known = {p.get("number") for p in (json.loads(STATE.read_text(encoding="utf-8")).get("prs") or [])
+             if isinstance(p, dict)}
+    missing, bad = [], []
+    for p in parked:
+        n = p["number"]
+        if n in known:
+            continue                     # already recorded; its role is whatever the file says
+        if n not in roles:
+            missing.append(p)
+        elif roles[n] not in PR_ROLES:
+            bad.append((n, roles[n]))
+    if bad:
+        raise SystemExit("RED: --parked-role value not in " + repr(PR_ROLES) + ": "
+                         + ", ".join(f"#{n}={r!r}" for n, r in bad))
+    if missing:
+        raise SystemExit(
+            "RED: these pull requests are open, are not the carrier, and have no role yet:\n"
+            + "".join(f"    #{p['number']}  {p.get('title') or ''}\n" for p in missing)
+            + "A settled snapshot has to NAME every open pull request (check_repo_state), and every\n"
+              "prs[] entry has to declare a role from " + repr(PR_ROLES) + " (check_coordination).\n"
+              "Re-run with, for example:  --parked-role "
+            + " --parked-role ".join(f"{p['number']}=design" for p in missing))
+    return roles
+
+
+def record_parked_prs(parked: list[dict], roles: dict[int, str]) -> list[int]:
+    """Put every open pull request that is NOT the carrier into prs[], with its exact live head.
+
+    `check_repo_state.verify_settled_snapshot` refuses a settled snapshot that names no open pull
+    request, and `compare_external_prs` then anchors each prs[] entry to an exact live head, branch,
+    base and draft flag. So this is not bookkeeping: an entry written here is a live claim that goes
+    RED the moment the parked PR moves. Every value comes from GitHub, so the entry cannot be a
+    guess. Insertion is targeted text surgery -- re-dumping this 109 KB file through json.dumps
+    would reformat all of it and bury the change.
+    """
+    if not parked:
+        return []
+    text = STATE.read_text(encoding="utf-8")
+    have = {p.get("number") for p in (json.loads(text).get("prs") or []) if isinstance(p, dict)}
+    new = [p for p in parked if p["number"] not in have]
+    if not new:
+        return []
+    rows = "".join(
+        '    {"number": %d, "branch": %s, "base": %s, "draft": %s, "merge_state": "open", '
+        '"role": %s, "head": %s, "why_listed": %s},\n'
+        % (p["number"], json.dumps(p["headRefName"]), json.dumps(p["baseRefName"]),
+           "true" if p["isDraft"] else "false", json.dumps(roles[p["number"]]),
+           json.dumps(p["headRefOid"]),
+           json.dumps("Open and NOT the carrier: " + str(p.get("title") or "").strip()
+                      + ". Listed so the settled snapshot names it; its exact head is anchored."))
+        for p in new)
+    if '"prs": [],' in text:
+        text = text.replace('"prs": [],', '"prs": [\n' + rows.rstrip(",\n") + "\n  ],", 1)
+    elif '"prs": [\n' in text:
+        text = text.replace('"prs": [\n', '"prs": [\n' + rows, 1)
+    else:
+        raise SystemExit("RED: could not locate the prs[] array to record the parked pull requests")
+    json.loads(text)                     # never leave it unreadable
+    STATE.write_text(text, encoding="utf-8")
+    return [p["number"] for p in new]
 
 
 def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
@@ -205,13 +314,18 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
     return True
 
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
-           banner: str | None = None) -> int:
+           banner: str | None = None, role_pairs: list[str] | None = None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
 
     `check_repo_state` refuses a snapshot that still names a merged carrier, because the reader it
     misleads is a person or an agent arriving at the repository cold — and CI never noticed, since
     the PR-event checks only run on a `pull_request` and after the merge nothing asked.
     """
+    # Measure and validate FIRST. parked_roles() refuses when an open pull request has no declared
+    # role, and a refusal has to leave the tree untouched -- a half-settled snapshot (new
+    # settled_at_main_head, no prs[] entry) is precisely the RED state this whole change is about.
+    parked = [p for p in live_open_prs() if p["number"] != pr]
+    roles = parked_roles(parked, role_pairs)
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
     line = '  "settled_at_main_head": "' + head + '",\n'
@@ -239,11 +353,18 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # And the settle commit's OWN pull request becomes the carrier. While it is open, it is the one
     # thing that is open, and the exact-head anchor has to point at it -- otherwise the snapshot
     # names a merged PR's dead branch and the gate refuses the very commit that resolves it.
+    parked_phrase = ("Nothing else is open" if not parked else
+                     "Also open, and NOT the carrier: "
+                     + ", ".join("#" + str(p["number"]) for p in parked)
+                     + " (recorded in prs[], exact-head anchored)")
     if pr and branch:
         rewrite_state(pr, branch,
-                      "Settling the state anchor at main " + head[:7] + ". Nothing else is open; "
-                      "this pull request is the commit that records it.", head)
+                      "Settling the state anchor at main " + head[:7] + ". " + parked_phrase
+                      + "; this pull request is the commit that records it.", head)
         rewrite_carrier_block(pr, branch)
+    added = record_parked_prs(parked, roles)
+    if added:
+        print("  recorded in prs[]: " + ", ".join("#" + str(n) for n in added))
 
     last = (data.get("current_workflow_pr") or {}).get("number")
     tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
@@ -256,9 +377,17 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # at once. `--banner` could not be used to work around it either: main() parsed the flag and
     # never passed it to this function. A banner that reads as nonsense is not a smaller failure
     # than one that reads as a lie; it is the first thing a cold reader meets in every state file.
-    carrier = ((" The only thing open is PR #" + str(pr) + " on `" + branch
-                + "`, the pull request that records it.") if pr and branch
-               else " Nothing is open.")
+    # "The only thing open" is a measurement, not a phrase. See live_open_prs(): it was hard-coded
+    # and it was wrong the day a design proposal was parked open for review.
+    others = ("" if not parked else
+              " Also open, and deliberately not merged here: "
+              + ", ".join("PR #" + str(p["number"]) + " (`" + p["headRefName"] + "`)"
+                          for p in parked) + ".")
+    carrier = (((" The pull request that records it is PR #" + str(pr) + " on `" + branch + "`."
+                 if parked else
+                 " The only thing open is PR #" + str(pr) + " on `" + branch
+                 + "`, the pull request that records it.") + others) if pr and branch
+               else ((" Nothing is open." if not parked else " Open:" + others)))
     rewrite_banners(banner or (
         "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
         + " Start from "
@@ -282,11 +411,14 @@ def main() -> int:
                     help="with --settled: one line on what happens next, for whoever reads this "
                          "repository cold")
     ap.add_argument("--banner", help="the human banner; defaults to a line built from --summary")
+    ap.add_argument("--parked-role", action="append", metavar="NUMBER=ROLE",
+                    help="with --settled: the role of an open pull request that is NOT the "
+                         "carrier, e.g. 112=design. Never inferred; see parked_roles().")
     args = ap.parse_args()
 
     head = live_main_head()
     if args.settled:
-        return settle(head, args.next_up, args.pr, args.branch, args.banner)
+        return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
