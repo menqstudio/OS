@@ -6377,7 +6377,13 @@ body.ignited .shimmer{opacity:1}
 
 /* ---------- PHONE TIER : full single-column stacking + tighter spacing ---------- */
 @media (max-width: 560px){
-  :root{ --s5:16px; --s6:18px; --s8:24px; --s10:30px }
+  /* --s7 and --s9 tighten with the rest. Added at the base and forgotten here, they stayed at
+     28px and 36px while --s8 dropped to 24px and --s10 to 30px, so the ladder ran backwards on
+     a phone: the panels that use `padding:var(--s7) var(--s5)` tightened horizontally to 16px
+     and kept desktop-tier 28px vertically (A-04, fifth audit). The gate that was supposed to
+     protect this ladder read only the FIRST :root and could not see this block at all; it reads
+     every one of them now, and refuses a non-monotonic tier. */
+  :root{ --s5:16px; --s6:18px; --s7:21px; --s8:24px; --s9:27px; --s10:30px }
   .stage{ padding-left:13px; padding-right:13px }
 
   .pageHead{ flex-direction:column; align-items:flex-start; gap:10px; margin-bottom:16px }

@@ -44,7 +44,13 @@ const styles = `
 .v-decisions .dec-engine-said p:last-child { margin-bottom: 0; }
 .v-decisions .dec-engine-attr { letter-spacing: .06em; }
 @keyframes dec-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { transform: none; } }
+/* The 100% keyframe MUST restate opacity. This row carries the "rise" class, which is opacity:0
+   until an animation lifts it, and .led.dec-stamp REPLACES that animation with this one using
+   "both". A property missing from the last keyframe gets an implicit 100% built from the
+   UNDERLYING value - rise's opacity:0 - so a stamped decision row animated in and then faded
+   back out to nothing. Same family as the fifth audit's A-01, and found by the check written in
+   answer to it (tools/check_c1_tokens.py::animation_clobber). */
+@keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .v-decisions .led, .v-decisions .led.dec-stamp { animation: none; }
   /* Keep the .now / .live colours (they carry meaning) but drop the motion. */

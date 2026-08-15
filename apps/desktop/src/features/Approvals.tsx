@@ -195,6 +195,11 @@ export function Approvals() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // A MODIFIED KEY IS SOMEBODY ELSE'S SHORTCUT. `e.key.toLowerCase() === 'g'` matched
+      // Ctrl+G / Cmd+G, so find-next staged a grant dialog and preventDefault swallowed the
+      // browser's own binding (A-11, fifth audit). Pre-existing for `d`/`e`; this round widened
+      // it to the grant path, which is the one where a mistaken keystroke matters most.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const list = data ?? [];
       if (list.length === 0) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((i) => Math.min(i + 1, list.length - 1)); return; }

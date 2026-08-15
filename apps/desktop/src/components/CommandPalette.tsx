@@ -70,7 +70,32 @@ export function CommandPalette() {
     }
     const opener = openerRef.current;
     openerRef.current = null;
-    opener?.focus?.();
+    // ONLY if it still exists. On the palette's PRIMARY path — ⌘K, type, Enter — `go()` changes
+    // the route before closing, so the page that owned the opener has already unmounted and the
+    // remembered node is detached. Calling focus() on a detached node is a silent no-op that
+    // leaves the keyboard on <body>, which is the exact failure the restore was added to prevent
+    // (A-03, fifth audit). When the opener is gone, `RouteFocus` owns the handoff: it moves focus
+    // into the new page's heading, which is the right destination for a navigation anyway.
+    if (opener && opener.isConnected) opener.focus?.();
+  }, [paletteOpen]);
+
+  // THE TRAP HAS TO LIVE ABOVE THE INPUT. Bound to the input alone it stops existing the moment
+  // focus leaves it — and one click on the panel's padding, on the list container, or on the
+  // empty-state row does exactly that: the click is not on a focusable element, so the browser
+  // blurs to <body>, the scrim keeps the palette open, and the next Tab lands on a control behind
+  // a modal the user cannot see past (A-02, fifth audit; found with trusted CDP input, because
+  // synthetic events skip the browser's focus steps and jsdom's tab model never saw it).
+  // Two guards, because either alone leaves a hole: mousedown keeps focus from leaving, and the
+  // document-level Tab handler recovers if it left anyway.
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      inputRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [paletteOpen]);
 
   // Nav matches — the original palette behaviour, kept intact.
@@ -148,6 +173,16 @@ export function CommandPalette() {
         aria-modal="true"
         aria-label={t('top.command')}
         onClick={(e) => e.stopPropagation()}
+        // Keep the click from blurring the input in the first place. Preventing the default on
+        // mousedown suppresses the browser's focus change, so pressing on the panel's padding or
+        // on a result row never moves focus to <body>. Focusable descendants are exempt so the
+        // input stays clickable (caret placement, selection) — today it is the only one.
+        onMouseDown={(e) => {
+          const el = e.target as HTMLElement;
+          if (!el.closest('input, button, a[href], select, textarea, [tabindex]:not([tabindex="-1"])')) {
+            e.preventDefault();
+          }
+        }}
       >
         <input
           ref={inputRef}

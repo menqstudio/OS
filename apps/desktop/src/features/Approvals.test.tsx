@@ -118,6 +118,27 @@ describe('Approvals — mirror-never-decide honesty invariants', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('a MODIFIED key is somebody else’s shortcut and stages nothing', async () => {
+    // fifth audit, A-11. `e.key.toLowerCase() === 'g'` matched Ctrl+G / Cmd+G, so find-next
+    // opened a grant confirm AND preventDefault swallowed the browser's own binding. The
+    // deliberate confirm step meant it could not commit — but a dialog the owner did not ask
+    // for, over a keystroke they aimed somewhere else, is the wrong thing to have built.
+    setup();
+    await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));
+
+    fireEvent.keyDown(window, { key: 'g', ctrlKey: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'g', metaKey: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Positive control: the unmodified key still works, so this is a modifier guard and not a
+    // test that would pass against a build where `g` stopped doing anything at all.
+    fireEvent.keyDown(window, { key: 'g' });
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
   it('DENY routes through the real fail-safe reject command', async () => {
     setup();
     await waitFor(() => expect(screen.getAllByText('vendor@example.com').length).toBeGreaterThan(0));

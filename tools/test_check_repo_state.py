@@ -176,6 +176,47 @@ class CarrierExactHeadTests(unittest.TestCase):
                             for p in rs.verify_carrier_exact_head(CARRIER_HEAD, CARRIER_HEAD, marker)))
 
 
+class ExternalPrAnchorTests(unittest.TestCase):
+    """fifth audit, A-05: the docstring claimed four anchors and delivered one.
+
+    `branch`, `base` and `draft` were each checked only *if the snapshot bothered to state them*,
+    so an entry of `{number, merge_state, head}` satisfied "anchored to an exact live head, branch,
+    base and draft flag" while anchoring only the head. Omission is now a failure, which is what
+    makes the sentence true.
+    """
+    def _live(self):
+        return {112: {"state": "OPEN", "isDraft": False, "headRefName": "design/floor-writer",
+                      "baseRefName": "main", "headRefOid": HEAD_31}}
+
+    def _entry(self, **over):
+        e = {"number": 112, "branch": "design/floor-writer", "base": "main",
+             "draft": False, "merge_state": "open", "head": HEAD_31}
+        e.update(over)
+        return e
+
+    def test_a_complete_entry_passes(self):
+        self.assertEqual(rs.compare_external_prs({"prs": [self._entry()]}, self._live()), [])
+
+    def test_head_only_entry_is_REFUSED(self):
+        thin = {"number": 112, "merge_state": "open", "head": HEAD_31}
+        f = rs.compare_external_prs({"prs": [thin]}, self._live())
+        self.assertTrue(any("omits `branch`" in p for p in f), f)
+        self.assertTrue(any("omits `base`" in p for p in f), f)
+        self.assertTrue(any("omits `draft`" in p for p in f), f)
+
+    def test_each_omission_is_reported_on_its_own(self):
+        for field, needle in (("branch", "omits `branch`"), ("base", "omits `base`"),
+                              ("draft", "omits `draft`")):
+            entry = self._entry()
+            del entry[field]
+            f = rs.compare_external_prs({"prs": [entry]}, self._live())
+            self.assertTrue(any(needle in p for p in f), (field, f))
+
+    def test_a_stated_but_wrong_value_still_fails(self):
+        f = rs.compare_external_prs({"prs": [self._entry(branch="wrong")]}, self._live())
+        self.assertTrue(any("but GitHub head branch" in p for p in f), f)
+
+
 class CarrierPostMergeTests(unittest.TestCase):
     def test_merged_with_correct_post_merge_is_green(self):
         snap = _snapshot()
@@ -268,6 +309,47 @@ class SettledSnapshotTests(unittest.TestCase):
         snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
                             "draft": False, "merge_state": "open", "head": HEAD_31}])
         self.assertEqual(rs.verify_settled_snapshot(114, "MERGED", snap, {112}, MAIN, self._yes), [])
+
+    # --- fifth audit, A-05: the safety net was a fail-open --------------------------------------
+    def test_unknown_open_set_REFUSES_rather_than_assuming_nothing_is_open(self):
+        # open_prs_now() used to return an empty set when gh failed, and an empty set is the most
+        # PERMISSIVE answer this rule can receive — "no pull requests are open" — returned exactly
+        # when the truth is unknown. None now means unknown, and unknown is a refusal.
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), None, MAIN, self._yes)
+        self.assertTrue(any("could not be determined" in p for p in f), f)
+
+    def test_the_refusal_does_not_fire_while_the_carrier_is_still_open(self):
+        self.assertEqual(rs.verify_settled_snapshot(118, "OPEN", self._snap(), None, MAIN, self._yes), [])
+
+    # --- fifth audit, A-07: an ancestor check alone can never go stale --------------------------
+    def test_settled_older_than_the_carriers_own_merge_commit_is_red(self):
+        # The repository's first commit is an ancestor of every head, so ancestor-of-main passes
+        # forever. The carrier's merge is the floor: you cannot have settled before the pull
+        # request you are naming as the thing that merged.
+        # Direction-aware stub: settled (MAIN) IS on this main, but the carrier's merge commit
+        # (NEWMAIN) is NOT an ancestor of it — i.e. settled predates the merge it names.
+        def anc(a, b):
+            return not (a == NEWMAIN and b == MAIN)
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, anc,
+                                       carrier_merge_commit=NEWMAIN)
+        self.assertTrue(any("older than the merge commit" in p for p in f), f)
+
+    def test_settled_at_the_merge_commit_itself_is_green(self):
+        snap = self._snap(); snap["settled_at_main_head"] = NEWMAIN
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", snap, set(), NEWMAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN), [])
+
+    def test_settled_after_the_merge_commit_is_green(self):
+        # is_ancestor(merge_commit, settled) is true => settled is at or after it.
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN), [])
+
+    def test_no_merge_commit_available_does_not_invent_a_failure(self):
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=None), [])
 
     def test_malformed_prs_entries_do_not_launder_an_open_pr(self):
         # a non-dict, a null number and a string number must NOT count as "named".

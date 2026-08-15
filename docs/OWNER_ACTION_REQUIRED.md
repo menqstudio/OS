@@ -6,8 +6,26 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **FIFTH AUDIT, 2026-08-16 — RED, on `main` @ `5fe4740` (pin proved by tree digest).** It
+> confirmed **all three production-gate refusals still closed** and found **no P0**. It also found
+> **11 findings** and promoted **15 Builder claims to ✅** — the largest promotion this ledger has
+> carried. Its headline is `A-01`: the round it audited **shipped a rendering regression in the one
+> file whose header argues that a comment is not an honesty property.** The `sigbreathe` rule used
+> the `animation` shorthand, which replaced `.reveal`'s entrance, so the Security integrity
+> instrument rendered at **`opacity:0`** for the whole of the state the pulse was added to depict.
+>
+> **Nothing here could have seen it.** `vitest.config.ts` sets `css: false`, so 660 unit tests and
+> the entire axe suite run against a DOM with **no stylesheet attached**. The test asserted that
+> the class name was in the DOM — which was true — and said nothing about paint. That gap is the
+> audit's most valuable finding, and it is §E of its report, not a numbered one.
+>
+> **All 11 are fixed as of 2026-08-16**, and the two that had no possible test now have a static
+> one: `tools/check_c1_tokens.py::animation_clobber`. Building it found a **third** instance of the
+> same family nobody had reported — `dec-stamp`'s final keyframe omitted `opacity`, so a stamped
+> decision row animated in and then **faded back out to nothing**.
+>
 > **The standing audit verdict is RED — and as of 2026-08-15 it is NOT older than the code.**
-> **Four** independent audits have run. This block said "two", "it is older than the code" and "it
+> **Five** independent audits have run. This block said "two", "it is older than the code" and "it
 > has never been re-run" until today, which was true when written and false the moment the third
 > round finished — on the page every banner sends a cold reader to for what is blocked and on whom.
 >

@@ -79,6 +79,35 @@ describe('CommandPalette — ⌘K opens a real dialog', () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
+  // fifth audit, A-02. The trap was bound to the input, so it stopped existing the moment focus
+  // left it — and one click on the panel's padding, the list container or the empty row does
+  // exactly that. Found with trusted CDP input in a real browser; jsdom's tab model never saw it,
+  // which is why the guard is now BOTH a mousedown that stops the blur and a document-level Tab
+  // handler that recovers if focus left anyway.
+  it('keeps focus in the field when a non-focusable part of the panel is clicked', async () => {
+    const user = userEvent.setup();
+    setup();
+    await openWithShortcut(user);
+    await waitFor(() => expect(screen.getByRole('combobox')).toHaveFocus());
+    await user.click(screen.getByRole('listbox'));
+    expect(document.activeElement).not.toBe(document.body);
+    expect(screen.getByRole('combobox')).toHaveFocus();
+  });
+
+  it('recovers the trap even if focus has already reached <body>', async () => {
+    const user = userEvent.setup();
+    setup();
+    const opener = screen.getByTestId('opener');
+    act(() => opener.focus());
+    await openWithShortcut(user);
+    // Simulate the state the audit reached: focus on <body>, palette still open.
+    act(() => (document.activeElement as HTMLElement)?.blur());
+    expect(document.activeElement).toBe(document.body);
+    await user.keyboard('{Tab}');
+    expect(screen.getByRole('combobox')).toHaveFocus();
+    expect(opener).not.toHaveFocus();
+  });
+
   it('traps Tab — a modal the keyboard can walk out of is not a modal', async () => {
     const user = userEvent.setup();
     setup();
@@ -147,6 +176,38 @@ describe('CommandPalette — the listbox says which row Enter is aimed at', () =
     // A dangling id reference is worse than none: the screen reader announces nothing and the
     // user is told nothing is wrong.
     expect(input.getAttribute('aria-activedescendant')).toBeNull();
+  });
+
+  // fifth audit, A-03. On the palette's PRIMARY path the opener has unmounted with the old page
+  // by the time the restore runs, so `focus()` on a detached node was a silent no-op that left
+  // the keyboard on <body> — the exact failure the restore was written to prevent.
+  it('does not chase a detached opener when navigation unmounted it', async () => {
+    const user = userEvent.setup();
+    function Harness({ showOpener }: { showOpener: boolean }) {
+      return (
+        <AppProvider>
+          <ToastProvider>
+            {showOpener && <button type="button" data-testid="opener">opener</button>}
+            <button type="button" data-testid="survivor">survivor</button>
+            <CommandPalette />
+          </ToastProvider>
+        </AppProvider>
+      );
+    }
+    invokeMock.mockImplementation(() => Promise.resolve([]));
+    const { rerender } = render(<Harness showOpener />);
+    const opener = screen.getByTestId('opener');
+    act(() => opener.focus());
+    await openWithShortcut(user);
+    // React unmounts the opener, exactly as a route change does to the page that owned it.
+    rerender(<Harness showOpener={false} />);
+    expect(opener.isConnected).toBe(false);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // The restore must not "succeed" against a node that is no longer in the document. Nothing
+    // pretends otherwise, and nothing throws; the route's own focus handoff owns the destination
+    // from here. What must NOT happen is a no-op dressed as a restore.
+    expect(screen.getByTestId('survivor')).not.toHaveFocus();
   });
 
   it('filters to the typed page and Enter navigates to it', async () => {
