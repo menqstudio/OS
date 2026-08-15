@@ -40,7 +40,14 @@
 
   /* radii + space */
   --r-sm:9px; --r:12px; --r-lg:18px; --r-xl:26px; --r-pill:999px;
-  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px; --s10:40px;
+  /* A 4px ladder, s1..s10. --s7 and --s9 were MISSING RUNGS, and --s7 was in use:
+     `padding:var(--s7) var(--s5)` on the Agents and Automations empty states. An undeclared
+     custom property makes the whole shorthand invalid at computed-value time, so those two
+     panels rendered with no padding at all - a live layout bug nothing could see, because
+     nothing checked that a referenced token exists. tools/check_c1_tokens.py checks it now.
+     Section C.1 of the roadmap listed only eight of the ten values, which is why the gap read
+     as intentional to every reader who went looking. */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s7:28px; --s8:32px; --s9:36px; --s10:40px;
 
   /* motion */
   --fast:130ms cubic-bezier(.2,.6,.2,1);
@@ -2895,7 +2902,7 @@ body.ignited .shimmer{opacity:1}
 .v-decisions .c-fill.a { border-radius:99px 0 0 99px; }
 .v-decisions .c-fill.b { border-radius:0 99px 99px 0; }
 .v-decisions .c-fill span {
-  position:absolute; top:0; bottom:0; width:var(--v); border-radius:99px;
+  position:absolute; top:0; bottom:0; width:var(--v, 0px); border-radius:99px;
   background:linear-gradient(90deg, rgb(var(--ot)/.55), rgb(var(--ot)/1));
   transform:scaleX(0); animation:grow-x 1s var(--spring) .3s forwards;
 }
@@ -3911,7 +3918,7 @@ body.ignited .shimmer{opacity:1}
   transition:opacity var(--slow), filter var(--slow);
 }
 .v-integrations .s-dot {
-  --sz:clamp(8px, calc(6px + var(--tp) * 0.003px), 22px);
+  --sz:clamp(8px, calc(6px + var(--tp, 0) * 0.003px), 22px);
   width:var(--sz); height:var(--sz); border-radius:50%; position:relative;
   background:radial-gradient(circle at 42% 38%, rgb(var(--stc)/.98), rgb(var(--stc)/.34) 64%, transparent 78%);
   box-shadow:0 0 12px rgb(var(--stc)/.55), inset 0 0 6px rgb(var(--stc)/.4);
@@ -4259,7 +4266,7 @@ body.ignited .shimmer{opacity:1}
   transition:opacity var(--slow), filter var(--slow);
 }
 .v-knowledge .kdot {
-  --sz:calc(9px + var(--heat) * 1.7px);
+  --sz:calc(9px + var(--heat, 0) * 1.7px);
   width:var(--sz); height:var(--sz); border-radius:50%; position:relative;
   background:radial-gradient(circle at 42% 38%, rgb(var(--nt)/.95), rgb(var(--nt)/.32) 66%, transparent 78%);
   box-shadow:0 0 12px rgb(var(--nt)/.5), inset 0 0 6px rgb(var(--nt)/.4);
@@ -5182,8 +5189,8 @@ body.ignited .shimmer{opacity:1}
 .v-projects .energy-key span{display:inline-flex;align-items:center;gap:6px;
   font-family:var(--f-mono);font-size:var(--t-micro);text-transform:uppercase;
   letter-spacing:.08em;color:var(--ink-muted)}
-.v-projects .energy-key i{width:7px;height:7px;border-radius:50%;background:var(--k);
-  box-shadow:0 0 7px var(--k)}
+.v-projects .energy-key i{width:7px;height:7px;border-radius:50%;background:var(--k, var(--ink-muted));
+  box-shadow:0 0 7px var(--k, var(--ink-muted))}
 
 .v-projects .lanes{display:grid;gap:12px}
 
@@ -5645,13 +5652,13 @@ body.ignited .shimmer{opacity:1}
 /* the incoming threat vectors — travel IN along a real radius, transform only */
 .v-security .vfield{position:absolute;inset:0;z-index:3;pointer-events:none}
 .v-security .vector{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;
-  transform:rotate(var(--ang)) translateX(var(--edge))}
+  transform:rotate(var(--ang, 0deg)) translateX(var(--edge, 0px))}
 .v-security .vector .vdot{position:absolute;left:0;top:0;width:9px;height:9px;border-radius:50%;
   transform:translate(-50%,-50%);background:var(--danger);
   box-shadow:0 0 10px rgb(var(--danger-rgb)/.9),0 0 3px rgb(var(--danger-rgb)/1)}
 .v-security .vector.sv-med .vdot{background:var(--warning);box-shadow:0 0 10px rgb(var(--warning-rgb)/.85)}
 .v-security .vector.sv-gate .vdot{background:var(--warning);box-shadow:0 0 12px rgb(var(--warning-rgb)/.9)}
-.v-security .vector.launched{opacity:1;transform:rotate(var(--ang)) translateX(var(--stop));
+.v-security .vector.launched{opacity:1;transform:rotate(var(--ang, 0deg)) translateX(var(--stop, 0px));
   transition:transform .9s cubic-bezier(.4,0,.2,1),opacity .2s ease}
 .v-security .vector.absorbed .vdot{animation:v-sec-absorb .5s ease forwards}
 @keyframes v-sec-absorb{to{transform:translate(-50%,-50%) scale(.2);opacity:0}}
