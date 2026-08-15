@@ -881,13 +881,18 @@ stop. Any needed engine gate change → separate audited task.
 >    authority, correctly gated, but the desktop's, not a request across the wall. This phase's own
 >    **Contracts** row pre-authorised that outcome: an `approval-request` needing an engine schema
 >    change is *"an audited engine task, flagged, not done here"*. It is flagged, in
->    `governance.rs`'s module docs and here.
+>    `governance.rs`'s module docs, here, and — since 2026-08-15 — on the one page that says what is
+>    blocked and on whom: [`docs/OWNER_ACTION_REQUIRED.md` §2a(ii)](docs/OWNER_ACTION_REQUIRED.md).
+>    Being flagged in the roadmap is not the same as being *routed*: a decision recorded only beside
+>    the box it blocks is a decision the Owner has to go looking for.
 > 2. **`security`'s §D `sigbreathe` integrity pulse is deliberately NOT applied** (boxes 1 · 9).
 >    `Security.tsx:196-197` renders a non-live wire — *"the chain does not flow — nothing is
 >    confirmed"* — because the integrity posture is `blocked` and a breathing pulse would paint
 >    liveness onto a surface that has established nothing. Adding the motion would satisfy §D's
 >    letter by making the page say something the data does not support. **This is a §D wording
->    question, not a build task**, and it is left for the Owner rather than resolved by a Builder.
+>    question, not a build task**, and it is left for the Owner rather than resolved by a Builder —
+>    stated as a two-option choice, with a recommendation, at
+>    [`docs/OWNER_ACTION_REQUIRED.md` §2a(i)](docs/OWNER_ACTION_REQUIRED.md).
 >
 > One §D gap WAS closed rather than reported: §D binds `g` to grant and no `g` handler existed, so a
 > keyboard owner could deny and escalate by keystroke and not grant. `g` now stages the same confirm

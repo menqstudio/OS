@@ -402,11 +402,86 @@ A green CI is not an audit. CI runs the tests we wrote. Audits on this repositor
 on rows the builder had marked closed — which is why a tick in these documents means *independently
 confirmed* and a half-tick means *the builder's unverified claim*.
 
-**Concretely, as of 2026-08-09:** the last independent audit returned **RED** with 45 surviving
-findings, it assessed `main` @ `219c763`, and `main` is now `b3010f6` — so a large part of that
-verdict describes code that has since changed, in both directions, and **nobody who did not build
-this has looked at any of it.** Findings closed since are the Builder's claims. This is the item on
-this page with the longest lead time and nothing else on it substitutes for it.
+**Concretely, as of 2026-08-15:** two more independent rounds have run since, and the header of this
+page carries what they found. The gate is still shut and the standing verdict is still **RED**, but
+the *reason* has changed shape: it is no longer "nobody who did not build this has looked."
+
+This paragraph used to end with exactly that sentence — *"nobody who did not build this has looked at
+any of it"* — beside *"as of 2026-08-09"* and *"`main` is now `b3010f6`"*. All three went false when
+the third round ran, and the fix landed on the block at the top of this page while **this** paragraph,
+four hundred lines down and on the same subject, kept saying the opposite. A page can contradict
+itself in two places and still look maintained from either one; that is the whole failure mode this
+document exists against.
+
+What has **not** changed, and is still the item on this page with the longest lead time: an audit
+covering the **whole chain** at a **current** head. Rounds three and four were scoped — five findings
+and then a re-audit of those five fixes — and `main` has moved many times since `0a9a1af`. Everything
+closed since is the Builder's claim until someone who did not build it says otherwise.
+
+---
+
+## 2a. Phase 2 is finished except for two decisions, and both are yours
+
+Phase 2 was **checked against the code before anything was built** (T-019, 2026-08-15) — all four
+governance pages already existed when the exemption unlocked the phase, so the first act was
+verification. Six of eleven boxes are ticked with file/line/test evidence. The five that are not
+reduce to **two facts, and neither is a missing page or a build task.** They are on this page because
+the roadmap routes both here, and until today this page did not name either.
+
+**(i) The `sigbreathe` integrity pulse — a §D wording question.** §D specifies a breathing pulse as
+`security`'s motion. `Security.tsx` renders a **non-live** wire instead — *"the chain does not flow —
+nothing is confirmed"* — because the integrity posture is `blocked`. Applying the pulse would satisfy
+§D's letter by painting liveness onto a surface that has established nothing. A Builder resolving this
+by adding the motion would be choosing the spec's letter over its meaning on its own authority, so it
+is left here. **You are deciding between two readings of your own spec**, not approving a change:
+
+| Option | What it means |
+|---|---|
+| Amend §D | motion is conditional on a *confirmed* chain; the still wire is correct and box 1 · 9 ticks as-is |
+| Keep §D literal | the pulse is applied unconditionally, and the page animates a chain it cannot verify |
+
+The recommendation is the first: every other surface in this repository is built to refuse rather
+than to imply. But §D is yours.
+
+**(ii) The approval-REQUEST path does not exist, on either side — and this phase pre-authorised
+that.** There is no `approval-request` schema in `engine/schemas/` (21 schemas; none is one) and no
+desktop→engine command. The `approvals` page's grant/deny/escalate are real and correctly gated —
+behind a native confirmation the webview cannot forge — but they drive the **desktop's own** approval
+system (T-010/T-011 over local SQLite), not a request across the wall. Phase 2's own **Contracts**
+row says an `approval-request` needing an engine schema change is *"an audited engine task, flagged,
+not done here."* It is flagged. **What is yours: whether to open that audited engine task now, or
+carry it into a later phase.** Nothing is blocked on it today — the read half is complete and wired
+end to end.
+
+Boxes 2 · 7 · 11 are unticked for (ii); boxes 1 · 9 for (i). A box whose surface exists but whose
+obligation is unmet stays unticked and says which obligation — which is why five look open on a phase
+that has nothing left to build.
+
+---
+
+## 2b. Who reviews a §I design proposal when there is no Architect (PR #112)
+
+**PR #112 is open and deliberately not merged.** It is the floor-writer service design (T-020) — the
+implementation route for §1b, which you resolved on 2026-08-14 in favour of a service over a setuid
+helper. It is a **§I design proposal**, and §I requires a design review the Builder cannot perform on
+its own work. The session that wrote it caught itself recommending its own merge and corrected that
+before handing over; the precedent (PR #30) is merge only **after** a design review.
+
+There is no Architect. This is the same problem the independent audit had, and the same answer is
+available: **a separate clean-context session in an auditor role** — which is what this repository
+has always meant by "independent", and what produced rounds three and four.
+
+If that route is used, the verdict must be recorded as **what it is**. `OWNER_APPROVED_NOT_ARCHITECT_AUDITED`
+exists for exactly this distinction and is already the value of `CURRENT_DESIGN_GATE`. A design review
+by an auditor session is **not** Architect GREEN, and recording it as one would be the F-02 pattern —
+a claim promoted a grade above what produced it — in the one place a promotion is hardest to see.
+
+`B-02` from the fourth audit sits beside this and stays **OPEN**: the anti-rollback floor has **three**
+claimed owners — the rev-30 addendum §7 P1-7 and `supervisor_ledger.rs:20` say `brops-signer`; the
+DDL, the CAS and the only process that opens the file say the supervisor; the scope-key pin is the
+challenge authority's. The design also introduces an **eighth principal**, which amends the addendum's
+normative §2.5/§2.6 — *"the SEVEN runtime service UIDs"* — and FW-3 is blocked on that amendment.
+Both are §I territory, which is to say: the same review.
 
 ---
 
