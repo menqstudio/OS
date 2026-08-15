@@ -1,12 +1,86 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `1db74ef`.** The only thing open is PR #111 on `floor-writer-proposal`, the pull request that records it. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **◑ ONE PROPOSAL IN REVIEW — `main` is at `dc8d867`.** PR #111 merged. The open pull request is **#112** on `design/floor-writer-service`, task **T-020**, and it carries exactly one new file: [`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md`](./docs/design/FLOOR_WRITER_SERVICE_DESIGN.md) — the §I step-1 proposal the **1b** decision has been waiting on since 2026-08-14. It is **a proposal, not an implementation**: no product code, no gate moved, and the Architect audit that decision's own text requires **has not run**. Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> **Next:** Open a session AT Desktop\OS so the canonical-law hook fires, then author docs/design/FLOOR_WRITER_SERVICE_DESIGN.md - SS-I step 1, the Builder's, a proposal and not an implementation. 1b was DECIDED 2026-08-14 (floor-writer service) and its own text requires an Architect audit before anything is built; the Architect has nothing to audit because that design does not exist. It closes 1b, A-01's root and B-02 at one boundary.
+> **Next:** hand `docs/design/FLOOR_WRITER_SERVICE_DESIGN.md` to the Architect for the §I **step-2 audit**. Its §9 is the checklist: the three-way contradiction over which principal owns the per-install floor, the §2.5/§2.6 amendment an eighth principal requires, the served pin versus a config file both sites read, whether the per-task floor should adopt the governed floor's A–E matrix, and the `_head_floor_dir` warning that goes stale the day FW-1 lands. **No FW slice may start before that verdict**, and FW-3 additionally needs the amendment ratified. `B-02` and `A-01`'s root close when the design is Architect-GREEN **and built** — not when #112 merges.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The decision was fourteen days old and had no design; now it has a proposal (2026-08-15)
+
+`1b` was **decided** on 2026-08-14 — a floor-writer service owns the marks, the setuid helper is not
+taken — and the decision shipped with its own process: *"Owner approval (given, here) → Architect audit
+→ implement. **No implementation lands on this decision alone.**"* Step 2 could not happen, because
+step 1 did not exist: `docs/design/` held thirteen documents and none of them was a floor-writer
+design, while **two** places in the repository already linked the file as though it did —
+`AUDIT_LEDGER.md`'s `B-02` row pointed at `docs/design/FLOOR_WRITER_SERVICE_DESIGN.md` by path, and
+`bro_completion.py:502` named *"a floor-writer service or a setuid helper"* as the resolution. A
+dangling link and a code comment were carrying a design. That file now exists.
+
+**It is a proposal and it is marked ◑ throughout.** Every claim it makes about current code carries a
+`file:line` so it can be refuted cheaply, and nobody independent has read a word of it. Merging #112
+records the proposal; it does not approve it.
+
+**What it proposes, in one sentence.** One resident principal — `brops-floor` on POSIX, a
+`NT SERVICE\BroPSFloorWriter` virtual account on Windows — that owns `bro_completion`'s per-task
+anti-rollback marks **and** serves the deployment's `install_id`, which is the Owner's own reason 3:
+*"one principal, one trusted config, both defects closed at the same boundary."*
+
+**The three things in it that are not restatements of the decision.**
+
+**The policed account gets no access at all, not merely no write.** `_refuse_self_owned_floor`'s third
+verdict (`bro_completion.py:593-600`) is the **parent-rename** vector — a floor whose own mode is fine
+but whose parent the subject can write can be renamed aside and replaced with an empty one — and
+today's default puts the marks under `BRO_EVIDENCE_STORE`, which the subject writes. So the marks move
+into the service's own state directory, and with no read grant either the policed process holds **no
+parser for a mark file**: `_load_head_floor`, `_load_floor_index` and the roster stop being client code.
+
+**The scope pin is resolved once at start, not per turn — which answers both halves of `B-02`.** That
+row rejected *moving* the check (a misconfiguration caught today at `create-pending` would travel three
+hops before failing) and *duplicating* it (a second configured value that must agree with the first,
+in the one place where disagreement silently widens an anti-rollback scope). The authority keeps its
+door check, and there is **one** configured value with **one** owner that the other two sites read —
+two readers of one value is not two implementations of one contract. Per-turn cost: zero hops.
+
+**And the limit is written inside the proposal rather than left for a reader to hit.** Moving the write
+makes the **mark** unforgeable; it does not make the **check** unskippable. `validate_evidence_chain`
+runs in the policed process and a process that never calls it is not stopped by any service. Wording
+that implies more should be refused in review.
+
+## A finding the proposal turned up: one floor, three named owners
+
+Establishing who owns the per-install floor today produced a disagreement rather than an answer, and it
+is reported rather than resolved — deciding it is §I items 1 and 2.
+
+* The rev-30 addendum §7 P1-7 (`:1142`, `:3355`) specifies *"a durable **`brops-signer`-owned** floor
+  DB … dir `0700` / file `0600`"*, and `core/src/supervisor_ledger.rs:20` repeats it: *"The
+  **signer-owned** durable evidence-head floor CAS."*
+* The code says the **supervisor**. The DDL is `supervisor_ledger.sql:168`, the CAS at
+  `governed_supervisor_ledger.py:774` runs inside the **supervisor's** completion transaction, and the
+  ledger file is opened only by `run_supervisor.py:155` / `run_ladder_supervisor.py:550` as the
+  supervisor account. `isolated_signer.py` opens **no sqlite at all** — its one mention of the table
+  (`:130`) is a comment.
+* And the scope key's pin is in a **third** principal, the challenge authority (`A-01`'s fix).
+
+Two documents and the code do not agree about which principal owns one anti-rollback floor. That is
+`B-02`'s question in its full form, and it is question 1 of the proposal's §9.
+
+## What was deliberately NOT done
+
+The per-install `_evidence_floor_cas` is **not** proposed for relocation: it is folded into the
+supervisor's single `BEGIN IMMEDIATE` precisely so *"a refused floor cannot leave a completion
+behind"* (`governed_supervisor_ledger.py:774-781`), and moving it out means losing that atomicity or
+inventing a two-phase commit across a socket. The floor **rule** is unchanged by FW-1 by design —
+moving the write and changing the rule in one slice would make a regression indistinguishable from the
+move. `O-2`, `O-5` and `F-29` stay OPEN; §1.10 narrows O-5's gap and says plainly that it does not
+close it. And the eighth principal is an **amendment request** to §2.5/§2.6 of a rev-30 the Architect
+has already passed — requested here, ratified only there.
+
+**Verified before writing:** the canonical full-read receipt is GREEN for this session (16 files,
+digest `93f770e902a5`), Phase 1 is declared, and the prior-art search for the new path is recorded.
+`check_coordination` and `check_repo_state` were GREEN on the base head before any edit.
 
 ### The wall was off for the session that just used it, and two tenses were wrong (2026-08-15)
 
@@ -2671,7 +2745,7 @@ Startup read order (from [`START_HERE.md`](./START_HERE.md), extended):
 ## 3. Current work — exact pointers
 
 > **CURRENT STATE (authoritative; machine-mirror: [`config/current_state.json`](./config/current_state.json)).**
-> Tokens (validated against `config/current_state.json.status_tokens`): `CURRENT_ACTIVE_TASK: T-017` · `CURRENT_ACTIVE_WAVE: 3b-1B` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+> Tokens (validated against `config/current_state.json.status_tokens`): `CURRENT_ACTIVE_TASK: T-020` · `CURRENT_ACTIVE_WAVE: floor-writer` · `CURRENT_FLOOR_WRITER_DESIGN: PROPOSAL_PENDING_ARCHITECT_AUDIT` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
 >
 > **How to read those tokens — two of them are PROVENANCE, not open work.** `CURRENT_DESIGN_PR: 48`
 > and `CURRENT_IMPL_PR: 48` record the pull request the Wave-3b design and implementation landed on.

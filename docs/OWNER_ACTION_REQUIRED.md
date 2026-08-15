@@ -201,6 +201,30 @@ setuid helper is not taken.
 - **§I change-control.** This is a deployment-topology change, so: Owner approval (given, here) →
   Architect audit → implement. **No implementation lands on this decision alone.**
 
+**Step 1 exists now, and step 2 is what this section is waiting on (2026-08-15).**
+[`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md`](./design/FLOOR_WRITER_SERVICE_DESIGN.md) — T-020, PR
+#112 on `design/floor-writer-service` — is the Builder's proposal under the ownership matrix
+(🔨 proposal · 📐 **mandatory** · 🛑 before implementation). For fourteen days the decision had no
+design to audit, while two places in the tree already pointed at that filename: the `B-02` ledger row
+by path, and `bro_completion.py:502` by name. It takes all three of your constraints as written — fail
+closed, not inside the broker, §I change control — and it takes reason 3 literally: one principal owns
+the marks **and** serves `install_id`, so `A-01`'s root and `B-02` close at the same boundary.
+
+**Three things on it are yours or the Architect's, not the Builder's**, and they are §9 of that
+document: (1) one anti-rollback floor currently has **three named owners** — the rev-30 addendum §7
+P1-7 and `core/src/supervisor_ledger.rs:20` say `brops-signer`-owned, the DDL/CAS/opening process say
+the supervisor, and the scope pin is the challenge authority's; (2) an eighth resident principal is an
+**amendment** to the rev-30 addendum's normative §2.5 (`TCB_ARTIFACTS`) and §2.6 (*"the **SEVEN**
+runtime service UIDs"*), which only the Architect may ratify, and the scope-pin slice is blocked on it;
+(3) the pin may be **served** by the service (one authenticated channel, a start-time liveness
+dependency) or read from its **TCB-owned config file** by both sites (no liveness dependency, four
+custody sites on the primitive whose Windows rule *"still reads one descriptor and cannot see an
+ancestor"* — the follow-up named in §1 above). The proposal recommends the first and records the second
+as the runner-up.
+
+**Nothing is built, and merging the proposal is not approving it.** Every claim it makes about current
+code is the Builder's own reading with a `file:line` beside it; nobody independent has read it.
+
 **The analysis that produced the question is kept below as the record.**
 
 ---
