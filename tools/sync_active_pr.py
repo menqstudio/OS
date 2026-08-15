@@ -423,9 +423,19 @@ def main() -> int:
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
     rewrite_carrier_block(args.pr, args.branch)
+    # A pull request parked open while another one carries the snapshot has to be named in the
+    # banner too, not only in --settled's. `check_coordination` requires every OPEN prs[] entry's
+    # branch to appear in all three banner documents, and it is right to: a reader who is told
+    # "CURRENT ACTIVE: PR #115" and nothing else will not discover that #112 is sitting there
+    # waiting on them. Same omission as the hard-coded "Nothing else is open", one mode over.
+    parked = [p for p in live_open_prs() if p["number"] != args.pr]
+    also = ("" if not parked else
+            " Also open, and not this PR's work: "
+            + ", ".join("PR #" + str(p["number"]) + " on `" + p["headRefName"] + "`"
+                        for p in parked) + ".")
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
-        f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> "
+        f"`{head[:7]}`, task T-017).{also}\n>\n> {args.summary}\n>\n> "
         + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
