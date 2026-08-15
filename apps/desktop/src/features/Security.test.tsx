@@ -46,3 +46,46 @@ describe('Security — mirrors engine truth, never fabricates a verified chain',
     expect(called('read_evidence_chain')).toBe(true);
   });
 });
+
+// §D: "Motion: integrity pulse (`sigbreathe`)". The pulse is bound to state — it means
+// "this surface is reading the chain right now", never "the chain is alive", which the
+// desktop cannot establish (RECORDS_ARE_AUTHENTICATED is permanently false). These tests
+// pin the binding in all three directions, because the failure that made them necessary
+// was a page that argued for stillness in its comments and animated unconditionally in
+// its stylesheet.
+describe('Security — the integrity pulse is bound to state, not decorative', () => {
+  const instrument = () => document.querySelector('.mani.sec-section');
+
+  it('pulses while the chain read is IN FLIGHT — the one state with real liveness', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_security_summary')
+        return Promise.resolve({ pendingApprovals: 0, decidedApprovals: 0, auditEvents: 0, sensitiveEvents: [] });
+      if (cmd === 'read_evidence_chain') return new Promise(() => {});   // never settles
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Security /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(instrument()).toBeTruthy());
+    expect(instrument()!.className).toContain('sec-int--checking');
+    expect(instrument()!.className).toContain('sigbreathe');
+  });
+
+  it('is STILL once the read settles blocked — nothing is established, so nothing breathes', async () => {
+    setup();
+    await waitFor(() => expect(screen.getAllByText('Integrity unverified').length).toBeGreaterThan(0));
+    expect(instrument()!.className).toContain('sec-int--blocked');
+    expect(instrument()!.className).not.toContain('sigbreathe');
+  });
+
+  it('does NOT breathe on a chain-read failure — that is an alert, not liveness', async () => {
+    // hasBackend() is what separates `broken` from `blocked`: a rejected read only means
+    // the chain is broken when there was a backend to reject it.
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      setup();
+      await waitFor(() => expect(instrument()?.className).toContain('sec-int--broken'));
+      expect(instrument()!.className).not.toContain('sigbreathe');
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
+  });
+});

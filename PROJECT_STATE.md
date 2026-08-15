@@ -76,12 +76,25 @@ forge. That is a real authority, correctly gated, and it is **not** a request ac
 phase pre-authorised this outcome in its own Contracts row: a shape needing an engine schema change
 is *"an audited engine task, flagged, not done here"*. It is now flagged in `governance.rs`'s module
 docs, in the roadmap, and here — rather than left for a reader to infer from an unticked box.
+**DECIDED 2026-08-15 (Owner-delegated): opened as `T-021`, and still not built here.** Building it
+now would add a new input to the engine's trust boundary while the standing verdict is RED; carrying
+it as a note is how an obligation disappears, and this one is in Phase 2's *acceptance criteria*. So
+the task exists, sequenced behind the standing audit, with its five contract invariants fixed now so
+the eventual contract test is not designed by whoever is trying to pass it. Boxes 2 · 7 · 11 stay
+unticked: a capability that does not exist does not tick.
 
-**And `security`'s §D `sigbreathe` integrity pulse is deliberately not applied.** `Security.tsx`
-renders a non-live wire — *"the chain does not flow — nothing is confirmed"* — because the integrity
-posture is `blocked`. Adding the motion would satisfy §D's letter by making the page say something
-the data does not support. That is a §D **wording** question, not a build task, and it is left where
-it belongs rather than resolved by a Builder.
+**And `security`'s §D `sigbreathe` integrity pulse is applied, BOUND TO STATE** — decided
+2026-08-15 by Owner delegation, and it turned out to be a build task after all. The reasoning on
+record was that a breathing instrument would paint liveness onto a chain nothing has confirmed. That
+reasoning is right; the conclusion was wrong, because **the page was already breathing**: `.mc-halo`
+carried an unconditional `secHalo 2.6s infinite`, so the instrument pulsed hardest in `blocked` — the
+exact state the comment two hundred lines above forbade it in. *An honesty argument written in a
+comment is not an honesty property of the page.* The pulse now runs in `checking` (a chain read
+genuinely in flight), takes the faster danger cadence in `broken`, and is **still** in `blocked`. It
+says "this surface is reading the chain right now", never "the chain is alive" — which the desktop
+cannot establish, `RECORDS_ARE_AUTHENTICATED` being permanently `false`. Gating the pulse on a
+*confirmed* chain was rejected for that reason: it would be a branch that can never run. Three
+mutants killed; reduced motion stills all of it.
 
 **One §D gap was closed rather than reported.** §D binds `g` to grant and no `g` handler existed, so
 a keyboard owner driving the queue with ↑/↓ could deny and escalate by keystroke and not grant. `g`

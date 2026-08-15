@@ -420,7 +420,47 @@ closed since is the Builder's claim until someone who did not build it says othe
 
 ---
 
-## 2a. Phase 2 is finished except for two decisions, and both are yours
+## 2a. RESOLVED 2026-08-15 — both Phase-2 decisions taken, by delegation
+
+> **You delegated both** — *"decide for me, and let it be the strongest and most correct, not the
+> easiest and fastest"* — so they are taken, and what follows records **what was decided and why**,
+> including the part where the easiest answer was also the one already written down as correct.
+> Phase 2 is now **8 of 11** boxes ticked. The three that stay open are one fact, tracked as `T-021`.
+>
+> **(i) `sigbreathe` — DECIDED: apply it, bound to state. Built.** The recommendation on this page
+> an hour earlier was to amend §D and keep the surface still. Reading `Security.tsx` instead of the
+> argument about it changed the answer: **the page was already breathing.** `.mc-halo` carried an
+> unconditional `secHalo 2.6s infinite`, so the instrument pulsed hardest in `blocked` — the exact
+> state its own comment two hundred lines above forbade motion in. *An honesty argument written in a
+> comment is not an honesty property of the page.* Amending §D would have ratified the still surface
+> the page did not actually have.
+>
+> "Never animate" and "animate always" were never the only options. The pulse is now bound:
+> `checking` (a chain read genuinely in flight) breathes, `broken` takes the faster danger cadence
+> §D asks for, `blocked` is **still** — which it was not before. It says *"this surface is reading
+> the chain right now"*, a fact, and never *"the chain is alive"*, which the desktop cannot
+> establish. And the obvious third reading — gate the pulse on a **confirmed** chain — was rejected
+> on inspection: `RECORDS_ARE_AUTHENTICATED` is permanently `false`, so that branch could never run,
+> and a branch that cannot run is the shape this repository deletes rather than ships.
+>
+> **(ii) approval-request — DECIDED: opened as `T-021`, still not built here.** Neither option on
+> offer was right. *Build it now* adds a new input to the engine's trust boundary while the standing
+> verdict is **RED**, and breaks Phase 2's own scope line. *Carry it* is how an obligation
+> disappears — and this one is in Phase 2's **acceptance criteria** (*"owner can request an approval
+> that the engine adjudicates"*), so the phase would have closed over a promise kept only in prose.
+> So the task exists, **sequenced explicitly behind the standing audit**, with its five contract
+> invariants written down **now** — no key/lease/nonce/verdict crosses; the desktop requests and
+> never decides; the desktop's own T-010/T-011 authority stays separately named in the UI;
+> `RECORDS_ARE_AUTHENTICATED` stays false; the engine schema change is audited **before** it lands.
+> Fixing them now means the contract test is not designed by whoever is trying to pass it.
+>
+> **Nothing here opened the gate, and nothing here is a claim about the audit.** Both marks are the
+> Builder's until someone who did not write them looks.
+
+*The original statement of the two decisions is kept below, because a decision is only legible
+beside the question it answered.*
+
+## 2a (as posed). Phase 2 is finished except for two decisions, and both are yours
 
 Phase 2 was **checked against the code before anything was built** (T-019, 2026-08-15) — all four
 governance pages already existed when the exemption unlocked the phase, so the first act was
@@ -482,6 +522,15 @@ DDL, the CAS and the only process that opens the file say the supervisor; the sc
 challenge authority's. The design also introduces an **eighth principal**, which amends the addendum's
 normative §2.5/§2.6 — *"the SEVEN runtime service UIDs"* — and FW-3 is blocked on that amendment.
 Both are §I territory, which is to say: the same review.
+
+**A structural note, found by parking it.** PR #112 went `MERGEABLE` → `CONFLICTING` the moment
+anything else merged, and it will do so again after every merge. It is not a bad rebase — the PR
+writes `NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md` and `config/current_state.json`, which are the
+**carrier** files every merge rewrites by ritual. A design proposal that claims the carrier cannot be
+parked; it can only be merged or rebased forever. Worth fixing in whichever direction you choose:
+either a §I proposal stays off the carrier files and lives in `docs/design/` alone, or design
+proposals are reviewed and merged promptly rather than parked. Recorded, not acted on — changing
+what a design PR is allowed to touch is itself §I.
 
 ---
 
