@@ -34,7 +34,7 @@ jobs:
       # their verdict on the real tokens.
       - name: Checker self-tests
         working-directory: tools
-        run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity
+        run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity test_check_c1_tokens
 
       # Fail-closed: any token that disagrees between tokens.ts and aios.css in either
       # theme fails the job.
@@ -44,6 +44,17 @@ jobs:
       # Fail-closed: any committed text-pair below WCAG AA in either theme fails the job.
       - name: Contrast (WCAG AA, both themes)
         run: python tools/check_contrast.py
+
+      # Fail-closed: §C.1 of the roadmap IS the design-token specification, and until 2026-08-15
+      # nothing read the stylesheet against it. Token parity above compares tokens.ts to
+      # tokens.css for the `--menq-*` names — a different pair of files and a different set of
+      # names from the `--azure`/`--s4`/`--t-body` ladder the cockpit is actually built on.
+      # The gap that proves the point: `--s7` and `--s9` were absent from a ladder documented as
+      # `--s1..--s10` while `padding:var(--s7) var(--s5)` shipped on two empty states, so those
+      # panels rendered with no padding at all. This also refuses a bare `var(--x)` that nothing
+      # declares anywhere — the failure that cannot be seen in a screenshot or a unit test.
+      - name: §C.1 tokens (spec parity + no undeclared var())
+        run: python tools/check_c1_tokens.py
 
       # Fail-closed: a key present in one locale and missing in another fails the job.
       # This gate EXISTED and no workflow ran it, while the roadmap's Phase-4 status-board

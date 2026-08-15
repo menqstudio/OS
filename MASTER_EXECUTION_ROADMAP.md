@@ -201,7 +201,7 @@ feel; this roadmap wins on scope & sequencing.**
 | **Type scale** | hero 32 · h1 24 · h2 19 · body 15 · ui 14 · small 12 · micro 10 (px) |
 | **Fonts** | `Baloo 2` (display), `Inter` (UI Latin), `Noto Sans Armenian` (UI HY), `JetBrains Mono` (code/data) |
 | **Radii** | sm 9 · base 12 · lg 18 · xl 26 · pill 999 (px) |
-| **Spacing** | 4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 (px) — `--s1..--s10` |
+| **Spacing** | 4 · 8 · 12 · 16 · 20 · 24 · 28 · 32 · 36 · 40 (px) — `--s1..--s10` |
 | **Motion** | `--fast 130ms`, `--slow 220ms`, `--spring cubic-bezier(.16,1,.3,1)`, `--enter 640ms`, `--stagger 52ms` |
 
 Every component honors `prefers-reduced-motion` (disable drift/ember/reveal animations, keep opacity
