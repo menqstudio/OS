@@ -210,6 +210,72 @@ class CarrierPostMergeTests(unittest.TestCase):
         self.assertEqual(rs.verify_carrier_post_merge({"state": "OPEN"}, _snapshot()), [])
 
 
+class SettledSnapshotTests(unittest.TestCase):
+    """The carrier stopped being OPEN. What must the snapshot then say?
+
+    The third arm of this rule used to demand that the carrier itself still be open, which is
+    unsatisfiable once a second pull request is parked open across a merge (main RED -> the repair PR
+    must self-carry -> merging it re-creates the condition). These tests pin BOTH halves: an open PR
+    named nowhere is still RED, and an open PR named in prs[] is GREEN.
+    """
+    def _snap(self, prs=None):
+        snap = _snapshot()
+        snap["settled_at_main_head"] = MAIN
+        snap["prs"] = prs if prs is not None else []
+        return snap
+
+    def _yes(self, a, b):  # is_ancestor stub: settled is on main
+        return True
+
+    def test_open_carrier_is_noop(self):
+        self.assertEqual(rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes), [])
+
+    def test_unresolvable_state_is_noop(self):
+        # empty string == gh could not say; the exact-head anchors are the ones that fail closed.
+        self.assertEqual(rs.verify_settled_snapshot(33, "", self._snap(), {33}, MAIN, self._yes), [])
+
+    def test_merged_without_settled_head_is_red(self):
+        snap = self._snap(); snap.pop("settled_at_main_head")
+        self.assertTrue(any("records no settled_at_main_head" in p
+                            for p in rs.verify_settled_snapshot(33, "MERGED", snap, set(), MAIN, self._yes)))
+
+    def test_settled_head_not_on_main_is_red(self):
+        f = rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), NEWMAIN, lambda a, b: False)
+        self.assertTrue(any("is not an ancestor of live main" in p for p in f))
+
+    def test_merged_with_nothing_open_is_green(self):
+        self.assertEqual(rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), MAIN, self._yes), [])
+
+    def test_open_pr_named_nowhere_is_red(self):
+        # the staleness the rule exists for: #112 is open and this file mentions it nowhere.
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112}, MAIN, self._yes)
+        self.assertTrue(any("#112 is open and unnamed" in p for p in f), f)
+
+    def test_every_unnamed_open_pr_is_listed(self):
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112, 120}, MAIN, self._yes)
+        self.assertTrue(any("#112, #120 are open and unnamed" in p for p in f), f)
+
+    def test_open_pr_carried_in_prs_is_green(self):
+        # THE DEADLOCK REGRESSION. A parked PR recorded in prs[] is named, so main is not RED —
+        # and it is not a free pass either: compare_external_prs anchors it to an exact live head.
+        snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
+                            "draft": False, "merge_state": "open", "head": HEAD_31}])
+        self.assertEqual(rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes), [])
+
+    def test_repair_pr_cannot_be_forced_to_carry_the_parked_pr(self):
+        # The other half of the deadlock, stated as a test: the repair PR self-carries (#114) while
+        # #112 stays parked in prs[]. Under the old rule this was RED with no legal way out.
+        snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
+                            "draft": False, "merge_state": "open", "head": HEAD_31}])
+        self.assertEqual(rs.verify_settled_snapshot(114, "MERGED", snap, {112}, MAIN, self._yes), [])
+
+    def test_malformed_prs_entries_do_not_launder_an_open_pr(self):
+        # a non-dict, a null number and a string number must NOT count as "named".
+        snap = self._snap(["112", {"number": None}, {"number": "112"}])
+        self.assertTrue(any("#112 is open and unnamed" in p
+                            for p in rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes)))
+
+
 class CarrierStateTests(unittest.TestCase):
     """P1: the carrier's live state is explicitly enumerated; unresolved/unknown => RED; OPEN validates
     the pre_merge branch, MERGED the post_merge branch."""

@@ -264,6 +264,66 @@ def verify_carrier_state(carrier_live: dict | None, snapshot: dict) -> list[str]
     return failures
 
 
+def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
+                            open_now: set[int], live_main: str | None, is_ancestor) -> list[str]:
+    """The carrier has stopped being OPEN. What must the snapshot then say? Pure/testable.
+
+    A carrier that has MERGED is the staleness this gate could not see. The event-context checks only
+    run on a pull_request, so after the carrier merges the snapshot keeps naming it -- and a reader
+    arriving at the repository goes looking for an open PR and a branch that no longer exist. CI stayed
+    green throughout, because nothing asked. It asks here: once the carrier is no longer OPEN, the
+    snapshot must say so explicitly, must record the main it settled at, and must leave no open pull
+    request unnamed.
+
+    THE THIRD ARM WAS WRONG, AND WROTE ITS OWN CORRECTION IN ITS FAILURE MESSAGE. It demanded
+    `carrier_no in open_prs_now()` while telling the reader "the snapshot names NONE of them". Naming
+    is the real requirement; carrier identity is not, because prs[] is exactly where this file records
+    the other durable pull requests (see compare_external_prs, which exact-head-anchors every one of
+    them). Demanding carrier identity made the rule UNSATISFIABLE the moment a second pull request
+    stayed open across a merge:
+
+      - main after any merge:  carrier is MERGED, the parked PR is open -> RED.
+      - the repair PR:         must name ITSELF as carrier, or verify_carrier_exact_head compares the
+                               repair PR's event head against the parked PR's head and goes RED.
+      - so the repair merges:  carrier MERGED again, the parked PR still open -> RED again.
+
+    A gate whose only repair re-creates the condition it fires on is not a gate, it is a trap; and the
+    single file that holds it shut cannot be edited except through the pull request it refuses. That
+    state is reachable from ordinary use -- one design proposal parked open for review while the
+    builder keeps working -- and it is where this repository actually arrived, at PR #113 with #112
+    open. Naming an open PR in prs[] is NOT a free pass out of it: every entry there is anchored to an
+    exact live head, branch, base and draft flag, so a parked PR that moves still turns main RED and
+    still forces a deliberate re-sync. Only "named nowhere" is the failure.
+    """
+    if not carrier_state or carrier_state == "OPEN":
+        return []
+    settled = snapshot.get("settled_at_main_head")
+    if not settled:
+        return [f"current_workflow_pr #{carrier_no} is {carrier_state}, but the snapshot still names "
+                f"it as active and records no settled_at_main_head. A reader would look for an open "
+                f"PR that does not exist. Run: python tools/sync_active_pr.py --settled"]
+    if live_main and settled != live_main and not is_ancestor(settled, live_main):
+        # ANCESTOR, not equality. The first version demanded equality and could never be satisfied:
+        # the settle commit is what MOVES main, so a file recording the head it produces can never
+        # match it. Every settle left main red and the next settle inherited the same impossibility.
+        # What the field actually means is "everything up to here has merged", and an ancestor check
+        # says exactly that -- while still refusing a snapshot that settled at a commit which is not
+        # on this main at all, which is the case worth catching.
+        return [f"settled_at_main_head {str(settled)[:7]} is not an ancestor of live main "
+                f"{live_main[:7]} — the snapshot settled at a commit that is not on this main. "
+                f"Re-run: python tools/sync_active_pr.py --settled"]
+    named = {carrier_no} | {pr["number"] for pr in snapshot.get("prs", [])
+                            if isinstance(pr, dict) and isinstance(pr.get("number"), int)}
+    unnamed = sorted(n for n in open_now if n not in named)
+    if unnamed:
+        listed = ", ".join(f"#{n}" for n in unnamed)
+        return [f"current_workflow_pr #{carrier_no} is {carrier_state} and the snapshot names no "
+                f"open pull request: {listed} {'is' if len(unnamed) == 1 else 'are'} open and "
+                f"unnamed. Carry it as the new current_workflow_pr, or record it in prs[] with its "
+                f"exact live head — a parked pull request still has to be visible from this file."]
+    return []
+
+
 def verify_main_push(pushed_sha: str, baseline: str, is_ancestor) -> list[str]:
     """On a push to main, the recorded baseline must be an ANCESTOR of (or equal to) the pushed HEAD.
     This is what makes merging the carrier PR safe — post-merge main is a descendant of the baseline,
@@ -391,40 +451,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failures += compare_external_prs(snap, fetch_live(numbers))
 
-    # A carrier that has MERGED is the staleness this gate could not see. The event-context checks
-    # above only run on a pull_request, so after the carrier merges the snapshot keeps naming it --
-    # and a reader arriving at the repository goes looking for an open PR and a branch that no
-    # longer exist. CI stayed green throughout, because nothing asked. It asks now: once the carrier
-    # is no longer OPEN, the snapshot must say so explicitly and record the main it settled at.
+    # Once the carrier is no longer OPEN the snapshot has to say so, record the main it settled at,
+    # and leave no open pull request unnamed. The rule itself lives in verify_settled_snapshot, which
+    # is pure and therefore mutation-testable; this call site only supplies the live measurements.
     if carrier_no is not None:
         carrier_live = fetch_live([carrier_no]).get(carrier_no) or {}
         carrier_state = str(carrier_live.get("state") or "").upper()
-        if carrier_state and carrier_state != "OPEN":
-            settled = snap.get("settled_at_main_head")
-            live_main = _live_main_head()
-            if not settled:
-                failures.append(
-                    f"current_workflow_pr #{carrier_no} is {carrier_state}, but the snapshot still "
-                    f"names it as active and records no settled_at_main_head. A reader would look "
-                    f"for an open PR that does not exist. Run: python tools/sync_active_pr.py "
-                    f"--settled")
-            elif live_main and settled != live_main and not _git_is_ancestor(settled, live_main):
-                # ANCESTOR, not equality. The first version demanded equality and could never be
-                # satisfied: the settle commit is what MOVES main, so a file recording the head it
-                # produces can never match it. Every settle left main red and the next settle
-                # inherited the same impossibility. What the field actually means is "everything up
-                # to here has merged", and an ancestor check says exactly that -- while still
-                # refusing a snapshot that settled at a commit which is not on this main at all,
-                # which is the case worth catching.
-                failures.append(
-                    f"settled_at_main_head {str(settled)[:7]} is not an ancestor of live main "
-                    f"{live_main[:7]} — the snapshot settled at a commit that is not on this "
-                    f"main. Re-run: python tools/sync_active_pr.py --settled")
-            elif open_prs_now() and carrier_no not in open_prs_now():
-                failures.append(
-                    f"current_workflow_pr #{carrier_no} is {carrier_state} while other pull "
-                    f"requests are open — the snapshot names none of them. Re-sync to whichever "
-                    f"is now the carrier.")
+        failures += verify_settled_snapshot(carrier_no, carrier_state, snap,
+                                            open_prs_now(), _live_main_head(), _git_is_ancestor)
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
