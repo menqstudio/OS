@@ -56,9 +56,40 @@
 //! its own findings. The three values (records / empty / blocked) stay exactly as
 //! distinct as they were; the explanation sits beside them, never in place of them.
 //!
-//! Because the Phase-2 engine read endpoints do not answer yet, in practice every
-//! command below returns `Unreachable`/`Blocked` today — that is expected and is the
-//! point: a real read-IPC surface plus an honest blocked state, with zero fabrication.
+//! # What answers on the other end (corrected 2026-08-15)
+//!
+//! This paragraph read *"the Phase-2 engine read endpoints do not answer yet, in practice
+//! every command below returns `Unreachable`/`Blocked` today"*. **That has stopped being
+//! true and nothing noticed** — the repository's signature defect, an honest comment
+//! written the moment it was true and never revisited. All four surfaces are served:
+//! `bro_control_room_api.GOVERNANCE_SURFACES` names exactly `decisionLedger`,
+//! `evidenceChain`, `verdicts` and `approvalQueue` (`:47`), `governance_read` dispatches
+//! all four (`:568`, `:616-621`), and `bridge/engine_sidecar.py` relays the reply verbatim
+//! (`_op_governance_read`, `:477`, wired at `:808`).
+//!
+//! What is still true is narrower and is the part that matters: a **shipped** install
+//! reaches `Blocked`, because the engine refuses the read until
+//! `BROPS_GOVERNANCE_STATE_DIR` names a provisioned mirror and nothing in the app sets it.
+//! So the steady state is unchanged; the REASON for it is a deployment input, not a
+//! missing endpoint, and a page that says "the engine has not been built yet" would now be
+//! telling the owner the wrong thing.
+//!
+//! # What this module does NOT carry: the approval-REQUEST path
+//!
+//! Phase 2's Definition of Done pairs the read IPC with *"the approval-**request** path
+//! works"* — the desktop POSTing an owner approval **request** that the engine's Ed25519
+//! system adjudicates. **No such path exists, on either side.** There is no
+//! `approval-request` schema in `engine/schemas/` (21 schemas; none is one), no
+//! desktop→engine command, and `read_engine_approval_queue` below is the QUEUE READ ONLY.
+//! The grant/deny/escalate buttons on the `approvals` page drive the **desktop's own**
+//! approval system (T-010/T-011: `confirm_approval` / `reject_approval` /
+//! `escalate_approval` over local SQLite, behind a native dialog the webview cannot forge)
+//! — a real authority, but the desktop's, not a request to the engine.
+//!
+//! That gap is deliberate and Phase 2 pre-authorised it in its own Contracts section: an
+//! `approval-request` shape that needs an engine schema change is *"an audited engine
+//! task, flagged, not done here"*. It is flagged here rather than left for a reader to
+//! infer from an unticked box.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -719,6 +750,94 @@ mod tests {
         let mut ev = valid_event();
         ev["payload_hash"] = json!("nothex");
         assert!(parse_evidence_event(&ev).is_err());
+    }
+
+    #[test]
+    fn a_broken_chain_link_blocks_the_whole_read_rather_than_showing_part_of_it() {
+        // Phase-2 DoD: "`blocked` + `error` states proven against engine-unreachable and
+        // chain-break". Unreachable had a test; the chain-break half had one only for the
+        // engine SAYING the chain broke (`ok_false_reply_maps_to_blocked`). This is the
+        // other door: a chain arriving with a malformed link.
+        //
+        // Say plainly what it does NOT establish, because the gap is easy to over-read in
+        // the box's favour. This mirror does not WALK the chain — `parse_evidence_event`
+        // checks that `previous_event_hash` is null-or-64-hex and nothing more, and it
+        // could not do better: the schema carries no signature, no trusted key is reachable
+        // here, and re-deriving a head from records the desktop cannot authenticate would
+        // be a check that cannot fail. Detecting a genuine fork is the supervisor's, on
+        // both platforms (`governed_supervisor_ledger.py`, `win-live/src/servers.rs`).
+        // What is proven here is the boundary rule: a link this mirror CAN see is wrong,
+        // and the whole read fails closed rather than rendering the valid records beside it.
+        let mut broken = valid_event();
+        broken["previous_event_hash"] = json!("not-a-hash");
+        assert!(parse_evidence_event(&broken).is_err());
+
+        let doc = json!({ "ok": true, "records": [ valid_event(), broken ], "record_count": 2 });
+        match classify("evidenceChain", Ok(doc), |d| validate_records(d, parse_evidence_event)) {
+            GovernanceRead::Blocked { reason, .. } => {
+                assert!(reason.contains("previous_event_hash"), "reason was: {reason}");
+                // Record #1, so the FIRST record really was accepted and the read still
+                // failed — a partly-valid mirror is never shown as `ok`.
+                assert!(reason.contains("record #1"), "reason was: {reason}");
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+
+        // The positive control: the same two-record read with an intact link is `ok`, so
+        // the assertion above cannot be satisfied by an arm that refuses every chain.
+        let mut linked = valid_event();
+        linked["event_id"] = json!("ev-2");
+        linked["previous_event_hash"] = json!("f".repeat(64));
+        let doc = json!({ "ok": true, "records": [ valid_event(), linked ], "record_count": 2 });
+        match classify("evidenceChain", Ok(doc), |d| validate_records(d, parse_evidence_event)) {
+            GovernanceRead::Ok { records, .. } => assert_eq!(records.len(), 2),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_governance_command_can_take_a_key_a_lease_or_the_database() {
+        // Phase-2 DoD: "No desktop-side decision authority; no cached keys/leases." That
+        // holds structurally — none of the four commands takes `State<AppState>`, so there
+        // is nowhere to cache anything, and none takes a key/lease/nonce/verdict, so there
+        // is no parameter through which the desktop could decide. Structural is not the
+        // same as CHECKED, though: the property lives in four signatures a future command
+        // can simply not follow, and the module docs above would go on asserting it.
+        //
+        // So it is read out of this file's own source. The alternative — a runtime test —
+        // cannot exist: the thing being asserted is the ABSENCE of a parameter, which has
+        // no value to pass.
+        let src = include_str!("governance.rs");
+        // Split on a needle assembled at compile time. Writing the attribute as a literal
+        // here would make this line itself a fifth "command" — the test found that on its
+        // first run, which is the small proof that it is reading the real file.
+        let attribute = concat!("#[tauri::", "command]");
+        let commands: Vec<&str> = src
+            .split(attribute)
+            .skip(1)
+            .map(|after| after.split(" {").next().unwrap_or(""))
+            .collect();
+        assert_eq!(commands.len(), 4, "the command count moved; re-reason, do not re-run");
+        for sig in commands {
+            // The scan is over the PARAMETER LIST, not the whole signature. `verdict` is a
+            // forbidden input and also half the name of `read_verifier_verdicts`, and a check
+            // that cannot tell those apart is a check that fires on an honest command — this
+            // one did, on its first run, which is how the distinction got written down.
+            let params = sig.split('(').nth(1).unwrap_or("").split(')').next().unwrap_or("");
+            for forbidden in ["State<", "AppState", "key", "lease", "nonce", "verdict", "sign"] {
+                assert!(
+                    !params.contains(forbidden),
+                    "a governance command took `{forbidden}`: {params}"
+                );
+            }
+            // And positively: the only input the mirror is allowed is an optional read filter.
+            // The negatives above enumerate what is banned today; this one holds when someone
+            // invents an authority nobody thought to ban.
+            assert!(
+                params.trim().is_empty() || params.trim() == "task_id: Option<String>",
+                "a governance command grew a parameter that is not a read filter: {params}"
+            );
+        }
     }
 
     // --- classify: fail-closed mapping ---

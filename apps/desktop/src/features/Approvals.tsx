@@ -202,7 +202,16 @@ export function Approvals() {
       const cur = list[Math.min(selected, list.length - 1)];
       if (!cur || cur.status !== 'pending') return;
       const k = e.key.toLowerCase();
-      if (k === 'd') { e.preventDefault(); setStaged({ id: cur.id, kind: 'deny' }); }
+      // §D binds `g` to grant. It was missing: grant was reachable only as the pointer
+      // press-and-hold (or Space/Enter ON that button), so a keyboard owner driving the
+      // queue with ↑/↓ could deny and escalate by keystroke and not grant. `g` stages the
+      // SAME confirm dialog `d` and `e` stage — §D's own "all actions confirm before
+      // committing" — rather than committing on one keypress, which would have made the
+      // deliberate hold gesture bypassable by the very binding meant to complete it. The
+      // real gate is unchanged either way: `desktop.confirmApproval` is adjudicated behind
+      // the Rust-driven native dialog (T-011) that the webview cannot forge.
+      if (k === 'g') { e.preventDefault(); setStaged({ id: cur.id, kind: 'grant' }); }
+      else if (k === 'd') { e.preventDefault(); setStaged({ id: cur.id, kind: 'deny' }); }
       else if (k === 'e') { e.preventDefault(); setStaged({ id: cur.id, kind: 'escalate' }); }
     };
     window.addEventListener('keydown', onKey);
@@ -458,7 +467,7 @@ export function Approvals() {
       </section>
 
       <div className="ap-hint muted" aria-hidden="true">
-        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · d ${L('denyLower')} · e ${L('escalateLower')}`}
+        {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · g ${L('grant').toLowerCase()} · d ${L('denyLower')} · e ${L('escalateLower')}`}
       </div>
 
       {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
@@ -537,16 +546,29 @@ export function Approvals() {
         <div className={`wire${pendingCount > 0 ? ' live' : ''}`} aria-hidden="true" />
       </section>
 
-      {/* deny / escalate go through a confirm dialog (grant uses press-and-hold). */}
-      {staged && stagedItem && staged.kind !== 'grant' && (
+      {/* All three actions confirm before committing (§D). `g`/`d`/`e` stage this dialog;
+          the pointer press-and-hold on the grant key is the mouse-driven equivalent, not a
+          second authority — both end at the same `confirm_approval`, which is adjudicated
+          behind the Rust-driven native dialog the webview cannot forge (T-011). */}
+      {staged && stagedItem && (
         <ConfirmDialog
-          title={staged.kind === 'deny' ? L('confirmDenial') : L('escalateForReview')}
-          message={
-            staged.kind === 'deny'
-              ? `${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`
-              : `${L('escalateDialogA')}${stagedItem.actionType}${L('escalateDialogB')}${stagedItem.target}${L('escalateDialogC')}`
+          title={
+            staged.kind === 'grant' ? L('confirmGrant')
+              : staged.kind === 'deny' ? L('confirmDenial')
+                : L('escalateForReview')
           }
-          confirmLabel={staged.kind === 'deny' ? t('action.reject') : L('escalate')}
+          message={
+            staged.kind === 'grant'
+              ? `${L('grantDialogA')}${stagedItem.actionType}${L('grantDialogB')}${stagedItem.target}${L('grantDialogC')}`
+              : staged.kind === 'deny'
+                ? `${L('denyDialogA')}${stagedItem.actionType}${L('denyDialogB')}${stagedItem.target}${L('denyDialogC')}`
+                : `${L('escalateDialogA')}${stagedItem.actionType}${L('escalateDialogB')}${stagedItem.target}${L('escalateDialogC')}`
+          }
+          confirmLabel={
+            staged.kind === 'grant' ? L('grant')
+              : staged.kind === 'deny' ? t('action.reject')
+                : L('escalate')
+          }
           cancelLabel={t('action.cancel')}
           onConfirm={commit}
           onCancel={() => setStaged(null)}
