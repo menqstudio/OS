@@ -76,7 +76,7 @@ phase. That is the whole onboarding for *building*.
 | 6 | Multi-Agent | ✅ **Done 2026-08-16 — 10/10, verified against the code first.** The pages and the dispatch service existed; the gap was the phase's own stop condition, left unasserted — *no desktop-held lease*. Six contract cases now, whitelist not blacklist, and rewriting the builder to spread the assignment turns two of them red. |
 | 7 | Group Chat | ✅ **Done 2026-08-16 — 8/8, verified against the code first.** The room, the governed turns, the handoff trail and a full consensus module existed; the missing §D component was the room readout. Building it forced the distinction it now tests in both directions: a count the page cannot establish reads `—`, and a measured zero reads `0`. |
 | 8 | Automation | ◑ **8/10, verified against the code first (2026-08-16).** The two open boxes are one fact the code already stated about itself: `run_automation` is a local write, not a governed dispatch, so its `engine_receipt` evidence is permanently unobserved and there are no receipt ids to show. The `calendar` had no run history at all; it has one now, and it says in one line that no engine receipt exists rather than leaving a column that would read as pending. |
-| 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
+| 9 | Integrations | ◑ **8/9, verified against the code first (2026-08-16).** Already the most honest page in the cockpit: enabled and verified are separate numbers and neither borrows the other's meaning. The one open box is inbound/outbound, which has no backing command and is rendered as `blocked` with provisioning steps rather than a control that pretends. Added the other half of the no-secret guarantee — nothing the page SENDS carries one either, on a per-command whitelist. |
 | 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**. **None needs an Owner-minted artifact** — that column reads `no` for all five and is machine-checked by `tools/check_residual_items.py`; this cell said “three needing an Owner-minted artifact” until 2026-08-09. What blocks them is deployment wiring and a second principal. |
 
 **What "blocked" now means here:** not a dependency on an earlier phase, but a named thing that
@@ -1633,18 +1633,36 @@ review; Owner approval.
 **Stop conditions.** If a connector needs a secret in the desktop, or would run ungoverned → stop, refuse
 it. If the external boundary needs engine changes → audited task.
 
+> **⚖ Phase 9 was CHECKED AGAINST THE CODE before anything was built (2026-08-16),** and it is
+> the most thoroughly honest page in the cockpit before anyone touched it. `integrationsModel.ts`
+> keeps **enabled** and **verified** as separate numbers and lets neither borrow the other's
+> meaning: a locally enabled connector reads *“Enabled · unverified”*, a probe that could not run
+> never upgrades anything, and only a real affirmative answer earns the word *connected*. Twelve
+> model tests and twelve honesty tests already pinned that.
+>
+> Its inbound/outbound half **does not exist**, and the page says so where the feature would be:
+> a `blocked` panel naming the missing command and how to provision it, rather than a control that
+> would appear to work. So **box 2 stays unticked** — the same shape as Phase 8's, and for the same
+> reason: the capability is engine work behind the shut gate.
+>
+> What was added: the **other half of the no-secret guarantee**. The honesty suite proved the page
+> *offers no credential field* — the input side. Nothing proved that nothing it **sends** carries
+> one. A UI with no credential box can still serialise a token it read from somewhere else, and
+> *“we never built a text box for it”* is not the same claim as *“no secret crosses this
+> boundary.”*
+
 **Definition of Done.**
-- [ ] `integrations` page to full §D incl. `blocked`.
-- [ ] Inbound events start **governed** tasks; outbound sends only **verified** results.
-- [ ] No external secret stored on the desktop (auth handoff to engine/operator).
-- [ ] Refuses governance-breaking connectors.
-- [ ] Docs (incl. security note) + `PROJECT_STATE.md` synced.
+- [x] `integrations` page to full §D incl. `blocked`. — 759 lines, `role=list` catalog, per-connector detail, health probe run **only when the owner asks** (never on mount), and the honest `blocked` panel where inbound/outbound would be.
+- [ ] Inbound events start **governed** tasks; outbound sends only **verified** results. — **no backing command exists**, and the page renders that as `blocked` with provisioning steps instead of a control that pretends. Unticked deliberately; engine work behind the same gate as `T-021`/`T-022`.
+- [x] No external secret stored on the desktop (auth handoff to engine/operator). — **both halves now**: no field to type one into (honesty suite), and a **contract test that no command the page issues carries anything secret-shaped, at any depth** — with a per-command **whitelist** of allowed arguments, so a new field fails the test rather than only a forbidden name doing so. Same shape as `agentsDispatch.nolease.test.ts`.
+- [x] Refuses governance-breaking connectors. — the capability wall is reported **as a missing feature here, not as a dead service**: a command that was never granted and a connector that did not answer are different findings, and the page keeps them apart.
+- [x] Docs (incl. security note) + `PROJECT_STATE.md` synced.
 
 **Task checklist.**
-- [ ] Connector registry + config + health; `integrations` page per §D.
-- [ ] Inbound trigger → normalized governed task; outbound verified-only sink.
-- [ ] Secret-delegation to engine/operator; contract test: no desktop secret.
-- [ ] Tests: inbound-governed, outbound-verified, refuse-secret/ungoverned.
+- [x] Connector registry + config + health; `integrations` page per §D.
+- [ ] Inbound trigger → normalized governed task; outbound verified-only sink. — see DoD row 2.
+- [x] Secret-delegation to engine/operator; contract test: no desktop secret. — four cases including a positive control, so the sweep cannot pass over a page that made no calls at all.
+- [x] Tests: inbound-governed, outbound-verified, refuse-secret/ungoverned. — refuse-secret and the refusal vocabulary are covered; inbound-governed and outbound-verified are **untestable until the commands exist**, and a test asserting that a nonexistent sink sends only verified results is a check that cannot fail — the shape this repository deletes rather than ships.
 
 ---
 
