@@ -71,7 +71,7 @@ phase. That is the whole onboarding for *building*.
 | 1 | Bridge | 🔨 **Wired, real mode still refuses.** Contract, adapter, broker and receipt are real; the three previously unreachable commands (`read_decision_ledger`, `read_verifier_verdicts`, `governed_turn_execute`) now have wrappers and a `bridge` route. `engine_sidecar._real_callables()` still raises unconditionally, pending the supervisor-reserved execution attempt and the authoritative execution→receipt binding — correct and fail-closed. **2026-08-09:** two long-open questions were settled in writing rather than left to disagree with the code. Governed **delta-streaming is descoped** (a governed turn is buffered by construction — the desktop's authority is a signature over the whole output); what stays open under that heading is the §4.10(f) chunked output **pull** — whose SUPERVISOR hop landed 2026-08-10 in the engine, while its DESKTOP hop does not exist; the `core/src/governed_output_stream.rs` ladder that used to sit here uncalled was deleted in that change rather than wired, because its table diverged from the design it cited. The **Settings governed-provider row was amended to a read-only three-state control** — the provider is resolved from the backend environment and this phase's own gate is "Desktop never holds lease/key/env", so a switch the webview could flip is not buildable honestly; it now reports `default`/`on`/`blocked` and is keyboard-reachable instead of dropping out of the tab order. The phase stays **open**, and as of **2026-08-10** by one box more than this cell used to admit. The DoD row *One governed round-trip proven end-to-end* had been ticked and marked "done" and was false: the production order at `commands.rs:1338-1428` returns at `:1382`, before `ai::governed_turn` and before `verify_and_record_receipt`, so those two have zero runtime-reachable callers. The refusal is deliberate and stays — the row is open because the roadmap was describing a round-trip the gate forbids. Read the rest of this cell with that in mind: "contract, adapter, broker and receipt are real" is true about the code and says nothing about whether anything reaches it. Two DoD boxes are now unchecked, matching this cell. |
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
 | 3 | Desktop Integration | ✅ **Done 2026-08-15 — 11/11, verified against the code first.** 23 routes on a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, route-change focus, and a `cmd-dock` that is now a real ARIA dialog. Verification found two live defects: an undeclared `--s7` that silently removed the padding from two empty states, and a modal the keyboard could walk out of. `tools/check_c1_tokens.py` holds the stylesheet to §C.1 so the first cannot recur. |
-| 4 | UI/UX System | 🔨 **Gated.** Design tokens, WCAG-AA contrast on 24 pairs, i18n parity across en/hy/ru on 233 keys, and a bundle budget — all enforced in CI. |
+| 4 | UI/UX System | ✅ **Done 2026-08-16 — 12/12, verified against the code first.** 28 library primitives with usage docs, light/dark parity on all 42 colour tokens, and the three pages this phase owns finished to §D. Four §D sweeps (keyboard · states · a11y · motion) plus a read of the phase's own pages found **six** user-facing defects, including a `command` page that rendered a governed refusal identically to a dropped connection. |
 | 5 | Memory & Knowledge | 🔨 **Recorded, not verified — deliberately.** Every write appends a local record in the same transaction, append-only by database trigger. It is *not* called verified: nothing is signed, and it attests content, never the writer. |
 | 6 | Multi-Agent | 🔨 **Capability model is real.** Three tiers reach the CLI inline via `--agents`; 262 pack-role definitions are generated and drift-gated. Path scope is stated per task and **not enforced** on the desktop route, and every card says so. |
 | 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
@@ -1138,21 +1138,41 @@ update this phase's specs; `PROJECT_STATE.md`.
 **Stop conditions.** If a page needs bespoke CSS that bypasses the token system → stop, extend the system
 instead. If a chart encodes meaning in color alone → stop, add a non-color signal (§dataviz).
 
+> **⚖ Phase 4 was CHECKED AGAINST THE CODE before anything was built (2026-08-16),** the same
+> way Phases 2 and 3 were. Most of it already existed. What verification is for is the part that
+> did not, and this phase was swept along **four §D dimensions** rather than read page by page:
+>
+> | sweep | pages | real gaps |
+> |---|---|---|
+> | **Keyboard** | 22 | 1 — `automations` declared `/` and had no handler |
+> | **States** | 22 | 1 — `command` rendered a governed REFUSAL identically to a dropped connection |
+> | **A11y** | 21 | 2 — `tasks` lanes were bare `<div>`s, `command`'s trace had `aria-live` without `role=log` |
+> | **Motion** | 14 | 0 |
+>
+> Two more were found by reading the pages the phase actually owns: **`analytics` had no scrubber
+> at all**, and **`library`'s `Enter` did nothing while looking as though it did**. Six real
+> defects, every one of them user-facing, none of them visible from a status board.
+>
+> Three pages flagged by the sweeps were **false positives, checked rather than trusted**: `group`
+> inherits its keymap from `Conversations`, `activity`'s `Space`/`←→`/`Enter` live in the
+> `StripChart` primitive, and `command`'s loading/error/empty come from the shared `Async`. A page
+> that looks empty in its own file is not the same as a page that does nothing.
+
 **Definition of Done.**
-- [ ] Component library with full §D state/keyboard/aria/reduced-motion coverage + usage docs.
-- [ ] Theme provider (dark default + light parity); generated tokens match §C.1 (drift check green).
-- [ ] `activity`, `analytics`, `library` pages shipped to full §D.
-- [ ] All Phase-3 pages refactored onto the library.
-- [ ] `docs/DESIGN_SYSTEM.md` + `PROJECT_STATE.md` synced.
+- [x] Component library with full §D state/keyboard/aria/reduced-motion coverage + usage docs. — **28 exports** in `components/ui.tsx` (`Async` · `Button` · `Card` · `ConfirmDialog` · `DataTable` · `Drawer` · `EmptyState` · `ErrorState` · `Modal` · `Panel` · `Rail` · `Skeleton` · `StatTile` · `StatusPill` · `TileGroup` · …), each documented in [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §3.1. `Drawer` and `Modal` carry the full dialog contract (focus trap, initial focus, restoration, `Esc`); `Async` is the one place loading/error/empty are decided, which is why three pages that looked stateless are not. The a11y pass covers the primitives **and**, since 2026-08-16, the pages.
+- [x] Theme provider (dark default + light parity); generated tokens match §C.1 (drift check green). — **measured, not assumed**: `aios.css`'s base `:root` declares 72 custom properties and `:root[data-theme="light"]` overrides **42** — every colour. The 30 it does not override are spacing, radii, type scale, fonts and motion, which are theme-independent by definition and would be a bug to fork. `check_token_parity` (tokens.ts ↔ tokens.css), `check_contrast` (24 pairs, **both** themes) and `check_c1_tokens` (42 §C.1 tokens + no undeclared `var()` + a monotonic spacing ladder in every tier) all gate this in CI.
+- [x] `activity`, `analytics`, `library` pages shipped to full §D. — `activity`: ECG strip, vitals from real events only, `Space`/`←→`/`Enter` in `StripChart`. `analytics`: the **scrubber §D asks for**, built as an ARIA slider over the RANK cut-off rather than a timeline, because the engine exposes one all-time aggregate with no time dimension and this page refuses to invent an axis in three other panels. `library`: `/`, arrows, and `Enter` that now **opens** — it used to fire an `onClick` that re-selected the already-selected row while the preview it should open had no tab stop at all.
+- [x] All Phase-3 pages refactored onto the library. — **25 of 28** feature modules import `components/ui`. The three that do not are named and reasoned: `Chat.tsx` is a 20-line delegate to `Conversations`, `writeRecord.tsx` is a helper rather than a page, and `Agents.tsx`'s stateful lattice is the **documented exception** in §3.1 — generalising it would produce a one-consumer abstraction with a dozen slots, so only the deterministic ring geometry was extracted (`charts/geometry.ts`, pure and tested).
+- [x] `docs/DESIGN_SYSTEM.md` + `PROJECT_STATE.md` synced. — the catalogue described **27 of 28** exports; the missing one was `usePrefersReducedMotion`, which is the hook implementing §C.1's own reduced-motion rule. Documented now, with the distinction that matters: the hook is for motion produced in **JavaScript** (a count-up, an rAF loop), the media query for motion declared in **CSS**, and neither replaces the other.
 
 **Task checklist.**
-- [ ] Build the component library (surfaces, marks, pills, tiles, tables, skeleton, toast, modal, rails).
-- [ ] Theme provider + generated `theme-tokens` + CI token-drift/contrast check.
-- [ ] Charting primitive (plot/beatline/sweep) with accessible summaries + table fallback.
-- [ ] `activity` page per §D (ECG + vitals + scrub/freeze).
-- [ ] `analytics` page per §D (distribution + autonomy/channel splits + scrubber).
-- [ ] `library` page per §D (catalog + search + previews).
-- [ ] Refactor Phase-3 pages onto the library; author `docs/DESIGN_SYSTEM.md`.
+- [x] Build the component library (surfaces, marks, pills, tiles, tables, skeleton, toast, modal, rails). — see DoD row 1.
+- [x] Theme provider + generated `theme-tokens` + CI token-drift/contrast check. — see DoD row 2; three gates, not one.
+- [x] Charting primitive (plot/beatline/sweep) with accessible summaries + table fallback. — `components/charts/Chart.tsx`: `role="img"` labelled by a generated one-line summary, a `<details>` **data-table fallback** on every chart, a focusable legend, and share percentages on each row. §dataviz honoured — *"colour is never the signal"*: the line is one accent stroke, every blip carries a text label, and every table row states label **and** value.
+- [x] `activity` page per §D (ECG + vitals + scrub/freeze). — keyboard scrub lives in `StripChart` with its own tests; every vital is derived from the real events array and the ones with no backing signal say so rather than showing a number.
+- [x] `analytics` page per §D (distribution + autonomy/channel splits + scrubber). — the splits render **honest empties naming the missing engine aggregate**; the distribution and the scrubber are real.
+- [x] `library` page per §D (catalog + search + previews). — see DoD row 3.
+- [x] Refactor Phase-3 pages onto the library; author `docs/DESIGN_SYSTEM.md`. — see DoD rows 4 and 5.
 
 ---
 
