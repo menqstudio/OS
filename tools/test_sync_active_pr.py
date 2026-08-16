@@ -124,3 +124,61 @@ class RecordParkedTests(_StateFile):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettledHeadTests(unittest.TestCase):
+    """The generator must compute `settled_at_main_head` the way its VERIFIER does.
+
+    `check_repo_state.verify_settled_snapshot` pins the field to the FIRST PARENT of the carrier's
+    merge commit -- "the main that carrier #N merged into". `--settled` wrote the live main head,
+    which is the same commit only while the carrier is still open. Run the documented ritual in the
+    documented order -- merge, pull, settle -- and the tool produced a snapshot its own gate
+    refused, naming the merge commit where the pin wanted that commit's parent. Observed
+    2026-08-17, on the settle of PR #138.
+
+    This is the SECOND disagreement between a generator and a gate over this one field; the first
+    was the unsatisfiable floor the fifth audit's A-07 fix shipped. Both are pinned here, because a
+    generator that can emit a state its verifier rejects teaches whoever hits it that the gate is
+    noise.
+    """
+
+    HEAD = "a" * 40
+    PARENT = "b" * 40
+
+    def _patch(self, merge_commit, parent=None):
+        self.addCleanup(setattr, sap, "carrier_merge_commit", sap.carrier_merge_commit)
+        sap.carrier_merge_commit = lambda number: merge_commit
+        if parent is not None:
+            import subprocess
+            real = subprocess.run
+            self.addCleanup(setattr, subprocess, "run", real)
+
+            class _Out:
+                stdout = parent
+            subprocess.run = lambda *a, **k: _Out()
+
+    def test_a_merged_carrier_settles_at_the_parent_of_its_merge_commit(self):
+        # THE DEFECT, as a test. The gate wants the main the carrier merged INTO.
+        self._patch(self.HEAD, self.PARENT)
+        self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.PARENT)
+
+    def test_an_open_carrier_settles_at_the_live_main_head(self):
+        # Nothing has merged, so the field means exactly what it used to.
+        self._patch(None)
+        self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)
+
+    def test_a_carrier_that_merged_somewhere_else_does_not_move_the_field(self):
+        # Settling at a head the carrier did not produce: the parent of THIS head says nothing
+        # about that carrier, so guessing would be worse than leaving the live head.
+        self._patch("c" * 40)
+        self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)
+
+    def test_no_carrier_at_all_settles_at_the_live_main_head(self):
+        self.assertEqual(sap.settled_head_for(self.HEAD, None), self.HEAD)
+
+    def test_an_unreadable_gh_fails_SOFT_rather_than_refusing_the_settle(self):
+        # Deliberate asymmetry with parked_roles(), which refuses. This helper only avoids MOVING a
+        # field that is already right; a gh outage must not turn a settle into a refusal, and the
+        # gate downstream still fails closed if the value is wrong.
+        self._patch(None)
+        self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)

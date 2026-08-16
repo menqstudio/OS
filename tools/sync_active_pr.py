@@ -114,6 +114,55 @@ def live_main_head() -> str:
     return sha
 
 
+def carrier_merge_commit(number: int) -> str | None:
+    """The 40-hex merge commit of a pull request, or None if it is not merged / cannot be read.
+
+    Fail-soft on purpose: the caller uses this only to AVOID moving a field that is already right,
+    and a `gh` outage must not turn a settle into a refusal. What it must never do is answer
+    confidently and wrongly, so anything that is not a 40-hex sha is None.
+    """
+    out = subprocess.run(["gh", "pr", "view", str(number), "--json", "mergeCommit"],
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0:
+        return None
+    try:
+        commit = (json.loads(out.stdout or "{}").get("mergeCommit") or {}).get("oid") or ""
+    except json.JSONDecodeError:
+        return None
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
+
+
+def settled_head_for(head: str, carrier_no: int | None) -> str:
+    """What `settled_at_main_head` must be, computed the way its VERIFIER computes it.
+
+    `check_repo_state.verify_settled_snapshot` pins the field to the first parent of the carrier's
+    merge commit — *"the main that carrier #N merged into"*. `--settled` wrote the live main head
+    instead, which is the same commit only while the carrier is still open. Run the documented
+    ritual in the documented order — merge, pull, settle — and the generator produces a snapshot its
+    own gate refuses, naming the merge commit where the pin wants that commit's parent.
+
+    That happened on 2026-08-17 and is recorded rather than quietly patched, because it is the
+    SECOND time a generator and a gate have disagreed about this one field. The first was the
+    unsatisfiable floor the fifth audit's `A-07` fix shipped, which turned main red within the hour.
+    **A generator that can emit a state its own verifier rejects is a defect even when the verifier
+    is right**, because what it teaches whoever hits it is that the gate is noise.
+
+    So the rule is DERIVED from the fact the gate reads rather than restated beside it: if the
+    carrier has merged and its merge commit is the head being settled at, the settled head is that
+    commit's first parent. Otherwise — carrier still open, `gh` unreadable, someone settling from a
+    branch — it is the live main head, which is what the field meant before the carrier existed.
+    """
+    if carrier_no is None:
+        return head
+    merged_as = carrier_merge_commit(carrier_no)
+    if not merged_as or merged_as != head:
+        return head
+    out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", f"{head}^1"],
+                         capture_output=True, text=True)
+    parent = out.stdout.strip()
+    return parent if re.fullmatch(r"[0-9a-f]{40}", parent) else head
+
+
 def live_open_prs() -> list[dict]:
     """Every pull request GitHub says is open right now, with the fields prs[] is anchored on.
 
@@ -350,7 +399,12 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     roles = parked_roles(parked, role_pairs)
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
-    line = '  "settled_at_main_head": "' + head + '",\n'
+    # Computed the way the GATE computes it, not assumed to be the live head — see
+    # settled_head_for(). The carrier is whichever PR the snapshot currently names, because that is
+    # the one whose merge this settle is recording.
+    carrier_no = pr or ((data.get("current_workflow_pr") or {}).get("number"))
+    settled = settled_head_for(head, carrier_no)
+    line = '  "settled_at_main_head": "' + settled + '",\n'
     existing = re.search(r'^\s*"settled_at_main_head":.*\n', text, re.M)
     if existing:
         text = text[: existing.start()] + line + text[existing.end() :]
