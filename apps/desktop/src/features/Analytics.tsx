@@ -127,6 +127,73 @@ function AnPlot(
   );
 }
 
+// --- the rank scrubber (anScrub) ----------------------------------------------
+// §D: "scrubber (`anScrub`) … Keyboard: scrubber is a slider (role=slider, arrows)".
+//
+// WHAT IT SCRUBS, and why it is not a timeline. `get_analytics` returns one ALL-TIME
+// aggregate with no time dimension anywhere in it. A time scrubber would therefore be
+// drawing an axis the engine does not expose — the exact fabrication this page refuses
+// three times over in `AnHonest`, where the districts, autonomy and channel panels
+// render an honest empty instead of inventing a split. So the scrub is over the one
+// ordering the data really has: RANK. It moves the cut-off — how far down the ranked
+// distribution is plotted — and every position it can take is a true statement about
+// real values.
+//
+// A native <input type=range> would give keyboard support for free and is the usual
+// right answer, but §D names `role=slider` and this deck's chrome is a custom rail;
+// so the ARIA slider pattern is implemented in full rather than approximated: the
+// value, its bounds and a human-readable `aria-valuetext` are all published, and the
+// whole keyboard contract the pattern requires is here — not only the two arrows §D
+// mentions. Home/End and PageUp/PageDown are part of that contract, and a slider that
+// ignores them is one a keyboard user has to hold an arrow key down on.
+function AnScrub(
+  { value, max, onChange, tr }:
+  { value: number; max: number; onChange: (next: number) => void; tr: Tr },
+) {
+  const clamp = (n: number) => Math.max(1, Math.min(max, n));
+  const page = Math.max(1, Math.round(max / 5));
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step: Record<string, number> = {
+      ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1,
+      PageUp: page, PageDown: -page,
+    };
+    if (e.key in step) {
+      e.preventDefault();
+      onChange(clamp(value + step[e.key]));
+      return;
+    }
+    if (e.key === 'Home') { e.preventDefault(); onChange(1); }
+    else if (e.key === 'End') { e.preventDefault(); onChange(max); }
+  };
+  const valueText = value >= max
+    ? tr('scrubAll')
+    : `${tr('scrubTop')} ${value} ${tr('scrubOf')} ${max}`;
+  return (
+    <div className="an-scrub">
+      <span className="micro an-scrub-label" id="an-scrub-label">{tr('scrubLabel')}</span>
+      <div
+        className="an-scrub-rail"
+        role="slider"
+        tabIndex={0}
+        aria-labelledby="an-scrub-label"
+        aria-valuemin={1}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        aria-valuetext={valueText}
+        aria-describedby="an-scrub-hint"
+        onKeyDown={onKeyDown}
+      >
+        <span className="an-scrub-fill" style={{ width: `${(value / max) * 100}%` }} aria-hidden="true" />
+        <span className="an-scrub-knob" style={{ left: `${(value / max) * 100}%` }} aria-hidden="true" />
+      </div>
+      {/* The value is TEXT as well as an aria attribute: a sighted mouse user gets no
+          screen reader, and a rail with a knob and no number is a guess. */}
+      <b className="mono an-scrub-value">{valueText}</b>
+      <span className="micro muted an-scrub-hint" id="an-scrub-hint">{tr('scrubHint')}</span>
+    </div>
+  );
+}
+
 // --- honest empty panel: the engine exposes no such split aggregate yet -------
 // Names what's missing (with a keyboard-reachable <details> table) instead of
 // fabricating a breakdown. Reused for the districts, autonomy and channel panels.
@@ -178,7 +245,18 @@ export function Analytics() {
       return next;
     });
 
-  const metrics = s.data ?? [];
+  const all = s.data ?? [];
+  // Ranked once, here, so the scrubber's "top N" means the same thing everywhere on the
+  // page and the plot is not re-sorted per render by a component that does not own the cut.
+  const ranked = useMemo(() => [...all].sort((a, b) => b.value - a.value), [all]);
+  const [cut, setCut] = useState<number | null>(null);
+  // `null` = untouched, which shows everything. Storing a number instead would freeze the
+  // cut at whatever the FIRST read happened to return, so a later read with more nodes
+  // would silently keep hiding the new ones.
+  const shownCount = cut === null ? ranked.length : Math.min(cut, ranked.length);
+  const metrics = ranked.slice(0, shownCount);
+  // The deck total follows the CUT, not the whole set: a number that ignores the control
+  // right above it is the page contradicting itself.
   const total = metrics.reduce((sum, m) => sum + m.value, 0);
   const reduced = useReducedMotion();
   const totalShown = useCountUp(total, reduced);
@@ -258,6 +336,12 @@ export function Analytics() {
 
           <AnPlot metrics={metrics} hidden={hidden} onToggle={toggle} tr={Lz} lang={lang} />
 
+          {/* Only when there is something to cut. A slider with one position is a control
+              that cannot be wrong and cannot be useful. */}
+          {ranked.length > 1 && (
+            <AnScrub value={shownCount} max={ranked.length} onChange={setCut} tr={Lz} />
+          )}
+
           {/* Plain divider — `wire.live` animates a travelling pulse that reads as a
               running feed. There is no feed behind this deck, so the claim is dropped. */}
           <div className="wire" aria-hidden="true" />
@@ -267,6 +351,13 @@ export function Analytics() {
               <b>{metrics.length}</b>
               <span>{Lz('nodes')}</span>
             </span>
+            {/* When the cut is hiding nodes, say so. A count that silently means "some of
+                them" is the same failure as a total that ignores the control above it. */}
+            {shownCount < ranked.length && (
+              <span className="micro muted">
+                {`${Lz('scrubTop')} ${shownCount} ${Lz('scrubOf')} ${ranked.length}`}
+              </span>
+            )}
             <span className="an-foot-r">
               <span className="micro">{Lz('totalAcrossNodes')}</span>
               <b className="mono">{totalShown}</b>
@@ -352,6 +443,26 @@ export function Analytics() {
 const ANALYTICS_CSS = `
 .v-analytics .an-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ── the rank scrubber ─────────────────────────────────────────────────────── */
+.v-analytics .an-scrub { display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+  gap: var(--s3); margin-top: var(--s4); }
+.v-analytics .an-scrub-label { color: var(--ink-muted); }
+.v-analytics .an-scrub-rail { position: relative; height: 6px; border-radius: var(--r-pill);
+  background: rgb(var(--line-rgb)/.9); cursor: pointer; }
+/* The focus ring is NOT decoration here: the rail is the only focusable thing in this
+   row, and a keyboard user who cannot see where focus landed cannot use the arrows. */
+.v-analytics .an-scrub-rail:focus-visible { outline: 2px solid var(--azure); outline-offset: 4px; }
+.v-analytics .an-scrub-fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, rgb(var(--cyan-rgb)/.55), rgb(var(--azure-rgb)/.9)); }
+.v-analytics .an-scrub-knob { position: absolute; top: 50%; width: 14px; height: 14px;
+  margin: -7px 0 0 -7px; border-radius: 50%; background: var(--ink);
+  box-shadow: 0 0 0 3px rgb(var(--azure-rgb)/.35); transition: left var(--fast); }
+.v-analytics .an-scrub-value { white-space: nowrap; }
+.v-analytics .an-scrub-hint { grid-column: 1 / -1; }
+@media (prefers-reduced-motion: reduce) {
+  .v-analytics .an-scrub-knob { transition: none; }
+}
 
 /* honest-empty data-table fallback (AnHonest panels) */
 .v-analytics .an-table { font-size: 13px; margin-top: 10px; }
