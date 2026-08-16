@@ -707,21 +707,34 @@ export function Tasks() {
                         <h3 className="lane-nm">{L(lane.nmKey)}</h3>
                         <span className="lane-ct mono">{items.length}</span>
                       </header>
-                      <div className="lane-body">
+                      {/* §D: "board columns `role=list`, cards labeled". A lane is a LIST of
+                          cards and was a bare <div>, so a screen reader announced the section
+                          and then read the cards as loose content — no count, no position, no
+                          "3 of 7". The lane header's number is on screen and was nowhere in the
+                          accessibility tree except as the section's own label. */}
+                      <div className="lane-body" role="list" aria-label={L(lane.nmKey)}>
                         {items.map((x) => (
-                          <TaskCard
-                            key={x.id}
-                            task={x}
-                            projectName={x.projectId ? projectName.get(x.projectId) : undefined}
-                            onOpen={setDetail}
-                            onMove={moveTo}
-                            onDispatch={setDispatching}
-                            t={t}
-                            lang={lang}
-                            L={L}
-                          />
+                          <div role="listitem" key={x.id}>
+                            <TaskCard
+                              task={x}
+                              projectName={x.projectId ? projectName.get(x.projectId) : undefined}
+                              onOpen={setDetail}
+                              onMove={moveTo}
+                              onDispatch={setDispatching}
+                              t={t}
+                              lang={lang}
+                              L={L}
+                            />
+                          </div>
                         ))}
-                        {items.length === 0 && <p className="lane-empty micro">—</p>}
+                        {/* An em dash is not an empty state to a screen reader — it is a
+                            character. The lane says it is empty, in words. */}
+                        {items.length === 0 && (
+                          <p className="lane-empty micro" role="listitem">
+                            <span aria-hidden="true">—</span>
+                            <span className="sr-only">{t('state.empty')}</span>
+                          </p>
+                        )}
                       </div>
                     </section>
                   );

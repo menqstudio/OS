@@ -310,7 +310,11 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
           <span className="eyebrow">{L('dispatchTrace')}</span>
           {executing && <span className="pill info">{L('live')}</span>}
         </div>
-        <div className="timeline cmd-trace" aria-live="polite" aria-label={t('command.steps')}>
+        {/* §D: "trace `role=log aria-live`". It carried the live region and not the role, so a
+            screen reader was told the content had changed without being told what kind of thing
+            it was reading. `log` is the role for an append-only record where the newest entry
+            is the one that matters — which is exactly what a dispatch trace is. */}
+        <div className="timeline cmd-trace" role="log" aria-live="polite" aria-label={t('command.steps')}>
           {/* decorative LIVE pulse riding the rail — only while a step streams and
               only when motion is allowed; the real progress is the .now node below */}
           {executing && !reduced && <span className="cmd-pulse" aria-hidden="true" />}

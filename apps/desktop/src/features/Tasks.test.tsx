@@ -56,3 +56,28 @@ describe('Tasks — mirrors the real task store', () => {
     expect(called('list_tasks')).toBe(true);
   });
 });
+
+// §D: "board columns `role=list`, cards labeled." A lane is a LIST of cards and was a bare
+// <div>, so a screen reader announced the section and then read the cards as loose content —
+// no count, no position, no "3 of 7".
+describe('Tasks — the board lanes are lists', () => {
+  it('every lane exposes its cards as a list', async () => {
+    setup();
+    await waitFor(() => expect(screen.getAllByText('Draft the specification').length).toBeGreaterThan(0));
+    const lists = screen.getAllByRole('list');
+    expect(lists.length).toBeGreaterThan(0);
+    // Every lane is named, so "list, 3 items" is not the whole announcement.
+    for (const l of lists) expect(l).toHaveAccessibleName();
+    // The one real task is inside one of them, as an item.
+    expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
+  });
+
+  it('an empty lane says so in words, not with a dash', async () => {
+    // An em dash is a character to a screen reader, not an empty state.
+    setup();
+    await waitFor(() => expect(screen.getAllByText('Draft the specification').length).toBeGreaterThan(0));
+    const items = screen.getAllByRole('listitem');
+    const spoken = items.map((i) => i.textContent ?? '');
+    expect(spoken.some((s) => s.trim() !== '' && s.trim() !== '—')).toBe(true);
+  });
+});
