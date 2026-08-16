@@ -74,7 +74,7 @@ phase. That is the whole onboarding for *building*.
 | 4 | UI/UX System | ✅ **Done 2026-08-16 — 12/12, verified against the code first.** 28 library primitives with usage docs, light/dark parity on all 42 colour tokens, and the three pages this phase owns finished to §D. Four §D sweeps (keyboard · states · a11y · motion) plus a read of the phase's own pages found **six** user-facing defects, including a `command` page that rendered a governed refusal identically to a dropped connection. |
 | 5 | Memory & Knowledge | ✅ **Done 2026-08-16 — 11/11, verified against the code first.** The check found `research` with **no governed run at all** — a local CRUD list in the one page of this phase that is supposed to cross the wall — and a files guard that was implemented and **never tested**, against a merge gate that says *files guard proven*. Research now runs through `stream_ask` and saves via a command that takes a one-time id and never a body; the guard has six cases with a positive control. |
 | 6 | Multi-Agent | ✅ **Done 2026-08-16 — 10/10, verified against the code first.** The pages and the dispatch service existed; the gap was the phase's own stop condition, left unasserted — *no desktop-held lease*. Six contract cases now, whitelist not blacklist, and rewriting the builder to spread the assignment turns two of them red. |
-| 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
+| 7 | Group Chat | ✅ **Done 2026-08-16 — 8/8, verified against the code first.** The room, the governed turns, the handoff trail and a full consensus module existed; the missing §D component was the room readout. Building it forced the distinction it now tests in both directions: a count the page cannot establish reads `—`, and a measured zero reads `0`. |
 | 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
 | 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
 | 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**. **None needs an Owner-minted artifact** — that column reads `no` for all five and is machine-checked by `tools/check_residual_items.py`; this cell said “three needing an Owner-minted artifact” until 2026-08-09. What blocks them is deployment wiring and a second principal. |
@@ -1442,17 +1442,29 @@ approval.
 **Stop conditions.** If a room turn is shown without a verified receipt → stop (invariant break). If
 consensus/handoff needs engine changes → audited task.
 
+> **⚖ Phase 7 was CHECKED AGAINST THE CODE before anything was built (2026-08-16).** The room,
+> the governed per-agent turns, the handoff trail, mention resolution and a full consensus module
+> (rules, tally, verdict, dissent) all existed. One §D component did not: the **room readout** —
+> *participants / handoffs / messages* and `grpElapsed`.
+>
+> Building it surfaced the question worth the work: **what does a count mean when the page cannot
+> see the thing it counts?** The delegation trail arrives on the LIVE event channel while a turn
+> runs and is not reconstructable from stored messages. So a room the owner has merely opened must
+> not report `0 handoffs` — that states *"no handoffs happened"* while meaning *"I cannot see
+> handoffs"*. It reads `—`, and a message count of zero from a read that succeeded reads `0`,
+> because that one **is** established. Both directions have a test.
+
 **Definition of Done.**
-- [ ] `group` page to full §D incl. inline `blocked`.
-- [ ] Each agent turn governed + verified in-room.
-- [ ] Handoff + consensus render; mentions resolve.
-- [ ] Docs + `PROJECT_STATE.md` synced.
+- [x] `group` page to full §D incl. inline `blocked`. — the room is `<Conversations kind="group">` (thread `role=log aria-live=polite`, mentions, `↑` edit, per-agent receipt badges) plus the consensus deck; a blocked agent turn renders inline with the engine's reason and **no** persisted message. The room readout was the missing component and is built.
+- [x] Each agent turn governed + verified in-room. — the same `receiptBadge` vocabulary as direct chat, which **fails closed on anything it does not recognise** — never a promotion to green.
+- [x] Handoff + consensus render; mentions resolve. — `consensus.ts` computes the verdict from recorded positions under a stated rule, and **renders dissent for every outcome, `reached` included**: an outcome shown without the disagreement behind it is the defect that deck exists to prevent. Silence is counted as its own stance rather than folded into abstention.
+- [x] Docs + `PROJECT_STATE.md` synced.
 
 **Task checklist.**
-- [ ] Room store + multi-participant turn orchestration through the bridge.
-- [ ] `group` page (thread, participants, loom/handoff, consensus, badges) per §D.
-- [ ] Handoff + consensus computation; mention resolution.
-- [ ] Tests: in-room verified receipts, handoff/consensus, inline `blocked`.
+- [x] Room store + multi-participant turn orchestration through the bridge.
+- [x] `group` page (thread, participants, loom/handoff, consensus, badges) per §D. — including the readout added here, as a labelled `<dl>` so a screen reader never meets a bare number.
+- [x] Handoff + consensus computation; mention resolution.
+- [x] Tests: in-room verified receipts, handoff/consensus, inline `blocked`. — `GroupChat.render` · `GroupChat.delegation` · `Conversations.handoff` · and seven new readout cases, four of which exist only to keep *not established* and *measured zero* apart.
 
 ---
 
