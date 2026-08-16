@@ -188,4 +188,66 @@ export const STR = {
     hy: 'Ավարտված',
     ru: 'Готово',
   },
+
+  // -- §D: the governed run, its verified-receipt badge, and its `blocked` state --
+  runPanel: {
+    en: 'GOVERNED RUN',
+    hy: 'ԿԱՌԱՎԱՐՎՈՂ ԿԱՏԱՐՈՒՄ',
+    ru: 'УПРАВЛЯЕМЫЙ ЗАПУСК',
+  },
+  runIt: {
+    en: 'Run this question',
+    hy: 'Կատարել այս հարցը',
+    ru: 'Выполнить этот вопрос',
+  },
+  running: {
+    en: 'Running…',
+    hy: 'Կատարվում ա…',
+    ru: 'Выполняется…',
+  },
+  runHint: {
+    en: 'Enter runs · Esc cancels. The question goes through the governed turn — the same path chat uses.',
+    hy: 'Enter-ը կատարում ա · Esc-ը չեղարկում։ Հարցը գնում ա կառավարվող շրջանով՝ նույն ուղին, ինչ չաթը։',
+    ru: 'Enter запускает · Esc отменяет. Вопрос идёт через управляемый ход — тот же путь, что и чат.',
+  },
+  needQuestion: {
+    en: 'This record has no question to run.',
+    hy: 'Այս գրառումը կատարելու հարց չունի։',
+    ru: 'У этой записи нет вопроса для выполнения.',
+  },
+  runBlocked: {
+    en: 'Refused at the governed wall',
+    hy: 'Մերժվել ա կառավարվող պատի մոտ',
+    ru: 'Отклонено управляемой стеной',
+  },
+  runBlockedNote: {
+    en: 'No result was produced and nothing was saved. The reason is the engine’s own, shown exactly as it arrived.',
+    hy: 'Արդյունք չի ստացվել ու ոչինչ չի պահպանվել։ Պատճառը շարժիչինն ա, ցույց ա տրված ուղիղ այնպես, ինչպես եկել ա։',
+    ru: 'Результат не получен и ничего не сохранено. Причина — от движка, показана ровно так, как пришла.',
+  },
+  runFailed: {
+    en: 'The run failed',
+    hy: 'Կատարումը ձախողվեց',
+    ru: 'Запуск не удался',
+  },
+  verifiedHeld: {
+    en: 'Verified · held',
+    hy: 'Ստուգված · պահված',
+    ru: 'Проверено · удержано',
+  },
+  verifiedHeldNote: {
+    en: 'Verified desktop-side and held by the backend. Saving files it to knowledge; the app window never receives the text.',
+    hy: 'Ստուգված ա desktop-ի կողմից ու պահվում ա backend-ի մոտ։ Պահպանելը գրանցում ա այն գիտելիքում; պատուհանը տեքստը չի ստանում։',
+    ru: 'Проверено на стороне приложения и удерживается бэкендом. Сохранение записывает его в знания; окно текст не получает.',
+  },
+  saveToKnowledge: {
+    en: 'Save to knowledge',
+    hy: 'Պահպանել գիտելիքում',
+    ru: 'Сохранить в знания',
+  },
+  savedToKnowledge: {
+    en: 'Saved to knowledge',
+    hy: 'Պահպանվեց գիտելիքում',
+    ru: 'Сохранено в знания',
+  },
 } as const;

@@ -675,6 +675,63 @@ pub fn save_ask_to_chat(
     result
 }
 
+/// Persist a finished governed research answer (from `stream_ask`) as a knowledge note.
+///
+/// Phase 5's Definition of Done pairs "governed research produces verified receipts" with
+/// "results save to knowledge". The receipt half already existed — `stream_ask` runs the
+/// governed turn, verifies it desktop-side and holds the body under a one-time id — and the
+/// save half had only [`save_ask_to_chat`], which files the pair as a conversation. Research
+/// belongs in the knowledge store, and routing it through the chat path would have meant
+/// either a conversation nobody asked for or the webview carrying the body itself.
+///
+/// SAME RULE AS `save_ask_to_chat`, and it is the reason this is a command rather than two
+/// existing ones composed in the renderer: the webview passes ONLY the opaque one-time
+/// `result_id` and a display `title`. The body is taken from the server-held entry that id
+/// names, so a compromised renderer cannot mint a knowledge note with text the server never
+/// generated (P1-6). "Read the answer, then write it back through `create_knowledge_note`"
+/// would hand the webview exactly the authority this closes.
+///
+/// The id is consumed on use. If the write fails the answer is put back, so a disk error
+/// costs a retry rather than the result.
+///
+/// The note's `source` records that this came from a governed run and carries the query
+/// verbatim — a knowledge entry whose provenance is "somebody typed it" and one whose
+/// provenance is "a governed turn answered this question" are different claims, and the
+/// store should not flatten them.
+#[tauri::command]
+pub fn save_ask_to_knowledge(
+    state: State<AppState>,
+    result_id: String,
+    title: String,
+) -> Result<brops_core::domain::KnowledgeNote, String> {
+    require_len("title", &title, MAX_CONVERSATION_TITLE_CHARS)?;
+    let claimed = claim_pending_answer(&result_id)
+        .ok_or_else(|| "unknown or already-saved result id".to_string())?;
+
+    let result = (|| -> Result<brops_core::domain::KnowledgeNote, String> {
+        let conn = locked(&state)?;
+        repo::knowledge::create(
+            &conn,
+            brops_core::domain::NewKnowledgeNote {
+                title: title.clone(),
+                body: claimed.answer.clone(),
+                // Provenance, not decoration. The query is the question this body answers.
+                source: format!("governed research · {}", claimed.prompt),
+                tags: "research".to_string(),
+            },
+        )
+        .map_err(|e| e.to_string())
+    })();
+
+    if result.is_err() {
+        pending_answers()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(result_id, claimed);
+    }
+    result
+}
+
 /// L-4b: preferred write path for human chat input. The role is fixed to
 /// `user` server-side, so a compromised renderer cannot flip its message into
 /// the agent/markdown rendering path by choosing its own role.

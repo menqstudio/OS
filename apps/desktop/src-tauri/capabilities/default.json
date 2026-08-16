@@ -42,6 +42,7 @@
     "allow-post-message",
     "allow-post-user-message",
     "allow-save-ask-to-chat",
+    "allow-save-ask-to-knowledge",
     "deny-delete-conversation",
     "allow-rename-conversation",
     "allow-list-knowledge",
