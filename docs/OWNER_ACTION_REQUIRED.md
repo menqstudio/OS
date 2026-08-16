@@ -552,6 +552,51 @@ what a design PR is allowed to touch is itself §I.
 
 ---
 
+## 2d. DECISIONS TAKEN 2026-08-17 — four answers, and what each one commits us to
+
+The Owner was given the open decisions as options with a recommendation each, and answered all
+four. Recorded here as **decisions**, not as status, so the next reader inherits the reasoning and
+not just the outcome.
+
+**A — the sixth independent audit runs NOW, on `main` @ `35cc40b`.** Not after `T-021`/`T-022`
+land. Twenty-four merged pull requests have accumulated since the fifth round's pinned head and
+**not one of them has been looked at by anyone who did not write it**. Waiting would have doubled
+that, and the deferred work is itself sequenced *behind* the audit — so "audit once, later" was a
+plan that could never start. The fifth round found a rendering regression **one round** after it
+shipped; the cost of accumulation is measured, not hypothetical.
+
+**B — `T-021`, `T-022` and Phase 9's connectors are built AFTER the audit, if it passes.** Each is a
+**new input to the engine's trust boundary** and the standing verdict is RED. The boxes stay
+**open** in the meantime.
+
+> The Owner was offered a third option — amend the phase scope so those boxes leave by definition,
+> which is the **only** way phases 1–9 could read 100% today — **and declined it.** That is the
+> decision worth recording: a phase that closes because its scope was trimmed to fit is the exact
+> shape every audit round has punished, and 1–9 will reach 100% by being finished, not by being
+> re-described.
+
+**C — PR #112's §I design review goes to a separate auditor-role session.** The same route that
+produced rounds three and four. Its verdict is recorded as **what it is**:
+`OWNER_APPROVED_NOT_ARCHITECT_AUDITED`, never as Architect GREEN. Note the standing cost of the
+delay — #112 writes the four carrier files, so it **conflicts after every merge** and will need a
+rebase whenever it is finally taken.
+
+**D — O-1 is to be DONE, not deferred.** It is the only **HIGH** of the five and the only one with
+a written way to accept the risk instead; the Owner chose the fix. **O-2…O-5 keep no new
+instruction and therefore stay OPEN** — which §2c says plainly is the one answer that is not a
+decision. They remain five sentences away from being settled.
+
+**What O-1 needs from you, exactly.** Make the control-plane tree **unwritable by the account that
+runs the engine**, then *prove it on the real install* — the item's own words are that a packaged
+install *"gives it for free"* on `Program Files` / `/opt` / `/Applications`, and that this
+**"needs verifying on a packaged build rather than asserting."** The assertion is not the closure;
+the verification is. On Debian that is a bind mount
+([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). When it is verified, the item's status line
+moves to `CLOSED` **with a `Sign-off:` line** — `tools/check_residual_items.py` refuses the change
+without one.
+
+---
+
 ## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
 
 You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
