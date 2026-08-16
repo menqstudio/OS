@@ -6,26 +6,55 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **FIFTH AUDIT, 2026-08-16 — RED, on `main` @ `5fe4740` (pin proved by tree digest).** It
-> confirmed **all three production-gate refusals still closed** and found **no P0**. It also found
-> **11 findings** and promoted **15 Builder claims to ✅** — the largest promotion this ledger has
-> carried. Its headline is `A-01`: the round it audited **shipped a rendering regression in the one
-> file whose header argues that a comment is not an honesty property.** The `sigbreathe` rule used
-> the `animation` shorthand, which replaced `.reveal`'s entrance, so the Security integrity
-> instrument rendered at **`opacity:0`** for the whole of the state the pulse was added to depict.
+> **SIXTH AUDIT, 2026-08-17 — RED, on `main` @ `b16e572` (pin proved by tree digest
+> `098df1d5`).** Filed at
+> [`2026-08-17-sixth-audit-b16e572.md`](../apps/desktop/AUDIT/2026-08-17-sixth-audit-b16e572.md).
+> It confirmed **all three production-gate refusals still closed** and found **no P0** — so RED
+> stands exactly where it stood, and for the first time it stands on the **surface**.
 >
-> **Nothing here could have seen it.** `vitest.config.ts` sets `css: false`, so 660 unit tests and
-> the entire axe suite run against a DOM with **no stylesheet attached**. The test asserted that
-> the class name was in the DOM — which was true — and said nothing about paint. That gap is the
-> audit's most valuable finding, and it is §E of its report, not a numbered one.
+> Its headline is `A-01`: **the ⌘K palette, the shell's only modal, has had no CSS at all since
+> 2026-07-28.** Its rules were deleted whole with `layout.css`'s palette section in `0c08dd8`
+> (PR #47) and never replaced, while the component went on rendering every class. No overlay, no
+> backdrop, no panel, no scroll container for 23 rows, and an "active" row that highlighted nothing
+> while `aria-activedescendant` told a screen reader the selection had moved. The page behind stayed
+> clickable while `aria-modal="true"` asserted it was inert. **Nineteen days, three PRs touching the
+> file, 33 green checks each** — including the round that rebuilt its focus trap and reasoned in a
+> comment about *"pressing on the panel's padding"*. The panel had none.
 >
-> **All 11 are fixed as of 2026-08-16**, and the two that had no possible test now have a static
-> one: `tools/check_c1_tokens.py::animation_clobber`. Building it found a **third** instance of the
-> same family nobody had reported — `dec-stamp`'s final keyframe omitted `opacity`, so a stamped
-> decision row animated in and then **faded back out to nothing**.
+> **Fixed 2026-08-17, and measured rather than asserted** — see the T-024 entry below.
+> 14 findings in all (P1 1 · P2 7 · P3 6); 20 claim groups attacked and not refuted; 10 rows here or
+> in the ledger found stale or false. Two are fixed (`A-01`, `A-13`) and `A-06` is structurally
+> closed; the rest are `T-025`…`T-032` on the board.
+>
+> **FIFTH AUDIT, 2026-08-16 — RED, on `main` @ `5fe4740`.** Confirmed the three refusals closed, no
+> P0, **11 findings**, and promoted **15 Builder claims to ✅**. Its headline was `A-01`: the round
+> it audited **shipped a rendering regression in the one file whose header argues that a comment is
+> not an honesty property.** The `sigbreathe` rule used the `animation` shorthand, which replaced
+> `.reveal`'s entrance, so the Security integrity instrument rendered at **`opacity:0`** for the
+> whole of the state the pulse was added to depict.
+>
+> **Its report was never filed, and that is the sixth round's `A-06`.** Until 2026-08-17 the ledger
+> named the FOURTH audit as authoritative while this page carried the fifth's verdict — so every
+> `(…, fifth audit)` citation embedded in the source pointed at a document nobody could open. The
+> text is **not recoverable**; its 15 promotions are therefore **not** carried in the ledger as ✅,
+> because a confirmation whose evidence cannot be read is a claim. `tools/check_audit_reports.py`
+> now makes a missing or contradicted report RED in CI rather than invisible.
+>
+> **This page said "All 11 are fixed as of 2026-08-16". That was false** — the sixth audit's `A-08`.
+> Fifth-round `A-06` (six `var(--x, fallback)` edits, five of them to dead CSS that nothing renders)
+> was never touched, and is not fixed today: `c-fill`, `s-dot`, `kdot`, `energy-key` and `vfield`
+> still appear in no `.ts`/`.tsx` under `apps/`. Tracked as `T-029`.
+>
+> **The `css: false` gap that let both `A-01`s ship is now closed by measurement.** It was true that
+> nothing here could have seen either one: both test configs run against a DOM with no stylesheet
+> attached, so an assertion about appearance was really an assertion about a className string. As of
+> 2026-08-17 a third vitest project runs the app in **real Chromium** with real CSS —
+> `npm run test:browser`, 226 assertions over 23 pages × 3 states × 2 motion settings, plus the
+> palette. It is a measurement, not a cleverer read: the fifth audit's `A-01`, deliberately
+> reintroduced, turns it red.
 >
 > **The standing audit verdict is RED — and as of 2026-08-15 it is NOT older than the code.**
-> **Five** independent audits have run. This block said "two", "it is older than the code" and "it
+> **Six** independent audits have run. This block said "two", "it is older than the code" and "it
 > has never been re-run" until today, which was true when written and false the moment the third
 > round finished — on the page every banner sends a cold reader to for what is blocked and on whom.
 >
@@ -552,6 +581,41 @@ what a design PR is allowed to touch is itself §I.
 
 ---
 
+## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
+
+You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
+actually blocked on** — and the answer is the same five times: **the code half is built and the
+remaining half is a deployment act only you can perform.** Not one of them needs a Builder change.
+
+**And §3 below listed four of them under *"Open, and not waiting on you."*** That heading was false
+for O-1, O-3, O-4 and O-5. It is the same failure this page has now been corrected for three times:
+the one page that answers *"what is waiting on me"* answering **no** when the answer was **yes**.
+Corrected here; §3 keeps only what genuinely is not yours.
+
+Phase 10's exit criterion is *"O-1..O-5 **closed or owner-signed-deferred** (each audited)"*, and
+the mechanism for the second half already exists: `tools/check_residual_items.py` accepts
+`OWNER-DEFERRED` and **refuses any status change without a `Sign-off:` line**. So each of these is
+one decision with two legal answers — **do the act**, or **defer it by name**. Leaving it OPEN is
+the only answer that is not a decision.
+
+| item | sev | the one act that closes it |
+|---|---|---|
+| **O-1** | **HIGH** | Make the control-plane tree **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
+| **O-2** | MEDIUM | **Provision the anchor signer's custody.** The signer mints its own Ed25519 key — no offline root artefact is needed — but until custody is configured `append()` writes a plaintext head and **no deployment is anchored**. 26 tests already prove the refusal works, including a ledger whose head was rewritten over dropped records. |
+| **O-3** | MEDIUM | A **deploy step** that mints and rotates the operator-root-signed `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. The code fails closed and the shipped policy already requires it. |
+| **O-4** | LOW | **Pin `control-room-command` in the operator-signed registry.** Both actors are signature-verified today; the shipped registry grants the type to nobody, so the check can never pass on a real install. |
+| **O-5** | LOW | **Mint the evidence-floor anchor offline**, grant its type to that key in the operator-signed registry, and present the file **under a principal the policed account cannot write**. The manifest binding is built and enforced; this is the credential half. |
+
+**None of the five needs an offline-root-signed Owner secret** — the `Owner secret needed: no` in
+the inventory is accurate. What they need is a deployment posture and two provisioning steps.
+O-1 is the only **HIGH**, and it is also the only one with a written, named way to accept the risk
+instead of fixing it.
+
+**What a Builder can still do here is nothing**, and saying so is the point of writing it down:
+every remaining half is an act on a machine you control, with credentials you hold.
+
+---
+
 ## 2d. DECISIONS TAKEN 2026-08-17 — four answers, and what each one commits us to
 
 The Owner was given the open decisions as options with a recommendation each, and answered all
@@ -597,44 +661,16 @@ without one.
 
 ---
 
-## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
-
-You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
-actually blocked on** — and the answer is the same five times: **the code half is built and the
-remaining half is a deployment act only you can perform.** Not one of them needs a Builder change.
-
-**And §3 below listed four of them under *"Open, and not waiting on you."*** That heading was false
-for O-1, O-3, O-4 and O-5. It is the same failure this page has now been corrected for three times:
-the one page that answers *"what is waiting on me"* answering **no** when the answer was **yes**.
-Corrected here; §3 keeps only what genuinely is not yours.
-
-Phase 10's exit criterion is *"O-1..O-5 **closed or owner-signed-deferred** (each audited)"*, and
-the mechanism for the second half already exists: `tools/check_residual_items.py` accepts
-`OWNER-DEFERRED` and **refuses any status change without a `Sign-off:` line**. So each of these is
-one decision with two legal answers — **do the act**, or **defer it by name**. Leaving it OPEN is
-the only answer that is not a decision.
-
-| item | sev | the one act that closes it |
-|---|---|---|
-| **O-1** | **HIGH** | Make the control-plane tree **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
-| **O-2** | MEDIUM | **Provision the anchor signer's custody.** The signer mints its own Ed25519 key — no offline root artefact is needed — but until custody is configured `append()` writes a plaintext head and **no deployment is anchored**. 26 tests already prove the refusal works, including a ledger whose head was rewritten over dropped records. |
-| **O-3** | MEDIUM | A **deploy step** that mints and rotates the operator-root-signed `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. The code fails closed and the shipped policy already requires it. |
-| **O-4** | LOW | **Pin `control-room-command` in the operator-signed registry.** Both actors are signature-verified today; the shipped registry grants the type to nobody, so the check can never pass on a real install. |
-| **O-5** | LOW | **Mint the evidence-floor anchor offline**, grant its type to that key in the operator-signed registry, and present the file **under a principal the policed account cannot write**. The manifest binding is built and enforced; this is the credential half. |
-
-**None of the five needs an offline-root-signed Owner secret** — the `Owner secret needed: no` in
-the inventory is accurate. What they need is a deployment posture and two provisioning steps.
-O-1 is the only **HIGH**, and it is also the only one with a written, named way to accept the risk
-instead of fixing it.
-
-**What a Builder can still do here is nothing**, and saying so is the point of writing it down:
-every remaining half is an act on a machine you control, with credentials you hold.
-
----
-
 ## 3. Open, and not waiting on you
 
-Recorded so nothing reads as closed that is not. These are being worked.
+Recorded so nothing reads as closed that is not.
+
+> **This line used to say "These are being worked", and both items below said the opposite** — the
+> sixth audit's `A-14`. One ends *"Not done unilaterally — CI depends on it today"* and the other
+> ends *"recorded honestly instead"* of being fixed. Neither is being worked; both are **parked with
+> a stated reason**, which is a different and more honest thing to be. §2c had already corrected
+> this heading's scope by moving four O-items out and left the standing claim about the two that
+> remained.
 
 > **Four O-items used to be listed here and are not any more** — they moved to §2c, because their
 > remaining halves are yours. What stays below is genuinely not waiting on you.

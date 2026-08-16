@@ -722,6 +722,14 @@ jobs:
       # complete" from being a one-character edit.
       - name: Roadmap completion is stated the same way in both places
         run: python tools/check_roadmap_order.py
+      # The audit trail has to be openable (sixth audit, A-06). The FIFTH round's report was never
+      # written to the repository: the ledger went on naming the FOURTH as authoritative while the
+      # OWNER page carried the fifth's verdict and its 15 promotions to ✅, so every citation the
+      # round embedded in source comments pointed at a document nobody could open. The auditor is
+      # deliberately read-only on the tree, so filing the report is the Builder's step — and an
+      # unwritten Builder step is one nobody notices. This is the half that fails closed.
+      - name: Every audit citation opens, and the ledger agrees with the OWNER page
+        run: python tools/check_audit_reports.py
       # The update law, per PR. Stricter than check_coordination's any-one-state-file rule:
       # EVERY required document, and no environment bypass.
       - name: Code and canon moved together
@@ -753,9 +761,16 @@ jobs:
       # generator that writes config/current_state.json, and every stale-canon incident this
       # repository has recorded was manufactured there. Tests are wired one-by-one here (there is no
       # discover over tools/), so a test file that is not named on this line does not run at all.
+      #
+      # That warning was accurate and insufficient. `test_renderer_broker_schemas` — 13 tests of the
+      # renderer<->broker governed-turn schema contracts (rev-30 §4.10(g)) — was named on no line in
+      # any workflow and had never run in CI; the sixth independent audit found it (A-12). Naming a
+      # trap in a comment does not close it, so `check_reachability.py::unrun_test_modules` now
+      # sweeps BACKWARD: any tools/test_*.py that no workflow names is RED. Forgetting this line is
+      # now a build failure rather than a quiet nothing.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors
+        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.

@@ -549,6 +549,41 @@ def workflow_invocations(root: pathlib.Path) -> set[str]:
     return invoked
 
 
+def test_modules(root: pathlib.Path) -> list[str]:
+    """Every self-test under tools/, as a repo-relative posix path."""
+    return sorted(p.relative_to(root).as_posix() for p in (root / "tools").glob("test_*.py"))
+
+
+def unrun_test_modules(root: pathlib.Path) -> list[str]:
+    """`tools/test_*.py` files no workflow names — the same defect, swept BACKWARD.
+
+    Added for the sixth independent audit's `A-12`. `gate_modules`/`workflow_invocations` above
+    ask *"is every gate run?"*; nothing asked *"is every test run?"*, and
+    `tools/test_renderer_broker_schemas.py` had been answering "no" for some time: 13 tests, green
+    when run by hand, invoked by nothing. `grep -rn "renderer_broker_schemas" .github/` returned
+    only the file's own docstring telling a reader how to run it.
+
+    The audit named the shape as well as the instance: *"The round confirmed its four NEW test
+    files were wired and did not sweep for the ones that were not."* A forward sweep proves the
+    thing you just added is connected; only a backward sweep finds what quietly came loose. This
+    file's whole thesis is that something can be implemented, shipped, reviewed and believed while
+    nothing calls it — a test suite is not an exception to that, it is the case where it hurts
+    most, because an unrun test reads as coverage.
+
+    Matched on the MODULE STEM rather than the path: these are invoked as
+    `python -m unittest test_check_repo_state test_sync_active_pr …` from a `tools/` working
+    directory, so the path never appears. A stem is a weaker signal than a path — a workflow that
+    merely mentions the name in a comment would count — but the alternative is a gate that is red
+    for every correctly-wired test in the repository.
+    """
+    directory = root / WORKFLOWS
+    if not directory.is_dir():
+        return []
+    text = "\n".join(_read(w) for w in sorted(directory.glob("*.y*ml")))
+    return [m for m in test_modules(root)
+            if pathlib.PurePosixPath(m).stem not in text]
+
+
 def tracking_path_missing(root: pathlib.Path, tracked_by: object) -> bool:
     if not isinstance(tracked_by, str) or not tracked_by.strip():
         return True
@@ -860,6 +895,17 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
             f"{DECLARATIONS.as_posix()}: 'tools_gates' declares `{gate}`, which does not exist."
         )
 
+    # The same sweep, run BACKWARD over the self-tests (sixth audit, A-12). No declarations
+    # escape hatch: a gate can have a real reason to be un-run, and its tests cannot. If the gate
+    # runs in CI, the tests that prove the gate correct belong in CI beside it.
+    orphan_tests = unrun_test_modules(root)
+    for module in orphan_tests:
+        problems.append(
+            f"`{module}` is named by no workflow — it runs only when someone remembers. Every "
+            f"other tools/test_*.py is wired; this one was green by hand and invisible to CI, "
+            f"which is how a passing suite stops meaning anything."
+        )
+
     summary = {
         "registered": len(registered),
         "reached": len(registered) - len(unreached),
@@ -870,6 +916,8 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
         "rust": rust_state,
         "gates": len(all_gates),
         "gates_run": len(invoked_gates),
+        "tests": len(test_modules(root)),
+        "tests_unrun": len(orphan_tests),
     }
     return problems, summary
 
