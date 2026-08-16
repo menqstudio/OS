@@ -21,6 +21,23 @@ import { Approvals } from './Approvals';
 import { Decisions } from './Decisions';
 import { Security } from './Security';
 import { Notifications } from './Notifications';
+import { Activity } from './Activity';
+import { Agents } from './Agents';
+import { Analytics } from './Analytics';
+import { Automations } from './Automations';
+import { BridgePanel } from './Bridge';
+import { Calendar } from './Calendar';
+import { Chat } from './Chat';
+import { Command } from './Command';
+import { Files } from './Files';
+import { GroupChat } from './GroupChat';
+import { Integrations } from './Integrations';
+import { Knowledge } from './Knowledge';
+import { Library } from './Library';
+import { Memory } from './Memory';
+import { Projects } from './Projects';
+import { Research } from './Research';
+import { Tasks } from './Tasks';
 
 /**
  * Accessibility (axe) coverage for the SURFACES, not just the primitives.
@@ -41,14 +58,23 @@ import { Notifications } from './Notifications';
  * That is most of what a page gets wrong, and none of it was being checked.
  */
 
-/** Resolve every command to something shaped like an empty result set. */
+/** Resolve every command to something shaped like an empty result set.
+ *
+ *  SHAPE matters, not just emptiness. `list_dir` returns an OBJECT with an `entries` array, and
+ *  answering it with `[]` is not a harmless approximation: `[].entries` is
+ *  `Array.prototype.entries`, a function, so `s.data?.entries ?? []` happily yields a function and
+ *  the page dies on `.filter`. An empty-result mock that returns the wrong shape tests the page's
+ *  behaviour against a value the backend can never send. */
+const OBJECT_SHAPED: Record<string, unknown> = {
+  get_security_summary: { pendingApprovals: 0, decidedApprovals: 0, auditEvents: 0, sensitiveEvents: [] },
+  list_dir: { path: '/', parent: null, entries: [] },
+  read_file: { path: '/', content: '', readonly: true },
+  get_ai_status: { provider: 'not-configured', governed: false, reason: '' },
+};
+
 function empty() {
-  invokeMock.mockImplementation((cmd: string) => {
-    if (cmd === 'get_security_summary') {
-      return Promise.resolve({ pendingApprovals: 0, decidedApprovals: 0, auditEvents: 0, sensitiveEvents: [] });
-    }
-    return Promise.resolve([]);
-  });
+  invokeMock.mockImplementation((cmd: string) =>
+    Promise.resolve(cmd in OBJECT_SHAPED ? OBJECT_SHAPED[cmd] : []));
 }
 
 /** Every command rejects — the `error` / `unreachable` state each page must render honestly.
@@ -80,6 +106,10 @@ async function settled() {
 beforeEach(() => invokeMock.mockReset());
 afterEach(() => { invokeMock.mockReset(); });
 
+// EVERY routed feature page, not a sample. The first version of this file covered six, which was
+// the six the fifth audit's §E named plus the ones nearest them — and a sample is how a page ends
+// up being the one nobody checked. `Chat` and `GroupChat` both render `Conversations`, so the
+// shared surface is covered through them rather than twice.
 const PAGES: Array<[string, () => React.ReactElement]> = [
   ['home', () => <Home />],
   ['settings', () => <Settings />],
@@ -87,6 +117,23 @@ const PAGES: Array<[string, () => React.ReactElement]> = [
   ['decisions', () => <Decisions />],
   ['security', () => <Security />],
   ['notifications', () => <Notifications />],
+  ['activity', () => <Activity />],
+  ['agents', () => <Agents />],
+  ['analytics', () => <Analytics />],
+  ['automations', () => <Automations />],
+  ['bridge', () => <BridgePanel />],
+  ['calendar', () => <Calendar />],
+  ['chat', () => <Chat />],
+  ['command', () => <Command />],
+  ['files', () => <Files />],
+  ['groupChat', () => <GroupChat />],
+  ['integrations', () => <Integrations />],
+  ['knowledge', () => <Knowledge />],
+  ['library', () => <Library />],
+  ['memory', () => <Memory />],
+  ['projects', () => <Projects />],
+  ['research', () => <Research />],
+  ['tasks', () => <Tasks />],
 ];
 
 describe('accessibility (axe) — the pages, in the state a reader actually meets', () => {
