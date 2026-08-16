@@ -82,13 +82,26 @@ do not yet relocate**. A reader who trusted the README would have arrived expect
 
 Each step is independently mergeable and leaves the tree working.
 
-**M1 — bind before you move (Phase 10 opens here).**
+**M1 — bind before you move. ✅ DONE 2026-08-16 — `tools/check_schema_mirrors.py`.**
 A gate that reads each `*.schema.json` and the Rust type that claims to mirror it, and fails when the
-required-field sets disagree. Today `VerifierReceipt` gaining a field the schema forbids — or the
-schema gaining a required field Rust does not parse — is caught by nothing until a real payload
-fails in production. This is the whole value of the milestone and it needs **no file to move**.
+required-field sets disagree. `VerifierReceipt` gaining a field the schema forbids — or the schema
+gaining a required field Rust does not parse — was caught by nothing until a real payload failed in
+production. This is the whole value of the milestone and it needed **no file to move**.
 
-*Precondition:* none. *Provable by:* delete a field from the schema, watch the gate go red.
+*Provable by:* delete a field from the schema, watch the gate go red. Three mutations, all caught —
+schema gains a required field, mirror drops one, discriminator check removed.
+
+**And the gate was wrong first, in a way worth keeping.** Its first version read `schema` in the
+schema's `required` list, did not find it on the struct, and reported both mirrors as broken. They
+are not: `schema: {const: 1}` and `artifact_type: {const: "verifier-receipt"}` are
+**discriminators** — they say what the object IS — and `governance.rs` checks them on the raw value
+and drops them, which is the right thing to do with a constant. Carrying one into a parsed struct
+adds a field that can only ever hold one value.
+
+Fixing that false positive made the rule **stronger**, not looser: a discriminator must now be
+either carried **or** checked, so one that is *neither* — a shape parsed on the strength of its
+other fields alone, where anything with the same field names would be accepted — is a finding the
+first version could not have produced.
 
 **M2 — one home for the cross-half schemas.**
 Move only the schemas both halves consume — `verifier-receipt`, `evidence-event`, `task-contract`,

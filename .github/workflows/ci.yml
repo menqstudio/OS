@@ -755,10 +755,17 @@ jobs:
       # discover over tools/), so a test file that is not named on this line does not run at all.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state test_sync_active_pr
+        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.
+      # M1 of the contracts dedupe (docs/design/CONTRACTS_DEDUPE_PLAN.md): the Rust structs that
+      # claim to mirror an engine schema were bound to it by nothing but a doc comment. A schema
+      # can gain a required field, or a mirror lose one, and nothing notices until a real payload
+      # fails somewhere expensive. This is the binding, and it needs no file to move.
+      - name: Schema mirrors (Rust structs vs engine schemas)
+        run: python tools/check_schema_mirrors.py
+
       - name: Live GitHub truth check (fail-closed)
         env:
           GH_TOKEN: ${{ github.token }}
