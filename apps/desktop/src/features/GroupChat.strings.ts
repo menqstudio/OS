@@ -353,4 +353,11 @@ export const STR = {
     hy: 'փուլի կոնտեքստ գրանցված չէ',
     ru: 'контекст раунда не записан',
   },
+  // -- section D's room readout: participants / handoffs / messages / elapsed ----
+  readoutLabel: { en: 'Room readout', hy: 'Սրահի ցուցմունք', ru: 'Сводка комнаты' },
+  readoutParticipants: { en: 'PARTICIPANTS', hy: 'ՄԱՍՆԱԿԻՑ', ru: 'УЧАСТНИКИ' },
+  readoutMessages: { en: 'MESSAGES', hy: 'ՀԱՂՈՐԴԱԳՐՈՒԹՅՈՒՆ', ru: 'СООБЩЕНИЯ' },
+  readoutRounds: { en: 'ROUNDS', hy: 'ՓՈՒԼԵՐ', ru: 'РАУНДЫ' },
+  readoutHandoffs: { en: 'HANDOFFS', hy: 'ՓՈԽԱՆՑՈՒՄ', ru: 'ПЕРЕДАЧИ' },
+  readoutElapsed: { en: 'OPEN FOR', hy: 'ԲԱՑ Է', ru: 'ОТКРЫТА' },
 } as const;
