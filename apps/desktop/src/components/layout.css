@@ -63,6 +63,62 @@
    -1); it should not paint a persistent outline when focused that way. */
 .content:focus { outline: none; }
 
+/* --- ⌘K command palette ----------------------------------------------------
+   RESTORED. These rules lived here until `0c08dd8` (PR #47, "UI refreshes",
+   2026-07-28), which deleted the section whole. `CommandPalette.tsx` kept
+   rendering every one of the classes, so for nineteen days the app's only modal
+   was a stack of unstyled block divs in normal flow: no overlay, no backdrop,
+   no panel box, no width limit, no scroll container for 23 nav rows, and an
+   `active` row that highlighted nothing while `aria-activedescendant` told a
+   screen reader the selection had moved. Three PRs touched the component in that
+   window — one of them rebuilding its focus trap and reasoning in a comment about
+   "the panel's padding" — and 33 checks were green on each.
+
+   Found by the sixth independent audit (A-01), which measured it in Chromium
+   rather than reading the component. `CommandPalette.browser.spec.tsx` now
+   asserts each property below as behaviour — scrim covers the viewport, page
+   behind is not hittable, list scrolls, active row is distinct — so deleting a
+   rule here turns that suite red instead of shipping silently.
+
+   Two of them are load-bearing beyond appearance. The scrim is what makes
+   `aria-modal="true"` (CommandPalette.tsx:173) true for a sighted user: without
+   it the page behind stays clickable and the attribute is a promise kept only to
+   assistive technology. And `.palette-item.active` is the only thing a sighted
+   keyboard user has to follow the cursor the arrow keys move. */
+.palette-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgb(0 0 0 / .5);
+  display: grid; place-items: start center;
+  padding: 12vh var(--menq-space-4) var(--menq-space-4);
+}
+.palette {
+  width: min(620px, 92vw); max-height: 76vh; display: flex; flex-direction: column;
+  gap: var(--menq-space-3); padding: var(--menq-space-3);
+  background: var(--brops-surface); border: 1px solid var(--brops-border);
+  border-radius: var(--menq-radius-md); box-shadow: 0 24px 60px rgb(0 0 0 / .45);
+}
+.palette > input {
+  width: 100%; padding: 10px 12px;
+  background: var(--brops-bg); color: var(--brops-text);
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md);
+}
+.palette > input:focus-visible { outline: 2px solid var(--brops-accent); outline-offset: 1px; }
+/* Bounded, and scrollable. 23 nav rows plus entity results do not fit anywhere. */
+.palette-list { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; }
+.palette-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--brops-muted); padding: var(--menq-space-3) var(--menq-space-2) var(--menq-space-2);
+}
+.palette-item {
+  display: flex; align-items: center; gap: var(--menq-space-3);
+  padding: 9px 10px; border-radius: var(--menq-radius-md);
+  color: var(--brops-text); cursor: pointer;
+}
+.palette-item:hover { background: var(--menq-color-hover); }
+/* The keyboard cursor. `aria-activedescendant` moves with the arrow keys; this is
+   the half a sighted user can see, and it was missing entirely. */
+.palette-item.active { background: var(--menq-color-selected); color: var(--brops-accent); font-weight: 600; }
+
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px 1fr; }
   /* The brand wordmark collapses via `.mark--responsive .mark-text` in ui.css. */
