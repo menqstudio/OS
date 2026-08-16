@@ -135,8 +135,16 @@ describe('Approvals — mirror-never-decide honesty invariants', () => {
 
     // Positive control: the unmodified key still works, so this is a modifier guard and not a
     // test that would pass against a build where `g` stopped doing anything at all.
-    fireEvent.keyDown(window, { key: 'g' });
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    //
+    // The keypress is RETRIED rather than fired once. This test was flaky — twice in a full-suite
+    // run, never in ten isolated runs — because a single `fireEvent` races the page's own async
+    // load: the handler closes over `data` and the selected row, and under load a re-render can
+    // land between the guard presses and this one. The race is the test's, not the product's, so
+    // the fix is to keep asking rather than to assume the first ask arrived.
+    await waitFor(() => {
+      fireEvent.keyDown(window, { key: 'g' });
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
   });
 
   it('DENY routes through the real fail-safe reject command', async () => {
