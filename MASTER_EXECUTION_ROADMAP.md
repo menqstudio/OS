@@ -73,7 +73,7 @@ phase. That is the whole onboarding for *building*.
 | 3 | Desktop Integration | ✅ **Done 2026-08-15 — 11/11, verified against the code first.** 23 routes on a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, route-change focus, and a `cmd-dock` that is now a real ARIA dialog. Verification found two live defects: an undeclared `--s7` that silently removed the padding from two empty states, and a modal the keyboard could walk out of. `tools/check_c1_tokens.py` holds the stylesheet to §C.1 so the first cannot recur. |
 | 4 | UI/UX System | ✅ **Done 2026-08-16 — 12/12, verified against the code first.** 28 library primitives with usage docs, light/dark parity on all 42 colour tokens, and the three pages this phase owns finished to §D. Four §D sweeps (keyboard · states · a11y · motion) plus a read of the phase's own pages found **six** user-facing defects, including a `command` page that rendered a governed refusal identically to a dropped connection. |
 | 5 | Memory & Knowledge | ✅ **Done 2026-08-16 — 11/11, verified against the code first.** The check found `research` with **no governed run at all** — a local CRUD list in the one page of this phase that is supposed to cross the wall — and a files guard that was implemented and **never tested**, against a merge gate that says *files guard proven*. Research now runs through `stream_ask` and saves via a command that takes a one-time id and never a body; the guard has six cases with a positive control. |
-| 6 | Multi-Agent | 🔨 **Capability model is real.** Three tiers reach the CLI inline via `--agents`; 262 pack-role definitions are generated and drift-gated. Path scope is stated per task and **not enforced** on the desktop route, and every card says so. |
+| 6 | Multi-Agent | ✅ **Done 2026-08-16 — 10/10, verified against the code first.** The pages and the dispatch service existed; the gap was the phase's own stop condition, left unasserted — *no desktop-held lease*. Six contract cases now, whitelist not blacklist, and rewriting the builder to spread the assignment turns two of them red. |
 | 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
 | 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
 | 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
@@ -1357,19 +1357,34 @@ governance; Owner approval.
 **Stop conditions.** If fan-out tempts the desktop to hold/relay a lease → stop (that breaks the whole
 model). If pack dispatch needs an engine change → audited task.
 
+> **⚖ Phase 6 was CHECKED AGAINST THE CODE before anything was built (2026-08-16).** All four
+> pages and the dispatch service existed. The gap was the phase's **own stop condition**, left
+> unasserted: *"If fan-out tempts the desktop to hold/relay a lease → stop (that breaks the whole
+> model)."* The Definition of Done asks for the contract test in as many words, and the CI
+> requirement names its shape — *"a test asserts the desktop never serializes a lease/key"*.
+>
+> One existed, in `governance.rs`, over the governance READ commands' signatures. **None existed
+> for dispatch** — which is the surface the stop condition is actually about: dispatch is where a
+> lease exists, where fan-out happens, and where relaying one would look like a convenience
+> rather than a breach.
+>
+> The distinction the test pins: an accepted reply **names** a `lease_id`, and the parser refuses
+> an accepted frame without one, because *an assignment with no lease was not governed*. Naming a
+> lease and holding one are different acts, and **the direction of travel is the whole model**.
+
 **Definition of Done.**
-- [ ] `agents`, `command`, `tasks`, `projects` pages to full §D incl. `blocked`.
-- [ ] Governed pack dispatch; per-builder verified receipts rendered.
-- [ ] Desktop never holds a lease/key (contract test green).
-- [ ] Missions/flows mirror engine task contracts.
-- [ ] Docs + `PROJECT_STATE.md` synced.
+- [x] `agents`, `command`, `tasks`, `projects` pages to full §D incl. `blocked`. — `Agents.tsx` 705 · `Command.tsx` 491 · `Tasks.tsx` 810 · `Projects.tsx` 541, each with the real state set and a `blocked` path. `command`'s `blocked` was rebuilt earlier this session so a governed **refusal** no longer renders identically to a dropped connection; `tasks`' lanes became real lists in the same sweep.
+- [x] Governed pack dispatch; per-builder verified receipts rendered. — `services/agentsDispatch.ts` builds a `brops.agent-dispatch.v1` frame, validates the draft **before** sending (the renderer does not ask for what it already knows is wrong; the engine validates again), and parses the reply **fail-closed**: an accepted frame with no `contract_digest`, no `lease_id` or no sealed repository binding degrades to `unreachable` rather than being upgraded into success.
+- [x] Desktop never holds a lease/key (contract test green). — **six cases**, and the mutation that matters: rewriting the builder to spread the assignment instead of naming its fields turns two of them red. The frame is checked against a **whitelist** of its six declared fields, not a blacklist of forbidden names — a blacklist protects against the names someone thought of, a whitelist fails the moment any new field appears. A lease smuggled onto the assignment does not reach the wire; a reply's `lease_id` is read and never echoed into a later request; the refusal path is checked too, because a failure path is exactly where a loophole would hide; and a positive control keeps the sweep from passing over an empty object.
+- [x] Missions/flows mirror engine task contracts. — `Tasks.tsx` carries the contract surface and its dispatch test; `agentsDispatch` mirrors `engine/schemas/task-contract.schema.json`'s path grammar with a drift-guard corpus, so the renderer cannot bless a scope the engine will not honour.
+- [x] Docs + `PROJECT_STATE.md` synced.
 
 **Task checklist.**
-- [ ] `agents` lattice page (+ list fallback) per §D.
-- [ ] `command` core dispatch page (governed) per §D.
-- [ ] `tasks` mission board per §D; `projects` flow view per §D.
-- [ ] Dispatch IPC → engine pack run; per-builder receipt verification.
-- [ ] Contract test: no desktop-held lease/key; `blocked` on denied dispatch.
+- [x] `agents` lattice page (+ list fallback) per §D. — `role=list` fallback beside the lattice; the ring geometry is the extracted, tested `charts/geometry.ts` and the stateful lattice stays bespoke by documented decision (`DESIGN_SYSTEM.md` §3.1).
+- [x] `command` core dispatch page (governed) per §D. — including the `role=log` trace and the refusal-vs-failure distinction added this session.
+- [x] `tasks` mission board per §D; `projects` flow view per §D. — board lanes are `role=list` with named lanes and a spoken empty state; `projects` carries its step-list fallback.
+- [x] Dispatch IPC → engine pack run; per-builder receipt verification. — the dispatch channel is probed rather than assumed (`probeDispatchChannel`), and `present` deliberately says nothing about acceptance.
+- [x] Contract test: no desktop-held lease/key; `blocked` on denied dispatch. — see DoD row 3; the refusal reasons are a **closed set**, and a reason outside it degrades to `unreachable` instead of being shown as a refusal the engine did not give.
 
 ---
 
