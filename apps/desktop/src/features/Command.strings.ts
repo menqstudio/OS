@@ -18,4 +18,24 @@ export const STR = {
   // Command dock quick-issue button + quick-command chip label.
   dockRun: { en: 'Run', hy: 'Կատարել', ru: 'Выполнить' },
   quickCommand: { en: 'QUICK COMMAND', hy: 'ԱՐԱԳ ՀՐԱՄԱՆ', ru: 'БЫСТРАЯ КОМАНДА' },
+
+  // -- §D `blocked`: "dispatch denied by wall → reason" -------------------------
+  // A governed refusal is NOT a failure, and rendering it as one teaches the owner
+  // that the wall is a bug. It is the system working as designed; the engine's own
+  // reason is carried verbatim rather than summarised.
+  dispatchBlocked: {
+    en: 'Dispatch refused at the governed wall',
+    hy: 'Առաքումը մերժվել է կառավարվող պատի մոտ',
+    ru: 'Отправка отклонена управляемой стеной',
+  },
+  dispatchBlockedNote: {
+    en: 'The engine refused this step. Nothing ran. The reason it gave is shown exactly as it arrived.',
+    hy: 'Շարժիչը մերժել ա այս քայլը։ Ոչինչ չի կատարվել։ Իր տված պատճառը ցույց ա տրված ուղիղ այնպես, ինչպես եկել ա։',
+    ru: 'Движок отклонил этот шаг. Ничего не выполнялось. Причина показана ровно так, как пришла.',
+  },
+  dispatchFailed: {
+    en: 'Dispatch failed',
+    hy: 'Առաքումը ձախողվեց',
+    ru: 'Отправка не удалась',
+  },
 } as const;
