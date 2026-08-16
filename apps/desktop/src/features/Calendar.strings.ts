@@ -71,4 +71,16 @@ export const STR = {
     hy: 'Ջնջվում է…',
     ru: 'Удаление…',
   },
+  // -- Phase 8: run history, and the receipt this build cannot produce ----------
+  runHistory: { en: 'RUN HISTORY', hy: 'SԿՍԱԾՆԵՐ', ru: 'ИСТОРИЯ' },
+  runHistoryEmpty: {
+    en: 'No automation has run yet.',
+    hy: 'Ոչ մի ավտոմատ դեռ չի աշխատել։',
+    ru: 'Ни одна автоматизация ещё не запускалась.',
+  },
+  runHistoryNoReceipt: {
+    en: 'These are local run records. No engine receipt exists for them — running an automation writes to the desktop store, it does not cross the governed wall.',
+    hy: 'Սրանք լոկալ գրառումներ են։ Նրանց համար engine-ի անդորրագիր չկա — ավտոմատի աշխատեցումը գրում ա desktop-ի պահոցում, ոչ թե անցնում կառավարվող պատով։',
+    ru: 'Это локальные записи запусков. Квитанции движка для них нет — запуск автоматизации пишет в хранилище приложения, а не пересекает управляемую стену.',
+  },
 } as const;

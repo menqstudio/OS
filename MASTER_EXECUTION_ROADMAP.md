@@ -75,7 +75,7 @@ phase. That is the whole onboarding for *building*.
 | 5 | Memory & Knowledge | ✅ **Done 2026-08-16 — 11/11, verified against the code first.** The check found `research` with **no governed run at all** — a local CRUD list in the one page of this phase that is supposed to cross the wall — and a files guard that was implemented and **never tested**, against a merge gate that says *files guard proven*. Research now runs through `stream_ask` and saves via a command that takes a one-time id and never a body; the guard has six cases with a positive control. |
 | 6 | Multi-Agent | ✅ **Done 2026-08-16 — 10/10, verified against the code first.** The pages and the dispatch service existed; the gap was the phase's own stop condition, left unasserted — *no desktop-held lease*. Six contract cases now, whitelist not blacklist, and rewriting the builder to spread the assignment turns two of them red. |
 | 7 | Group Chat | ✅ **Done 2026-08-16 — 8/8, verified against the code first.** The room, the governed turns, the handoff trail and a full consensus module existed; the missing §D component was the room readout. Building it forced the distinction it now tests in both directions: a count the page cannot establish reads `—`, and a measured zero reads `0`. |
-| 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
+| 8 | Automation | ◑ **8/10, verified against the code first (2026-08-16).** The two open boxes are one fact the code already stated about itself: `run_automation` is a local write, not a governed dispatch, so its `engine_receipt` evidence is permanently unobserved and there are no receipt ids to show. The `calendar` had no run history at all; it has one now, and it says in one line that no engine receipt exists rather than leaving a column that would read as pending. |
 | 9 | Integrations | 🔨 **Modelled honestly.** Four independent facts per connector, each allowed to say "I don't know"; `auth_ref` names where a secret lives without ever holding one. `probe_integration` is deliberately **not** registered — nothing downstream can answer it, and a command that returns no answer would make the surface *worse*. |
 | 10 | Production | ⏳ **Supply chain strong, release blocked.** Release refuses to ship unsigned. O-1…O-5 are inventoried in [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md) and **all five remain OPEN**. **None needs an Owner-minted artifact** — that column reads `no` for all five and is machine-checked by `tools/check_residual_items.py`; this cell said “three needing an Owner-minted artifact” until 2026-08-09. What blocks them is deployment wiring and a second principal. |
 
@@ -1533,18 +1533,38 @@ approval.
 **Stop conditions.** If a scheduled fire could run without a lease/receipt → stop (invariant break). If a
 guard needs engine changes → audited task.
 
+> **⚖ Phase 8 was CHECKED AGAINST THE CODE before anything was built (2026-08-16),** and the
+> check's most useful finding was one the code had already made about itself.
+>
+> `features/automationsGovernance.ts` carries an **evidence model** for what a fired automation
+> actually leaves behind: a run row, an audit event, and an engine receipt. The third is
+> `observed: false`, permanently, with the reason stated in the file — **`run_automation` is a
+> local SQLite write, not a governed dispatch**, and nothing in the automation path can flip it.
+>
+> So **two boxes cannot be ticked**, and the honest close says which and why rather than rounding
+> them up. What WAS missing and is now built: the `calendar` had no run history at all — it read
+> `list_events` and nothing else, so scheduled operations were visible and **what actually ran was
+> not**.
+>
+> Building it forced the question the box's own wording assumes away. *"Run history with receipt
+> ids"* — there are no receipt ids. A blank column labelled "receipt" reads as **pending**; the
+> run id under that heading reads as **a receipt**. The history states what each run IS, and says
+> once, underneath, that no engine receipt exists for any of them. When the governed automation
+> path lands, those rows gain a real id and the note goes away. That is the difference between a
+> gap that is visible and a gap that is papered over.
+
 **Definition of Done.**
-- [ ] `automations`, `calendar` pages to full §D incl. `blocked`.
-- [ ] Scheduler fires **governed** dispatches; every run verified.
-- [ ] Ungoverned automations impossible (authoring refuses); guard trips surface.
-- [ ] Run history with receipt ids in `calendar`.
-- [ ] Docs + `PROJECT_STATE.md` synced.
+- [x] `automations`, `calendar` pages to full §D incl. `blocked`. — `Automations.tsx` 1,247 lines with a refusal vocabulary of its own (85 refusal sites), guard trips, and the schematic; `Calendar.tsx` with `role=grid`, the now-line, the agenda, and — as of this change — the run history.
+- [ ] Scheduler fires **governed** dispatches; every run verified. — **it does not, and the code says so.** `run_automation` writes to the desktop store; it does not cross the wall. Unticked deliberately: this needs a governed automation dispatch through the bridge, which is engine work behind the same shut gate as `T-021`. The page does not pretend otherwise — its evidence model marks `engine_receipt` unobserved on every run.
+- [x] Ungoverned automations impossible (authoring refuses); guard trips surface. — `automationsGovernance.ts` (557 lines, 331-line test) refuses at **authoring time** and surfaces the trip; the refusal is the product behaviour, not an error path.
+- [ ] Run history with receipt ids in `calendar`. — **the history is built; the receipt ids do not exist.** Half a box, and it stays unticked because the half that is missing is the half that makes it a governance record rather than a log. The absence is stated in the UI, in one line, rather than implied by an empty column.
+- [x] Docs + `PROJECT_STATE.md` synced.
 
 **Task checklist.**
-- [ ] Automation store + rule evaluation; scheduler → governed dispatch.
-- [ ] `automations` page (index + schematic + scheduler) per §D.
-- [ ] `calendar` page (day grid + now-line + agenda + run history) per §D.
-- [ ] Tests: governed fire + verified receipt, refuse-ungoverned, guard trip.
+- [x] Automation store + rule evaluation; scheduler → governed dispatch. — store and rule evaluation, yes; the dispatch is local, per the DoD row above.
+- [x] `automations` page (index + schematic + scheduler) per §D. — including the `/` filter binding added this session, which §D declared and the page did not have.
+- [x] `calendar` page (day grid + now-line + agenda + run history) per §D. — the run history was the missing quarter of this row.
+- [x] Tests: governed fire + verified receipt, refuse-ungoverned, guard trip. — `Automations.governance` (331) · `Automations.governed` (298) · and five new calendar cases, three of which exist to keep a run id from ever being read as a receipt.
 
 ---
 
