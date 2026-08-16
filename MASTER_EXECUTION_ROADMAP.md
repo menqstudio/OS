@@ -72,7 +72,7 @@ phase. That is the whole onboarding for *building*.
 | 2 | Governance Sidecar | 🔨 **Reachable at last.** The engine serves a three-valued `brops.governance-read.v1`, the sidecar dispatches named ops, and the desktop no longer requires the AI provider to be `governed-engine` to read a mirror. The mirror was never empty — it was never asked. |
 | 3 | Desktop Integration | ✅ **Done 2026-08-15 — 11/11, verified against the code first.** 23 routes on a total `Record<RouteId, …>` so a missing page is a compile error, an error boundary that renders the real cause, route-change focus, and a `cmd-dock` that is now a real ARIA dialog. Verification found two live defects: an undeclared `--s7` that silently removed the padding from two empty states, and a modal the keyboard could walk out of. `tools/check_c1_tokens.py` holds the stylesheet to §C.1 so the first cannot recur. |
 | 4 | UI/UX System | ✅ **Done 2026-08-16 — 12/12, verified against the code first.** 28 library primitives with usage docs, light/dark parity on all 42 colour tokens, and the three pages this phase owns finished to §D. Four §D sweeps (keyboard · states · a11y · motion) plus a read of the phase's own pages found **six** user-facing defects, including a `command` page that rendered a governed refusal identically to a dropped connection. |
-| 5 | Memory & Knowledge | 🔨 **Recorded, not verified — deliberately.** Every write appends a local record in the same transaction, append-only by database trigger. It is *not* called verified: nothing is signed, and it attests content, never the writer. |
+| 5 | Memory & Knowledge | ✅ **Done 2026-08-16 — 11/11, verified against the code first.** The check found `research` with **no governed run at all** — a local CRUD list in the one page of this phase that is supposed to cross the wall — and a files guard that was implemented and **never tested**, against a merge gate that says *files guard proven*. Research now runs through `stream_ask` and saves via a command that takes a one-time id and never a body; the guard has six cases with a positive control. |
 | 6 | Multi-Agent | 🔨 **Capability model is real.** Three tiers reach the CLI inline via `--agents`; 262 pack-role definitions are generated and drift-gated. Path scope is stated per task and **not enforced** on the desktop route, and every card says so. |
 | 7 | Group Chat | 🔨 **Consensus and delegation.** Silence is never consent, dissent renders even when the vote passes, and delegations show in the room. |
 | 8 | Automation | 🔨 **Scheduler real, runs carry a contract.** Refused runs and their reasons are shown, not swallowed. |
@@ -1246,20 +1246,38 @@ Architect + Owner approval.
 **Stop conditions.** If research is tempted to bypass the governed path for speed → stop. If a file guard
 can be circumvented from the desktop → stop, it is a wall issue → audited engine task.
 
+> **⚖ Phase 5 was CHECKED AGAINST THE CODE before anything was built (2026-08-16).** All four
+> pages existed, three of them substantially finished. The check found **one page missing its
+> entire reason for being, and one security behaviour that had never been tested**:
+>
+> 1. **`research` had no governed run at all.** It was a local CRUD list — `list_research` /
+>    `create_research_item` / `delete_research_item` — with no receipt, no verified badge and no
+>    `blocked` state, in the one page of this phase whose whole point is that it **crosses the
+>    wall**. §D asks for *"run status (governed — with verified-receipt badge)"* and a
+>    `blocked`(governed provider off / sidecar down → no result); the page had never gone near
+>    the bridge.
+> 2. **The files guard was implemented and untested.** `Files.tsx` renders `open`/`read`/`sealed`
+>    honestly, and `Files.test.tsx` covered the listing mirror and *"no `read_file` while
+>    browsing"* — both worth having, neither touching the guard. This phase's merge gate says
+>    **files guard proven**, and nothing proved it. A guard nobody tests is a guard that has
+>    never been shown to hold.
+>
+> Both closed. The rest was verified rather than rebuilt.
+
 **Definition of Done.**
-- [ ] `memory`, `knowledge`, `research`, `files` pages to full §D incl. `blocked`.
-- [ ] Governed research produces verified receipts; results save to knowledge.
-- [ ] Files honor engine guard states (open/read/sealed); no unlawful open.
-- [ ] Recall surfaced in `chat` context rail.
-- [ ] Docs + `PROJECT_STATE.md` synced.
+- [x] `memory`, `knowledge`, `research`, `files` pages to full §D incl. `blocked`. — `Memory.tsx` 815 · `Knowledge.tsx` 798 · `Research.tsx` 507 · `Files.tsx` 635, each with the real state set (`Skeleton`/`EmptyState`/`ErrorState`, `aria-live`) against the real IPC and no fixture layer. `research`'s `blocked` was **added this phase** and is the state the shipped app will actually be in.
+- [x] Governed research produces verified receipts; results save to knowledge. — the run goes through **`stream_ask`**, the same governed path `chat` uses: buffered, verified desktop-side, and the answer **held server-side under a one-time id** rather than streamed into the window. Deltas are ignored deliberately — a governed ask is buffered by construction, and painting partial text would show what the verify step may still refuse. Saving is the new Rust command **`save_ask_to_knowledge`**, which takes the id and a title and **never a body**: composing it in the renderer would hand the window exactly the authority the held-answer design withholds (P1-6). A test asserts no call from the window carries the text.
+- [x] Files honor engine guard states (open/read/sealed); no unlawful open. — **proven now, not asserted**: a refused open renders the guard reason verbatim in an `aria-live="assertive"` alert, leaves **no editable surface** behind (no textarea, no save), and an ordinary I/O failure is **not** dressed as a refusal — telling the owner the system is protecting them when it is merely broken is the fail-open direction here. `isGuardDenied` is tested in both directions, with a positive control so the suite cannot pass against a build that refuses everything.
+- [x] Recall surfaced in `chat` context rail. — `Conversations.tsx` feeds `searchAll` results into the context rail (`ctx-rail`), covered by `Conversations.recall.test.tsx`.
+- [x] Docs + `PROJECT_STATE.md` synced. — this note, the status board, `CLAUDE.md` (both languages) and the state anchor, in the same commit per the Continuous-Documentation Law.
 
 **Task checklist.**
-- [ ] Desktop memory store + `memory` page (typed, linked, confidence) per §D.
-- [ ] Knowledge store + `knowledge` page (collections/articles/citations) per §D.
-- [ ] `research` page wired to governed bridge run + verified badge, all §D states.
-- [ ] `files` page with guard states + preview/query per §D.
-- [ ] Retrieval/recall into `chat` context rail; search across stores.
-- [ ] Tests: CRUD/search, governed research fail-closed, files guard.
+- [x] Desktop memory store + `memory` page (typed, linked, confidence) per §D. — `role=list`, `blocked`, and a write-record trail; three test files including `Memory.honesty.test.tsx`.
+- [x] Knowledge store + `knowledge` page (collections/articles/citations) per §D. — `role=article`, `empty` vs filtered-empty, four test files.
+- [x] `research` page wired to governed bridge run + verified badge, all §D states. — see DoD row 2; six new tests in `Research.governed.test.tsx`.
+- [x] `files` page with guard states + preview/query per §D. — see DoD row 3; `role=grid`, guard state in the accessible name.
+- [x] Retrieval/recall into `chat` context rail; search across stores. — `search_all` in Rust, `searchAll` in the service, consumed by the rail.
+- [x] Tests: CRUD/search, governed research fail-closed, files guard. — the two that were missing are the two this phase added: **governed research fail-closed** (a refusal renders as a refusal, offers no save, and a failure is not dressed as one) and the **files guard** (six cases).
 
 ---
 
