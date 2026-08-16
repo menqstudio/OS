@@ -552,25 +552,48 @@ what a design PR is allowed to touch is itself §I.
 
 ---
 
+## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
+
+You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
+actually blocked on** — and the answer is the same five times: **the code half is built and the
+remaining half is a deployment act only you can perform.** Not one of them needs a Builder change.
+
+**And §3 below listed four of them under *"Open, and not waiting on you."*** That heading was false
+for O-1, O-3, O-4 and O-5. It is the same failure this page has now been corrected for three times:
+the one page that answers *"what is waiting on me"* answering **no** when the answer was **yes**.
+Corrected here; §3 keeps only what genuinely is not yours.
+
+Phase 10's exit criterion is *"O-1..O-5 **closed or owner-signed-deferred** (each audited)"*, and
+the mechanism for the second half already exists: `tools/check_residual_items.py` accepts
+`OWNER-DEFERRED` and **refuses any status change without a `Sign-off:` line**. So each of these is
+one decision with two legal answers — **do the act**, or **defer it by name**. Leaving it OPEN is
+the only answer that is not a decision.
+
+| item | sev | the one act that closes it |
+|---|---|---|
+| **O-1** | **HIGH** | Make the control-plane tree **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
+| **O-2** | MEDIUM | **Provision the anchor signer's custody.** The signer mints its own Ed25519 key — no offline root artefact is needed — but until custody is configured `append()` writes a plaintext head and **no deployment is anchored**. 26 tests already prove the refusal works, including a ledger whose head was rewritten over dropped records. |
+| **O-3** | MEDIUM | A **deploy step** that mints and rotates the operator-root-signed `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. The code fails closed and the shipped policy already requires it. |
+| **O-4** | LOW | **Pin `control-room-command` in the operator-signed registry.** Both actors are signature-verified today; the shipped registry grants the type to nobody, so the check can never pass on a real install. |
+| **O-5** | LOW | **Mint the evidence-floor anchor offline**, grant its type to that key in the operator-signed registry, and present the file **under a principal the policed account cannot write**. The manifest binding is built and enforced; this is the credential half. |
+
+**None of the five needs an offline-root-signed Owner secret** — the `Owner secret needed: no` in
+the inventory is accurate. What they need is a deployment posture and two provisioning steps.
+O-1 is the only **HIGH**, and it is also the only one with a written, named way to accept the risk
+instead of fixing it.
+
+**What a Builder can still do here is nothing**, and saying so is the point of writing it down:
+every remaining half is an act on a machine you control, with credentials you hold.
+
+---
+
 ## 3. Open, and not waiting on you
 
 Recorded so nothing reads as closed that is not. These are being worked.
 
-- **O-3 — the engine can now see it.** `BRO_TRUSTED_REGISTRY_ROOT` redirects where the registry is
-  read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
-  carried the anchor along would have handed over the whole thing. Proven in both directions against
-  the real verifier, including that a token accepted by *a* provisioned registry is still refused by
-  *this* deployment's. **The startup wiring landed on 2026-08-09.** `Provisioned::engine_env()` now
-  returns all **five** variables — `BRO_TRUSTED_REGISTRY_ROOT` plus `BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID` — and
-  `apps/desktop/src-tauri/src/engine_trust.rs` applies the set to the engine child at the one seam
-  that launches it, whole or not at all, refusing by name when an inherited anchor disagrees.
-  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves it against the real Python:
-  accepted with the export, refused without it and refused pointed elsewhere. What is left is **not**
-  an export — it is that the desktop's engine entry point (the bridge sidecar's real mode) is itself
-  fail-closed until Wave 3b, so a desktop turn does not yet reach `authorize_conductor_stop`.
-  *(This bullet has been corrected twice: it once said "the variable ... it already writes", then
-  said nothing exported any of the five. Neither is true now.)*
+> **Four O-items used to be listed here and are not any more** — they moved to §2c, because their
+> remaining halves are yours. What stays below is genuinely not waiting on you.
+
 - **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
   `production: false`, carries no private half anywhere in the tree, and a real deployment with a
   file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the
@@ -578,22 +601,11 @@ Recorded so nothing reads as closed that is not. These are being worked.
   it under `engine/tests/fixtures/` so an unconfigured deployment fails closed with "cannot read
   trusted key registry" instead of quietly loading a development registry. Four dependents would
   name it explicitly. Not done unilaterally — CI depends on it today.
-- **O-5 — deliberately not minted at install.** At install no task exists, and an anchor the app
-  mints by reading the store the check polices would restate the store's own claim under a
-  signature: worse than none, because it looks like corroboration. `mint_floor_anchor` exists and is
-  proven against the real verifier; when it is called is a design question, not a provisioning one.
-- **O-1 — a packaged install gives it for free.** The item wants the control plane unwritable by the
-  account that runs the engine. `Program Files`, `/Applications` and `/opt` are not writable by that
-  account. Needs verifying on a packaged build rather than asserting.
 - **Windows key-material permissions are inherited, not set.** `secure_owner_only_file` has no
   non-unix branch, so on Windows the private keys carry the app data directory's ACL — per-user by
   default, plus SYSTEM and Administrators. Failing closed there would mean the app never starts on
   its primary platform, so it is recorded honestly instead: in `PROVISIONING.json`, in
   `POSTURE.txt`, and on stderr at first launch.
-- **The minted registry grants `control-room-command`**, which the committed engine registry grants
-  to nobody. O-4's code half is closed, so pointing the engine at this registry also provisions
-  O-4's key. A consequence worth a decision rather than a silent side effect.
-
 ---
 
 *Update this file in the same commit as any change to what it claims. A page about what is blocked
