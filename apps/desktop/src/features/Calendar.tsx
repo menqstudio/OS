@@ -134,6 +134,69 @@ function NewEventForm(
   );
 }
 
+/**
+ * §D / Phase 8: *"Run history with receipt ids in `calendar`."*
+ *
+ * The calendar read only `list_events`, so scheduled operations were visible and **what actually
+ * ran was not**. This adds the history — and it adds it with the one fact the box's own wording
+ * assumes and this build does not have.
+ *
+ * **There is no receipt id, and there is no honest way to show one.** `automationsGovernance.ts`
+ * already establishes why, in its own evidence model: `run_automation` is a **local SQLite write**,
+ * not a governed dispatch, so its `engine_receipt` evidence item is `observed: false` and nothing
+ * in the automation path can flip it. Printing a blank column labelled "receipt" would imply the
+ * receipt is pending. Printing the run id under that heading would be worse — it would look like
+ * one.
+ *
+ * So the history states what each run IS: a local record, with its outcome, and one line saying
+ * no engine receipt exists for it. When the governed automation path lands, the same rows gain a
+ * real id and this note goes away — which is the difference between a gap that is visible and a
+ * gap that is papered over.
+ */
+function RunHistory({ L }: { L: (k: keyof typeof STR) => string }) {
+  const automations = useAsync(() => desktop.listAutomations(), []);
+  const list = automations.data ?? [];
+  // One read per automation. The set is small and owner-authored; a batched command would be the
+  // right call at a scale this page does not have, and inventing one now would be speculative.
+  const runs = useAsync(
+    () => Promise.all(list.map((a) => desktop.listAutomationRuns(a.id)
+      .then((rs) => rs.map((r) => ({ run: r, name: a.name })))
+      .catch(() => [])))
+      .then((rows) => rows.flat()
+        .sort((x, y) => Number(y.run.ranAt) - Number(x.run.ranAt))
+        .slice(0, 12)),
+    [list.length],
+  );
+
+  if (automations.loading || runs.loading) return null;
+  const rows = runs.data ?? [];
+
+  return (
+    <section className="cal-runs" aria-label={L('runHistory')}>
+      <div className="cal-agenda-heading">{L('runHistory')}</div>
+      {rows.length === 0 ? (
+        <p className="ag-empty muted">{L('runHistoryEmpty')}</p>
+      ) : (
+        <>
+          <ul className="cal-run-list" role="list">
+            {rows.map(({ run, name }) => (
+              <li key={run.id} className="cal-run" role="listitem">
+                <span className="cal-run-when mono micro">
+                  {new Date(Number(run.ranAt)).toLocaleString()}
+                </span>
+                <span className="cal-run-name">{name}</span>
+                <span className="cal-run-outcome micro">{run.outcome}</span>
+              </li>
+            ))}
+          </ul>
+          {/* The absent half, stated once rather than as an empty column per row. */}
+          <p className="cal-run-note micro muted">{L('runHistoryNoReceipt')}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
 export function Calendar() {
   const { t, lang } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
@@ -517,6 +580,8 @@ export function Calendar() {
                   )}
                 </>
               )}
+
+              <RunHistory L={L} />
             </aside>
           </div>
         </>
