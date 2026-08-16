@@ -56,6 +56,7 @@ fn main() {
         "post_message",
         "post_user_message",
         "save_ask_to_chat",
+        "save_ask_to_knowledge",
         "delete_conversation",
         "rename_conversation",
         // knowledge

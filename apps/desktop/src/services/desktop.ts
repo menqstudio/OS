@@ -225,6 +225,12 @@ export const desktop = {
   // server pulls the held question+answer and persists the pair.
   saveAskToChat: (resultId: string, title: string) =>
     invoke<Conversation>('save_ask_to_chat', { resultId, title }),
+  // Same one-time id, same rule: the webview passes the id and a title, never the body. A
+  // governed research answer belongs in the knowledge store, and "read it, then write it back
+  // through create_knowledge_note" would hand the renderer exactly the authority `stream_ask`'s
+  // held-answer design exists to withhold.
+  saveAskToKnowledge: (resultId: string, title: string) =>
+    invoke<KnowledgeNote>('save_ask_to_knowledge', { resultId, title }),
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),

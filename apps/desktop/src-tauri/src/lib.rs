@@ -260,6 +260,7 @@ pub fn run() {
             commands::post_message,
             commands::post_user_message,
             commands::save_ask_to_chat,
+            commands::save_ask_to_knowledge,
             commands::delete_conversation,
             commands::rename_conversation,
             commands::list_knowledge,
