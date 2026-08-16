@@ -8,7 +8,27 @@
 > status it cannot back — anything not individually re-verified is marked so, with the independent audit
 > as the live source of truth for current-code behaviour.
 
-**Authoritative current assessment:** [`2026-08-15-zero-trust-reaudit-0a9a1af.md`](./2026-08-15-zero-trust-reaudit-0a9a1af.md)
+**Authoritative current assessment:** [`2026-08-17-sixth-audit-b16e572.md`](./2026-08-17-sixth-audit-b16e572.md)
+— the **SIXTH** independent audit, of `main` @ `b16e572` (tree `098df1d5`, pin proven by the auditor).
+**Verdict: RED — but for the first time with no P0.** All three production-gate refusals were read at
+this head and verified closed. RED stands on the surface instead: `A-01`, the ⌘K palette, the shell's
+only modal, has had **no CSS at all since 2026-07-28** — deleted whole in `0c08dd8` (PR #47) and never
+replaced, through three PRs and 33 green checks each. 14 findings (P1 1 · P2 7 · P3 6), 20 claim
+groups attacked and not refuted, 10 rows here or on the OWNER page found stale or false.
+
+> **`A-06` — read this before trusting any ✅ below.** The **FIFTH** round's report was never written
+> to this directory. Until 2026-08-17 this line named the FOURTH audit as authoritative while
+> `docs/OWNER_ACTION_REQUIRED.md` carried the fifth's verdict, its 11 findings and 15 promotions — so
+> every `(…, fifth audit)` citation now embedded in the source pointed at a document nobody could
+> open. **The sixth round's report is filed** (above), and the brief that produces these reports has
+> been corrected so the next one is written to a file rather than left in a reply.
+>
+> The fifth round's text is **not recoverable** and is not reconstructed here. Its 15 promotions are
+> therefore **not** carried into this file as ✅ — a promotion whose evidence cannot be opened is a
+> claim, which is what ◑ means. Where the sixth round independently re-attacked a fifth-round fix and
+> could not break it, that is recorded below on the sixth round's own authority.
+
+**Prior assessment:** [`2026-08-15-zero-trust-reaudit-0a9a1af.md`](./2026-08-15-zero-trust-reaudit-0a9a1af.md)
 — the **FOURTH** independent audit, a re-audit of the third round's five fixes against a **pinned
 snapshot** of `main` @ `0a9a1af`. **Verdict: still RED — but now for one platform rather than one
 mechanism.** Four of the five fixes could not be reopened; `B-01` found the fifth fixed on Linux
@@ -81,6 +101,29 @@ The distinction is not bureaucratic. Both RED verdicts came from rows marked ✅
 that wrote the fix, and in the worst case (F-02) the ✅ was written while the defect was still
 live on the only platform where the Owner had ever been shown a `production_verified=true`.
 
+## Findings of the SIXTH independent audit (2026-08-17, `main` @ `b16e572`) — status
+
+Full text: [`2026-08-17-sixth-audit-b16e572.md`](./2026-08-17-sixth-audit-b16e572.md). Status here is
+the **Builder's** claim unless a later independent round says otherwise — that is what ◑ means, and
+`A-06` exists because this file once said otherwise.
+
+| # | P | Finding | Status |
+|---|---|---|---|
+| `A-01` | P1 | **The ⌘K palette has had no CSS since 2026-07-28.** Five classes deleted with `layout.css`'s palette section in `0c08dd8` (PR #47); the component kept rendering them. No overlay, no backdrop, no panel, no scroll container, no active-row highlight, and the page behind clickable while `aria-modal="true"`. | ◑ **Fixed 2026-08-17.** Section restored in `layout.css`. Measured, not asserted: `CommandPalette.browser.spec.tsx` fails 8 of 9 without it. |
+| `A-02` | P2 | `validates()` requires a **substring**, not a check. Five mutations — including deleting `parse_evidence_event`'s discriminator comparison outright — leave the gate GREEN. | ◑ Open — `T-025` |
+| `A-03` | P2 | `animation_clobber` is evaded by the `animation-name` longhand **its own error message recommends**. | ◑ Open — `T-026` |
+| `A-04` | P2 | `ENTRANCE_CLASSES` knows 2 entrance classes; 14 rules in the tree are invisible-until-animated. Three further blind spots measured. | ◑ Open — `T-026` |
+| `A-05` | P2 | `save_ask_to_knowledge` stamps `"governed research · …"` unconditionally, and the **only** path that can reach it on any install is the ungoverned one. | ◑ Open — `T-027` |
+| `A-06` | P2 | The fifth audit's report was never filed; this ledger named the fourth as authoritative while the OWNER page carried the fifth's 15 promotions. | ◑ **Structurally fixed 2026-08-17** for this round: report filed, this line repointed, brief corrected. **The fifth round's text remains unrecoverable** and its promotions are NOT carried here. |
+| `A-07` | P2 | `RoomReadout` reports a measured zero and a failed read as the same em dash (`:296`), and after any failed refresh states `0` for values that were never established (`:297-298`). | ◑ Open — `T-028` |
+| `A-08` | P2 | `OWNER_ACTION_REQUIRED.md:22` — *"All 11 are fixed"* is false; fifth-round `A-06` (six fallbacks on dead CSS) was never touched. | ◑ Open — `T-029` |
+| `A-09` | P3 | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. | ◑ Open — `T-030` |
+| `A-10` | P3 | The C.1 gate still misses a non-spacing token overridden in a later `:root` — the docstring's own `--azure` example. | ◑ Open — `T-026` |
+| `A-11` | P3 | Two silent fail-open paths remain in `verify_settled_snapshot` beside the one that was fixed. | ◑ Open — `T-031` |
+| `A-12` | P3 | `tools/test_renderer_broker_schemas.py` is named by no workflow; the round swept forward for new tests and not backward for orphaned ones. | ◑ Open — `T-032` |
+| `A-13` | P3 | `AUDIT_LEDGER.md:134` — nested backticks terminate the code span; the row stating the P0 gate status renders garbled. | ◑ **Fixed 2026-08-17.** |
+| `A-14` | P3 | `OWNER_ACTION_REQUIRED.md:638` — *"These are being worked"*; both surviving §3 items say they are not. `## 2d.` precedes `## 2c.` | ◑ Open — `T-029` |
+
 ## Findings of the THIRD independent audit (2026-08-14) — status
 
 | Finding | Status |
@@ -131,7 +174,7 @@ these nine survived.
 
 | # | Claim | ✅ what the auditor did |
 |---|---|---|
-| 1 | **The three production-gate refusals** | Read, not trusted: `governed_verification_unconfigured()` is `Some(...)` with **no branch** (`commands.rs:1161-1164`); `connect_broker` is `#[cfg(target_os = "linux")]`, every other host `UnsupportedPlatform` (`governed_turn.rs:230-253 (the `UnsupportedPlatform` return is at :251 — this row cited :225-232, which does not contain it; corrected 2026-08-16 from the fifth audit's stale-row list, claim unchanged and re-confirmed)`); `build_governed_executor` returns `fail_closed()` unless `$BROPS_BROKER_CONFIG` is set and parses (`broker/src/main.rs:266-280`). **The gate is closed at this head.** |
+| 1 | **The three production-gate refusals** | Read, not trusted: `governed_verification_unconfigured()` is `Some(...)` with **no branch** (`commands.rs:1161-1164`); `connect_broker` is `#[cfg(target_os = "linux")]`, every other host `UnsupportedPlatform` (`governed_turn.rs:230-253`; the `UnsupportedPlatform` return is at `:251` — this row cited `:225-232`, which does not contain it; corrected 2026-08-16 from the fifth audit's stale-row list, claim unchanged and re-confirmed); `build_governed_executor` returns `fail_closed()` unless `$BROPS_BROKER_CONFIG` is set and parses (`broker/src/main.rs:266-280`). **The gate is closed at this head.** |
 | 2 | **F-01's second half — the `output_handle` sign-oracle** | **The previous round's P0.** Attacked the mechanism, not the wording, and **could not reopen it, on either platform.** Supervisor derives the head from the recorder's chain and refuses a completion whose `output_handle` the recorder did not capture (`governed_supervisor_ledger.py:624-685`, check at `:661-666`), on the only path to `COMPLETED`. Recorder no longer takes `--launcher/--executor/--store/--lease` from the broker's argv — root-owned policy at a compile-time path, argv disagreement refused. Windows twin refuses `evidence_mismatch`. Covered by a **real end-to-end negative**, not an assertion (`test_governed_chain_e2e.py:657-684`). |
 | 3 | **`R-04` / F-08's OUTER equality** | *"a real gap"* — was asserted only by a deployment-time shell check. Now a runtime comparison: `verify_lease_matches_attested_request` refuses per-slot (`launcher/src/main.rs:491-505`), called before any drop or exec (`:592`), attested config read from a **compile-time** path so the broker cannot redirect it (`:586-591`). |
 | 4 | **`R-03`'s store-input custody** | fds 3/4/5 are no longer "a regular file ≤ 8 MiB": each must be a regular inode owned by root/brops-admin with no group or other write bit (`launcher/src/main.rs:600-605`). |
