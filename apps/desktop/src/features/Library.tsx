@@ -120,18 +120,31 @@ function CreateDialog(
 }
 
 // ── Live preview panel — the opened "codex" (labeled, announces selection) ────
-function PreviewPanel({ item, label, previewLabelFor, L }: {
+function PreviewPanel({ item, label, previewLabelFor, L, panelRef, onEscape }: {
   item: LibraryItem | null;
   label: string;
   previewLabelFor: (title: string) => string;
   L: Localize;
+  /** §D binds `Enter` to "open". On this page the preview was ALREADY showing whatever the
+   *  arrows had focused, so Enter had nothing left to do and did nothing — and the panel it
+   *  would open was unreachable by keyboard: no tab stop, no way in, no way back. "Open" here
+   *  means move INTO the preview, which is the only reading of §D that changes anything. */
+  panelRef: React.RefObject<HTMLElement | null>;
+  onEscape: () => void;
 }) {
   return (
     <section
+      ref={panelRef as React.RefObject<HTMLElement>}
       className="lib-codex surface soft"
       role="region"
       aria-live="polite"
       aria-label={item ? previewLabelFor(item.title) : label}
+      // -1: reachable by the Enter handoff and by a screen reader, without adding a tab stop
+      // that a mouse user would have to Tab past on every visit to the page.
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') { e.preventDefault(); onEscape(); }
+      }}
     >
       {!item ? (
         <div className="lib-codex-empty micro">{label}</div>
@@ -175,6 +188,7 @@ export function Library() {
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const previewRef = useRef<HTMLElement | null>(null);
 
   const rawItems: LibraryItem[] = s.data ?? [];
 
@@ -219,7 +233,16 @@ export function Library() {
     else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(sel - 1); }
     else if (e.key === 'Home') { e.preventDefault(); moveSelection(0); }
     else if (e.key === 'End') { e.preventDefault(); moveSelection(filtered.length - 1); }
+    // §D: "Enter open". The rows are <button>s, so Enter already fired their onClick — which
+    // only re-selected the row the arrows had already selected. The preview was showing it
+    // the whole time, and the panel itself had no tab stop, so a keyboard user could see the
+    // preview change and never reach it. Enter now hands focus to the panel, and Escape hands
+    // it back to the row it came from.
+    else if (e.key === 'Enter' && filtered.length) { e.preventDefault(); previewRef.current?.focus(); }
   };
+  /** Return from the preview to the row that opened it. Focus that goes somewhere with no way
+   *  back is a trap, and the row is where the user's place in the list is. */
+  const returnToList = () => itemRefs.current[sel]?.focus();
 
   const onSearchChange = (e: ChangeEvent<HTMLInputElement>) => {
     setQuery(e.target.value);
@@ -348,7 +371,14 @@ export function Library() {
             );
           })}
         </ul>
-        <PreviewPanel item={active} label={L('previewEmpty')} previewLabelFor={previewLabelFor} L={L} />
+        <PreviewPanel
+          item={active}
+          label={L('previewEmpty')}
+          previewLabelFor={previewLabelFor}
+          L={L}
+          panelRef={previewRef}
+          onEscape={returnToList}
+        />
       </div>
     );
   };
