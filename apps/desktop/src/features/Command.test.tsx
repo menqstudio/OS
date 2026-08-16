@@ -115,6 +115,17 @@ describe('Command — a refusal at the wall is not a failure', () => {
     expect(alert.className).not.toContain('cmd-outcome--blocked');
   });
 
+  it('the dispatch trace is a log, not an unnamed live region', async () => {
+    // §D: "trace `role=log aria-live`". It had the live region and not the role, so a screen
+    // reader was told the content changed without being told what kind of thing it was reading.
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+    await screen.findByText('Gather the source figures');
+    const trace = await screen.findByRole('log');
+    expect(trace).toHaveAttribute('aria-live', 'polite');
+    expect(trace).toHaveAccessibleName();
+  });
+
   it('the outcome is announced, not queued behind the output stream', async () => {
     // role=alert, because a dispatch the owner just pressed and that did NOT happen is the
     // definition of something a screen-reader user must be told immediately. The surrounding

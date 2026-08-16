@@ -378,6 +378,11 @@
 .chart-table > summary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); border-radius: var(--menq-radius-sm); }
 .chart-table table { width: 100%; border-collapse: collapse; margin-top: var(--menq-space-3); }
 .chart-table caption { text-align: left; }
+/* Visually hidden, still announced. `.chart-caption` was this rule under a name that only made
+   sense inside a chart, so every other surface that needed it either re-declared the same six
+   properties locally (Analytics, Security both did) or used a glyph and hoped. `.sr-only` is the
+   name the rest of the world uses; the chart keeps its own so nothing has to be renamed. */
+.sr-only,
 .chart-caption { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .chart-table th, .chart-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--brops-border);
