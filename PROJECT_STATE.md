@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `878256c`.** Open: Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **✅ SETTLED — `main` is at `a244602`.** Open: Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
 > **Next:** All fourteen findings of the sixth audit are closed and every one is the Builder's claim. The seventh independent audit is the next step.
 >
