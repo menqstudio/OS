@@ -151,7 +151,7 @@ class OverrideBlockTests(unittest.TestCase):
         # --s7 left at 28px while --s8 drops to 24px: 'one step larger' becomes false.
         broken = self.CSS.replace(" --s7:21px;", "").replace(" --s9:27px;", "")
         f = c1.ladder_monotonic(c1.root_blocks(broken), self.NAMES)
-        self.assertTrue(any("runs backwards" in p for p in f), f)
+        self.assertTrue(any("reorders itself" in p for p in f), f)
         self.assertTrue(any("--s7" in p for p in f), f)
 
     def test_a_partial_tier_is_checked_against_the_effective_value(self):
@@ -160,7 +160,7 @@ class OverrideBlockTests(unittest.TestCase):
                                    " --s8:24px; --s9:27px; --s10:30px } }",
                                    "@media (max-width:560px){ :root{ --s10:2px } }")
         f = c1.ladder_monotonic(c1.root_blocks(partial), self.NAMES)
-        self.assertTrue(any("runs backwards" in p for p in f), f)
+        self.assertTrue(any("reorders itself" in p for p in f), f)
 
     def test_a_non_px_rung_is_reported_rather_than_skipped(self):
         odd = self.CSS.replace("--s4:16px", "--s4:1rem")
@@ -269,3 +269,141 @@ class RealRepositoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class A03LonghandTests(unittest.TestCase):
+    r"""`A-03` — the gate was evaded by the remedy its own error message recommended.
+
+    `animation-name` is list-valued; setting it replaces the list identically. The check matched
+    `animation\s*:` only, so an author who tripped it, read "use the animation-* longhands" and did
+    exactly that reintroduced the fifth audit's `A-01` byte for byte. Measured in Chromium by the
+    auditor: shorthand -> opacity 0, longhand -> opacity 0; gate RED for one and GREEN for the other.
+    """
+
+    CSS = ".reveal{opacity:0;animation:reveal var(--enter) forwards}\n@keyframes reveal{to{opacity:1}}\n"
+    TSX = 'const x = <div className="reveal hot" />;'
+
+    def clobber(self, rule):
+        texts = {"a.css": self.CSS + rule, "x.tsx": self.TSX}
+        return c1.animation_clobber(texts, c1.classname_groups(texts))
+
+    def test_the_shorthand_is_caught(self):
+        self.assertTrue(self.clobber(".reveal.hot{animation:spin 2s infinite}"))
+
+    def test_the_animation_name_LONGHAND_is_caught_too(self):
+        self.assertTrue(self.clobber(".reveal.hot{animation-name:spin;animation-duration:2s}"))
+
+    def test_a_composed_list_is_accepted_in_both_forms(self):
+        self.assertEqual(self.clobber(".reveal.hot{animation:reveal var(--enter) forwards,spin 2s}"), [])
+        self.assertEqual(self.clobber(".reveal.hot{animation-name:reveal,spin}"), [])
+
+    def test_the_message_no_longer_recommends_the_longhand_on_its_own(self):
+        message = self.clobber(".reveal.hot{animation:spin 2s infinite}")[0]
+        self.assertIn("Compose the list instead", message)
+        self.assertIn("NOT the `animation-name` longhand on its own", message)
+
+
+class A04EntranceDiscoveryTests(unittest.TestCase):
+    """`A-04` — the check knew two entrance classes; the tree had fourteen."""
+
+    def test_an_entrance_class_is_DERIVED_from_opacity_zero_plus_an_animation(self):
+        css = ".zzfade{opacity:0;animation:zzin 1s forwards}\n@keyframes zzin{to{opacity:1}}\n"
+        self.assertEqual(c1.entrance_classes(css).get("zzfade"), "zzin")
+
+    def test_a_descendant_selector_records_its_SUBJECT_compound(self):
+        css = ".spark .fill{opacity:0;animation:draw 1s forwards}\n"
+        self.assertIn("fill", c1.entrance_classes(css))
+        self.assertNotIn("spark", c1.entrance_classes(css))
+
+    def test_a_pseudo_element_is_not_an_entrance_class_on_its_owner(self):
+        css = ".sigil::before{opacity:0;animation:glow 1s forwards}\n"
+        self.assertNotIn("sigil", c1.entrance_classes(css))
+
+    def test_a_derived_entrance_class_is_then_protected(self):
+        css = (".zzfade{opacity:0;animation:zzin 1s forwards}\n@keyframes zzin{to{opacity:1}}\n"
+               ".zzfade.zzhot{animation:spin 2s infinite}\n")
+        tsx = 'const x = <div className="zzfade zzhot" />;'
+        self.assertTrue(c1.animation_clobber({"a.css": css, "x.tsx": tsx},
+                                            c1.classname_groups({"x.tsx": tsx})))
+
+    def test_a_PLAIN_string_className_is_read_at_all(self):
+        # The hole found by mutation-testing A-04's own case, and bigger than A-04: for
+        # `className="a b"` the region has no quotes or backticks inside it, so both harvest
+        # loops found nothing and EVERY plain className in the app was invisible to this check.
+        self.assertEqual(c1.classname_groups({"x.tsx": 'x = <b className="alpha beta" />'}),
+                         [{"alpha", "beta"}])
+
+    def test_an_UPPERCASE_class_token_is_read(self):
+        self.assertEqual(c1.classname_groups({"x.tsx": 'x = <b className="Alpha beta" />'}),
+                         [{"Alpha", "beta"}])
+
+    def test_a_keyframe_named_after_an_animation_keyword_is_refused(self):
+        self.assertEqual(c1.keyframe_name_collisions("@keyframes forwards{to{opacity:1}}"),
+                         ["forwards"])
+        self.assertEqual(c1.keyframe_name_collisions("@keyframes reveal{to{opacity:1}}"), [])
+
+    def test_a_test_fixture_is_not_shipped_source(self):
+        self.assertTrue(c1.is_test_file("src/test/harness.browser.spec.tsx"))
+        self.assertTrue(c1.is_test_file("src/features/Foo.test.tsx"))
+        self.assertFalse(c1.is_test_file("src/features/Foo.tsx"))
+
+
+class A10OverrideScopeTests(unittest.TestCase):
+    """`A-10` — what a `:root` override is entitled to change, per kind of block."""
+
+    KINDS = {"--azure": "colour", "--s4": "geometry", "--t-body": "geometry"}
+
+    def test_block_kinds_are_read_from_the_stylesheet(self):
+        css = (':root{--azure:#0A84FF}\n'
+               ':root[data-theme="light"]{--azure:#FFFFFF}\n'
+               '@media (max-width:560px){:root{--s4:12px}}\n')
+        self.assertEqual(c1.root_block_kinds(css), ["base", "theme", "responsive"])
+
+    def test_a_theme_may_restate_colours(self):
+        self.assertEqual(
+            c1.override_scope([{}, {"--azure": "#fff"}], ["base", "theme"], self.KINDS), [])
+
+    def test_a_theme_may_NOT_move_the_layout(self):
+        out = c1.override_scope([{}, {"--s4": "99px"}], ["base", "theme"], self.KINDS)
+        self.assertTrue(any("geometry token" in f for f in out), out)
+
+    def test_a_responsive_tier_may_restate_geometry(self):
+        self.assertEqual(
+            c1.override_scope([{}, {"--s4": "12px"}], ["base", "responsive"], self.KINDS), [])
+
+    def test_a_responsive_tier_may_NOT_repaint(self):
+        # THE FINDING, and the docstring's own worked example.
+        out = c1.override_scope([{}, {"--azure": "#FF0000"}], ["base", "responsive"], self.KINDS)
+        self.assertTrue(any("colour token" in f for f in out), out)
+
+    def test_a_block_nobody_can_classify_is_refused_rather_than_guessed_at(self):
+        out = c1.override_scope([{}, {"--azure": "#f00"}], ["base", "other"], self.KINDS)
+        self.assertTrue(any("cannot say what it is entitled to change" in f for f in out), out)
+
+    def test_token_kinds_come_from_C1s_own_values(self):
+        kinds = c1.token_kinds({"--azure": "#0A84FF", "--s4": "16px", "--enter": "640ms"})
+        self.assertEqual(kinds, {"--azure": "colour", "--s4": "geometry", "--enter": "geometry"})
+
+
+class LadderDirectionTests(unittest.TestCase):
+    """The type scale descends. An ascending-only check called the correct base six failures."""
+
+    def test_a_descending_scale_is_accepted(self):
+        blocks = [{"--t-hero": "32px", "--t-h1": "24px", "--t-body": "15px"}]
+        self.assertEqual(c1.ladder_monotonic(blocks, ["--t-hero", "--t-h1", "--t-body"], "type scale"), [])
+
+    def test_a_tier_that_reorders_a_DESCENDING_scale_is_red(self):
+        blocks = [{"--t-hero": "32px", "--t-h1": "24px", "--t-body": "15px"},
+                  {"--t-body": "99px"}]
+        out = c1.ladder_monotonic(blocks, ["--t-hero", "--t-h1", "--t-body"], "type scale")
+        self.assertTrue(any("reorders itself" in f for f in out), out)
+
+    def test_an_ascending_scale_still_works(self):
+        blocks = [{"--s1": "4px", "--s2": "8px"}, {"--s2": "2px"}]
+        out = c1.ladder_monotonic(blocks, ["--s1", "--s2"], "spacing")
+        self.assertTrue(any("reorders itself" in f for f in out), out)
+
+    def test_a_base_with_no_direction_at_all_is_refused(self):
+        blocks = [{"--a": "1px", "--b": "9px", "--c": "2px"}]
+        out = c1.ladder_monotonic(blocks, ["--a", "--b", "--c"], "made-up scale")
+        self.assertTrue(any("no direction" in f for f in out), out)
