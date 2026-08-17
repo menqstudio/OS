@@ -76,12 +76,64 @@ describe('GroupChat — the room readout counts only what it can establish', () 
     expect(valueFor(/HANDOFF/i)).not.toBe('0');
   });
 
-  it('an empty roster is also not established, rather than zero participants', async () => {
+  // THIS TEST USED TO ASSERT THE DEFECT — sixth independent audit, `A-07`.
+  //
+  // It read *"an empty roster is also not established, rather than zero participants"* and passed,
+  // because `RoomReadout` tested `roster.length > 0` — truthiness on a length, one line above a
+  // `messageCount === null` that was already correct. The auditor measured both halves with the
+  // real component: a roster read that SUCCEEDS returning `[]` and one that REJECTS rendered the
+  // same em dash, so an empty room and an unreadable one were indistinguishable.
+  //
+  // Two facts got swapped. A read that succeeded and returned nothing is a MEASURED ZERO — the
+  // sibling test below already says so for messages, in the same file, three cases down. Encoding
+  // the inverse here is how a defect survives a suite written to prevent it.
+  it('an empty roster that was READ is zero participants, not "not established"', async () => {
     mount({ roster: [] });
     // Settle on a value that DOES arrive, so this is not passing on first paint — before the
-    // roster read resolves, every cell reads "—" and the assertion would be vacuous.
+    // reads resolve every cell reads "—" and the assertion would be vacuous.
     await waitFor(() => expect(valueFor(/MESSAGE/i)).toBe('2'));
+    expect(valueFor(/PARTICIPANT/i)).toBe('0');
+  });
+
+  it('a roster read that FAILS is not established, and is not zero either', async () => {
+    // The other side of the pair, which nothing tested. This is the case the em dash is for.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM]);
+      if (cmd === 'list_conversation_participants') {
+        const rejected = Promise.reject(new Error('roster_unreadable'));
+        rejected.catch(() => {});
+        return rejected;
+      }
+      if (cmd === 'list_messages') return Promise.resolve([{
+        id: 'm1', conversationId: 'g-1', role: 'user', author: 'Gev', body: 'start', createdAt: '1',
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(valueFor(/MESSAGE/i)).toBe('1'));
     expect(valueFor(/PARTICIPANT/i)).toBe('—');
+    expect(valueFor(/PARTICIPANT/i)).not.toBe('0');
+  });
+
+  it('a failed message read does not leave Messages and Rounds stating a measured zero', async () => {
+    // `useAsync` never clears `data` on error, so before this fix the caller's null guard held
+    // only on the very FIRST load: after any failed refresh both figures reported a count for a
+    // read that had failed. Here the very first read fails, which is the case the old guard did
+    // cover — and the assertion below is that BOTH cells refuse, not just Messages.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Bro', 'Auditor']);
+      if (cmd === 'list_messages') {
+        const rejected = Promise.reject(new Error('messages_unreadable'));
+        rejected.catch(() => {});
+        return rejected;
+      }
+      return Promise.resolve([]);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(valueFor(/PARTICIPANT/i)).toBe('2'));
+    expect(valueFor(/MESSAGE/i)).toBe('—');
+    expect(valueFor(/ROUND|ՇՐՋԱՆ|РАУНД/i)).toBe('—');
   });
 
   it('a room with no messages reports zero, because that IS established', async () => {
