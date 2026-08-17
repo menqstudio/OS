@@ -356,14 +356,35 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
     # What `settled_at_main_head` actually means is "the main this carrier merged into", and that
     # is exactly the merge commit's FIRST PARENT — knowable, exact, and satisfiable by writing the
     # live main head at sync time, which is what the generator does.
-    if carrier_merge_commit and first_parent is not None:
-        parent = first_parent(carrier_merge_commit)
-        if parent and settled != parent:
-            return [f"settled_at_main_head {str(settled)[:7]} is not the main that carrier "
-                    f"#{carrier_no} merged into ({parent[:7]}, the first parent of merge commit "
-                    f"{carrier_merge_commit[:7]}). The field means 'everything up to here has "
-                    f"merged'; an ancestor-of-main check alone would accept the first commit ever "
-                    f"made. Re-run: python tools/sync_active_pr.py"]
+    #
+    # AND IT REFUSES WHEN IT CANNOT READ THE PIN — sixth independent audit, `A-11`. The two guards
+    # below used to be part of the `if`, so a `gh` reply with no `mergeCommit`, or a `first_parent`
+    # that could not resolve, SKIPPED the pin silently and let `settled_at_main_head` be anything:
+    # the auditor measured the repository's own first commit passing. `open_prs_now()` was fixed
+    # this round to return `None`, print the reason and have the caller refuse; these two sat
+    # beside it degrading quietly, neither logged. The auditor's aside is the sharp part — these
+    # are exactly the paths a `gh`-less environment takes, so the environment least able to verify
+    # anything was the one that checked least and said so least.
+    if first_parent is None:
+        return [f"settled_at_main_head cannot be verified: no first-parent resolver was supplied, "
+                f"so the pin that stops this field going stale did not run. A check that cannot "
+                f"run is not a check that passed."]
+    if not carrier_merge_commit:
+        return [f"settled_at_main_head cannot be verified: GitHub reported no mergeCommit for "
+                f"carrier #{carrier_no}, so there is nothing to pin the field against. Refusing "
+                f"rather than skipping — an ancestor check alone accepts the first commit ever "
+                f"made (A-07)."]
+    parent = first_parent(carrier_merge_commit)
+    if not parent:
+        return [f"settled_at_main_head cannot be verified: the first parent of carrier "
+                f"#{carrier_no}'s merge commit {carrier_merge_commit[:7]} could not be resolved. "
+                f"Fetch the full history (`fetch-depth: 0`) and re-run; do not skip the pin."]
+    if settled != parent:
+        return [f"settled_at_main_head {str(settled)[:7]} is not the main that carrier "
+                f"#{carrier_no} merged into ({parent[:7]}, the first parent of merge commit "
+                f"{carrier_merge_commit[:7]}). The field means 'everything up to here has "
+                f"merged'; an ancestor-of-main check alone would accept the first commit ever "
+                f"made. Re-run: python tools/sync_active_pr.py"]
     named = {carrier_no} | {pr["number"] for pr in snapshot.get("prs", [])
                             if isinstance(pr, dict) and isinstance(pr.get("number"), int)}
     unnamed = sorted(n for n in open_now if n not in named)

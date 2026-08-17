@@ -268,6 +268,15 @@ class SettledSnapshotTests(unittest.TestCase):
     def _yes(self, a, b):  # is_ancestor stub: settled is on main
         return True
 
+    #: A carrier merge commit whose FIRST PARENT is the settled head these fixtures record.
+    #: Supplied to every call, because as of the sixth audit's A-11 the pin FAILS CLOSED: a
+    #: missing mergeCommit or an unresolvable parent is a refusal, not a skip. Before that they
+    #: were silently skipped, and the auditor measured the repository's own first commit passing.
+    MERGE = "f" * 40
+
+    def _parent(self, sha):  # first_parent stub: the merge landed on MAIN
+        return MAIN if sha == self.MERGE else None
+
     def test_open_carrier_is_noop(self):
         self.assertEqual(rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes), [])
 
@@ -278,22 +287,23 @@ class SettledSnapshotTests(unittest.TestCase):
     def test_merged_without_settled_head_is_red(self):
         snap = self._snap(); snap.pop("settled_at_main_head")
         self.assertTrue(any("records no settled_at_main_head" in p
-                            for p in rs.verify_settled_snapshot(33, "MERGED", snap, set(), MAIN, self._yes)))
+                            for p in rs.verify_settled_snapshot(33, "MERGED", snap, set(), MAIN, self._yes, self.MERGE, self._parent)))
 
     def test_settled_head_not_on_main_is_red(self):
-        f = rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), NEWMAIN, lambda a, b: False)
+        f = rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), NEWMAIN, lambda a, b: False, self.MERGE, self._parent)
         self.assertTrue(any("is not an ancestor of live main" in p for p in f))
 
     def test_merged_with_nothing_open_is_green(self):
-        self.assertEqual(rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), MAIN, self._yes), [])
+        self.assertEqual(rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), MAIN,
+                                                    self._yes, self.MERGE, self._parent), [])
 
     def test_open_pr_named_nowhere_is_red(self):
         # the staleness the rule exists for: #112 is open and this file mentions it nowhere.
-        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112}, MAIN, self._yes)
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112}, MAIN, self._yes, self.MERGE, self._parent)
         self.assertTrue(any("#112 is open and unnamed" in p for p in f), f)
 
     def test_every_unnamed_open_pr_is_listed(self):
-        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112, 120}, MAIN, self._yes)
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112, 120}, MAIN, self._yes, self.MERGE, self._parent)
         self.assertTrue(any("#112, #120 are open and unnamed" in p for p in f), f)
 
     def test_open_pr_carried_in_prs_is_green(self):
@@ -301,21 +311,21 @@ class SettledSnapshotTests(unittest.TestCase):
         # and it is not a free pass either: compare_external_prs anchors it to an exact live head.
         snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
                             "draft": False, "merge_state": "open", "head": HEAD_31}])
-        self.assertEqual(rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes), [])
+        self.assertEqual(rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent), [])
 
     def test_repair_pr_cannot_be_forced_to_carry_the_parked_pr(self):
         # The other half of the deadlock, stated as a test: the repair PR self-carries (#114) while
         # #112 stays parked in prs[]. Under the old rule this was RED with no legal way out.
         snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
                             "draft": False, "merge_state": "open", "head": HEAD_31}])
-        self.assertEqual(rs.verify_settled_snapshot(114, "MERGED", snap, {112}, MAIN, self._yes), [])
+        self.assertEqual(rs.verify_settled_snapshot(114, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent), [])
 
     # --- fifth audit, A-05: the safety net was a fail-open --------------------------------------
     def test_unknown_open_set_REFUSES_rather_than_assuming_nothing_is_open(self):
         # open_prs_now() used to return an empty set when gh failed, and an empty set is the most
         # PERMISSIVE answer this rule can receive — "no pull requests are open" — returned exactly
         # when the truth is unknown. None now means unknown, and unknown is a refusal.
-        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), None, MAIN, self._yes)
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), None, MAIN, self._yes, self.MERGE, self._parent)
         self.assertTrue(any("could not be determined" in p for p in f), f)
 
     def test_the_refusal_does_not_fire_while_the_carrier_is_still_open(self):
@@ -349,22 +359,51 @@ class SettledSnapshotTests(unittest.TestCase):
                                        carrier_merge_commit=NEWMAIN,
                                        first_parent=lambda _: MAIN), [])
 
-    def test_an_unresolvable_first_parent_does_not_invent_a_failure(self):
-        self.assertEqual(
-            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
-                                       carrier_merge_commit=NEWMAIN,
-                                       first_parent=lambda _: None), [])
+    # --- sixth audit, A-11: the two fail-opens BESIDE the one that was fixed --------------------
+    #
+    # These two tests used to be named `…_does_not_invent_a_failure` and asserted `[]`. That is the
+    # defect, encoded as intent: the auditor measured `settled_at_main_head` set to the
+    # REPOSITORY'S OWN FIRST COMMIT passing, because a missing `mergeCommit` or an unresolvable
+    # first parent skipped the pin entirely and nothing was logged.
+    #
+    # "Does not invent a failure" was the wrong frame. A check that could not run has not passed —
+    # and the auditor's aside is the sharp part: these are exactly the paths a `gh`-less
+    # environment takes, so the environment least able to verify anything was the one that
+    # verified least and said so least. `open_prs_now()` was given this same treatment for the
+    # fifth audit's `A-05`; these two sat beside it, quiet.
 
-    def test_no_merge_commit_available_does_not_invent_a_failure(self):
-        self.assertEqual(
-            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
-                                       carrier_merge_commit=None), [])
+    def test_an_unresolvable_first_parent_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: None)
+        self.assertTrue(any("could not be resolved" in p for p in f), f)
+
+    def test_no_merge_commit_available_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=None, first_parent=self._parent)
+        self.assertTrue(any("no mergeCommit" in p for p in f), f)
+
+    def test_no_first_parent_RESOLVER_refuses_too(self):
+        # The third door into the same room: a caller that simply does not supply the resolver.
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN)
+        self.assertTrue(any("no first-parent resolver" in p for p in f), f)
+
+    def test_the_first_commit_ever_made_no_longer_passes_through_a_skipped_pin(self):
+        # The auditor's own measurement, as a regression. With the pin skipped this was GREEN.
+        snap = self._snap()
+        snap["settled_at_main_head"] = "0" * 40
+        for kwargs in ({"carrier_merge_commit": None, "first_parent": self._parent},
+                       {"carrier_merge_commit": NEWMAIN, "first_parent": lambda _: None},
+                       {"carrier_merge_commit": NEWMAIN}):
+            f = rs.verify_settled_snapshot(118, "MERGED", snap, set(), MAIN, self._yes, **kwargs)
+            self.assertTrue(f, f"a skipped pin must not pass: {kwargs}")
 
     def test_malformed_prs_entries_do_not_launder_an_open_pr(self):
         # a non-dict, a null number and a string number must NOT count as "named".
         snap = self._snap(["112", {"number": None}, {"number": "112"}])
         self.assertTrue(any("#112 is open and unnamed" in p
-                            for p in rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes)))
+                            for p in rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent)))
 
 
 class CarrierStateTests(unittest.TestCase):
