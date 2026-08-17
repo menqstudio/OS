@@ -616,6 +616,37 @@ every remaining half is an act on a machine you control, with credentials you ho
 
 ---
 
+## 2e. DECISION TAKEN 2026-08-17 — one palette, and it is `--menq-*`
+
+The seventh independent audit's `G-10`/`G-11(a)` found this repository painting with one colour
+system and measuring another. `check_contrast.py` resolves every pair against `--menq-*` hexes in
+`contrast-pairs.json`; the cockpit paints with `aios.css`'s own `--ink`/`--azure`/`--success`
+palette. Both are live — 289 references against 215 — and **not one of the manifest's twelve
+hexes appears anywhere in `aios.css`**. The auditor changed the shipped light-theme `--azure` to
+`#FF0000` in place and `check_c1_tokens`, `check_contrast` and `check_token_parity` all stayed
+GREEN.
+
+The auditor was explicit that no Builder edit closes this: *"two palettes with one gate is a 'one
+contract, two implementations' instance, and this repository's own ledger says it has now found
+that shape eight times"* — and that the question of whether the `--menq-*` system should exist
+at all is §I architecture, not a Builder decision.
+
+**The Owner's answer: `--menq-*` stays.**
+
+What that commits us to, stated so the next session inherits the reasoning rather than the verdict:
+
+* `aios.css`'s **colour tokens** are the duplicate and converge onto `--menq-*`. Its layout, motion
+  and instrument language are not in scope — 417 KB of design is not what "delete the duplicate"
+  meant.
+* §C.1 then pins **one** palette, and `check_contrast` measures the one the app actually paints,
+  which is the property `G-10` found missing.
+* The migration is sequenced **behind a measurement**. The browser suite is the only thing that can
+  prove a colour swap did not change what renders, and `check_contrast` is expected to go **red on
+  the way** — the two palettes are genuinely different colours — before it goes green on the
+  merged one. A find-and-replace that stayed green throughout would mean the gate was not looking.
+
+Tracked as `T-034`, now unblocked.
+
 ## 2d. DECISIONS TAKEN 2026-08-17 — four answers, and what each one commits us to
 
 The Owner was given the open decisions as options with a recommendation each, and answered all
