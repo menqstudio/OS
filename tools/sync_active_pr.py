@@ -399,6 +399,35 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     roles = parked_roles(parked, role_pairs)
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
+
+    # AND REFUSE TO LEAVE A MERGED CARRIER NAMED — seventh independent audit, `G-06`.
+    #
+    # `--settled` without `--pr`/`--branch` skipped `rewrite_carrier_block` behind `if pr and
+    # branch:` with no warning, printed *"banners point at main, not at a deleted branch"*, and
+    # exited 0 — while `current_workflow_pr` went on naming a merged pull request on a branch that
+    # had been deleted. That is the exact staleness this mode's docstring says it exists to remove,
+    # and it passes `verify_settled_snapshot` because a present-and-correct `settled_at_main_head`
+    # satisfies every arm.
+    #
+    # It is also not hypothetical: PR #146 carried a snapshot naming #145 for this reason, the
+    # Repo-state gate refused it correctly, and it was merged anyway because `main` had no required
+    # checks (`G-01`). Two defects, one commit.
+    #
+    # Refusing rather than nulling the carrier: `check_coordination` requires the human documents
+    # to name `active.branch`, so an empty carrier would cascade there, and a mode that quietly
+    # produces a different snapshot shape is how the next reader gets surprised. The message names
+    # the flags, because a refusal whose fix is undocumented is a trap this file already carries
+    # two long comments about.
+    if not (pr and branch):
+        current = (data.get("current_workflow_pr") or {}).get("number")
+        if isinstance(current, int) and carrier_merge_commit(current):
+            raise SystemExit(
+                f"RED: --settled would leave current_workflow_pr naming #{current}, which has "
+                f"MERGED. The snapshot would send a reader to a pull request that is closed and a "
+                f"branch that is probably deleted — the staleness this mode exists to remove.\n"
+                f"  Run it as the settle commit's OWN pull request:\n"
+                f"    python tools/sync_active_pr.py --settled --pr <N> --branch <branch> …\n"
+                f"  Nothing has been written.")
     # Computed the way the GATE computes it, not assumed to be the live head — see
     # settled_head_for(). The carrier is whichever PR the snapshot currently names, because that is
     # the one whose merge this settle is recording.

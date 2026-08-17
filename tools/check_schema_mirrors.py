@@ -198,11 +198,32 @@ def has_negative_test(source: str, name: str) -> bool:
     """Is there a `#[test] fn <name>` in this source? Pure/testable.
 
     Existence only. Whether it asserts the right thing is what running it establishes — and it IS
-    run: `cargo test -p brops --lib` is a required job. The gate's job is to make sure a mirror
-    cannot be added without one, because the mirror that had no negative test is exactly the one
-    whose discriminator check could be deleted with 29 tests still passing.
+    run: `cargo test -p brops --lib` is a required job (and as of 2026-08-17 it is a *required
+    status check* on `main`, which it was not when this was written). The gate's job is to make
+    sure a mirror cannot be added without one, because the mirror that had no negative test is
+    exactly the one whose discriminator check could be deleted with 29 tests still passing.
+
+    **THE ATTRIBUTE IS PART OF THE CHECK — seventh independent audit, `G-02`.** This used to be
+    `function_body(source, name) is not None`, which brace-matches a `fn` declaration and never
+    looks at what is above it, while the docstring said it looked for `#[test] fn <name>`. The
+    auditor deleted the `#[test]` line, left the function, and neutered the discriminator: the gate
+    printed GREEN, `cargo` printed 123 passed against a baseline of 124, and the only warning was
+    a non-fatal *"function is never used"* that `ci.yml` does not turn into a wall.
+
+    That is `A-02`'s own shape one level up. The gate proves the check is in the right place; the
+    test proves it is right; **nothing proved the test runs.** A dropped attribute — by refactor or
+    by hand — removed the last thing standing between the Security page and a v2 evidence event
+    rendered as v1, and both defenses reported green.
+
+    The intervening-attribute clause is deliberate: `#[test]` is often followed by `#[ignore]`,
+    `#[should_panic]` or a `cfg`, and a pattern that demanded them adjacent would be red on correct
+    code — which is how a gate gets switched off (`A-03`).
     """
-    return function_body(source, name) is not None
+    if function_body(source, name) is None:
+        return False
+    live = strip_comments(source)
+    pattern = r"#\[\s*test\s*\]\s*(?:#\[[^\]]*\]\s*)*fn\s+%s\b" % re.escape(name)
+    return re.search(pattern, live) is not None
 
 
 def compare(name: str, required: set[str], props: set[str], closed: bool,

@@ -280,9 +280,36 @@ class SettledSnapshotTests(unittest.TestCase):
     def test_open_carrier_is_noop(self):
         self.assertEqual(rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes), [])
 
-    def test_unresolvable_state_is_noop(self):
-        # empty string == gh could not say; the exact-head anchors are the ones that fail closed.
-        self.assertEqual(rs.verify_settled_snapshot(33, "", self._snap(), {33}, MAIN, self._yes), [])
+    # --- seventh audit, G-05: the fifth door, and the test that pinned it open -----------------
+    #
+    # This was `test_unresolvable_state_is_noop`, asserting `[]` for an empty carrier state — three
+    # lines above the two tests `A-11` rewrote for saying exactly the same thing in different
+    # words. `A-11`'s own sentence applies: *"a check that could not run has not passed."*
+    # `_is_noop` in the name is what stopped anyone noticing, including the round that rewrote its
+    # neighbours.
+    #
+    # An empty state short-circuits ALL FOUR of `A-11`'s doors before any is reached, so this was
+    # the largest fail-open in the function and the only one with a test defending it.
+
+    def test_an_unreadable_carrier_state_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(33, "", self._snap(), {33}, MAIN, self._yes,
+                                       self.MERGE, self._parent)
+        self.assertTrue(any("could not be read" in p for p in f), f)
+
+    def test_an_unreadable_state_does_not_let_a_missing_settled_head_through(self):
+        # What the fail-open actually cost: with no settled_at_main_head at all, it returned clean.
+        snap = self._snap()
+        del snap["settled_at_main_head"]
+        self.assertNotEqual(
+            rs.verify_settled_snapshot(33, "", snap, {33}, MAIN, self._yes, self.MERGE, self._parent),
+            [])
+
+    def test_an_OPEN_carrier_is_still_a_legitimate_skip(self):
+        # The half of the old guard that was right, kept separate so the two cannot be confused
+        # again — and note it needs no live measurements at all, which is why it is a skip.
+        self.assertEqual(
+            rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes,
+                                       self.MERGE, self._parent), [])
 
     def test_merged_without_settled_head_is_red(self):
         snap = self._snap(); snap.pop("settled_at_main_head")

@@ -37,8 +37,12 @@ def build(reports: list[str], ledger_report: str, ledger_ordinal: str,
     root = pathlib.Path(tempfile.mkdtemp())
     audit = root / m.AUDIT_DIR
     audit.mkdir(parents=True)
+    # Above MIN_REPORT_BYTES. The gate gained a size floor for the seventh audit's `G-03` — it
+    # passed a zero-byte report cited by all three documents, because "openable" was implemented as
+    # `.exists()`. These fixtures are testing the OTHER rules, so they must clear that floor rather
+    # than trip it; the floor has its own cases below.
     for name in reports:
-        (audit / name).write_text("# report\n", encoding="utf-8")
+        (audit / name).write_text("# report\n" + ("body line\n" * 300), encoding="utf-8")
     (audit / "AUDIT_LEDGER.md").write_text(
         LEDGER_HEAD.format(report=ledger_report, ordinal=ledger_ordinal.upper()), encoding="utf-8")
     if owner_report is not None:
@@ -115,6 +119,38 @@ class GateTests(unittest.TestCase):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / m.AUDIT_DIR).mkdir(parents=True)
         self.assertEqual(m.main(["--root", str(root)]), 1)
+
+
+class AnnouncedRoundTests(unittest.TestCase):
+    """`G-03` — the gate written to close `A-06` did not detect `A-06`.
+
+    Checks 1-3 compare the ledger, the OWNER page and the directory TO EACH OTHER. The auditor set
+    both banners to SEVENTH with no seventh report filed and got GREEN: agreeing with each other is
+    not the same as being current. And "openable" was `.exists()` — a zero-byte file cited by all
+    three documents also passed.
+    """
+
+    def test_an_announced_round_with_no_report_is_red(self):
+        # THE FINDING. Ledger and OWNER page both say SEVENTH; only a sixth report exists.
+        root = build([FOURTH, SIXTH], SIXTH, "seventh", SIXTH, "seventh")
+        f = m.main(["--root", str(root)])
+        self.assertEqual(f, 1)
+
+    def test_an_announced_round_with_its_report_is_green(self):
+        seventh = "2026-08-18-seventh-audit-491f923.md"
+        root = build([SIXTH, seventh], seventh, "seventh", seventh, "seventh")
+        self.assertEqual(m.main(["--root", str(root)]), 0)
+
+    def test_a_zero_byte_report_is_not_a_report(self):
+        root = build([SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        (root / m.AUDIT_DIR / SIXTH).write_text("", encoding="utf-8")
+        self.assertEqual(m.main(["--root", str(root)]), 1)
+
+    def test_the_size_floor_is_a_smoke_check_and_says_so(self):
+        # Pinned so nobody later defends it as a guarantee: padding satisfies it, deliberately.
+        root = build([SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        (root / m.AUDIT_DIR / SIXTH).write_text("x" * (m.MIN_REPORT_BYTES + 1), encoding="utf-8")
+        self.assertEqual(m.main(["--root", str(root)]), 0)
 
 
 class StateAnchorTests(unittest.TestCase):

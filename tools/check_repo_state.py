@@ -320,8 +320,31 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
     empty set: the whole justification for relaxing carrier-identity to naming is that the set of
     open pull requests is known, and `gh` failing is exactly when it is not.
     """
-    if not carrier_state or carrier_state == "OPEN":
+    if carrier_state == "OPEN":
         return []
+    # AN UNREADABLE CARRIER STATE IS A REFUSAL — seventh independent audit, `G-05`.
+    #
+    # These two used to share one guard: `if not carrier_state or carrier_state == "OPEN"`. The
+    # empty case is not a legitimate skip. `fetch_live` catches `SubprocessError`, `OSError` and
+    # `ValueError` and stores `None`, so a `gh` error, a rate limit, an expired 30 s timeout or
+    # malformed JSON all arrive here as `""` — and returned CLEAN, before all four of the doors
+    # `A-11` closed. Same root cause as the door `A-11` did close (gh unavailable), opposite
+    # behaviour, in the same function.
+    #
+    # And it was PINNED as intended: `test_unresolvable_state_is_noop`, three lines above the two
+    # tests `A-11` rewrote for saying exactly this. *"A check that could not run has not passed"*
+    # applied to it too, and `_is_noop` in the name hid that.
+    #
+    # The local path is not endangered. The only call site sits inside `if not _have_gh(): …
+    # return` — a laptop without `gh` never reaches this function at all, and the gate says
+    # "SKIPPED (online PR checks)" out loud. Reaching here with an empty state means `gh` IS
+    # available and the read of THIS carrier specifically failed, which is a different fact and
+    # deserves a different answer.
+    if not carrier_state:
+        return [f"current_workflow_pr #{carrier_no}: GitHub is reachable but its state could not "
+                f"be read (gh errored, timed out, was rate-limited, or returned malformed JSON). "
+                f"The settled-snapshot rule cannot run, and a check that could not run has not "
+                f"passed — it refuses rather than skipping the four doors behind it."]
     if open_now is None:
         return [f"current_workflow_pr #{carrier_no} is {carrier_state} and the set of open pull "
                 f"requests could not be determined (gh unavailable or failing). This rule permits a "

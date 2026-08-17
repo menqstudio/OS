@@ -14,10 +14,10 @@
       "border": "#e2e5ea",
       "accent": "#3d5afe",
       "accent-text": "#ffffff",
-      "success": "#1f9d55",
-      "warning": "#c77700",
+      "success": "#1b8749",
+      "warning": "#ab6600",
       "danger": "#d1435b",
-      "info": "#2a7de1",
+      "info": "#2876d5",
       "focus": "#3d5afe"
     },
     "dark": {
@@ -37,17 +37,77 @@
     }
   },
   "pairs": [
-    { "id": "body-text-on-bg",        "fg": "text",        "bg": "bg",       "size": "normal" },
-    { "id": "body-text-on-surface",   "fg": "text",        "bg": "surface",  "size": "normal" },
-    { "id": "body-text-on-elevated",  "fg": "text",        "bg": "elevated", "size": "normal" },
-    { "id": "muted-on-bg",            "fg": "muted",       "bg": "bg",       "size": "normal" },
-    { "id": "muted-on-surface",       "fg": "muted",       "bg": "surface",  "size": "normal" },
-    { "id": "muted-on-elevated",      "fg": "muted",       "bg": "elevated", "size": "normal" },
-    { "id": "primary-button-label",   "fg": "accent-text", "bg": "accent",   "size": "normal" },
-    { "id": "link-on-surface",        "fg": "accent",      "bg": "surface",  "size": "large"  },
-    { "id": "status-success-label",   "fg": "success",     "bg": "surface",  "size": "large"  },
-    { "id": "status-warning-label",   "fg": "warning",     "bg": "surface",  "size": "large"  },
-    { "id": "status-danger-label",    "fg": "danger",      "bg": "surface",  "size": "large"  },
-    { "id": "status-info-label",      "fg": "info",        "bg": "surface",  "size": "large"  }
+    {
+      "id": "body-text-on-bg",
+      "fg": "text",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "body-text-on-surface",
+      "fg": "text",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "body-text-on-elevated",
+      "fg": "text",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "muted-on-bg",
+      "fg": "muted",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "muted-on-surface",
+      "fg": "muted",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "muted-on-elevated",
+      "fg": "muted",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "primary-button-label",
+      "fg": "accent-text",
+      "bg": "accent",
+      "size": "normal"
+    },
+    {
+      "id": "link-on-surface",
+      "fg": "accent",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "status-success-label",
+      "fg": "success",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "status-warning-label",
+      "fg": "warning",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "status-danger-label",
+      "fg": "danger",
+      "bg": "surface",
+      "size": "normal"
+    },
+    {
+      "id": "status-info-label",
+      "fg": "info",
+      "bg": "surface",
+      "size": "normal"
+    }
   ]
 }

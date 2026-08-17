@@ -373,7 +373,7 @@ export function Settings() {
       <div className="set-grid">
 
         {/* — APPEARANCE · theme (real toggle) + language (real setLang) — */}
-        <section className="surface soft set-panel set-theme reveal" aria-label={t('settings.appearance')}>
+        <section className="surface soft set-panel reveal" aria-label={t('settings.appearance')}>
           <div className="sec-head">
             <h2>{t('settings.appearance')}</h2>
             <span className="note">{L('appearanceDesc')}</span>
