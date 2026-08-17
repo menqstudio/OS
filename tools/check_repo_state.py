@@ -444,6 +444,50 @@ def _have_gh() -> bool:
         return False
 
 
+#: The repository REST reads address. `gh pr view` infers it from the remote; `gh api` needs it.
+_REPO = "menqstudio/OS"
+
+
+def _rest_pull(number: int) -> dict | None:
+    """The same facts, from GitHub's REST (v3) API. A SECOND ROAD, not a bypass.
+
+    `gh pr view` and `gh pr list` speak GraphQL (v4) exclusively, so a v4 outage takes every pull
+    request read in this file down at once - and since 2026-08-17 `Repo-state` is a REQUIRED status
+    check on `main`, which means that outage blocks every merge in the repository.
+
+    Not hypothetical. On 2026-08-17 GitHub reported a Partial System Outage, v4 returned HTTP 503
+    to every call, `main` went red, and `gh api repos/.../pulls/148` answered correctly throughout.
+    Two decisions taken the same day compounded: the fail-closed refusals (`A-11`, `G-05`) and the
+    required-context list. The honest fix is neither to relax the refusal nor to drop the context.
+    It is to stop letting one transport be a single point of failure for a fact two can serve.
+
+    THE FAIL-CLOSED PROPERTY IS UNCHANGED. If both roads fail the caller still gets `None` and
+    still refuses. This removes only the case where one API is down and the other is answering.
+    """
+    try:
+        out = subprocess.run(["gh", "api", "repos/" + _REPO + "/pulls/" + str(number)],
+                             capture_output=True, text=True, timeout=30, check=True).stdout
+        pr = json.loads(out)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+    if not isinstance(pr, dict) or "state" not in pr:
+        return None
+    # REST's vocabulary differs from GraphQL's and the difference is load-bearing: REST reports a
+    # merged pull request as `state: "closed"` with `merged: true`, while GraphQL reports `MERGED`.
+    # Mapping a merged PR to CLOSED here would tell `verify_settled_snapshot` the wrong story.
+    state = "MERGED" if pr.get("merged") else str(pr.get("state") or "").upper()
+    merge_sha = pr.get("merge_commit_sha")
+    return {
+        "state": state,
+        "isDraft": bool(pr.get("draft")),
+        "headRefName": (pr.get("head") or {}).get("ref"),
+        "baseRefName": (pr.get("base") or {}).get("ref"),
+        "headRefOid": (pr.get("head") or {}).get("sha"),
+        "mergeCommit": {"oid": merge_sha} if merge_sha else None,
+        "body": pr.get("body"),
+    }
+
+
 def fetch_live(numbers: list[int]) -> dict:
     live: dict = {}
     for n in numbers:
@@ -452,7 +496,7 @@ def fetch_live(numbers: list[int]) -> dict:
                                  capture_output=True, text=True, timeout=30, check=True).stdout
             live[n] = json.loads(out)
         except (subprocess.SubprocessError, OSError, ValueError):
-            live[n] = None
+            live[n] = _rest_pull(n)      # v4 unreachable - try v3 before giving up
     return live
 
 
@@ -464,7 +508,7 @@ def fetch_carrier(number: int) -> dict | None:
             capture_output=True, text=True, timeout=30, check=True).stdout
         return json.loads(out)
     except (subprocess.SubprocessError, OSError, ValueError):
-        return None
+        return _rest_pull(number)        # same second road; see _rest_pull()
 
 
 def _git_is_ancestor(a: str, b: str) -> bool:
@@ -492,16 +536,48 @@ def open_prs_now() -> set[int] | None:
     try:
         out = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "number"],
                              capture_output=True, text=True, timeout=30)
-        if out.returncode != 0:
-            print(f"  (gh pr list failed, exit {out.returncode}: {(out.stderr or '').strip()[:200]})",
-                  file=sys.stderr)
-            return None
-        if not (out.stdout or "").strip():
-            print("  (gh pr list returned no output)", file=sys.stderr)
-            return None
+        if out.returncode != 0 or not (out.stdout or "").strip():
+            # v4 unreachable or silent - try v3 before refusing. Same second road as _rest_pull():
+            # `gh pr list` speaks GraphQL only, and on 2026-08-17 a v4 outage took this down while
+            # REST answered throughout. The refusal below is unchanged for the case where BOTH
+            # fail, which is the case it was written for.
+            print(f"  (gh pr list failed, exit {out.returncode}: "
+                  f"{(out.stderr or '').strip()[:160]} - falling back to REST)", file=sys.stderr)
+            return _rest_open_prs()
         return {int(pr["number"]) for pr in json.loads(out.stdout)}
     except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
-        print(f"  (gh pr list unavailable: {exc})", file=sys.stderr)
+        print(f"  (gh pr list unavailable: {exc} - falling back to REST)", file=sys.stderr)
+        return _rest_open_prs()
+
+
+def _rest_open_prs() -> set[int] | None:
+    """Open pull request numbers from REST (v3). `None` when that road fails too.
+
+    Paginated deliberately: `per_page=100` with `--paginate` rather than a single page, because a
+    truncated list would look like "these are all the open pull requests" and this function's whole
+    contract is that the set is COMPLETE. A partial answer here is worse than no answer, which is
+    why the failure path returns None rather than what it managed to read.
+    """
+    try:
+        out = subprocess.run(
+            ["gh", "api", "--paginate", "repos/" + _REPO + "/pulls?state=open&per_page=100"],
+            capture_output=True, text=True, timeout=60)
+        if out.returncode != 0 or not (out.stdout or "").strip():
+            print(f"  (REST fallback also failed, exit {out.returncode}: "
+                  f"{(out.stderr or '').strip()[:160]})", file=sys.stderr)
+            return None
+        # --paginate concatenates JSON arrays; normalise both shapes.
+        numbers: set[int] = set()
+        for chunk in out.stdout.replace("][", "],[").split("\n"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            data = json.loads(chunk)
+            for pr in (data if isinstance(data, list) else [data]):
+                numbers.add(int(pr["number"]))
+        return numbers
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
+        print(f"  (REST fallback unavailable: {exc})", file=sys.stderr)
         return None
 
 

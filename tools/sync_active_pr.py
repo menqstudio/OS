@@ -163,6 +163,40 @@ def settled_head_for(head: str, carrier_no: int | None) -> str:
     return parent if re.fullmatch(r"[0-9a-f]{40}", parent) else head
 
 
+def _rest_open_prs() -> list[dict] | None:
+    """Open pull requests from REST (v3), in the shape `live_open_prs()` returns. None on failure.
+
+    Paginated: a truncated list would look like "these are all the open pull requests", and every
+    caller here treats the set as complete - `parked_roles()` refuses on an undeclared one, and a
+    missing entry would let a parked PR go unnamed, which is the state `verify_settled_snapshot`
+    turns main red for.
+    """
+    out = subprocess.run(
+        ["gh", "api", "--paginate", "repos/menqstudio/OS/pulls?state=open&per_page=100"],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0 or not (out.stdout or "").strip():
+        return None
+    try:
+        rows: list[dict] = []
+        for chunk in out.stdout.replace("][", "],[").split("\n"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            data = json.loads(chunk)
+            for pr in (data if isinstance(data, list) else [data]):
+                rows.append({
+                    "number": int(pr["number"]),
+                    "headRefName": (pr.get("head") or {}).get("ref"),
+                    "headRefOid": (pr.get("head") or {}).get("sha"),
+                    "baseRefName": (pr.get("base") or {}).get("ref"),
+                    "isDraft": bool(pr.get("draft")),
+                    "title": pr.get("title"),
+                })
+        return sorted(rows, key=lambda p: p["number"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 def live_open_prs() -> list[dict]:
     """Every pull request GitHub says is open right now, with the fields prs[] is anchored on.
 
@@ -182,8 +216,17 @@ def live_open_prs() -> list[dict]:
         # whatever the console happens to be.
         capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
     if out.returncode != 0:
-        raise SystemExit("RED: `gh pr list` failed, so this tool cannot know what is open and will "
-                         "not guess: " + (out.stderr or "").strip())
+        # v4 unreachable - try v3 before refusing. `gh pr list` and `gh pr view` speak GraphQL
+        # exclusively, and on 2026-08-17 a GitHub Partial System Outage took every one of them
+        # down while REST answered throughout. `check_repo_state.py` carries the same fallback and
+        # the same reasoning: a second road to the same fact is not a relaxation, and the refusal
+        # below still stands when BOTH roads fail.
+        rest = _rest_open_prs()
+        if rest is None:
+            raise SystemExit("RED: `gh pr list` failed AND the REST fallback failed, so this tool "
+                             "cannot know what is open and will not guess: "
+                             + (out.stderr or "").strip())
+        return rest
     try:
         return sorted(json.loads(out.stdout or "[]"), key=lambda p: p["number"])
     except (ValueError, KeyError) as exc:
