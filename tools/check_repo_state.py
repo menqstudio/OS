@@ -528,6 +528,16 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
     `G-05`, and the same answer.
     """
     if live is None:
+        # NO RIGHTS IS NOT AN OUTAGE, and this one cannot be fixed by granting a permission:
+        # `administration` is not a GITHUB_TOKEN scope at all, so under the workflow token this
+        # read can never succeed. Refusing here would make the gate permanently red in CI for a
+        # reason nobody can act on, which is how a gate gets deleted. It reports and moves on, and
+        # `verify_required_contexts_exist` below is the half CI can actually check.
+        if "403" in why or "Resource not accessible" in why or "Not Found" in why:
+            print(f"  (SKIPPED: branch protection needs admin rights the workflow token cannot "
+                  f"hold; {REQUIRED_CHECKS.as_posix()} verified against workflow job names only)",
+                  file=sys.stderr)
+            return []
         hint = ""
         if "403" in why or "Resource not accessible" in why:
             hint = (" This reads as a PERMISSION gap, not an outage: the job needs "
@@ -565,6 +575,48 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
                         f"{REQUIRED_CHECKS.as_posix()}. A context nobody wrote down is a security "
                         f"boundary nobody can review.")
     return failures
+
+
+
+def verify_required_contexts_exist(expected: dict, workflow_dir: pathlib.Path) -> list[str]:
+    """Every required context names a job that exists. Pure/testable, offline, no rights needed.
+
+    The half of `H-04` that CI can carry. `verify_branch_protection` compares the committed
+    expectation against live GitHub and is the real check — but it needs admin rights, and
+    `administration` is not a `GITHUB_TOKEN` permission scope, so under the workflow token that
+    read can never succeed. Saying that plainly matters more than pretending otherwise: **the live
+    comparison runs locally and Owner-side, not in CI.**
+
+    What CI can verify without any rights is that the committed list is not stale in the way it is
+    most likely to go stale — a job renamed in a workflow while the required-context string keeps
+    the old name. GitHub treats a required context that never reports as PENDING, so a rename does
+    not fail the build; it blocks every merge, forever, with no message. That is worth catching.
+
+    Matched on the `name:` a job declares, because that is the string GitHub uses as the context.
+    A matrix job's context is `name (value)`, so the bare name is accepted as a prefix.
+    """
+    problems: list[str] = []
+    if not workflow_dir.is_dir():
+        return problems
+    names: set[str] = set()
+    for path in sorted(workflow_dir.glob("*.y*ml")):
+        for m in re.finditer(r"^\s{4,6}name:\s*(.+?)\s*$", path.read_text(encoding="utf-8"), re.M):
+            names.add(m.group(1).strip().strip('"\''))
+    if not names:
+        return [f"no job names found under {workflow_dir.name}/ — this check verified nothing"]
+    for context in expected.get("contexts") or []:
+        # A matrix job's context is `<declared name> (<matrix values>)`, so strip ONE trailing
+        # parenthetical and require an EXACT match on what is left. A prefix match would have been
+        # the obvious shortcut and is wrong: it accepts a job renamed by appending anything, which
+        # is exactly the drift this is for — mutation-tested, and the prefix version passed it.
+        base = re.sub(r"\s*\([^()]*\)$", "", context)
+        if context in names or base in names:
+            continue
+        problems.append(
+            f"{REQUIRED_CHECKS.as_posix()} requires `{context}`, and no workflow declares a job "
+            f"with that name. A required context that never reports is PENDING forever — GitHub "
+            f"does not fail the build, it blocks every merge with no message.")
+    return problems
 
 
 def _live_protection() -> tuple[dict | None, str]:
@@ -754,6 +806,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             live_prot, why = _live_protection()
             failures += verify_branch_protection(expected, live_prot, why)
+            failures += verify_required_contexts_exist(
+                expected, root / ".github" / "workflows")
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
