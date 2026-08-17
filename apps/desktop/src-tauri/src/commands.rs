@@ -153,6 +153,68 @@ const MAX_PENDING_ANSWERS: usize = 32;
 struct PendingAnswer {
     prompt: String,
     answer: String,
+    /// HOW this answer was produced, carried from the site that produced it.
+    ///
+    /// The sixth independent audit's `A-05`: `save_ask_to_knowledge` wrote
+    /// `"governed research · {prompt}"` unconditionally, and this struct had no field that
+    /// could have contradicted it. Two paths stash into this one map — a governed turn held
+    /// under an untrusted manifest, and the ungoverned development stream, which runs no turn,
+    /// issues no challenge and produces no receipt. On a shipped install the governed branch is
+    /// blocked before the model runs and never stashes, **so the only configuration in which
+    /// that note could be written was the one where its provenance string was false.**
+    ///
+    /// A field the save path cannot guess is the fix. Provenance is a property of the
+    /// PRODUCTION of an answer, and it was being asserted at the point of persistence by code
+    /// that had no way to know it.
+    provenance: AnswerProvenance,
+}
+
+/// What actually happened behind an answer, in decreasing order of trust.
+///
+/// Deliberately not a boolean. `governed` and `ungoverned` are not the only states this app can
+/// be in — the one it is in on every developer machine today is neither, and flattening it into
+/// either would reproduce `A-05` in the other direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerProvenance {
+    /// A governed turn ran and its receipt verified against a TRUSTED manifest.
+    ///
+    /// Nothing constructs this yet, and that is correct rather than an omission:
+    /// `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no shipped
+    /// install can reach a trusted verification. It exists so the day one can, the note says so
+    /// because the producing site said so — not because a `format!` two hundred lines away
+    /// assumed it.
+    Governed,
+    /// A governed turn ran; the receipt verified desktop-side against NO trusted manifest.
+    /// `ReceiptOutcome::DevelopmentUntrustedHeld`.
+    DevelopmentUntrusted,
+    /// No governed turn at all — the `BROPS_ALLOW_UNGOVERNED=1` development stream. No challenge,
+    /// no receipt, no verification.
+    Ungoverned,
+}
+
+impl AnswerProvenance {
+    /// The `source` prefix a persisted note carries. Written so a reader who knows nothing about
+    /// this codebase can tell the three apart, because that reader is the point of the field.
+    fn source_prefix(self) -> &'static str {
+        match self {
+            Self::Governed => "governed research",
+            Self::DevelopmentUntrusted => "development-untrusted research (no trusted manifest)",
+            Self::Ungoverned => "UNGOVERNED research (no governed turn, no receipt)",
+        }
+    }
+
+    /// The wire token the renderer switches on.
+    ///
+    /// Deliberately the SAME vocabulary `receiptBadge()` already uses for chat messages
+    /// (`Conversations.tsx`), so one outcome does not get two names depending on which surface a
+    /// reader is looking at. `ungoverned` is new because no chat path can produce it.
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Governed => "trusted_verified",
+            Self::DevelopmentUntrusted => "development_untrusted",
+            Self::Ungoverned => "ungoverned",
+        }
+    }
 }
 
 fn pending_answers() -> &'static Mutex<HashMap<String, PendingAnswer>> {
@@ -161,7 +223,11 @@ fn pending_answers() -> &'static Mutex<HashMap<String, PendingAnswer>> {
 }
 
 /// Stash a server-generated answer under a fresh opaque id and return that id.
-fn stash_pending_answer(prompt: String, answer: String) -> String {
+///
+/// `provenance` is REQUIRED rather than defaulted. A default would be a guess made at the wrong
+/// end of the pipeline, which is exactly the defect this parameter closes (`A-05`) — and the
+/// compiler now refuses a new stash site that has not decided what it is producing.
+fn stash_pending_answer(prompt: String, answer: String, provenance: AnswerProvenance) -> String {
     let result_id = brops_core::id();
     let mut pending = pending_answers().lock().unwrap_or_else(|p| p.into_inner());
     if pending.len() >= MAX_PENDING_ANSWERS {
@@ -169,7 +235,7 @@ fn stash_pending_answer(prompt: String, answer: String) -> String {
             pending.remove(&k);
         }
     }
-    pending.insert(result_id.clone(), PendingAnswer { prompt, answer });
+    pending.insert(result_id.clone(), PendingAnswer { prompt, answer, provenance });
     result_id
 }
 
@@ -694,10 +760,20 @@ pub fn save_ask_to_chat(
 /// The id is consumed on use. If the write fails the answer is put back, so a disk error
 /// costs a retry rather than the result.
 ///
-/// The note's `source` records that this came from a governed run and carries the query
-/// verbatim — a knowledge entry whose provenance is "somebody typed it" and one whose
-/// provenance is "a governed turn answered this question" are different claims, and the
-/// store should not flatten them.
+/// The note's `source` records HOW the answer was produced and carries the query verbatim — a
+/// knowledge entry whose provenance is "somebody typed it" and one whose provenance is "a governed
+/// turn answered this question" are different claims, and the store should not flatten them.
+///
+/// **That paragraph used to say "records that this came from a governed run", and the code wrote
+/// `"governed research · {prompt}"` unconditionally.** The sixth independent audit's `A-05`: two
+/// paths stash into one map, and on a shipped install the governed one is blocked before the model
+/// runs — so the only configuration in which this command could fire was the ungoverned one, where
+/// the string was false. The command was flattening the exact distinction its own doc comment
+/// argues for.
+///
+/// The provenance now travels with the answer from the site that produced it
+/// ([`AnswerProvenance`]) and is written verbatim. This command asserts nothing about how the text
+/// came to exist, because it is not in a position to know.
 #[tauri::command]
 pub fn save_ask_to_knowledge(
     state: State<AppState>,
@@ -715,8 +791,9 @@ pub fn save_ask_to_knowledge(
             brops_core::domain::NewKnowledgeNote {
                 title: title.clone(),
                 body: claimed.answer.clone(),
-                // Provenance, not decoration. The query is the question this body answers.
-                source: format!("governed research · {}", claimed.prompt),
+                // Provenance, not decoration — and REPORTED, not assumed. The prefix comes from
+                // the producing site; the query is the question this body answers.
+                source: format!("{} · {}", claimed.provenance.source_prefix(), claimed.prompt),
                 tags: "research".to_string(),
             },
         )
@@ -1054,7 +1131,17 @@ pub enum StreamEvent {
     /// One-shot `stream_ask` finished: the full answer is held server-side under
     /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
     /// persist the pair — it never carries the agent body itself (P1-6).
-    Ready { result_id: String },
+    ///
+    /// `provenance` says HOW the held answer was produced, because the renderer cannot tell and
+    /// was guessing. The sixth audit's `A-05` found the Research page rendering *"Verified ·
+    /// held"* and *"Verified desktop-side and held by the backend"* for an outcome that is
+    /// `development_untrusted` at best and, on the only path a shipped install can reach,
+    /// unreceipted entirely. Fixing only the words would have left the page unable to tell those
+    /// two apart, so the fact travels instead.
+    ///
+    /// This is not a P1-6 loosening. Provenance is a claim ABOUT the answer, not the answer: the
+    /// body stays server-side and the webview still holds nothing but an opaque id.
+    Ready { result_id: String, provenance: &'static str },
     /// Bro handed work to a specialist. Carries the delegation as an already-shaped JSON object
     /// rather than a typed struct so the OMISSION of a field is expressible: an absent `tools`
     /// means capability could not be established, and the renderer says "unknown" instead of
@@ -2190,8 +2277,14 @@ pub async fn stream_ask(
             match outcome {
                 // Accepted + held: stash the VERIFIED body under a one-time id (never post it).
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => {
-                    let result_id = stash_pending_answer(prompt, body);
-                    let _ = on_event.send(StreamEvent::Ready { result_id });
+                    // The outcome's own name is the provenance. Verified desktop-side against no
+                    // trusted manifest is not "governed", and the note this may become must not
+                    // say it was.
+                    let provenance = AnswerProvenance::DevelopmentUntrusted;
+                    let result_id = stash_pending_answer(prompt, body, provenance);
+                    let _ = on_event.send(StreamEvent::Ready {
+                        result_id, provenance: provenance.wire(),
+                    });
                 }
                 // Blocked (every Wave 3a governed ask): a turn-level notice, no held answer leaks.
                 Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
@@ -2226,8 +2319,17 @@ pub async fn stream_ask(
         Ok(answer) => {
             // Hold the SERVER-generated answer under an opaque one-time id; hand
             // the webview only the id (never the body) for a later save.
-            let result_id = stash_pending_answer(prompt, answer);
-            let _ = on_event.send(StreamEvent::Ready { result_id });
+            //
+            // This is the `BROPS_ALLOW_UNGOVERNED=1` development stream: a plain
+            // `ai::generate_stream` with no governed turn, no challenge, no receipt and no
+            // verification. It is also — because the governed branch is blocked before the model
+            // runs on every shipped install — the ONLY path that reaches a save today. Whatever
+            // this becomes must say so.
+            let provenance = AnswerProvenance::Ungoverned;
+            let result_id = stash_pending_answer(prompt, answer, provenance);
+            let _ = on_event.send(StreamEvent::Ready {
+                result_id, provenance: provenance.wire(),
+            });
         }
         Err(e) => {
             let _ = on_event.send(StreamEvent::Error { message: e });
@@ -2829,13 +2931,63 @@ mod tests {
         assert!(claim_pending_answer("nonexistent-forged-id").is_none());
 
         // A server-generated answer round-trips through the opaque id unchanged.
-        let id = stash_pending_answer("what is 2+2?".to_string(), "4".to_string());
+        let id = stash_pending_answer(
+            "what is 2+2?".to_string(), "4".to_string(), AnswerProvenance::Ungoverned);
         let first = claim_pending_answer(&id).expect("first claim returns the stashed answer");
         assert_eq!(first.prompt, "what is 2+2?");
         assert_eq!(first.answer, "4");
 
         // One-time: the same id cannot be used to save the answer again.
         assert!(claim_pending_answer(&id).is_none(), "second claim must be refused");
+    }
+
+    // A-05, sixth independent audit. `save_ask_to_knowledge` wrote
+    // `"governed research · {prompt}"` unconditionally, and on a shipped install the ONLY path
+    // that can reach it is the ungoverned development stream — so the single configuration in
+    // which the note could be written was the one where its provenance was false.
+    //
+    // These pin the property that fixes it: provenance is decided where the answer is PRODUCED
+    // and travels with it. A save path cannot know how a body came to exist, so it must not say.
+    #[test]
+    fn provenance_travels_with_the_answer_it_describes() {
+        let id = stash_pending_answer(
+            "q".to_string(), "a".to_string(), AnswerProvenance::DevelopmentUntrusted);
+        let claimed = claim_pending_answer(&id).expect("stashed");
+        assert_eq!(claimed.provenance, AnswerProvenance::DevelopmentUntrusted);
+    }
+
+    #[test]
+    fn the_ungoverned_stream_never_produces_a_note_that_says_governed() {
+        // THE DEFECT, as a test. `BROPS_ALLOW_UNGOVERNED=1` runs a plain generate_stream: no
+        // turn, no challenge, no receipt, no verification.
+        let prefix = AnswerProvenance::Ungoverned.source_prefix();
+        let source = format!("{} · {}", prefix, "what did the engine decide?");
+        assert!(!source.starts_with("governed research"),
+                "the ungoverned path must not stamp `governed research`: {source}");
+        assert!(source.contains("UNGOVERNED"),
+                "a reader must be able to see this at a glance: {source}");
+        assert!(source.contains("no receipt"), "say WHY it is ungoverned: {source}");
+    }
+
+    #[test]
+    fn a_held_development_answer_is_not_described_as_governed_either() {
+        // The other stash site. `DevelopmentUntrustedHeld` verified desktop-side against NO
+        // trusted manifest — which is not the same claim as governed, and the renderer's own
+        // receiptBadge() already maps it to a warning and refuses to promote it.
+        let source = AnswerProvenance::DevelopmentUntrusted.source_prefix();
+        assert!(!source.starts_with("governed research"), "{source}");
+        assert!(source.contains("no trusted manifest"), "name the missing thing: {source}");
+    }
+
+    #[test]
+    fn the_governed_prefix_exists_and_is_reachable_only_from_a_trusted_verification() {
+        // Constructed HERE and nowhere else in the crate, deliberately.
+        // `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no
+        // shipped install can reach a trusted verification and nothing may claim one. The variant
+        // exists so that the day one can, the note says so because the PRODUCING site said so —
+        // not because a `format!` two hundred lines away assumed it. This test is what keeps it
+        // honest and what keeps the compiler from calling it dead.
+        assert_eq!(AnswerProvenance::Governed.source_prefix(), "governed research");
     }
 
     // T-010 in-body bound: an automation's action (which can drive execution) is

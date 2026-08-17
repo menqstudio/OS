@@ -408,8 +408,20 @@ export type StreamEvent =
   // produced (Wave 3a Blocks every governed turn). The UI shows a transient turn-level
   // notice, never a persisted reply. `reason` is the machine verdict.
   | { type: 'blocked'; reason: string }
-  // stream_ask only: the full answer is held server-side under this one-time id.
-  | { type: 'ready'; resultId: string }
+  // stream_ask only: the full answer is held server-side under this one-time id, and
+  // `provenance` says HOW it was produced.
+  //
+  // The sixth audit's `A-05`: the Research page rendered "Verified · held" for an outcome that is
+  // `development_untrusted` at best and, on the only path a shipped install can reach, has no
+  // receipt at all. The page could not have known — the event did not say — so the fact now
+  // travels, rather than the words being softened around a guess.
+  //
+  // The vocabulary is deliberately the one `receiptBadge()` already uses for chat messages, so one
+  // outcome does not get two names on two surfaces. `ungoverned` is new because no chat path can
+  // produce it. Typed `string` and not a union on purpose: this crosses the IPC boundary, where a
+  // narrow type is a hope about the backend rather than a guarantee — the renderer's fallback arm
+  // is what actually holds.
+  | { type: 'ready'; resultId: string; provenance: string }
   // Bro handed work to a specialist, mid-turn, on this same channel.
   //
   // `delegation` is typed `unknown` DELIBERATELY. The Rust side sends an already-shaped JSON

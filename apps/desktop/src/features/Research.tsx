@@ -10,6 +10,7 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { STR } from './Research.strings';
+import { heldLabel, heldNoteKey } from './Research.provenance';
 import type { ResearchItem } from '../domain/entities';
 import type { Lang, Tone } from '../domain/enums';
 
@@ -66,7 +67,7 @@ function statusLabel(L: Localize, status: string): string {
 type RunState =
   | { k: 'idle' }
   | { k: 'running' }
-  | { k: 'held'; resultId: string }
+  | { k: 'held'; resultId: string; provenance: string }
   | { k: 'saved' }
   | { k: 'blocked'; reason: string }
   | { k: 'failed'; reason: string };
@@ -94,7 +95,9 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
       // `delta` is ignored on purpose: a governed ask is buffered by construction and the
       // body is held, not streamed. Painting deltas here would show text that the verify
       // step may still refuse.
-      if (ev.type === 'ready') setRun({ k: 'held', resultId: ev.resultId });
+      if (ev.type === 'ready') {
+        setRun({ k: 'held', resultId: ev.resultId, provenance: ev.provenance });
+      }
       else if (ev.type === 'blocked') setRun({ k: 'blocked', reason: ev.reason });
       else if (ev.type === 'error') setRun({ k: 'failed', reason: ev.message });
     }).catch((e: unknown) => {
@@ -128,7 +131,10 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
       <div className="sec-head">
         <h3>{L('runPanel')}</h3>
         {run.k === 'running' && <span className="pill info">{L('running')}</span>}
-        {run.k === 'held' && <span className="pill warn">◑ {L('verifiedHeld')}</span>}
+        {run.k === 'held' && (() => {
+          const b = heldLabel(run.provenance);
+          return <span className={`pill ${b.tone}`}>{b.glyph} {L(b.key)}</span>;
+        })()}
         {run.k === 'saved' && <span className="pill success">✓ {L('savedToKnowledge')}</span>}
       </div>
 
@@ -156,7 +162,7 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
       {/* The outcome. `role="status"` for the ones that are progress, `role="alert"` for the
           two that mean the thing the owner asked for did not happen. */}
       {run.k === 'held' && (
-        <p className="rsx-run-out" role="status">{L('verifiedHeldNote')}</p>
+        <p className="rsx-run-out" role="status">{L(heldNoteKey(run.provenance))}</p>
       )}
       {run.k === 'blocked' && (
         <p className="rsx-run-out rsx-run-out--blocked" role="alert">
@@ -167,7 +173,7 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
       )}
       {run.k === 'failed' && (
         <p className="rsx-run-out rsx-run-out--failed" role="alert">
-          <span className="pill danger">⚠ {L('runFailed')}</span>
+          <span className="pill bad">⚠ {L('runFailed')}</span>
           <span className="rsx-run-reason">{run.reason}</span>
         </p>
       )}
