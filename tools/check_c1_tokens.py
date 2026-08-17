@@ -85,11 +85,26 @@ def root_blocks(css: str) -> list[dict[str, str]]:
     """EVERY `:root` block's declarations, base first. Pure/testable.
 
     Reading only the first block was a hole big enough to drive the bug through. The stylesheet has
-    three `:root`s — the base and two overrides — and 17 of the 42 §C.1 tokens are redeclared after
-    the first, so an override could change `--azure` to red, or `--s4` to 99px, and the gate stayed
-    GREEN. The fifth audit demonstrated exactly that (A-04). The base block still decides §C.1
-    parity, because an override is a responsive tier and not the token's declared value; the
-    overrides are checked for internal consistency instead.
+    three `:root`s — the base, a theme and a responsive tier — and 17 of the 42 §C.1 tokens are
+    redeclared after the first, so an override could change `--azure` to red, or `--s4` to 99px,
+    and the gate stayed GREEN. The fifth audit demonstrated exactly that (its `A-04`).
+
+    **This docstring then claimed both halves were closed, and only one was.** The sixth
+    independent audit's `A-10` measured the other: `--azure:#FF0000` in a new `@media :root` and in
+    `:root[data-theme="light"]` were both still GREEN — the example named here by hand. `--s4` was
+    covered because `ladder_monotonic` happened to see it; nothing looked at colours at all.
+
+    Both are covered now, by two different rules, because they are two different questions:
+
+      * `ladder_monotonic` asks whether an ORDERED SCALE still runs the way the base declares it —
+        applied to spacing, the type scale and the radii, which is where `--t-body:99px` and
+        `--r-pill:0px` were also green;
+      * `override_scope` asks whether a block is entitled to touch that family of token AT ALL —
+        a theme may restate colours, a responsive tier may restate geometry, and neither may do
+        the other's job.
+
+    The base block still decides §C.1 parity, because an override is a tier and not the token's
+    declared value.
     """
     blocks = [
         # `body + ";"` because the LAST declaration in a block is usually written without a
@@ -109,16 +124,139 @@ def root_declarations(css: str) -> dict[str, str]:
     return root_blocks(css)[0]
 
 
-def ladder_monotonic(blocks: list[dict[str, str]], names: list[str]) -> list[str]:
-    """The spacing ladder must not run backwards in ANY tier. Pure/testable.
+def root_block_kinds(css: str) -> list[str]:
+    """What KIND each `:root` block is, in the same order as `root_blocks`. Pure/testable.
+
+    `base` | `theme` (a `[data-theme=…]` attribute selector) | `responsive` (inside an `@media`).
+    A block that is neither is `other`, and `override_scope()` refuses those rather than guessing
+    what they are entitled to change.
+    """
+    kinds: list[str] = []
+    for m in re.finditer(r"(:root[^{]*)\{", css):
+        selector = m.group(1)
+        before = css[:m.start()]
+        # Inside an @media? Count braces since the last @media opener: still open means inside.
+        in_media = False
+        last = None
+        for med in re.finditer(r"@media[^{]*\{", before):
+            last = med
+        if last is not None:
+            tail = css[last.end():m.start()]
+            if tail.count("{") - tail.count("}") >= 0:
+                in_media = True
+        if "[data-theme" in selector:
+            kinds.append("theme")
+        elif in_media:
+            kinds.append("responsive")
+        elif not kinds:
+            kinds.append("base")
+        else:
+            kinds.append("other")
+    return kinds
+
+
+#: Which §C.1 tokens are COLOUR and which are GEOMETRY. A token whose declared value is a hex
+#: colour is a colour; everything else in §C.1 is a length, a duration or an easing curve.
+def token_kinds(expected: dict[str, str]) -> dict[str, str]:
+    """`{token: 'colour' | 'geometry'}` from §C.1's own declared values. Pure/testable."""
+    return {name: ("colour" if value.strip().startswith("#") else "geometry")
+            for name, value in expected.items()}
+
+
+def override_scope(blocks: list[dict[str, str]], kinds: list[str],
+                   kinds_by_token: dict[str, str]) -> list[str]:
+    """What each `:root` override is ENTITLED to change — sixth independent audit, `A-10`.
+
+    `root_blocks`'s docstring claimed the closed hole was that *"an override could change
+    `--azure` to red, or `--s4` to 99px, and the gate stayed GREEN."* Only the `--s4` half was
+    closed, by `ladder_monotonic`. The auditor measured the other: `--azure:#FF0000` in a new
+    `@media :root`, and again in `:root[data-theme="light"]`, both **GREEN** — the docstring's own
+    hand-picked example, still open.
+
+    Forbidding colour overrides outright would have been the wrong fix, and is why this took a
+    rule rather than a patch: `:root[data-theme="light"]` redeclares 42 colour tokens and that is
+    exactly what a theme IS. What each kind of block may change is different:
+
+      * a **theme** block exists to restate colours. Geometry has no theme — a light layout and a
+        dark layout are the same layout — so a theme that moves the spacing ladder or the type
+        scale is changing something no reader asked it to.
+      * a **responsive** block exists to restate geometry. A colour has no responsive meaning: a
+        surface does not become a different colour at 560px, and a rule that says it does is
+        either a mistake or a defect hidden where nobody reads.
+
+    So the check is per-kind, and each direction is a real failure rather than a stylistic one.
+    Ordering within a scale is still `ladder_monotonic`'s job; this is about which scales a block
+    is allowed to touch at all.
+    """
+    allowed = {"theme": "colour", "responsive": "geometry"}
+    failures: list[str] = []
+    for index, (block, kind) in enumerate(zip(blocks, kinds)):
+        if kind == "base":
+            continue
+        if kind == "other":
+            failures.append(
+                f":root block {index} is neither the base, a [data-theme=…] theme nor a responsive "
+                f"@media tier. This gate cannot say what it is entitled to change, and a block "
+                f"nobody can classify is where a token change hides. Give it one of those shapes.")
+            continue
+        may = allowed[kind]
+        for name in sorted(block):
+            token_kind = kinds_by_token.get(name)
+            if token_kind is None or token_kind == may:
+                continue
+            failures.append(
+                f":root block {index} ({kind}) redeclares `{name}`, which is a {token_kind} token. "
+                f"A {kind} block may only restate {may}: "
+                + ("a light layout and a dark layout are the same layout."
+                   if kind == "theme" else
+                   "a surface does not become a different colour at a narrower viewport."))
+    return failures
+
+
+def ladder_monotonic(blocks: list[dict[str, str]], names: list[str],
+                     scale: str = "spacing ladder") -> list[str]:
+    """An ordered scale must not reorder itself in ANY tier. Pure/testable.
 
     `--s1..--s10` is an ordered scale, and code picks a rung by meaning — `--s7` is "more than
     `--s6`, less than `--s8`". A tier that tightens some rungs and not others breaks that promise
     silently: the phone tier dropped `--s8` to 24px while `--s7` stayed at 28px, so a panel using
     `padding:var(--s7) var(--s5)` kept desktop-tier vertical padding on a phone while its
     horizontal padding tightened. Nothing renders wrong enough to notice; it is simply wrong.
+
+    **The DIRECTION is read from the base block rather than assumed.** This applies to the type
+    scale and the radii too (`A-10`: `--t-body:99px` and `--r-pill:0px` in a later override were
+    both measured GREEN), and the type scale runs the other way — `--t-hero` 32px down to
+    `--t-micro` 10px. An ascending-only check reported the correct base type scale as six
+    failures the first time it was pointed at it, which is how a gate gets switched off rather
+    than fixed. The invariant is not "increasing"; it is "the order the base declares still
+    holds".
     """
-    failures = []
+    def read(block: dict[str, str], on_error: list[str] | None, index: int) -> list[tuple[str, float]]:
+        out = []
+        for name in names:
+            raw = block.get(name)
+            if raw is None:
+                continue
+            match = re.fullmatch(r"(\d+(?:\.\d+)?)px", raw.strip())
+            if not match:
+                if on_error is not None:
+                    on_error.append(f":root block {index}: {name} = {raw!r} is not a px length")
+                continue
+            out.append((name, float(match.group(1))))
+        return out
+
+    failures: list[str] = []
+    base_values = read(blocks[0], failures, 0)
+    ups = sum(1 for (_, a), (_, b) in zip(base_values, base_values[1:]) if b > a)
+    downs = sum(1 for (_, a), (_, b) in zip(base_values, base_values[1:]) if b < a)
+    if ups and downs:
+        failures.append(
+            f"the base {scale} is not ordered at all — it rises {ups} time(s) and falls {downs}. "
+            f"Nothing downstream can be checked against a scale that has no direction.")
+        return failures
+    ascending = ups >= downs
+    _ = ascending  # direction is applied below
+    failures_local = []
     for index, block in enumerate(blocks):
         # A block that touches NO rung cannot make the ladder inconsistent, so it is skipped. One
         # that touches a SINGLE rung very much can — the partial tier is the dangerous shape,
@@ -131,23 +269,16 @@ def ladder_monotonic(blocks: list[dict[str, str]], names: list[str]) -> list[str
         effective = dict(blocks[0])
         for earlier in blocks[1:index + 1]:
             effective.update(earlier)
-        values = []
-        for name in names:
-            raw = effective.get(name)
-            if raw is None:
-                continue
-            match = re.fullmatch(r"(\d+(?:\.\d+)?)px", raw.strip())
-            if not match:
-                failures.append(f":root block {index}: {name} = {raw!r} is not a px length")
-                continue
-            values.append((name, float(match.group(1))))
+        values = read(effective, failures_local if index else None, index)
         for (a_name, a), (b_name, b) in zip(values, values[1:]):
-            if b < a:
-                failures.append(
-                    f":root block {index}: the spacing ladder runs backwards — {a_name}={a:g}px "
-                    f"but {b_name}={b:g}px. A tier that tightens some rungs and not others makes "
-                    f"'one step larger' false for whoever picked the token by meaning.")
-    return failures
+            if (b < a) if ascending else (b > a):
+                way = "larger" if ascending else "smaller"
+                failures_local.append(
+                    f":root block {index}: the {scale} reorders itself — {a_name}={a:g}px but "
+                    f"{b_name}={b:g}px, and the base declares this scale getting {way} along its "
+                    f"length. A tier that reorders some rungs and not others makes 'one step "
+                    f"{way}' false for whoever picked the token by meaning.")
+    return failures + failures_local
 
 
 def referenced_tokens(texts: dict[str, str]) -> dict[str, list[str]]:
@@ -181,11 +312,78 @@ def referenced_tokens(texts: dict[str, str]) -> dict[str, list[str]]:
     return refs
 
 
-#: Classes whose ELEMENT IS INVISIBLE until an animation runs. `.reveal`/`.rise` are
-#: `opacity:0; transform:translateY(14px); animation:reveal …` — the entrance animation is the
-#: only thing that paints them. Anything that overrides `animation` on such an element must keep
-#: the entrance in the list.
+#: Seeds only. The real set is DERIVED from the stylesheet by `entrance_classes()` below.
+#:
+#: This used to be the whole list, and the sixth independent audit's `A-04` measured the cost:
+#: the check knew two entrance classes while **fourteen** rules in the tree declare `opacity:0`
+#: together with an animation and are equally invisible-until-animated — `.chat-typing span`,
+#: `.strip--sweeping .strip-sweep`, `.shimmer`, `.sigil::before`, `.spark .fill`, `.spark .end`,
+#: `.v-agents .lat-links .ll`, `.v-analytics .an-fill`, `.v-analytics .an-emk`, `.v-files .slab`,
+#: `.v-home .wf-fill`, `.v-notifications .band`. A hand-maintained list of the dangerous shapes is
+#: only ever as current as the last person who remembered it.
 ENTRANCE_CLASSES = {"reveal": "reveal", "rise": "reveal"}
+
+#: Words the `animation` shorthand can contain that are NOT keyframe names.
+#:
+#: `A-04`'s latent third finding: the name harvest takes every identifier out of the shorthand, so
+#: a keyframe called `forwards`, `infinite` or `both` would make every declaration containing that
+#: word "self-sufficient" and switch the whole check off. No such collision exists among the
+#: tree's 163 keyframe names today — `keyframe_name_collisions()` is what keeps it that way.
+ANIMATION_KEYWORDS = {
+    "normal", "reverse", "alternate", "alternate-reverse",
+    "none", "forwards", "backwards", "both",
+    "running", "paused", "infinite",
+    "linear", "ease", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end",
+    "steps", "cubic-bezier", "var", "s", "ms", "initial", "inherit", "unset", "revert",
+}
+
+
+def entrance_classes(all_css: str) -> dict[str, str]:
+    """Every class whose element is INVISIBLE until its own animation runs. Pure/testable.
+
+    Derived from the stylesheet rather than listed by hand (`A-04`). A rule that declares
+    `opacity: 0` and an animation in the same body is making the animation load-bearing: the
+    element does not paint until it runs, so anything that later replaces the animation list on
+    that element deletes its only path to being visible. That is `A-01`, and it is a property of
+    the rule, not of a name someone remembered to add here.
+
+    The SUBJECT compound is what gets recorded — for `.spark .fill` that is `fill` — because that
+    is the element the animation is on and the element another rule would clobber.
+
+    Conservative in the direction that matters: a rule with no class in its subject contributes
+    nothing, and a keyframe that cannot be named is skipped rather than guessed at. The result
+    only ever makes the clobber check consider MORE elements, and every one it reports is printed
+    with its selector.
+    """
+    found = dict(ENTRANCE_CLASSES)
+    live = re.sub(r"/\*.*?\*/", " ", all_css, flags=re.S)
+    for selector, body in re.findall(r"([^{}@;]+)\{([^{}]*)\}", live):
+        if not re.search(r"(?<![-\w])opacity\s*:\s*0\s*(?:[;}]|$)", body + ";"):
+            continue
+        decl = re.search(r"(?<![-\w])animation(?:-name)?\s*:\s*([^;}]+)", body)
+        if not decl:
+            continue
+        names = [n for n in re.findall(r"[a-zA-Z][\w-]*", decl.group(1))
+                 if n not in ANIMATION_KEYWORDS]
+        if not names:
+            continue
+        for part in selector.split(","):
+            subject = re.split(r"[\s>+~]+", part.strip())[-1]
+            # A pseudo-element is a different box and cannot be clobbered by a class rule on the
+            # element itself, so `.sigil::before` contributes nothing here.
+            if re.search(r"::[a-zA-Z-]+", subject):
+                continue
+            for cls in re.findall(r"\.([a-zA-Z][\w-]*)", subject):
+                found.setdefault(cls, names[0])
+    return found
+
+
+def keyframe_name_collisions(all_css: str) -> list[str]:
+    """A keyframe named after an `animation` keyword — the latent hole in `A-04`. Pure/testable."""
+    return sorted({
+        name for name in re.findall(r"@keyframes\s+([\w-]+)", all_css)
+        if name in ANIMATION_KEYWORDS
+    })
 
 
 def classname_groups(texts: dict[str, str]) -> list[set[str]]:
@@ -200,9 +398,11 @@ def classname_groups(texts: dict[str, str]) -> list[set[str]]:
             i = match.end()
             if i >= len(text):
                 continue
+            plain = False
             if text[i] in "\"'":                      # className="a b c"
                 end = text.find(text[i], i + 1)
                 region = text[i + 1:end] if end != -1 else ""
+                plain = True
             elif text[i] == "{":                      # className={`a ${x} b` : ''} — brace-matched,
                 depth, j = 0, i                       # so a conditional class is not truncated at
                 while j < len(text):                  # the first quote inside the interpolation.
@@ -224,15 +424,42 @@ def classname_groups(texts: dict[str, str]) -> list[set[str]]:
             #  2. The literal text of the template itself, with interpolations removed.
             # Over-inclusion is the safe direction here: a stray token can only make this check
             # consider MORE rules, and every rule it considers is printed with its selector.
+            # `[A-Za-z]`, not `[a-z]`. The sixth audit's `A-04` measured the lowercase-only filter
+            # as a blind spot: a class token starting with a capital was dropped, so any clobber
+            # applied through one was invisible. CSS class names are case-sensitive and nothing
+            # forbids a capital.
             tokens: set[str] = set()
+            # THE PLAIN FORM, WHICH THIS FUNCTION HAD NEVER READ. For `className="a b c"` the
+            # region is `a b c` — no quotes and no backticks inside it — so both harvest loops
+            # below found nothing and the group was dropped. Every plain string className in the
+            # app has been invisible to the clobber check since it was written, which is a larger
+            # hole than any of the three the sixth audit reported and was found only by
+            # mutation-testing its A-04 case with a plain attribute.
+            if plain:
+                tokens |= {t for t in region.split() if re.fullmatch(r"[A-Za-z][\w-]*", t)}
             for literal in re.findall(r"['\"]([^'\"\n]*)['\"]", region):
-                tokens |= {t for t in literal.split() if re.fullmatch(r"[a-z][\w-]*", t)}
+                tokens |= {t for t in literal.split() if re.fullmatch(r"[A-Za-z][\w-]*", t)}
             for literal in re.findall(r"`([^`]*)`", region):
                 stripped = re.sub(r"\$\{[^{}]*\}", " ", literal)
-                tokens |= {t for t in stripped.split() if re.fullmatch(r"[a-z][\w-]*", t)}
+                tokens |= {t for t in stripped.split() if re.fullmatch(r"[A-Za-z][\w-]*", t)}
             if tokens:
                 groups.append(tokens)
     return groups
+
+
+def is_test_file(label: str) -> bool:
+    """`*.test.*` / `*.spec.*`. Pure/testable.
+
+    Only `animation_clobber` uses this, and only because a test that PROVES a clobber detector
+    works has to contain a clobber. `harness.browser.spec.tsx` renders
+    `.a01 { animation: spin … }` on a `.reveal` element on purpose, and once this gate learned to
+    read plain string classNames it started reporting that fixture as a defect — correctly, and
+    uselessly, since nothing in a spec file is shipped.
+
+    Deliberately NOT applied to the reference check. `var(--x)` in a test still has to resolve:
+    that check is about a declaration nothing declares, which is a mistake wherever it is written.
+    """
+    return ".test." in label or ".spec." in label
 
 
 def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str]:
@@ -254,6 +481,23 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
     Deliberately conservative. A selector is only judged when EVERY class in it appears together
     in some real `className`, so an unmatched or dynamically-composed selector is skipped rather
     than guessed at. It under-reports; it does not invent.
+
+    KNOWN LIMITS, stated rather than implied — every one of these is a shape this check cannot see:
+
+      * **A class list built by a helper.** `classname_groups` reads `className=` attributes. A
+        clobbering class applied through `cx(...)`, a lookup table or a prop never appears in one,
+        so it is invisible here. The sixth audit measured this and it is NOT closed: closing it
+        means resolving arbitrary JS, and a resolver that guesses wrong reports correct code as
+        broken, which is how a gate gets switched off. What covers it instead is a measurement —
+        `apps/desktop/src/features/pages.browser.spec.tsx` renders the real components in real
+        Chromium and reads `animation-name` off the real element.
+      * **A clobber that only exists at a viewport or in a state this file never reaches.** Same
+        answer: the browser suite measures what renders.
+      * **Test files.** Excluded on purpose — see `is_test_file`.
+
+    The honest division: this check runs per-commit and catches the author; the browser suite
+    measures the result. Neither is a substitute for the other, and this docstring has been wrong
+    about its own reach once already (`A-03`), so the reach is written down.
     """
     # A keyframe set whose FINAL state paints the element is a legitimate replacement: the
     # entrance no longer has to run, because this animation does the same job. `dec-reveal`
@@ -267,6 +511,8 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
         if last and re.search(r"opacity\s*:\s*(?!0\b)[\d.]+", last[-1]):
             self_sufficient.add(name)
 
+    entrances = entrance_classes(all_css)
+
     failures: list[str] = []
     for label, text in texts.items():
         live = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
@@ -274,10 +520,19 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
         # there, so killing the animation is what SHOULD happen and is not a clobber.
         live = re.sub(r"@media[^{]*prefers-reduced-motion[^{]*\{.*?\n\s*\}", " ", live, flags=re.S)
         for selector, body in re.findall(r"([^{}@;]+)\{([^{}]*)\}", live):
-            decl = re.search(r"(?<![-\w])animation\s*:\s*([^;}]+)", body)
+            # `animation-name` TOO — the sixth audit's `A-03`, and the sharpest kind of hole:
+            # this check matched the shorthand only, and its own error message recommended "use
+            # the animation-* longhands". `animation-name` is itself list-valued, so setting it
+            # replaces the list identically. Measured in Chromium: shorthand → opacity 0, longhand
+            # → opacity 0, and the gate caught one and passed the other. An author who tripped
+            # this gate and followed its advice reintroduced the bug byte for byte.
+            decl = re.search(r"(?<![-\w])animation(?:-name)?\s*:\s*([^;}]+)", body)
             if not decl:
                 continue
-            names = set(re.findall(r"[a-zA-Z][\w-]*", decl.group(1)))
+            # Keywords are not keyframe names. Without this, a keyframe called `forwards` would
+            # make every `animation: x 1s forwards` look self-sufficient (`A-04`, latent).
+            names = {n for n in re.findall(r"[a-zA-Z][\w-]*", decl.group(1))
+                     if n not in ANIMATION_KEYWORDS}
             if names & self_sufficient:
                 continue
             for part in selector.split(","):
@@ -298,15 +553,24 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
                 for group in groups:
                     if not classes <= group:
                         continue
-                    for entrance_class, keyframe in ENTRANCE_CLASSES.items():
-                        if entrance_class in group and entrance_class not in classes \
-                                and keyframe not in names:
+                    for entrance_class, keyframe in entrances.items():
+                        # NO `entrance_class not in classes` guard. It was there to stop the
+                        # entrance rule reporting itself, and it also excused the shape the sixth
+                        # audit measured: `.zzfade{opacity:0;animation:zzin}` clobbered by
+                        # `.zzfade.zzhot{animation:sigbreathe}` — a MORE SPECIFIC rule on the same
+                        # class, which is the most natural way to write the bug and was silently
+                        # exempt. The entrance rule still does not report itself, for the honest
+                        # reason rather than the accidental one: it declares its own keyframe, so
+                        # `keyframe in names` skips it.
+                        if entrance_class in group and keyframe not in names:
                             failures.append(
-                                f"{label}: `{part.strip()}` sets the `animation` shorthand without "
+                                f"{label}: `{part.strip()}` replaces the animation list without "
                                 f"`{keyframe}`, on an element that also carries `.{entrance_class}` "
-                                f"— which is `opacity:0` until `{keyframe}` runs. The shorthand "
-                                f"replaces the whole list, so this element never becomes visible. "
-                                f"Include `{keyframe}` in the list, or use the animation-* longhands.")
+                                f"— which is `opacity:0` until `{keyframe}` runs, so this element "
+                                f"never becomes visible. Compose the list instead: "
+                                f"`animation: {keyframe} var(--enter) forwards, <yours>`. "
+                                f"NOT the `animation-name` longhand on its own — it is list-valued "
+                                f"and replaces the list identically, which is the same bug (A-03).")
                     break
     return sorted(set(failures))
 
@@ -391,8 +655,21 @@ def main(argv: list[str] | None = None) -> int:
         declared_anywhere |= set(re.findall(r"""setProperty\(\s*['"](--[a-zA-Z0-9-]+)['"]""", live))
 
     failures = compare(expected, declared)
-    failures += ladder_monotonic(blocks, POSITIONAL["Spacing"])
-    failures += animation_clobber(texts, classname_groups(texts))
+    # Every ORDERED scale, not only spacing. `--t-body: 99px` and `--r-pill: 0px` in a later
+    # override were both measured GREEN by the sixth audit (`A-10`), and they break the same
+    # promise `--s7` does: code picks a rung by meaning, and a tier that reorders the scale makes
+    # "one step larger" false for whoever picked it that way.
+    for scale in ("Spacing", "Type scale", "Radii"):
+        failures += ladder_monotonic(blocks, POSITIONAL[scale], scale.lower())
+    failures += override_scope(blocks, root_block_kinds(css), token_kinds(expected))
+    failures += [
+        f"@keyframes `{name}` is also an `animation` keyword. Every declaration containing that "
+        f"word would read as self-sufficient and switch the clobber check off (A-04, latent). "
+        f"Rename the keyframes." for name in keyframe_name_collisions(css)]
+    # Shipped source only — see is_test_file(). A spec that proves the clobber detector works has
+    # to contain a clobber, and reporting it would train everyone to ignore this gate.
+    shipped = {k: v for k, v in texts.items() if not is_test_file(k)}
+    failures += animation_clobber(shipped, classname_groups(shipped))
     failures += undeclared_references(referenced_tokens(texts), declared_anywhere, local_ok=set())
 
     if failures:
