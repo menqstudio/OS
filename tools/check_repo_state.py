@@ -514,7 +514,7 @@ def fetch_carrier(number: int) -> dict | None:
 REQUIRED_CHECKS = pathlib.Path("config") / "required-checks.json"
 
 
-def verify_branch_protection(expected: dict, live: dict | None) -> list[str]:
+def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -> list[str]:
     """Live branch protection against the committed expectation. Pure/testable.
 
     Eighth independent audit, `H-04`. Branch protection was turned on 2026-08-17 and **seven
@@ -528,8 +528,14 @@ def verify_branch_protection(expected: dict, live: dict | None) -> list[str]:
     `G-05`, and the same answer.
     """
     if live is None:
-        return [f"branch protection could not be read from GitHub, so {REQUIRED_CHECKS.as_posix()} "
-                f"could not be verified. A check that could not run has not passed."]
+        hint = ""
+        if "403" in why or "Resource not accessible" in why:
+            hint = (" This reads as a PERMISSION gap, not an outage: the job needs "
+                    "`administration: read` in its `permissions:` block. This check failed on "
+                    "exactly that on its first CI run.")
+        return [f"branch protection could not be read from GitHub, so "
+                f"{REQUIRED_CHECKS.as_posix()} could not be verified. A check that could not run "
+                f"has not passed.{hint} ({why or 'no reason reported'})"]
     failures: list[str] = []
     for flag, path in (("enforce_admins", ("enforce_admins", "enabled")),
                        ("required_linear_history", ("required_linear_history", "enabled")),
@@ -561,21 +567,29 @@ def verify_branch_protection(expected: dict, live: dict | None) -> list[str]:
     return failures
 
 
-def _live_protection() -> dict | None:
-    """GitHub's protection object for `main`, or None. REST only - `gh api` is v3 here, which is
-    the road that survived the 2026-08-17 GraphQL outage (PR #149)."""
+def _live_protection() -> tuple[dict | None, str]:
+    """GitHub's protection object for `main`, and WHY when there isn't one.
+
+    REST only — `gh api` is v3 here, the road that survived the 2026-08-17 GraphQL outage (PR #149).
+
+    The reason is returned rather than swallowed because the two ways this fails are not the same
+    fact. A 403 is a **permission gap**: the workflow token needs `administration: read`, and this
+    check failed on exactly that on its first CI run. A 503 or a timeout is an **outage**. Both are
+    refusals — a check that could not run has not passed — but a refusal that does not name which
+    one it is sends the reader to the wrong fix.
+    """
     try:
-                             # encoding is EXPLICIT. `text=True` decodes with the process locale, which is
-                             # cp1252 on this host, and every context name here contains a middle dot or a
-                             # section sign - so the comparison would fail on mojibake rather than on drift.
-                             # `sync_active_pr.live_open_prs` already carries this correction; this call was
-                             # written without it and the gate caught itself on its first run.
+        # encoding is EXPLICIT: `text=True` decodes with the process locale, cp1252 on Windows, and
+        # every context name contains a middle dot or a section sign.
         out = subprocess.run(["gh", "api", "repos/" + _REPO + "/branches/main/protection"],
-                             capture_output=True, text=True, encoding="utf-8", timeout=30, check=True).stdout
-        data = json.loads(out)
-        return data if isinstance(data, dict) else None
-    except (subprocess.SubprocessError, OSError, ValueError):
-        return None
+                             capture_output=True, text=True, encoding="utf-8",
+                             timeout=30)
+        if out.returncode != 0:
+            return None, (out.stderr or "").strip()[:200]
+        data = json.loads(out.stdout)
+        return (data, "") if isinstance(data, dict) else (None, "reply was not an object")
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        return None, str(exc)[:200]
 
 
 def _git_is_ancestor(a: str, b: str) -> bool:
@@ -738,7 +752,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             failures.append(f"{REQUIRED_CHECKS.as_posix()} is not readable JSON: {exc}")
         else:
-            failures += verify_branch_protection(expected, _live_protection())
+            live_prot, why = _live_protection()
+            failures += verify_branch_protection(expected, live_prot, why)
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The
