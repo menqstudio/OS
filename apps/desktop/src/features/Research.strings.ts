@@ -230,15 +230,55 @@ export const STR = {
     hy: 'Կատարումը ձախողվեց',
     ru: 'Запуск не удался',
   },
-  verifiedHeld: {
+  // The held answer, described by what ACTUALLY produced it — sixth independent audit, `A-05`.
+  //
+  // There used to be ONE pair here, `verifiedHeld` / `verifiedHeldNote`, reading "Verified · held"
+  // and "Verified desktop-side and held by the backend" for every held answer. Two paths stash
+  // one, and on a shipped install the only reachable path runs no governed turn, issues no
+  // challenge and produces no receipt. The strongest claim on the page was attached to the weakest
+  // outcome the app has.
+  //
+  // Four pairs now, one per provenance — including one for a value this version does not
+  // recognise, because an unknown outcome must read as a warning and never as a pass.
+  heldVerified: {
     en: 'Verified · held',
     hy: 'Ստուգված · պահված',
     ru: 'Проверено · удержано',
   },
-  verifiedHeldNote: {
-    en: 'Verified desktop-side and held by the backend. Saving files it to knowledge; the app window never receives the text.',
-    hy: 'Ստուգված ա desktop-ի կողմից ու պահվում ա backend-ի մոտ։ Պահպանելը գրանցում ա այն գիտելիքում; պատուհանը տեքստը չի ստանում։',
-    ru: 'Проверено на стороне приложения и удерживается бэкендом. Сохранение записывает его в знания; окно текст не получает.',
+  heldVerifiedNote: {
+    en: 'A governed turn produced this and its receipt verified against a trusted manifest. It is held by the backend; saving files it to knowledge, and the app window never receives the text.',
+    hy: 'Սա արտադրել ա կառավարվող փոխանցումը, ու ստացականը ստուգվել ա վստահելի manifest-ով։ Պահվում ա backend-ի մոտ; պահպանելը գրանցում ա գիտելիքում, ու պատուհանը տեքստը չի ստանում։',
+    ru: 'Это произвёл управляемый ход, и его квитанция проверена по доверенному манифесту. Удерживается бэкендом; сохранение записывает его в знания, окно текст не получает.',
+  },
+  heldDevelopment: {
+    en: 'Development · not trusted',
+    hy: 'Մշակում · վստահելի չէ',
+    ru: 'Разработка · не доверенное',
+  },
+  heldDevelopmentNote: {
+    en: 'A governed turn produced this, but the receipt verified against NO trusted manifest — this is the development outcome, not a production one. It is held by the backend; the app window never receives the text.',
+    hy: 'Սա արտադրել ա կառավարվող փոխանցումը, բայց ստացականը ստուգվել ա ԱՌԱՆՑ վստահելի manifest-ի — սա մշակման արդյունք ա, ոչ արտադրական։ Պահվում ա backend-ի մոտ; պատուհանը տեքստը չի ստանում։',
+    ru: 'Это произвёл управляемый ход, но квитанция проверена БЕЗ доверенного манифеста — это результат разработки, а не production. Удерживается бэкендом; окно текст не получает.',
+  },
+  heldUngoverned: {
+    en: 'Ungoverned · no receipt',
+    hy: 'Չկառավարվող · առանց ստացականի',
+    ru: 'Неуправляемое · без квитанции',
+  },
+  heldUngovernedNote: {
+    en: 'No governed turn ran. No challenge, no receipt, nothing verified — this answer came straight from the model. It is held by the backend, and saving it records that provenance in the note.',
+    hy: 'Կառավարվող փոխանցում չի կատարվել։ Ոչ մարտահրավեր, ոչ ստացական, ոչինչ ստուգված չէ — այս պատասխանը ուղիղ մոդելից ա։ Պահվում ա backend-ի մոտ, ու պահպանելը գրանցում ա հենց այդ ծագումը գրառման մեջ։',
+    ru: 'Управляемый ход не выполнялся. Ни вызова, ни квитанции, ничего не проверено — этот ответ пришёл прямо от модели. Удерживается бэкендом, и сохранение записывает это происхождение в заметку.',
+  },
+  heldUnknown: {
+    en: 'Unrecognised outcome',
+    hy: 'Չճանաչված արդյունք',
+    ru: 'Нераспознанный результат',
+  },
+  heldUnknownNote: {
+    en: 'The backend reported a provenance this version does not recognise. Treated as unverified: an outcome nobody can name is not a pass.',
+    hy: 'Backend-ը հաղորդել ա ծագում, որ այս տարբերակը չի ճանաչում։ Համարվում ա չստուգված․ արդյունքը, որին ոչ ոք անուն չի տալիս, անցում չէ։',
+    ru: 'Бэкенд сообщил происхождение, которое эта версия не распознаёт. Считается непроверенным: результат, который никто не может назвать, — не пропуск.',
   },
   saveToKnowledge: {
     en: 'Save to knowledge',

@@ -112,7 +112,7 @@ function TurnOutcome({ attempt, L }: { attempt: GovernedTurnAttempt; L: Localize
   if (isVerified(attempt) && attempt.status === 'committed') {
     return (
       <div role="note">
-        <span className="pill ok">{L('outcomeVerified')}</span>
+        <span className="pill success">{L('outcomeVerified')}</span>
         <p className="br-body">{L('outcomeVerifiedBody')}</p>
         <p className="micro br-why">{L('turnIdLabel')}<b className="mono">{attempt.brokerTurnId}</b></p>
         <div className="br-msg">{attempt.message.body}</div>
