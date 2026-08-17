@@ -117,6 +117,84 @@ class CompareTests(unittest.TestCase):
         self.assertFalse(m.validates("// we should check schema one day", "schema"))
 
 
+class ScopedValidationTests(unittest.TestCase):
+    """`A-02`, sixth independent audit — `validates()` required a SUBSTRING, not a check.
+
+    It searched the whole file for `get("schema")`, comments and `#[cfg(test)]` included, while
+    both MIRRORS entries named the same file. The auditor measured five mutations that all left
+    the gate GREEN — including deleting `parse_evidence_event`'s comparison outright while the
+    receipt's own check kept the substring alive, which on the real repository produced 29 passed
+    and a green gate.
+
+    Each mutation below is one of those five. Three are killed here; the other two — a comparison
+    replaced by `false`, and one inverted so every version is accepted — still contain the
+    substring in the right function and are killed by the REQUIRED negative test instead. Both
+    halves are asserted, and neither claims to do the other's job.
+    """
+
+    SRC = '''
+        /// doc mentioning o.get("schema") in prose
+        pub fn parse_thing(o: &Value) -> Result<Thing, String> {
+            if o.get("schema").and_then(|v| v.as_i64()) != Some(1) {
+                return Err("thing: schema must be 1".to_string());
+            }
+            Ok(Thing {})
+        }
+
+        pub fn parse_other(o: &Value) -> Result<Other, String> {
+            Ok(Other {})
+        }
+
+        #[cfg(test)]
+        mod tests {
+            #[test]
+            fn rejects_bad_thing_schema() {
+                let mut t = valid();
+                t["schema"] = json!(2);
+                assert!(parse_thing(&t).is_err());
+            }
+        }
+    '''
+
+    def test_a_parser_that_checks_its_own_discriminator_passes(self):
+        self.assertTrue(m.validates(self.SRC, "schema", "parse_thing"))
+
+    def test_mutation_1_another_parsers_check_does_not_count(self):
+        # THE FINDING. `parse_other` never looks at `schema`; the file does, in `parse_thing`.
+        self.assertFalse(m.validates(self.SRC, "schema", "parse_other"))
+
+    def test_mutation_3_a_comment_is_not_a_check(self):
+        src = self.SRC.replace('if o.get("schema").and_then(|v| v.as_i64()) != Some(1) {',
+                               '// o.get("schema") is checked elsewhere\n            if false {')
+        self.assertFalse(m.validates(src, "schema", "parse_thing"))
+
+    def test_mutation_4_a_mention_inside_cfg_test_is_not_a_check(self):
+        src = self.SRC.replace('if o.get("schema").and_then(|v| v.as_i64()) != Some(1) {',
+                               'if false {')
+        # The test module still contains `t["schema"]` and calls the parser; neither is a check.
+        self.assertFalse(m.validates(src, "schema", "parse_thing"))
+
+    def test_a_parser_that_is_not_there_fails_closed(self):
+        self.assertFalse(m.validates(self.SRC, "schema", "parse_missing"))
+
+    def test_strip_test_modules_brace_counts_rather_than_stopping_at_the_first_brace(self):
+        stripped = m.strip_test_modules(self.SRC)
+        self.assertNotIn("rejects_bad_thing_schema", stripped)
+        self.assertIn("parse_thing", stripped)
+
+    def test_function_body_brace_counts(self):
+        body = m.function_body(self.SRC, "parse_thing")
+        self.assertIn("schema must be 1", body)
+        self.assertNotIn("parse_other", body)
+
+    # --- the half a static reader cannot do -------------------------------------------
+    def test_a_declared_negative_test_that_exists_is_found(self):
+        self.assertTrue(m.has_negative_test(self.SRC, "rejects_bad_thing_schema"))
+
+    def test_a_declared_negative_test_that_was_renamed_away_is_not(self):
+        self.assertFalse(m.has_negative_test(self.SRC, "rejects_bad_thing_schema_v2"))
+
+
 class RealRepositoryTests(unittest.TestCase):
     """The regression: the real mirrors, against the real schemas."""
     def test_every_declared_mirror_agrees_today(self):
@@ -127,6 +205,21 @@ class RealRepositoryTests(unittest.TestCase):
         self.assertGreaterEqual(len(m.MIRRORS), 2)
         for entry in m.MIRRORS:
             self.assertTrue(entry.get("reason"), entry)
+
+    def test_every_mirror_declares_a_parser_and_a_negative_test(self):
+        # A-02's structural half. Without `parser` the discriminator is searched for file-wide
+        # again; without `negative_test` an inverted comparison is invisible to everything.
+        for entry in m.MIRRORS:
+            self.assertTrue(entry.get("parser"), entry)
+            self.assertTrue(entry.get("negative_test"), entry)
+
+    def test_every_declared_negative_test_really_exists(self):
+        # Belt and braces with main(): named here so a rename shows up as THIS failing rather than
+        # as a generic gate RED whose cause has to be read out of a message.
+        for entry in m.MIRRORS:
+            source = (m.ROOT / entry["rust"]).read_text(encoding="utf-8")
+            self.assertTrue(m.has_negative_test(source, entry["negative_test"]),
+                            f"{entry['struct']}: {entry['negative_test']} is gone")
 
 
 if __name__ == "__main__":
