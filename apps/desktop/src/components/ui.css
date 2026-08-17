@@ -227,6 +227,19 @@
 .cal-more { font-size: 11px; color: var(--brops-muted); padding-left: 2px; }
 .cal-agenda-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--brops-muted); margin-top: var(--menq-space-3); font-weight: 600; }
+/* The run-history section — seventh independent audit, `G-07`.
+   `Calendar.tsx` renders `<section className="cal-runs" aria-label={L('runHistory')}>` and the
+   class was selected by nothing. Three of the four unstyled classes that audit found sat on
+   elements already carrying `surface soft` or a `.v-*` view class, so they were dead hooks and
+   were deleted; this one carried NO other class, so the whole run-history block had no rules at
+   all. Its children were already styled — `.cal-agenda-heading` above, and the list below — which
+   is why nothing looked obviously broken: the section simply had no separation from the agenda
+   items it follows. */
+.cal-runs { display: flex; flex-direction: column; gap: var(--menq-space-2);
+  margin-top: var(--menq-space-4); padding-top: var(--menq-space-3);
+  border-top: 1px solid var(--brops-border); }
+.cal-run-list { list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--menq-space-2); }
 .agenda-card { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3);
   flex-wrap: wrap; padding: 10px 12px; background: var(--brops-surface);
   border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); }

@@ -579,7 +579,22 @@ def unrun_test_modules(root: pathlib.Path) -> list[str]:
     directory = root / WORKFLOWS
     if not directory.is_dir():
         return []
-    text = "\n".join(_read(w) for w in sorted(directory.glob("*.y*ml")))
+    # THE STEM MUST CO-OCCUR WITH AN INVOCATION — seventh independent audit, `G-08`.
+    #
+    # This matched the stem anywhere in the concatenated workflow text, and the docstring named
+    # that limit honestly — "a workflow that merely mentions the name in a comment would count" —
+    # without noticing the condition was ALREADY MET for the exact module this check was written
+    # about. `ci.yml` carries a comment explaining the A-12 fix, and that comment contains the
+    # string `test_renderer_broker_schemas`. Remove the module from the run line and the gate stays
+    # green, satisfied by the note congratulating the fix.
+    #
+    # Requiring `unittest` or `pytest` ON THE SAME LINE is cruder than stripping YAML comments and
+    # deliberately so: a `#` inside a quoted string or a `run:` block scalar is not a comment, and
+    # a naive strip would corrupt the very run lines this check needs — turning the gate red on
+    # correctly-wired tests, which is how a gate gets switched off (`A-03`).
+    invocation = [ln for w in sorted(directory.glob("*.y*ml")) for ln in _read(w).splitlines()
+                  if "unittest" in ln or "pytest" in ln]
+    text = "\n".join(invocation)
     return [m for m in test_modules(root)
             if pathlib.PurePosixPath(m).stem not in text]
 

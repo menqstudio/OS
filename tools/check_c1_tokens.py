@@ -144,7 +144,19 @@ def root_block_kinds(css: str) -> list[str]:
             tail = css[last.end():m.start()]
             if tail.count("{") - tail.count("}") >= 0:
                 in_media = True
-        if "[data-theme" in selector:
+        themed = "[data-theme" in selector
+        # BOTH IS NOT THEME — seventh independent audit, `G-11(b)`. This tested `[data-theme` FIRST
+        # and returned, so `@media (max-width:560px){:root[data-theme="dark"]{--azure:#FF0000}}`
+        # classified as a theme and colour was permitted — while the rule's own justification is
+        # *"a surface does not become a different colour at 560px"*, which is exactly what that
+        # passes. A viewport-conditional colour change escaped by adding a theme attribute.
+        #
+        # A block that is both is held to the INTERSECTION: it may restate neither. That is the
+        # honest reading — it is making a claim conditional on the viewport AND on the theme, and
+        # neither of the two justifications covers the other's half.
+        if themed and in_media:
+            kinds.append("responsive-theme")
+        elif themed:
             kinds.append("theme")
         elif in_media:
             kinds.append("responsive")
@@ -188,7 +200,10 @@ def override_scope(blocks: list[dict[str, str]], kinds: list[str],
     Ordering within a scale is still `ladder_monotonic`'s job; this is about which scales a block
     is allowed to touch at all.
     """
-    allowed = {"theme": "colour", "responsive": "geometry"}
+    # A `responsive-theme` block - one inside an `@media` that ALSO carries
+    # `[data-theme]` - may restate NEITHER family. See `root_block_kinds()` for
+    # why (seventh independent audit, `G-11(b)`).
+    allowed = {"theme": "colour", "responsive": "geometry", "responsive-theme": None}
     failures: list[str] = []
     for index, (block, kind) in enumerate(zip(blocks, kinds)):
         if kind == "base":
@@ -203,6 +218,15 @@ def override_scope(blocks: list[dict[str, str]], kinds: list[str],
         for name in sorted(block):
             token_kind = kinds_by_token.get(name)
             if token_kind is None or token_kind == may:
+                continue
+            if may is None:
+                failures.append(
+                    f":root block {index} is inside an @media AND carries [data-theme], and "
+                    f"redeclares `{name}`. A block conditional on BOTH the viewport and the theme "
+                    f"may restate neither family: the theme justification (a light layout and a "
+                    f"dark layout are the same layout) does not cover the viewport half, and the "
+                    f"responsive justification (a surface does not become a different colour at a "
+                    f"narrower viewport) does not cover the theme half. Split it into two blocks.")
                 continue
             failures.append(
                 f":root block {index} ({kind}) redeclares `{name}`, which is a {token_kind} token. "
@@ -378,6 +402,24 @@ def entrance_classes(all_css: str) -> dict[str, str]:
     return found
 
 
+def all_source_css(texts: dict[str, str]) -> str:
+    """Every source file's text, comments stripped — the surface `animation_clobber` actually reads.
+
+    Seventh independent audit, `G-13`: `keyframe_name_collisions` was called with `aios.css` alone
+    while the check it guards builds its keyframe set from every file in `SOURCE_GLOBS`, so a
+    keyword-named `@keyframes` in any other stylesheet — or in one of the 28 in-component `<style>`
+    template literals — was invisible to the guard.
+
+    The auditor was scrupulous about the severity and so is this note: **they could not turn it
+    into an escape.** `ANIMATION_KEYWORDS` is subtracted from `names` inside `animation_clobber`
+    regardless of where the keyframe was defined, so `names & self_sufficient` cannot be satisfied
+    by a keyword-named keyframe. What remains is the reverse — a legitimate rule using one would
+    compute `names = {}` and be falsely reported. That is noise, not silence, and it is fixed as
+    the lesser thing it is: an inconsistency between a guard and its subject.
+    """
+    return "\n".join(re.sub(r"/\*.*?\*/", " ", t, flags=re.S) for t in texts.values())
+
+
 def keyframe_name_collisions(all_css: str) -> list[str]:
     """A keyframe named after an `animation` keyword — the latent hole in `A-04`. Pure/testable."""
     return sorted({
@@ -394,7 +436,12 @@ def classname_groups(texts: dict[str, str]) -> list[set[str]]:
     """
     groups: list[set[str]] = []
     for text in texts.values():
-        for match in re.finditer(r"className=", text):
+        # `class=` TOO — seventh independent audit, `G-12`. `markdown.tsx:33` emits
+        # `<span class="muted">` into `dangerouslySetInnerHTML`, and that is the form the entire
+        # Markdown surface — the body of every agent reply in the product — is written in. The one
+        # instance in the tree is styled, so nothing was broken; the harvest simply could not see
+        # the shape.
+        for match in re.finditer(r"\b(?:className|class)=", text):
             i = match.end()
             if i >= len(text):
                 continue
@@ -484,11 +531,15 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
 
     KNOWN LIMITS, stated rather than implied — every one of these is a shape this check cannot see:
 
-      * **A class list built by a helper.** `classname_groups` reads `className=` attributes. A
-        clobbering class applied through `cx(...)`, a lookup table or a prop never appears in one,
-        so it is invisible here. The sixth audit measured this and it is NOT closed: closing it
+      * **A class list assembled from NON-LITERAL values.** This paragraph used to say a class
+        applied through `cx(...)` "never appears in one, so it is invisible here." That is false
+        and the seventh audit measured it (`G-12`): `cx('a','b','c')` IS caught, because the
+        quoted-literal pass harvests string arguments anywhere in the attribute region. The real
+        limit is narrower — a helper called with **variables** or a lookup table, where there is no
+        literal to harvest. Wrong in the safe direction, but wrong, and a docstring that overstates
+        a hole is the same defect as one that understates a reach (`A-03`). Closing the real limit
         means resolving arbitrary JS, and a resolver that guesses wrong reports correct code as
-        broken, which is how a gate gets switched off. What covers it instead is a measurement —
+        broken. What covers it instead is a measurement —
         `apps/desktop/src/features/pages.browser.spec.tsx` renders the real components in real
         Chromium and reads `animation-name` off the real element.
       * **A clobber that only exists at a viewport or in a state this file never reaches.** Same
@@ -550,6 +601,19 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
                 classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", subject))
                 if not classes:
                     continue
+                # EVERY matching group, not the first — seventh independent audit, `G-04`.
+                #
+                # This loop used to `break` after the first group that was a superset of the
+                # selector's subject classes. If that group lacked the entrance class, nothing was
+                # reported and no later group was examined, so **detection depended on the source
+                # order of two unrelated JSX elements.** The auditor measured it with the same CSS
+                # twice, changing only which component was declared first: non-entrance first →
+                # GREEN, entrance first → RED.
+                #
+                # That is the most natural way this bug arises — the same class pair rendered with
+                # the entrance in a detail view and without it in a compact list — and it is
+                # fifth-round `A-01`'s exact mechanism. `sorted(set(failures))` already dedupes,
+                # and the sets involved are small, so the `break` bought nothing worth that.
                 for group in groups:
                     if not classes <= group:
                         continue
@@ -571,7 +635,6 @@ def animation_clobber(texts: dict[str, str], groups: list[set[str]]) -> list[str
                                 f"`animation: {keyframe} var(--enter) forwards, <yours>`. "
                                 f"NOT the `animation-name` longhand on its own — it is list-valued "
                                 f"and replaces the list identically, which is the same bug (A-03).")
-                    break
     return sorted(set(failures))
 
 
@@ -665,7 +728,7 @@ def main(argv: list[str] | None = None) -> int:
     failures += [
         f"@keyframes `{name}` is also an `animation` keyword. Every declaration containing that "
         f"word would read as self-sufficient and switch the clobber check off (A-04, latent). "
-        f"Rename the keyframes." for name in keyframe_name_collisions(css)]
+        f"Rename the keyframes." for name in keyframe_name_collisions(all_source_css(texts))]
     # Shipped source only — see is_test_file(). A spec that proves the clobber detector works has
     # to contain a clobber, and reporting it would train everyone to ignore this gate.
     shipped = {k: v for k, v in texts.items() if not is_test_file(k)}

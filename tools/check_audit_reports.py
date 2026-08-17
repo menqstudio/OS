@@ -51,6 +51,11 @@ LEDGER = f"{AUDIT_DIR}/AUDIT_LEDGER.md"
 OWNER = "docs/OWNER_ACTION_REQUIRED.md"
 STATE = "config/current_state.json"
 
+#: A report shorter than this is a placeholder. A-06's gate implemented "openable" as
+#: .exists(), and the seventh audit passed it with a zero-byte file cited by all three
+#: documents. Deliberately generous: the shortest real report in this directory is far above it.
+MIN_REPORT_BYTES = 2048
+
 #: The ordinals a round is written with, in order. Matching on words rather than digits because
 #: that is how both documents are written ("the FOURTH independent audit", "FIFTH AUDIT").
 ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
@@ -189,13 +194,51 @@ def main(argv: list[str] | None = None) -> int:
             f"treats as current — both are how the fifth round's verdict went missing.")
 
     # 3. the two documents agree on which round is current
+    led = ordinal_of(ledger_text)
     if owner_text:
-        led, own = ordinal_of(ledger_text), ordinal_of(owner_text)
+        own = ordinal_of(owner_text)
         if led and own and led != own:
             failures.append(
                 f"{LEDGER} leads with the {led.upper()} round and {OWNER} leads with the "
                 f"{own.upper()}. A reader following one to the other gets a contradiction — the "
                 f"literal symptom of A-06.")
+
+    # 3b. THE ROUND THE DOCUMENTS ANNOUNCE HAS A REPORT — seventh independent audit, `G-03`.
+    #
+    # Checks 1-3 above compare the ledger, the OWNER page and the directory TO EACH OTHER. None
+    # compares any of them to the round the documents announce, so the gate written to close A-06
+    # did not detect A-06: the auditor set both banners to SEVENTH with no seventh report filed and
+    # got GREEN. `newest_report()` returns the newest file on disk and `authoritative_link()`
+    # returns what the ledger points at; agreeing with each other is not the same as being current.
+    #
+    # This binds the announcement to the evidence. The filename convention is now load-bearing —
+    # a report must carry its ordinal — and that is stated in the failure message, because a gate
+    # whose naming rule is undocumented is a gate that goes red on a correctly-filed report.
+    if led:
+        matching = [n for n in reports if f"-{led}-" in n]
+        if not matching:
+            failures.append(
+                f"{LEDGER} announces the {led.upper()} round and no report in {AUDIT_DIR} names it "
+                f"(expected a filename containing `-{led}-`). This is A-06 exactly: a round "
+                f"announced whose evidence is not in the repository. File the report, or correct "
+                f"the banner.")
+        elif newest and max(matching) != newest:
+            failures.append(
+                f"{LEDGER} announces the {led.upper()} round, whose newest report is "
+                f"`{max(matching)}`, but `{newest}` is newer and is filed. Either a round happened "
+                f"and the banners were not moved, or a report was filed under the wrong ordinal.")
+
+    # 3c. A report has to have something in it. `A-06`'s gate implemented "openable" as `.exists()`,
+    # and the auditor passed it with a zero-byte file cited by all three documents. A smoke check,
+    # not a guarantee — it is trivially satisfiable by padding, and it is written down as the lesser
+    # thing it is rather than defended as the greater one.
+    for name in reports:
+        size = (audit_dir / name).stat().st_size
+        if size < MIN_REPORT_BYTES:
+            failures.append(
+                f"{AUDIT_DIR}/{name} is {size} bytes. A report that small is a placeholder; "
+                f"`exists()` is not the same as `is a report`. (Smoke check only — padding "
+                f"satisfies it, and it is not claimed to do more.)")
 
     # 4. the machine-readable anchor names the same round the humans do
     state_path = root / STATE

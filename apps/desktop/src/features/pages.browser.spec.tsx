@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, act } from '@testing-library/react';
 import {
   settleAnimations, invisibleContent, clobberedMotion, reportInvisible, reportClobbered,
+  unstyledClasses, styledClassTokens, reportUnstyled,
   emulateMedia as media,
 } from '../test/computedStyle';
 
@@ -175,6 +176,45 @@ describe('computed style — nothing a reader should see renders invisible', () 
         const findings = invisibleContent(container);
         expect(findings, `\n${name} (${state}, reduced motion): content present in the DOM and `
           + `invisible on screen —\n${reportInvisible(findings)}\n`).toEqual([]);
+      });
+    }
+  }
+});
+
+/**
+ * Class tokens carried for a reason other than styling. Empty, and it must stay empty.
+ *
+ * The seventh audit's `G-15` names the shape to avoid: a baseline list is where defects hide, and
+ * a 785-entry one would make this check theatre. If a genuine JS-hook class ever needs an entry,
+ * it gets a written reason beside it — not a quiet widening.
+ */
+const EXEMPT = new Set<string>([]);
+
+describe('computed style — every class a page applies is styled by something', () => {
+  /**
+   * `unstyledClasses` was built for the sixth audit's `A-01` and pointed at **two** surfaces: the
+   * palette (already known broken) and a hand-written list of seven pill tones. Not at any of the
+   * 23 routed pages.
+   *
+   * The seventh audit ran it across all 69 page/state pairs and found four classes applied by
+   * shipped pages that no rule selects — `set-theme`, `sec-page`, `rsx-rail-card`, `cal-runs`.
+   * Its sentence is the one worth keeping: *"the repository built the detector for this exact
+   * defect class and pointed it at one modal and one hand-written list."* The sixth round's §E had
+   * said *"nothing checks that a class the app applies is styled by anything"*; the fix built the
+   * check and aimed it at the finding rather than at the class of finding.
+   *
+   * `styledClassTokens()` is computed AFTER mount, deliberately: 28 of these pages inject their
+   * CSS as a `<style>` block when they render, so reading the stylesheet list before mounting
+   * would report every one of their classes as unstyled.
+   */
+  for (const [name, page] of PAGES) {
+    for (const state of STATES) {
+      it(`${name} · ${state} applies no class that nothing selects`, async () => {
+        arrange(state);
+        const { container } = await mount(page());
+        const findings = unstyledClasses(container, styledClassTokens(), EXEMPT);
+        expect(findings, `\n${name} (${state}): classes applied and defined by no rule —\n`
+          + `${reportUnstyled(findings)}\n`).toEqual([]);
       });
     }
   }

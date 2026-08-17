@@ -357,7 +357,7 @@ export function Security() {
   return (
     <>
       <style>{SEC_STYLE}</style>
-      <div className="v-security sec-page" onKeyDown={onKeyDown}>
+      <div className="v-security" onKeyDown={onKeyDown}>
         <header className="pageHead reveal" style={cv(0)}>
           <div>
             <span className="eyebrow">{L('eyebrowCore')}</span>

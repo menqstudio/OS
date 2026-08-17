@@ -552,7 +552,7 @@ export function Research() {
       </div>
 
       <div className="rsx-grid">
-        <section className="rsx-panel surface soft rsx-rail-card" aria-label={L('listPanel')}>
+        <section className="rsx-panel surface soft" aria-label={L('listPanel')}>
           <div className="rsx-rail">
             {toolbarVisible && (
               <div className="rsx-search">
