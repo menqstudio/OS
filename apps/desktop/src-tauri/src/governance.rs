@@ -717,6 +717,33 @@ mod tests {
         assert!(parse_verifier_receipt(&r).is_err());
     }
 
+    /// The other mirror's discriminator — sixth independent audit, `A-02`.
+    ///
+    /// `rejects_bad_schema_version` above exercises `parse_verifier_receipt` only, and **no test
+    /// fed a bad schema to `parse_evidence_event`**. The auditor deleted that function's
+    /// discriminator comparison outright on the real repository, with rebuild proof, and got
+    /// `cargo test -p brops --lib governance::` at 29 passed and
+    /// `tools/check_schema_mirrors.py` GREEN — because the gate's `validates()` searched the
+    /// WHOLE FILE for the substring `get("schema")`, and the receipt's own check still contained
+    /// it.
+    ///
+    /// Failure scenario, verbatim: the engine emits an evidence event with `"schema": 2` — same
+    /// field names, different semantics. `parse_evidence_event` accepts it, the Security page
+    /// renders it as a v1 event, and the gate prints that both mirrors agree.
+    ///
+    /// A negative test is the half a static reader cannot fake. `check_schema_mirrors.py` now
+    /// requires each mirror to NAME one and refuses if it is missing; this is that test, and it
+    /// is what actually catches an inverted or deleted comparison.
+    #[test]
+    fn rejects_bad_evidence_schema_version() {
+        let mut ev = valid_event();
+        ev["schema"] = json!(2);
+        assert!(
+            parse_evidence_event(&ev).is_err(),
+            "an evidence event declaring schema 2 must be refused, not parsed as v1"
+        );
+    }
+
     #[test]
     fn rejects_wrong_artifact_type() {
         let mut r = valid_receipt();
