@@ -148,6 +148,62 @@ def state_audit_pointer(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+#: Where a round can be cited. Source comments are included deliberately: `A-06` and `H-02` were
+#: both discovered through citations that outlived their report.
+CITATION_GLOBS = (
+    "apps/desktop/AUDIT/*.md",
+    "docs/*.md",
+    "*.md",
+    "tools/*.py",
+    "apps/desktop/src/**/*.ts",
+    "apps/desktop/src/**/*.tsx",
+    "apps/desktop/src/**/*.css",
+    "apps/desktop/src-tauri/src/*.rs",
+)
+
+
+def highest_cited_ordinal(root: pathlib.Path) -> tuple[str, str] | None:
+    """The latest round anything in the tree CITES, and one file that cites it. Pure-ish.
+
+    Seventh independent audit, `H-02`. Checks 1-3 bind the ledger, the OWNER page and the directory
+    to each other, and check 3b binds the round the ledger ANNOUNCES to a filed report. None of
+    them notices a round that is cited everywhere and announced nowhere — which is exactly what
+    happened: eleven of the seventh round's findings survived only as `(G-05, seventh audit)`
+    inside source comments, pointing at a document that had never existed, while this gate printed
+    GREEN because no banner mentioned a seventh.
+
+    That is `A-06` twice. The first time the citations were in source comments and the banner was
+    ahead of the file; the second time the citations were in source comments and the banner was
+    behind. The invariant that covers both: **if anything in this repository refers to a round, that
+    round has a report.**
+    """
+    best = None
+    for pattern in CITATION_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file() or path.name == "AUDIT_LEDGER.md":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for m in re.finditer(
+                    r"\b(%s)[\s-]+(?:independent[\s-]+)?audit\b" % "|".join(ORDINALS), text, re.I):
+                word = m.group(1).lower()
+                rank = ORDINALS.index(word)
+                if best is None or rank > best[0]:
+                    best = (rank, word, path.relative_to(root).as_posix())
+    # The ledger last, so a citation in a real file is preferred as the example.
+    ledger = root / LEDGER
+    if ledger.is_file():
+        for m in re.finditer(r"\b(%s)[\s-]+(?:independent[\s-]+)?audit\b" % "|".join(ORDINALS),
+                             ledger.read_text(encoding="utf-8"), re.I):
+            word = m.group(1).lower()
+            rank = ORDINALS.index(word)
+            if best is None or rank > best[0]:
+                best = (rank, word, LEDGER)
+    return (best[1], best[2]) if best else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=str(ROOT))
@@ -239,6 +295,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"{AUDIT_DIR}/{name} is {size} bytes. A report that small is a placeholder; "
                 f"`exists()` is not the same as `is a report`. (Smoke check only — padding "
                 f"satisfies it, and it is not claimed to do more.)")
+
+    # 3d. ANYTHING THAT CITES A ROUND BINDS IT — seventh audit `H-02`, found by the eighth.
+    cited = highest_cited_ordinal(root)
+    if cited:
+        word, where = cited
+        if not any(f"-{word}-" in n for n in reports):
+            failures.append(
+                f"`{where}` cites the {word.upper()} round and no report in {AUDIT_DIR} names it "
+                f"(expected a filename containing `-{word}-`). A citation that outlives its report "
+                f"is A-06, and it has now happened twice: once with the banner ahead of the file, "
+                f"once with the banner behind it. If anything in this repository refers to a "
+                f"round, that round has a report.")
 
     # 4. the machine-readable anchor names the same round the humans do
     state_path = root / STATE

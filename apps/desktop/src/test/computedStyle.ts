@@ -268,6 +268,71 @@ export function unstyledClasses(root: ParentNode, styled: Set<string>, exempt: S
     .sort((a, b) => a.className.localeCompare(b.className));
 }
 
+/** `rgb()` / `rgba()` as computed by the browser → `[r, g, b, a]`. */
+function parseRgb(value: string): [number, number, number, number] | null {
+  const m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/
+    .exec(value.trim());
+  if (!m) return null;
+  const alpha = m[4] === undefined ? 1
+    : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+  return [Number(m[1]), Number(m[2]), Number(m[3]), alpha];
+}
+
+/**
+ * What is ACTUALLY behind this element's text, as an opaque `rgb()`.
+ *
+ * A translucent background has no contrast ratio of its own — `rgba(61,90,254,.12)` is not a
+ * colour a reader ever sees. The palette's active row is painted with exactly that, over whatever
+ * the panel behind it is, so measuring the declared value would measure a colour that never
+ * reaches a screen. This walks up compositing each translucent layer until it reaches an opaque
+ * one, which is what the eye does.
+ *
+ * Falls back to white only when the whole chain is transparent, which in a mounted page means the
+ * document background — and that is the honest default rather than a guess, because a page whose
+ * every ancestor is transparent really is on the canvas.
+ */
+export function effectiveBackground(el: Element): string {
+  let r = 255, g = 255, b = 255;
+  const layers: Array<[number, number, number, number]> = [];
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    const parsed = parseRgb(getComputedStyle(node).backgroundColor);
+    if (!parsed || parsed[3] === 0) continue;
+    layers.push(parsed);
+    if (parsed[3] === 1) break;
+  }
+  // Composite from the bottom up: the last layer found is the furthest back.
+  for (let i = layers.length - 1; i >= 0; i -= 1) {
+    const [lr, lg, lb, la] = layers[i];
+    r = lr * la + r * (1 - la);
+    g = lg * la + g * (1 - la);
+    b = lb * la + b * (1 - la);
+  }
+  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+}
+
+/** WCAG 2.x relative luminance / contrast ratio, on computed `rgb()` strings.
+ *
+ *  The same arithmetic `tools/check_contrast.py` runs over the token manifest — deliberately, so
+ *  a page measured here and a pair measured there cannot disagree about what 4.5:1 means. What
+ *  differs is the input: that reads hexes a human typed into JSON, this reads what Chromium
+ *  computed. The eighth audit's `H-03` is the gap between those two. */
+export function contrastRatio(fg: string, bg: string): number {
+  const lum = (value: string): number => {
+    const parsed = parseRgb(value);
+    if (!parsed) return 0;
+    const [r, g, b] = parsed.map((c, i) => {
+      if (i === 3) return c;
+      const s = c / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const a = lum(fg);
+  const b = lum(bg);
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /** A failure message someone can act on without opening a debugger. */
 export function reportInvisible(findings: Invisible[]): string {
   return findings.map((f) =>

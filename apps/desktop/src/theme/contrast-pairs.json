@@ -1,5 +1,5 @@
 {
-  "note": "Foreground/background text intents for the BroPS design tokens. The named colors MUST mirror apps/desktop/src/theme/tokens.ts (which itself mirrors tokens.css) — the same shipping palette. tools/check_contrast.py resolves every pair against BOTH the light and dark palette and fails closed if any text pair is below its WCAG AA threshold in either theme. `size` selects the threshold: `normal` text needs >= 4.5:1, `large`/bold text (>= 18.66px bold or >= 24px) needs >= 3.0:1. Update this file in the same change as any token color edit.",
+  "note": "Foreground/background text intents for the BroPS design tokens. The named colors MUST mirror apps/desktop/src/theme/tokens.ts (which itself mirrors tokens.css) — the same shipping palette. tools/check_contrast.py resolves every pair against BOTH the light and dark palette and fails closed if any text pair is below its WCAG AA threshold in either theme. `size` selects the threshold: `normal` text needs >= 4.5:1, `large`/bold text (>= 18.66px bold or >= 24px) needs >= 3.0:1. Update this file in the same change as any token color edit. `selected` is the COMPOSITE of --menq-color-selected over --menq-color-surface, because a translucent tint has no ratio of its own; recompute it if either token changes. It exists because the eighth audit's H-03 found .palette-item.active at 2.34:1 in the light theme while this gate reported GREEN over 24 pairs - the rule was not among them.",
   "thresholds": {
     "normal": 4.5,
     "large": 3.0
@@ -18,7 +18,8 @@
       "warning": "#ab6600",
       "danger": "#d1435b",
       "info": "#2876d5",
-      "focus": "#3d5afe"
+      "focus": "#3d5afe",
+      "selected": "#e8ebff"
     },
     "dark": {
       "bg": "#0c0e13",
@@ -33,7 +34,8 @@
       "warning": "#f0b23a",
       "danger": "#f2708a",
       "info": "#6cb2ff",
-      "focus": "#7c8dff"
+      "focus": "#7c8dff",
+      "selected": "#272c47"
     }
   },
   "pairs": [
@@ -108,6 +110,18 @@
       "fg": "info",
       "bg": "surface",
       "size": "normal"
+    },
+    {
+      "id": "palette-active-label",
+      "fg": "text",
+      "bg": "selected",
+      "size": "normal"
+    },
+    {
+      "id": "palette-active-marker",
+      "fg": "accent",
+      "bg": "selected",
+      "size": "large"
     }
   ]
 }

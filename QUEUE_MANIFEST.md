@@ -57,7 +57,7 @@ that job continuously, so no freeze is needed:
 
 That rule is now the merge rule — held by convention, not by enforcement: **31 checks run on every
 PR** (15 of them repository gates under `tools/`), and **none of them is a *required* check**,
-because `main` has no branch protection and no rulesets (verified 2026-08-09). Enabling protection
+because `main` carries branch protection: **33 required status checks**, `enforce_admins`, `strict`, linear history, no force pushes, no deletions (enabled 2026-08-17 by Owner decision after the seventh audit's `G-01`; widened from 12 to 33 on 2026-08-18 after the eighth audit's `H-01`). Exactly two pull-request jobs are excluded, each for a measured reason: `AI-surface inventory gate` (a `paths:` filter means it does not report on unrelated PRs, and GitHub treats a skipped required context as pending) and `Trust provisioning (windows-latest)` (`T-023`, three recorded occurrences). *(Until 2026-08-17 this sentence said `main` had none, and it was true when written — that is the seventh audit's `G-01`, and the eighth audit's `H-04` is that seven documents went on saying it afterwards.)* Enabling protection
 is the Owner's, not the Builder's. For security work there is also
 the discipline that every added check is **deleted once to confirm its test goes red**. In the last
 wave about ninety checks were verified that way, and four came back *green*, meaning four tests

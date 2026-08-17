@@ -706,7 +706,7 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
       `paths` filter, so it runs on every push and PR; its exact command re-run 2026-08-10 gives **60
       tests, 0 failures**. Two honest qualifiers: this phase's CI paragraph specifies `BRO_ENV=ci` and
       the job does not set it (nothing in `bridge/` reads it, so it is cosmetic drift, not a hole); and
-      the job **runs** but is not a **required** check — `main` has no branch protection, which is the
+      the job **runs**, and since 2026-08-17 it is a **required** check — `main` carries branch protection: **33 required status checks**, `enforce_admins`, `strict`, linear history, no force pushes, no deletions (enabled 2026-08-17 by Owner decision after the seventh audit's `G-01`; widened from 12 to 33 on 2026-08-18 after the eighth audit's `H-01`). Exactly two pull-request jobs are excluded, each for a measured reason: `AI-surface inventory gate` (a `paths:` filter means it does not report on unrelated PRs, and GitHub treats a skipped required context as pending) and `Trust provisioning (windows-latest)` (`T-023`, three recorded occurrences). *(This line said `main` had no branch protection until the eighth audit's `H-04`.)* Which is the
       Owner's to enable and is tracked in `docs/OWNER_ACTION_REQUIRED.md`.
 - [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **shipped and
       reachable, and it can only ever paint a demonstration badge.** The badge renders at

@@ -511,6 +511,73 @@ def fetch_carrier(number: int) -> dict | None:
         return _rest_pull(number)        # same second road; see _rest_pull()
 
 
+REQUIRED_CHECKS = pathlib.Path("config") / "required-checks.json"
+
+
+def verify_branch_protection(expected: dict, live: dict | None) -> list[str]:
+    """Live branch protection against the committed expectation. Pure/testable.
+
+    Eighth independent audit, `H-04`. Branch protection was turned on 2026-08-17 and **seven
+    canonical documents went on saying it was off** — `docs/ARCHITECTURE.md` among them, stating the
+    command, its output and a verification date while being false. Prose about repository settings
+    goes stale silently and nothing notices, which is how the seventh round's `G-01` survived six
+    audits: everyone read a document that said enforcement was convention.
+
+    `live is None` is a REFUSAL, not a skip. The caller only reaches this when `gh` is available, so
+    an unreadable protection state means the read failed specifically — the same reasoning as
+    `G-05`, and the same answer.
+    """
+    if live is None:
+        return [f"branch protection could not be read from GitHub, so {REQUIRED_CHECKS.as_posix()} "
+                f"could not be verified. A check that could not run has not passed."]
+    failures: list[str] = []
+    for flag, path in (("enforce_admins", ("enforce_admins", "enabled")),
+                       ("required_linear_history", ("required_linear_history", "enabled")),
+                       ("allow_force_pushes", ("allow_force_pushes", "enabled")),
+                       ("allow_deletions", ("allow_deletions", "enabled"))):
+        if flag not in expected:
+            continue
+        got = live
+        for key in path:
+            got = (got or {}).get(key) if isinstance(got, dict) else None
+        if bool(got) != bool(expected[flag]):
+            failures.append(
+                f"branch protection: `{flag}` is {bool(got)} on GitHub and "
+                f"{bool(expected[flag])} in {REQUIRED_CHECKS.as_posix()}. The committed "
+                f"expectation and the live setting must move in the same pull request.")
+    checks = (live.get("required_status_checks") or {}) if isinstance(live, dict) else {}
+    if "strict" in expected and bool(checks.get("strict")) != bool(expected["strict"]):
+        failures.append(f"branch protection: `strict` is {bool(checks.get('strict'))} on GitHub "
+                        f"and {bool(expected['strict'])} in {REQUIRED_CHECKS.as_posix()}.")
+    want = set(expected.get("contexts") or [])
+    got_ctx = set(checks.get("contexts") or [])
+    for missing in sorted(want - got_ctx):
+        failures.append(f"branch protection: `{missing}` is required by "
+                        f"{REQUIRED_CHECKS.as_posix()} and is NOT required on GitHub.")
+    for extra in sorted(got_ctx - want):
+        failures.append(f"branch protection: `{extra}` is required on GitHub and is not in "
+                        f"{REQUIRED_CHECKS.as_posix()}. A context nobody wrote down is a security "
+                        f"boundary nobody can review.")
+    return failures
+
+
+def _live_protection() -> dict | None:
+    """GitHub's protection object for `main`, or None. REST only - `gh api` is v3 here, which is
+    the road that survived the 2026-08-17 GraphQL outage (PR #149)."""
+    try:
+                             # encoding is EXPLICIT. `text=True` decodes with the process locale, which is
+                             # cp1252 on this host, and every context name here contains a middle dot or a
+                             # section sign - so the comparison would fail on mojibake rather than on drift.
+                             # `sync_active_pr.live_open_prs` already carries this correction; this call was
+                             # written without it and the gate caught itself on its first run.
+        out = subprocess.run(["gh", "api", "repos/" + _REPO + "/branches/main/protection"],
+                             capture_output=True, text=True, encoding="utf-8", timeout=30, check=True).stdout
+        data = json.loads(out)
+        return data if isinstance(data, dict) else None
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
 def _git_is_ancestor(a: str, b: str) -> bool:
     try:
         return subprocess.run(["git", "merge-base", "--is-ancestor", a, b],
@@ -662,6 +729,16 @@ def main(argv: list[str] | None = None) -> int:
                                             open_prs_now(), _live_main_head(), _git_is_ancestor,
                                             merge_commit if _is_sha(merge_commit) else None,
                                             _git_first_parent)
+
+    # H-04: the protection state is a committed artefact, compared live, not a sentence in a doc.
+    expected_path = root / REQUIRED_CHECKS
+    if expected_path.exists():
+        try:
+            expected = json.loads(expected_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            failures.append(f"{REQUIRED_CHECKS.as_posix()} is not readable JSON: {exc}")
+        else:
+            failures += verify_branch_protection(expected, _live_protection())
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The

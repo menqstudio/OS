@@ -111,13 +111,41 @@
 }
 .palette-item {
   display: flex; align-items: center; gap: var(--menq-space-3);
-  padding: 9px 10px; border-radius: var(--menq-radius-md);
+  /* 3px of the padding is given to the active row's marker below, so the text does not
+     shift by 3px when the keyboard cursor lands on it. */
+  padding: 9px 10px; border-left: 3px solid transparent; border-radius: var(--menq-radius-md);
   color: var(--brops-text); cursor: pointer;
 }
 .palette-item:hover { background: var(--menq-color-hover); }
-/* The keyboard cursor. `aria-activedescendant` moves with the arrow keys; this is
-   the half a sighted user can see, and it was missing entirely. */
-.palette-item.active { background: var(--menq-color-selected); color: var(--brops-accent); font-weight: 600; }
+/* The keyboard cursor. `aria-activedescendant` moves with the arrow keys; this is the half a
+   sighted user can see, and it was missing entirely until the sixth audit's `A-01`.
+
+   THE FIRST FIX MADE IT THE LEAST READABLE ROW IN THE LIST — seventh audit `G-10` deferred it,
+   eighth audit `H-03` measured it live. It read
+   `color: var(--brops-accent)` on `background: var(--menq-color-selected)`, which is
+   `--cyan` (the aios palette) painted on a `--menq-*` tint — the two-palette collision `T-034`
+   names, inside one declaration. Composited with the repository's own `contrast_ratio`:
+
+     light   #0EA5E9 on #e8ebff = 2.34:1     inactive row 18.58:1
+     dark    #38BDF8 on #272c47 = 6.38:1
+
+   AA normal wants 4.50. The row `aria-activedescendant` points at, and that Enter will take, was
+   eight times harder to read than every row around it in the light theme.
+
+   `--menq-color-accent` does not fix it either: 4.34:1 light, still under the floor. That was the
+   audit's proposed remedy and it was correctly marked UNVERIFIED.
+
+   So selection is no longer signalled by the TEXT COLOUR at all. The label stays at
+   `--brops-text` (15.71:1 light, 12.06:1 dark) and the cursor is carried by a left marker in the
+   accent — 4.34:1 light and 4.62:1 dark against the row, above the 3:1 WCAG 1.4.11 floor for a
+   non-text indicator — plus the tinted background and the weight. Three signals, none of which
+   asks anyone to read low-contrast text. */
+.palette-item.active {
+  background: var(--menq-color-selected);
+  border-left-color: var(--menq-color-accent);
+  color: var(--brops-text);
+  font-weight: 600;
+}
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px 1fr; }

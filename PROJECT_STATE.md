@@ -2420,7 +2420,7 @@ already made once, so it is named in the row and not counted.
 **The other five, stated at their real width.** The `task-request` contract is validated at runtime
 (`engine_adapter.py:120`); `bridge-result.schema.json` is loaded only by a test, so "contracts tested" was
 covering a test-only contract. The `bridge` CI job is real (`ci.yml:574-586`, re-run: **60 tests, 0
-failures**) -- it runs but is **not required**, since `main` has no branch protection. The adapter is built,
+failures**) -- it runs and, since 2026-08-17, **is required** — `main` now carries 33 required status checks with `enforce_admins` (seventh audit `G-01`, widened by the eighth's `H-01`). The adapter is built,
 correct and re-verified at **10/10**, and its only caller is reachable only through the dead governed path.
 The governed-provider transport is real and default-OFF, and all three callers of `ai::governed_turn` sit
 behind the unconditional refusal. The UI badge and control ship and a user reaches them (19 vitest cases),
