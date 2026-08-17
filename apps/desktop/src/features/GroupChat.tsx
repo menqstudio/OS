@@ -4,7 +4,7 @@ import {
   Badge, Button, EmptyState, ErrorState, FormRow, Input, Select, Skeleton,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
-import { useAsync } from '../hooks/useAsync';
+import { useAsync, established } from '../hooks/useAsync';
 import type { Tone } from '../domain/enums';
 import { Conversations } from './Conversations';
 import { STR } from './GroupChat.strings';
@@ -278,11 +278,14 @@ function RoundCard({ round, verdict, old }: {
  * owner has merely opened shows "—", and the count appears once turns have run in this session.
  */
 function RoomReadout(
-  { room, roster, messageCount, rounds, handoffs, live, L }: {
+  { room, participants, messageCount, rounds, handoffs, live, L }: {
     room: { createdAt: string };
-    roster: string[];
+    /** `null` = the roster was not established for THIS room. A measured zero is `0`. */
+    participants: number | null;
+    /** `null` = the message read was not established for THIS room. */
     messageCount: number | null;
-    rounds: number;
+    /** `null` = derived from a message read that was not established. */
+    rounds: number | null;
     handoffs: number;
     live: boolean;
     L: (k: Key) => string;
@@ -292,10 +295,22 @@ function RoomReadout(
   const elapsed = Number.isFinite(started) && started > 0
     ? formatElapsed(Date.now() - started)
     : null;
+  // EVERY figure tests `=== null`, and none tests truthiness — sixth independent audit, `A-07`.
+  //
+  // Participants used to read `roster.length > 0 ? String(roster.length) : NOT_ESTABLISHED`, one
+  // line above a `messageCount === null` that was already correct. Measured with the real
+  // component: a roster read that SUCCEEDS returning `[]` and one that REJECTS both rendered `—`,
+  // so an empty room and an unreadable one were indistinguishable — and the measured zero was
+  // reported as *not established*, the inverse of the sin this component's docstring names.
+  //
+  // Rounds used to render `String(rounds)` unconditionally. Both it and Messages therefore stated
+  // a measured `0` for a value nobody had established, because `useAsync` never clears `data` and
+  // the caller's null guard only held on the very first load.
+  const figure = (n: number | null) => (n === null ? NOT_ESTABLISHED : String(n));
   const cells: Array<[string, string]> = [
-    [L('readoutParticipants'), roster.length > 0 ? String(roster.length) : NOT_ESTABLISHED],
-    [L('readoutMessages'), messageCount === null ? NOT_ESTABLISHED : String(messageCount)],
-    [L('readoutRounds'), String(rounds)],
+    [L('readoutParticipants'), figure(participants)],
+    [L('readoutMessages'), figure(messageCount)],
+    [L('readoutRounds'), figure(rounds)],
     // Absence and unobservability, kept apart.
     [L('readoutHandoffs'), live ? String(handoffs) : NOT_ESTABLISHED],
     [L('readoutElapsed'), elapsed ?? NOT_ESTABLISHED],
@@ -314,6 +329,7 @@ function RoomReadout(
 
 /** An em dash means "not established" — never a measured zero. */
 const NOT_ESTABLISHED = '—';
+
 
 /** Coarse, honest elapsed: a room open for two days does not need its seconds. NOT exported —
  *  `routes.tsx` lazy-loads this module as a map of components, so a non-component export here
@@ -393,7 +409,13 @@ function ConsensusDeck() {
     [roomId],
   );
 
-  const transcript = useMemo(() => readConsensusTranscript(messages.data ?? []), [messages.data]);
+  // Derived from the ESTABLISHED read, not from whatever `data` happens to hold. On a room switch
+  // `useAsync` keeps the previous room's messages until the new read lands, so deriving from
+  // `messages.data` rendered the last room's rounds — and the last room's round CARD — under the
+  // new room's name (sixth audit, `A-07`, one step past the readout it names).
+  const establishedMessages = established(messages);
+  const transcript = useMemo(
+    () => readConsensusTranscript(establishedMessages ?? []), [establishedMessages]);
   const rounds = transcript.rounds;
   const latest = rounds.length > 0 ? rounds[rounds.length - 1] : null;
   const latestVerdict = latest ? evaluateConsensus(latest.rule, latest.asked, latest.positions) : null;
@@ -569,20 +591,20 @@ function ConsensusDeck() {
 
           <RoomReadout
             room={room}
-            roster={roster.data ?? []}
-            messageCount={messages.data === null ? null : (messages.data ?? []).length}
-            rounds={rounds.length}
+            participants={established(roster)?.length ?? null}
+            messageCount={establishedMessages === null ? null : establishedMessages.length}
+            rounds={establishedMessages === null ? null : rounds.length}
             handoffs={askTrail(delegations).length}
             live={delegations !== NO_GROUP_DELEGATIONS}
             L={L}
           />
 
-          {messages.loading && messages.data === null && <Skeleton rows={3} />}
+          {messages.loading && <Skeleton rows={3} />}
           {messages.error && (
             <ErrorState message={messages.error} onRetry={messages.reload} retryLabel={t('action.retry')} />
           )}
 
-          {messages.data !== null && !messages.error && rounds.length === 0 && (
+          {establishedMessages !== null && rounds.length === 0 && (
             <EmptyState glyph="⚖" title={L('noRounds')} hint={L('noRoundsHint')} />
           )}
 

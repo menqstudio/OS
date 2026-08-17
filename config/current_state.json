@@ -4,14 +4,14 @@
   "settled_at_main_head": "b269b2a20deed224c5ccb1e7a3b6f58ed582a116",
   "sync": {
     "baseline_main_head_at_sync": "b269b2a20deed224c5ccb1e7a3b6f58ed582a116",
-    "snapshot_branch": "t025-discriminator-proof",
+    "snapshot_branch": "main",
     "live_main_resolution": "Read settled_at_main_head: live main is b3010f6 (PR #81 merged, 2026-08-09), baseline_main_head_at_sync now equals it, and the only open pull request is the self-carrier #82 that records the settle. No implementation work is queued. Until 2026-08-09 this field said the baseline WAS the live HEAD 0efa99e (PR #65 merged) and named an active branch chore/staleness-sweep that no longer exists - stale by roughly sixteen merged PRs, in the machine-readable file the human docs are checked against.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #141). PR #141's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "3b-1B",
     "task": "T-017",
-    "branch": "t025-discriminator-proof"
+    "branch": "main"
   },
   "prs": [
     {"number": 112, "branch": "design/floor-writer-service", "base": "main", "draft": false, "merge_state": "open", "role": "design", "head": "3d0f053a79e1e3de118c6ce6ebab8e17e039c1f2", "why_listed": "Open and NOT the carrier: The floor-writer service has a design now (T-020) \u2014 a proposal, not an implementation. Listed so the settled snapshot names it; its exact head is anchored."}
