@@ -107,22 +107,37 @@ Full text: [`2026-08-17-sixth-audit-b16e572.md`](./2026-08-17-sixth-audit-b16e57
 the **Builder's** claim unless a later independent round says otherwise — that is what ◑ means, and
 `A-06` exists because this file once said otherwise.
 
+> **All fourteen are marked fixed as of 2026-08-17, and every one of them is ◑. Not one is ✅.**
+> This ledger has twice carried a RED verdict that came from a row marked ✅ by the session that
+> wrote the fix, and the sixth round's own §E named the arrangement while it was happening: *"It
+> will be written, mutation-tested and marked ◑ by its own author, which is the arrangement six
+> rounds have now punished."* The seventh round decides which of these survive.
+>
+> **Read the last banner before trusting the count.** `docs/OWNER_ACTION_REQUIRED.md` said *"All 11
+> are fixed as of 2026-08-16"* about the fifth round and `A-08` found that false. What is different
+> here is that each row names what was done and what was measured, so the claim is checkable rather
+> than tallied — and **four rows record a defect found in the FIX, by the fixer, after the audit had
+> closed**: the new browser suite missing four unstyled pill tones because it cannot reach the state
+> they render in; `classname_groups` never having read a plain string `className` at all;
+> `sync_active_pr --settled` emitting a `settled_at_main_head` its own gate refuses; and two tests
+> that had encoded a fail-open as intent. None of those were in the report.
+
 | # | P | Finding | Status |
 |---|---|---|---|
 | `A-01` | P1 | **The ⌘K palette has had no CSS since 2026-07-28.** Five classes deleted with `layout.css`'s palette section in `0c08dd8` (PR #47); the component kept rendering them. No overlay, no backdrop, no panel, no scroll container, no active-row highlight, and the page behind clickable while `aria-modal="true"`. | ◑ **Fixed 2026-08-17.** Section restored in `layout.css`. Measured, not asserted: `CommandPalette.browser.spec.tsx` fails 8 of 9 without it. |
-| `A-02` | P2 | `validates()` requires a **substring**, not a check. Five mutations — including deleting `parse_evidence_event`'s discriminator comparison outright — leave the gate GREEN. | ◑ Open — `T-025` |
-| `A-03` | P2 | `animation_clobber` is evaded by the `animation-name` longhand **its own error message recommends**. | ◑ Open — `T-026` |
-| `A-04` | P2 | `ENTRANCE_CLASSES` knows 2 entrance classes; 14 rules in the tree are invisible-until-animated. Three further blind spots measured. | ◑ Open — `T-026` |
-| `A-05` | P2 | `save_ask_to_knowledge` stamps `"governed research · …"` unconditionally, and the **only** path that can reach it on any install is the ungoverned one. | ◑ Open — `T-027` |
+| `A-02` | P2 | `validates()` requires a **substring**, not a check. Five mutations — including deleting `parse_evidence_event`'s discriminator comparison outright — leave the gate GREEN. | ◑ **Fixed 2026-08-17.** `validates()` scoped to the struct's own parser, comments and `#[cfg(test)]` stripped, and a `negative_test` required per mirror. All five audit mutations die: three at the gate, two at the test. |
+| `A-03` | P2 | `animation_clobber` is evaded by the `animation-name` longhand **its own error message recommends**. | ◑ **Fixed 2026-08-17** (`T-026`). |
+| `A-04` | P2 | `ENTRANCE_CLASSES` knows 2 entrance classes; 14 rules in the tree are invisible-until-animated. Three further blind spots measured. | ◑ **Fixed 2026-08-17** (`T-026`). |
+| `A-05` | P2 | `save_ask_to_knowledge` stamps `"governed research · …"` unconditionally, and the **only** path that can reach it on any install is the ungoverned one. | ◑ **Fixed 2026-08-17.** `AnswerProvenance` is a required parameter of `stash_pending_answer`; the save path writes it verbatim and asserts nothing. The renderer carries the fact rather than softening the words, and an unrecognised outcome reads as a warning. |
 | `A-06` | P2 | The fifth audit's report was never filed; this ledger named the fourth as authoritative while the OWNER page carried the fifth's 15 promotions. | ◑ **Structurally fixed 2026-08-17** for this round: report filed, this line repointed, brief corrected. **The fifth round's text remains unrecoverable** and its promotions are NOT carried here. |
-| `A-07` | P2 | `RoomReadout` reports a measured zero and a failed read as the same em dash (`:296`), and after any failed refresh states `0` for values that were never established (`:297-298`). | ◑ Open — `T-028` |
-| `A-08` | P2 | `OWNER_ACTION_REQUIRED.md:22` — *"All 11 are fixed"* is false; fifth-round `A-06` (six fallbacks on dead CSS) was never touched. | ◑ Open — `T-029` |
-| `A-09` | P3 | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. | ◑ Open — `T-030` |
-| `A-10` | P3 | The C.1 gate still misses a non-spacing token overridden in a later `:root` — the docstring's own `--azure` example. | ◑ Open — `T-026` |
-| `A-11` | P3 | Two silent fail-open paths remain in `verify_settled_snapshot` beside the one that was fixed. | ◑ Open — `T-031` |
-| `A-12` | P3 | `tools/test_renderer_broker_schemas.py` is named by no workflow; the round swept forward for new tests and not backward for orphaned ones. | ◑ Open — `T-032` |
+| `A-07` | P2 | `RoomReadout` reports a measured zero and a failed read as the same em dash (`:296`), and after any failed refresh states `0` for values that were never established (`:297-298`). | ◑ **Fixed 2026-08-17.** `established()` — a value counts only when this read finished, succeeded and produced data. Also closed the misattribution case the audit did not name: a room switch rendered the previous room's counts and round card. |
+| `A-08` | P2 | `OWNER_ACTION_REQUIRED.md:22` — *"All 11 are fixed"* is false; fifth-round `A-06` (six fallbacks on dead CSS) was never touched. | ◑ **Fixed 2026-08-17.** The five dead selectors deleted (130 lines). The banner was corrected the same day. `T-033` carries the measured remainder: 785 of 2 639 class tokens are dead. |
+| `A-09` | P3 | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. | ◑ **Fixed 2026-08-17.** Both DoD rows now claim what the tests establish, and `agentsDispatch.boundary.test.ts` makes the limit executable — the three smuggle routes are asserted to pass, on purpose. |
+| `A-10` | P3 | The C.1 gate still misses a non-spacing token overridden in a later `:root` — the docstring's own `--azure` example. | ◑ **Fixed 2026-08-17** (`T-026`). |
+| `A-11` | P3 | Two silent fail-open paths remain in `verify_settled_snapshot` beside the one that was fixed. | ◑ **Fixed 2026-08-17.** All three doors refuse with a reason, including one the audit did not name. Two tests that asserted the fail-open as intent were rewritten. |
+| `A-12` | P3 | `tools/test_renderer_broker_schemas.py` is named by no workflow; the round swept forward for new tests and not backward for orphaned ones. | ◑ **Fixed 2026-08-17.** Wired, and `check_reachability::unrun_test_modules` sweeps backward with no escape hatch. |
 | `A-13` | P3 | `AUDIT_LEDGER.md:134` — nested backticks terminate the code span; the row stating the P0 gate status renders garbled. | ◑ **Fixed 2026-08-17.** |
-| `A-14` | P3 | `OWNER_ACTION_REQUIRED.md:638` — *"These are being worked"*; both surviving §3 items say they are not. `## 2d.` precedes `## 2c.` | ◑ Open — `T-029` |
+| `A-14` | P3 | `OWNER_ACTION_REQUIRED.md:638` — *"These are being worked"*; both surviving §3 items say they are not. `## 2d.` precedes `## 2c.` | ◑ **Fixed 2026-08-17.** The heading no longer claims the items are being worked — they are parked with a stated reason, which is a different and more honest thing to be — and `2c`/`2d` are in order. |
 
 ## Findings of the THIRD independent audit (2026-08-14) — status
 
