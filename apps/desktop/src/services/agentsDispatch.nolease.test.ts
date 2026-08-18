@@ -56,17 +56,51 @@ const BASE: AssignmentInput = {
 
 const assignment = (): Assignment => buildAssignment(BASE);
 
-/** Every string that appears anywhere in a value, however deeply nested. */
+/**
+ * Every string that appears anywhere in a value, however deeply nested.
+ *
+ * **Non-string leaves are visited too** (sixth audit `A-09` route 3, reopened by the eighth).
+ * The earlier version pushed only `typeof value === 'string'`, so a `number[]` whose elements
+ * are character codes decoded to `"lease-7f2a91"` on the far side while being invisible here.
+ * Numbers and booleans are now stringified, and an array that is *entirely* printable character
+ * codes is additionally pushed in its decoded form — the sweep sees the bytes as the text they
+ * would become, not as digits.
+ */
 function flatten(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) value.forEach((v) => flatten(v, out));
-  else if (value && typeof value === 'object') {
+  else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    out.push(String(value));
+  } else if (Array.isArray(value)) {
+    const decoded = decodeCharCodes(value);
+    if (decoded !== null) out.push(decoded);
+    value.forEach((v) => flatten(v, out));
+  } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
   }
   return out;
 }
 
-const FORBIDDEN = /lease|(?<![a-z])key(?![a-z])|secret|token|nonce|signature|private/i;
+/** `[108,101,97,115,101]` → `"lease"`; `null` when the array is not all printable ASCII codes. */
+function decodeCharCodes(list: readonly unknown[]): string | null {
+  if (list.length === 0) return null;
+  const codes: number[] = [];
+  for (const v of list) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
+    codes.push(v);
+  }
+  return String.fromCharCode(...codes);
+}
+
+/**
+ * The credential-shaped vocabulary. `key` carries a **compound** family rather than the bare
+ * word: `(?<![a-z])key(?![a-z])` matched none of `pubkey` / `apikey` / `keystore` / `sessionkey`
+ * (sixth audit `A-09` route 2, reopened by the eighth), while still needing to leave `monkey`,
+ * `turkey` and `keyboard` alone — a lookaround that admits every compound would fire on ordinary
+ * prose, and a sweep that cries wolf gets deleted. The prefix and suffix groups are both optional,
+ * so the bare-word behaviour this replaced is preserved exactly.
+ */
+const FORBIDDEN =
+  /lease|secret|token|nonce|signature|private|(?<![a-z])(?:pub|api|access|secret|private|public|session|signing|host|ssh|gpg|master|root|enc|dec)?[-_ ]?keys?(?:tore|chain|file|pair|ring|id)?(?![a-z])/i;
 
 describe('dispatch — the desktop never serializes a lease or a key', () => {
   it('the request frame carries no lease, key, token, nonce or signature — at any depth', async () => {
