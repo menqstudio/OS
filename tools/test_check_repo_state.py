@@ -509,3 +509,170 @@ class MainPushTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestSecondRoad(unittest.TestCase):
+    """The REST fallback — eighth audit `H-05`, and the first tests it has ever had.
+
+    `grep -c "_rest_" tools/test_check_repo_state.py` returned **0** when the audit ran. This is the
+    one piece of code the seventh round added that no gate covered, written during a live GitHub
+    outage and merged the same day, and it sits behind a REQUIRED status check.
+    """
+
+    def setUp(self):
+        rs._REPO_SLUG_CACHE = None
+        self.addCleanup(setattr, rs, "_REPO_SLUG_CACHE", None)
+
+    def _gh(self, mapping, default=None):
+        """Patch `subprocess.run` in the module under test; dispatch on the joined argv."""
+        class R:
+            def __init__(self, rc, out, err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def run(cmd, **_kw):
+            key = " ".join(cmd)
+            for needle, value in mapping.items():
+                if needle in key:
+                    if isinstance(value, Exception):
+                        raise value
+                    return R(*value)
+            if default is None:
+                raise AssertionError("unexpected subprocess call: " + key)
+            return R(*default)
+
+        real = rs.subprocess.run
+        rs.subprocess.run = run
+        self.addCleanup(setattr, rs.subprocess, "run", real)
+
+    # ---- the slug the REST road addresses -----------------------------------------------------
+
+    def test_the_slug_comes_from_gh_not_from_a_literal(self):
+        self._gh({"repo view": (0, '{"nameWithOwner":"someone/fork"}')})
+        self.assertEqual(rs._repo_slug(), "someone/fork")
+
+    def test_the_slug_is_resolved_once_and_cached(self):
+        calls = []
+
+        class R:
+            returncode, stdout, stderr = 0, '{"nameWithOwner":"a/b"}', ""
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return R()
+
+        real = rs.subprocess.run
+        rs.subprocess.run = run
+        self.addCleanup(setattr, rs.subprocess, "run", real)
+        self.assertEqual(rs._repo_slug(), "a/b")
+        self.assertEqual(rs._repo_slug(), "a/b")
+        self.assertEqual(len(calls), 1, "resolved once per process, not per REST call")
+
+    def test_an_unresolvable_slug_REFUSES_rather_than_guessing(self):
+        # The whole point of H-05: in a fork, guessing `menqstudio/OS` answers about a DIFFERENT
+        # repository than the GraphQL road did, and nothing downstream could tell.
+        for reply in [(1, "", "gh: not a repository"), (0, ""), (0, "not json"),
+                      (0, '{"nameWithOwner":null}'), (0, '{"nameWithOwner":"no-slash"}'),
+                      (0, '{"nameWithOwner":"https://github.com/a/b"}')]:
+            with self.subTest(reply=reply):
+                rs._REPO_SLUG_CACHE = None
+                self._gh({"repo view": reply})
+                self.assertIsNone(rs._repo_slug())
+        rs._REPO_SLUG_CACHE = None
+        self._gh({"repo view": OSError("gh not installed")})
+        self.assertIsNone(rs._repo_slug())
+
+    def test_a_failed_slug_makes_every_REST_road_refuse(self):
+        rs._REPO_SLUG_CACHE = False
+        self._gh({})                      # any REST call at all would raise AssertionError
+        self.assertIsNone(rs._rest_pull(153))
+        self.assertIsNone(rs._rest_open_prs())
+        data, why = rs._live_protection()
+        self.assertIsNone(data)
+        self.assertIn("slug unresolved", why)
+
+    # ---- _rest_pull ---------------------------------------------------------------------------
+
+    def test_rest_pull_maps_RESTs_merged_vocabulary_to_GraphQLs(self):
+        # REST says `state:"closed"` + `merged:true`; GraphQL says `MERGED`. Mapping a merged PR to
+        # CLOSED would tell verify_settled_snapshot the wrong story about the settle.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": (0, '{"state":"closed","merged":true,"draft":false,'
+                                 '"head":{"ref":"h","sha":"' + MAIN + '"},"base":{"ref":"main"},'
+                                 '"merge_commit_sha":"' + NEWMAIN + '","body":"b"}')})
+        pr = rs._rest_pull(9)
+        self.assertEqual(pr["state"], "MERGED")
+        self.assertEqual(pr["mergeCommit"], {"oid": NEWMAIN})
+        self.assertEqual(pr["headRefOid"], MAIN)
+        self.assertEqual(pr["baseRefName"], "main")
+
+    def test_rest_pull_uppercases_the_unmerged_states(self):
+        for rest_state, expected in [("open", "OPEN"), ("closed", "CLOSED")]:
+            with self.subTest(rest_state=rest_state):
+                rs._REPO_SLUG_CACHE = "a/b"
+                self._gh({"pulls/9": (0, '{"state":"' + rest_state + '","merged":false,'
+                                         '"head":{},"base":{}}')})
+                self.assertEqual(rs._rest_pull(9)["state"], expected)
+
+    def test_rest_pull_with_no_merge_commit_reports_None_not_a_fake_oid(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": (0, '{"state":"open","merged":false,"head":{},"base":{},'
+                                 '"merge_commit_sha":null}')})
+        self.assertIsNone(rs._rest_pull(9)["mergeCommit"])
+
+    def test_rest_pull_refuses_a_reply_with_no_state(self):
+        # A reply with no `state` must fail closed rather than becoming the empty string, which
+        # would uppercase to '' and compare unequal to every real state — a silent permanent
+        # mismatch that reads as drift instead of as an unanswered read.
+        rs._REPO_SLUG_CACHE = "a/b"
+        for body in ['{"merged":false}', '[]', 'null', '"a string"']:
+            with self.subTest(body=body):
+                self._gh({"pulls/9": (0, body)})
+                self.assertIsNone(rs._rest_pull(9))
+
+    def test_rest_pull_returns_None_when_the_SECOND_road_fails_too(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": rs.subprocess.CalledProcessError(1, "gh")})
+        self.assertIsNone(rs._rest_pull(9))
+        self._gh({"pulls/9": (0, "{not json")})
+        self.assertIsNone(rs._rest_pull(9))
+
+    # ---- _rest_open_prs -----------------------------------------------------------------------
+
+    def test_rest_open_prs_reads_the_shape_gh_ACTUALLY_emits(self):
+        # MEASURED against gh 2.97.0 on 2026-08-18: `--paginate` over a genuinely two-page result
+        # returns ONE merged array — zero newlines, zero `][`. This is the shape that must work.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, '[{"number":153},{"number":112}]')})
+        self.assertEqual(rs._rest_open_prs(), {153, 112})
+
+    def test_rest_open_prs_also_reads_the_two_shapes_the_normalisation_defends(self):
+        # Neither is emitted by gh 2.97.0 — both have been emitted by other versions, which is why
+        # the branches are kept. Pinned so a future tidy-up cannot remove them silently.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, '[{"number":1}][{"number":2}]')})
+        self.assertEqual(rs._rest_open_prs(), {1, 2}, "concatenated arrays")
+        self._gh({"--paginate": (0, '[{"number":3}]\n[{"number":4}]\n')})
+        self.assertEqual(rs._rest_open_prs(), {3, 4}, "newline-delimited pages")
+
+    def test_rest_open_prs_never_truncates_a_multi_page_answer(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        every = list(range(1, 251))
+        body = "[" + ",".join('{"number":' + str(n) + '}' for n in every) + "]"
+        self._gh({"--paginate": (0, body)})
+        self.assertEqual(rs._rest_open_prs(), set(every))
+
+    def test_rest_open_prs_refuses_rather_than_returning_the_empty_set(self):
+        # An empty set is the MOST PERMISSIVE answer available ("nothing is open"), returned exactly
+        # when the truth is unknown. That was A-05 in the fifth audit; None is the honest answer.
+        rs._REPO_SLUG_CACHE = "a/b"
+        for reply in [(1, "", "503"), (0, ""), (0, "   "), (0, "[{not json")]:
+            with self.subTest(reply=reply):
+                self._gh({"--paginate": reply})
+                self.assertIsNone(rs._rest_open_prs())
+        self._gh({"--paginate": OSError("gh vanished")})
+        self.assertIsNone(rs._rest_open_prs())
+
+    def test_an_empty_open_set_is_distinguishable_from_a_failure(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, "[]")})
+        self.assertEqual(rs._rest_open_prs(), set(), "genuinely no open PRs is a SET, not None")

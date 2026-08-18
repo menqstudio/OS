@@ -1,12 +1,87 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #153 · branch `fix/a09-smuggle-routes`** (base `main`, tip `5ce8fcd`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #154 · branch `fix/rest-fallback-slug`** (base `main`, tip `911b079`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> A-09: smuggle routes 2 and 3 closed with mutants; route 1 answered by a declared eight-leaf free-text register
+> T-037 done (REST second road: first tests, resolved-or-refused slug, the inert line was broken); T-039 diagnosed and still open
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The inert line was broken, and the flake's two leading suspects are both eliminated (2026-08-18)
+
+Two tickets from the eighth audit, worked the way the audit asked: measure before patching.
+
+## `T-037` — the REST fallback had no test, and one of its branches could never have worked
+
+`grep -c "_rest_" tools/test_check_repo_state.py` was **0**. It is the one piece of code the seventh
+round added that no gate covered, written during a live GitHub outage and merged the same day, and it
+sits behind a **required** status check. It has fourteen tests now.
+
+**The hardcoded slug is gone.** `_REPO = "menqstudio/OS"` was a literal while every GraphQL road in the
+same file — `gh pr view`, `gh pr list` — infers the slug from the git remote. In a fork the two roads
+answered about **different repositories** and nothing in the gate could tell. `_repo_slug()` now asks
+`gh repo view --json nameWithOwner`, caches the answer once per process (including a cached failure, so
+three call sites do not pay three subprocesses to learn the same thing), validates it really is
+`owner/name`, and returns `None` otherwise. All three REST call sites — `_rest_pull`, `_rest_open_prs`,
+`_live_protection` — **refuse** on `None`. A road that cannot establish *which* repository it is reading
+has not read anything.
+
+**The pagination line: measured, and then found to be worse than inert.** The audit called
+`.replace("][", "],[")` inert but could not observe which shape this `gh` emits, and said — correctly —
+that fixing a parser against an unobserved shape is how the third version turns out wrong. So it was
+observed: **`gh 2.97.0`, a genuinely two-page result, returns one merged JSON array — 39 650 bytes,
+zero newlines, zero `][`.** Inert, as the audit thought.
+
+Then the first test for the branch it defends went red. `[{...}][{...}]` becomes `[{...}],[{...}]` after
+the replace, and **that is not a JSON document** — `json.loads` raises `Extra data`, the caller's
+`except ValueError` fires, and `_rest_open_prs` returns `None`. The branch written to defend a shape
+turned that shape into a refusal. It was never noticed because it is unreachable on this `gh`.
+
+Both normalisations are replaced by `_json_documents`, a `raw_decode` loop that asks the JSON parser
+itself where each document ends. It reads all three shapes for real, and a trailing fragment that is not
+a complete document **raises** rather than being skipped — a silently dropped page is exactly the
+truncation this function refuses to commit. This is not a third guess: the shape that matters was
+measured, and the fix is verified against all three.
+
+## `T-039` — both hypotheses eliminated, so neither proposed fix is justified
+
+The ticket named the decision to make first: *"establish whether the denial is only ever the writer's
+own exclusion window (in which case serialising the writer is the fix, not retrying the reader)."*
+Established — and the answer is **no**.
+
+* **Not reproducible here.** 200 runs of the single test, then 40 runs of the whole 107-test binary:
+  **0 failures**.
+* **Not the writer's replace window.** A probe racing `std::fs::read` against two threads continuously
+  `rename`-replacing the same path produced **zero** errors across ~27 000 reads. `write_hint`'s
+  `MoveFileExW` replace does not deny a concurrent reader on this platform.
+* **Not an on-access scan either.** A third party holding the file with `share_mode(0)` — what an
+  antivirus does — produces **error 32** (`ERROR_SHARING_VIOLATION`), not error 5.
+* **What does produce exactly `Access is denied. (os error 5)`:** the path not being a regular file. A
+  directory at the counter path reproduces the CI errno precisely, which is now the deterministic
+  fixture for the test below.
+
+So the cause is still unidentified, and the honest response to an unidentified intermittent refusal on
+an **anti-rollback floor** is neither of the two available shortcuts. A retry loop would turn *"the read
+succeeded"* into *"the read eventually succeeded"* — a different claim about a floor, and the ticket
+warns about it by name. Serialising the writer would be fixing something the measurement says is not
+broken. Coercing the error to `0` is the `L-4` defect this module's own comment exists to prevent.
+
+**What landed instead is the thing that makes the next occurrence answerable in one shot.** `read_hint`
+still refuses on exactly the same conditions — that half is asserted first in the new test — and the
+refusal now carries `raw_os_error`, the `ErrorKind`, whether the path exists, its length / readonly /
+is-dir, and **how many `.writing` staging siblings are present**. That last field is the one that
+matters: if a future occurrence shows one, the eliminated writer-window hypothesis is the first thing to
+revisit; if it shows none, it is eliminated again with evidence rather than by argument.
+
+`T-039` stays **open** and its job stays out of the required set. What changed is that the next
+occurrence produces a diagnosis instead of another guess.
+
+## Verified by deletion
+
+Strip the `read_hint` instrumentation ⇒ red. Restore the broken `][` normalisation ⇒ red. Make
+`_repo_slug` guess the fallback instead of refusing ⇒ six red. Restored: 88 tool tests (was 74), 9
+`head_sequence` tests (was 8), twelve repository gates GREEN.
 
 ### Two of A-09's three smuggle routes are closed, and the third is counted instead of swept (2026-08-18)
 
