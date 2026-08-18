@@ -6,6 +6,33 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **EIGHTH AUDIT, 2026-08-18 — RED, on `main` @ `9ae2fd2` (tree `30b3c966`, pin proven).** Filed
+> at [`2026-08-18-eighth-audit-9ae2fd2.md`](../apps/desktop/AUDIT/2026-08-18-eighth-audit-9ae2fd2.md).
+> No P0 — the three production-gate refusals verified closed for the third round running.
+>
+> **This round is the one that mattered for a reason that is not a finding.** Its primary output was
+> a promotion table: 29 marks carried by the sixth and seventh rounds, every one of them ◑ — the
+> Builder's claim, written by the session that wrote the fix — attacked one at a time.
+> **27 earned ✅.** Those are the first independent confirmations this ledger has carried since the
+> fourth round, and they exist because someone who did not build any of it tried to break all of it.
+>
+> **Two did not survive, and they are the honest half.** `A-06` — the audit report that is never
+> filed — **recurred, with the gate for it already in the tree and green.** `A-09` — three routes
+> that get a credential past the no-lease whitelist — was never touched: the roadmap rows were
+> corrected and the limit made executable, but the routes stayed open, and treating that as closed
+> was an overclaim.
+>
+> Its headline finding is `H-01`, and it is about the wall the round before built: **18
+> pull-request-running jobs sat outside branch protection with no reason recorded anywhere** — the
+> whole of `supply-chain.yml`, including secret scanning, action pinning and all four dependency
+> advisory gates. `enforce_admins: true` does nothing about a job that is not required, *"which is
+> where the supply chain lives."* **Fixed the same day: 12 required contexts → 33, with exactly two
+> exclusions, each for a measured reason.**
+>
+> `H-03` is the one worth reading if you read only one: the ⌘K palette's **selected** row — the row
+> the keyboard cursor points at and Enter will take — was the least readable row in the list in the
+> light theme. It was created by the fix for the sixth round's own `A-01`.
+>
 > **SIXTH AUDIT, 2026-08-17 — RED, on `main` @ `b16e572` (pin proved by tree digest
 > `098df1d5`).** Filed at
 > [`2026-08-17-sixth-audit-b16e572.md`](../apps/desktop/AUDIT/2026-08-17-sixth-audit-b16e572.md).

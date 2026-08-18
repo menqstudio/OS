@@ -92,8 +92,53 @@ def _iter_uses(root: pathlib.Path, globs=DISPATCHED_GLOBS):
                 )
 
 
-def check(root: pathlib.Path) -> list[str]:
+#: Bytes that make a YAML document unreadable. Tab, newline and carriage return are legal; the
+#: rest of the C0 control set is not, and a single one silently kills the whole file.
+_ILLEGAL_BYTES = set(range(0, 9)) | {11, 12} | set(range(14, 32))
+
+
+def unparseable_workflows(root: pathlib.Path) -> list[str]:
+    """Workflow files carrying a byte YAML cannot read. Pure/testable.
+
+    **A workflow that does not parse does not run, and GitHub does not tell you that.** On
+    2026-08-18 a single BEL (`0x07`) reached `ci.yml` — a PowerShell here-string turned `` `a ``
+    into an escape — and the entire `ci` workflow, every required context among its jobs, silently
+    produced nothing. The Actions list showed it **by filename rather than by workflow name**, with
+    zero jobs and a `failure` conclusion, and the pull request read as *blocked on missing
+    contexts* rather than as *your CI is broken*.
+
+    Branch protection is the only reason that became a merge block instead of an invisible total
+    loss of CI. This makes it a message instead of a puzzle.
+
+    Deliberately a BYTE check rather than a YAML parse: no gate job here installs `pyyaml`, and
+    every other check in `tools/` is stdlib-only and offline. This catches the class that actually
+    happened — a stray control character from a shell-quoting accident — and names the file, the
+    line and the byte. It does not claim to catch a structurally invalid document; the workflow
+    running at all is what proves that, and it can no longer fail to run *for this reason* without
+    saying so.
+    """
     problems: list[str] = []
+    directory = root / ".github" / "workflows"
+    if not directory.is_dir():
+        return problems
+    for path in sorted(directory.glob("*.y*ml")):
+        raw = path.read_bytes()
+        for offset, byte in enumerate(raw):
+            if byte in _ILLEGAL_BYTES:
+                line = raw[:offset].count(b"\n") + 1
+                problems.append(
+                    f"{path.relative_to(root).as_posix()}:{line}: byte 0x{byte:02x} is a control "
+                    f"character YAML cannot read. The whole workflow will silently not run, and "
+                    f"GitHub will report it by filename with no jobs rather than as an error.")
+                break
+    return problems
+
+
+def check(root: pathlib.Path) -> list[str]:
+    # A workflow that does not parse does not run, and GitHub does not say so — see
+    # `unparseable_workflows`. Checked FIRST, because every rule below reads these same files and
+    # would otherwise report an empty pin inventory as the finding rather than as the symptom.
+    problems: list[str] = unparseable_workflows(root)
     seen_any = False
     by_action: dict[str, set[tuple[str, str]]] = defaultdict(set)
     where: dict[tuple[str, str], list[str]] = defaultdict(list)

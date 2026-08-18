@@ -1,8 +1,8 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #150 · branch `palette-decision`** (base `main`, tip `9ae2fd2`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #151 · branch `eighth-audit-remediation`** (base `main`, tip `2db3f0e`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Owner decision recorded: one palette, and it is --menq-*; T-034 unblocked
+> Eighth audit: 27 of 29 marks promoted to independently confirmed; H-01/H-02/H-03/H-04 closed
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
@@ -2420,7 +2420,7 @@ already made once, so it is named in the row and not counted.
 **The other five, stated at their real width.** The `task-request` contract is validated at runtime
 (`engine_adapter.py:120`); `bridge-result.schema.json` is loaded only by a test, so "contracts tested" was
 covering a test-only contract. The `bridge` CI job is real (`ci.yml:574-586`, re-run: **60 tests, 0
-failures**) -- it runs but is **not required**, since `main` has no branch protection. The adapter is built,
+failures**) -- it runs and, since 2026-08-17, **is required** — `main` now carries 33 required status checks with `enforce_admins` (seventh audit `G-01`, widened by the eighth's `H-01`). The adapter is built,
 correct and re-verified at **10/10**, and its only caller is reachable only through the dead governed path.
 The governed-provider transport is real and default-OFF, and all three callers of `ai::governed_turn` sit
 behind the unconditional refusal. The UI badge and control ship and a user reaches them (19 vitest cases),

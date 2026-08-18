@@ -747,6 +747,16 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # NOTE: this job CANNOT read branch protection. `administration` is not a valid
+      # GITHUB_TOKEN permission scope - adding it made GitHub reject the whole workflow file,
+      # which produced the failure mode `unparseable_workflows` now catches: zero jobs, the run
+      # listed by filename, and the pull request reading as blocked on missing contexts.
+      #
+      # So `verify_branch_protection` runs only where the caller has admin rights - locally,
+      # or Owner-run. In CI it reports SKIPPED with the reason. What CI verifies instead is the
+      # half that needs no rights: every context in `config/required-checks.json` names a job
+      # that actually exists in a workflow. That catches the likely drift - a renamed job - and
+      # says so; it does not catch protection being turned off, and does not claim to.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

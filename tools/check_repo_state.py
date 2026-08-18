@@ -511,6 +511,139 @@ def fetch_carrier(number: int) -> dict | None:
         return _rest_pull(number)        # same second road; see _rest_pull()
 
 
+REQUIRED_CHECKS = pathlib.Path("config") / "required-checks.json"
+
+
+def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -> list[str]:
+    """Live branch protection against the committed expectation. Pure/testable.
+
+    Eighth independent audit, `H-04`. Branch protection was turned on 2026-08-17 and **seven
+    canonical documents went on saying it was off** — `docs/ARCHITECTURE.md` among them, stating the
+    command, its output and a verification date while being false. Prose about repository settings
+    goes stale silently and nothing notices, which is how the seventh round's `G-01` survived six
+    audits: everyone read a document that said enforcement was convention.
+
+    `live is None` is a REFUSAL, not a skip. The caller only reaches this when `gh` is available, so
+    an unreadable protection state means the read failed specifically — the same reasoning as
+    `G-05`, and the same answer.
+    """
+    if live is None:
+        # NO RIGHTS IS NOT AN OUTAGE, and this one cannot be fixed by granting a permission:
+        # `administration` is not a GITHUB_TOKEN scope at all, so under the workflow token this
+        # read can never succeed. Refusing here would make the gate permanently red in CI for a
+        # reason nobody can act on, which is how a gate gets deleted. It reports and moves on, and
+        # `verify_required_contexts_exist` below is the half CI can actually check.
+        if "403" in why or "Resource not accessible" in why or "Not Found" in why:
+            print(f"  (SKIPPED: branch protection needs admin rights the workflow token cannot "
+                  f"hold; {REQUIRED_CHECKS.as_posix()} verified against workflow job names only)",
+                  file=sys.stderr)
+            return []
+        hint = ""
+        if "403" in why or "Resource not accessible" in why:
+            hint = (" This reads as a PERMISSION gap, not an outage: the job needs "
+                    "`administration: read` in its `permissions:` block. This check failed on "
+                    "exactly that on its first CI run.")
+        return [f"branch protection could not be read from GitHub, so "
+                f"{REQUIRED_CHECKS.as_posix()} could not be verified. A check that could not run "
+                f"has not passed.{hint} ({why or 'no reason reported'})"]
+    failures: list[str] = []
+    for flag, path in (("enforce_admins", ("enforce_admins", "enabled")),
+                       ("required_linear_history", ("required_linear_history", "enabled")),
+                       ("allow_force_pushes", ("allow_force_pushes", "enabled")),
+                       ("allow_deletions", ("allow_deletions", "enabled"))):
+        if flag not in expected:
+            continue
+        got = live
+        for key in path:
+            got = (got or {}).get(key) if isinstance(got, dict) else None
+        if bool(got) != bool(expected[flag]):
+            failures.append(
+                f"branch protection: `{flag}` is {bool(got)} on GitHub and "
+                f"{bool(expected[flag])} in {REQUIRED_CHECKS.as_posix()}. The committed "
+                f"expectation and the live setting must move in the same pull request.")
+    checks = (live.get("required_status_checks") or {}) if isinstance(live, dict) else {}
+    if "strict" in expected and bool(checks.get("strict")) != bool(expected["strict"]):
+        failures.append(f"branch protection: `strict` is {bool(checks.get('strict'))} on GitHub "
+                        f"and {bool(expected['strict'])} in {REQUIRED_CHECKS.as_posix()}.")
+    want = set(expected.get("contexts") or [])
+    got_ctx = set(checks.get("contexts") or [])
+    for missing in sorted(want - got_ctx):
+        failures.append(f"branch protection: `{missing}` is required by "
+                        f"{REQUIRED_CHECKS.as_posix()} and is NOT required on GitHub.")
+    for extra in sorted(got_ctx - want):
+        failures.append(f"branch protection: `{extra}` is required on GitHub and is not in "
+                        f"{REQUIRED_CHECKS.as_posix()}. A context nobody wrote down is a security "
+                        f"boundary nobody can review.")
+    return failures
+
+
+
+def verify_required_contexts_exist(expected: dict, workflow_dir: pathlib.Path) -> list[str]:
+    """Every required context names a job that exists. Pure/testable, offline, no rights needed.
+
+    The half of `H-04` that CI can carry. `verify_branch_protection` compares the committed
+    expectation against live GitHub and is the real check — but it needs admin rights, and
+    `administration` is not a `GITHUB_TOKEN` permission scope, so under the workflow token that
+    read can never succeed. Saying that plainly matters more than pretending otherwise: **the live
+    comparison runs locally and Owner-side, not in CI.**
+
+    What CI can verify without any rights is that the committed list is not stale in the way it is
+    most likely to go stale — a job renamed in a workflow while the required-context string keeps
+    the old name. GitHub treats a required context that never reports as PENDING, so a rename does
+    not fail the build; it blocks every merge, forever, with no message. That is worth catching.
+
+    Matched on the `name:` a job declares, because that is the string GitHub uses as the context.
+    A matrix job's context is `name (value)`, so the bare name is accepted as a prefix.
+    """
+    problems: list[str] = []
+    if not workflow_dir.is_dir():
+        return problems
+    names: set[str] = set()
+    for path in sorted(workflow_dir.glob("*.y*ml")):
+        for m in re.finditer(r"^\s{4,6}name:\s*(.+?)\s*$", path.read_text(encoding="utf-8"), re.M):
+            names.add(m.group(1).strip().strip('"\''))
+    if not names:
+        return [f"no job names found under {workflow_dir.name}/ — this check verified nothing"]
+    for context in expected.get("contexts") or []:
+        # A matrix job's context is `<declared name> (<matrix values>)`, so strip ONE trailing
+        # parenthetical and require an EXACT match on what is left. A prefix match would have been
+        # the obvious shortcut and is wrong: it accepts a job renamed by appending anything, which
+        # is exactly the drift this is for — mutation-tested, and the prefix version passed it.
+        base = re.sub(r"\s*\([^()]*\)$", "", context)
+        if context in names or base in names:
+            continue
+        problems.append(
+            f"{REQUIRED_CHECKS.as_posix()} requires `{context}`, and no workflow declares a job "
+            f"with that name. A required context that never reports is PENDING forever — GitHub "
+            f"does not fail the build, it blocks every merge with no message.")
+    return problems
+
+
+def _live_protection() -> tuple[dict | None, str]:
+    """GitHub's protection object for `main`, and WHY when there isn't one.
+
+    REST only — `gh api` is v3 here, the road that survived the 2026-08-17 GraphQL outage (PR #149).
+
+    The reason is returned rather than swallowed because the two ways this fails are not the same
+    fact. A 403 is a **permission gap**: the workflow token needs `administration: read`, and this
+    check failed on exactly that on its first CI run. A 503 or a timeout is an **outage**. Both are
+    refusals — a check that could not run has not passed — but a refusal that does not name which
+    one it is sends the reader to the wrong fix.
+    """
+    try:
+        # encoding is EXPLICIT: `text=True` decodes with the process locale, cp1252 on Windows, and
+        # every context name contains a middle dot or a section sign.
+        out = subprocess.run(["gh", "api", "repos/" + _REPO + "/branches/main/protection"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             timeout=30)
+        if out.returncode != 0:
+            return None, (out.stderr or "").strip()[:200]
+        data = json.loads(out.stdout)
+        return (data, "") if isinstance(data, dict) else (None, "reply was not an object")
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        return None, str(exc)[:200]
+
+
 def _git_is_ancestor(a: str, b: str) -> bool:
     try:
         return subprocess.run(["git", "merge-base", "--is-ancestor", a, b],
@@ -662,6 +795,19 @@ def main(argv: list[str] | None = None) -> int:
                                             open_prs_now(), _live_main_head(), _git_is_ancestor,
                                             merge_commit if _is_sha(merge_commit) else None,
                                             _git_first_parent)
+
+    # H-04: the protection state is a committed artefact, compared live, not a sentence in a doc.
+    expected_path = root / REQUIRED_CHECKS
+    if expected_path.exists():
+        try:
+            expected = json.loads(expected_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            failures.append(f"{REQUIRED_CHECKS.as_posix()} is not readable JSON: {exc}")
+        else:
+            live_prot, why = _live_protection()
+            failures += verify_branch_protection(expected, live_prot, why)
+            failures += verify_required_contexts_exist(
+                expected, root / ".github" / "workflows")
 
     # The EXACT-head anchor ALWAYS applies to the current_workflow_pr (the self-carrier): on its
     # pull_request, event head == live headRefOid == PR-body AUDIT_CANDIDATE_HEAD marker. The

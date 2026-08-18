@@ -8,13 +8,36 @@
 > status it cannot back — anything not individually re-verified is marked so, with the independent audit
 > as the live source of truth for current-code behaviour.
 
-**Authoritative current assessment:** [`2026-08-17-sixth-audit-b16e572.md`](./2026-08-17-sixth-audit-b16e572.md)
-— the **SIXTH** independent audit, of `main` @ `b16e572` (tree `098df1d5`, pin proven by the auditor).
-**Verdict: RED — but for the first time with no P0.** All three production-gate refusals were read at
-this head and verified closed. RED stands on the surface instead: `A-01`, the ⌘K palette, the shell's
-only modal, has had **no CSS at all since 2026-07-28** — deleted whole in `0c08dd8` (PR #47) and never
-replaced, through three PRs and 33 green checks each. 14 findings (P1 1 · P2 7 · P3 6), 20 claim
-groups attacked and not refuted, 10 rows here or on the OWNER page found stale or false.
+**Authoritative current assessment:** [`2026-08-18-eighth-audit-9ae2fd2.md`](./2026-08-18-eighth-audit-9ae2fd2.md)
+— the **EIGHTH** independent audit, of `main` @ `9ae2fd2` (tree `30b3c966`, pin proven). **Verdict:
+RED, and no P0** — all three production-gate refusals read at that head and verified closed for the
+third round running.
+
+> ## THIS FILE'S FIRST ✅ SINCE THE FOURTH ROUND
+>
+> The eighth round's primary output was not new findings. It was a **promotion table**: 29 marks
+> carried by the sixth and seventh rounds, every one of them ◑ — *the Builder's claim, written by
+> the session that wrote the fix* — attacked one at a time.
+>
+> **27 earned ✅. Two are REOPENED.** Every ✅ below rests on a measurement the auditor performed:
+> mutations re-run independently, Chromium probes re-taken, gates driven live. Where they read
+> rather than measured — `G-13` — the row says so and is marked as read.
+>
+> That matters because of what this ledger has cost twice: both earlier RED verdicts came from rows
+> marked ✅ by the session that wrote the fix. Seven rounds have now punished that arrangement. These
+> are the first marks in three rounds that did not come from the Builder.
+>
+> **The two that did not survive are the honest half of the number.** `A-06` — the audit report that
+> is never filed — recurred *with the gate for it already in the tree and green*. `A-09` — the
+> credential routes past the no-lease whitelist — was never touched: the DoD rows were corrected and
+> the boundary made executable, but the routes stayed open, and calling that "fixed" was the
+> overclaim the auditor caught.
+>
+> **The seventh round's report did not exist when the eighth ran.** It has been reconstructed from
+> the only surviving record — two commit messages — and is filed as
+> [`2026-08-17-seventh-audit-491f923.md`](./2026-08-17-seventh-audit-491f923.md), labelled as a
+> reconstruction on its first page. The confirmation of its findings is the eighth round's table
+> below, not that file.
 
 > **`A-06` — read this before trusting any ✅ below.** The **FIFTH** round's report was never written
 > to this directory. Until 2026-08-17 this line named the FOURTH audit as authoritative while
@@ -101,6 +124,44 @@ The distinction is not bureaucratic. Both RED verdicts came from rows marked ✅
 that wrote the fix, and in the worst case (F-02) the ✅ was written while the defect was still
 live on the only platform where the Owner had ever been shown a `production_verified=true`.
 
+## Findings of the EIGHTH independent audit (2026-08-18, `main` @ `9ae2fd2`) — status
+
+Full text: [`2026-08-18-eighth-audit-9ae2fd2.md`](./2026-08-18-eighth-audit-9ae2fd2.md).
+
+| # | P | Finding | Status |
+|---|---|---|---|
+| `H-01` | P1 | **18 pull-request-running jobs sit outside branch protection with no reason recorded** — the whole of `supply-chain.yml`, including `gitleaks`, `Action pins (F-46)`, `cargo-audit`, `cargo-deny`, `pip-audit`, `npm audit` and `SBOM`. `enforce_admins: true` does nothing about jobs that are not required, *"which is where the supply chain lives."* | ◑ **Fixed 2026-08-18.** Required contexts 12 → **33**. Exactly two remain excluded, each for a measured reason: `AI-surface inventory gate` (a `paths:` filter means it does not report on unrelated PRs, and GitHub treats a skipped required context as pending) and `Trust provisioning (windows-latest)` (`T-023`, three recorded occurrences). Bundle-budget's old exclusion reason was **wrong** — it is RED locally only because `dist/` is absent; CI builds first — and it is now required. |
+| `H-02` | P2 | **The seventh round produced no report, and the gate built to prevent that is GREEN by construction.** `A-06` verbatim, one round later. Eleven findings survived only as `(G-0n, seventh audit)` citations pointing at a document that did not exist. | ◑ **Fixed 2026-08-18.** The round is filed (reconstructed, labelled), the ledger carries its findings, and `check_audit_reports.py` now binds the **highest ordinal cited anywhere in the tree** to a filed report — so a round that leaves citations behind can no longer leave the report behind. |
+| `H-03` | P2 | **The restored palette's active row is unreadable in the light theme.** `color: var(--brops-accent)` (aios cyan) on `var(--menq-color-selected)` (menq tint) — two palettes in one declaration, from the fix for the sixth round's own `A-01`. | ◑ **Fixed 2026-08-18, and the measurement corrected.** Recomputed against the real light-theme `--cyan` (`#0EA5E9`, not the fallback): **2.34:1**, not 1.81 — same verdict, AA wants 4.50, inactive rows are 18.58:1. **The audit's proposed remedy does not work either:** `--menq-color-accent` gives 4.34:1, still under the floor, which is why it was correctly marked UNVERIFIED. Selection is no longer signalled by text colour at all — the label sits at `--brops-text` (15.71:1 / 12.06:1) and the cursor is a left marker in the accent (4.34:1 / 4.62:1, above the 3:1 non-text floor) plus the tint and the weight. |
+| `H-04` | P3 | **Seven canonical documents still say main has no branch protection** — `ARCHITECTURE.md` states the command, the output and a verification date. | ◑ **Fixed 2026-08-18.** All seven corrected, and the claim made **checkable**: `config/required-checks.json` commits the expected protection state and `check_repo_state.verify_branch_protection` compares it against live GitHub — a context required on GitHub and absent from the file is RED, and so is the reverse. Mutation-tested in four directions. Its first run caught a bug in itself: `gh api` decoded as cp1252 turned every `·` and `§` in a context name into mojibake. |
+| `H-05` | P3 | The REST fallback hardcodes `menqstudio/OS`, and one line of its pagination is inert. The fail-closed contract holds; the repository slug does not survive a fork. | ◑ Open — `T-037` |
+| `H-06` | P3 | **A load-flaky suite is required; a flaky suite was excluded for being flaky.** Two decisions taken the same day pointing opposite ways. | ◑ Open — `T-038` |
+| §E | — | **The browser suite measures 16.1% of the styled design system** and reaches neither `default` (a page with data) nor `blocked` — the state every governed surface permanently ships in. Proven by mutation with a positive control. | ◑ Open — `T-039` |
+| §E | — | **PR #149's REST fallback has no test of its own.** `grep -c "_rest_" tools/test_check_repo_state.py` → 0. The one piece of new code in the seventh round that no gate covers. | ◑ Open — `T-037` |
+
+## Findings of the SEVENTH independent audit (2026-08-17, `main` @ `491f923`) — status
+
+Full text: [`2026-08-17-seventh-audit-491f923.md`](./2026-08-17-seventh-audit-491f923.md) —
+**reconstructed**, see `H-02`. The status column is the EIGHTH round's verdict, not the Builder's.
+
+| # | P | Finding | Eighth round |
+|---|---|---|---|
+| `G-01` | P1 | **No required status checks on main.** Every "33 green checks" claim in this repository's history described advisory signal. | ✅ Protection read live: `enforce_admins`, `strict`, `linear`, 12 contexts all mapping to real jobs. *"The finding and the fix are real. The exclusion list is not"* → `H-01`. |
+| `G-02` | P2 | `has_negative_test` required a `fn`, not a `#[test] fn`. | ✅ 3 mutations: attribute deleted → RED; test renamed → RED; intervening `#[should_panic]` → GREEN, so the tolerance clause is not a false positive. |
+| `G-03` | P2 | The gate written to close `A-06` did not detect `A-06`. | ✅ 6 mutations, all correct. **Stronger than claimed** — it binds three documents, `current_state.json` included. |
+| `G-04` | P2 | `animation_clobber` broke after the first matching group — order-dependent. | ✅ 4 orderings including both interleavings inside one file, all RED. |
+| `G-05` | P2 | A fifth fail-open door, pinned by a test named `_is_noop`. | ✅ `""` → RED, `None` → RED, `OPEN` → GREEN (a real no-op). All four `A-11` doors re-attacked. |
+| `G-06` | P2 | `--settled` left a merged carrier named on a deleted branch. | ✅ Run live against a merged #150: refuses, names the flags, and `git status` is clean — so *"Nothing has been written"* is true. |
+| `G-07` | P2 | `unstyledClasses` was pointed at 2 surfaces out of 24. | ✅ 23 × 3 = 69 exactly. *"What those 69 pairs cannot reach is §E."* |
+| `G-08` | P3 | The backward sweep was satisfied by the comment explaining its own fix. | ✅ Run line stripped, comment kept → RED with the exact message. |
+| `G-09` | P3 | Three status pills below AA; the manifest called 10px/600 text "large". | ✅ Colours reverted → RED with exactly 3 pairs at 3.49, 3.46, 4.10. Zero `"size": "large"` remain. **Three files, not two.** |
+| `G-10` | P3 | The contrast gate measures a palette the app does not paint with. | **Not promoted — became live.** Deferred to `T-034` as *"a structural gap, not a live defect"*, which was true when written and is not now: `H-03`. |
+| `G-11` | P3 | `[data-theme]` inside `@media` evaded the responsive rule. | ✅ All four quadrants correct. `G-11(a)` — the theme block checked by nothing — remains `T-034`. |
+| `G-12` | P3 | `classname_groups` read neither `class=` nor spread props. | ✅ The clobber applied through plain `class="…"` → RED. |
+| `G-13` | P3 | The keyframe guard read a narrower surface than the check it protects. | ✅ **read, not mutated** — the auditor says so explicitly and declines to count it as re-run. |
+| `G-14` | P3 | The ledger's P0 row cited a line that does not contain the refusal. | ✅ `grep -n` → 1305, matching the citation. |
+| `G-15` | P3 | `785 of 2 639` could not be reproduced and no tool computed it. | ✅ `count_dead_classes.py` → 785 of 2356, reproducing numerator **and** corrected denominator. |
+
 ## Findings of the SIXTH independent audit (2026-08-17, `main` @ `b16e572`) — status
 
 Full text: [`2026-08-17-sixth-audit-b16e572.md`](./2026-08-17-sixth-audit-b16e572.md). Status here is
@@ -124,20 +185,20 @@ the **Builder's** claim unless a later independent round says otherwise — that
 
 | # | P | Finding | Status |
 |---|---|---|---|
-| `A-01` | P1 | **The ⌘K palette has had no CSS since 2026-07-28.** Five classes deleted with `layout.css`'s palette section in `0c08dd8` (PR #47); the component kept rendering them. No overlay, no backdrop, no panel, no scroll container, no active-row highlight, and the page behind clickable while `aria-modal="true"`. | ◑ **Fixed 2026-08-17.** Section restored in `layout.css`. Measured, not asserted: `CommandPalette.browser.spec.tsx` fails 8 of 9 without it. |
-| `A-02` | P2 | `validates()` requires a **substring**, not a check. Five mutations — including deleting `parse_evidence_event`'s discriminator comparison outright — leave the gate GREEN. | ◑ **Fixed 2026-08-17.** `validates()` scoped to the struct's own parser, comments and `#[cfg(test)]` stripped, and a `negative_test` required per mirror. All five audit mutations die: three at the gate, two at the test. |
-| `A-03` | P2 | `animation_clobber` is evaded by the `animation-name` longhand **its own error message recommends**. | ◑ **Fixed 2026-08-17** (`T-026`). |
-| `A-04` | P2 | `ENTRANCE_CLASSES` knows 2 entrance classes; 14 rules in the tree are invisible-until-animated. Three further blind spots measured. | ◑ **Fixed 2026-08-17** (`T-026`). |
-| `A-05` | P2 | `save_ask_to_knowledge` stamps `"governed research · …"` unconditionally, and the **only** path that can reach it on any install is the ungoverned one. | ◑ **Fixed 2026-08-17.** `AnswerProvenance` is a required parameter of `stash_pending_answer`; the save path writes it verbatim and asserts nothing. The renderer carries the fact rather than softening the words, and an unrecognised outcome reads as a warning. |
-| `A-06` | P2 | The fifth audit's report was never filed; this ledger named the fourth as authoritative while the OWNER page carried the fifth's 15 promotions. | ◑ **Structurally fixed 2026-08-17** for this round: report filed, this line repointed, brief corrected. **The fifth round's text remains unrecoverable** and its promotions are NOT carried here. |
-| `A-07` | P2 | `RoomReadout` reports a measured zero and a failed read as the same em dash (`:296`), and after any failed refresh states `0` for values that were never established (`:297-298`). | ◑ **Fixed 2026-08-17.** `established()` — a value counts only when this read finished, succeeded and produced data. Also closed the misattribution case the audit did not name: a room switch rendered the previous room's counts and round card. |
-| `A-08` | P2 | `OWNER_ACTION_REQUIRED.md:22` — *"All 11 are fixed"* is false; fifth-round `A-06` (six fallbacks on dead CSS) was never touched. | ◑ **Fixed 2026-08-17.** The five dead selectors deleted (130 lines). The banner was corrected the same day. `T-033` carries the measured remainder: 785 of 2 356 class tokens are dead. |
-| `A-09` | P3 | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. | ◑ **Fixed 2026-08-17.** Both DoD rows now claim what the tests establish, and `agentsDispatch.boundary.test.ts` makes the limit executable — the three smuggle routes are asserted to pass, on purpose. |
-| `A-10` | P3 | The C.1 gate still misses a non-spacing token overridden in a later `:root` — the docstring's own `--azure` example. | ◑ **Fixed 2026-08-17** (`T-026`). |
-| `A-11` | P3 | Two silent fail-open paths remain in `verify_settled_snapshot` beside the one that was fixed. | ◑ **Fixed 2026-08-17.** All three doors refuse with a reason, including one the audit did not name. Two tests that asserted the fail-open as intent were rewritten. |
-| `A-12` | P3 | `tools/test_renderer_broker_schemas.py` is named by no workflow; the round swept forward for new tests and not backward for orphaned ones. | ◑ **Fixed 2026-08-17.** Wired, and `check_reachability::unrun_test_modules` sweeps backward with no escape hatch. |
-| `A-13` | P3 | `AUDIT_LEDGER.md:134` — nested backticks terminate the code span; the row stating the P0 gate status renders garbled. | ◑ **Fixed 2026-08-17.** |
-| `A-14` | P3 | `OWNER_ACTION_REQUIRED.md:638` — *"These are being worked"*; both surviving §3 items say they are not. `## 2d.` precedes `## 2c.` | ◑ **Fixed 2026-08-17.** The heading no longer claims the items are being worked — they are parked with a stated reason, which is a different and more honest thing to be — and `2c`/`2d` are in order. |
+| `A-01` | P1 | **The ⌘K palette has had no CSS since 2026-07-28.** Five classes deleted with `layout.css`'s palette section in `0c08dd8` (PR #47); the component kept rendering them. No overlay, no backdrop, no panel, no scroll container, no active-row highlight, and the page behind clickable while `aria-modal="true"`. | ✅ **Fixed 2026-08-17.** Section restored in `layout.css`. Measured, not asserted: `CommandPalette.browser.spec.tsx` fails 8 of 9 without it. &nbsp; **Eighth audit:** Re-ran the round-six Chromium probe against the real stylesheet graph. Every measurement inverted: scrim `position:fixed` `z-index:60` `rgba(0,0,0,.5)`, rect 764×429 = viewport, covers viewport **true** (was false); panel 620px with border; list `max-height:340px overflow-y:auto`; active row distinct **true**; `elementFromPoint` over the background control returns the scrim. |
+| `A-02` | P2 | `validates()` requires a **substring**, not a check. Five mutations — including deleting `parse_evidence_event`'s discriminator comparison outright — leave the gate GREEN. | ✅ **Fixed 2026-08-17.** `validates()` scoped to the struct's own parser, comments and `#[cfg(test)]` stripped, and a `negative_test` required per mirror. All five audit mutations die: three at the gate, two at the test. &nbsp; **Eighth audit:** The decisive mutation re-run with rebuild proof: deleting `parse_evidence_event`'s comparison now turns the gate RED **and** fails a cargo test. In round six the same mutation left both green. 29 → 30 tests. |
+| `A-03` | P2 | `animation_clobber` is evaded by the `animation-name` longhand **its own error message recommends**. | ✅ **Fixed 2026-08-17** (`T-026`). &nbsp; **Eighth audit:** `animation-name: sigbreathe` — the longhand the gate's own message used to recommend — RED. |
+| `A-04` | P2 | `ENTRANCE_CLASSES` knows 2 entrance classes; 14 rules in the tree are invisible-until-animated. Three further blind spots measured. | ✅ **Fixed 2026-08-17** (`T-026`). &nbsp; **Eighth audit:** An entrance class that is neither `.reveal` nor `.rise` → RED. A clobber applied via `cx('a','b','reveal')` rather than a literal → RED. |
+| `A-05` | P2 | `save_ask_to_knowledge` stamps `"governed research · …"` unconditionally, and the **only** path that can reach it on any install is the ungoverned one. | ✅ **Fixed 2026-08-17.** `AnswerProvenance` is a required parameter of `stash_pending_answer`; the save path writes it verbatim and asserts nothing. The renderer carries the fact rather than softening the words, and an unrecognised outcome reads as a warning. &nbsp; **Eighth audit:** Three-state enum carried from the producing site; `Governed` unreachable in production; the ungoverned path prints `UNGOVERNED research (no governed turn, no receipt)`. |
+| `A-06` | P2 | The fifth audit's report was never filed; this ledger named the fourth as authoritative while the OWNER page carried the fifth's 15 promotions. | ❌ REOPENED **Structurally fixed 2026-08-17** for this round: report filed, this line repointed, brief corrected. **The fifth round's text remains unrecoverable** and its promotions are NOT carried here. &nbsp; **Eighth audit:** **The gate is strong and the defect recurred anyway.** No seventh-round report exists in any commit on any branch; the ledger still named the sixth authoritative. See `H-02` — and note the gate was GREEN throughout, correctly, because nothing announced a seventh. |
+| `A-07` | P2 | `RoomReadout` reports a measured zero and a failed read as the same em dash (`:296`), and after any failed refresh states `0` for values that were never established (`:297-298`). | ✅ **Fixed 2026-08-17.** `established()` — a value counts only when this read finished, succeeded and produced data. Also closed the misattribution case the audit did not name: a room switch rendered the previous room's counts and round card. &nbsp; **Eighth audit:** One `figure(n)` for all three cells and callers that pass `null` on failure. A measured zero and a failed read are no longer the same glyph. |
+| `A-08` | P2 | `OWNER_ACTION_REQUIRED.md:22` — *"All 11 are fixed"* is false; fifth-round `A-06` (six fallbacks on dead CSS) was never touched. | ✅ **Fixed 2026-08-17.** The five dead selectors deleted (130 lines). The banner was corrected the same day. `T-033` carries the measured remainder: 785 of 2 356 class tokens are dead. &nbsp; **Eighth audit:** The false sentence is gone and its correction is recorded in place. |
+| `A-09` | P3 | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. | ❌ REOPENED **Fixed 2026-08-17.** Both DoD rows now claim what the tests establish, and `agentsDispatch.boundary.test.ts` makes the limit executable — the three smuggle routes are asserted to pass, on purpose. &nbsp; **Eighth audit:** **Untouched.** `FORBIDDEN` is byte-identical, `flatten` is still `typeof value === 'string'` only, and no test mentions a non-string leaf. All three smuggle routes remain open. The DoD rows were corrected and the boundary was made executable — the ROUTES were never closed, and that was a recorded decision, not an oversight. The auditor is right that the finding is not closed; `T-030` reopens with what would actually close it. |
+| `A-10` | P3 | The C.1 gate still misses a non-spacing token overridden in a later `:root` — the docstring's own `--azure` example. | ✅ **Fixed 2026-08-17** (`T-026`). &nbsp; **Eighth audit:** All three round-six misses now caught: `--azure`, `--t-body`, `--r-pill` in a plain `@media :root` → RED, RED, RED; a legitimate `[data-theme]` colour override stays GREEN. |
+| `A-11` | P3 | Two silent fail-open paths remain in `verify_settled_snapshot` beside the one that was fixed. | ✅ **Fixed 2026-08-17.** All three doors refuse with a reason, including one the audit did not name. Two tests that asserted the fail-open as intent were rewritten. &nbsp; **Eighth audit:** All four doors RED, plus the two residuals the round-six auditor left open: absent `mergeCommit` → RED, unresolvable `first_parent()` → RED. |
+| `A-12` | P3 | `tools/test_renderer_broker_schemas.py` is named by no workflow; the round swept forward for new tests and not backward for orphaned ones. | ✅ **Fixed 2026-08-17.** Wired, and `check_reachability::unrun_test_modules` sweeps backward with no escape hatch. &nbsp; **Eighth audit:** Wired at `ci.yml:773`, and `G-08`'s backward sweep now prevents the regression — mutation-confirmed. |
+| `A-13` | P3 | `AUDIT_LEDGER.md:134` — nested backticks terminate the code span; the row stating the P0 gate status renders garbled. | ✅ **Fixed 2026-08-17.** &nbsp; **Eighth audit:** Backtick parity in the P0 row is balanced. |
+| `A-14` | P3 | `OWNER_ACTION_REQUIRED.md:638` — *"These are being worked"*; both surviving §3 items say they are not. `## 2d.` precedes `## 2c.` | ✅ **Fixed 2026-08-17.** The heading no longer claims the items are being worked — they are parked with a stated reason, which is a different and more honest thing to be — and `2c`/`2d` are in order. &nbsp; **Eighth audit:** The sentence was corrected and the correction recorded in place. |
 
 ## Findings of the THIRD independent audit (2026-08-14) — status
 

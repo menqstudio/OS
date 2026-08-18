@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import {
   settleAnimations, invisibleContent, clobberedMotion, unstyledClasses, styledClassTokens,
-  reportUnstyled,
+  reportUnstyled, contrastRatio, effectiveBackground,
 } from '../test/computedStyle';
 
 /**
@@ -159,6 +159,55 @@ describe('⌘K palette — it behaves as a modal, not as block divs in normal fl
       || a.boxShadow !== b.boxShadow;
     expect(distinct, `active and inactive rows compute identically `
       + `(background ${a.backgroundColor}, color ${a.color})`).toBe(true);
+  });
+
+  it('the ACTIVE row is READABLE, not just distinct — measured, in both themes', async () => {
+    // Eighth independent audit, `H-03`. The row this suite already proved "distinct" was, in the
+    // light theme, the LEAST READABLE row in the list: `color: var(--brops-accent)` — the aios
+    // palette's cyan — on `var(--menq-color-selected)`, a `--menq-*` tint. Two palettes inside one
+    // declaration, which is the collision `T-034` names.
+    //
+    //   light  #0EA5E9 on #e8ebff = 2.34:1     every inactive row = 18.58:1
+    //
+    // The distinctness assertion above passed throughout, because a background change satisfies
+    // it. `check_contrast.py` was GREEN over 24 pairs, because this rule was not among them. The
+    // manifest now carries `palette-active-label` and `palette-active-marker` — but a manifest
+    // binds the INTENT, not the rule: nothing stops someone changing the declaration back.
+    //
+    // This does. It reads the colours Chromium actually computed and does the WCAG arithmetic on
+    // them, so the assertion is about what renders rather than about what a JSON file says should.
+    // THE THEME IS AN ATTRIBUTE, NOT A MEDIA FEATURE, and the first version of this test got that
+    // wrong. It emulated `prefers-color-scheme` — which appears in ZERO stylesheets here — so both
+    // iterations measured the same theme and the test passed with the broken rule restored. Found
+    // by mutation-testing it, which is the only reason it is not still theatre.
+    //
+    // `app/store.tsx:127` sets `data-theme` on the document element; that is the switch.
+    // AND THE ATTRIBUTE MUST BE SET **AFTER** MOUNT. `AppProvider` writes `data-theme` from its
+    // own state in an effect (`app/store.tsx:127`), so anything set beforehand is overwritten the
+    // moment the provider mounts. The second version of this test did set the attribute — before
+    // rendering — and measured `dark` twice, passing again with the broken rule.
+    //
+    // That is worth more than this one assertion: it means **every** computed-style spec in this
+    // repository has only ever measured the dark theme. Recorded as `T-035`.
+    const root = document.documentElement;
+    const restore = root.getAttribute('data-theme');
+    try {
+      for (const theme of ['light', 'dark'] as const) {
+        const { unmount } = await openPalette();
+        root.setAttribute('data-theme', theme);
+        const active = q('.palette-item.active');
+        const fg = getComputedStyle(active).color;
+        const bg = effectiveBackground(active);
+        const ratio = contrastRatio(fg, bg);
+        expect(ratio, `${theme}: the active row's label is ${fg} on ${bg} = `
+          + `${ratio.toFixed(2)}:1 — WCAG AA wants 4.5 for normal text, and this is the one row `
+          + `the keyboard cursor points at`).toBeGreaterThanOrEqual(4.5);
+        unmount();
+      }
+    } finally {
+      if (restore === null) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', restore);
+    }
   });
 
   it('rows have hit area — a zero-padding row is a text line, not a target', async () => {
