@@ -30,17 +30,46 @@ const ROW = {
   createdAt: '1700000000000', updatedAt: '1700000000000',
 };
 
-/** Every string that appears anywhere in a value, keys included. */
+/**
+ * Every string that appears anywhere in a value, keys included.
+ *
+ * **Non-string leaves are visited too** (sixth audit `A-09` route 3, reopened by the eighth and
+ * closed alongside `agentsDispatch.boundary.test.ts`). The earlier version pushed only
+ * `typeof value === 'string'`, so a `number[]` of character codes decoded to text on the far side
+ * while being invisible here — and this suite is the one Phase 9's DoD row cites.
+ */
 function flatten(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) value.forEach((v) => flatten(v, out));
-  else if (value && typeof value === 'object') {
+  else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    out.push(String(value));
+  } else if (Array.isArray(value)) {
+    const decoded = decodeCharCodes(value);
+    if (decoded !== null) out.push(decoded);
+    value.forEach((v) => flatten(v, out));
+  } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
   }
   return out;
 }
 
-const SECRET_SHAPED = /secret|credential|token|password|api[-_ ]?key|bearer|private/i;
+/** `[116,111,107,101,110]` → `"token"`; `null` when the array is not all printable ASCII codes. */
+function decodeCharCodes(list: readonly unknown[]): string | null {
+  if (list.length === 0) return null;
+  const codes: number[] = [];
+  for (const v of list) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
+    codes.push(v);
+  }
+  return String.fromCharCode(...codes);
+}
+
+/**
+ * `api[-_ ]?key` caught one compound and missed the family (`pubkey`, `keystore`, `sessionkey`,
+ * `keychain`) — the same route 2 the dispatch sweep carried. The `key` clause now takes an optional
+ * prefix and suffix, so every compound is matched while `monkey` / `keyboard` / `keyword` are not.
+ */
+const SECRET_SHAPED =
+  /secret|credential|token|password|bearer|private|(?<![a-z])(?:pub|api|access|secret|private|public|session|signing|host|ssh|gpg|master|root|enc|dec)?[-_ ]?keys?(?:tore|chain|file|pair|ring|id)?(?![a-z])/i;
 
 function setup() {
   invokeMock.mockImplementation((cmd: string) => {
