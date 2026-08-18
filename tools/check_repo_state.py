@@ -444,8 +444,54 @@ def _have_gh() -> bool:
         return False
 
 
-#: The repository REST reads address. `gh pr view` infers it from the remote; `gh api` needs it.
-_REPO = "menqstudio/OS"
+#: The fallback slug, used ONLY to name what a failed resolution was looking for. It is never the
+#: address a REST call is made against — see `_repo_slug()`.
+_REPO_FALLBACK = "menqstudio/OS"
+
+#: Resolved once per process. `None` means "not yet asked"; a resolved failure is cached as `False`
+#: so a repository with no `gh` context does not pay for three subprocess calls to learn it twice.
+_REPO_SLUG_CACHE: str | bool | None = None
+
+
+def _repo_slug() -> str | None:
+    """`owner/name` for this checkout, from `gh`, or `None` when it cannot be established.
+
+    **Eighth audit, `H-05`.** This was the literal `"menqstudio/OS"` while every GraphQL road in this
+    file — `gh pr view`, `gh pr list` — infers the slug from the git remote. In a fork the two roads
+    therefore answered about **different repositories**: `gh pr view 7` would report the fork's PR #7
+    and the REST fallback would report `menqstudio/OS`'s PR #7, and nothing in the gate could tell.
+    The fallback exists so that one transport being down does not block every merge; a fallback that
+    silently answers about somebody else's repository is worse than no fallback.
+
+    `None` is returned rather than a guess, and every caller REFUSES on it. That keeps the fail-closed
+    property this whole file is built on: a road that cannot establish *which* repository it is
+    reading has not read anything.
+    """
+    global _REPO_SLUG_CACHE
+    if _REPO_SLUG_CACHE is not None:
+        return _REPO_SLUG_CACHE if isinstance(_REPO_SLUG_CACHE, str) else None
+    try:
+        out = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner"],
+                             capture_output=True, text=True, encoding="utf-8", timeout=30)
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f"  (repository slug unresolved: {exc}; REST roads refuse)", file=sys.stderr)
+        _REPO_SLUG_CACHE = False
+        return None
+    slug = None
+    if out.returncode == 0:
+        try:
+            slug = (json.loads(out.stdout) or {}).get("nameWithOwner")
+        except ValueError:
+            slug = None
+    # A slug is `owner/name`. Anything else — empty, a path, a URL — is a failure to establish it,
+    # not a value to interpolate into a REST path.
+    if not (isinstance(slug, str) and re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", slug)):
+        print(f"  (repository slug unresolved from `gh repo view` (exit {out.returncode}); "
+              f"REST roads refuse rather than assuming {_REPO_FALLBACK})", file=sys.stderr)
+        _REPO_SLUG_CACHE = False
+        return None
+    _REPO_SLUG_CACHE = slug
+    return slug
 
 
 def _rest_pull(number: int) -> dict | None:
@@ -464,8 +510,11 @@ def _rest_pull(number: int) -> dict | None:
     THE FAIL-CLOSED PROPERTY IS UNCHANGED. If both roads fail the caller still gets `None` and
     still refuses. This removes only the case where one API is down and the other is answering.
     """
+    slug = _repo_slug()
+    if slug is None:
+        return None                  # cannot establish WHICH repository; see `_repo_slug()`
     try:
-        out = subprocess.run(["gh", "api", "repos/" + _REPO + "/pulls/" + str(number)],
+        out = subprocess.run(["gh", "api", f"repos/{slug}/pulls/{number}"],
                              capture_output=True, text=True, timeout=30, check=True).stdout
         pr = json.loads(out)
     except (subprocess.SubprocessError, OSError, ValueError):
@@ -633,7 +682,10 @@ def _live_protection() -> tuple[dict | None, str]:
     try:
         # encoding is EXPLICIT: `text=True` decodes with the process locale, cp1252 on Windows, and
         # every context name contains a middle dot or a section sign.
-        out = subprocess.run(["gh", "api", "repos/" + _REPO + "/branches/main/protection"],
+        slug = _repo_slug()
+        if slug is None:
+            return None, "repository slug unresolved; refusing rather than reading another repo"
+        out = subprocess.run(["gh", "api", f"repos/{slug}/branches/main/protection"],
                              capture_output=True, text=True, encoding="utf-8",
                              timeout=30)
         if out.returncode != 0:
@@ -683,6 +735,33 @@ def open_prs_now() -> set[int] | None:
         return _rest_open_prs()
 
 
+def _json_documents(text: str) -> list:
+    """Every top-level JSON document in `text`, whatever `gh --paginate` chose to emit.
+
+    Eighth audit `H-05` called the previous `.replace("][", "],[")` **inert**. Testing it found
+    something worse: it was **broken**. On a concatenated-array output it produced `[{...}],[{...}]`,
+    which is not a JSON document at all -- `json.loads` raises `Extra data`, the caller's
+    `except ValueError` fires, and `_rest_open_prs` returns `None`. The branch written to defend a
+    shape turned that shape into a refusal. Nobody noticed because `gh` does not emit it, so the
+    broken branch was unreachable; the first test written against it went red immediately.
+
+    `raw_decode` in a loop reads all three shapes for real, and is not another normalisation guess:
+    it asks the JSON parser itself where each document ends. A trailing fragment that is not a
+    complete document RAISES rather than being skipped -- a partial page silently dropped is exactly
+    the truncation `_rest_open_prs` refuses to commit.
+    """
+    decoder = json.JSONDecoder()
+    out, i, n = [], 0, len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        doc, i = decoder.raw_decode(text, i)   # ValueError on a partial/garbage document
+        out.append(doc)
+    return out
+
+
 def _rest_open_prs() -> set[int] | None:
     """Open pull request numbers from REST (v3). `None` when that road fails too.
 
@@ -690,23 +769,28 @@ def _rest_open_prs() -> set[int] | None:
     truncated list would look like "these are all the open pull requests" and this function's whole
     contract is that the set is COMPLETE. A partial answer here is worse than no answer, which is
     why the failure path returns None rather than what it managed to read.
+
+    MEASURED, not read (eighth audit `H-05` asked for exactly this and could not take the reading).
+    Against `gh 2.97.0` on 2026-08-18, `gh api --paginate repos/<slug>/pulls?state=open&per_page=1`
+    over a genuinely two-page result returned **one merged JSON array**: 39 650 bytes, zero newlines
+    and zero `][` occurrences. The audit called the old `.replace("][", "],[")` inert. Writing the
+    first test for it found something worse -- it was BROKEN, and unreachably so. See
+    `_json_documents`, which replaces both normalisations with a real multi-document scan.
     """
+    slug = _repo_slug()
+    if slug is None:
+        return None                  # cannot establish WHICH repository; see `_repo_slug()`
     try:
         out = subprocess.run(
-            ["gh", "api", "--paginate", "repos/" + _REPO + "/pulls?state=open&per_page=100"],
+            ["gh", "api", "--paginate", f"repos/{slug}/pulls?state=open&per_page=100"],
             capture_output=True, text=True, timeout=60)
         if out.returncode != 0 or not (out.stdout or "").strip():
             print(f"  (REST fallback also failed, exit {out.returncode}: "
                   f"{(out.stderr or '').strip()[:160]})", file=sys.stderr)
             return None
-        # --paginate concatenates JSON arrays; normalise both shapes.
         numbers: set[int] = set()
-        for chunk in out.stdout.replace("][", "],[").split("\n"):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            data = json.loads(chunk)
-            for pr in (data if isinstance(data, list) else [data]):
+        for doc in _json_documents(out.stdout):
+            for pr in (doc if isinstance(doc, list) else [doc]):
                 numbers.add(int(pr["number"]))
         return numbers
     except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
