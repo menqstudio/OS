@@ -1,6 +1,35 @@
 // jest-dom matchers (toBeInTheDocument, etc.) for all tests.
 import '@testing-library/jest-dom';
 
+import { beforeEach } from 'vitest';
+
+// `T-038`. The suite was load-flaky: one failure in a combined unit+browser+tools run, 732/732 in
+// isolation, and nothing recorded WHICH test. It is `Approvals.test.tsx`'s `g`-key case, and the
+// cause is not slowness -- it is shared browser state.
+//
+// `app/store.test.tsx` calls `setLang('hy')`, which writes `localStorage['brops.lang']`. Nothing
+// clears it, and vitest reuses a worker across files, so whether `Approvals` inherits Armenian is a
+// scheduling detail. When it does, `ConfirmDialog` renders Armenian copy, `findByRole('dialog')`
+// still succeeds -- the dialog IS there -- and the synchronous `getByText(/native confirmation…/i)`
+// on the next line does not. That is exactly the observed signature: line 100 passed, line 101
+// failed.
+//
+// Reproduced deterministically by seeding `brops.lang` before that test: same error, same line,
+// plus a second case the one observed occurrence never showed.
+//
+// This is NOT one of the two remedies `T-038` warned about. `--poolOptions.forks.singleFork` and a
+// job-level `--retry=1` both make a genuine race harder to see; clearing state that was never meant
+// to be shared makes the suite MORE deterministic, and it removes the cause rather than the symptom.
+beforeEach(() => {
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch {
+    /* a test may run without a DOM; nothing to clear there */
+  }
+});
+
+
 // jsdom does not implement matchMedia; several views read it at mount for
 // reduced-motion / responsive breakpoints. Provide an inert, non-matching stub so
 // component tests can render those views. Tests that need a specific match can
