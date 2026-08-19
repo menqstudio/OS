@@ -1,12 +1,63 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #155 · branch `fix/theme-axis-measured`** (base `main`, tip `af6cd7d`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #156 · branch `fix/t023-custody-diagnosis`** (base `main`, tip `4c303df`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> T-034: a live AA defect in the light --menq-* palette, fixed; the contrast gate goes from 28 checks to 56. T-035 measured vacuous. T-038 characterised
+> T-023 fired a third time on PR #155; the custody refusal now names the ACE, the principal and whether it was INHERITED
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The custody refusal fired a third time, on this session's own pull request (2026-08-19)
+
+`T-023` names the first step and it is deliberately not a fix: *"someone to dump the actual ACL at
+failure time before deciding whether the fix belongs in the check (too broad on inherited ACEs) or in
+the harness (create the anchor dir with an explicit DACL instead of inheriting)."*
+
+**It fired again while that row was being read.** *Trust provisioning + audit signer (windows-latest)*
+went red on PR #155 — the third recorded occurrence after PR #125 and PR #132 — with a message
+byte-identical to the previous two:
+
+```
+bro_signature.SignatureError: BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by
+non-owner principals: D:\a\_temp\brops-standard-account-run\.tmppzkSU5\anchor\operator-root.pub
+```
+
+That sentence names a path and nothing else. It is compatible with an inherited ACE the runner's
+`_temp` handed the harness, a directly-applied ACE on a genuinely writable object, and a broken check —
+which is precisely why three occurrences have produced no decision, and why each was cleared by a
+rerun. A flaky test is an annoyance; a flaky **custody** refusal trains everyone to rerun the one gate
+that is supposed to be unignorable, and the row says so.
+
+**The refusal now says what it saw.** Same condition, same sentence, same path — the new part is the
+bracket, and the test asserts the unchanged half first:
+
+```
+BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by non-owner principals: …\operator-root.pub
+  [ace #0 grants FILE_WRITE_DATA, FILE_APPEND_DATA (mask 0x00100116, flags 0x00,
+   APPLIED DIRECTLY) to BUILTIN\Users (S-1-5-32-545)]
+```
+
+That output is measured, not sketched: it is what the function prints on a real file with a real
+`icacls` grant on this Windows box.
+
+**`APPLIED DIRECTLY` versus `INHERITED` is the whole point.** It is one bit — `INHERITED_ACE`, `0x10` in
+the ACE flags — and it chooses where the fix belongs, which is the decision `T-023` says has to come
+before any code. Inherited means the harness took whatever the runner handed it and the anchor
+directory needs an explicit DACL; applied directly means the object really is writable by a non-owner
+and the check is right to refuse. Neither can be concluded from the message the last three failures
+produced, and both can be read off the next one at a glance.
+
+**The assertion is not weakened, and that is deliberate.** It is the Windows half of `O-2`. The row's
+own instruction — *"Do NOT weaken the assertion to make CI quiet"* — is the reason nothing here changes
+when the refusal fires; only what it is able to tell you afterwards. The test proves both halves: it
+asserts the original sentence and path are still present before it asserts anything about the new
+detail, and it pins `APPLIED DIRECTLY` in words rather than as a hex digit so a future refactor cannot
+quietly invert the sense.
+
+**`T-023` stays open.** Three occurrences and no cause; what changed is that the fourth will be
+answerable. The engine suite is 2002 tests (was 2001), and stripping the instrumentation turns the new
+one red.
 
 ### The contrast gate checked five colours against the one background that flatters them (2026-08-19)
 

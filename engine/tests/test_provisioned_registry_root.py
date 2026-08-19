@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import bro_custody
 import bro_signature
 from bro_signature import (
     ENV_PIN_FILE,
@@ -745,6 +746,76 @@ class ConductorSessionO3Tests(unittest.TestCase):
         ok, note = self.verify(self.provisioned)
         self.assertFalse(ok)
         self.assertIn("RED", note)
+
+
+class WindowsCustodyRefusalNamesWhatItSaw(unittest.TestCase):
+    """`T-023`: a custody refusal that cannot be told apart from a runner artefact.
+
+    *Trust provisioning + audit signer (windows-latest)* has failed three times now on
+    `BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by non-owner principals`, pointing at
+    the runner's own `_temp` tree — PR #125, PR #132, and PR #155 on 2026-08-19. Each was
+    cleared by a rerun, which is the dangerous part: a flaky **custody** refusal trains everyone
+    to rerun the one gate that is supposed to be unignorable.
+
+    The row says what the first step is, and it is not a fix: *"someone to dump the actual ACL
+    at failure time before deciding whether the fix belongs in the check (too broad on inherited
+    ACEs) or in the harness (create the anchor dir with an explicit DACL instead of inheriting)."*
+
+    Until 2026-08-19 the message named only the path, so that decision could not be made from a
+    CI log at all. It now names the ACE index, the rights, the mask, the flags, whether the ACE
+    was **INHERITED**, and the principal. The inheritance bit is the one that chooses: inherited
+    means the harness took whatever `_temp` handed it; applied directly means the object really
+    is writable and the check is right.
+
+    **The refusal itself is unchanged.** This asserts that first, because the point of the row is
+    that the assertion must NOT be weakened to make CI quiet — it is the Windows half of `O-2`.
+    """
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows ACL custody; POSIX uses file modes")
+    def test_the_refusal_still_fires_AND_names_the_principal_and_the_inheritance(self):
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = pathlib.Path(tmp) / "operator-root.pub"
+            target.write_bytes(b"not a real key")
+            # A non-owner principal with write. `BUILTIN\\Users` is the closest stand-in for the
+            # ACE the runner keeps producing, and it is applied DIRECTLY here — which is exactly
+            # the distinction the message has to be able to draw.
+            granted = subprocess.run(["icacls", str(target), "/grant", "*S-1-5-32-545:(W)"],
+                                     capture_output=True, text=True)
+            if granted.returncode != 0:
+                self.skipTest(f"icacls could not grant on this host: {granted.stderr.strip()[:120]}")
+
+            class Refusal(Exception):
+                pass
+
+            with self.assertRaises(Refusal) as caught:
+                bro_custody.refuse_windows_writable(
+                    target, "BRO_OPERATOR_ROOT_PUBKEY_FILE", Refusal,
+                    on_rewrite=lambda right, who: f"this process can rewrite it: {right} via {who}",
+                    on_privilege=lambda priv: f"privilege overrides the DACL: {priv}",
+                    # The self-rewrite question is a different rule and would fire first on a
+                    # developer box, where the owner IS the running account. This test is about
+                    # question 2 -- can anyone ELSE rewrite it -- which is the one CI hits.
+                    ask_self=False)
+
+            said = str(caught.exception)
+            # 1. The refusal is unchanged: same sentence, same path.
+            self.assertIn("must not be writable by non-owner principals", said)
+            self.assertIn(str(target), said)
+            # 2. And it now says what it saw.
+            self.assertIn("ace #", said, f"names which ACE: {said}")
+            self.assertRegex(said, r"mask 0x[0-9A-F]{8}", f"names the raw mask: {said}")
+            self.assertRegex(said, r"flags 0x[0-9A-F]{2}", f"names the ACE flags: {said}")
+            self.assertIn("S-1-5-32-545", said, f"names the principal by SID: {said}")
+            # 3. The bit that decides check-vs-harness, in words rather than as a hex digit.
+            self.assertIn("APPLIED DIRECTLY", said,
+                          "a directly-applied ACE must not be reported as inherited -- that is the "
+                          f"distinction the whole row turns on: {said}")
+            self.assertNotIn("INHERITED,", said)
+            # 4. The rights are named, not just masked. A reader who sees FILE_WRITE_DATA can act.
+            self.assertIn("FILE_WRITE_DATA", said, f"names the right in words: {said}")
 
 
 if __name__ == "__main__":
