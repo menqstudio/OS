@@ -8,6 +8,59 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The instrumentation answered `T-023` on its first firing, and the answer was the harness (2026-08-19)
+
+Yesterday's change added an ACL dump to the custody refusal because three occurrences had produced no
+decision. It fired a **fourth** time the same day — on PR #157 — and this time the log settled it in
+one line:
+
+```
+BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by non-owner principals:
+D:\a\_temp\brops-standard-account-run\.tmphXpqyn\anchor\operator-root.pub
+  [ace #3 grants FILE_WRITE_DATA, FILE_APPEND_DATA, DELETE
+   (mask 0x001301BF, flags 0x10, INHERITED) to NT AUTHORITY\Authenticated Users (S-1-5-11)]
+```
+
+**`INHERITED`, and `Authenticated Users`.** The row's own hypothesis was *"the inherited ACL on the
+GitHub runner's `_temp` differs between job starts, so the check is reading a genuine
+non-owner-writable state that is an artefact of the runner rather than of the code"* — confirmed, with
+the ACE, on the first log that could carry it.
+
+**So the check was right and the harness was wrong.** That is the decision the row deferred: *"whether
+the fix belongs in the check (too broad on inherited ACEs) or in the harness (create the anchor dir
+with an explicit DACL instead of inheriting)."* The anchor genuinely was writable by every
+authenticated principal on the machine. Teaching the check to ignore inherited ACEs would have made CI
+quiet by deleting the Windows half of `O-2`, which the row forbids by name.
+
+**The fix is three lines of `icacls` and one verification.** `ci.yml` created the work directory under
+`RUNNER_TEMP` and inherited its DACL, then `/grant` only **added** to it. It now does
+`/inheritance:r` to drop the inherited ACEs and `/grant:r` to state the whole DACL, granting only
+principals the custody check treats as owner-equivalent — SYSTEM and `BUILTIN\Administrators`, **by
+SID**, so a non-English runner cannot miss them — plus `brops-ci`, which owns everything it creates
+there and is therefore the ACE the check skips.
+
+**`$env:USERNAME` is deliberately not granted.** An explicit ACE for the runner admin would inherit
+onto `operator-root.pub` as a non-owner write and reproduce this exact refusal one principal over. It
+keeps its access through `BUILTIN\Administrators`, which it is a member of.
+
+**And the DACL is verified rather than assumed.** A silent `icacls` failure would put the run straight
+back to an intermittent refusal with no way to tell the two apart — the state this whole change exists
+to leave behind. The step now re-reads the ACL, refuses if `Authenticated Users` or `Everyone` survive,
+and prints it either way.
+
+**Why this lands unverified locally, said plainly.** The defect only exists on the GitHub runner: the
+inherited ACE comes from *its* `_temp`, and no local box reproduces it — 240 attempts at the sibling
+flake produced nothing, and this one has never been seen off-runner. The CI run is the test. That is
+acceptable here for two reasons and they are both stated rather than assumed: the job is in
+`required-checks.json`'s `deliberately_excluded` list, so a wrong fix cannot block a merge; and if it
+is wrong, the refusal now names the surviving principal, so the next run says so instead of repeating
+the ambiguity.
+
+**`T-023` is Builder-claimed closed, marked ◑.** Four occurrences, a measured cause, and a fix aimed at
+what the measurement named. It stays ◑ until the job runs clean across several pull requests — an
+intermittent failure is not proven fixed by one green run, and this row exists because reruns were
+treated as evidence.
+
 ### The `default` state has fixtures now, and the first thing it did was catch them being wrong (2026-08-19)
 
 `T-036`: the browser suite mounted 363 of 2 249 styled class tokens, and covered `loading`, `error`

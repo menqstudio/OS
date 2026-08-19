@@ -466,8 +466,51 @@ jobs:
 
           $work = Join-Path $env:RUNNER_TEMP 'brops-standard-account-run'
           New-Item -ItemType Directory -Force -Path $work | Out-Null
-          icacls $work /grant 'brops-ci:(OI)(CI)(F)' /T /C /Q | Out-Null
+
+          # T-023, answered on its fourth occurrence by the ACL dump added for exactly this.
+          #
+          # The refusal was `BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by non-owner
+          # principals`, intermittent across #125, #132, #155 and #157 and cleared by a rerun each
+          # time. With the ACE printed it stopped being ambiguous on the first firing:
+          #
+          #   [ace #3 grants FILE_WRITE_DATA, FILE_APPEND_DATA, DELETE
+          #    (mask 0x001301BF, flags 0x10, INHERITED) to NT AUTHORITY\Authenticated Users (S-1-5-11)]
+          #
+          # INHERITED, and Authenticated Users. So the anchor really was writable by every
+          # authenticated principal on the box, the check was RIGHT to refuse, and the defect is
+          # here: this directory is created under RUNNER_TEMP and inherited its DACL, while the
+          # `/grant` below only ADDED to it. The row named both candidate fixes and the evidence
+          # chose this one -- the harness, not the check. Teaching the check to ignore inherited
+          # ACEs would have made CI quiet by deleting the Windows half of O-2.
+          #
+          # `/inheritance:r` drops the inherited ACEs and `/grant:r` then states the whole DACL.
+          # Only principals the custody check treats as owner-equivalent are granted, BY SID so a
+          # non-English runner cannot miss them: SYSTEM (S-1-5-18) and BUILTIN\Administrators
+          # (S-1-5-32-544) -- which is how the outer step, running as the runner admin, keeps its
+          # access to the script it writes and the stdout it reads back. `brops-ci` is granted
+          # because it has to create the fixtures, and it is the OWNER of everything it creates
+          # here, which is the ACE the check skips. `$env:USERNAME` is deliberately NOT granted: an
+          # explicit ACE for the runner admin would inherit onto operator-root.pub as a non-owner
+          # write and reproduce this exact refusal one principal over.
+          icacls $work /inheritance:r /grant:r `
+            '*S-1-5-18:(OI)(CI)(F)' `
+            '*S-1-5-32-544:(OI)(CI)(F)' `
+            'brops-ci:(OI)(CI)(F)' /T /C /Q | Out-Null
           $global:LASTEXITCODE = 0
+
+          # Verified, not assumed. A silent icacls failure would put the run straight back to the
+          # intermittent refusal with no way to tell the two apart, which is the state this whole
+          # change exists to leave behind.
+          $acl = (icacls $work) -join "`n"
+          $global:LASTEXITCODE = 0
+          foreach ($bad in @('Authenticated Users', 'Everyone')) {
+            if ($acl -match [regex]::Escape($bad)) {
+              throw ("the work directory still grants '$bad' after /inheritance:r, so the anchor " +
+                     "would inherit a non-owner write ACE and the custody check would refuse it. " +
+                     "That is T-023 and it is a real refusal, not a flake. Full ACL:`n$acl")
+            }
+          }
+          Write-Host "work-directory DACL (inheritance removed):`n$acl"
 
           # A batch file rather than an argument string: `Start-Process -Credential` builds a
           # fresh environment block for the new logon, so the variables have to be set on the
