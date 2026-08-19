@@ -1,5 +1,5 @@
 {
-  "note": "Foreground/background text intents for the BroPS design tokens. The named colors MUST mirror apps/desktop/src/theme/tokens.ts (which itself mirrors tokens.css) — the same shipping palette. tools/check_contrast.py resolves every pair against BOTH the light and dark palette and fails closed if any text pair is below its WCAG AA threshold in either theme. `size` selects the threshold: `normal` text needs >= 4.5:1, `large`/bold text (>= 18.66px bold or >= 24px) needs >= 3.0:1. Update this file in the same change as any token color edit. `selected` is the COMPOSITE of --menq-color-selected over --menq-color-surface, because a translucent tint has no ratio of its own; recompute it if either token changes. It exists because the eighth audit's H-03 found .palette-item.active at 2.34:1 in the light theme while this gate reported GREEN over 24 pairs - the rule was not among them.",
+  "note": "Foreground/background text intents for the BroPS design tokens. The named colors MUST mirror apps/desktop/src/theme/tokens.ts (which itself mirrors tokens.css) — the same shipping palette. tools/check_contrast.py resolves every pair against BOTH the light and dark palette and fails closed if any text pair is below its WCAG AA threshold in either theme. `size` selects the threshold: `normal` text needs >= 4.5:1, `large`/bold text (>= 18.66px bold or >= 24px) needs >= 3.0:1. Update this file in the same change as any token color edit. `selected` is the COMPOSITE of --menq-color-selected over --menq-color-surface, because a translucent tint has no ratio of its own; recompute it if either token changes. It exists because the eighth audit's H-03 found .palette-item.active at 2.34:1 in the light theme while this gate reported GREEN over 24 pairs - the rule was not among them. EIGHTH-AUDIT FOLLOW-UP (T-034/T-035, 2026-08-18): the five SEMANTIC colours were each paired with `surface` and nothing else, while `text` and `muted` were checked on all three. `surface` is #ffffff in the light theme -- the lightest surface there is, and therefore the most forgiving background a dark foreground can have. Measured on the real pages in a browser, every one of the five sat below AA the moment it landed on the app's own `bg` (#f5f6f8) or on a `selected` tint: accent 4.34, info 3.83, success 3.85, warning 3.83, danger 3.81. The gate was GREEN throughout, because it was never asked. The missing pairs are added here and the five light values are re-tuned at constant hue so they clear 4.5:1 on EVERY surface they are painted on. The dark palette needed no change -- measured min 4.62 across the same four surfaces.",
   "thresholds": {
     "normal": 4.5,
     "large": 3.0
@@ -12,14 +12,14 @@
       "text": "#10131a",
       "muted": "#5b6473",
       "border": "#e2e5ea",
-      "accent": "#3d5afe",
+      "accent": "#3856fe",
       "accent-text": "#ffffff",
-      "success": "#1b8749",
-      "warning": "#ab6600",
-      "danger": "#d1435b",
-      "info": "#2876d5",
-      "focus": "#3d5afe",
-      "selected": "#e8ebff"
+      "success": "#187a42",
+      "warning": "#9b5c00",
+      "danger": "#c6314a",
+      "info": "#246bc0",
+      "focus": "#3856fe",
+      "selected": "#e7ebff"
     },
     "dark": {
       "bg": "#0c0e13",
@@ -122,6 +122,90 @@
       "fg": "accent",
       "bg": "selected",
       "size": "large"
+    },
+    {
+      "id": "accent-on-bg",
+      "fg": "accent",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "accent-on-elevated",
+      "fg": "accent",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "success-on-bg",
+      "fg": "success",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "success-on-elevated",
+      "fg": "success",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "success-on-selected",
+      "fg": "success",
+      "bg": "selected",
+      "size": "normal"
+    },
+    {
+      "id": "warning-on-bg",
+      "fg": "warning",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "warning-on-elevated",
+      "fg": "warning",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "warning-on-selected",
+      "fg": "warning",
+      "bg": "selected",
+      "size": "normal"
+    },
+    {
+      "id": "danger-on-bg",
+      "fg": "danger",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "danger-on-elevated",
+      "fg": "danger",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "danger-on-selected",
+      "fg": "danger",
+      "bg": "selected",
+      "size": "normal"
+    },
+    {
+      "id": "info-on-bg",
+      "fg": "info",
+      "bg": "bg",
+      "size": "normal"
+    },
+    {
+      "id": "info-on-elevated",
+      "fg": "info",
+      "bg": "elevated",
+      "size": "normal"
+    },
+    {
+      "id": "info-on-selected",
+      "fg": "info",
+      "bg": "selected",
+      "size": "normal"
     }
   ]
 }
