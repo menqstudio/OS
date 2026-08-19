@@ -79,3 +79,30 @@ describe('AppProvider — a route that crosses the IPC boundary is validated, no
     expect(api.focus).toEqual({ kind: 'task', id: 't-9' });
   });
 });
+
+/**
+ * `T-038` — the load-flake, and the guarantee that closes it.
+ *
+ * This file's `setLang('hy')` above writes `localStorage['brops.lang']`, and nothing used to clear
+ * it. Vitest reuses a worker across files, so whether `Approvals.test.tsx` inherited Armenian was a
+ * scheduling detail — and when it did, its `g`-key case found the confirm dialog and then failed on
+ * the synchronous English `getByText` one line later. One failure in a combined run, 732/732 in
+ * isolation, and nothing recorded which test.
+ *
+ * `test/setup.ts` now clears storage before every test. These two pin that, in order: the first
+ * dirties it the way this file already does, the second requires the next test to start clean.
+ * Delete the `beforeEach` in `setup.ts` and the second one goes red.
+ */
+describe('T-038 — no test inherits another test\'s browser storage', () => {
+  it('dirties localStorage, exactly as setLang does', () => {
+    localStorage.setItem('brops.lang', '"hy"');
+    localStorage.setItem('brops.theme', '"light"');
+    sessionStorage.setItem('anything', '1');
+    expect(localStorage.getItem('brops.lang')).toBe('"hy"');
+  });
+
+  it('starts with none of it', () => {
+    expect(localStorage.length, 'localStorage leaked from the previous test').toBe(0);
+    expect(sessionStorage.length, 'sessionStorage leaked from the previous test').toBe(0);
+  });
+});
