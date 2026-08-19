@@ -8,6 +8,40 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The contrast gate rounded toward passing, and two of its own pairs were below AA (2026-08-27)
+
+`I-04` from the ninth audit, re-applied onto `main` after PR #164. The gate compared
+`round(ratio, 2) >= threshold`, with the reasoning written into the code: *"so a printed 4.50 is
+never reported as a failure."* That is the wrong way round. A printed 4.50 that is really 4.4995 **is**
+a failure, and rounding before comparing is how a gate reports the number it wants instead of the
+number it measured.
+
+Two pairs were living in that gap, and both were pairs a previous change had just added:
+`danger-on-selected` at **4.4995** and `info-on-selected` at **4.4996**, against a floor of 4.5.
+
+## The comparison moved, and so did the two colours
+
+`passed` is decided on the **raw** ratio now. The displayed value keeps two decimals and gains more
+when the extra digits are what decides, so a reader can see *why* a 4.50 failed rather than doubting
+the gate — the failure line prints `4.4995:1`, not `4.50:1`.
+
+`--menq-color-danger` `#c6314a`→`#c5314a` and `--menq-color-info` `#246bc0`→`#246bbf`, in
+`tokens.css`, `tokens.ts` and `contrast-pairs.json` together.
+
+## The root cause was a fixed point that was never iterated
+
+The five light colours were solved against the `selected` composite as it then stood; the composite
+was then recomputed from the new accent (`#e8ebff`→`#e7ebff`, slightly darker); and the colours were
+never re-solved against the composite that resulted. Two of the five landed four ten-thousandths
+under the floor, and the rounding hid it. The palette is re-solved as a fixed point now: the accent
+decides the composite, the composite decides every colour.
+
+## Measured both ways
+
+With the fix: **GREEN, 56 token text pairs pass WCAG AA in every theme.** Put the two old colours
+back and the same gate returns **RED** naming both pairs at 4.4995 and 4.4996 — the audit's own
+numbers, which is what says the comparison change is what closed this and not the colours alone.
+
 ### The five app fixes have tests now, and one of them had to be rewritten rather than kept (2026-08-27)
 
 The entry below records five defects the Owner found by opening the application. Fixing them is not

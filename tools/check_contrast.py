@@ -155,11 +155,19 @@ def evaluate(manifest: dict) -> list[Result]:
                     fg=fg_hex,
                     bg=bg_hex,
                     size=size,
-                    # Round to 2dp for stable reporting; compare on the rounded
-                    # value so a printed 4.50 is never reported as a failure.
-                    ratio=round(ratio, 2),
+                    # NINTH AUDIT. This used to compare `round(ratio, 2) >= threshold`, with the
+                    # reasoning "so a printed 4.50 is never reported as a failure". It is the wrong
+                    # way round: it made the gate PASS two pairs WCAG fails. `info-on-selected` was
+                    # 4.4996 and `danger-on-selected` 4.4995 -- both below AA, both printing 4.50,
+                    # and both pairs the previous change had just added. A gate that rounds toward
+                    # passing is a gate that reports the number it wants.
+                    #
+                    # The comparison is on the RAW ratio now. The displayed value keeps 2dp, and
+                    # gains a third when the extra digit is what decides -- so a reader can see WHY
+                    # a 4.50 failed instead of doubting the gate.
+                    ratio=round(ratio, 4) if abs(ratio - threshold) < 0.01 else round(ratio, 2),
                     threshold=threshold,
-                    passed=round(ratio, 2) >= threshold,
+                    passed=ratio >= threshold,
                 )
             )
     return results
@@ -187,7 +195,9 @@ def _format(r: Result) -> str:
     mark = "ok " if r.passed else "XX "
     return (
         f"  {mark}{r.pair_id:<24} {r.theme:<5} "
-        f"{r.fg} on {r.bg}  {r.ratio:>5.2f}:1  "
+        # Print every digit that was stored. When the gate rounded to 2dp AND compared on the
+        # rounded value, a 4.4996 failure printed as "4.50" and read as a bug in the gate.
+        f"{r.fg} on {r.bg}  {r.ratio:>7g}:1  "
         f"(need {r.threshold:.1f} · {r.size})"
     )
 
