@@ -751,8 +751,22 @@ def refuse_windows_writable(path: pathlib.Path, env_name: str,
                     or advapi32.EqualSid(sid, admins)
                     or advapi32.EqualSid(sid, owner_rights)):
                 continue
+            # T-023. This refusal used to name only the path, so an intermittent CI failure
+            # could not be told apart from a real one: nobody could see WHICH principal was
+            # granted WHICH right, or -- decisively -- whether the ACE was INHERITED. That
+            # single bit chooses where the fix belongs. An inherited ACE means the harness
+            # took whatever the runner's `_temp` handed it, and the anchor directory must be
+            # created with an explicit DACL instead; a directly-applied ACE means the object
+            # really is writable and the check is right to refuse. The refusal itself is
+            # unchanged -- this only makes it say what it saw.
+            inherited = bool(header.AceFlags & 0x10)          # INHERITED_ACE
+            granted = [nm for nm, bit in rights if ace.Mask & bit] or ["<none named>"]
             raise error(
-                f"{env_name} must not be writable by non-owner principals: {path}")
+                f"{env_name} must not be writable by non-owner principals: {path} "
+                f"[ace #{index} grants {', '.join(granted)} "
+                f"(mask 0x{ace.Mask:08X}, flags 0x{header.AceFlags:02X}"
+                f"{', INHERITED' if inherited else ', APPLIED DIRECTLY'}) "
+                f"to {windows_account_label(sid)}]")
     finally:
         kernel32.LocalFree(owner_rights)
         kernel32.LocalFree(descriptor)
