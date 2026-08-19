@@ -1,12 +1,116 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #154 · branch `fix/rest-fallback-slug`** (base `main`, tip `911b079`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #155 · branch `fix/theme-axis-measured`** (base `main`, tip `af6cd7d`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> T-037 done (REST second road: first tests, resolved-or-refused slug, the inert line was broken); T-039 diagnosed and still open
+> T-034: a live AA defect in the light --menq-* palette, fixed; the contrast gate goes from 28 checks to 56. T-035 measured vacuous. T-038 characterised
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The contrast gate checked five colours against the one background that flatters them (2026-08-19)
+
+`T-034` closed a real defect on the way to investigating `T-035`, and `T-035`'s own proposed fix turned
+out to be vacuous. Both results came from measuring rather than reasoning, and one of the measurements
+was wrong the first time — which is recorded here because catching it was the only reason the number
+below is trustworthy.
+
+## The defect: `surface` is the most forgiving background there is
+
+`config/contrast-pairs.json` carried 14 pairs. `text` and `muted` were each checked on **`bg`,
+`surface` and `elevated`**. The five colours that carry meaning — `accent`, `success`, `warning`,
+`danger`, `info` — were each checked on **`surface` and nothing else**.
+
+In the light theme `surface` is `#ffffff`. For a dark foreground that is the *lightest* background in
+the system and therefore the highest contrast it will ever achieve. Every one of the five was tuned
+until it just cleared 4.5:1 there — 4.50, 4.52, 4.53, 4.56 — and then painted on the app's own page
+background and on selection tints, where nobody looked:
+
+| token | on `surface` `#ffffff` | on `bg` `#f5f6f8` | on `selected` | verdict |
+|---|---|---|---|---|
+| `accent` | 5.13 | 4.78 | **4.34** | below AA |
+| `info` | 4.52 | 4.21 | **3.83** | below AA |
+| `success` | 4.56 | 4.24 | **3.85** | below AA |
+| `warning` | 4.53 | 4.22 | **3.83** | below AA |
+| `danger` | 4.50 | 4.19 | **3.81** | below AA |
+
+The gate was GREEN the whole time. It was never asked.
+
+**Fixed, and the fix is the boring one.** The five light values are re-tuned at constant hue and
+saturation — only lightness moves, so nothing changes colour, it only stops being too pale — until each
+clears 4.5:1 on **every** surface it is painted on: `accent #3d5afe→#3856fe`, `info #2876d5→#246bc0`,
+`success #1b8749→#187a42`, `warning #ab6600→#9b5c00`, `danger #d1435b→#c6314a`. The `selected`
+composite is recomputed from the new accent (`#e8ebff → #e7ebff`), as that file's own note requires.
+**14 pairs are added** so the hole cannot reopen: each of the five on `bg`, on `elevated`, and on
+`selected`. The gate now runs **56 checks instead of 28** and is GREEN.
+
+**The dark theme needed nothing** — measured at min 4.62 across the same four surfaces. That is
+`T-035`'s headline arriving from the other direction: the unmeasured theme was the broken one.
+
+## `T-035`: the proposed fix is vacuous, and here is the measurement that says so
+
+The ticket asks for a theme axis on `pages.browser.spec.tsx`'s loop. It was built, and then tested the
+way this repository tests things — by breaking the thing it is supposed to catch. **Setting all five
+light opacity tokens to `0` left all 345 assertions passing.**
+
+The reason is structural, not a bug in the axis. `invisibleContent` reads one property: computed
+`opacity` on elements that carry their own text or are controls. The five tokens that differ between
+themes (`--aurora-op` `--mesh-op` `--grid-op` `--scan-op` `--grain-op`) drive *decorative fixed-position
+chrome*, which carries no text and is never a candidate. And `theme/aios.css` contains exactly **one**
+`[data-theme]` selector, declaring nothing but custom properties and `color-scheme` — so no rule
+*matches* differently between themes, which is why the other two loops (does a rule select this class;
+does the cascade run this animation) cannot change their answer either.
+
+So the axis was **not shipped**. Doubling a suite that cannot detect the defect class is cost without
+coverage, and the file would then read as a light-theme guarantee it does not provide.
+
+What the axis *did* establish, and what is worth keeping, is the trap the ticket records: `AppProvider`
+writes `data-theme` from its own state in an effect, so setting the attribute before rendering has it
+overwritten on mount. The way past it is not to fight the effect afterwards but to seed the input it
+reads — `localStorage['brops.theme']` — and then assert the attribute actually landed. That is written
+into `T-035` for whoever builds the check that *can* find light-theme defects.
+
+## The measurement that was wrong the first time
+
+Sweeping computed contrast over all 23 pages in light first reported **316** elements below AA. It was
+wrong. `body` carries `transition:background var(--slow)`, the theme flips on mount, and the sweep was
+reading colours mid-transition — light text already applied over a background still animating away from
+`#05070C`. With `settleAnimations()` first, the honest number is **95 in light and 1 in dark**.
+
+It is recorded because the false number was the more alarming one, and publishing it would have been
+this repository's characteristic defect performed by the person writing the correction to it.
+
+**The real 95 are a different finding and stay open under `T-034`.** They come from `theme/aios.css`,
+not from `--menq-*`: four token families carried from dark into light unchanged — `--cyan-soft`
+`#38BDF8` (26 occurrences), `--cyan` `#0EA5E9` (15), `--azure-soft` `#4DA5FF`, `--mint` `#0E9E92` —
+sitting as text on light tinted panels at ratios from 1.84 to 2.44. The darkest light surface the pages
+actually paint is `#E7E3D8`.
+
+**And the Owner-decided migration will not fix them by itself.** The 2026-08-17 decision is that
+`aios.css` colour tokens converge onto `--menq-*`. Measured before this change, every `--menq-*`
+semantic colour *also* failed on `bg` — so converging onto them would have moved the failures rather
+than removing them. That is no longer true as of this change, which is the order these two tickets have
+to be done in: fix the destination palette first, then migrate onto it.
+
+## `T-038`: the flake was observed, and this is the characterisation the ticket asked for
+
+Running the full unit suite produced `1 failed | 736 passed`; the identical command immediately after
+gave `737 passed`. `T-038` says the first thing needed is to **record which test fails**, because
+nothing does today and the auditor saw it once without characterising it. It is:
+
+* `apps/desktop/src/features/Approvals.test.tsx:88` —
+  *"GRANT is reachable by the §D `g` key, and stages a confirm rather than committing"*
+* failing at **line 101**, `within(dialog).getByText(/native confirmation the app window cannot forge/i)`
+
+The narrowing that matters: **line 100 succeeded.** `await screen.findByRole('dialog')` resolved, so a
+dialog was present — this is not "the dialog never opened" and not a timeout. It is a dialog whose copy
+was not the expected one at the moment a *synchronous* `getByText` looked, which points at a race
+between the keypress and the selection/staging state the message is composed from, not at suite-level
+slowness.
+
+**No patch is written from one observation.** Changing line 101 to `findByText` would very likely make
+it green and would also make a genuine race invisible, which is the exact trade `T-038` exists to
+prevent. The ticket keeps its order: characterise, then choose.
 
 ### The inert line was broken, and the flake's two leading suspects are both eliminated (2026-08-18)
 

@@ -115,15 +115,15 @@ export const lightColors: ColorTokens = {
   text: '#10131a',
   muted: '#5b6473',
   border: '#e2e5ea',
-  accent: '#3d5afe',
+  accent: '#3856fe',
   accentText: '#ffffff',
-  success: '#1b8749',
-  warning: '#ab6600',
-  danger: '#d1435b',
-  info: '#2876d5',
-  focus: '#3d5afe',
-  hover: 'rgba(61, 90, 254, 0.08)',
-  selected: 'rgba(61, 90, 254, 0.12)',
+  success: '#187a42',
+  warning: '#9b5c00',
+  danger: '#c6314a',
+  info: '#246bc0',
+  focus: '#3856fe',
+  hover: 'rgba(56, 86, 254, 0.08)',
+  selected: 'rgba(56, 86, 254, 0.12)',
 };
 
 export const darkColors: ColorTokens = {
