@@ -8,6 +8,72 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A third of the design system was residue, and the deletion pass found two things the count could not (2026-08-19)
+
+`T-033` measured **785 of 2 356 class tokens (33%)** named by a rule and appearing in no `.ts`/`.tsx`,
+and was explicit that the number is a scale and not an instruction: *"Do not bulk-delete on the
+word-scan alone — it is deliberately crude, which makes it safe as a lower bound on what is dead and
+useless as an instruction."*
+
+**After the pass: 136 of 1 799 (8%).** `aios.css` goes from 3 194 rules to 2 009 — **1 185 rules and
+147 KB of source**, and the built stylesheet from **345.53 kB to 218.52 kB** (gzip 58.83 → 39.37).
+
+## The rule that decides, and it is not the word-scan
+
+`T-029`'s, worked out there and not re-derived: a comma-separated selector part dies when **any**
+class in it names a token nothing applies, because an element must carry every class in a compound. A
+rule dies when every one of its parts does. Two weaker readings were tried in `T-029` and both removed
+nothing.
+
+The word-scan supplies the token set; the compound rule supplies the deletion. Neither alone is
+enough, which is the whole content of the row's warning.
+
+## Two guards, and both were earned rather than designed
+
+**A class the app COMPOSES is not dead.** `T-036` found the first instance — `tier-${a.level}`
+produces `tier-A1`, which appears in no source file and is applied every time an approval renders. So
+the pass collects every static run before a `${` and excludes those families. It found the second
+instance the expensive way: `fs-info` and `fs-mint` were deleted, and the browser suite went red on
+the next run. The cause is a **nested** template literal —
+`` `fstat${c.tone ? ` fs-${c.tone}` : ''}` `` — where a regex matching backtick-to-backtick swallows
+the inner one. The scan now runs over the whole file text. That subtraction is 97 tokens and only ever
+makes the dead count smaller.
+
+**A rule that would orphan a LIVE class is kept.** `.v-memory .mrail.swap .mr-core` is unreachable —
+nothing applies `swap` — but `mr-core` is applied by `Memory.tsx`, and that rule is the only place any
+stylesheet names it. Deleting it is correct about reachability and turns the browser suite red.
+
+## Which is the finding the count could not produce
+
+**32 live classes have no reachable rule at all.** They are applied by the markup, they are named only
+by selectors that can never match, and they therefore render **unstyled in the running app today**:
+
+```
+accent  cap  cited  cleared  editing  en  end  err  fill  filtered  filtering  flip  hit
+is-unread  knob  lead  line  linked  miss  mr-core  mr-detail  out  probing  proven
+reweighing  rings  sc  schem  sealed  settle  show  tick
+```
+
+`unstyledClasses` cannot see any of them, and that is not a bug in it — its contract is *"a class the
+markup applies that no CSS rule anywhere selects"*, which is a question about **naming**, not about
+reachability. A class named only by a dead selector reads as styled. That is the same shape as
+everything else this cycle: a check pointed at the name rather than at the thing.
+
+They are recorded, not fixed. Each is a design decision — give the class a rule, or drop the
+unreachable requirement from the selector it is trapped behind — and deciding thirty-two of those from
+a test log would be inventing a design.
+
+## The method has a home
+
+`tools/count_dead_classes.py` gains the interpolation subtraction and a `--rules` mode that prints the
+selectors that can never match, so the pass is reproducible and the next reader can argue with it. It
+still **exits 0 always**: `T-033` is right that a dead-CSS gate needs a baseline the size of whatever
+remains, and a baseline is the shape six rounds of audit keep finding defects inside. 136 is a much
+better place to have that argument than 785.
+
+Verified: 737 unit · 323 browser · 59 a11y · `tsc --noEmit` clean · `check_c1_tokens`,
+`check_contrast`, `check_token_parity`, `check_bundle_budget` GREEN.
+
 ### The instrumentation answered `T-023` on its first firing, and the answer was the harness (2026-08-19)
 
 Yesterday's change added an ACL dump to the custody refusal because three occurrences had produced no
