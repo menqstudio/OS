@@ -8,6 +8,87 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The `default` state has fixtures now, and the first thing it did was catch them being wrong (2026-08-19)
+
+`T-036`: the browser suite mounted 363 of 2 249 styled class tokens, and covered `loading`, `error`
+and `empty` — but not **`default`**, a page with data in it. The row is precise about the cause and
+about the danger: *"the fixtures must come from the real command shapes or they measure a page the app
+never renders."*
+
+**The fixtures exist, and they are correct by construction rather than by care.** Every one is declared
+against the exported domain interface the command's own `invoke<T>` names — `entities.ts` opens with
+*"these types mirror the Rust structs returned by the Tauri commands"* — so a missing field, a
+misspelling or a wrong type is a compile error. `tsc --noEmit` is the check; there is no second
+manifest to drift.
+
+## Shape-correct was not enough, and the suite said so immediately
+
+The first draft typechecked cleanly and was still wrong. `Approval.level` is declared `string` — it
+mirrors a Rust `String` column — so `level: 'L2'` and `status: 'granted'` compiled fine, and the suite
+reported `.tier-L2` as an unstyled class. **That was not a page defect. It was this file inventing a
+vocabulary**, which is `T-036`'s own warning arriving one level below shape.
+
+The canonical vocabulary is `domain/enums.ts`: `ApprovalLevel` is `'A0'|'A1'|'A2'|'A3'`, `Priority` has
+no `medium`, `ApprovalStatus` has no `granted`, `TaskStatus` has no `in_progress`. Every enumerated
+value now routes through a typed accessor, so a wrong one is a compile error instead of a false
+finding. **Sixteen values were wrong in the first draft.** The lesson is worth more than the fixtures:
+a typed fixture proves the shape, and the shape is the easy half.
+
+## What the corrected fixtures then found
+
+With the right vocabulary, `populated` turns **13 of the three sweeps red** — and none of it is the
+fixtures:
+
+* **24 class tokens no rule selects**, across 12 pages: the whole `cal-run*` family (the run history
+  Phase 8 added), `ctx-recalls`, `kb-chip-name`, `lane-queue`/`lane-prog`/`lane-done`, `rsx-run`,
+  `ag-node-face`, `tier-A1` and `tier-A2` — where `.tier-A3` **is** styled, so three of the four
+  approval levels render with no tier treatment at all.
+* **one entrance the `decisions` ledger substitutes rather than runs**: `.rise` promises `@keyframes
+  reveal` and the computed name is `dec-reveal`. An entrance does run; it is not the `A-01` shape.
+
+These are exactly the 1 886 tokens the eighth audit measured as never shown.
+
+## So `populated` is not in `STATES`, and the reason is in the file
+
+Three ways to go green were available and all three are refused, in the file where the next reader will
+look: adding the 24 to `EXEMPT` (that file's own header says a baseline list is where defects hide);
+relaxing `clobberedMotion` so a substituted entrance passes (weakening an assertion to quiet CI, and
+the substitution deserves its own decision); or writing 24 CSS rules for surfaces nobody has looked at
+(inventing a design from a test log). Adding `'populated'` to `STATES` is one line once the 24 are
+decided.
+
+## Two smaller things it caught on the way
+
+**A crash in `afterEach` that was blaming product code.** `mockReset()` clears the implementation as
+well as the calls, so `invoke` returned `undefined`; React runs unmount cleanup *after* `afterEach`,
+and `Conversations.tsx` cancels its in-flight reply there — `desktop.cancelReply(id).catch(…)`. The
+teardown threw `Cannot read properties of undefined (reading 'catch')` and failed the **next** test
+with a stack trace pointing at code that was behaving correctly. It only surfaced under `populated`,
+because that is the first state in which a conversation is ever selected. Reset now returns a resolved
+promise.
+
+**A phantom key in the four-entry table.** `OBJECT_SHAPED` has carried `get_ai_status` since it was
+written; the command is `ai_status`. The liveness test found it and it is left in place with a note,
+because it is a finding about that table, not a defect in this one.
+
+## What the new tests prove, and what they do not
+
+Each page must put a value **from its own fixtures** on the screen — not "it rendered something",
+which an empty state satisfies, and not "it rendered more", which was tried and is wrong in three
+legitimate ways (`settings` is answered with an object; `security` and `files` fold rows into counts).
+
+The limit is stated in the file rather than left to be assumed: it is `some`, not `every`. Emptying
+`list_projects` **and** `list_agents` still passed, because `projects` also asks for tasks. The
+per-command version was built and turns **five** pages red — `home`, `security`, `analytics`,
+`calendar`, `tasks` — each asking for a row command and displaying no value from it. Some are pages
+folding rows into counts; at least one, `tasks` not showing a task title, looks like a real filter the
+fixtures do not satisfy. Shipping it would have meant five investigations or a reason-list written to
+make it green, and a reason-list written that way is the baseline this file refuses. It is recorded as
+the next slice instead.
+
+Verified by deletion: emptying every fixture a page asks for turns it red, and the liveness test
+catches the entries that go dead. 737 unit tests, 323 browser tests, `tsc --noEmit` clean.
+
 ### The custody refusal fired a third time, on this session's own pull request (2026-08-19)
 
 `T-023` names the first step and it is deliberately not a fix: *"someone to dump the actual ACL at
