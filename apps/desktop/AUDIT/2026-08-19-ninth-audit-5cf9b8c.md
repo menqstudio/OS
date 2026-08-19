@@ -66,6 +66,63 @@ Two further checks, because the third refusal is conditional and the condition i
 
 The gate is shut and nothing this cycle moved it.
 
+### 2.1 Second pass — the questions the three-refusal check does not ask
+
+The three refusals are the documented gate, and checking them is not the same as checking that the
+gate has no way around it. Challenged on the P0 verdict, I re-attacked it along four vectors the
+first pass did not cover. **The verdict is unchanged and the evidence is now four locks deep.**
+
+**(a) Does every governed surface actually reach a refusal?** The pre-flight's own doc comment says
+*"the three governed surfaces"* while `NEXT_CHAT.md` §1 and `CLAUDE.md` §3 both say **four** AI
+surfaces. Four command definitions exist — `stream_reply` (`:1638`), `stream_run_step` (`:1794`),
+`stream_ask` (`:2129`), `reply_in_conversation` (`:2346`) — and there are only **three**
+production call sites of `governed_unconfigured_block` (`:1532`, `:2007`, `:2214`), the last of
+them *above* `reply_in_conversation`. That is the shape a hole has.
+
+It is not one. `:1532` sits inside `run_governed_conversation_turn` (`:1490`), and **both**
+`stream_reply` (`:1670`) and `reply_in_conversation` (`:2372`) call it. Four surfaces, three
+pre-flights, no uncovered surface. `tools/check_ai_surfaces.py` independently reports *"4 classified
+surfaces; every provider-invoking command is accounted for … no 'governed' surface reaches a generic
+provider entry."*
+
+**(b) Is `NoTrustedManifest` what production actually wires?** Yes, at every verify site:
+`commands.rs:1578`, `:2053`, `:2273` and `ai.rs:4611`. There is no second authority in the shipped
+paths.
+
+**(c) Two shipped `#[tauri::command]`s run the real in-process crypto chain.** This is the vector
+the first pass missed entirely. `governed_trust_selftest` (`governed_selftest.rs:156`) and
+`demonstration_verified_reply` (`commands.rs:2681`) both call
+`brops_win_live::proof::in_process_turn_produce`, and `governed_selftest.rs:162` surfaces
+`production_verified: outcome.production_verified` to the webview — **passed through from the chain,
+not hardcoded false.** So the honesty of the whole thing rests on what that chain resolves to.
+
+It resolves to demonstration custody **by type**. `proof.rs:256-261` builds the anchor as
+`provenance: RootProvenance::Demonstration`, hardcoded, with the root's private seed five lines above
+it in the same source file — and the comment says why that is the point: *"its private half is the
+seed two lines above, in this source file … which is why this proof can never render `Production`
+however completely the chain runs."* `verify_manifest_anchored` carries that provenance into the
+token, `resolve_trust_state` splits on it, and `is_production_verified()` is
+`matches!(self, TrustState::Production { .. })`. `proof.rs:499-500` asserts `!production_verified`,
+and the comment records that the assertion *"used to be the opposite way round."* I ran it:
+`cargo test -p brops-win-live --lib proof::` → **7 passed**.
+
+**(d) Can anything shipped mint the provenance that would open it?** `RootProvenance::External` is
+the only value that yields `TrustState::Production`. Every construction of it in the tree is either
+`#[cfg(test)]` (`production_trust.rs`, `key_manifest.rs`) or a `RootProvenance::parse` of a
+**deployment config** inside a live-kit binary (`win_live_turn.rs`, `live_turn.rs`, `ladder_turn.rs`,
+`win_provision.rs`). **No shipped desktop code path constructs it.** Production trust is unreachable
+by the type system, not only by an unset environment variable.
+
+**One thing worth stating rather than leaving implied.** On a Windows build,
+`governed_trust_selftest` does return the literal string `"trusted_verified"` to the webview when
+`outcome.bound` is true (`governed_selftest.rs:161`), beside `production_verified: false` and
+`demonstration_custody: true`. That is the documented demonstration badge, not a production claim,
+and the honesty machinery around it is real and tested — `TrustSelftest.tsx:86` renders the custody
+flag, and `Conversations.test.tsx:34` pins *"maps demonstration_custody to the demo badge — never the
+production green."* It is not a P0. It is recorded because it is the one place in the shipped app
+where the production vocabulary appears on a surface a person can reach, and a future edit that drops
+the custody flag beside it would turn a labelled demonstration into an unlabelled one.
+
 ---
 
 ## 3. Promotion table — the nine Builder claims
