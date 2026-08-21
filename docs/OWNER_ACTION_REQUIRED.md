@@ -6,6 +6,41 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **NINTH AUDIT, 2026-08-19 — RED, on `main` @ `5cf9b8c` (tree `9580b86d`, pin proven).** Filed
+> at [`2026-08-19-ninth-audit-5cf9b8c.md`](../apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md).
+> **No P0** — the three production-gate refusals were read at the source and are closed for the
+> fourth round running, `AnswerProvenance::Governed` is constructed only inside `#[cfg(test)]`, and
+> nothing in the tree sets `$BROPS_BROKER_CONFIG`.
+>
+> **Nothing here needs the Owner today.** This round decided the nine Builder claims from PRs
+> #153–#162. **Six earned ✅** (`T-033`, `T-035`, `T-036`, `T-037`, `T-038`, `T-039`), each on a
+> measurement the auditor performed, with every mutation restored byte-exact.
+>
+> **Two are REOPENED, and both are the same shape: a fix that measured itself against the wrong
+> thing.** `T-034` re-tuned five colours to clear WCAG AA and two of them landed at **4.4996** and
+> **4.4995** — *under* the floor — passing only because `check_contrast.py` compares
+> `round(ratio, 2) >= threshold`. Remove the rounding and the gate goes RED on exactly those two
+> pairs, both of which `T-034` itself added. `A-09` replaced an undecidable word-sweep with a
+> *declared eight-leaf free-text register*, and the register calls nine `isContractId` leaves
+> "shape-constrained" while that pattern admits 128 characters of `[a-z0-9._-]` — a 64-hex
+> credential rides straight through with the register silent. Three of its eight entries are also
+> never exercised: **deleting all three leaves the suite green.**
+>
+> **`T-023` is held at ◑ and that is the honest answer, not a harsh one.** The ACE dump and the
+> `icacls` harness fix are both real and both were *read, not run*. The defect exists only on the
+> GitHub runner's inherited `_temp` ACL, and the job is in `deliberately_excluded`, so the
+> repository cannot tell "fixed" from "has not recurred yet" until it runs clean across several
+> pull requests.
+>
+> **One finding touches the roadmap percentages you are asked to trust.** Two Phase-10 boxes —
+> `contracts/` finalisation — are blocked by no production gate, no service principal and no
+> deployment. `contracts/` is a lone 3 012-byte README while `engine/schemas/` holds 21 schemas,
+> and `ARCHITECTURE.md` says so itself. The claimed total of 94/117 is also not derivable: the
+> roadmap counts **92/115** by checkbox and **44/56** by Definition-of-Done, and `94/117` appears
+> nowhere in the tree or in `git log`.
+>
+> _The eighth round's summary, superseded by the above, is kept below for provenance._
+>
 > **EIGHTH AUDIT, 2026-08-18 — RED, on `main` @ `9ae2fd2` (tree `30b3c966`, pin proven).** Filed
 > at [`2026-08-18-eighth-audit-9ae2fd2.md`](../apps/desktop/AUDIT/2026-08-18-eighth-audit-9ae2fd2.md).
 > No P0 — the three production-gate refusals verified closed for the third round running.
