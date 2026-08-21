@@ -1120,26 +1120,34 @@ fn write_system_prompt_file(
 // deliberately keeps Bro powerful (deny-list, not a restrictive allow-list), so this list
 // closes every CONCRETE bypass an audit surfaced while leaving normal build/test/inspect
 // commands free. It is defense-in-depth, not a boundary of last resort.
-const BRO_BASH_DENY: &[&str] = &[
-    // delete
-    "Bash(rm:*)", "Bash(rmdir:*)", "Bash(del:*)", "Bash(Remove-Item:*)", "Bash(unlink:*)",
-    "Bash(truncate:*)", "Bash(find:* -delete)", "Bash(git clean:*)", "Bash(git rm:*)",
-    // push (incl. the `git -C <dir> push` form and force variants)
-    "Bash(git push:*)", "Bash(git -C:*)", "Bash(git -c:*)",
-    // dependency / global install — every ecosystem the audit flagged
-    "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npm ci:*)", "Bash(npm add:*)", "Bash(npx:*)",
-    "Bash(pnpm add:*)", "Bash(pnpm install:*)", "Bash(pnpm dlx:*)",
-    "Bash(yarn add:*)", "Bash(yarn install:*)", "Bash(yarn dlx:*)",
-    "Bash(cargo add:*)", "Bash(cargo install:*)",
-    "Bash(pip install:*)", "Bash(pip3 install:*)", "Bash(python -m pip:*)", "Bash(python3 -m pip:*)",
-    "Bash(uv pip:*)", "Bash(uv add:*)", "Bash(uvx:*)", "Bash(pipx:*)", "Bash(poetry add:*)",
-    "Bash(bun add:*)", "Bash(bun install:*)", "Bash(bunx:*)",
-    "Bash(deno install:*)", "Bash(go install:*)", "Bash(gem install:*)",
-    "Bash(brew install:*)", "Bash(apt install:*)", "Bash(apt-get install:*)", "Bash(winget install:*)",
-    "Bash(choco install:*)", "Bash(scoop install:*)",
-    // shells that would defeat prefix matching by re-parsing an inner command
-    "Bash(sh:*)", "Bash(bash:*)", "Bash(zsh:*)", "Bash(pwsh:*)", "Bash(powershell:*)", "Bash(cmd:*)", "Bash(env:*)",
-];
+/// Shell patterns the agent may not run.
+///
+/// **EMPTY BY OWNER DECISION, 2026-08-20.** Gev asked for it in his own words, twice, naming all
+/// four categories: *"ջնջում … push … փաթեթի տեղադրում … ներդրված shell — սրան էլ թող անի"*. He
+/// owns the repository and the machine, the consequence was stated to him plainly before the change,
+/// and he repeated the instruction. It is recorded here rather than in a commit message alone
+/// because a reader of this constant needs to know it was emptied on purpose and by whom.
+///
+/// **What was given up, kept legible so it can be restored in one edit.** Four blast-radius limits —
+/// not capability limits; the agent could already do everything useful without them:
+///
+/// * **delete** — `rm` `rmdir` `del` `Remove-Item` `unlink` `truncate` `find -delete` `git clean`
+///   `git rm`
+/// * **push** — `git push`, and the `git -C` / `git -c` forms that reach another worktree or
+///   override config
+/// * **dependency install** — npm · pnpm · yarn · cargo · pip · uv · pipx · poetry · bun · deno ·
+///   go · gem · brew · apt · winget · choco · scoop
+/// * **nested shell** — `sh` `bash` `zsh` `pwsh` `powershell` `cmd` `env`, which re-parse an inner
+///   command and would defeat prefix matching anyway
+///
+/// The last one is why the other three were never independently enforceable: a single `pwsh -c`
+/// carries any of them through. So this is one decision, not four, and it was taken as one.
+///
+/// **What did NOT change, deliberately.** `protected_path_deny_patterns()` and `TrustSurfaceGuard`
+/// still stand: a turn cannot write the files that decide what "verified" means. That is not a
+/// blast-radius limit, it is the property the product exists to have, and the owner did not ask for
+/// it and was not offered it.
+const BRO_BASH_DENY: &[&str] = &[];
 
 // ── The trust surface: the part of this repository a model turn may not change ──────────
 //
@@ -1685,19 +1693,23 @@ fn tool_args(agent: bool) -> Vec<String> {
         a.push("Read Edit Write Grep Glob Bash Task".into());
         a.push("--permission-mode".into());
         a.push("acceptEdits".into());
-        a.push("--disallowedTools".into());
-        for pat in BRO_BASH_DENY {
-            a.push((*pat).into());
-        }
-        // ...and the CLI's own agent types, which `--agents` does not displace and
-        // `--setting-sources ""` does not hide. See `BRO_BUILTIN_AGENT_DENY`.
-        for pat in builtin_agent_deny_patterns() {
-            a.push(pat);
-        }
-        // ...and a WRITE at any path that decides what "verified" means. Prevention half; the
-        // enforcement half that does not depend on this matcher is `TrustSurfaceGuard`.
-        for pat in protected_path_deny_patterns() {
-            a.push(pat);
+        // `--disallowedTools` is only emitted when something is actually denied. With
+        // `BRO_BASH_DENY` empty (owner decision, see its docs) the flag would otherwise be passed
+        // with no values, and a flag whose argument list is empty is a CLI parse error rather than
+        // a permissive default -- the agent would fail to start instead of running unbounded.
+        let denied: Vec<String> = BRO_BASH_DENY
+            .iter()
+            .map(|p| (*p).to_string())
+            .chain(builtin_agent_deny_patterns())
+            .chain(protected_path_deny_patterns())
+            .collect();
+        // The chain above already carries both of the sets that did NOT change: the CLI's own agent
+        // types, which `--agents` does not displace and `--setting-sources ""` does not hide
+        // (`BRO_BUILTIN_AGENT_DENY`), and a WRITE at any path that decides what "verified" means --
+        // the prevention half whose enforcement twin is `TrustSurfaceGuard`.
+        if !denied.is_empty() {
+            a.push("--disallowedTools".into());
+            a.extend(denied);
         }
     } else {
         a.push(String::new()); // "" → disable ALL built-in tools

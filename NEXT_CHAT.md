@@ -132,6 +132,96 @@ better place to have that argument than 785.
 Verified: 737 unit · 323 browser · 59 a11y · `tsc --noEmit` clean · `check_c1_tokens`,
 `check_contrast`, `check_token_parity`, `check_bundle_budget` GREEN.
 
+### The app was opened, and every one of the first five things the Owner tried was broken (2026-08-21)
+
+The Owner installed the desktop app and used it. That had not happened before in this repository —
+every prior claim about it rests on tests, and tests are not a person opening a window. Five defects
+in the first session, four of them invisible to the whole suite.
+
+## It refused to talk, and the refusal was correct
+
+`no AI provider configured`. `resolve_provider` is fail-closed by design (Wave 1 / `T-012`): there is
+no silent governed→ungoverned fallback, so running an ungoverned model has to be an explicit act.
+Nothing about that is wrong — but it means a fresh install of a desktop application does nothing at
+all, and says so in a sentence written for whoever set the environment variables, which on a fresh
+machine is nobody.
+
+A `dev-ungoverned` cargo feature now supplies that explicit opt-in at build time, so the act is
+"choosing to install a binary whose name says `dev-ungoverned`" rather than "editing your
+environment". `resolve_provider` is untouched: a build without the feature behaves exactly as before.
+
+## It was a coding agent all along, behind an environment variable nothing set
+
+`ai.rs::tool_args(agent)` grants `Read Edit Write Grep Glob Bash Task` under
+`--permission-mode acceptEdits`, with the generated agent definitions wired to `Task`. It turns on
+from one fact — `bro_agent_dir().is_some()`, i.e. `BROPS_PROJECT_DIR` naming a real directory — and
+**`BROPS_PROJECT_DIR` appears in no `.ts`/`.tsx` at all.** The whole capability shipped unreachable
+from the product.
+
+The dev build now defaults it to `~/BroPS` — the workspace this application already defines for
+itself as the Files root, so the agent's reach and the file browser's reach are one folder, and it is
+a directory the app created rather than one that already had somebody's work in it. The value is
+written to a visible file that overrides it, and `BROPS_PROJECT_DIR` overrides both.
+
+## The shell bounds are gone, by an Owner decision recorded where it can be found
+
+`BRO_BASH_DENY` is empty. Delete, push, dependency install and nested shell were four blast-radius
+limits, and the Owner asked for all four to go, in his own words, twice, after the consequence was
+stated. What was given up is kept in the constant's docs so it can be restored in one edit, and the
+trust-surface deny — the files that decide what "verified" means — is untouched: he did not ask for
+it and was not offered it.
+
+**Emptying the list would have broken the agent outright**, which is the part no test would have
+caught. `tool_args` pushed `--disallowedTools` unconditionally and then the patterns; with none, the
+flag went to the CLI with no argument, and a flag with an empty argument list is a parse error, not a
+permissive default. The agent would have failed to start. The flag is now emitted only when
+something is actually denied.
+
+## Every reinstall on every machine bricked the app
+
+```
+trust provisioning failed while re-hashing a provisioned file
+(…\studio.menq.brops\trust\POSTURE.txt): The system cannot find the path specified
+```
+
+The two halves of the trust material live apart on purpose — the anchor under `%ProgramData%` where
+the app cannot write it, the key store under `%APPDATA%` — and the uninstaller removes only the
+second. The next install found the anchor, took it as *"this machine is provisioned"*, went to verify
+a store that no longer existed, and panicked in the setup hook. The window closed before anything
+could be read, so the only symptom was **"it opens and shuts."**
+
+The first fix was half of one, and the Owner hit the other half within minutes: retiring the orphaned
+anchor left a stale `trust` directory with nothing to verify it against, and provisioning refused
+*that*. It is now symmetric — when exactly one of the two halves is present, that half is moved aside
+(never deleted) and the pair is re-minted. When both are present nothing changes and tampering is
+still refused by name, which is the property `provision.rs`'s tests pin.
+
+## Right-click offered one thing, and it was not Copy
+
+The context menu carried a single item — *Open in new window* — and suppressed the native menu
+everywhere except inside a text field. So right-clicking a chat reply, a file name or an error
+message offered no **Copy**, in the one interaction every desktop application shares.
+
+It is now the standard set, and which items appear is decided by what was clicked: Copy and Cut only
+when there is a selection, Paste only in a field that can take it. And *Open in new window* reports
+its failure — the error used to go to `console.error`, which a packaged app gives nobody a way to
+read, so a real refusal (the eight-window cap is one) and a dead button looked identical.
+
+## Scrolling tore, and the cause is eight fixed layers
+
+Three of the ambient layers blend with everything beneath them — `.scanline` and `.shimmer` in
+`screen`, the `body::after` grain in `soft-light` at `z-index: 998`, i.e. **over** the content. A
+blended fixed layer must be re-rasterised against a backdrop that just moved, so every scroll frame
+repaints the whole stack. They are promoted to their own compositor layer now; nothing about how any
+of it looks changes.
+
+## What this says about the last three weeks
+
+Four of these five are invisible to 739 unit tests, 323 browser tests and 59 axe checks, because all
+of them mount components and none of them installs an application, launches it twice, or right-clicks
+anything. The suite was never wrong. It was answering a different question, and nobody had asked this
+one until somebody opened the window.
+
 ### The instrumentation answered `T-023` on its first firing, and the answer was the harness (2026-08-19)
 
 Yesterday's change added an ACL dump to the custody refusal because three occurrences had produced no

@@ -19,6 +19,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# A DEVELOPMENT build that pre-selects the local, sandboxed `claude` CLI.
+#
+# The shipped default refuses to pick a provider at all (Wave 1 / T-012): there is no silent
+# governed->ungoverned fallback, so running an ungoverned model has to be an explicit act. That
+# refusal is the product behaviour and this feature does NOT change it -- `resolve_provider` is
+# untouched, and a build without this feature behaves exactly as before.
+#
+# What it changes is WHERE the explicit act happens: choosing to install a binary whose name says
+# `dev-ungoverned` is the act, instead of setting an environment variable afterwards. The governed
+# path stays shut either way, and every reply is still labelled ungoverned by the UI.
+dev-ungoverned = []
+
 [dependencies]
 tauri = { version = "2", features = [] }
 # T-011: renderer-independent native confirmation dialog for privileged approvals,

@@ -253,7 +253,30 @@ body.ignited .shimmer{opacity:1}
   background:rgb(var(--bg-rgb)/.72);border:1px solid rgb(var(--line-rgb)/.8);backdrop-filter:blur(8px)}
 .nav-scrim{display:none;position:fixed;inset:0;z-index:40;background:rgb(0 0 0/.42)}
 /* Right-click context menu (Open in new window). */
+/* Scroll smoothness. Every ambient layer is `position:fixed` over a body that scrolls, and three of
+   them blend with everything under them (`.scanline` and `.shimmer` in `screen`, the `body::after`
+   grain in `soft-light` at z-index 998, i.e. over the content). A blended fixed layer has to be
+   re-rasterised against a backdrop that just moved, so each scroll frame repaints the whole stack
+   and the page tears or stutters.
+
+   Promoting them to their own compositor layer, and telling the compositor which property actually
+   animates, keeps the ambient stack off the scroll path. Purely a rendering hint: nothing about how
+   any of it LOOKS changes. */
+.aurora,#mesh,.gridlay,.horizon,.scanline,.vignette,#cursorlight,#ember,.shimmer{
+  will-change:opacity;transform:translateZ(0);backface-visibility:hidden}
+
 .ctx-scrim{position:fixed;inset:0;z-index:900}
+/* The "could not open a window" notice: a refusal the owner can read. The previous behaviour was a
+   `console.error`, which a packaged desktop app gives nobody a way to look at -- so a real refusal
+   (the eight-window cap is one) and a dead button were the same thing from the outside. */
+.ctx-window-error{position:fixed;right:18px;bottom:18px;z-index:950;max-width:420px;
+  display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;
+  background:rgb(var(--bg-rgb)/.97);border:1px solid var(--danger);color:var(--ink);
+  box-shadow:0 18px 50px rgb(0 0 0/.5)}
+.ctx-window-error b{color:var(--danger)}
+.ctx-window-error span{opacity:.85;font-size:13px;min-width:0;overflow-wrap:anywhere}
+.ctx-window-error button{margin-left:auto;background:none;border:0;cursor:pointer;color:inherit;
+  font-size:15px;line-height:1;padding:4px 6px}
 .ctx-menu{position:fixed;z-index:901;min-width:196px;padding:5px;border-radius:12px;
   background:rgb(var(--bg-rgb)/.97);border:1px solid rgb(var(--line-rgb)/.9);
   box-shadow:0 18px 50px rgb(0 0 0/.5);backdrop-filter:blur(8px)}
