@@ -8,6 +8,98 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Running one governed turn requires the Owner to sign that install by hand (2026-08-13)
+
+`brops-preflight` reports, by name, which of **27** requirements a machine meets — each carrying what the
+deployment must have, **who can provision it** (`installer` / `machine-admin` / `offline-root-custodian` /
+`not-provisionable`), and the refusal in the product that fires when it is missing. `Unmeasurable` is a
+third status and is **never a pass**: exit 0 all met, 1 something not met, 2 nothing not-met but something
+unmeasurable. Every fact goes through a `Host` trait whose entire surface is **reads** — no write, no
+env-set, no spawn.
+
+**The product finding, stated plainly because it is not a bug.**
+
+> Running one governed turn on a user's machine today requires the user to hold an **offline root private
+> key** and perform a **signing ceremony**. The manifest naming the deployment's signer and
+> supervisor-attestation keys must be signed by `brops-tcb-root-1`, whose private half is deliberately held
+> on no machine that runs the product. Every install would need either the Owner to sign that install's
+> manifest, or the private root shipped inside the product — which would make forging a production-class
+> §4.9 envelope trivial against every install.
+>
+> **That is the design working.** But it means "BroPS runs governed turns" is not, today, a statement about
+> a shipped desktop application. It is a statement about a Linux deployment that an administrator
+> provisions with root, seven service accounts, a sudoers grant, a setuid binary and a root-owned pin
+> manifest — and whose key manifest the Owner signs by hand.
+
+The full sequence, if nothing changed: install a Linux build; run an elevated provisioner that creates
+seven accounts, installs a setuid launcher, writes a sudoers file and a root-owned 22-artifact pin
+manifest; generate a key manifest; **send it to the Owner and receive it back signed**; place the
+signature; set the config variable in the service unit — and even then the turn ends `blocked`, because no
+custody resolver is wired.
+
+**The honest split.** Thirteen of the twenty-seven a desktop application can provision, and all thirteen
+are *values in a file it already owns*. Eleven need a **machine administrator**: seven service accounts, a
+sudoers vector, a setuid-root launcher, a `0700` supervisor store, and the §2.5 pin manifest — whose entire
+security property is that no login or runtime principal can write it, so an app running as the login user
+writing it would defeat it by construction. One needs the **offline root custodian**. And two are not
+provisionable on any machine: `SO_PEERCRED`, and the custody resolver, which is a code decision behind the
+Owner's gate rather than a configuration gap.
+
+**The Windows answer is that there isn't one yet**, and it was measured rather than reasoned: the preflight
+run on this box returns `platform.linux_af_unix_peercred` **NOT MET** with the reason *"there is no
+configuration of this machine that meets this requirement"*, and six rows come back UNMEASURABLE because
+the questions do not exist there. Three primitives would have to be designed first — a peer-credential
+replacement (a named pipe's client-process-id is **not** the same guarantee as a kernel-attested uid at
+connect time), a principal-switch replacement for `sudo -u`, and a setuid replacement, which does not exist
+and turns the privileged launcher into a service: a different trust architecture, not a port.
+
+**Two proof runs, both real.** On Windows, exit 1 with the platform row named. On the genuinely provisioned
+live kit in WSL — seven real accounts, real setuid launcher, real sockets — **`met 20 / not met 6 /
+unmeasurable 1 of 27`**, which turned three known findings into measurements and produced **one new one**:
+
+**`write_floor_atomically` writes its temp with `std::fs::write` and renames it over the original, so the
+anti-rollback floor's `0600` does not survive the first successful advance** — measured on disk as
+`-rw-rw-r--`. `main.rs` states the requirement in its own comment ("writable only by the broker service
+principal, file mode 0600") and **nothing in the tree noticed it degrade**. Verified independently here:
+`key_manifest.rs:369` is `fs::write(&tmp, bytes)` with no mode, then `rename`. Not fixed — it is a change to
+governed-path persistence — and the patch shape is recorded: create the temp with `OpenOptions::mode(0o600)`
+under `#[cfg(unix)]`, keeping the kit's `floor-unwritable` negative control passing.
+
+**It is not a second architecture.** The §2.5 roster is `TCB_REQUIRED_ARTIFACTS` itself, not a copy; the
+sidecar block is validated by `SidecarPrincipal::from_config`, the one constructor; the root signature check
+is `key_manifest::verify_manifest` against the real pin. And the config-key list is held to `main.rs` by a
+test that extracts the key literals **out of that file's own source** and fails if the two sets differ in
+either direction — it caught a `cfg
+.get("uids")` written across two lines when the first extractor only
+matched the one-line spelling.
+
+**Three corrections to the earlier 16-input map**, each now enforced by a test: `db.path` is **not** a
+broker input (`serve()` derives it from argv, and the kit's `db` block is read by the proof driver); the
+supervisor and signer sockets and the whole `execution` block are no longer read; and two further kit keys
+are used by the preflight only to *locate* artifacts. The real surface is 25 dotted keys, 2 environment
+variables and 2 argv values.
+
+**It refused to build the partial provisioning, and the reason is right.** The thirteen `installer` rows are
+all values in one config file — and writing that file is the one act in this area that could make a
+governed surface reachable, since it is inert only until someone points the environment variable at it.
+Thirteen of twenty-seven produces a file that **looks complete and still ends in `fail_closed()`**, with the
+gap hidden behind it. The legible gap is worth more than the partial artifact.
+
+**22 mutants, 21 killed on Windows, 22/22 across both platforms.** The first pass had three survivors, all
+real: a test asserting message *text* rather than *status*, so a row that said "unreadable" while returning
+`Met` survived; no test drove an empty key id; and a symlink-following mutant whose killing test is
+`#[cfg(unix)]` — verified killed in WSL and the file restored to an identical digest. And it audited its own
+assertions against this week's platform-pinning pattern, finding one that matched **brops-core's** wording
+and changing it to compare against that module's own returned error — reword-proof, and it additionally
+forbids the preflight from inventing a second wording.
+
+`brops-broker` **82 + 9** (from 46 + 9, +36 preflight tests), engine 1995 OK (43 skipped), bridge 210,
+`brops-core --lib` 471, `brops --lib` 117, tools 419; reachability, spec-references and coordination GREEN.
+No gate touched — `commands.rs`, `governed_turn.rs` and `broker/src/main.rs` have an empty diff.
+`brops-provision` **panicked** on three prerequisites and they were **declared, not skipped**:
+`windows-symlink-creation`, `installed-signer-service`, `windows-owner-assignment`.
+
+
 ### A sudo that exists fails differently from one that does not (2026-08-13)
 
 CI went RED on two tests that are green on Windows, and it is the **fifth** time this week a platform fact
