@@ -1,12 +1,49 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #163 · branch `audit/ninth-round-5cf9b8c`** (base `main`, tip `5cf9b8c`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #164 · branch `feat/app-agent-mode`** (base `main`, tip `8d30918`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Ninth independent audit at 5cf9b8c: six claims earn ticks, A-09 and T-034 reopen, 13 new findings
+> The app was opened for the first time and five things broke: the provider refusal, an unreachable coding agent, an empty deny list that would have broken the CLI, a reinstall that bricks provisioning, and a right-click with no Copy
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The five app fixes have tests now, and one of them had to be rewritten rather than kept (2026-08-27)
+
+The entry below records five defects the Owner found by opening the application. Fixing them is not
+the same as pinning them, and two of the five were still resting on nothing but the fix itself.
+
+## The reinstall brick is pinned from both directions, because the first fix was one-directional
+
+`retire_orphaned_anchor` now has four tests: an anchor with no key store is retired, a key store with
+no anchor is retired **too**, a complete pair is left alone even when its contents are tampered — the
+retirement must not become a way to erase a provisioned machine — and a first launch with neither
+half present is left for provisioning to mint.
+
+The second of those is the one that matters, and it is there because the first version of this fix
+handled only the first case and the Owner hit the mirror image within minutes. The mutant confirms
+it: restore the one-directional form and `a_key_store_with_no_anchor_is_retired_too` goes red while
+the other three stay green.
+
+## A test that pinned the shell bounds could not survive the decision that removed them
+
+`tool_args_agent_enables_bounded_bash_chat_disables_all` asserted four literal patterns —
+`Bash(git push:*)`, `Bash(rm:*)`, `Bash(npm install:*)`, `Bash(pip install:*)` — and the Owner asked
+for all four to go. There is no version of that test that is both honest and passing, so the four
+assertions are gone.
+
+What replaces them is not weaker, it is about a different thing: **`--disallowedTools` is either
+carried with contents or absent, never present-and-empty.** That is the failure emptying the list
+would actually have caused — a flag with no argument is a CLI parse error, so the agent would not
+have started at all — and it is a property that stays true no matter what the deny list contains.
+The removed patterns are written out in the test's body rather than silently deleted, because a test
+that quietly loses four assertions looks exactly like one that never had them.
+
+Alongside: `builtin_agent_deny_patterns()` and `protected_path_deny_patterns()` are asserted to be
+carried still. Those are the two sets the Owner did **not** ask for and was not offered — the files
+that decide what "verified" means stay unwritable by a turn.
+
+Host crate: **128 tests green.**
 
 ### The load-flake was not slowness — it was one test's language leaking into another's (2026-08-19)
 
@@ -131,6 +168,96 @@ better place to have that argument than 785.
 
 Verified: 737 unit · 323 browser · 59 a11y · `tsc --noEmit` clean · `check_c1_tokens`,
 `check_contrast`, `check_token_parity`, `check_bundle_budget` GREEN.
+
+### The app was opened, and every one of the first five things the Owner tried was broken (2026-08-21)
+
+The Owner installed the desktop app and used it. That had not happened before in this repository —
+every prior claim about it rests on tests, and tests are not a person opening a window. Five defects
+in the first session, four of them invisible to the whole suite.
+
+## It refused to talk, and the refusal was correct
+
+`no AI provider configured`. `resolve_provider` is fail-closed by design (Wave 1 / `T-012`): there is
+no silent governed→ungoverned fallback, so running an ungoverned model has to be an explicit act.
+Nothing about that is wrong — but it means a fresh install of a desktop application does nothing at
+all, and says so in a sentence written for whoever set the environment variables, which on a fresh
+machine is nobody.
+
+A `dev-ungoverned` cargo feature now supplies that explicit opt-in at build time, so the act is
+"choosing to install a binary whose name says `dev-ungoverned`" rather than "editing your
+environment". `resolve_provider` is untouched: a build without the feature behaves exactly as before.
+
+## It was a coding agent all along, behind an environment variable nothing set
+
+`ai.rs::tool_args(agent)` grants `Read Edit Write Grep Glob Bash Task` under
+`--permission-mode acceptEdits`, with the generated agent definitions wired to `Task`. It turns on
+from one fact — `bro_agent_dir().is_some()`, i.e. `BROPS_PROJECT_DIR` naming a real directory — and
+**`BROPS_PROJECT_DIR` appears in no `.ts`/`.tsx` at all.** The whole capability shipped unreachable
+from the product.
+
+The dev build now defaults it to `~/BroPS` — the workspace this application already defines for
+itself as the Files root, so the agent's reach and the file browser's reach are one folder, and it is
+a directory the app created rather than one that already had somebody's work in it. The value is
+written to a visible file that overrides it, and `BROPS_PROJECT_DIR` overrides both.
+
+## The shell bounds are gone, by an Owner decision recorded where it can be found
+
+`BRO_BASH_DENY` is empty. Delete, push, dependency install and nested shell were four blast-radius
+limits, and the Owner asked for all four to go, in his own words, twice, after the consequence was
+stated. What was given up is kept in the constant's docs so it can be restored in one edit, and the
+trust-surface deny — the files that decide what "verified" means — is untouched: he did not ask for
+it and was not offered it.
+
+**Emptying the list would have broken the agent outright**, which is the part no test would have
+caught. `tool_args` pushed `--disallowedTools` unconditionally and then the patterns; with none, the
+flag went to the CLI with no argument, and a flag with an empty argument list is a parse error, not a
+permissive default. The agent would have failed to start. The flag is now emitted only when
+something is actually denied.
+
+## Every reinstall on every machine bricked the app
+
+```
+trust provisioning failed while re-hashing a provisioned file
+(…\studio.menq.brops\trust\POSTURE.txt): The system cannot find the path specified
+```
+
+The two halves of the trust material live apart on purpose — the anchor under `%ProgramData%` where
+the app cannot write it, the key store under `%APPDATA%` — and the uninstaller removes only the
+second. The next install found the anchor, took it as *"this machine is provisioned"*, went to verify
+a store that no longer existed, and panicked in the setup hook. The window closed before anything
+could be read, so the only symptom was **"it opens and shuts."**
+
+The first fix was half of one, and the Owner hit the other half within minutes: retiring the orphaned
+anchor left a stale `trust` directory with nothing to verify it against, and provisioning refused
+*that*. It is now symmetric — when exactly one of the two halves is present, that half is moved aside
+(never deleted) and the pair is re-minted. When both are present nothing changes and tampering is
+still refused by name, which is the property `provision.rs`'s tests pin.
+
+## Right-click offered one thing, and it was not Copy
+
+The context menu carried a single item — *Open in new window* — and suppressed the native menu
+everywhere except inside a text field. So right-clicking a chat reply, a file name or an error
+message offered no **Copy**, in the one interaction every desktop application shares.
+
+It is now the standard set, and which items appear is decided by what was clicked: Copy and Cut only
+when there is a selection, Paste only in a field that can take it. And *Open in new window* reports
+its failure — the error used to go to `console.error`, which a packaged app gives nobody a way to
+read, so a real refusal (the eight-window cap is one) and a dead button looked identical.
+
+## Scrolling tore, and the cause is eight fixed layers
+
+Three of the ambient layers blend with everything beneath them — `.scanline` and `.shimmer` in
+`screen`, the `body::after` grain in `soft-light` at `z-index: 998`, i.e. **over** the content. A
+blended fixed layer must be re-rasterised against a backdrop that just moved, so every scroll frame
+repaints the whole stack. They are promoted to their own compositor layer now; nothing about how any
+of it looks changes.
+
+## What this says about the last three weeks
+
+Four of these five are invisible to 739 unit tests, 323 browser tests and 59 axe checks, because all
+of them mount components and none of them installs an application, launches it twice, or right-clicks
+anything. The suite was never wrong. It was answering a different question, and nobody had asked this
+one until somebody opened the window.
 
 ### The instrumentation answered `T-023` on its first firing, and the answer was the harness (2026-08-19)
 
