@@ -8,6 +8,43 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The five app fixes have tests now, and one of them had to be rewritten rather than kept (2026-08-27)
+
+The entry below records five defects the Owner found by opening the application. Fixing them is not
+the same as pinning them, and two of the five were still resting on nothing but the fix itself.
+
+## The reinstall brick is pinned from both directions, because the first fix was one-directional
+
+`retire_orphaned_anchor` now has four tests: an anchor with no key store is retired, a key store with
+no anchor is retired **too**, a complete pair is left alone even when its contents are tampered — the
+retirement must not become a way to erase a provisioned machine — and a first launch with neither
+half present is left for provisioning to mint.
+
+The second of those is the one that matters, and it is there because the first version of this fix
+handled only the first case and the Owner hit the mirror image within minutes. The mutant confirms
+it: restore the one-directional form and `a_key_store_with_no_anchor_is_retired_too` goes red while
+the other three stay green.
+
+## A test that pinned the shell bounds could not survive the decision that removed them
+
+`tool_args_agent_enables_bounded_bash_chat_disables_all` asserted four literal patterns —
+`Bash(git push:*)`, `Bash(rm:*)`, `Bash(npm install:*)`, `Bash(pip install:*)` — and the Owner asked
+for all four to go. There is no version of that test that is both honest and passing, so the four
+assertions are gone.
+
+What replaces them is not weaker, it is about a different thing: **`--disallowedTools` is either
+carried with contents or absent, never present-and-empty.** That is the failure emptying the list
+would actually have caused — a flag with no argument is a CLI parse error, so the agent would not
+have started at all — and it is a property that stays true no matter what the deny list contains.
+The removed patterns are written out in the test's body rather than silently deleted, because a test
+that quietly loses four assertions looks exactly like one that never had them.
+
+Alongside: `builtin_agent_deny_patterns()` and `protected_path_deny_patterns()` are asserted to be
+carried still. Those are the two sets the Owner did **not** ask for and was not offered — the files
+that decide what "verified" means stay unwritable by a turn.
+
+Host crate: **128 tests green.**
+
 ### The load-flake was not slowness — it was one test's language leaking into another's (2026-08-19)
 
 `T-038` recorded a suite that fails once in a combined unit+browser+tools run and passes 732/732 in

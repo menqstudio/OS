@@ -3984,10 +3984,33 @@ mod tests {
         assert_eq!(agent.get(tpos + 1), Some(&"Read Edit Write Grep Glob Bash Task".to_string()));
         assert!(agent[tpos + 1].contains("Task"), "Bro must be able to spawn specialists");
         assert!(agent.iter().any(|a| a == "acceptEdits"), "agent runs acceptEdits");
-        assert!(agent.iter().any(|a| a == "--disallowedTools"), "agent carries the deny-list");
-        // push / delete / install are hard-blocked regardless of the allow-list.
-        for needle in ["Bash(git push:*)", "Bash(rm:*)", "Bash(npm install:*)", "Bash(pip install:*)"] {
-            assert!(agent.iter().any(|a| a == needle), "deny-list must block {needle}");
+        // THE SHELL BOUNDS ARE GONE, and this test used to be what pinned them. It asserted
+        // `Bash(git push:*)`, `Bash(rm:*)`, `Bash(npm install:*)` and `Bash(pip install:*)` were
+        // present. The Owner asked for all four categories to be lifted (see `BRO_BASH_DENY`), so
+        // those assertions are wrong about the product now. They are written out here rather than
+        // silently deleted, because a test that quietly loses four assertions looks exactly like
+        // one that never had them.
+        //
+        // What replaces them is the property that survived the decision: the deny-list is not
+        // something this code may forget to pass. Either there is something to deny and the flag
+        // carries it, or there is nothing and the flag is ABSENT — never present-and-empty, which
+        // is a CLI parse error and would stop the agent starting at all.
+        match agent.iter().position(|a| a == "--disallowedTools") {
+            Some(i) => assert!(
+                agent.get(i + 1).is_some_and(|v| !v.is_empty()),
+                "--disallowedTools must never be passed with an empty argument list"
+            ),
+            None => assert!(
+                BRO_BASH_DENY.is_empty()
+                    && builtin_agent_deny_patterns().is_empty()
+                    && protected_path_deny_patterns().is_empty(),
+                "the flag may only be omitted when there is genuinely nothing to deny"
+            ),
+        }
+        // The two sets the Owner did NOT ask for, and was not offered, are still carried: the CLI's
+        // own agent types, and a WRITE at any path that decides what "verified" means.
+        for pat in builtin_agent_deny_patterns().iter().chain(protected_path_deny_patterns().iter()) {
+            assert!(agent.iter().any(|a| a == pat), "must still deny {pat}");
         }
         // never bypass permissions or pass an allow-list flag.
         assert!(!agent.iter().any(|a| a == "--dangerously-skip-permissions" || a == "--allowedTools"));

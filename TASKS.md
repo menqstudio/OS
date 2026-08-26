@@ -2667,7 +2667,7 @@ invisible to the whole suite and will stay invisible until something installs an
 | 4 | every reinstall bricks the app (anchor outlives the key store) | provisioning is tested on temp dirs that never survive an uninstall |
 | 5 | right-click offers no Copy; its one item reports failure to `console.error` | no test right-clicks, and a packaged app has no console |
 
-**All five are fixed** (`feat/app-agent-mode`), and the scroll tearing with them — three ambient
+**All five are fixed** (`feat/app-agent-mode`), with four tests pinning the half-removed-install states from both directions — the mutant that restores the one-directional first fix turns one of them red. The test that pinned the shell bounds is rewritten rather than deleted: what it asserted is now wrong about the product, and what replaces it is the property that survived the decision — `--disallowedTools` is either carried with contents or absent, never present-and-empty, which is the parse error that would have stopped the agent starting. The scroll tearing is fixed with them — three ambient
 layers blend over the content and were repainting the whole stack on every scroll frame.
 
 **The gap this exposes is bigger than the five.** 739 unit tests, 323 browser tests and 59 axe checks

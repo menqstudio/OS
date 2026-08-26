@@ -517,3 +517,105 @@ mod tests {
         assert!(acquire_instance_lock(dir.path()).is_ok());
     }
 }
+
+/// Half-removed installs — the state an uninstall leaves and the state the first fix for it left.
+///
+/// The Owner found both of these by installing the app, in that order, minutes apart. Neither is
+/// reachable from a test that mounts a component: the first needs an uninstall to have happened, and
+/// the second needs the first fix to have run. What makes them testable at all is that
+/// `retire_orphaned_anchor` takes both roots as parameters instead of reading `%ProgramData%` and
+/// `%APPDATA%` itself — so the pair can be built in a temp directory and driven from either side.
+#[cfg(test)]
+mod half_removed_install {
+    use super::retire_orphaned_anchor;
+
+    /// Build a machine root + app data dir with whichever halves are asked for.
+    fn scene(anchor: bool, store: bool) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let machine = tmp.path().join("ProgramData");
+        let app = tmp.path().join("AppData");
+        std::fs::create_dir_all(&machine).unwrap();
+        std::fs::create_dir_all(&app).unwrap();
+        if anchor {
+            let dir = machine.join("trust-anchor");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("PROVISIONING.json"), b"{}").unwrap();
+        }
+        if store {
+            let dir = app.join("trust");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("POSTURE.txt"), b"posture").unwrap();
+        }
+        (tmp, machine, app)
+    }
+
+    fn names(dir: &std::path::Path, prefix: &str) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(prefix))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The uninstall case. The uninstaller removes the key store and leaves the anchor, so the next
+    /// launch verified a store that was gone and panicked in the setup hook — the window closed
+    /// before the message could be read, and the only symptom was "it opens and shuts".
+    #[test]
+    fn an_anchor_whose_key_store_is_gone_is_retired_rather_than_verified() {
+        let (_tmp, machine, app) = scene(true, false);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(!machine.join("trust-anchor").exists(), "the orphaned anchor must not still be live");
+        let retired = names(&machine, "trust-anchor.orphaned-");
+        assert_eq!(retired.len(), 1, "exactly one retired anchor, got {retired:?}");
+        // Moved, never deleted: a machine that reached this state by some other route keeps its
+        // material to look at.
+        assert!(machine.join(&retired[0]).join("PROVISIONING.json").is_file());
+    }
+
+    /// The mirror case, which the first fix for the one above created. Retiring the anchor left a
+    /// `trust` directory with nothing to verify it against, and provisioning refused THAT instead —
+    /// the Owner hit it minutes later. A fix for one direction of a symmetric fault is half a fix.
+    #[test]
+    fn a_key_store_with_no_anchor_is_retired_too() {
+        let (_tmp, machine, app) = scene(false, true);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(!app.join("trust").exists(), "the orphaned store must not still be live");
+        let retired = names(&app, "trust.orphaned-");
+        assert_eq!(retired.len(), 1, "exactly one retired store, got {retired:?}");
+        assert!(app.join(&retired[0]).join("POSTURE.txt").is_file());
+    }
+
+    /// Both halves present is the normal case, and it must be left completely alone — this is where
+    /// a real verification happens, and where TAMPERING is caught. A retirement here would turn
+    /// "somebody edited a provisioned file" into "mint a fresh one", which is the refusal
+    /// `provision.rs` has tests pinning.
+    #[test]
+    fn a_complete_pair_is_never_touched_even_though_it_may_be_tampered() {
+        let (_tmp, machine, app) = scene(true, true);
+        // A store whose file was altered still has BOTH halves; deciding it is tamper or not is the
+        // verifier's job, not this function's.
+        std::fs::write(app.join("trust").join("POSTURE.txt"), b"altered").unwrap();
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(machine.join("trust-anchor").exists(), "anchor must survive");
+        assert!(app.join("trust").exists(), "store must survive for the verifier to judge");
+        assert!(names(&machine, "trust-anchor.orphaned-").is_empty());
+        assert!(names(&app, "trust.orphaned-").is_empty());
+    }
+
+    /// Neither half present is a genuine first launch. Nothing to retire, and nothing created — the
+    /// mint that follows is what makes the directories.
+    #[test]
+    fn a_first_launch_is_left_to_mint() {
+        let (_tmp, machine, app) = scene(false, false);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(names(&machine, "trust-anchor").is_empty());
+        assert!(names(&app, "trust").is_empty());
+    }
+}
