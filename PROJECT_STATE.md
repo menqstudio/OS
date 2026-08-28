@@ -8,6 +8,20 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### A third load-only flake, found while verifying — and checked against the head before the work (2026-08-29)
+
+`GroupChat.readout.test.tsx` fails in a full `npm test` and passes alone: **three of five full runs red on
+Windows, 9/9 every time in isolation.** It fails at `5abdb5e` too — *before* this branch existed — so it is not
+this work's doing, and that check was run precisely because adding a test file changes scheduling.
+
+It is **not** `T-038`'s cause. The received value is `'0'`, not `'(label not found)'`: the readout rendered and
+the roster read had not landed inside the default 1 000 ms. A timeout on a value that does arrive, under a run
+reporting ~1 450 s of environment time across 80 files.
+
+**Not patched here.** Raising the timeout would go green and would also hide a read that never lands, which is
+the trade `T-038` exists to prevent. Recorded as `T-040` with the measurement and the decisive experiment named,
+in that order, and with `--retry` ruled out.
+
 ### Twelve of the ninth audit's thirteen findings had no owner, and one was marked open two days after it was fixed (2026-08-29)
 
 The ninth independent audit returned RED with no P0 and filed `I-01`..`I-13`. Five days later
