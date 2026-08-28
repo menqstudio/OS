@@ -8,6 +8,21 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The `contracts/` boxes stay unticked, and the reason is the boxes' own words (2026-08-29)
+
+`I-13`'s substance is delivered — `contracts/` is the source, versioned, and drift-gated — but the
+Phase-10 row says *duplicates deleted*, and two copies of five files still exist. Drift is
+impossible; deletion has not happened. Ticking on a paraphrase is how a checkbox stops meaning
+anything, so both rows are **annotated with what is true and left unchecked**.
+
+The second row also names an `approval` schema that exists nowhere in the tree. The approval path
+across the wall exists on neither side (`T-021`), so that row cannot be finished as written until it
+is built — recorded here rather than discovered again by the next reader.
+
+Also corrected: `START_HERE.md` said `check_bundle_budget.py` merely *wants a Vite manifest*. Since
+`I-12` it also refuses to grade a `dist/` older than the tree, so it says `the build is stale` after
+any checkout until you rebuild — which reads like a broken gate if the page does not say so.
+
 ### `main` is settled at `4c98856` — the ninth round's thirteen findings are answered (2026-08-29)
 
 `I-01`..`I-13` all have owners in `TASKS.md` and marks in the ledger, and every one a Builder change

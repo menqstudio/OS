@@ -1735,7 +1735,15 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
 **Definition of Done.**
 - [ ] Signed, auto-updating Windows build; onboarding/first-run flow shipped.
 - [ ] **Full** enforcement-path CI green (option-C skips retired via T-005).
-- [ ] `contracts/` finalized as the single source; duplicates deleted; versioned.
+- [ ] `contracts/` finalized as the single source; duplicates deleted; versioned. — **most of it is
+      done and the box stays UNTICKED on purpose (2026-08-29, ninth audit `I-13`).** `contracts/` holds
+      the five cross-half schemas as the **source**, `contracts/index.json` carries each one's version as a
+      JSON Pointer into its own `const`, and `tools/check_contracts_single_source.py` (17 tests, in CI)
+      makes drift, a one-sided version bump, an unclassified new engine schema and a stray third copy all
+      RED. **What is not true is the box's own words:** *duplicates deleted*. Two copies of five files
+      still exist — drift is impossible, deletion has not happened — and ticking on a paraphrase is how a
+      checkbox stops meaning anything. The remaining move is an audited **engine** change (root-relative
+      loaders; `engine/` is a subtree of `menqstudio/Bro`), **not** the production gate.
 - [ ] O-1..O-5 closed or owner-signed-deferred (each audited).
 - [ ] Every page passes production a11y + performance gates; no placeholder copy.
 - [ ] `README`/`ARCHITECTURE`/`SECURITY_MODEL`/`CLAUDE`/`PROJECT_STATE` all final and synced.
@@ -1744,7 +1752,10 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
 - [ ] Production build + signing + auto-update (Windows) + update/rollback tests.
 - [ ] Onboarding/first-run (sidecar provisioning + first governed turn).
 - [ ] T-005 (audited): engine worktree-check native fix → retire option-C skips → full enforcement CI green.
-- [ ] `contracts/` final dedupe (lease/approval/task-contract/mode-grant) + versioning.
+- [ ] `contracts/` final dedupe (lease/approval/task-contract/mode-grant) + versioning. — **versioning is
+      done, the dedupe is not** (see the Definition-of-Done row above). Note also that `approval` names a
+      schema that **does not exist anywhere in the tree**: the approval path across the wall exists on
+      neither side and is tracked as `T-021`. This row cannot be finished as written until that is built.
 - [ ] O-1..O-5 remediation (each its own audited engine branch/PR/Owner approval).
 - [ ] Production a11y + performance gate pass over all 22 pages; real HY copy.
 - [ ] Finalize all docs; mark every phase ✅.
