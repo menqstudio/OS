@@ -550,6 +550,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pr", type=int, help="required unless --settled")
     ap.add_argument("--branch", help="required unless --settled")
+    # The task id used to be the string literal "T-017" inside the banner, so every PR this tool
+    # touched announced the same task whatever it was doing -- a hard-coded fact in the tool that
+    # writes three canonical banners at a time, which is the shape of the ninth audit's `I-06`.
+    ap.add_argument("--task", default=None,
+                    help="the TASKS.md id this PR carries; the banner says `unstated` without it")
     ap.add_argument("--summary", help="required unless --settled")
     ap.add_argument("--settled", action="store_true",
                     help="nothing is open: record the main everything merged into, and say so in "
@@ -583,7 +588,7 @@ def main() -> int:
                         for p in parked) + ".")
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
-        f"`{head[:7]}`, task T-017).{also}\n>\n> {args.summary}\n>\n> "
+        f"`{head[:7]}`, task {args.task or 'unstated'}).{also}\n>\n> {args.summary}\n>\n> "
         + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
@@ -591,7 +596,9 @@ def main() -> int:
     # said it had been rewritten, and the only thing that caught it was reading the file.
     rewrite_banners(banner)
 
-    print(f"state anchor → PR #{args.pr} on {args.branch}, main {head[:7]}")
+    # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
+    # files had already been rewritten, so the tool reported failure for work it had done.
+    print(f"state anchor -> PR #{args.pr} on {args.branch}, main {head[:7]}")
     print(f"  fields changed: {', '.join(changed)}")
     print(f"  banners rewritten: {', '.join(BANNER_FILES)}")
     print("\nNot committed. Run the two gates, then commit with the work:")
