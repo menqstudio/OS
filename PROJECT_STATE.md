@@ -8,6 +8,12 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `5480579` (2026-08-29)
+
+The ninth round's thirteen findings are answered and the two `contracts/` boxes are annotated rather
+than ticked. Everything from PR #166 and #168 is ◑ — the Builder's own claim. The standing verdict is
+**RED**, the production gate is **shut**, and the three refusals are untouched.
+
 ### The `contracts/` boxes stay unticked, and the reason is the boxes' own words (2026-08-29)
 
 `I-13`'s substance is delivered — `contracts/` is the source, versioned, and drift-gated — but the
