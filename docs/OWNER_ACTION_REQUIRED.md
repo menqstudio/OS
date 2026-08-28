@@ -6,6 +6,30 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **2026-08-29 — the ninth round's thirteen findings are answered, and NOTHING here needs you.**
+> `I-01`..`I-13` had no owner in `TASKS.md` five days after they were written, twelve were still
+> marked OPEN in the ledger, and `I-04` was marked OPEN two days after its fix merged. All of that is
+> closed in PR #166, on `main` @ `4c98856`.
+>
+> **Every mark is ◑ — the Builder's own claim, not a tick.** `A-09` and `T-034` were each reopened
+> after the session that fixed them called them closed, and repeating that here would be the same
+> mistake with a better patch under it. The standing verdict is still **RED** and the production gate
+> is still **shut**; the three refusals are untouched by this work.
+>
+> **One finding is worth your attention because it changes what "blocked" means.** `I-13` found two
+> Phase-10 boxes filed under the production gate while nothing about them was blocked by a service
+> principal, a launcher, a broker or a deployment. That was true, and it is now built: `contracts/`
+> is the source for the five cross-half schemas, versioned and drift-gated. What remains of it —
+> moving the files out of `engine/schemas/` — is an audited **engine** change, because the engine
+> resolves schema paths relative to its own root and `engine/` is a subtree of `menqstudio/Bro`.
+> Still not your gate; still not a Builder-alone change either.
+>
+> **Deliberately left undone, and said so rather than quietly skipped:** `A-09`'s route 1 (a
+> credential is defined by what a remote system accepts, not by its text — the honest answer is the
+> enumerated surface, not a heuristic), `T-023` (one green run of an intermittent job is not
+> evidence), and `T-040` (a load-only flake, measured and unpatched, with the decisive experiment
+> named in order and `--retry` ruled out).
+
 > **NINTH AUDIT, 2026-08-19 — RED, on `main` @ `5cf9b8c` (tree `9580b86d`, pin proven).** Filed
 > at [`2026-08-19-ninth-audit-5cf9b8c.md`](../apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md).
 > **No P0** — the three production-gate refusals were read at the source and are closed for the
