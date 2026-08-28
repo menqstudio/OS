@@ -128,7 +128,8 @@ is written down here rather than the number alone.)* Three of the 23 need argume
 instead of a verdict when that loop runs them bare:
 `check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
 Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
-wants a Vite manifest from `npm run build`, and `check_runbook_snippets.py` fails closed unless
+wants a Vite manifest from `npm run build` **and, since `I-12`, refuses to grade a `dist/` older than
+the tree, so it says `the build is stale` after any checkout until you rebuild**, and `check_runbook_snippets.py` fails closed unless
 `cryptography` imports. Both are green in CI. *(This paragraph said "15 gates, all expected GREEN"
 until 2026-08-14, which set up a reader to treat five non-verdicts as failures — or worse, to stop
 counting.)* The engine suite needs `BRO_ENV=ci` or operator-pin gating denies and the tests error
