@@ -8,6 +8,21 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Two supply-chain gates caught real things on the way in (2026-08-29)
+
+`gitleaks` flagged `agentsDispatch.boundary.test.ts` as `generic-api-key`, and it was **right to**.
+The `I-01` demonstration restated the 64-hex probe as `const secret = '...'`, which is a second copy
+that reads exactly like a credential assignment — and a synthetic value and a real one are the same
+bytes to a scanner, which is this file's own subject one level up. Fixed by using the probe already
+declared in `CREDENTIAL_PROBES`: one definition, used by both the capacity check and the
+demonstration. **No allowlist entry and no scanner config change** — suppressing the rule to keep a
+duplicate literal would be trading a supply-chain gate for a stylistic preference.
+
+`cargo-audit` failed on `chacha20 0.10.1` being **yanked** upstream — not caused by this branch, and
+the gate working exactly as intended on a new upstream event. Bumped to `0.10.2` (a two-line
+`Cargo.lock` change; `cargo check` clean). **Not added to the ignore list**, which is where a yanked
+crate goes to be forgotten.
+
 ### A third load-only flake, found while verifying — and checked against the head before the work (2026-08-29)
 
 `GroupChat.readout.test.tsx` fails in a full `npm test` and passes alone: **three of five full runs red on

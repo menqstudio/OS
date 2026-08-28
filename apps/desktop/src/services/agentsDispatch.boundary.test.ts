@@ -476,9 +476,15 @@ describe('the no-lease sweep proves the FRAME, not the absence of a credential',
   it('`I-01`: a 64-hex secret really does reach the wire through a shape-constrained leaf', async () => {
     // Measured, not argued. `slug()` lowercases and strips, and a lowercase hex string has nothing
     // to strip, so the value arrives verbatim in a field the register used to call constrained.
-    const secret = '7f2a91c4e08b45d9a1f36c27be5049d83a7e1b6045cf92d8e3ab7710c65d4f92';
-    const sent = await wire({ ...BASE, taskId: secret });
-    expect(flatten(sent), 'the secret is on the wire').toContain(secret);
+    //
+    // The probe comes from CREDENTIAL_PROBES rather than being written out again here. Restating
+    // the literal made a second copy that reads exactly like a credential assignment -- `gitleaks`
+    // flagged this line as `generic-api-key` and it was right to: a synthetic value and a real one
+    // are the same bytes to a scanner, which is this file's whole subject one level up. One
+    // definition, used by both the capacity check and the demonstration.
+    const [, probe] = CREDENTIAL_PROBES[0];
+    const sent = await wire({ ...BASE, taskId: probe });
+    expect(flatten(sent), 'the probe is on the wire').toContain(probe);
     expect(undeclared(sent), 'and every leaf still validates — the shape check is blind to it')
       .toEqual([]);
     expect(flatten(sent).filter((s) => FORBIDDEN.test(s)), 'and the sweep is silent').toEqual([]);
