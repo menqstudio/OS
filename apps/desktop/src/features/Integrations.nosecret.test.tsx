@@ -43,8 +43,7 @@ function flatten(value: unknown, out: string[] = []): string[] {
   else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     out.push(String(value));
   } else if (Array.isArray(value)) {
-    const decoded = decodeCharCodes(value);
-    if (decoded !== null) out.push(decoded);
+    out.push(...decodeCharCodeRuns(value));
     value.forEach((v) => flatten(v, out));
   } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
@@ -52,15 +51,32 @@ function flatten(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** `[116,111,107,101,110]` → `"token"`; `null` when the array is not all printable ASCII codes. */
-function decodeCharCodes(list: readonly unknown[]): string | null {
-  if (list.length === 0) return null;
-  const codes: number[] = [];
+/**
+ * The printable text a character-code array carries — ninth audit `I-03`.
+ *
+ * The superseded form returned `null` for the whole array the moment ONE element fell outside
+ * `0x20`–`0x7e`, so a newline appended to the character-code array made it invisible again. Two
+ * things are produced instead: every maximal printable RUN, so adjacency is preserved, and the
+ * concatenation of all printable bytes with the non-printable ones removed, so a value interleaved
+ * with separators cannot hide either. An array with no printable byte yields nothing at all, which
+ * is what keeps the decode from becoming a wildcard that invents offenders.
+ */
+function decodeCharCodeRuns(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  let run = '';
+  let all = '';
   for (const v of list) {
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
-    codes.push(v);
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0x20 && v <= 0x7e) {
+      run += String.fromCharCode(v);
+      all += String.fromCharCode(v);
+    } else if (run) {
+      out.push(run);
+      run = '';
+    }
   }
-  return String.fromCharCode(...codes);
+  if (run) out.push(run);
+  if (all && !out.includes(all)) out.push(all);
+  return out;
 }
 
 /**
@@ -144,5 +160,19 @@ describe('Integrations — no external secret crosses this boundary', () => {
       expect(box).not.toHaveAttribute('type', 'password');
     }
     expect(document.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  it('`I-03`: one byte outside the printable range no longer defeats the decode', () => {
+    // Phase 9's DoD row cites this suite, so the escape the ninth audit found in the boundary
+    // suite's decode has to be closed in this copy too: a single 0x0a made the all-or-nothing
+    // form return null for the whole array, and the sweep went silent.
+    const codes = Array.from('bearer-7f2a91').map((c) => c.charCodeAt(0));
+    for (const bytes of [codes, [...codes, 0x0a], codes.flatMap((c) => [c, 0x0a])]) {
+      expect(flatten({ smuggled: bytes })).toContain('bearer-7f2a91');
+      expect(flatten({ smuggled: bytes }).filter((s) => SECRET_SHAPED.test(s)).length)
+        .toBeGreaterThan(0);
+    }
+    // And still not a wildcard: an array with no printable byte decodes to nothing.
+    expect(decodeCharCodeRuns([1, 2, 3, 999])).toEqual([]);
   });
 });

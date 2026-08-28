@@ -11,6 +11,9 @@ import {
   type GovernanceRead,
 } from '../services/governance';
 import type { Decision } from '../domain/entities';
+// `I-11`: the status classifier moved to its own module so a test can hold it to a vocabulary;
+// `app/routes.tsx` types a page module as Record<string, ComponentType>, so it cannot live here.
+import { statusMeta, decisionStatusFamily } from './Decisions.status';
 import { STR } from './Decisions.strings';
 import { BridgePanel } from './Bridge';
 
@@ -59,17 +62,6 @@ const styles = `
 }
 `;
 
-// Honest status → presentation map. NEVER returns a "live"/green/verified tone: the
-// desktop cannot verify a decision, so the power mark is `idle` for anything that is
-// not an explicit block/refusal (which reads `alert`). Colour on the ledger dot is
-// carried by `--st-rgb`; a settled decision simply reads neutral, never approved-green.
-function statusMeta(status: string): { face: string; mark: string; tone: string } {
-  const v = (status || '').toLowerCase();
-  if (/block|reject|den|fail|abort|error/.test(v)) return { face: 'blocked', mark: 'alert', tone: 'var(--danger-rgb)' };
-  if (/wait|pend|propos|review|hold|open|draft/.test(v)) return { face: 'waiting', mark: 'idle', tone: 'var(--warning-rgb)' };
-  return { face: 'idle', mark: 'idle', tone: 'var(--muted-rgb)' };
-}
-
 export function Decisions() {
   const { t, lang, focus, clearFocus } = useApp();
   // Data source: the engine decision ledger, read-only, via the real
@@ -114,8 +106,11 @@ export function Decisions() {
   // (avg confidence, reversal %, evidence coverage) has any backing in the `Decision`
   // entity, so those are omitted; only honestly-countable facts are shown.
   const stats = useMemo(() => {
-    const isBlocked = (d: Decision) => /block|reject|den|fail|abort|error/.test((d.status || '').toLowerCase());
-    const isPending = (d: Decision) => /wait|pend|propos|review|hold|open|draft/.test((d.status || '').toLowerCase());
+    // `I-11`: these two used to restate the classifier's regexes a third time, in a file where a
+    // change to one copy and not the others would show up as a count that disagrees with the row
+    // beside it. One classifier, three readers.
+    const isBlocked = (d: Decision) => decisionStatusFamily(d.status) === 'blocked';
+    const isPending = (d: Decision) => decisionStatusFamily(d.status) === 'waiting';
     return [
       { v: ledger.length, label: L('ledgerCount'), tone: '' },
       { v: new Set(ledger.map((d) => d.owner).filter(Boolean)).size, label: L('owners'), tone: 'info' },

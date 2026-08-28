@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -183,6 +184,80 @@ class CheckBundleBudgetTests(unittest.TestCase):
         self._write(root, bad, manifest, files)
         with self.assertRaises(SystemExit):
             cb.check(root)
+
+
+class FreshnessTests(unittest.TestCase):
+    """The gate must refuse to grade a build older than the tree — ninth audit `I-12`.
+
+    The finding is a measurement, not a theory: the gate reported GREEN at 151.6 KB against a
+    `dist/` built BEFORE the deletion whose effect it was being cited to prove, then GREEN again
+    at 133.0 KB after a rebuild of the identical tree. Two numbers, one source, both "GREEN".
+    """
+
+    def _tree(self, source_offset: float):
+        """A complete fake desktop tree; `source_offset` seconds are added to the source mtime."""
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root = pathlib.Path(d.name)
+        desktop, dist = root / cb.DESKTOP, root / cb.DIST
+        (dist / "assets").mkdir(parents=True, exist_ok=True)
+        (dist / ".vite").mkdir(parents=True, exist_ok=True)
+        (desktop / "src" / "features").mkdir(parents=True, exist_ok=True)
+        js = _bytes_for_gzip_kb(10)
+        (dist / "assets" / "index-abc123.js").write_bytes(js)
+        manifest = {"index.html": {"file": "assets/index-abc123.js", "name": "index",
+                                   "src": "index.html", "isEntry": True}}
+        mpath = dist / ".vite" / "manifest.json"
+        mpath.write_text(json.dumps(manifest), encoding="utf-8")
+        (desktop / "perf-budget.json").write_text(
+            json.dumps({"entries": {"index": {"max_gzip_kb": 500}}}), encoding="utf-8")
+        base = mpath.stat().st_mtime
+        for name in ("src/features/Home.tsx", "index.html", "vite.config.ts", "package.json"):
+            p = desktop / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x", encoding="utf-8")
+            os.utime(p, (base + source_offset, base + source_offset))
+        return root, desktop, mpath, base
+
+    def test_a_source_newer_than_the_manifest_is_red(self):
+        root, _, _, _ = self._tree(source_offset=60)
+        problems = cb.check(root)
+        self.assertTrue(problems, "a stale build must not be graded")
+        self.assertTrue(problems[0].startswith("the build is stale"), problems)
+
+    def test_a_build_newer_than_every_source_is_green(self):
+        root, _, _, _ = self._tree(source_offset=-60)
+        self.assertEqual(cb.check(root), [])
+
+    def test_editing_a_test_file_does_not_make_the_build_stale(self):
+        # A gate that reds when a `.test.tsx` is touched gets switched off within a week, and it
+        # would be wrong: no test file is in the bundle it measures.
+        root, desktop, mpath, base = self._tree(source_offset=-60)
+        for name in ("src/features/Home.test.tsx", "src/features/Home.spec.ts", "src/notes.md"):
+            p = desktop / name
+            p.write_text("x", encoding="utf-8")
+            os.utime(p, (base + 600, base + 600))
+        self.assertEqual(cb.check(root), [])
+
+    def test_the_staleness_report_names_the_offending_file(self):
+        # A refusal a person cannot act on gets worked around; the message has to say WHICH file.
+        root, desktop, mpath, base = self._tree(source_offset=-60)
+        p = desktop / "src" / "features" / "Late.tsx"
+        p.write_text("x", encoding="utf-8")
+        os.utime(p, (base + 600, base + 600))
+        problems = cb.check(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Late.tsx", problems[0])
+
+    def test_staleness_is_reported_instead_of_a_size_verdict_not_beside_it(self):
+        # The point of failing first: a precise-looking KB number next to the wrong tree is the
+        # thing that made this finding possible, so a stale build reports ONE problem, not two.
+        root, desktop, mpath, base = self._tree(source_offset=60)
+        (desktop / "perf-budget.json").write_text(
+            json.dumps({"entries": {"index": {"max_gzip_kb": 0.001}}}), encoding="utf-8")
+        problems = cb.check(root)
+        self.assertEqual(len(problems), 1)
+        self.assertNotIn("exceeds", problems[0])
 
 
 if __name__ == "__main__":

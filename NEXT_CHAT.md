@@ -1,12 +1,144 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **⏭️ CURRENT ACTIVE: PR #165 · branch `fix/contrast-rounding-2`** (base `main`, tip `32bfe46`, task T-017). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #166 · branch `fix/ninth-audit-remediation`** (base `main`, tip `5abdb5e`, task I-01..I-13 + T-040). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The contrast gate rounded toward passing, and two of its own pairs were below AA
+> The ninth audit's thirteen findings get owners, marks and fixes: A-09's register is COMPUTED from the real validators rather than asserted in a sentence (19 credential-capable leaves, not 8), three gates that were grading the wrong thing are fixed, and contracts/ becomes the single source with a versioned index and a drift gate -- which the audit was right is blocked by no production gate.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### Two supply-chain gates caught real things on the way in (2026-08-29)
+
+`gitleaks` flagged `agentsDispatch.boundary.test.ts` as `generic-api-key`, and it was **right to**.
+The `I-01` demonstration restated the 64-hex probe as `const secret = '...'`, which is a second copy
+that reads exactly like a credential assignment — and a synthetic value and a real one are the same
+bytes to a scanner, which is this file's own subject one level up. Fixed by using the probe already
+declared in `CREDENTIAL_PROBES`: one definition, used by both the capacity check and the
+demonstration. **No allowlist entry and no scanner config change** — suppressing the rule to keep a
+duplicate literal would be trading a supply-chain gate for a stylistic preference.
+
+`cargo-audit` failed on `chacha20 0.10.1` being **yanked** upstream — not caused by this branch, and
+the gate working exactly as intended on a new upstream event. Bumped to `0.10.2` (a two-line
+`Cargo.lock` change; `cargo check` clean). **Not added to the ignore list**, which is where a yanked
+crate goes to be forgotten.
+
+### A third load-only flake, found while verifying — and checked against the head before the work (2026-08-29)
+
+`GroupChat.readout.test.tsx` fails in a full `npm test` and passes alone: **three of five full runs red on
+Windows, 9/9 every time in isolation.** It fails at `5abdb5e` too — *before* this branch existed — so it is not
+this work's doing, and that check was run precisely because adding a test file changes scheduling.
+
+It is **not** `T-038`'s cause. The received value is `'0'`, not `'(label not found)'`: the readout rendered and
+the roster read had not landed inside the default 1 000 ms. A timeout on a value that does arrive, under a run
+reporting ~1 450 s of environment time across 80 files.
+
+**Not patched here.** Raising the timeout would go green and would also hide a read that never lands, which is
+the trade `T-038` exists to prevent. Recorded as `T-040` with the measurement and the decisive experiment named,
+in that order, and with `--retry` ruled out.
+
+### Twelve of the ninth audit's thirteen findings had no owner, and one was marked open two days after it was fixed (2026-08-29)
+
+The ninth independent audit returned RED with no P0 and filed `I-01`..`I-13`. Five days later
+**none of them had a row in `TASKS.md`**, twelve were still 🔴 OPEN in the ledger, and `I-04` —
+which PR #165 had fixed — was still marked OPEN there, because that PR touched eight files and the
+ledger was not one of them. A finding with no owner is a finding nobody is carrying, and a ledger
+that lags the code is the failure mode the ledger exists to catch. Both are closed here.
+
+**Every claim below is the Builder's own and stays ◑.** `A-09` and `T-034` were each reopened after
+being marked closed by the session that fixed them; repeating that would be the same mistake with a
+better patch under it.
+
+## `A-09`'s register said eight, and the register was wrong
+
+`I-01` is the one that matters. The register's sentence — *"these — and only these — are places a
+credential could ride"* — was false, and not marginally: eleven more leaves are bound by
+`isContractId`, `isRepoPath` or `isWorkPath`, and **every one of those patterns admits a credential**.
+`^[a-z0-9][a-z0-9._-]{1,127}$` takes a 64-character hex secret with 64 characters to spare, `slug()`
+lowercases caller input so it arrives verbatim, and a JWT contains no slash, space or reserved
+character, so the path validators take one whole.
+
+The fix is not a better sentence. **The register is computed now:** four credential probes are run
+through each leaf's *real* validator, and a leaf that admits one must be declared a carrier. The
+honest number is **19**, not 8 — and it is asserted equal to the computed set, so loosening a
+validator moves the count and the declaration stops matching. The audit's own attack is a test: a
+64-hex `taskId` reaches the wire through `contract_draft.task_id`, every leaf still validates, and
+the sweep is silent.
+
+`I-02`'s count was worse than filed. Three free-text entries were unreachable — and so were **four
+shape-constrained ones**, for the same reason: `BASE` never populated them and `leafPaths` drops
+nulls and empty arrays. Seven of nineteen register entries were untested. A `FULL` fixture populates
+every optional field, and the assertion that was missing — *a declared entry no fixture reaches* —
+now exists. The fixture had to move to the `builder` tier to get there, which is itself the finding
+in miniature: `validateAssignment` refuses rollback commands to a tier that cannot write, a refused
+assignment never reaches the wire, and **nothing said so**. `both fixtures really do dispatch` says
+so now.
+
+`I-03` closed the escape and not just the published proof-of-concept: the decode returns every
+printable run **and** the printable bytes with the separators removed, so neither a trailing `0x0a`
+nor one interleaved between every character hides the text. Fixed in all three copies of the sweep.
+
+**Route 1 is still not closed and is still not claimed to be.** What changed is that the size of its
+surface is derived from the code instead of asserted in a comment.
+
+## The gates that graded the wrong thing
+
+Three findings were gates reporting a verdict on something other than what they claimed.
+
+`I-12` — `check_bundle_budget.py` had **no freshness check**. It printed GREEN at 151.6 KB against a
+`dist/` built before the deletion it was being cited to prove, and GREEN again at 133.0 KB after a
+rebuild of the same tree: two numbers, one source, both "GREEN". A bundled source newer than the
+manifest is RED now, naming the file — and the size verdict is *not* printed beside it, because a
+precise number next to the wrong tree is what made the finding possible.
+
+`I-07` — the roadmap board printed 8/10 and 8/9 over sections counting 7/9 and 7/9, and
+`check_roadmap_order.py` compared completeness as a **boolean** and never read the fractions at all.
+It reads them now. Whole-roadmap totals, re-measured: **92/115** by checkbox, **44/56** by
+Definition of Done.
+
+`I-05` — `unittest.main()` sat four lines above `class RestSecondRoad`, so the file's own entry point
+ran **74 of 88** tests and printed `OK`, silently dropping exactly the fourteen written because that
+code had no coverage. CI's `-m unittest` form always ran all of them, so the file was covered by one
+of its two entry points and the quiet one was the wrong one. Both now collect 91.
+
+## `contracts/` was closable by a Builder change, and the audit was right
+
+`I-13` said two Phase-10 boxes were filed under the production gate while nothing about them was
+blocked by a service principal, a launcher, a broker or a deployment. That was true. `contracts/`
+was a 3 012-byte README describing an intention while `engine/schemas/` held the files.
+
+`contracts/` is the **source** now for the five schemas that cross the wall, with
+`contracts/index.json` carrying each one's version as a JSON Pointer into its own `const`, and
+`tools/check_contracts_single_source.py` — 17 tests, wired into CI — failing on drift between source
+and vendored copy, on a version bumped in one place, on an engine schema classified as neither
+cross-half nor internal, and on any `*.schema.json` outside the four declared homes.
+
+**The engine keeps loading its own copy, and the reason is written down rather than filed under a
+blocker it does not have:** the engine resolves every schema path relative to its **own root**, and
+`engine/` is a git subtree of `menqstudio/Bro`. Pointing those loaders at `../contracts/` makes the
+engine read outside its root — a change to the containment model its perimeter is built on — and
+moving files out forks the vendored half from upstream. That relocation needs its own audited engine
+branch. It is not the production gate.
+
+## The rest
+
+`I-04` (ledger row corrected, gate re-run GREEN at 56 pairs) · `I-06` (the machine mirror said
+`b3010f6` and PR #82 for twenty days and roughly eighty merges, because no gate reads those prose
+fields — they name the fields now instead of restating them) · `I-08` (the T-023 exclusion reason
+named #148, which is not one of the four; #157 is, and #157 is the occurrence whose ACE dump found
+the cause) · `I-09` (the §E finding pointed at `T-039`, a Windows flake in the other half of the
+product; it is `T-036`) · `I-10` (gate counts wrong for the second consecutive round —
+**re-measured: 23 files, 22 wired**, corrected in four places, with the measuring command written
+into the paragraph) · `I-11` (`Decision.status` stays `string` and no CHECK is added — the ledger is
+not this app's to narrow — but the vocabulary is declared, the classifier moved out of the page so a
+test can hold it to one, and the browser fixture routes through it).
+
+**Mutation-verified, every one restored byte-exact:** register entry deleted ⇒ 2 red · shape entry
+deleted ⇒ 2 red · `FULL` back on the `reader` tier ⇒ 3 red · validator tightened ⇒ 2 red ·
+all-or-nothing decode restored ⇒ red in each of the three sweeps · entry point moved back above
+`RestSecondRoad` ⇒ **74 tests and `OK`**, the audit's exact number, and red under `-m unittest` ·
+freshness check disabled ⇒ 3 red · board fraction restored ⇒ RED naming Phase 8 · `decisionState`
+given an invented status ⇒ **TS2345** · engine schema copy edited alone ⇒ RED naming the file.
 
 ### The contrast gate rounded toward passing, and two of its own pairs were below AA (2026-08-27)
 

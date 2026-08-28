@@ -28,18 +28,26 @@ Only then start. **No exceptions.** When Gev says *"go read the repo / կարդ�
 **Canonical files (read every session) · Canonical ֆայլեր:** `NEXT_CHAT.md` · `CLAUDE.md` · `PROJECT_STATE.md` · `TASKS.md` · `OWNERS.md`.
 **Work rule:** no direct `main`; every task = branch + PR (uses the PR template); **the Builder merges, and only once every required check is green on the exact head that merges** (delegated 2026-08-14 — roadmap §B.5, Owner waiver). **A security PR also needs the Architect's zero-trust GREEN on the exact HEAD before merge — CI GREEN is not audit GREEN.** Release and tagging are not delegated.
 
-> **⚠ The standing independent-audit verdict is RED.** Two independent audits have run. The second
-> — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](./apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
-> of `main` @ `219c763` AFTER the first round's remediation — confirmed **4 of 18** blockers closed
-> and left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3), and **has never been re-run** on any
-> later head. Nothing merged since is independently confirmed. The index is
+> **⚠ The standing independent-audit verdict is RED.** **Nine** independent audits have run, not
+> two — this paragraph said two until 2026-08-29, seven rounds after that stopped being true, in the
+> file that is supposed to be the brain. The standing one is
+> [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md),
+> of `main` @ `5cf9b8c` (tree `9580b86d`, pin proved): **RED, no P0** — all three production-gate
+> refusals read at the source and closed for the fourth round running. It attacked nine Builder
+> claims, promoted **six** to ✅, **reopened `A-09` and `T-034`**, held `T-023` at ◑, and filed
+> thirteen new findings `I-01`..`I-13`. Nothing merged since is independently confirmed. The index is
 > [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) — read it before
 > believing any ✅ in these documents; ◑ there means *the Builder's unverified claim*. Until
 > 2026-08-09 this verdict was in no canonical file, while `NEXT_CHAT.md` opened with the FIRST
 > audit's “all code facts CONFIRMED, none refuted” — so two cold reads concluded the audit had come
 > back clean. It had not.
 
-> **⚠ Գործող անկախ աուդիտի վճիռը RED ա։** Երկու անկախ աուդիտ ա անցել։ Երկրորդը —
+> **⚠ Գործող անկախ աուդիտի վճիռը RED ա։** **Ինը** անկախ աուդիտ ա անցել, ոչ թե երկու — այս պարբերությունը
+> գրում էր «երկու» մինչև 2026-08-29։ Գործողը իններորդն ա՝ `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`,
+> `main` @ `5cf9b8c` (tree `9580b86d`, pin ապացուցված)՝ **RED, P0 չկա**, երեք production-gate մերժումն էլ
+> աղբյուրից կարդացված ու փակ։ Ինը Builder-ի պնդումից **վեցը** ✅ դարձան, `A-09`-ը ու `T-034`-ը **նորից բացվեցին**,
+> `T-023`-ը մնաց ◑, ու գրանցվեց տասներեք նոր գտածո՝ `I-01`..`I-13`։ Ստորև պահվում ա երկրորդ ռաունդի
+> պատմությունը՝ Երկրորդը —
 > `apps/desktop/AUDIT/2026-08-06-remediation-audit.md`, `main` @ `219c763`-ի վրա, առաջին փուլի
 > ուղղումներից հետո — հաստատել ա **18-ից 4** blocker-ի փակումը ու թողել **122 գտած** (1 P0,
 > 5 P1, 13 P2, 26 P3), ու **երբեք չի կրկնվել** որևէ ավելի ուշ head-ի վրա։ Դրանից հետո merge
@@ -136,7 +144,7 @@ Both halves arrived **already audited and fixed** (see §6). They were brought i
 | **7 — Group Chat** | `group` collaboration hall; per-agent governed turns | ✅ **DONE 2026-08-16 — 8/8**, verified against the code first. The room, the governed turns, the handoff trail and a full consensus module existed; the missing §D component was the room readout. Silence is still never consent and dissent still renders on every outcome |
 | **8 — Automation** | `automations`/`calendar`; governed scheduled runs | 🔨 **Scheduler real, runs carry a contract** (migration `0020`) — refused runs and their reasons are shown, not swallowed |
 | **9 — Integrations** | `integrations`; governed inbound/outbound, no desktop secrets | 🔨 **Modelled honestly** (migration `0022` `auth_ref`) — four independent facts per connector, each allowed to say it does not know |
-| **10 — Production** | signed/updatable build; full enforcement-path CI (retire option-C skips via T-005); `contracts/` dedupe; close O-1..O-5 | ⏳ **Supply chain strong, release blocked** — release refuses to ship unsigned; O-1…O-5 all OPEN, **none needing an Owner artifact** |
+| **10 — Production** | signed/updatable build; full enforcement-path CI (retire option-C skips via T-005); `contracts/` dedupe; close O-1..O-5 | ⏳ **Supply chain strong, release blocked** — release refuses to ship unsigned; O-1…O-5 all OPEN, **none needing an Owner artifact**. **`contracts/` is the single source since 2026-08-29** (ninth audit `I-13`, which found this row's dedupe boxes filed under the production gate while nothing blocked them): five cross-half schemas sourced there, versioned in `contracts/index.json`, drift gated by `tools/check_contracts_single_source.py`. The file **move** is what remains, and it is an audited engine change — root-relative loaders, subtree provenance — not a gate |
 
 ### ⚠️ OPEN DECISION — blocks a fully-green CI
 

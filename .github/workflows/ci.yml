@@ -823,7 +823,7 @@ jobs:
       # now a build failure rather than a quiet nothing.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports
+        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports test_check_contracts_single_source
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.
@@ -833,6 +833,14 @@ jobs:
       # fails somewhere expensive. This is the binding, and it needs no file to move.
       - name: Schema mirrors (Rust structs vs engine schemas)
         run: python tools/check_schema_mirrors.py
+
+      # M2 of the same plan, and the ninth audit's I-13: contracts/ was a lone README describing an
+      # intention while engine/schemas/ held the files, and nothing about that was blocked by the
+      # production gate. contracts/ is the SOURCE now; the engine keeps a byte-identical vendored
+      # copy because its loaders are root-relative and engine/ is a subtree of menqstudio/Bro.
+      # Editing one side alone is RED, and a new engine schema must be classified by a person.
+      - name: Contracts single source (contracts/ vs engine/schemas/)
+        run: python tools/check_contracts_single_source.py
 
       - name: Live GitHub truth check (fail-closed)
         env:

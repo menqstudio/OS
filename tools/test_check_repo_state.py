@@ -507,9 +507,6 @@ class MainPushTests(unittest.TestCase):
         self.assertTrue(any("not an ancestor" in p for p in f))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RestSecondRoad(unittest.TestCase):
     """The REST fallback — eighth audit `H-05`, and the first tests it has ever had.
@@ -676,3 +673,61 @@ class RestSecondRoad(unittest.TestCase):
         rs._REPO_SLUG_CACHE = "a/b"
         self._gh({"--paginate": (0, "[]")})
         self.assertEqual(rs._rest_open_prs(), set(), "genuinely no open PRs is a SET, not None")
+
+
+class FileEntryPoint(unittest.TestCase):
+    """The file's own entry point must run the whole file -- ninth audit `I-05`.
+
+    `unittest.main()` sat four lines above `class RestSecondRoad`, so a direct
+    `python tools/test_check_repo_state.py` collected 74 tests, printed `OK`, and never reached the
+    14 the eighth round had just added for the REST second road. CI's `python -m unittest` form
+    imports the module and always ran all 88, so the file was genuinely covered -- by one of its two
+    entry points. A gate that is right in CI and wrong from the command line is worse than one that
+    is wrong in both, because the command line is where a person checks before pushing.
+    """
+
+    #: The entry point and the class statements, as they appear at column 0. Matching on whole
+    #: lines rather than on substrings is deliberate: this class quotes both strings in its own
+    #: assertions, and a substring count would find those quotations too.
+    ENTRY = 'if __name__ == "__main__":'
+
+    def _lines(self):
+        return pathlib.Path(__file__).read_text(encoding="utf-8").splitlines()
+
+    def _index_of(self, predicate):
+        return [i for i, line in enumerate(self._lines()) if predicate(line)]
+
+    def test_the_entry_point_is_the_last_statement_in_the_file(self):
+        entries = self._index_of(lambda ln: ln == self.ENTRY)
+        classes = self._index_of(lambda ln: ln.startswith("class "))
+        self.assertTrue(entries and classes)
+        self.assertGreater(
+            entries[-1], classes[-1],
+            "unittest.main() must come after every class, or the classes below it never run",
+        )
+
+    def test_there_is_exactly_one_entry_point(self):
+        self.assertEqual(len(self._index_of(lambda ln: ln == self.ENTRY)), 1)
+
+    def test_both_entry_points_collect_the_same_number_of_tests(self):
+        # The measurement the finding is made of, taken rather than asserted: load the module the
+        # way `-m unittest` does and the way a direct run does, and compare the counts.
+        loader = unittest.TestLoader()
+        module = sys.modules[__name__]
+        from_module = loader.loadTestsFromModule(module).countTestCases()
+        from_names = loader.loadTestsFromNames(
+            [f"{module.__name__}.{n}" for n, o in vars(module).items()
+             if isinstance(o, type) and issubclass(o, unittest.TestCase)]
+        ).countTestCases()
+        self.assertEqual(from_module, from_names)
+        self.assertGreaterEqual(from_module, 88, "the REST second road's 14 must be in the count")
+
+# Ninth audit `I-05`. This entry point used to sit FOUR LINES ABOVE `class RestSecondRoad`, so
+# `python tools/test_check_repo_state.py` collected the 74 classes defined before it and printed
+# `OK` while silently dropping the 14 the eighth round added -- exactly the tests written because
+# that code had no coverage. CI runs `python -m unittest test_check_repo_state`, which imports the
+# whole module and was never fooled, so the two entry points disagreed and only the quiet one was
+# wrong. Keeping it last is the fix; `test_this_file_has_one_entry_point_and_it_is_last` is what
+# stops it drifting back up the file.
+if __name__ == "__main__":
+    unittest.main()
