@@ -18,6 +18,35 @@ export type Theme = 'dark' | 'light';
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'planned', 'active', 'blocked', 'review', 'done', 'cancelled'];
 export const PRIORITIES: Priority[] = ['low', 'normal', 'high', 'critical'];
 export const PROJECT_STATUSES: ProjectStatus[] = ['planned', 'active', 'blocked', 'completed', 'archived'];
+/**
+ * Decision statuses, and the family each one puts a decision in — ninth audit `I-11`.
+ *
+ * `Decision.status` is `string` on the entity and `TEXT` with no CHECK in `0002_decisions.sql`,
+ * because the value is READ from a ledger this app does not own: narrowing the entity type would
+ * claim a contract with the engine that nobody has written, and `Decisions.tsx` classifies with
+ * deliberately tolerant substring rules for exactly that reason. What was missing is the other
+ * half — a declared vocabulary for the statuses this repository DOES know a source for, so a
+ * fixture cannot invent one. `status: 'accepted'` in the browser spec was such an invention: it
+ * matches neither of the page's two families and therefore renders through the fallback, which
+ * means the fixture would have produced an identical screenshot for the word `zzz`.
+ *
+ * The family attached to each word is not a new rule — it is what `statusMeta` already computes,
+ * and `decisions status vocabulary` asserts the two agree, so this map cannot drift away from the
+ * page it describes.
+ */
+export const DECISION_STATUS_FAMILY = {
+  proposed: 'waiting',    // the ONLY value the desktop store itself writes (repo.rs decisions::create)
+  open: 'waiting',
+  review: 'waiting',
+  accepted: 'settled',
+  superseded: 'settled',
+  rejected: 'blocked',
+  blocked: 'blocked',
+} as const;
+export type DecisionStatus = keyof typeof DECISION_STATUS_FAMILY;
+export type DecisionStatusFamily = (typeof DECISION_STATUS_FAMILY)[DecisionStatus];
+export const DECISION_STATUSES = Object.keys(DECISION_STATUS_FAMILY) as DecisionStatus[];
+
 export type MemoryKind = 'fact' | 'preference' | 'note' | 'reference';
 export const MEMORY_KINDS: MemoryKind[] = ['fact', 'preference', 'note', 'reference'];
 export const RUN_STATUSES: RunStatus[] = ['drafted', 'queued', 'planning', 'awaiting_approval', 'running', 'paused', 'succeeded', 'failed', 'cancelled'];

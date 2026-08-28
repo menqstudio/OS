@@ -62,17 +62,16 @@ const assignment = (): Assignment => buildAssignment(BASE);
  * **Non-string leaves are visited too** (sixth audit `A-09` route 3, reopened by the eighth).
  * The earlier version pushed only `typeof value === 'string'`, so a `number[]` whose elements
  * are character codes decoded to `"lease-7f2a91"` on the far side while being invisible here.
- * Numbers and booleans are now stringified, and an array that is *entirely* printable character
- * codes is additionally pushed in its decoded form — the sweep sees the bytes as the text they
- * would become, not as digits.
+ * Numbers and booleans are now stringified, and an array's printable character codes are
+ * additionally pushed in decoded form — the sweep sees the bytes as the text they would become,
+ * not as digits. The decode survives one out-of-range byte (ninth audit `I-03`).
  */
 function flatten(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
   else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     out.push(String(value));
   } else if (Array.isArray(value)) {
-    const decoded = decodeCharCodes(value);
-    if (decoded !== null) out.push(decoded);
+    out.push(...decodeCharCodeRuns(value));
     value.forEach((v) => flatten(v, out));
   } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
@@ -80,15 +79,32 @@ function flatten(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** `[108,101,97,115,101]` → `"lease"`; `null` when the array is not all printable ASCII codes. */
-function decodeCharCodes(list: readonly unknown[]): string | null {
-  if (list.length === 0) return null;
-  const codes: number[] = [];
+/**
+ * The printable text a character-code array carries — ninth audit `I-03`.
+ *
+ * The superseded form returned `null` for the whole array the moment ONE element fell outside
+ * `0x20`–`0x7e`, so a newline appended to the character-code array made it invisible again. Two
+ * things are produced instead: every maximal printable RUN, so adjacency is preserved, and the
+ * concatenation of all printable bytes with the non-printable ones removed, so a value interleaved
+ * with separators cannot hide either. An array with no printable byte yields nothing at all, which
+ * is what keeps the decode from becoming a wildcard that invents offenders.
+ */
+function decodeCharCodeRuns(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  let run = '';
+  let all = '';
   for (const v of list) {
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
-    codes.push(v);
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0x20 && v <= 0x7e) {
+      run += String.fromCharCode(v);
+      all += String.fromCharCode(v);
+    } else if (run) {
+      out.push(run);
+      run = '';
+    }
   }
-  return String.fromCharCode(...codes);
+  if (run) out.push(run);
+  if (all && !out.includes(all)) out.push(all);
+  return out;
 }
 
 /**
@@ -187,5 +203,22 @@ describe('dispatch — the desktop never serializes a lease or a key', () => {
     await attemptDispatch(assignment(), async (req) => { sent = req; return null; }, () => UUID);
     // If this ever fails, the assertions above are passing over an empty object.
     expect(flatten(sent)).toContain('Read the ledger');
+  });
+
+  it('`I-03`: one byte outside the printable range no longer defeats the decode', () => {
+    // The ninth audit escaped route 3's fix by appending 0x0a: the all-or-nothing decode returned
+    // null for the whole array and the sweep went silent again. Both escapes are pinned here, in
+    // this copy of the sweep as well as in the boundary suite, because a fix applied to one of
+    // three copies is a fix in one of three places.
+    const codes = Array.from('lease-7f2a91').map((c) => c.charCodeAt(0));
+    const trailing = [...codes, 0x0a];
+    const interleaved = codes.flatMap((c) => [c, 0x0a]);
+    for (const bytes of [codes, trailing, interleaved]) {
+      expect(flatten({ smuggled: bytes })).toContain('lease-7f2a91');
+      expect(flatten({ smuggled: bytes }).filter((s) => FORBIDDEN.test(s)).length)
+        .toBeGreaterThan(0);
+    }
+    // And still not a wildcard: an array with no printable byte decodes to nothing.
+    expect(decodeCharCodeRuns([1, 2, 3, 999])).toEqual([]);
   });
 });

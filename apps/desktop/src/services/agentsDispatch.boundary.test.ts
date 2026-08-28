@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildAssignment, attemptDispatch, isContractId, isRepoPath, isWorkPath,
+  buildAssignment, attemptDispatch, validateAssignment, isContractId, isRepoPath, isWorkPath,
   CAPABILITY_TIERS, CONTRACT_SCHEMA_VERSION, DISPATCH_REQUEST_PROTOCOL, MODES, RISKS,
   type AssignmentInput,
 } from './agentsDispatch';
@@ -18,30 +18,49 @@ import {
  *   2. `pubkey` / `apikey` / `keystore` / `sessionkey` — `(?<![a-z])key(?![a-z])` matched none;
  *   3. a `number[]` whose bytes decode to `"lease-7f2a91"` — `flatten()` kept only strings.
  *
- * **Routes 2 and 3 are now CLOSED, and route 1 is not.** The eighth audit reopened `A-09` with the
- * correct reason: the previous round corrected the two roadmap sentences and made the limit
- * executable, and then marked the finding Done. *Correcting a claim is not closing a finding.* The
- * two halves that were always free — a compound-aware `key` family, and a `flatten` that visits
- * non-string leaves and decodes character-code arrays — are done here, each with the mutant that
- * proves it (revert either and a test below goes red).
+ * Routes 2 and 3 were closed in the eighth round's remediation and the NINTH audit re-ran both
+ * mutants independently and could not reopen either. It reopened `A-09` for a third reason, and
+ * that reason was this file's own sentence about route 1.
  *
- * # Route 1, and the decision `T-030` asks for
+ * # The register said eight, and the register was wrong — ninth audit `I-01`, `I-02`, `I-03`
  *
- * Route 1 stays open and this file still asserts it, on purpose. A credential is defined by what a
- * remote system will accept, not by anything about its text: an opaque token and a rollback note are
- * the same bytes to this process. The candidate fix — a high-entropy detector — is a heuristic that
- * would fire on legitimate ids, digests and hashes, and a heuristic that reads as proof is worse than
- * the honest gap, because the next roadmap row would cite it too. A declared *grammar* for the
- * free-text fields fails the same way from the other side: tight enough to exclude a JWT also excludes
- * a commit sha, a path, a URL and an Armenian sentence; loose enough for prose admits a token by
- * adding a space.
+ * The previous revision answered route 1 by declaring an eight-leaf free-text register and writing
+ * *"these — and only these — are places a credential could ride."* Three things were wrong with it,
+ * and all three are fixed here:
  *
- * **What IS newly established instead, and it is not a heuristic:** the set of fields whose value is
- * unconstrained is itself *declared and bounded*. Every leaf the frame carries is either
- * shape-constrained (an enum, a contract id, a UUIDv4, a repo path, a const) against its real
- * validator, or named in `DECLARED_FREE_TEXT` with the reason it must stay prose. A new field —
- * the way route 1 would widen — turns this file red rather than travelling silently beside a suite
- * that reads as a guarantee.
+ *   * **`I-01` — "shape-constrained" was doing work a shape cannot do.** Eleven further leaves are
+ *     bound by `isContractId`, `isRepoPath` or `isWorkPath`, and every one of those patterns admits
+ *     a credential: `^[a-z0-9][a-z0-9._-]{1,127}$` takes a 64-character hex secret whole, and
+ *     `slug()` lowercases caller input on the way in, so it arrives verbatim. A shape is not a
+ *     capacity. The register is COMPUTED now rather than asserted: {@link CREDENTIAL_PROBES} is run
+ *     through each leaf's REAL validator, and a leaf whose validator admits a probe must be declared
+ *     a carrier. Loosen a validator and the declaration stops matching what the code admits.
+ *   * **`I-02` — three of the eight declared entries were never exercised, and deleting them was
+ *     green.** `BASE` leaves `verifierRole`/`verifierAgentSlug` null and both command arrays empty,
+ *     and `leafPaths` drops nulls and empty arrays, so those leaves never reached the assertion —
+ *     which only ever checked that a *present* leaf is declared, never that a *declared* leaf is
+ *     real. Four shape-constrained entries (`inputs`, `additional_skills`, `reference_skills`,
+ *     `verification.verifier_agent_id`) were unexercised for exactly the same reason, so the true
+ *     count was seven, not three. {@link FULL} populates every optional field and
+ *     `the register has no unreachable entries` asserts the inverse direction.
+ *   * **`I-03` — one byte outside `0x20`–`0x7e` walked past the decode.** `decodeCharCodes` returned
+ *     `null` for the whole array if any element was out of range, so appending `0x0a` to the
+ *     character-code array defeated it entirely. It decodes printable RUNS now, and additionally the
+ *     printable bytes with the separators removed, so interleaving does not hide the text either.
+ *
+ * # Route 1 is still not closed, and is still not claimed to be
+ *
+ * A credential is defined by what a remote system will accept, not by anything about its text: an
+ * opaque token and a rollback note are the same bytes to this process. The candidate fix — a
+ * high-entropy detector — is a heuristic that would fire on legitimate ids, digests and hashes, and
+ * a heuristic that reads as proof is worse than the honest gap, because the next roadmap row would
+ * cite it too. A declared *grammar* for the free-text fields fails the same way from the other side:
+ * tight enough to exclude a JWT also excludes a commit sha, a path, a URL and an Armenian sentence;
+ * loose enough for prose admits a token by adding a space.
+ *
+ * **What IS established, and it is not a heuristic:** the set of leaves that can carry a credential
+ * is enumerated, and the enumeration is derived from the validators the product actually runs. A new
+ * field, or a widened validator, turns this file red on the commit that does it.
  */
 
 const BASE: AssignmentInput = {
@@ -64,6 +83,28 @@ const BASE: AssignmentInput = {
   rollbackStrategy: 'nothing was written',
 };
 
+/**
+ * The same assignment with **every optional field populated** — ninth audit `I-02`.
+ *
+ * `BASE` alone leaves seven register entries unreachable, and an entry that is never reached is an
+ * entry that can be deleted without a test noticing. Nothing here is exotic: it is the shape a real
+ * dispatch takes when a verifier is named and a rollback is scripted.
+ */
+const FULL: AssignmentInput = {
+  ...BASE,
+  // `builder`, not `reader`: `validateAssignment` refuses rollback commands to a tier that cannot
+  // change files, and a refused assignment never reaches the wire — which is how a fixture stops
+  // exercising anything without saying so. `both fixtures really do dispatch` pins that.
+  tier: 'builder',
+  inputs: ['docs/ARCHITECTURE.md'],
+  additionalSkills: ['analysis-secondary'],
+  referenceSkills: ['reference-reading'],
+  verifierAgentSlug: 'ledger-verifier',
+  verifierRole: 'Ledger Verifier',
+  verificationCommands: ['npm run test -- ledger'],
+  rollbackCommands: ['git checkout -- .'],
+};
+
 const UUID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 /**
@@ -72,17 +113,16 @@ const UUID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
  * **Non-string leaves are visited too** (sixth audit `A-09` route 3, reopened by the eighth).
  * The earlier version pushed only `typeof value === 'string'`, so a `number[]` whose elements
  * are character codes decoded to `"lease-7f2a91"` on the far side while being invisible here.
- * Numbers and booleans are now stringified, and an array that is *entirely* printable character
- * codes is additionally pushed in its decoded form — the sweep sees the bytes as the text they
- * would become, not as digits.
+ * Numbers and booleans are now stringified, and an array's printable character codes are
+ * additionally pushed in decoded form — the sweep sees the bytes as the text they would become,
+ * not as digits.
  */
 function flatten(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
   else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     out.push(String(value));
   } else if (Array.isArray(value)) {
-    const decoded = decodeCharCodes(value);
-    if (decoded !== null) out.push(decoded);
+    out.push(...decodeCharCodeRuns(value));
     value.forEach((v) => flatten(v, out));
   } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
@@ -90,15 +130,33 @@ function flatten(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** `[108,101,97,115,101]` → `"lease"`; `null` when the array is not all printable ASCII codes. */
-function decodeCharCodes(list: readonly unknown[]): string | null {
-  if (list.length === 0) return null;
-  const codes: number[] = [];
+/**
+ * The printable text a character-code array carries — ninth audit `I-03`.
+ *
+ * The superseded form returned `null` for the whole array the moment ONE element fell outside
+ * `0x20`–`0x7e`, so a newline on the end of the character-code array made it invisible again. Two
+ * things are produced instead, and the second is the one that matters: every maximal printable RUN,
+ * so adjacency is preserved, **and** the concatenation of all printable bytes with the
+ * non-printable ones removed, so a credential interleaved with separators cannot hide either. An
+ * array with no printable byte in it yields nothing at all, which is what keeps the decode from
+ * becoming a wildcard that invents offenders.
+ */
+function decodeCharCodeRuns(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  let run = '';
+  let all = '';
   for (const v of list) {
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
-    codes.push(v);
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0x20 && v <= 0x7e) {
+      run += String.fromCharCode(v);
+      all += String.fromCharCode(v);
+    } else if (run) {
+      out.push(run);
+      run = '';
+    }
   }
-  return String.fromCharCode(...codes);
+  if (run) out.push(run);
+  if (all && !out.includes(all)) out.push(all);
+  return out;
 }
 
 /**
@@ -131,6 +189,9 @@ const oneOf = (...allowed: readonly string[]) => (v: unknown) => isStr(v) && all
 /**
  * The value shape of every constrained leaf, checked against the module's OWN validators rather
  * than a second copy of them — a private regex here would drift from the one the product enforces.
+ *
+ * Being in this map means the value's SHAPE is pinned. It does **not** mean its capacity is
+ * bounded; {@link CREDENTIAL_CAPABLE} is the set that says which of these can still carry a secret.
  */
 const SHAPE_CONSTRAINED: Record<string, (v: unknown) => boolean> = {
   'protocol': oneOf(DISPATCH_REQUEST_PROTOCOL),
@@ -155,9 +216,10 @@ const SHAPE_CONSTRAINED: Record<string, (v: unknown) => boolean> = {
 };
 
 /**
- * The leaves that are prose by design, each with the reason it must stay prose. This set is the
- * honest statement of route 1's surface: these — and only these — are places a credential could
- * ride, and no check in this process can tell one from a sentence.
+ * The leaves that are prose by design, each with the reason it must stay prose.
+ *
+ * This is no longer claimed to be the whole of route 1's surface — {@link CREDENTIAL_CAPABLE} is
+ * the set that claim belongs to. It is the subset that has no validator at all.
  */
 const DECLARED_FREE_TEXT = new Set([
   'contract_draft.title',                      // what a person calls the task
@@ -170,6 +232,77 @@ const DECLARED_FREE_TEXT = new Set([
   'contract_draft.rollback.commands',          // shell the rollback runs
 ]);
 
+/**
+ * Credential-shaped strings, in the forms a real secret arrives in — ninth audit `I-01`.
+ *
+ * Two of them are lowercase-and-alphanumeric on purpose: `slug()` lowercases and strips, so those
+ * are the shapes that survive the id path verbatim. If a probe ever stopped being credential-shaped
+ * the capacity check would weaken silently, so `the probes are really credential-shaped` pins them.
+ */
+const CREDENTIAL_PROBES: ReadonlyArray<readonly [name: string, value: string]> = [
+  ['64-hex secret', '7f2a91c4e08b45d9a1f36c27be5049d83a7e1b6045cf92d8e3ab7710c65d4f92'],
+  ['base64url token body', 'dqx1_ab2cd3ef4gh5ij6kl7mn8op9qr0st1uv2wx3yz4a5b6'],
+  ['signed JWT', 'eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiI3ZjJhOTEifQ.3xR9'],
+  ['dotted opaque id', 'v1.7f2a91c4e08b45d9a1f36c27be5049d8'],
+];
+
+/**
+ * Every leaf a caller's input reaches. `protocol`, `contract_draft.schema`, `client_request_id` and
+ * `verification.required` are excluded because the module produces them: two constants, a generated
+ * UUID and a boolean derived from `risk`. The UUID has 122 bits of capacity and could in principle
+ * carry a secret, but nothing the caller passes decides it, so it is not a route.
+ */
+const CALLER_CONTROLLED = new Set([
+  'agent_definition', 'capability_tier', 'pack_role_reference',
+  'contract_draft.task_id', 'contract_draft.mode', 'contract_draft.risk',
+  'contract_draft.pack_id', 'contract_draft.agent_id',
+  'contract_draft.scope', 'contract_draft.prohibited_scope', 'contract_draft.inputs',
+  'contract_draft.core_skills', 'contract_draft.additional_skills',
+  'contract_draft.reference_skills',
+  'contract_draft.verification.verifier_agent_id',
+  ...DECLARED_FREE_TEXT,
+]);
+
+/**
+ * The honest answer to *"where could a credential ride?"* — nineteen leaves, not eight.
+ *
+ * Eight have no validator. Eleven have one that admits a credential anyway: eight bound by
+ * `isContractId` (128 characters of `[a-z0-9._-]`, which a 64-hex secret fits inside twice over)
+ * and three by the path validators, which take a JWT whole because a JWT contains no slash, space
+ * or reserved character. This list is ASSERTED equal to the list COMPUTED from the validators, so
+ * it cannot drift from what the code admits.
+ */
+const CREDENTIAL_CAPABLE = new Set([
+  ...DECLARED_FREE_TEXT,
+  'pack_role_reference',
+  'contract_draft.task_id',
+  'contract_draft.pack_id',
+  'contract_draft.agent_id',
+  'contract_draft.core_skills',
+  'contract_draft.additional_skills',
+  'contract_draft.reference_skills',
+  'contract_draft.verification.verifier_agent_id',
+  'contract_draft.scope',
+  'contract_draft.prohibited_scope',
+  'contract_draft.inputs',
+]);
+
+/** The leaves whose validator lets at least one {@link CREDENTIAL_PROBES} value through. */
+function credentialCapable(shapes: Record<string, (v: unknown) => boolean>): Set<string> {
+  const out = new Set<string>();
+  for (const path of CALLER_CONTROLLED) {
+    const shape = shapes[path];
+    if (!shape) { out.add(path); continue; }                 // no validator at all
+    if (CREDENTIAL_PROBES.some(([, v]) => shape(v))) out.add(path);
+  }
+  return out;
+}
+
+const undeclared = (frame: unknown) => leafPaths(frame).filter(({ path, value }) => {
+  const shape = SHAPE_CONSTRAINED[path];
+  return shape ? !shape(value) : !DECLARED_FREE_TEXT.has(path);
+});
+
 async function wire(input: AssignmentInput): Promise<unknown> {
   let sent: unknown = null;
   await attemptDispatch(buildAssignment(input), async (req) => { sent = req; return null; }, () => UUID);
@@ -177,6 +310,16 @@ async function wire(input: AssignmentInput): Promise<unknown> {
 }
 
 describe('the no-lease sweep proves the FRAME, not the absence of a credential', () => {
+  it('both fixtures really do dispatch — a refused one exercises nothing', () => {
+    // The failure mode `I-02` was made of: a fixture that does not reach the wire cannot make any
+    // register entry reachable, and nothing said so. `validateAssignment` is the module's own
+    // refusal, so an invalid fixture is a red test rather than a silently smaller register.
+    for (const [name, input] of [['BASE', BASE], ['FULL', FULL]] as const) {
+      expect(validateAssignment(buildAssignment(input)), `${name} must be locally well-formed`)
+        .toEqual([]);
+    }
+  });
+
   it('a control credential IS caught — the sweep is not vacuous', async () => {
     const sent = await wire({ ...BASE, rollbackStrategy: 'lease-should-never-travel' });
     expect(flatten(sent).filter((s) => FORBIDDEN.test(s)).length).toBeGreaterThan(0);
@@ -239,43 +382,127 @@ describe('the no-lease sweep proves the FRAME, not the absence of a credential',
   });
 
   it('route 3: a non-code numeric array is left alone — the decode is not a wildcard', () => {
-    // Only an array that is ENTIRELY printable ASCII decodes. A list of ordinary numbers must not
-    // acquire a spurious text form, or the sweep starts inventing offenders.
+    // Only printable bytes decode. A list of ordinary numbers must not acquire a spurious text
+    // form, or the sweep starts inventing offenders.
     expect(flatten({ counts: [1, 2, 3, 999] })).not.toContain(String.fromCharCode(1, 2, 3));
     expect(flatten({ counts: [1, 2, 3, 999] })).toEqual(['counts', '1', '2', '3', '999']);
   });
 
+  it('`I-03`: one out-of-range byte no longer walks past the decode', () => {
+    // The ninth audit's escape, executable. A single 0x0a on the end defeated the all-or-nothing
+    // form completely; interleaving one between every character defeated it even more cheaply.
+    const trailing = [...Array.from('lease-7f2a91').map((c) => c.charCodeAt(0)), 0x0a];
+    const interleaved = Array.from('lease-7f2a91').flatMap((c) => [c.charCodeAt(0), 0x0a]);
+    for (const bytes of [trailing, interleaved]) {
+      expect(flatten({ smuggled: bytes }), 'the printable bytes decode with the separators removed')
+        .toContain('lease-7f2a91');
+      expect(flatten({ smuggled: bytes }).filter((s) => FORBIDDEN.test(s)).length)
+        .toBeGreaterThan(0);
+    }
+  });
+
+  it('`I-03` mutant: the all-or-nothing decode this replaced sees nothing', () => {
+    const superseded = (list: readonly unknown[]): string | null => {
+      if (list.length === 0) return null;
+      const codes: number[] = [];
+      for (const v of list) {
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0x20 || v > 0x7e) return null;
+        codes.push(v);
+      }
+      return String.fromCharCode(...codes);
+    };
+    const trailing = [...Array.from('lease-7f2a91').map((c) => c.charCodeAt(0)), 0x0a];
+    expect(superseded(trailing), 'the superseded decode gave up on the whole array').toBeNull();
+    expect(decodeCharCodeRuns(trailing)).toContain('lease-7f2a91');
+    // And the property that keeps the replacement from being a wildcard is preserved.
+    expect(decodeCharCodeRuns([1, 2, 3, 999])).toEqual([]);
+  });
+
   it('every leaf is either shape-constrained or a DECLARED free-text field', async () => {
-    // The property route 1 cannot have, stated as the one that IS available: not "no credential
-    // travels" (undecidable here) but "the set of places one COULD travel is enumerated". A new
-    // field turns this red on the commit that adds it, which is the moment a reviewer should look.
-    const sent = await wire(BASE);
-    const unknown = leafPaths(sent).filter(
-      ({ path, value }) => {
-        const shape = SHAPE_CONSTRAINED[path];
-        if (shape) return !shape(value);
-        return !DECLARED_FREE_TEXT.has(path);
-      },
-    );
-    expect(unknown, 'an undeclared or misshapen leaf reached the wire').toEqual([]);
+    // Both fixtures, because BASE alone never populates seven of the register's entries.
+    for (const input of [BASE, FULL]) {
+      expect(undeclared(await wire(input)),
+        'an undeclared or misshapen leaf reached the wire').toEqual([]);
+    }
+  });
+
+  it('the register has no unreachable entries — `I-02`', async () => {
+    // The inverse direction, which is the one that was missing: an entry no fixture reaches is an
+    // entry that can be deleted without a test noticing, and three free-text plus four
+    // shape-constrained entries were in exactly that state.
+    const reached = new Set<string>();
+    for (const input of [BASE, FULL]) {
+      for (const { path } of leafPaths(await wire(input))) reached.add(path);
+    }
+    const declared = [...Object.keys(SHAPE_CONSTRAINED), ...DECLARED_FREE_TEXT];
+    expect(declared.filter((p) => !reached.has(p)),
+      'a declared entry that no fixture populates is not being tested').toEqual([]);
+  });
+
+  it('`I-02` mutant: deleting a declared entry is no longer green', async () => {
+    // Precisely the audit's attack. `contract_draft.rollback.commands` was one of the three that
+    // could be deleted with all ten tests still passing; with FULL populating it, its absence from
+    // the register is a failure the suite reports.
+    const shrunk = new Set(DECLARED_FREE_TEXT);
+    shrunk.delete('contract_draft.rollback.commands');
+    const missed = leafPaths(await wire(FULL)).filter(({ path, value }) => {
+      const shape = SHAPE_CONSTRAINED[path];
+      return shape ? !shape(value) : !shrunk.has(path);
+    }).map((l) => l.path);
+    expect(missed).toEqual(['contract_draft.rollback.commands']);
+  });
+
+  it('the probes are really credential-shaped', () => {
+    // The capacity check is only as honest as its probes. A probe that stopped looking like a
+    // secret would quietly shrink the computed set, so the shapes are pinned here.
+    const [hex, b64, jwt, dotted] = CREDENTIAL_PROBES.map(([, v]) => v);
+    expect(hex).toMatch(/^[0-9a-f]{64}$/);
+    expect(b64.length).toBeGreaterThanOrEqual(43);
+    expect(jwt.split('.')).toHaveLength(3);
+    expect(dotted).toMatch(/^v1\.[0-9a-f]{32}$/);
+    // And none of them says anything the FORBIDDEN sweep could catch — that is the whole point.
+    for (const [, v] of CREDENTIAL_PROBES) expect(FORBIDDEN.test(v)).toBe(false);
+  });
+
+  it('`I-01`: the credential-capable set is COMPUTED from the real validators, and it is 19', () => {
+    // The sentence this replaces said eight. Eleven more leaves are bound by patterns that admit a
+    // secret whole: `isContractId` takes 128 characters of [a-z0-9._-], and the path validators
+    // take a JWT because a JWT has no slash, space or reserved character in it.
+    expect([...credentialCapable(SHAPE_CONSTRAINED)].sort()).toEqual([...CREDENTIAL_CAPABLE].sort());
+    expect(CREDENTIAL_CAPABLE.size).toBe(19);
+    expect(DECLARED_FREE_TEXT.size).toBe(8);
+  });
+
+  it('`I-01`: a 64-hex secret really does reach the wire through a shape-constrained leaf', async () => {
+    // Measured, not argued. `slug()` lowercases and strips, and a lowercase hex string has nothing
+    // to strip, so the value arrives verbatim in a field the register used to call constrained.
+    const secret = '7f2a91c4e08b45d9a1f36c27be5049d83a7e1b6045cf92d8e3ab7710c65d4f92';
+    const sent = await wire({ ...BASE, taskId: secret });
+    expect(flatten(sent), 'the secret is on the wire').toContain(secret);
+    expect(undeclared(sent), 'and every leaf still validates — the shape check is blind to it')
+      .toEqual([]);
+    expect(flatten(sent).filter((s) => FORBIDDEN.test(s)), 'and the sweep is silent').toEqual([]);
+  });
+
+  it('`I-01` mutant: tightening a validator moves the computed set, and the declaration notices', () => {
+    // The check earns its place only if the two sides can disagree. Bind `task_id` to a shape a
+    // credential cannot fit and the computed set loses it — which is a failure until someone
+    // updates the declaration deliberately.
+    const tightened = { ...SHAPE_CONSTRAINED, 'contract_draft.task_id': matches(/^task-\d+$/) };
+    const computed = credentialCapable(tightened);
+    expect(computed.has('contract_draft.task_id')).toBe(false);
+    expect(computed.size).toBe(CREDENTIAL_CAPABLE.size - 1);
   });
 
   it('the register is not vacuous: an undeclared field fails, a misshapen id fails', async () => {
     const sent = await wire(BASE) as Record<string, unknown>;
     // A field nobody declared.
-    const widened = { ...sent, operator_note: 'anything at all' };
-    expect(leafPaths(widened).filter(({ path, value }) => {
-      const shape = SHAPE_CONSTRAINED[path];
-      if (shape) return !shape(value);
-      return !DECLARED_FREE_TEXT.has(path);
-    }).map((l) => l.path)).toEqual(['operator_note']);
+    expect(undeclared({ ...sent, operator_note: 'anything at all' }).map((l) => l.path))
+      .toEqual(['operator_note']);
     // A declared field whose value stops matching its real validator.
     const draft = { ...(sent.contract_draft as Record<string, unknown>), task_id: 'Not An Id' };
-    expect(leafPaths({ ...sent, contract_draft: draft })
-      .filter(({ path, value }) => {
-        const shape = SHAPE_CONSTRAINED[path];
-        return shape ? !shape(value) : !DECLARED_FREE_TEXT.has(path);
-      }).map((l) => l.path)).toEqual(['contract_draft.task_id']);
+    expect(undeclared({ ...sent, contract_draft: draft }).map((l) => l.path))
+      .toEqual(['contract_draft.task_id']);
   });
 
   it('what IS established: the frame is exactly its declared fields', async () => {

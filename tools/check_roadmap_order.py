@@ -83,6 +83,8 @@ _BOARD_END_RE = re.compile(r"(?m)^#{1,3}\s+(?!#)")
 # (the 22-page index, the ownership matrix); scoping to the board SECTION and to a
 # three-column shape keeps them from being read as phases.
 _BOARD_ROW_RE = re.compile(r"(?m)^\|\s*(\d+)\s*\|([^|]*)\|([^|]*)\|\s*$")
+#: The FIRST `n/m` in a board cell -- the row's headline count (ninth audit `I-07`).
+_FRACTION_RE = re.compile(r"\b(\d+)/(\d+)\b")
 
 
 class RoadmapError(RuntimeError):
@@ -158,6 +160,49 @@ def board_state(root: pathlib.Path) -> dict[int, dict]:
     return board
 
 
+def phase_checkbox_counts(root: pathlib.Path) -> dict[int, tuple[int, int]]:
+    """{phase: (checked, total)} over EVERY checkbox in the phase section, not just the DoD block.
+
+    The board rows print this fraction, and until the ninth audit nothing compared the two. `I-07`:
+    Phase 8's row said 8/10 and Phase 9's said 8/9 while their sections held 7/9 and 7/9. Phases 3-7
+    matched exactly, which is what established that the fraction is meant to be countable rather
+    than editorial -- five rows agreeing by coincidence is not a thing that happens.
+    """
+    text = _text(root)
+    starts = [(int(m.group(1)), m.start()) for m in _PHASE_RE.finditer(text)]
+    counts: dict[int, tuple[int, int]] = {}
+    for index, (number, start) in enumerate(starts):
+        end = starts[index + 1][1] if index + 1 < len(starts) else len(text)
+        boxes = _CHECKBOX_RE.findall(text[start:end])
+        counts[number] = (sum(1 for b in boxes if b != " "), len(boxes))
+    return counts
+
+
+def fraction_problems(root: pathlib.Path) -> list[str]:
+    """A board row that prints `n/m` must print the fraction its own section counts.
+
+    Only the FIRST fraction in a row is read. A corrected row keeps the superseded number in a
+    parenthetical -- that is how this repository records a correction rather than erasing it -- and
+    a check that read every fraction would make writing the history down a failure.
+    """
+    problems: list[str] = []
+    counts = phase_checkbox_counts(root)
+    for number, detail in board_state(root).items():
+        match = _FRACTION_RE.search(detail["cell"])
+        if not match:
+            continue                  # a row may say nothing; it may not say a wrong thing
+        printed = (int(match.group(1)), int(match.group(2)))
+        counted = counts.get(number)
+        if counted is None:
+            continue                  # orphan rows are reported by structural_problems
+        if printed != counted:
+            problems.append(
+                f"Phase {number}: the status board prints {printed[0]}/{printed[1]} but its own "
+                f"section counts {counted[0]}/{counted[1]} checkboxes. The fraction is a count, "
+                "not a summary -- correct the row or tick the box")
+    return problems
+
+
 def structural_problems(root: pathlib.Path) -> list[str]:
     """The roadmap's two completion surfaces must agree, phase by phase."""
     problems: list[str] = []
@@ -183,6 +228,9 @@ def structural_problems(root: pathlib.Path) -> list[str]:
     orphans = sorted(set(board) - set(dod))
     if orphans:
         problems.append(f"status board rows with no matching phase section: {orphans}")
+    # Ninth audit `I-07`: this gate compared completeness as a BOOLEAN and never read the printed
+    # fractions, so a row could say 8/10 over a section counting 7/9 and stay green for two rounds.
+    problems.extend(fraction_problems(root))
     return problems
 
 

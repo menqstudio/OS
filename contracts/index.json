@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "//": [
+    "The cross-half contract index -- M2 of docs/design/CONTRACTS_DEDUPE_PLAN.md, and the answer to",
+    "the ninth audit's I-13 ('two Phase-10 boxes are closable by a Builder change').",
+    "",
+    "WHAT THIS DIRECTORY IS. contracts/ is the SOURCE of every schema listed below. The copy under",
+    "engine/schemas/ is a vendored artifact held byte-identical by tools/check_contracts_single_source.py:",
+    "edit the copy alone and CI goes RED naming the file. That is the property the roadmap box asks",
+    "for -- one definition both halves are held to -- obtained WITHOUT changing how the engine loads",
+    "schemas.",
+    "",
+    "WHY THE ENGINE STILL READS ITS OWN COPY, stated so nobody 'finishes' the job by deleting it.",
+    "The engine resolves every schema path relative to its OWN root (engine/schemas/registry.json",
+    "holds root-relative paths; bro_contracts.validate_registered_schemas and bro_orchestration read",
+    "them that way). Pointing those loaders at ../contracts/ makes the engine read outside its root,",
+    "which is a deliberate change to the containment model its perimeter is built on -- and engine/ is",
+    "a git subtree of menqstudio/Bro, so moving files out of it forks the vendored half from upstream.",
+    "That relocation is M2's remaining step and it needs its own audited engine branch. It is NOT",
+    "blocked by the production gate, by any service principal, launcher, broker or deployment, and",
+    "this file exists so the box is not filed under a blocker it never had.",
+    "",
+    "VERSIONING. version_pointer is a JSON Pointer into the schema itself, resolved by the gate and",
+    "compared with `version`. Four of the five carry `schema: {const: 1}` at the top level; mode-grant",
+    "is a signed envelope, so its version lives at payload.schema. A bump has to be made in the schema",
+    "AND here, in one commit, or the gate reports the disagreement."
+  ],
+  "source_of_record": "contracts/",
+  "vendored_copy": "engine/schemas/",
+  "contracts": [
+    {
+      "id": "execution-lease",
+      "file": "execution-lease.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/schema/const",
+      "crosses": "engine -> desktop",
+      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
+      "why_shared": "the lease is what the wall issues and the cockpit displays; both halves read the same object"
+    },
+    {
+      "id": "mode-grant",
+      "file": "mode-grant.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/payload/properties/schema/const",
+      "crosses": "engine -> desktop",
+      "rust_mirror": null,
+      "why_shared": "the signed envelope that raises a session's mode; the desktop shows its state and never mints one"
+    },
+    {
+      "id": "task-contract",
+      "file": "task-contract.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/schema/const",
+      "crosses": "desktop -> engine",
+      "rust_mirror": "apps/desktop/src-tauri/src/ai.rs",
+      "why_shared": "the desktop drafts it (agentsDispatch) and the engine is the only party that accepts it"
+    },
+    {
+      "id": "verifier-receipt",
+      "file": "verifier-receipt.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/schema/const",
+      "crosses": "engine -> desktop",
+      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
+      "why_shared": "the only artifact that can make the desktop say Verified; it is parsed on the desktop side"
+    },
+    {
+      "id": "evidence-event",
+      "file": "evidence-event.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/schema/const",
+      "crosses": "engine -> desktop",
+      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
+      "why_shared": "the append-only chain the security page mirrors; the desktop reads it and appends nothing"
+    }
+  ],
+  "engine_internal": {
+    "//": "The other 15 schemas in engine/schemas/ are consumed by the engine alone. Moving them buys churn, not a binding -- CONTRACTS_DEDUPE_PLAN.md M2. Listed so the gate can assert the split is exhaustive rather than assumed.",
+    "ids": [
+      "agent-profile", "agent-status", "agent-ui", "completion-manifest", "control-room-command",
+      "dashboard-manifest", "law-record", "meta-layer", "metric-contract", "orchestration-event",
+      "recovery-record", "release-grant", "runtime-dependency", "skill-evolution-proposal",
+      "skill-receipt"
+    ]
+  },
+  "wire_protocols_that_stay_put": {
+    "//": "M3 of the plan, recorded as a decision so a later reader does not fold them in: these are protocols between two NAMED processes, not shared domain objects, and they are correctly filed next to the process that serves them.",
+    "paths": ["bridge/contracts/", "engine/contracts/"]
+  }
+}

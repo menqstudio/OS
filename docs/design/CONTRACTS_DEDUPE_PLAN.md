@@ -103,13 +103,31 @@ either carried **or** checked, so one that is *neither* — a shape parsed on th
 other fields alone, where anything with the same field names would be accepted — is a finding the
 first version could not have produced.
 
-**M2 — one home for the cross-half schemas.**
-Move only the schemas both halves consume — `verifier-receipt`, `evidence-event`, `task-contract`,
-`execution-lease`, `mode-grant` — into `contracts/`, leaving `engine/schemas/` re-pointed. The other
-16 are engine-internal and moving them buys nothing but churn.
+**M2 — one home for the cross-half schemas. ◑ DONE except the relocation, 2026-08-29 —
+`contracts/index.json` + `tools/check_contracts_single_source.py`.**
+The five schemas both halves consume — `verifier-receipt`, `evidence-event`, `task-contract`,
+`execution-lease`, `mode-grant` — now have their **source of record in `contracts/`**, with a
+byte-identical vendored copy in `engine/schemas/` that the engine goes on loading. Editing either
+side alone is RED, naming the file and the direction of drift. The index carries each contract's
+**version** as a JSON Pointer into the schema's own `const`, so a bump has to be made in both places
+in one commit; the split between cross-half and engine-internal is asserted **exhaustive** over
+`engine/schemas/`, so a new schema cannot default into silence; and a `*.schema.json` outside the
+four declared homes is RED, which is the third-copy failure this milestone exists to prevent.
+Seventeen tests, every one a mutation of a green tree.
+
+*This is a weaker claim than "only one file exists", and it is said plainly rather than dressed up.*
+What remains is the relocation itself, and the reason it is not a plain Builder change is written
+down rather than filed under a blocker it does not have: the engine resolves every schema path
+relative to its **own root** (`registry.json` holds root-relative paths, read by
+`bro_contracts.validate_registered_schemas` and `bro_orchestration`), and `engine/` is a **git
+subtree** of `menqstudio/Bro`. Pointing those loaders at `../contracts/` makes the engine read
+outside its root — a change to the containment model its perimeter is built on — and moving files
+out forks the vendored half from upstream. **It is not blocked by the production gate, by any
+service principal, launcher, broker or deployment** (ninth audit `I-13`); it needs its own audited
+engine branch.
 
 *Precondition:* M1 green, so the move is provably behaviour-preserving. *Risk:* every Python loader
-path changes at once; that is why M1 comes first.
+path changes at once; that is why M1 came first, and why the binding landed before the move.
 
 **M3 — the bridge and signer protocols stay where they are.**
 `bridge/contracts/` and `engine/contracts/` are **wire protocols between two named processes**, not

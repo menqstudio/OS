@@ -62,8 +62,8 @@ import type {
   SearchResult, SecuritySummary, Task,
 } from '../domain/entities';
 import type {
-  AgentStatus, ApprovalLevel, ApprovalStatus, MemoryKind, Priority, ProjectStatus, RiskLevel,
-  RunStatus, Severity, TaskStatus,
+  AgentStatus, ApprovalLevel, ApprovalStatus, DecisionStatus, MemoryKind, Priority, ProjectStatus,
+  RiskLevel, RunStatus, Severity, TaskStatus,
 } from '../domain/enums';
 import { INTEGRATION_STATUSES } from '../domain/enums';
 import { AppProvider } from '../app/store';
@@ -150,6 +150,10 @@ const runState = (v: RunStatus) => v;
 const approvalState = (v: ApprovalStatus) => v;
 const integrationState = (v: (typeof INTEGRATION_STATUSES)[number]) => v;
 const memoryKind = (v: MemoryKind) => v;
+// `I-11`: `Decision.status` is `string` on the entity, so `'accepted'` used to be shape-correct
+// and vocabulary-free. It reaches the page's THIRD branch — the fallback — which is the branch a
+// word nobody has seen also reaches, so the fixture proved nothing about a recognised state.
+const decisionState = (v: DecisionStatus) => v;
 
 const T0 = '2026-08-19T09:00:00Z';
 const T1 = '2026-08-19T10:30:00Z';
@@ -200,7 +204,7 @@ const NOTIFICATIONS: Notification[] = [
 ];
 
 const DECISIONS: Decision[] = [
-  { id: 'de-1', title: 'One palette, and it is --menq-*', status: 'accepted', owner: 'owner',
+  { id: 'de-1', title: 'One palette, and it is --menq-*', status: decisionState('accepted'), owner: 'owner',
     rationale: 'Two palettes with one gate is one contract, two implementations.',
     createdAt: T0, updatedAt: T1 },
 ];
