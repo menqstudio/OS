@@ -8,6 +8,29 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `4c98856` — the ninth round's thirteen findings are answered (2026-08-29)
+
+`I-01`..`I-13` all have owners in `TASKS.md` and marks in the ledger, and every one a Builder change
+can reach is fixed and mutation-verified. **None of them is ✅** — every mark is ◑, the Builder's own
+claim, because `A-09` and `T-034` were each reopened after the session that fixed them called them
+closed.
+
+**What a tenth round should attack first**, in the order the evidence is weakest:
+
+1. **`A-09` route 1** — open by design. The claim to test is not *"no credential travels"* but
+   *"the set of leaves one could travel through is 19, and that number is derived from the
+   validators."* Add a field, or loosen one, and see whether the file goes red.
+2. **`I-13`'s remaining relocation** — `contracts/` is the source and the copy is gated, but the
+   engine still loads its own. The claim to test is that the reason (root-relative loaders, subtree
+   provenance) is real and not a preference.
+3. **`T-023`** — still ◑ on one green run of an intermittent job, by the ninth auditor's own
+   recommendation.
+4. **`T-040`** — measured, recorded, unpatched. Three of five full runs red on Windows, always green
+   in isolation, and it fails at `5abdb5e` too.
+5. **The gate fixes themselves** — `check_bundle_budget.py`'s freshness rule, the roadmap
+   fraction check, and the contracts drift gate are all new and all written by the same hand that
+   wrote the findings they answer.
+
 ### Two supply-chain gates caught real things on the way in (2026-08-29)
 
 `gitleaks` flagged `agentsDispatch.boundary.test.ts` as `generic-api-key`, and it was **right to**.
