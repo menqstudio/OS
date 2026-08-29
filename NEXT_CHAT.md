@@ -1,12 +1,52 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `5480579`.** The pull request that records it is PR #169 on `settle-after-168`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **⏭️ CURRENT ACTIVE: PR #170 · branch `perf/route-budgets`** (base `main`, tip `f6da2af`, task T-041). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Block C: what the ninth round left standing and what a tenth should attack, in the order the evidence is weakest -- A-09 route 1 (open by design), I-13's remaining file relocation (an audited engine change, not the production gate), T-023 (one green run of an intermittent job is not evidence), T-040 (measured, unpatched, decisive experiment named), and the three gates added in PR #166, which were written by the same hand that wrote the findings they answer. Nothing since the ninth round is independently confirmed.
+> The performance gate budgeted one entry chunk and left 23 lazily-loaded route chunks -- every page in the cockpit, 256.7 KB gzip -- with no ceiling at all, while Phase 10 asks for a performance gate over all 22 pages. perf-budget.json gains a routes section and check_bundle_budget.py enforces it bidirectionally; both roadmap rows stay unticked for one word, production, because axe runs in jsdom.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The performance gate measured one chunk and called it 22 pages (2026-08-29)
+
+Phase 10 asks for a *"production a11y + performance gate pass over all 22 pages"*. Three of that
+box's four halves turn out to be done and nobody had said so; the fourth was not close.
+
+**Measured first, before anything was built.** `pages.a11y.spec.tsx` mounts all **23** route
+components under axe and the job is green. Placeholder copy: **zero** hits for lorem/TODO/TBD/
+coming-soon. Real Armenian copy: **238 locale keys with 2 identical to English** — `app.name` =
+`BroPS` and `chat.you` = `gev`, both proper nouns — and **1 170 en/hy pairs** across the
+`*.strings.ts` files with **7** identical, every one an identifier (`GitHub`, `desktop-owner`,
+`local-scheduler`, cron syntax, `DIGEST`).
+
+**The performance half covered one chunk.** `entry_payloads` reads only `isEntry` records and
+`_collect_files` deliberately excludes `dynamicImports` as not-first-paint. Both are *right about
+first paint*, and together they left every page unmeasured: **23 lazily-loaded chunks, 256.7 KB gzip,
+no ceiling at all.** A page could double and the gate would print GREEN about the entry.
+
+## What a route's budget counts, and why the subtraction matters
+
+The route list is not a path heuristic — it is the entry's own `dynamicImports`, the build's
+statement of what the router can reach, so a new page is RED until somebody gives it a ceiling. A
+route's payload is its transitive closure **minus whatever the entry already loaded**, because bytes
+already in the initial payload are not fetched again and charging them twice would budget a cost
+nobody pays.
+
+`Chat` is the case that proves both directions: its own chunk is **0.16 KB** and the number that
+matters is **17.71 KB**, almost all of it the `Conversations` chunk it drags in. Budgeting the chunk
+alone would have understated that page by a hundred times.
+
+Ceilings are the measured size × 1.25, rounded up to the nearest 0.5 KB — headroom for ordinary work,
+not for a rewrite. The closest to its ceiling today is `GroupChat` at **28.7/36.0 KB**.
+
+## The one thing that is still not true, and it is one word
+
+**`production`.** Axe runs in **jsdom**, not against the built app. Both rows stay unticked for that
+single reason, which is written into them. The `computed-style (real Chromium)` workflow already has
+a real browser; pointing axe at it is what finishes the box.
+
+Nine new tests, and the route check mutated away turns **4** of them red.
 
 ### `main` is settled at `5480579` (2026-08-29)
 
