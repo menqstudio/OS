@@ -6,28 +6,27 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `893d1bf` · **task** `T-045` · **PR #180** (ready)
-**`main` is settled at** `96c013a` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
+**Active branch:** `settle-after-180` · **head** `40a2a44` · **task** `T-045` · **PR #181** (the settle commit)
+<!-- BANNER -->
+> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+>
+> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+>
+> **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
+<!-- /BANNER -->
 
-**Next: merge PR #180.** All 34 checks pass on the exact head and `mergeStateStatus` is
-`CLEAN`; re-verify both before merging, never mid-run. Then settle `main`
-(`python3 tools/sync_active_pr.py --settled --parked-role 112=design`) and commit the banner
-in the same cycle.
+**Next:** merge PR #181 so `main` records the settled state, then claim a row in
+[`TASKS.md`](TASKS.md). `T-045` is merged as PR #180: every canonical file is under a ceiling,
+the roadmap is eleven files under [`docs/roadmap/`](docs/roadmap/) reassembled by
+`tools/roadmap_source.py`, and five gates that were RED in CI are fixed.
 
-*Read `gh pr checks` before believing a sentence about gates.* The previous handoff said
-`T-045` was "GREEN on every gate it added"; CI showed four red jobs on that same head, and
-each fix exposed the next, because a job dies at its first failing step and everything after
-it never runs. Five in total. Two things now have to be true at every push, and neither was:
-the PR body carries exactly one `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head,
-and `config/current_state.json` names the live `main` — `96c013a`, not the `b190a16` that
-PR #179 settled AT. Update `NEXT_CHAT.md`'s head in its own commit, never an amend: an amend
-moves the hash and the handoff then names a commit that no longer exists.
-
-The roadmap split is **done**, not pending — eleven files under [`docs/roadmap/`](docs/roadmap/) plus
-`tools/roadmap_source.py`, byte-identical to the pre-split document by
-`tools/test_roadmap_split.py`. This paragraph said it was still the Owner's call until
-2026-08-30 because a handoff was carried forward without being checked, which is the same
-mistake as every other one on this page. Every canonical file is now under its ceiling.
+*Read `gh pr checks` before believing a sentence about gates.* The handoff before this one said
+`T-045` was "GREEN on every gate it added"; CI showed four red jobs on that same head, and each
+fix exposed the next, because a job dies at its first failing step and everything after it never
+runs. Three things have to be true at every push, and none was: the PR body carries exactly one
+`AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the
+live `main`, and the head named here is updated **in its own commit** — an amend moves the hash
+and the handoff then names a commit that no longer exists.
 
 ## Verify before you believe any of this
 

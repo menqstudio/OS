@@ -29,6 +29,9 @@ from check_coordination import PR_ROLES  # the closed enum, imported so it canno
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
+#: Where the shared banner starts and ends in each of them. See rewrite_banners().
+BANNER_OPEN = "<!-- BANNER -->"
+BANNER_CLOSE = "<!-- /BANNER -->"
 STATE = ROOT / "config" / "current_state.json"
 
 #: The one sentence every banner ends with. It states the SHIPPED fail-closed posture, so it is
@@ -47,49 +50,77 @@ STATE = ROOT / "config" / "current_state.json"
 #: Two cold reads in a row concluded the audit had come back clean: NEXT_CHAT.md led with the FIRST
 #: audit's "all code facts CONFIRMED, none refuted" and the SECOND audit's RED verdict appeared in
 #: no canonical file at all. A verdict that lives only in a report nobody is routed to is not a
-#: verdict the repository has. Change this string when -- and only when -- an independent audit
-#: actually returns a different one.
-AUDIT_POSITION_SENTENCE = (
-    "**The last independent audit returned RED -- now for one platform rather than one mechanism.** "
-    "The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit "
-    "of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the "
-    "auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved "
-    "three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was "
-    "fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 "
-    "pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the "
-    "authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside "
-    "the 1b decision. Superseding: the THIRD "
-    "independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ "
-    "`e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** "
-    "(A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and "
-    "**confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder "
-    "claims and could not refute **9**, which it recommends for the independently-confirmed mark; it "
-    "also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback "
-    "floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect "
-    "surviving one level up rather than closing, on both platforms, demonstrated against the "
-    "repository's own ledger code. **RED is the standing verdict of record and the gate stays "
-    "shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is "
-    "`2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`)."
-)
-#: This constant said "122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds"
-#: until 2026-08-14. That figure is in NEITHER audit report. The remediation audit's own verdict
-#: table says 45 (P0 1 / P1 5 / P2 13 / P3 26) and the document carries exactly 45 R-numbered
-#: rows, R-01..R-45, whose priorities sum to the same split. Every occurrence of "122" in that
-#: report is a line number or a line count. "across its three rounds" was invented with it.
+#: verdict the repository has.
 #:
-#: It mattered because THIS constant is what stamps the audit position into NEXT_CHAT.md,
-#: PROJECT_STATE.md and TASKS.md at once -- the same generator that stamped the false
-#: "the broker hands out UpstreamBlockedExecutor" sentence into three canonical files before
-#: 2026-08-09. The one file that had it right was apps/desktop/AUDIT/AUDIT_LEDGER.md, which is
-#: the file every reader is sent to for the audit position, and which said 45 while six other
-#: documents said 122. Where this sentence and the report disagree, the report wins: read it.
+#: It was a hard-coded paragraph until 2026-08-30, and by then it described the FOURTH round while
+#: the standing verdict was the NINTH -- five rounds stale, in the one generator that stamps the
+#: audit position into three canonical documents at once. Its own comment said "change this string
+#: when an independent audit returns a different one", and five did. The same comment records that
+#: this constant once carried a finding count ("122") that appears in neither report, and that the
+#: file which had it right was the ledger -- the file every reader is sent to.
+#:
+#: So it is READ now, from the two places that already have to be correct: the record
+#: `code_audit.last_independent_audit` in the machine mirror (which `check_audit_reports.py` binds
+#: to the ledger and to docs/OWNER_ACTION_REQUIRED.md) and the round ordinal the ledger announces.
+#: A sentence assembled from records cannot go stale on its own, and it refuses rather than guesses.
+def audit_position_sentence(root: pathlib.Path = ROOT) -> str:
+    """One line naming the standing verdict, its round and its report. Fail-closed.
 
-FAIL_CLOSED_SENTENCE = (
-    "**The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns "
-    "Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, "
-    "and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a "
-    "deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets."
-)
+    Deliberately SHORT. The paragraph it replaces was 2.3 KB and went into three canonical files,
+    which is 7 KB of a read set held to 350 KB -- and the reader who needs the detail is one link
+    away, at the ledger, which is where every other document sends them.
+    """
+    try:
+        import check_audit_reports as audit
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"RED: cannot read the audit position: {exc}. Nothing has been written.")
+    state = root / "config" / "current_state.json"
+    try:
+        pointer = audit.state_audit_pointer(state.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"RED: cannot read {state}: {exc}. Nothing has been written.")
+    if not pointer:
+        raise SystemExit(
+            "RED: config/current_state.json names no last-independent-audit report, so the banner "
+            "would state a verdict from nowhere. Set code_audit.last_independent_audit. "
+            "Nothing has been written.")
+    if not (root / pointer).is_file():
+        raise SystemExit(f"RED: the audit record names {pointer}, which does not exist. "
+                         f"Nothing has been written.")
+    ledger = root / audit.LEDGER
+    ordinal = audit.ordinal_of(ledger.read_text(encoding="utf-8")) if ledger.is_file() else None
+    if not ordinal:
+        raise SystemExit("RED: the audit ledger announces no round, so the banner cannot name one. "
+                         "Nothing has been written.")
+    return ("**Standing verdict: RED** -- the " + ordinal.upper() + " round, `" + pointer
+            + "`. Check any tick in prose against `" + audit.LEDGER + "` before believing it.")
+
+
+#: The shipped fail-closed posture used to be a fourth paragraph in the banner, repeated in all
+#: three documents. It is not repeated any more: it is in `CLAUDE.md` §6 and in `NEXT_CHAT.md`'s
+#: body, and a banner is a banner. The three banners came to 1.9 KB each on 2026-08-30 and put all
+#: three files over their ceilings at once, with `check_canon_budget` also reporting NEXT_CHAT.md
+#: and TASKS.md as 23% one document — the generator re-manufacturing exactly the duplication the
+#: budget exists to remove. What survives here is the state, the next action, and the verdict; the
+#: verdict survives because two cold reads in a row concluded the audit had come back clean.
+BANNER_MAX_BYTES = 900
+
+
+def _bounded(banner: str) -> str:
+    """Refuse a banner too large to be repeated three times. Fail-closed, with the number.
+
+    A banner is written into every canonical state document at once, so its size is multiplied by
+    three inside a read set held to 350 KB. This is the cheap check that stops the next long
+    paragraph from being discovered by `check_canon_budget` after the write.
+    """
+    size = len(banner.encode("utf-8"))
+    if size > BANNER_MAX_BYTES:
+        raise SystemExit(
+            f"RED: the banner is {size} bytes against a ceiling of {BANNER_MAX_BYTES}, and it is "
+            f"written into {len(BANNER_FILES)} canonical documents at once. Shorten it — the "
+            f"detail belongs in the body of one file, not in the first paragraph of three. "
+            f"Nothing has been written.")
+    return banner
 
 
 def live_main_head() -> str:
@@ -312,6 +343,27 @@ def record_parked_prs(parked: list[dict], roles: dict[int, str]) -> list[int]:
     return [p["number"] for p in new]
 
 
+def _json_string_end(text: str, start: int) -> int:
+    """Index just past the closing quote of the JSON string beginning at `start`.
+
+    Backslash escapes are honoured, so a note containing `\\"` does not end the scan early. Written
+    because the alternative — finding the end of the enclosing block — makes the surgery depend on
+    which key happens to be last.
+    """
+    if text[start] != '"':
+        raise SystemExit("RED: the note is not where this tool expects it. Nothing has been written.")
+    i = start + 1
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            return i + 1
+        i += 1
+    raise SystemExit("RED: unterminated string in the snapshot. Nothing has been written.")
+
+
 def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)              # parse first: refuse to touch a file we cannot read back
@@ -347,18 +399,23 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
          f"self-carrier is PR #{pr}). PR #{pr}'s own exact-head", "self-carrier")
 
     # The note is prose; replace it wholesale rather than patching around the old text.
+    #
+    # The span is found by SCANNING the JSON string, not by looking for the block's closing
+    # `"\n  },`. That earlier slice ran from `"note": "` to the end of the block, so it was
+    # correct only while `note` was the last key — and on 2026-08-30 it was not: `base` had been
+    # written after it, the slice would have swallowed `base` whole, and the settle refused. The
+    # refusal was right and the fix is not to reorder the file to suit the tool. `json.loads`
+    # cannot catch this on its own, because deleting whole key/value pairs leaves valid JSON
+    # (A-10, fifth audit); the shape comparison below is what caught it, and it stays.
     start = text.index('"note": "', text.index('"current_workflow_pr"'))
-    end = text.index('"\n  },', start) + 1
+    end = _json_string_end(text, start + len('"note": '))
     text = text[:start] + '"note": ' + json.dumps(summary) + text[end:]
     changed.append("note")
 
     after = json.loads(text)             # and parse again: never leave it unreadable
-    # THE SLICE ABOVE IS POSITIONAL. It runs from `"note": "` to the block's closing `"\n  },`,
-    # which is correct only while `note` is the LAST key of current_workflow_pr. Add a key after it
-    # and the slice swallows everything in between — and `json.loads` still succeeds, because
-    # deleting whole key/value pairs leaves valid JSON (A-10, fifth audit). A parse guard that
-    # cannot see the damage it was placed to catch is not a guard, so compare the key set instead:
-    # this function is allowed to change the VALUES of current_workflow_pr, never its shape.
+    # A parse guard that cannot see the damage it was placed to catch is not a guard, so compare
+    # the key set: this function is allowed to change the VALUES of current_workflow_pr, never
+    # its shape.
     before_keys = set((data.get("current_workflow_pr") or {}).keys())
     after_keys = set((after.get("current_workflow_pr") or {}).keys())
     if before_keys != after_keys:
@@ -381,18 +438,32 @@ def rewrite_banners(banner: str) -> None:
     check — the coordination gate saw a banner that did not name the active branch, which is a
     symptom two steps downstream of the cause.
 
-    The block is every consecutive blockquote line from line 3 down. All of it is replaced.
+    **Located by MARKER, never by line number.** It replaced "every consecutive blockquote line
+    from line 3 down" until 2026-08-30. `T-045` then rewrote all three documents and put a
+    *purpose* note in that position -- NEXT_CHAT.md's says what the file is for and what its
+    ceiling is -- so the first `--settled` run after that quietly overwrote it, and stopped
+    half-way through the second file leaving one document rewritten and two not. A tool that
+    locates canonical text by counting lines will eventually delete something else.
+
+    The markers are `<!-- BANNER -->` and `<!-- /BANNER -->`, the same idiom
+    `tools/roadmap_source.py` uses for `<!-- PHASES -->`. A file without them is REFUSED by name
+    rather than guessed at, and the refusal happens for ALL files before any is written, so a
+    partial rewrite is not reachable.
     """
+    found: list[tuple[pathlib.Path, str, int, int]] = []
     for name in BANNER_FILES:
         p = ROOT / name
-        lines = p.read_text(encoding="utf-8").split(chr(10))
-        if not lines[2].startswith("> **"):
-            raise SystemExit(f"RED: {name} line 3 is not the shared banner; refusing to overwrite it")
-        end = 2
-        while end + 1 < len(lines) and lines[end + 1].startswith(">"):
-            end += 1
-        rebuilt = lines[:2] + banner.split(chr(10)) + lines[end + 1:]
-        p.write_text(chr(10).join(rebuilt), encoding="utf-8")
+        text = p.read_text(encoding="utf-8")
+        i = text.find(BANNER_OPEN)
+        j = text.find(BANNER_CLOSE)
+        if i < 0 or j < 0 or j < i:
+            raise SystemExit(
+                f"RED: {name} carries no {BANNER_OPEN} ... {BANNER_CLOSE} block, so this tool "
+                f"cannot tell the shared banner from the rest of the document. Add the markers "
+                f"around the state block. Nothing has been written.")
+        found.append((p, text, i + len(BANNER_OPEN), j))
+    for p, text, i, j in found:
+        p.write_text(text[:i] + chr(10) + banner + chr(10) + text[j:], encoding="utf-8")
 
 def rewrite_carrier_block(pr: int, branch: str) -> bool:
     """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
@@ -537,10 +608,9 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
                  + "`, the pull request that records it.") + others) if pr and branch
                else ((" Nothing is open." if not parked else " Open:" + others)))
     rewrite_banners(banner or (
-        "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
-        + " Start from "
-        "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> " + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY."))
+        _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
+                 + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
+                 + tail + "\n>\n> " + audit_position_sentence())))
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -589,12 +659,12 @@ def main() -> int:
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
         f"`{head[:7]}`, task {args.task or 'unstated'}).{also}\n>\n> {args.summary}\n>\n> "
-        + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
+        + audit_position_sentence())
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
     # reports work it did not do is worse than silence: the banner stayed stale while the tool
     # said it had been rewritten, and the only thing that caught it was reading the file.
-    rewrite_banners(banner)
+    rewrite_banners(_bounded(banner))
 
     # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
     # files had already been rewritten, so the tool reported failure for work it had done.

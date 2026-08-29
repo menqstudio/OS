@@ -5,8 +5,13 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
-**Active branch** `gate/canon-budget` · **task** `T-045` · `main` settled at `96c013a`
-(PR #179) · open and deliberately unmerged: PR #112 (`design/floor-writer-service`).
+<!-- BANNER -->
+> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+>
+> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+>
+> **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
+<!-- /BANNER -->
 
 **Claim a row before you touch anything, and never two agents on one row.**
 
@@ -16,7 +21,7 @@ confirmed it. Never promote your own work.
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-045** | **The canon has to stay readable, and the handoff has to be checkable.** Every gate in `tools/` could only be satisfied by ADDING, and `coordination_stop_guard.py` went further and blocked a session from ending unless it wrote into `PROJECT_STATE.md`/`TASKS.md`/the roadmap — so the read manifest grew to 1917 KB (~386k tokens) with `NEXT_CHAT.md` and `PROJECT_STATE.md` carrying 3037 identical lines. `check_canon_budget.py` and `check_handoff_ready.py` are the counterweight, plus the PreToolUse refusal that accepts only shrinking edits to an over-budget canonical file. Its own gates then went red in CI on `1a5616d` for reasons nothing local could see — `check_handoff_ready.py` judged a `pull_request` merge commit as an ordinary checkout and said "nothing of it is on GitHub", and the `purpose` cut deleted the audit pointer `check_audit_reports.py` reads and the O-1..O-5 severities `check_residual_items.py` reads. All four fixed and mutation-verified, which exposed a fifth: `check_doc_claims.py` compared the documents against whatever machine ran it — only ever a CI runner — and its version check passed any `cargo 1.x` anyway. One record (`config/toolchain.json`), a component-wise comparison, and the gate's first 18 tests. Every canonical file is under its ceiling now, and the roadmap split is done (eleven files under [`docs/roadmap/`](docs/roadmap/) + `tools/roadmap_source.py`, proven byte-identical). Remaining: merge and settle | 🔨 Claude | In-Progress | `gate/canon-budget` |
+| **T-045** | **The canon has to stay readable, and the handoff has to be checkable.** Merged as PR #180 — ceilings on every canonical file, `check_handoff_ready.py`, `check_doc_claims.py`, `check_state_fields.py`, and the PreToolUse refusal that accepts only a shrinking edit to an over-budget file. Five of its own gates were RED in CI and are fixed; the write-up is in PR #180. ◑ Builder's claim, unaudited | 🔨 Claude | Done | merged `#180` |
 | **T-004** | **Engine deferred security items O-1..O-5** (roadmap Phase 10). All five OPEN; none needs an Owner-minted artifact. What blocks them is deployment wiring and a second principal. O-1 is the only HIGH and the Owner chose the fix over accepting the risk — closure is the VERIFICATION on a packaged build, not the assertion that the install directory is unwritable. Inventory: `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule plus a targeted fix to the worktree check** (`git rev-parse --show-toplevel` instead of parsing `git worktree list`). Touches security-adjacent code, so it needs its own branch, its own PR and Owner approval; it must not land inside a coordination merge. Until then 10 monorepo-coupled engine tests skip-guard themselves | — | Todo | — |
 | **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half end to end; the request half exists on neither side. Sequenced behind the standing audit: a new input to the engine's trust boundary is not added while the independent verdict is RED | — | Blocked | — |
