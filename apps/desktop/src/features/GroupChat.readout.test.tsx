@@ -162,6 +162,41 @@ describe('GroupChat — the room readout counts only what it can establish', () 
     expect(valueFor(/OPEN FOR|ԲԱՑ|ОТКРЫТА/i)).toBe('—');
   });
 
+  it('`T-040`: the raised asyncUtilTimeout is actually in force', async () => {
+    // Deterministic, and it deliberately touches no product code: `configure({ asyncUtilTimeout })`
+    // in `src/test/setup.ts` is a global whose effect is otherwise only visible as the ABSENCE of a
+    // flake, which is not something a test can assert. This one waits for a value that appears at
+    // 1 500 ms — past the 1000 ms default, inside the 5 000 ms ceiling. Revert the `configure` call
+    // and it fails in 1 second with `Unable to find`, which is exactly the failure `T-040` is about.
+    const host = document.createElement('div');
+    host.setAttribute('data-testid', 't040-late');
+    document.body.appendChild(host);
+    setTimeout(() => { host.textContent = 'arrived'; }, 1_500);
+    try {
+      await waitFor(() => expect(host).toHaveTextContent('arrived'));
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('the readout arrives well inside the isolated budget — `T-040`', async () => {
+    // The guard for the timeout `T-040` raised. `asyncUtilTimeout` went from 1000 ms to 5000 ms
+    // because the value takes **200 ms** to arrive in isolation and a 5x margin does not survive a
+    // full run of 80 files — this test failed three times in five. Waiting longer hides nothing a
+    // broken test would have shown, but it COULD hide a real slowdown behind a generous ceiling.
+    //
+    // So the isolated latency is pinned here, where "fast" is measurable at all: 1000 ms is five
+    // times the observed figure and still well under the raised ceiling, so a genuine regression
+    // fails this even while the rest of the suite goes on tolerating a loaded machine. If this ever
+    // goes red, the answer is not a bigger number — it is that the readout got slow.
+    const started = performance.now();
+    mount();
+    await waitFor(() => expect(valueFor(/PARTICIPANT/i)).toBe('3'), { timeout: 1_000 });
+    const elapsed = performance.now() - started;
+    expect(elapsed, `the readout took ${elapsed.toFixed(0)} ms with nothing else running; `
+      + 'it was 200 ms when the budget was set').toBeLessThan(1_000);
+  });
+
   it('the readout is a labelled description list, not five loose numbers', async () => {
     mount();
     const dl = await screen.findByLabelText(/room readout/i);

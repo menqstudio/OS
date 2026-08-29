@@ -8,6 +8,42 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `T-040` was the timeout the suite raised and the one it forgot (2026-08-29)
+
+`T-040` recorded a load-only flake and named the order of work: **measure first**, then choose, and
+distrust both easy remedies. The measurement is now taken and it points at neither of them.
+
+**`GroupChat.readout`'s PARTICIPANT value arrives 200 ms after mount in isolation.** Testing Library's
+`asyncUtilTimeout` — the timeout every `findBy*` and `waitFor` actually uses — defaults to **1 000 ms**.
+A five-times margin, on a suite of 80 files that reports ~1 450 s of environment time in one run.
+
+And `vitest.config.ts` already says why that is not enough — for the *other* timeout. It sets
+`testTimeout: 30_000` with exactly the right reasoning: *"vitest's 5s default is not enough for the
+render suites on a loaded machine, and the failures it produced were indistinguishable from real
+ones."* **The suite raised the timeout it knew about and left the one that fires.** A test was being
+given thirty seconds to run while each wait inside it gave up after one.
+
+The run that measured this failed `Approvals.test.tsx` rather than `GroupChat` — at **1 203 ms**, with
+`findByRole('dialog')` timing out. Different test, different signature from `T-038`'s (there, line 100
+*passed*), same cause. That is what makes it a class rather than an incident.
+
+## The fix is neither remedy the row warned about
+
+`--retry` hides a real intermittent failure exactly once; `singleFork` roughly doubles wall-clock.
+Waiting longer for something that **does** arrive hides nothing — a genuinely broken test still fails,
+it just fails later. `asyncUtilTimeout` is **5 000 ms** now: twenty-five times the observed latency,
+and still well inside the 30 s test timeout.
+
+**The risk it does carry is named and pinned.** A generous ceiling could hide a real slowdown, so the
+isolated latency is asserted separately, at 1 000 ms — five times the observed figure, in the one
+condition where "fast" is measurable at all. If that guard ever goes red the answer is not a bigger
+number; it is that the readout got slow. And a second test proves the raised ceiling is *in force* by
+waiting for a value that appears at 1 500 ms, because a global whose only effect is the absence of a
+flake is otherwise not something a test can assert.
+
+**Measured both ways:** three consecutive full runs at **757/757**, against three failures in five
+before. Mutants: revert the timeout to 1 000 ms ⇒ red; delete the `configure` call ⇒ red.
+
 ### `main` is settled at `a4ce1cd` — both palettes are under contract (2026-08-29)
 
 Four tasks closed today, all in the same seam and each one found by the previous: `T-041` gave the 23
