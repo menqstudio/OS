@@ -3,7 +3,7 @@
 **Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
 then repaired the five CI gates that cut turned red — four of them its own. The audit pointer
 and the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`),
-which a rewrite cannot delete. PR #180 carries the detail; it is merged and unaudited. `main` was RED after each of the two merges and both were reported as green because the PR's checks were read and the branch's were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closes the second, an intermittent in the audit ledger's concurrency test.
+which a rewrite cannot delete. PR #180 carries the detail; it is merged and unaudited. `main` was RED after each of the two merges and both were reported as green because the PR's checks were read and the branch's were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second, an intermittent in the audit ledger's concurrency test; it is merged and `main` is at `40be210` with all seven workflows green.
 This file was 3893 lines and **95% of it was a byte-for-byte copy of `NEXT_CHAT.md`** —
 3037 consecutive identical lines from line 2, differing only in the title. The log both
 carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
@@ -53,8 +53,8 @@ correcting them is part of `T-045`.
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. 17 pull
-requests, 66 files and 6496 inserted lines have merged since that head, all of it circle-half.
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. 20 pull
+requests, 107 files and 19688 inserted lines have merged since that head, all of it circle-half.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

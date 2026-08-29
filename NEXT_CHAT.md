@@ -15,20 +15,20 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** merge PR #182 once `gh pr checks 182` is green on the exact head — **and then read
-`main`'s own CI**, not only the PR's. `T-045` (PR #180) and the settle (PR #181) are merged;
-`main` went red after both, the first time from a baseline `test_roadmap_split` could no longer
-reach after a squash merge, the second from an intermittent this PR closes.
+**Next:** nothing is open but this settle. Merge it, then claim a row in
+[`TASKS.md`](TASKS.md) before touching anything. `T-046` merged as PR #182 and `main` is at
+`40be210`, where all seven workflows are green — read from `gh run list --branch main`, not
+from the pull request.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
-red `main`s this session were reported as green because the PR's checks were read and the branch's
-were not. Three more things have to be true at every push: the PR body carries exactly one
-`AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the
-live `main`, and the head named above moves **in its own commit** — an amend changes the hash and
-the handoff then names a commit that no longer exists.
+red `main`s of the previous session were reported as green because the PR's checks were read and
+the branch's were not. Three more things have to be true at every push: the PR body carries
+exactly one `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head,
+`config/current_state.json` names the live `main`, and the head named above moves **in its own
+commit** — an amend changes the hash and the handoff then names a commit that no longer exists.
 
-`T-046` stays open after this merges. One green run does not prove an intermittent fixed; the
-Windows engine job has to come back clean across several pull requests, which is `T-023`'s lesson.
+`T-046`'s row stays open although it merged. One green run does not prove an intermittent fixed;
+the Windows engine job has to come back clean across several pull requests — `T-023`'s lesson.
 
 ## Verify before you believe any of this
 
@@ -65,7 +65,7 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds have run; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**17 pull requests, 66 files and 6496 inserted lines have merged since that head**, and
+**20 pull requests, 107 files and 19688 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑.
 
 **Nothing is waiting on the Owner.**
