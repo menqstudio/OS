@@ -1,12 +1,54 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `cb3ae03`.** The pull request that records it is PR #177 on `settle-after-176`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **⏭️ CURRENT ACTIVE: PR #178 · branch `design/dead-token-gate`** (base `main`, tip `dedccea`, task T-044). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Block C's remaining items are the ones a Builder cannot finish alone, and none of them is the production gate: A-09 route 1 is open by design (a credential is defined by what a remote system accepts, so the honest answer is the enumerated 19-leaf surface, not a heuristic); I-13's file relocation needs an audited engine branch (root-relative loaders, subtree provenance); T-023 needs its job to run clean across several pull requests before one green run means anything. Also open and unowned: --hi, a token declared in both :root blocks and painted nowhere. The five tasks closed on 2026-08-29 -- T-040, T-041, T-042, T-043 and the ninth audit's I-01..I-13 -- are all circle-half; nothing since the ninth round is independently confirmed, and the NEXT independent round is what would change that (deliberately not named by ordinal: check_audit_reports treats any mention of a numbered audit as a citation that must have a filed report, which is the A-06 rule, and it caught this sentence on the first push).
+> check_c1_tokens asserts every var(--x) resolves; nothing asserted the reverse, and 20 of 149 custom properties were declared and read by nothing -- residue from T-033's deletion of 1185 rules. Six deleted, nine pinned by §C.1 (including --hi), five allowed by name with reasons. The naive scan said 24 because a BEM class name contains a double dash.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### Six dead tokens deleted, and the other fourteen have a reason now (2026-08-29)
+
+`T-042` found `--hi` by hand — a token declared in both `:root` blocks and painted nowhere — while
+writing a contrast pair for a background no page has. Nobody had looked at the class of problem.
+**20 of 149 custom properties were declared and read by nothing.**
+
+`check_c1_tokens.py` asserts the forward direction: every `var(--x)` resolves to a declaration. That
+is the direction with a visible symptom — Phase 3 shipped two empty states with no padding because
+`--s7` was referenced and never declared. **The reverse was asserted nowhere, and the reverse is where
+residue collects:** `T-033` deleted 1 185 unreachable CSS rules and the custom properties those rules
+read survived the deletion, because nothing counts a declaration nobody reads.
+
+## The measurement was wrong first, and that is worth more than the number
+
+The naive rule `(--[a-z0-9-]+)\s*:` reported **24**. Four of them were `.dt-row--action`,
+`.file-row--dir`, `.tile--link` and `.btn--primary` — a BEM class name contains a double dash and a
+pseudo-class contains a colon, so the scan was reading modifiers as tokens. A declaration is a
+`--name:` whose `--` is not preceded by an identifier character; corrected, the answer is **20**, and
+the lookbehind is the whole correctness of the gate. Deleting the BEM lookbehind turns a test red.
+
+## What the twenty are
+
+**Six deleted** — residue from `T-033`'s rule deletion: `--glow-cyan`, `--hex`, `--hex-clip`,
+`--mtone`, `--vt`, `--vt-rgb`. `--mtone-rgb` survives beside `--mtone` because something still reads
+it, which is the kind of pair a blunter cleanup would have taken both halves of.
+
+**Nine pinned by §C.1** — `--hi`, `--s1`, `--s8`, `--s9`, `--s10`, `--t-hero`, `--t-ui`,
+`--azure-hover`, `--info`. The roadmap's design-token specification names them and
+`check_c1_tokens.py` requires them to exist, so *"the app has not painted it yet"* is not a defect.
+That answers `T-042`'s open note about `--hi` properly: it is not a mistake, it is a specified token
+with no consumer. The exemption is **read from the roadmap**, so it cannot drift from the spec.
+
+**Five allowed by name, each with its reason** — the `--menq-*`/`--brops-*` entries `tokens.ts`
+mirrors. A published contract may carry an entry the app has not used. Listed **by name, never by
+prefix**: a prefix rule would exempt every future token in the family silently, which is the hole the
+gate exists to close. That property was asserted nowhere until a mutant said so — replacing
+`token in ALLOWED` with a `startswith` left every test green — and it has a test now.
+
+The allowlist is also checked from the other side: an entry naming a token that does not exist, or
+one something has started reading, is RED. An exemption that outlives its reason is how the next dead
+token hides.
 
 ### `main` is settled at `cb3ae03` — `T-040` is closed by measurement (2026-08-29)
 

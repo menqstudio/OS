@@ -823,7 +823,7 @@ jobs:
       # now a build failure rather than a quiet nothing.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports test_check_contracts_single_source
+        run: python -m unittest test_check_repo_state test_sync_active_pr test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports test_check_contracts_single_source test_check_dead_tokens
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.
@@ -841,6 +841,12 @@ jobs:
       # Editing one side alone is RED, and a new engine schema must be classified by a person.
       - name: Contracts single source (contracts/ vs engine/schemas/)
         run: python tools/check_contracts_single_source.py
+
+      # The reverse of check_c1_tokens: that one asserts every `var(--x)` RESOLVES, this one asserts
+      # every declaration is READ. T-033 deleted 1185 unreachable CSS rules and the custom properties
+      # they read survived, because nothing counted a declaration nobody reads -- 20 of 149 were dead.
+      - name: Dead design tokens (declared and read by nothing)
+        run: python tools/check_dead_tokens.py
 
       - name: Live GitHub truth check (fail-closed)
         env:
