@@ -8,6 +8,20 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `cb3ae03` — `T-040` is closed by measurement (2026-08-29)
+
+Five tasks closed today, each found by the last: `T-041` (route budgets) · `T-042` (axe in a real
+browser; eleven defects, ten light-theme) · `T-043` (a committed contract for the second palette) ·
+`T-040` (the timeout the suite raised and the one it forgot). Phase 10's a11y and performance rows
+are the first Phase-10 boxes to tick.
+
+**Block C's remaining items are the ones a Builder cannot finish alone:** `A-09` route 1 is open by
+design, `I-13`'s file relocation needs an audited engine branch, and `T-023` needs its job to run
+clean across several pull requests — none of which is the production gate.
+
+Everything from PRs #166, #168, #170, #172, #174 and #176 is ◑ — the Builder's own claim. Standing
+verdict **RED**, production gate **shut**, three refusals untouched.
+
 ### `T-040` was the timeout the suite raised and the one it forgot (2026-08-29)
 
 `T-040` recorded a load-only flake and named the order of work: **measure first**, then choose, and
