@@ -123,7 +123,7 @@
     "branch": "gate/canon-budget",
     "state": "draft",
     "what": "T-045 — canon budget, handoff gate, doc-claims gate, owner contract",
-    "note": "Draft until CI is green on the exact head. check_canon_budget is GREEN now; the roadmap fits its ceiling and the four CI jobs that were red on 1a5616d are fixed.",
+    "note": "Draft until CI is green on the exact head. check_canon_budget is GREEN now; the roadmap fits its ceiling and the five CI gates that were red on this branch are fixed. The toolchain a canonical document may claim is recorded in config/toolchain.json -- tools/check_doc_claims.py compared the documents against whatever machine ran it, and the only machine that runs it is a CI runner.",
     "base": "main"
   },
   "next_action_by_carrier": {

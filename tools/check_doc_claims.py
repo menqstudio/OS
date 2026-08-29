@@ -25,8 +25,19 @@ already being written. So the class gets a gate rather than the instances gettin
      a head that has gone stale, invented or rebased away.
   3. **Every ticket id must exist where tickets live.** A `T-nnn` in prose and not in
      `TASKS.md` or the archive is a pointer to nothing.
-  4. **Every toolchain version claim must match the machine.** This is what catches
-     "cargo 1.96" on a box running 1.97.1.
+  4. **Every toolchain version claim must match `config/toolchain.json`**, which records the
+     DEVELOPMENT machine, and that file must match the real machine wherever a real one is
+     present. This is what catches "cargo 1.96" on a box running 1.97.1.
+
+     It compared the documents straight against `platform.node()`'s machine until
+     2026-08-30 -- and it runs in CI, where the machine is a GitHub runner carrying a
+     different node. So it reported four canonical files as making an untrue claim about
+     node when all four were CORRECT about the box they describe, and it could not have
+     been green in CI and on the box at the same time. Two different machines were being
+     compared through one number. The claim gets one source of record instead: the
+     documents are checked against the file everywhere, and the file is checked against the
+     machine only where a development machine is what is running it. In CI that half prints
+     SKIPPED and says why -- "I could not check" and "it is fine" are different answers.
 
 What this deliberately does NOT do: judge prose. It cannot tell whether a sentence
 describing a design is still true — only a reader can. It checks the claims that have a
@@ -37,6 +48,7 @@ Stdlib plus `git`. Offline. Exit 0 GREEN, 1 RED.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -71,6 +83,23 @@ NOT_A_SHA = {"deadbee", "abcdefa", "1234567", "0000000", "fffffff", "accepted", 
 # a prefix rule before.
 PRE_IMPORT_SHAS = {"6a6882e", "fa1b8cb", "5be8d95"}
 
+# Versions a canonical document QUOTES in order to say it was wrong. `CLAUDE.md` and the
+# roadmap both carry "*(The documents said cargo 1.96 ...)*" beside the corrected number,
+# which is the record of the correction and worth keeping -- but it is version-shaped, so a
+# gate reading shapes cannot tell it from a claim.
+#
+# Listed as (file, tool, version) triples, BY NAME, exactly like PRE_IMPORT_SHAS and for the
+# same reason: a rule general enough to recognise a quotation -- "a version after the word
+# said" -- would hand back the guarantee this check provides, and every stale number in the
+# repository is one sentence away from qualifying. Three named exceptions can be read; a
+# heuristic cannot be audited. If one of these lines is ever rewritten, its entry goes RED as
+# an unused exemption is not caught here -- the entry simply stops matching and the quotation
+# is checked as a claim, which is the safe direction to fail.
+QUOTED_STALE_VERSIONS = {
+    ("CLAUDE.md", "cargo", "1.96"),
+    ("MASTER_EXECUTION_ROADMAP.md", "cargo", "1.96"),
+}
+
 
 def git(*args: str) -> tuple[int, str]:
     try:
@@ -79,6 +108,32 @@ def git(*args: str) -> tuple[int, str]:
         return r.returncode, (r.stdout or "").strip()
     except Exception:  # noqa: BLE001
         return 1, ""
+
+
+TOOLCHAIN_REL = "config/toolchain.json"
+
+
+def declared_versions(root: pathlib.Path) -> tuple[dict[str, str], str | None]:
+    """The development machine's toolchain as recorded, plus a problem string if unusable.
+
+    Fail-closed: an unreadable or malformed record is RED, not an empty dict that quietly
+    checks nothing. A gate that skips when its input is missing is a gate that passes on the
+    day the input goes missing.
+    """
+    path = root / TOOLCHAIN_REL
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, f"{TOOLCHAIN_REL}: unreadable, so no version claim can be checked ({exc})"
+    versions = data.get("versions")
+    if not isinstance(versions, dict) or not versions:
+        return {}, f"{TOOLCHAIN_REL}: carries no `versions` object"
+    out: dict[str, str] = {}
+    for tool, value in versions.items():
+        if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value):
+            return {}, f"{TOOLCHAIN_REL}: {tool} version {value!r} is not an x.y.z version"
+        out[tool.lower()] = value
+    return out, None
 
 
 def installed_versions() -> dict[str, str]:
@@ -98,6 +153,24 @@ def installed_versions() -> dict[str, str]:
         if m:
             out[tool] = m.group(1)
     return out
+
+
+def _version_prefix(claimed: str, actual: str) -> bool:
+    """Is `claimed` the same version as `actual`, allowing a document to name fewer parts?
+
+    Compared COMPONENT-WISE. The first rule here was
+
+        actual.startswith(claimed) or claimed.startswith(actual.split(".")[0])
+
+    and the second half of it made the whole check a formality: with `actual` = `1.97.1`,
+    every claim beginning `1` passed — `cargo 1.96`, the exact string this gate was written
+    to catch, among them. It only ever fired on `node` because 20 and 22 differ in the major.
+    A check that passes the case it was written for is not a check; it was found by its own
+    first test, which is what tests are for.
+    """
+    want = claimed.split(".")
+    have = actual.split(".")
+    return len(want) <= len(have) and have[:len(want)] == want
 
 
 def known_tickets() -> set[str]:
@@ -120,9 +193,29 @@ def main(root: pathlib.Path = ROOT) -> int:
         return 1
 
     tickets = known_tickets()
-    versions = installed_versions()
-    problems: list[str] = []
+    versions, toolchain_problem = declared_versions(root)
+    problems: list[str] = [] if toolchain_problem is None else [toolchain_problem]
     checked = {"paths": 0, "shas": 0, "tickets": 0, "versions": 0}
+
+    # The record against the machine — only where the machine is the one the record is about.
+    in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    machine_note = ("SKIPPED: config/toolchain.json describes the development box and this is a "
+                    "CI runner, which is a different machine; the documents are still checked "
+                    "against the file")
+    if versions and not in_ci:
+        installed = installed_versions()
+        compared = 0
+        for tool, declared in sorted(versions.items()):
+            actual = installed.get(tool)
+            if not actual:
+                continue
+            compared += 1
+            if actual != declared:
+                problems.append(
+                    f"{TOOLCHAIN_REL}: records {tool} {declared}; this machine has {actual}. "
+                    f"The direction is machine -> this file -> documents, so update the file "
+                    f"and every document that repeats the number, in one commit")
+        machine_note = f"config/toolchain.json agrees with this machine on {compared} tool(s)"
 
     for rel in paths:
         doc = root / rel
@@ -188,9 +281,11 @@ def main(root: pathlib.Path = ROOT) -> int:
             if not actual:
                 continue
             checked["versions"] += 1
-            if not actual.startswith(claimed) and not claimed.startswith(actual.split(".")[0]):
+            if (rel, tool, claimed) in QUOTED_STALE_VERSIONS:
+                continue
+            if not _version_prefix(claimed, actual):
                 problems.append(
-                    f"{rel}: claims {tool} {claimed}; this machine has {actual}. Five "
+                    f"{rel}: claims {tool} {claimed}; {TOOLCHAIN_REL} records {actual}. Five "
                     f"canonical documents said PowerShell-only cargo on a Debian box")
 
     if problems:
@@ -202,6 +297,7 @@ def main(root: pathlib.Path = ROOT) -> int:
 
     print("GREEN: canonical claims check out; "
           + ", ".join(f"{v} {k}" for k, v in checked.items()))
+    print(f"  ({machine_note})")
     return 0
 
 

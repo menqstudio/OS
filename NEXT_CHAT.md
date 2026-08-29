@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `3016208` · **task** `T-045` · **PR #180** (draft)
+**Active branch:** `gate/canon-budget` · **head** `ab9dc23` · **task** `T-045` · **PR #180** (draft)
 **`main` is settled at** `96c013a` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
 
 **Next:** take PR #180 out of draft once `gh pr checks 180` is green on the exact head. Two
@@ -43,8 +43,9 @@ python3 tools/check_handoff_ready.py      # a new session could take over
 
 Measured 2026-08-29 on **Debian**, cargo 1.97.1 / node 20.20.2 / npm 10.8.2, `cargo` run
 from an ordinary shell. The documents that called this a Windows box were corrected by
-`T-045`; `tools/check_doc_claims.py` now compares every version claim against the machine,
-so that particular drift cannot come back silently.
+`T-045`. Those three numbers have one source of record now — `config/toolchain.json` —
+because `check_doc_claims.py` compared the documents against whatever machine ran it, and
+the only machine that runs it is a CI runner with a different node.
 
 ## The position, in four sentences
 

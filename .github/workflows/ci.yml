@@ -773,6 +773,7 @@ jobs:
           python -m unittest test_check_coordination
           python -m unittest test_check_canon_budget
           python -m unittest test_check_handoff_ready
+          python -m unittest test_check_doc_claims
           python -m unittest test_check_recommendation
           python -m unittest test_roadmap_split
 

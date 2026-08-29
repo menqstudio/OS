@@ -1,15 +1,14 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
 **Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
-then repaired the four CI jobs that cut turned red. Three were `T-045`'s own: shortening
-`config/current_state.json.purpose` deleted the audit pointer `tools/check_audit_reports.py`
-reads (now the field `code_audit.last_independent_audit`, which a rewrite cannot lose) and the
-`O-1..O-5` severities `tools/check_residual_items.py` requires of `CLAUDE.md`. The fourth was
-`tools/check_handoff_ready.py` itself: added and wired into CI in the same commit, it judged a
-`pull_request` merge checkout as an ordinary one and reported "nothing of it is on GitHub"
-about a checkout GitHub had just made — never green in CI since it was written. All four
-fixes are mutation-verified; six mutations, two of which came back green first time and
-needed the test isolated.
+then repaired the five CI gates that cut turned red. Four were its own: the audit pointer and
+the `O-1..O-5` severities were prose inside files it shortened, `check_handoff_ready.py` read a
+`pull_request` merge checkout as an ordinary one and had never been green in CI, and
+`check_doc_claims.py` compared the documents against whatever machine ran it — only ever a CI
+runner. The pointer and the toolchain are records now (`code_audit.last_independent_audit`,
+`config/toolchain.json`), which a rewrite cannot delete. Fifteen mutations run; two came back green
+and needed their tests isolated, and the doc-claims gate's very first test found its version
+check passing any `cargo 1.x`. PR #180 carries the detail.
 This file was 3893 lines and **95% of it was a byte-for-byte copy of `NEXT_CHAT.md`** —
 3037 consecutive identical lines from line 2, differing only in the title. The log both
 carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
