@@ -684,7 +684,10 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
             "coordination checks are gated on NEXT_CHAT.md and would silently skip (fail-closed)"
         )
 
-    roadmap = _read(root, ROADMAP)
+    # The phase bodies live in docs/roadmap/phase-N.md; roadmap_source assembles the
+    # document exactly as it read before the split, so every check below is unchanged.
+    import roadmap_source
+    roadmap = roadmap_source.roadmap_text(root) if (root / ROADMAP).is_file() else None
     if roadmap is not None:
         # 2. Roadmap has a status line.
         if not re.search(r"(?m)^\*\*Status:", roadmap):

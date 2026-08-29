@@ -92,8 +92,12 @@ class RoadmapError(RuntimeError):
 
 
 def _text(root: pathlib.Path) -> str:
+    """The whole roadmap, assembled from the main file plus docs/roadmap/phase-N.md."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     try:
-        return (root / ROADMAP).read_text(encoding="utf-8")
+        import roadmap_source
+        return roadmap_source.roadmap_text(root)
     except OSError as exc:
         raise RoadmapError(f"{ROADMAP} is unreadable: {exc}") from exc
 

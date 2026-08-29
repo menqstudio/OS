@@ -764,12 +764,17 @@ jobs:
       # what it printed, or mark it UNVERIFIED with the experiment that would settle it.
       - name: No unmarked guess in a canonical document
         run: python tools/check_no_assumptions.py
+      # Options without a recommendation are a decision passed upward while looking thorough.
+      - name: Alternatives carry a reasoned recommendation
+        run: python tools/check_recommendation.py
       - name: Gate self-tests
         working-directory: tools
         run: |
           python -m unittest test_check_coordination
           python -m unittest test_check_canon_budget
           python -m unittest test_check_handoff_ready
+          python -m unittest test_check_recommendation
+          python -m unittest test_roadmap_split
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law
