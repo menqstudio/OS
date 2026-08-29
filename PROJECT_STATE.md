@@ -1,12 +1,24 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **⏭️ CURRENT ACTIVE: PR #178 · branch `design/dead-token-gate`** (base `main`, tip `dedccea`, task T-044). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **✅ SETTLED — `main` is at `b190a16`.** The pull request that records it is PR #179 on `settle-after-178`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
 >
-> check_c1_tokens asserts every var(--x) resolves; nothing asserted the reverse, and 20 of 149 custom properties were declared and read by nothing -- residue from T-033's deletion of 1185 rules. Six deleted, nine pinned by §C.1 (including --hi), five allowed by name with reasons. The naive scan said 24 because a BEM class name contains a double dash.
+> **Next:** Everything a Builder can reach alone in this seam is done. What is left needs someone else: A-09 route 1 is open by design and is a statement about what is provable, not a task; I-13's file relocation is an audited ENGINE change (root-relative loaders, subtree provenance); T-023 needs its job to run clean across several pull requests before one green run means anything; T-021 is sequenced behind the standing audit; O-1..O-5 and the remaining Phase 10 boxes need deployment, a second principal and a signed build. Six tasks closed on 2026-08-29 -- I-01..I-13, T-040, T-041, T-042, T-043, T-044 -- and every one is circle-half. Nothing since the ninth round is independently confirmed; the NEXT independent round is what would change that (not named by ordinal: check_audit_reports treats a numbered audit as a citation needing a filed report).
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### `main` is settled at `b190a16` (2026-08-29)
+
+Six tasks closed today, each found by the last: the ninth audit's `I-01`..`I-13` · `T-041` (route
+budgets) · `T-042` (axe in a real browser — eleven defects, ten light-theme) · `T-043` (a committed
+contract for the second palette) · `T-040` (the timeout the suite raised and the one it forgot) ·
+`T-044` (the reverse of the token gate — 20 of 149 tokens read by nothing).
+
+**Phase 10's a11y and performance rows are the first Phase-10 boxes to tick.**
+
+Everything is ◑ — the Builder's own claim. Standing verdict **RED**, production gate **shut**, three
+refusals untouched.
 
 ### Six dead tokens deleted, and the other fourteen have a reason now (2026-08-29)
 
