@@ -6,6 +6,7 @@
 > ratified Wave 3 design ([`WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md`](./WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md) §1 Option B-core, §5).
 >
 > **Revision history.**
+> *(The rev-1 and rev-3 commit ids below are from `menqstudio/BroPS` before the subtree import and do not resolve in this repository — `git cat-file -e` fails on both. Kept as the historical record of which revision was reviewed; `tools/check_doc_claims.py` excludes them by name for that reason, rather than by relaxing the rule.)*
 > - **rev 1** (`6a6882e`) — first boundaries. Architect design **RED** (PR #30): 4 P0.
 > - **rev 2** (`9801489`) — closed rev-1's 4 P0 (dedicated OS principal, authenticated
 >   evidence chain, context-aware resolver, concrete schemas). Architect design **RED**:

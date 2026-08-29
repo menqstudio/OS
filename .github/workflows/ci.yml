@@ -760,6 +760,10 @@ jobs:
       # machine-checkable referent -- paths, commits, ticket ids, toolchain versions.
       - name: Canonical documents make no false checkable claim
         run: python tools/check_doc_claims.py
+      # An assumption may not enter the record dressed as a fact. Either settle it and write
+      # what it printed, or mark it UNVERIFIED with the experiment that would settle it.
+      - name: No unmarked guess in a canonical document
+        run: python tools/check_no_assumptions.py
       - name: Gate self-tests
         working-directory: tools
         run: |

@@ -27,8 +27,8 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "T-017",
-    "CURRENT_ACTIVE_WAVE": "3b-1B",
+    "CURRENT_ACTIVE_TASK": "T-045",
+    "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
     "CURRENT_DESIGN_CANDIDATE": "rev-30",
@@ -92,6 +92,10 @@
       "status": "implemented_live",
       "code_exists": true,
       "note": "production trust resolver implemented + wired in the live kit; drove the first live production trusted_verified. Not yet wired into the shipped desktop runtime."
+    },
+    "canon": {
+      "what": "Cut the canonical read set to something a session can actually be handed, and make the rules that keep it that way enforceable rather than remembered.",
+      "state": "in-progress on gate/canon-budget (PR #180)"
     }
   },
   "product_roadmap": {
@@ -113,15 +117,15 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this rea [...] docs/archive/SESSION_LOG_2026-07_2026-08.md"
   ],
   "current_workflow_pr": {
-    "number": 179,
-    "branch": "settle-after-178",
-    "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #179 body.",
-    "note": "Settling the state anchor at main b190a16. Also open, and NOT the carrier: #112 (recorded in prs[], exact-head anchored); this pull request is the commit that records it."
+    "number": 180,
+    "branch": "gate/canon-budget",
+    "state": "draft",
+    "what": "T-045 — canon budget, handoff gate, doc-claims gate, owner contract",
+    "note": "Draft while check_canon_budget is RED on MASTER_EXECUTION_ROADMAP.md.",
+    "base": "main"
   },
   "next_action_by_carrier": {
-    "_note": "The carrier is current_workflow_pr (#179 on settle-after-178). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs.",
-    "open": "merge #179 so main records this state; see next_action for what follows",
-    "merged": "re-run tools/sync_active_pr.py --settled --pr <next> --branch <next> so the snapshot stops naming a carrier that has merged"
+    "current": "PR #180 (gate/canon-budget, draft): finish T-045. check_canon_budget.py must be GREEN before the draft becomes a real pull request; then check_handoff_ready.py; then request review.",
+    "_note": "The carrier is named inside the TEXT because check_coordination joins the values of this object and looks for the literal '#<number>' there — the keys are not read. This block modelled PR #48 for three days after #48 merged."
   }
 }

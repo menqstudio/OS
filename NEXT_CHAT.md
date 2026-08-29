@@ -6,14 +6,16 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `9e71923` · **task** `T-045`
+**Active branch:** `gate/canon-budget` · **head** `319dc89` · **task** `T-045` · **PR #180** (draft)
 **`main` is settled at** `b190a16` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
 
-**Next:** finish `T-045` on `gate/canon-budget` — the canonical read set is still over
-budget, so `python tools/check_canon_budget.py` is RED and this branch may not merge.
-What remains is `TASKS.md`, `MASTER_EXECUTION_ROADMAP.md`, `config/current_state.json`
-and `apps/desktop/AUDIT/AUDIT_LEDGER.md`. Run the gate; it names every file and its
-overage. Then `python tools/check_handoff_ready.py`.
+**Next:** `T-045` is GREEN on every gate it added. Take PR #180 out of draft once CI
+agrees, then the remaining work is the roadmap's structure: `MASTER_EXECUTION_ROADMAP.md`
+is 134 KB because `check_coordination.py:698-708` requires phases 0..10 with all 16
+sections in that one file, while `check_roadmap_order.py` forbids working any phase but
+the first open one — so ten phases are carried into every session that may not touch them.
+One file per phase under `docs/roadmap/` is the fix, and it changes a load-bearing gate,
+so it is the Owner's call. See `config/canon-budget.json.rationale`.
 
 ## Verify before you believe any of this
 
@@ -24,14 +26,17 @@ and the numbers in these documents have been wrong in every audit round so far.
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2002 OK, 10 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1012 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 758 tests / 80 files
-python3 tools/check_canon_budget.py                              # RED until T-045 lands
-python3 tools/check_handoff_ready.py                             # RED until then too
+python3 tools/check_canon_budget.py       # the read set fits one context
+python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
+python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real
+python3 tools/check_no_assumptions.py     # no unmarked guess in the canon
+python3 tools/check_handoff_ready.py      # a new session could take over
 ```
 
-Measured 2026-08-29 on **Debian**, cargo 1.97.1 / node 20.20.2 / npm 10.8.2, `cargo`
-run from an ordinary shell. Several canonical documents still say this is a Windows box
-and that `cargo` must run from PowerShell; on this machine that is false, and correcting
-it everywhere is part of `T-045`.
+Measured 2026-08-29 on **Debian**, cargo 1.97.1 / node 20.20.2 / npm 10.8.2, `cargo` run
+from an ordinary shell. The documents that called this a Windows box were corrected by
+`T-045`; `tools/check_doc_claims.py` now compares every version claim against the machine,
+so that particular drift cannot come back silently.
 
 ## The position, in four sentences
 
@@ -95,3 +100,9 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 | Blocked on whom | [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) |
 | Trust model, read before reasoning about trust | [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) |
 | History | [`docs/archive/`](docs/archive/) |
+
+## Status tokens
+
+Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
+
+`CURRENT_ACTIVE_TASK: T-045` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

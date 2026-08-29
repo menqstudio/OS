@@ -41,8 +41,10 @@ the reason — then do what he decides.
 **Do not start executing before his explicit go** («սկսի» / «գո» / «արա»). He front-loads
 context across several messages; collect it, do not act on it.
 
-**Ask when a wrong assumption would cost real work.** Otherwise decide, state the
-assumption, and continue.
+**Never assume.** If a fact can be settled by running a command or reading a file, settle it
+before writing it down. If it cannot be settled now, say so in those words and name the
+experiment that would settle it — `tools/check_no_assumptions.py` refuses an unmarked guess
+in any canonical document. A guess that reads like a measurement is what costs three days.
 
 **Hand-off is a gate, not a feeling.** Before saying "open a new session", run
 `python3 tools/check_handoff_ready.py` and show its output.

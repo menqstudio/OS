@@ -64,6 +64,13 @@ VERSION = re.compile(r"\b(cargo|node|npm|python3?)\s+v?(\d+\.\d+(?:\.\d+)?)\b", 
 # silently exempt the very thing this checks.
 NOT_A_SHA = {"deadbee", "abcdefa", "1234567", "0000000", "fffffff", "accepted", "deface"}
 
+# Commit ids from menqstudio/BroPS BEFORE the subtree import. They do not resolve here and
+# never will; they are the historical record of which design revision an Architect reviewed.
+# Listed BY NAME, never by a rule that would exempt a whole class -- a broad exemption here
+# would hand back exactly the guarantee this gate provides, and the ledger has been bitten by
+# a prefix rule before.
+PRE_IMPORT_SHAS = {"6a6882e", "fa1b8cb", "5be8d95"}
+
 
 def git(*args: str) -> tuple[int, str]:
     try:
@@ -132,6 +139,11 @@ def main(root: pathlib.Path = ROOT) -> int:
             # `lstrip("./")` strips CHARACTERS, not a prefix, so `.claude/x` became
             # `claude/x` and every reference to a dotfile directory was a false RED. Found
             # by this gate's own first run, on the file that documents this gate.
+            # "`x.rs` (deleted 2026-08-10)" is a document being accurate about a file that
+            # no longer exists. Requiring the word immediately after the path keeps this from
+            # becoming a way to cite anything at all.
+            if re.search(re.escape("`" + raw + "` (deleted"), text):
+                continue
             clean = target[2:] if target.startswith("./") else target
             candidates = [doc.parent / clean, root / clean]
             # Documents legitimately cite a path relative to the subtree they describe
@@ -151,7 +163,7 @@ def main(root: pathlib.Path = ROOT) -> int:
 
         # 2 — commit-shaped strings resolve.
         for sha in set(SHA.findall(text)):
-            if sha in NOT_A_SHA or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+            if sha in NOT_A_SHA or sha in PRE_IMPORT_SHAS or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
                 continue
             if len(sha) == 7 and not re.search(r"[a-f]", sha):
                 continue  # a bare 7-digit number is not a commit
