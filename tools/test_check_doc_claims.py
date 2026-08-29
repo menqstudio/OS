@@ -229,8 +229,16 @@ class TheOtherThreeChecks(unittest.TestCase):
 
 class TheRealRepository(unittest.TestCase):
     def test_the_real_canon_makes_no_untrue_claim(self):
-        code, _ = run(ROOT, env_ci=False)
-        self.assertEqual(code, 0)
+        """The documents against the record — the half that is true on every machine.
+
+        Deliberately NOT the machine half. Asking a GitHub runner whether
+        `config/toolchain.json` describes it is asking about the wrong box, and this test
+        went red in CI for exactly that reason on its first run: it is the same confusion,
+        one level up, as the defect this whole file is about. The record-versus-machine
+        comparison is covered by the synthetic tests above, which supply the machine.
+        """
+        code, out = run(ROOT, env_ci=True)
+        self.assertEqual(code, 0, out)
 
 
 class EntryPointRunsEverything(unittest.TestCase):
