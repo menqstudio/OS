@@ -8,6 +8,20 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `58e09ed` — the light theme has been swept (2026-08-29)
+
+`T-042` closed the last word in Phase 10's a11y row and, in doing so, found eleven defects in a half
+of the product no gate had ever measured. **Both a11y/performance rows are ticked** — the first
+Phase-10 boxes to close.
+
+**What a tenth round should attack here first:** `aios.css` still carries a **second palette** that
+no *static* gate measures. The browser sweep covers it on every page now, which is how the six values
+were found, but there is no `check_contrast.py` equivalent for the `--ink`/`--cyan`/`--success`
+family — so the coverage is a running test rather than a committed contract.
+
+Everything from PRs #166, #168, #170 and #172 is ◑ — the Builder's own claim. Standing verdict
+**RED**, production gate **shut**, three refusals untouched.
+
 ### The light theme had never been through an accessibility sweep, and it was carrying eleven defects (2026-08-29)
 
 `T-041` left one word between Phase 10's a11y row and a tick: **`production`**. Axe ran in jsdom with
