@@ -8,6 +8,18 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `90fbcf7` — the routes have ceilings now (2026-08-29)
+
+`T-041` closed the performance half of Phase 10's a11y+perf box: 23 route chunks that had no ceiling
+at all now have one each, enforced bidirectionally. Both roadmap rows stay **unticked** for one word
+— `production` — because axe runs in jsdom rather than against the built app.
+
+**The next concrete step is small and named:** point axe at the real browser the
+`Cockpit · computed style (real Chromium)` workflow already runs. That finishes both rows.
+
+Everything from PRs #166, #168 and #170 is ◑ — the Builder's own claim. Standing verdict **RED**,
+production gate **shut**, three refusals untouched.
+
 ### The performance gate measured one chunk and called it 22 pages (2026-08-29)
 
 Phase 10 asks for a *"production a11y + performance gate pass over all 22 pages"*. Three of that
