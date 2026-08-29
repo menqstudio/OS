@@ -57,6 +57,8 @@
   },
   "code_audit": {
     "builder_passes": "3 independent adversarial security passes converged: 10 -> 6 -> 1 P1, ALL fixed; trust-boundary / chain / manifest CLEAN.",
+    "last_independent_audit": "apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md",
+    "last_independent_audit_note": "The report tools/check_audit_reports.py binds the ledger and docs/OWNER_ACTION_REQUIRED.md to. The NINTH round, of main @ 5cf9b8c, verdict RED with no P0. It lived inside the purpose paragraph until 2026-08-29 (T-045), where a rewrite deleted it by accident; a field cannot be lost that way.",
     "authority": "This is the BUILDER's evidence only. The external Architect CODE-audit gate is still PENDING; builder convergence is NOT the Architect verdict.",
     "gate": "ARCHITECT_PENDING"
   },

@@ -9,6 +9,7 @@ by building the broken repository it is supposed to refuse, not by asserting the
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -185,6 +186,56 @@ class StateAnchorTests(unittest.TestCase):
         # Deleting the sentence must not be the cheap way to pass.
         root = build([SIXTH], SIXTH, "sixth", SIXTH, "sixth")
         self.state(root, "no audit position here")
+        self.assertEqual(m.main(["--root", str(root)]), 1)
+
+    # --- the pointer as a FIELD (T-045 regression) --------------------------------------
+    # `purpose` held the pointer inside 74k characters of prose. Cutting that paragraph
+    # deleted the pointer with it and turned this gate RED on a change that had nothing to
+    # do with the audit trail. A regex over prose is a pointer a rewrite can lose.
+
+    def field_state(self, root: pathlib.Path, pointer: str | None, purpose: str = "") -> None:
+        (root / "config").mkdir(parents=True, exist_ok=True)
+        audit: dict[str, str] = {"gate": "ARCHITECT_PENDING"}
+        if pointer is not None:
+            audit["last_independent_audit"] = pointer
+        (root / m.STATE).write_text(
+            json.dumps({"purpose": purpose, "code_audit": audit}), encoding="utf-8")
+
+    def test_a_pointer_in_the_code_audit_field_is_green(self):
+        root = build([FOURTH, SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(root, f"{m.AUDIT_DIR}/{SIXTH}")
+        self.assertEqual(m.main(["--root", str(root)]), 0)
+
+    def test_a_field_pointer_left_behind_is_red(self):
+        root = build([FOURTH, SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(root, f"{m.AUDIT_DIR}/{FOURTH}")
+        self.assertEqual(m.main(["--root", str(root)]), 1)
+
+    def test_a_field_pointer_at_a_report_never_filed_is_red(self):
+        root = build([FOURTH, SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(root, f"{m.AUDIT_DIR}/{FIFTH}")
+        self.assertEqual(m.main(["--root", str(root)]), 1)
+
+    def test_the_field_is_authoritative_over_a_stale_sentence(self):
+        # Both present and disagreeing: the machine-readable field decides, so a leftover
+        # sentence in prose cannot hold the gate green after the field has moved on.
+        root = build([FOURTH, SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(
+            root, f"{m.AUDIT_DIR}/{FOURTH}",
+            purpose=f"AUDIT POSITION: the last INDEPENDENT audit -- {m.AUDIT_DIR}/{SIXTH} -- returned RED.")
+        self.assertEqual(m.main(["--root", str(root)]), 1)
+
+    def test_an_empty_field_falls_back_to_the_sentence(self):
+        # Deleting the field must not silently disable the prose form older docs still use.
+        root = build([FOURTH, SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(
+            root, "   ",
+            purpose=f"AUDIT POSITION: the last INDEPENDENT audit -- {m.AUDIT_DIR}/{SIXTH} -- returned RED.")
+        self.assertEqual(m.main(["--root", str(root)]), 0)
+
+    def test_neither_field_nor_sentence_is_red(self):
+        root = build([SIXTH], SIXTH, "sixth", SIXTH, "sixth")
+        self.field_state(root, None)
         self.assertEqual(m.main(["--root", str(root)]), 1)
 
     def test_the_pointer_is_read_from_the_sentence_not_from_any_path(self):

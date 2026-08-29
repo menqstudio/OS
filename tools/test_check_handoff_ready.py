@@ -10,6 +10,8 @@ statement (ninth audit `I-05`).
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import subprocess
@@ -196,6 +198,157 @@ class HandoffReady(unittest.TestCase):
         git(solo, "add", "-A")
         git(solo, "commit", "-qm", "only")
         self.assertEqual(check_handoff_ready.main(solo), 1)
+
+
+class CiCheckout(unittest.TestCase):
+    """The gate ran in CI from the day it was written and was never green there.
+
+    `actions/checkout` on a `pull_request` builds a throwaway merge commit and checks it
+    out detached. Asked naively, git then reports no upstream, a branch called "HEAD" and a
+    first parent that is `main` — so the gate said "nothing of it is on GitHub" about a
+    checkout GitHub had just made, and demanded that NEXT_CHAT.md name a commit that exists
+    only inside that one job. Unsatisfiable, and red for a reason unconnected to its subject,
+    which is how a gate gets ignored.
+
+    These build the real shape: a base commit, a PR head that settles the handoff, and a
+    merge commit whose parents are (base, pr-head), checked out detached.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="handoff-ci-"))
+        self.work = build_repo(self.tmp)
+        self.branch = branch_of(self.work)
+        self.base = head_of(self.work)
+        # A PR head on top of the base, settling the handoff the way a session would.
+        git(self.work, "checkout", "-q", "-b", "pr/topic")
+        (self.work / "work.txt").write_text("the change\n", encoding="utf-8")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "the change")
+        write_handoff(self.work, head=head_of(self.work), branch="pr/topic")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "settle")
+        git(self.work, "push", "-q", "-u", "origin", "pr/topic")
+        self.pr_head = head_of(self.work)
+        # The merge commit actions/checkout leaves behind: parents (base, pr head).
+        git(self.work, "checkout", "-q", self.base)
+        git(self.work, "merge", "-q", "--no-ff", "-m", "merge", self.pr_head)
+        self.merge = head_of(self.work)
+
+    def env(self, **over: str) -> dict[str, str]:
+        e = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request",
+             "GITHUB_HEAD_REF": "pr/topic", "GITHUB_SHA": self.merge}
+        e.update(over)
+        return e
+
+    def test_a_pull_request_checkout_of_a_settled_branch_is_green(self):
+        """Mutant: pass ci=None into check_pushed and the handoff check ⇒ red, with two
+        problems that are both artefacts of the merge commit."""
+        self.assertEqual(check_handoff_ready.main(self.work, env=self.env()), 0)
+
+    def test_the_same_checkout_is_red_without_the_ci_environment(self):
+        """The control that proves the test above is not green for a general reason: the
+        identical detached merge commit, judged as an ordinary checkout, still fails."""
+        self.assertEqual(check_handoff_ready.main(self.work, env={}), 1)
+
+    def test_a_handoff_naming_the_base_instead_of_the_pr_head_is_red(self):
+        """Mutant: accept HEAD^ (the base branch) as well as the PR head ⇒ green. The gate
+        must still catch a stale handoff in CI, or it is CI-aware by being blind."""
+        git(self.work, "checkout", "-q", "pr/topic")
+        write_handoff(self.work, head=self.base, branch="pr/topic")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "stale")
+        git(self.work, "push", "-q", "origin", "HEAD")
+        pr_head = head_of(self.work)
+        git(self.work, "checkout", "-q", self.base)
+        git(self.work, "merge", "-q", "--no-ff", "-m", "merge", pr_head)
+        env = self.env()
+        env["GITHUB_SHA"] = head_of(self.work)
+        self.assertEqual(check_handoff_ready.main(self.work, env=env), 1)
+
+    def test_a_handoff_naming_a_different_branch_is_red_in_ci(self):
+        """The branch comes from GITHUB_HEAD_REF, not from git — so it must still be
+        compared, not merely defaulted away."""
+        self.assertEqual(
+            check_handoff_ready.main(self.work, env=self.env(GITHUB_HEAD_REF="pr/other")), 1)
+
+    def test_a_head_this_checkout_does_not_contain_is_red(self):
+        """Mutant: drop the cat-file test in check_pushed's CI branch ⇒ green. A shallow or
+        misconfigured checkout must not read as GREEN.
+
+        The handoff is written to name the unreachable sha, and the branch is left correct,
+        so the head-and-branch assertions all PASS and the only thing wrong is that CI is
+        naming a commit this clone does not have. Without that the test was red because
+        NEXT_CHAT.md did not name `0000000`, and it passed with the check deleted — which
+        the mutation run said out loud."""
+        missing = "0" * 40
+        git(self.work, "checkout", "-q", "pr/topic")
+        # Written by hand rather than through write_handoff, which would also point the
+        # machine mirror at the missing commit and make check_machine_mirror the thing that
+        # turns this red. Only ONE assertion may be failing, or the test proves nothing
+        # about check_pushed.
+        (self.work / "NEXT_CHAT.md").write_text(
+            f"# NEXT_CHAT\n\nBranch `pr/topic` settled at `{missing[:7]}`.\n"
+            f"\n**Next:** continue with the thing after this one.\n", encoding="utf-8")
+        (self.work / "config" / "current_state.json").write_text(
+            json.dumps({"settled_at_main_head": self.base}), encoding="utf-8")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "names a head that is not here")
+        git(self.work, "push", "-q", "origin", "HEAD")
+        pr_head = head_of(self.work)
+        git(self.work, "checkout", "-q", self.base)
+        git(self.work, "merge", "-q", "--no-ff", "-m", "merge", pr_head)
+        payload = self.tmp / "event.json"
+        payload.write_text(json.dumps({"pull_request": {"head": {"sha": missing}}}),
+                           encoding="utf-8")
+        env = self.env(GITHUB_EVENT_PATH=str(payload), GITHUB_SHA=head_of(self.work))
+        self.assertEqual(check_handoff_ready.main(self.work, env=env), 1)
+
+    def test_a_ci_run_that_cannot_resolve_its_head_at_all_is_red(self):
+        """Mutant: drop the empty-head guard ⇒ green, and a run that does not know what it
+        is testing then passes silently.
+
+        A `pull_request` event with no payload, no GITHUB_SHA and a HEAD that is not a merge
+        commit: nothing can say which commit is under test. "I could not check" and "it is
+        fine" are different answers."""
+        git(self.work, "checkout", "-q", "pr/topic")
+        env = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request",
+               "GITHUB_HEAD_REF": "pr/topic"}
+        self.assertEqual(check_handoff_ready.ci_checkout(self.work, env)["head"], "")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = check_handoff_ready.main(self.work, env=env)
+        self.assertEqual(code, 1)
+        # The MESSAGE is the assertion. Without the guard the run is still red -- `git
+        # cat-file -e ^{commit}` on an empty sha fails -- but it reports a checkout that is
+        # missing a commit, which is a different and misleading diagnosis of a run that
+        # simply does not know what it is testing.
+        self.assertIn("the head under test could not be resolved", buf.getvalue())
+
+    def test_the_pr_head_is_read_from_the_event_payload_when_present(self):
+        payload = self.tmp / "event.json"
+        payload.write_text(json.dumps({"pull_request": {"head": {"sha": self.pr_head}}}),
+                           encoding="utf-8")
+        got = check_handoff_ready.ci_checkout(
+            self.work, self.env(GITHUB_EVENT_PATH=str(payload)))
+        self.assertEqual(got, {"head": self.pr_head, "branch": "pr/topic"})
+
+    def test_the_pr_head_falls_back_to_the_merge_commits_second_parent(self):
+        """No payload on disk: the second parent IS the PR head, and reading it is what
+        keeps this working when the event file is unavailable."""
+        got = check_handoff_ready.ci_checkout(self.work, self.env())
+        self.assertEqual(got, {"head": self.pr_head, "branch": "pr/topic"})
+
+    def test_a_push_run_uses_the_sha_and_ref_github_gives(self):
+        got = check_handoff_ready.ci_checkout(self.work, {
+            "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push",
+            "GITHUB_SHA": self.pr_head, "GITHUB_REF_NAME": "main"})
+        self.assertEqual(got, {"head": self.pr_head, "branch": "main"})
+
+    def test_outside_github_actions_there_is_no_ci_checkout(self):
+        """Mutant: return a dict unconditionally ⇒ every local run stops checking the push.
+        This is the guard that keeps CI-awareness from leaking onto a developer's disk."""
+        self.assertIsNone(check_handoff_ready.ci_checkout(self.work, {}))
+        self.assertIsNone(check_handoff_ready.ci_checkout(self.work, {"GITHUB_ACTIONS": "false"}))
 
 
 class EntryPointRunsEverything(unittest.TestCase):

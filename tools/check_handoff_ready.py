@@ -22,7 +22,9 @@ Six questions, each satisfiable, each naming its own remedy:
 
   1. Is the canonical read set inside its budget?  (tools/check_canon_budget.py)
   2. Is the working tree clean?      An uncommitted file does not exist for the next session.
-  3. Is the branch pushed?           Neither does an unpushed commit.
+  3. Is the branch pushed?           Neither does an unpushed commit. Inside GitHub
+                                     Actions this becomes "does this checkout contain
+                                     the head CI says it is testing" -- see ci_checkout.
   4. Does NEXT_CHAT.md name THIS branch and THIS head, and a next action?
   5. Does config/current_state.json point at a commit that exists?
   6. If a session id is given: is the roadmap phase declared?
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -49,6 +52,49 @@ sys.path.insert(0, str(ROOT / "tools"))
 # file is history -- its own line 9 says "Earlier prose below is HISTORY" -- and a head
 # named 3000 lines down is a record, not a handoff.
 LIVE_BLOCK_LINES = 40
+
+
+#: On a `pull_request` run, `actions/checkout` leaves a DETACHED merge commit whose first
+#: parent is the base branch and whose second is the PR head. Asked naively, git then answers
+#: three questions wrong at once: the branch is "HEAD", there is no upstream, and HEAD^ is
+#: `main` rather than the commit the handoff is describing. This gate was added by `T-045`,
+#: wired into CI in the same commit, and had NEVER been green there -- it reported "nothing of
+#: it is on GitHub" about a checkout that GitHub had just performed. A gate that is red for a
+#: reason having nothing to do with its subject teaches everyone to ignore it, which is worse
+#: than not having it: `check_repo_state.py` was ignored the same way when #84 merged red.
+def ci_checkout(root: pathlib.Path, env: dict[str, str] | None = None) -> dict[str, str] | None:
+    """What GitHub Actions actually checked out, or None when this is not a CI run.
+
+    Returns `{"head": sha, "branch": name}` describing the commit a next session would clone
+    -- for a pull request that is the PR head, never the throwaway merge commit, because the
+    merge commit exists only inside this run and no session can ever start from it.
+    """
+    env = os.environ if env is None else env
+    if env.get("GITHUB_ACTIONS") != "true":
+        return None
+    event = env.get("GITHUB_EVENT_NAME") or ""
+    if event.startswith("pull_request"):
+        head = _pr_head_from_event(env) or ""
+        if not head:
+            # No payload: the PR head is the merge commit's second parent.
+            code, second = git(root, "rev-parse", "HEAD^2")
+            head = second if code == 0 else ""
+        return {"head": head or (env.get("GITHUB_SHA") or ""),
+                "branch": env.get("GITHUB_HEAD_REF") or ""}
+    return {"head": env.get("GITHUB_SHA") or "", "branch": env.get("GITHUB_REF_NAME") or ""}
+
+
+def _pr_head_from_event(env: dict[str, str]) -> str | None:
+    """`pull_request.head.sha` from the event payload, or None if it cannot be read."""
+    path = env.get("GITHUB_EVENT_PATH")
+    if not path:
+        return None
+    try:
+        payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    sha = (payload.get("pull_request") or {}).get("head", {}).get("sha")
+    return sha if isinstance(sha, str) and sha else None
 
 
 class Result:
@@ -100,7 +146,23 @@ def check_tree_clean(root: pathlib.Path, res: Result) -> None:
                 "commit them, or revert them; either is an answer, leaving them is not")
 
 
-def check_pushed(root: pathlib.Path, res: Result) -> None:
+def check_pushed(root: pathlib.Path, res: Result, ci: dict[str, str] | None = None) -> None:
+    if ci is not None:
+        # GitHub Actions cloned this from the remote a moment ago, so "is it pushed" is
+        # answered by the checkout itself. What is still worth asking is whether the commit
+        # CI names as the head is one this clone actually has -- a shallow or misconfigured
+        # checkout is a real failure and must not read as GREEN.
+        head = ci.get("head") or ""
+        if not head:
+            res.bad("this is a CI run and the head under test could not be resolved",
+                    "check the workflow's checkout step; the gate must know what it is testing")
+            return
+        code, _ = git(root, "cat-file", "-e", f"{head}^{{commit}}")
+        if code != 0:
+            res.bad(f"CI names {head[:7]} as the head under test and this checkout does not "
+                    f"have that commit",
+                    "give actions/checkout fetch-depth: 0, or enough depth to contain the head")
+        return
     code, branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
     if code != 0:
         res.bad("the current branch could not be resolved", "run this inside the repository")
@@ -122,7 +184,8 @@ def check_pushed(root: pathlib.Path, res: Result) -> None:
                 f"git push")
 
 
-def check_handoff_names_reality(root: pathlib.Path, res: Result) -> None:
+def check_handoff_names_reality(root: pathlib.Path, res: Result,
+                                ci: dict[str, str] | None = None) -> None:
     path = root / "NEXT_CHAT.md"
     try:
         head_lines = path.read_text(encoding="utf-8").splitlines()[:LIVE_BLOCK_LINES]
@@ -136,6 +199,12 @@ def check_handoff_names_reality(root: pathlib.Path, res: Result) -> None:
     if code != 0 or code2 != 0:
         res.bad("HEAD could not be resolved to compare against NEXT_CHAT.md", "run inside the repo")
         return
+    if ci is not None:
+        # Compare against what a next session would clone, not against the merge commit this
+        # run invented. Left alone, the gate demanded that NEXT_CHAT.md name a commit that
+        # exists nowhere but inside one CI job -- unsatisfiable by construction.
+        sha = ci.get("head") or sha
+        branch = ci.get("branch") or "HEAD"
 
     # A document cannot name the commit that contains it: the hash exists only after
     # the write. So the handoff may name HEAD or HEAD's first parent -- the settling
@@ -143,7 +212,7 @@ def check_handoff_names_reality(root: pathlib.Path, res: Result) -> None:
     # next session clones. Anything older is the drift this checks for: START_HERE.md
     # sat at a head SEVEN merges stale, and nothing checked it.
     accepted = [sha]
-    code3, parent = git(root, "rev-parse", "HEAD^")
+    code3, parent = git(root, "rev-parse", f"{sha}^")
     if code3 == 0:
         accepted.append(parent)
     if not any(re.search(re.escape(c[:7]), live) for c in accepted):
@@ -192,12 +261,14 @@ def check_phase_declared(root: pathlib.Path, session: str | None, res: Result) -
                 'python tools/check_roadmap_order.py --declare <n|meta> --note "..."')
 
 
-def main(root: pathlib.Path = ROOT, session: str | None = None) -> int:
+def main(root: pathlib.Path = ROOT, session: str | None = None,
+         env: dict[str, str] | None = None) -> int:
+    ci = ci_checkout(root, env)
     res = Result()
     check_canon(root, res)
     check_tree_clean(root, res)
-    check_pushed(root, res)
-    check_handoff_names_reality(root, res)
+    check_pushed(root, res, ci)
+    check_handoff_names_reality(root, res, ci)
     check_machine_mirror(root, res)
     check_phase_declared(root, session, res)
 
@@ -213,6 +284,9 @@ def main(root: pathlib.Path = ROOT, session: str | None = None) -> int:
 
     code, sha = git(root, "rev-parse", "HEAD")
     code2, branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if ci is not None:
+        sha = ci.get("head") or sha
+        branch = ci.get("branch") or branch
     print("GREEN: a new session can take over from this repository alone.\n")
     print(f"  branch : {branch}")
     print(f"  head   : {sha}")

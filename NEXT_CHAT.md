@@ -6,16 +6,21 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `5512d82` · **task** `T-045` · **PR #180** (draft)
+**Active branch:** `gate/canon-budget` · **head** `1a5616d` · **task** `T-045` · **PR #180** (draft)
 **`main` is settled at** `b190a16` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
 
-**Next:** `T-045` is GREEN on every gate it added. Take PR #180 out of draft once CI
-agrees, then the remaining work is the roadmap's structure: `MASTER_EXECUTION_ROADMAP.md`
-is 134 KB because `check_coordination.py:698-708` requires phases 0..10 with all 16
-sections in that one file, while `check_roadmap_order.py` forbids working any phase but
-the first open one — so ten phases are carried into every session that may not touch them.
-One file per phase under `docs/roadmap/` is the fix, and it changes a load-bearing gate,
-so it is the Owner's call. See `config/canon-budget.json.rationale`.
+**Next:** take PR #180 out of draft once `gh pr checks 180` is green on the exact head, then
+put the roadmap's structure to the Owner. *The previous handoff said `T-045` was "GREEN on
+every gate it added" and CI said otherwise on that same head — four red jobs, three of them
+`T-045`'s own doing. All four are fixed here; the lesson is the repository's own first rule,
+applied to a claim about gates: run `gh pr checks`, do not read the sentence.* The remaining
+work: `MASTER_EXECUTION_ROADMAP.md` is 41 KB because `check_coordination.py:698-708` requires
+phases 0..10 with all 16 sections in one file, while `check_roadmap_order.py` forbids working
+any phase but the first open one — so ten phases are carried into every session that may not
+touch them. **Recommended: one file per phase under `docs/roadmap/`**, with the gate taught to
+follow an index. It is the real fix rather than another trim, it costs a change to a
+load-bearing gate plus its tests, and because of that it is the Owner's call.
+See `config/canon-budget.json.rationale`.
 
 ## Verify before you believe any of this
 
