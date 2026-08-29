@@ -1,6 +1,7 @@
 {
   "paths": [
     "NEXT_CHAT.md",
+    "config/owner-contract.md",
     "START_HERE.md",
     "AGENTS.md",
     "CLAUDE.md",
@@ -10,14 +11,11 @@
     "docs/ARCHITECTURE.md",
     "MASTER_EXECUTION_ROADMAP.md",
     "apps/desktop/SECURITY.md",
-    "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
     "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md",
-    "docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md",
-    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md",
     "config/current_state.json",
     "apps/desktop/AUDIT/AUDIT_LEDGER.md"
   ],
   "current_state_pointer": "NEXT_CHAT.md",
   "machine_state_pointer": "config/current_state.json",
-  "notes": "AGENTS.md and START_HERE.md are equivalent doorways (AGENTS.md is a GitHub/Codex convenience shim that redirects to START_HERE.md). NEXT_CHAT.md §3 holds the exact current branch/PR/HEAD/blockers/next-action and must be updated in the same commit as any state change; config/current_state.json is the machine-readable mirror the human docs must agree with (tools/check_coordination.py validates the agreement, tools/check_repo_state.py verifies it against live GitHub). PROJECT_STATE.md and TASKS.md are the live coordination board. The Wave 3b design chain: WAVE_3B_ISOLATED_SIGNER_DESIGN.md (Architect-GREEN, isolated-signer/manifest) -> WAVE_3B1_EXECUTION_BINDING_MAP.md (3b-1 re-scope) -> WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md (3b-1B design-lock; Architect DESIGN GREEN at rev-30 per config/current_state.json.status_tokens CURRENT_DESIGN_GATE/CURRENT_DESIGN_CANDIDATE, and since amended to §5 v2 by the F-01 durable-supervisor remediation. Design-GREEN is NOT code-GREEN. This note said 'PENDING Architect re-audit at the exact HEAD, NOT GREEN' until 2026-08-09, contradicting the status tokens every human doc is required to restate.) Every path here is asserted to exist by the coordination gate. Do not add stale or nonexistent paths here. apps/desktop/AUDIT/AUDIT_LEDGER.md is on this list because the audit POSITION lives there and nowhere else: the Owner's SECOND independent audit (2026-08-06, main @ 219c763) returned RED, and until 2026-08-09 a reader following this manifest met only the FIRST audit's 'all code facts CONFIRMED' line and concluded the audit had come back clean. The ledger is the index of record for both audit reports and for every engine/desktop ticket; read it before believing any tick in the prose documents."
+  "notes": "AGENTS.md and START_HERE.md are equivalent doorways. NEXT_CHAT.md holds the live handoff -- branch, head, next action -- and must be updated in the same commit as any state change; config/current_state.json is the machine-readable mirror the human docs must agree with (tools/check_coordination.py validates the agreement, tools/check_repo_state.py verifies it against live GitHub). PROJECT_STATE.md carries per-part status and TASKS.md the OPEN rows; history is in docs/archive/. apps/desktop/AUDIT/AUDIT_LEDGER.md is here because the audit POSITION lives there and nowhere else -- read it before believing any tick in prose. The Wave 3b design chain (WAVE_3B_ISOLATED_SIGNER_DESIGN.md, and the 3b-1 map and 3b-1B addendum in docs/design/) is normative where it applies; the addendum, the map and the Wave 3 receipt protocol left this set on 2026-08-29 (T-045) because a 355 KB specification consulted when working in its area is a reference, and forcing it into every session is what made the set undeliverable: 16 paths, 1917 KB, about 386,000 tokens, of which the hook could paste a quarter. Read them when you work there. tools/check_canon_budget.py holds every path here to a ceiling in config/canon-budget.json and the whole set to one context; it is the only gate in this repository that can be satisfied only by removing text. Do not add stale or nonexistent paths here."
 }

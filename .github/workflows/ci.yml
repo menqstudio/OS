@@ -750,6 +750,16 @@ jobs:
       # continuous-documentation law has required that for weeks and nothing checked it.
       - name: Handoff is ready for a new session
         run: python tools/check_handoff_ready.py
+      # A field nothing reads cannot be wrong, so nothing corrects it -- which is how
+      # current_state.json's `purpose` reached 74,311 characters inside the file called
+      # the machine-readable mirror (ninth audit I-06).
+      - name: Machine mirror has no field nothing reads
+        run: python tools/check_state_fields.py
+      # Every defect found while cutting the read set down had one shape: something was
+      # written down and nothing checked it was true. This checks the claims that have a
+      # machine-checkable referent -- paths, commits, ticket ids, toolchain versions.
+      - name: Canonical documents make no false checkable claim
+        run: python tools/check_doc_claims.py
       - name: Gate self-tests
         working-directory: tools
         run: |
