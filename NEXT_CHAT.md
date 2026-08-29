@@ -8,6 +8,18 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `b190a16` (2026-08-29)
+
+Six tasks closed today, each found by the last: the ninth audit's `I-01`..`I-13` · `T-041` (route
+budgets) · `T-042` (axe in a real browser — eleven defects, ten light-theme) · `T-043` (a committed
+contract for the second palette) · `T-040` (the timeout the suite raised and the one it forgot) ·
+`T-044` (the reverse of the token gate — 20 of 149 tokens read by nothing).
+
+**Phase 10's a11y and performance rows are the first Phase-10 boxes to tick.**
+
+Everything is ◑ — the Builder's own claim. Standing verdict **RED**, production gate **shut**, three
+refusals untouched.
+
 ### Six dead tokens deleted, and the other fourteen have a reason now (2026-08-29)
 
 `T-042` found `--hi` by hand — a token declared in both `:root` blocks and painted nowhere — while
