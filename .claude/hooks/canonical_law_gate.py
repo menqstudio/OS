@@ -172,6 +172,73 @@ def relative(path_str: str) -> str | None:
         return None
 
 
+def canon_budget_problem(rel: str | None, tool: str, tool_input: dict) -> str | None:
+    """While a canonical document is over its ceiling, only an edit that SHRINKS it
+    is allowed through.
+
+    Every other gate in this repository can be satisfied by adding: a check to write,
+    a row to append, a document to update. That is why the read manifest reached
+    1917 KB -- a session that appends is compliant and a session that deletes is not
+    rewarded, so nothing ever deleted. NEXT_CHAT.md got to 4034 lines one honest
+    paragraph at a time, and PROJECT_STATE.md is 95% the same file.
+
+    So the refusal is deliberately asymmetric. Over budget, `NEXT_CHAT.md` accepts a
+    write that is smaller than what is there and refuses one that is not. Under
+    budget, nothing here fires at all.
+
+    LIMIT, stated rather than hidden: this sees the Edit/Write tools. A shell
+    redirect appends without passing through here -- the same "SHELL IS NOT GATED"
+    hole this file's own header names -- and `tools/check_canon_budget.py` in CI is
+    the backstop for whatever lands.
+    """
+    if rel is None:
+        return None
+    try:
+        import check_canon_budget as budget
+    except Exception:  # noqa: BLE001 - a missing gate must not wedge the session
+        return None
+    try:
+        ceilings = budget.load_json(ROOT, budget.BUDGET_REL).get("per_file_bytes") or {}
+    except SystemExit:
+        return None
+    cap = ceilings.get(rel)
+    if not isinstance(cap, int):
+        return None
+    try:
+        current = (ROOT / rel).stat().st_size
+    except OSError:
+        return None
+    if current <= cap:
+        return None
+
+    if tool == "Write":
+        content = tool_input.get("content")
+        if not isinstance(content, str):
+            return None
+        after = len(content.encode("utf-8"))
+        if after < current:
+            return None
+        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this write "
+                f"would leave it at {after:,}. While a canonical document is over budget "
+                f"the only edit that is accepted is one that makes it smaller. Move the "
+                f"history to docs/archive/ and leave the live statement behind, then write "
+                f"again. Run `python tools/check_canon_budget.py` to see the whole set.")
+
+    old = tool_input.get("old_string")
+    new = tool_input.get("new_string")
+    if isinstance(old, str) and isinstance(new, str):
+        delta = len(new.encode("utf-8")) - len(old.encode("utf-8"))
+        if delta < 0:
+            return None
+        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this edit "
+                f"adds {delta:,} more. While a canonical document is over budget the only "
+                f"edit that is accepted is one that makes it smaller -- that is the whole "
+                f"point of the ceiling: this repository has never lacked a rule that says "
+                f"write something, only one that says remove something. Archive the history "
+                f"first. `python tools/check_canon_budget.py` names every file and its overage.")
+    return None
+
+
 def handle_pre_tool(data: dict, receipt_store, roadmap, prior_art, sid: str) -> None:
     tool = str(data.get("tool_name") or "")
     if tool not in EDIT_TOOLS:
@@ -218,6 +285,13 @@ def handle_pre_tool(data: dict, receipt_store, roadmap, prior_art, sid: str) -> 
         if not art_ok:
             deny("CANONICAL LAW: " + art_why)
             return
+
+    # 5) canon budget -- the only refusal in this file that can only be satisfied
+    #    by removing text rather than adding it.
+    problem = canon_budget_problem(rel, tool, tool_input)
+    if problem:
+        deny("CANONICAL LAW: " + problem)
+        return
 
     if notes:
         context("PreToolUse", "\n\n".join(notes))

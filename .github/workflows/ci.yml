@@ -738,9 +738,24 @@ jobs:
       # anchor + docs-reference-active-PR + PR-diff state-doc drift guard).
       - name: Coordination-docs consistency gate
         run: python tools/check_coordination.py
+      # The reverse of check_read_receipt: that one asks whether the session READ the
+      # canon, this one asks whether the canon can still BE read. Every other gate here
+      # can be satisfied by adding text; this is the only one that can only be satisfied
+      # by removing it. The read manifest reached 1917 KB (~386k tokens) with
+      # NEXT_CHAT.md and PROJECT_STATE.md carrying 3037 identical lines, because a
+      # session that appends was compliant and a session that deletes was not.
+      - name: Canonical read set within budget
+        run: python tools/check_canon_budget.py
+      # Could a brand-new session take over from this repository alone? CLAUDE.md's
+      # continuous-documentation law has required that for weeks and nothing checked it.
+      - name: Handoff is ready for a new session
+        run: python tools/check_handoff_ready.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_coordination
+        run: |
+          python -m unittest test_check_coordination
+          python -m unittest test_check_canon_budget
+          python -m unittest test_check_handoff_ready
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law

@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "purpose": "Byte ceilings for every path in config/canonical-read-manifest.json, enforced by tools/check_canon_budget.py. These are TARGETS, not descriptions: the gate is expected to be RED until the canon has been cut down to them. Raising a number to fit the text is the failure this file exists to prevent — the read manifest reached 1917 KB one honest paragraph at a time, and every gate before this one could only be satisfied by adding.",
+  "how_to_use": "Over a ceiling? Move the history to docs/archive/ and leave the live statement behind. A canonical file answers 'what is true now'; an archive answers 'how did we get here'. The second question is real and its answer does not belong in a set every session must read before it can start.",
+
+  "total_bytes_max": 350000,
+  "total_bytes_note": "About 70k tokens. The canon is pasted into a session at SessionStart, so it competes for the same context the work needs. At 1917 KB the hook could deliver a quarter of it and listed the rest under a NOT PASTED banner — a read that silently did not happen. The sum of per_file_bytes is held at or under this number so the two constraints cannot disagree.",
+
+  "max_shared_fraction": 0.2,
+  "max_shared_fraction_note": "Measured over lines of 40+ characters, against the SMALLER of the two files. NEXT_CHAT.md and PROJECT_STATE.md currently share 3037 consecutive identical lines from line 2 and differ only in their titles; TASKS.md is 92% contained in NEXT_CHAT.md. No per-file ceiling would have caught that — each of the three reads as a single long document on its own.",
+
+  "per_file_bytes": {
+    "NEXT_CHAT.md": 12000,
+    "PROJECT_STATE.md": 8000,
+    "TASKS.md": 20000,
+    "CLAUDE.md": 36000,
+    "START_HERE.md": 16000,
+    "AGENTS.md": 4000,
+    "OWNERS.md": 8000,
+    "docs/ARCHITECTURE.md": 24000,
+    "MASTER_EXECUTION_ROADMAP.md": 48000,
+    "apps/desktop/SECURITY.md": 16000,
+    "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md": 20000,
+    "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md": 36000,
+    "docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md": 8000,
+    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md": 40000,
+    "config/current_state.json": 20000,
+    "apps/desktop/AUDIT/AUDIT_LEDGER.md": 32000
+  },
+
+  "rationale": {
+    "NEXT_CHAT.md": "A handoff is the current branch, PR, HEAD, blockers and next action. It is at 321 KB / 4034 lines because every session appended its write-up and none removed one; its own line 9 says 'Earlier prose below is HISTORY'.",
+    "PROJECT_STATE.md": "Currently a byte-for-byte copy of NEXT_CHAT.md under a different title. The ceiling assumes it either states something NEXT_CHAT does not, or stops being canonical.",
+    "TASKS.md": "A coordination board is the open tasks and who holds them. Closed-task narrative is archive.",
+    "MASTER_EXECUTION_ROADMAP.md": "The durable product plan legitimately needs room — 11 phases with per-phase gates. Not room for per-task narrative, which belongs to the task.",
+    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md": "347 KB of normative design, ~10% of it explicitly non-normative appendices. A specification consulted when working in its area is a reference; putting it in the every-session read set is what makes the set undeliverable. The ceiling is deliberately far below its current size: the honest fix is that it leaves the canon, not that it shrinks.",
+    "config/current_state.json": "110 KB, of which the `purpose` field alone is 74,311 characters of prose — inside the file called the machine-readable mirror, whose own first sentence says not to read a commit id out of that sentence.",
+    "apps/desktop/AUDIT/AUDIT_LEDGER.md": "The audit POSITION — the standing verdict and the open rows — is what a session must have. Nine rounds of per-finding narrative is the record, and the record can be a linked file."
+  }
+}
