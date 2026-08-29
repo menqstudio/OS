@@ -8,6 +8,46 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The performance gate measured one chunk and called it 22 pages (2026-08-29)
+
+Phase 10 asks for a *"production a11y + performance gate pass over all 22 pages"*. Three of that
+box's four halves turn out to be done and nobody had said so; the fourth was not close.
+
+**Measured first, before anything was built.** `pages.a11y.spec.tsx` mounts all **23** route
+components under axe and the job is green. Placeholder copy: **zero** hits for lorem/TODO/TBD/
+coming-soon. Real Armenian copy: **238 locale keys with 2 identical to English** — `app.name` =
+`BroPS` and `chat.you` = `gev`, both proper nouns — and **1 170 en/hy pairs** across the
+`*.strings.ts` files with **7** identical, every one an identifier (`GitHub`, `desktop-owner`,
+`local-scheduler`, cron syntax, `DIGEST`).
+
+**The performance half covered one chunk.** `entry_payloads` reads only `isEntry` records and
+`_collect_files` deliberately excludes `dynamicImports` as not-first-paint. Both are *right about
+first paint*, and together they left every page unmeasured: **23 lazily-loaded chunks, 256.7 KB gzip,
+no ceiling at all.** A page could double and the gate would print GREEN about the entry.
+
+## What a route's budget counts, and why the subtraction matters
+
+The route list is not a path heuristic — it is the entry's own `dynamicImports`, the build's
+statement of what the router can reach, so a new page is RED until somebody gives it a ceiling. A
+route's payload is its transitive closure **minus whatever the entry already loaded**, because bytes
+already in the initial payload are not fetched again and charging them twice would budget a cost
+nobody pays.
+
+`Chat` is the case that proves both directions: its own chunk is **0.16 KB** and the number that
+matters is **17.71 KB**, almost all of it the `Conversations` chunk it drags in. Budgeting the chunk
+alone would have understated that page by a hundred times.
+
+Ceilings are the measured size × 1.25, rounded up to the nearest 0.5 KB — headroom for ordinary work,
+not for a rewrite. The closest to its ceiling today is `GroupChat` at **28.7/36.0 KB**.
+
+## The one thing that is still not true, and it is one word
+
+**`production`.** Axe runs in **jsdom**, not against the built app. Both rows stay unticked for that
+single reason, which is written into them. The `computed-style (real Chromium)` workflow already has
+a real browser; pointing axe at it is what finishes the box.
+
+Nine new tests, and the route check mutated away turns **4** of them red.
+
 ### `main` is settled at `5480579` (2026-08-29)
 
 The ninth round's thirteen findings are answered and the two `contracts/` boxes are annotated rather

@@ -1745,7 +1745,16 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
       checkbox stops meaning anything. The remaining move is an audited **engine** change (root-relative
       loaders; `engine/` is a subtree of `menqstudio/Bro`), **not** the production gate.
 - [ ] O-1..O-5 closed or owner-signed-deferred (each audited).
-- [ ] Every page passes production a11y + performance gates; no placeholder copy.
+- [ ] Every page passes production a11y + performance gates; no placeholder copy. — **three of the
+      four halves are done and measured (2026-08-29); the box stays UNTICKED for the fourth.**
+      *a11y:* `pages.a11y.spec.tsx` mounts all **23** route components under axe and the job is green.
+      *performance:* every route now has a ceiling — `perf-budget.json` gained a `routes` section and
+      `check_bundle_budget.py` enforces it bidirectionally. Until this landed the gate measured the
+      **entry and nothing else**: 23 lazily-loaded chunks, **256.7 KB gzip**, no ceiling at all.
+      *placeholder copy:* zero hits for lorem/TODO/TBD/coming-soon across the locale and
+      `*.strings.ts` files. **What is NOT true is the word `production` in the a11y half:** axe runs
+      in **jsdom**, not against the built app. The `computed-style (real Chromium)` workflow already
+      has the browser; pointing axe at it is what would finish this row.
 - [ ] `README`/`ARCHITECTURE`/`SECURITY_MODEL`/`CLAUDE`/`PROJECT_STATE` all final and synced.
 
 **Task checklist.**
@@ -1757,7 +1766,12 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
       schema that **does not exist anywhere in the tree**: the approval path across the wall exists on
       neither side and is tracked as `T-021`. This row cannot be finished as written until that is built.
 - [ ] O-1..O-5 remediation (each its own audited engine branch/PR/Owner approval).
-- [ ] Production a11y + performance gate pass over all 22 pages; real HY copy.
+- [ ] Production a11y + performance gate pass over all 22 pages; real HY copy. — **the performance
+      half is done (per-route budgets, 2026-08-29) and `real HY copy` is measured and true:** 238
+      locale keys with **2** identical to English (`app.name` = `BroPS`, `chat.you` = `gev`, both
+      proper nouns) and **1 170** en/hy pairs across `*.strings.ts` with **7** identical, every one an
+      identifier (`GitHub`, `desktop-owner`, `local-scheduler`, cron syntax, `DIGEST`). The row stays
+      unticked for the same single reason as the Definition-of-Done row above: axe runs in jsdom.
 - [ ] Finalize all docs; mark every phase ✅.
 
 ---

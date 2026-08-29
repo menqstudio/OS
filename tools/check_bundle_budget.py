@@ -17,6 +17,11 @@ plus its transitively-imported chunks and their CSS — i.e. everything the brow
 must download before first paint — gzips each unique file, sums the bytes, and
 fails if the total exceeds that entry's budget.
 
+It then does the same for every ROUTE — the entry's own `dynamicImports`, which is
+the build's statement of what the router can reach — counting each route's closure
+MINUS whatever the entry already loaded, i.e. the bytes actually fetched when a
+person navigates to that page.
+
 The check is bidirectional and fail-closed, matching the other CI gates in this
 repo (capabilities/coordination):
 
@@ -25,6 +30,12 @@ repo (capabilities/coordination):
   * a budget naming an entry the build no longer emits        -> RED
     (stale budget / typo);
   * any entry whose initial payload exceeds its budget        -> RED;
+  * a ROUTE reachable from the entry with no budget           -> RED
+  * a budget naming a route the entry no longer reaches       -> RED
+  * any route whose navigation payload exceeds its budget     -> RED
+    (added 2026-08-29: the gate measured the entry and nothing else, so 23
+    lazily-loaded chunks -- every page in the cockpit, 256.7 KB gzip -- had no
+    ceiling at all while Phase 10 asked for a performance gate over all 22 pages);
   * a bundled source newer than the build manifest            -> RED
     (ninth audit `I-12`: the gate had no freshness check, so it reported GREEN
     at 151.6 KB against a dist/ built before the deletion it was cited to prove,
@@ -62,16 +73,37 @@ def load_budget(root: pathlib.Path) -> dict[str, float]:
     if not path.exists():
         raise SystemExit(f"RED: missing budget file {BUDGET} (commit a per-entry budget)")
     doc = json.loads(path.read_text(encoding="utf-8"))
-    entries = doc.get("entries")
-    if not isinstance(entries, dict) or not entries:
-        raise SystemExit(f'RED: {BUDGET} must have a non-empty object "entries"')
+    return _section(doc, "entries")
+
+
+def load_route_budget(root: pathlib.Path) -> dict[str, float]:
+    """route name -> max gzipped KB, from the committed perf-budget.json.
+
+    The `routes` KEY must exist — an optional section is one a refactor can delete without anything
+    noticing, and this section exists precisely because the routes went unmeasured through Phases
+    3–9. It is allowed to be *empty*, because a build with no lazily-loaded routes is a real thing;
+    an empty section next to a build that HAS routes is caught anyway, one RED per unbudgeted route.
+    """
+    path = root / BUDGET
+    if not path.exists():
+        raise SystemExit(f"RED: missing budget file {BUDGET} (commit a per-entry budget)")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return _section(doc, "routes", allow_empty=True)
+
+
+def _section(doc: dict, key: str, allow_empty: bool = False) -> dict[str, float]:
+    section = doc.get(key)
+    if not isinstance(section, dict) or (not section and not allow_empty):
+        raise SystemExit(
+            f'RED: {BUDGET} must have a{"n" if allow_empty else " non-empty"} object "{key}"'
+        )
     budget: dict[str, float] = {}
-    for name, spec in entries.items():
+    for name, spec in section.items():
         if not isinstance(spec, dict) or "max_gzip_kb" not in spec:
-            raise SystemExit(f'RED: {BUDGET} entry {name!r} needs {{"max_gzip_kb": <number>}}')
+            raise SystemExit(f'RED: {BUDGET} {key} {name!r} needs {{"max_gzip_kb": <number>}}')
         kb = spec["max_gzip_kb"]
         if not isinstance(kb, (int, float)) or isinstance(kb, bool) or kb <= 0:
-            raise SystemExit(f"RED: {BUDGET} entry {name!r} max_gzip_kb must be a positive number")
+            raise SystemExit(f"RED: {BUDGET} {key} {name!r} max_gzip_kb must be a positive number")
         budget[name] = float(kb)
     return budget
 
@@ -175,6 +207,52 @@ def entry_payloads(manifest: dict, dist_dir: pathlib.Path) -> dict[str, int]:
     return payloads
 
 
+def _sum_gzip(files: set[str], dist_dir: pathlib.Path) -> int:
+    total = 0
+    for rel in sorted(files):
+        f = dist_dir / rel
+        if not f.exists():
+            raise SystemExit(f"RED: manifest references missing built file {rel}")
+        total += gzip_size(f)
+    return total
+
+
+def route_payloads(manifest: dict, dist_dir: pathlib.Path) -> dict[str, int]:
+    """route name -> gzipped bytes the browser fetches when NAVIGATING to that page.
+
+    Phase 10 asks for a *"production a11y + performance gate pass over all 22 pages"*. The a11y half
+    covers every one of them (`pages.a11y.spec.tsx`). The performance half covered **one** chunk —
+    the entry — because `entry_payloads` looks only at `isEntry` records and `_collect_files`
+    deliberately excludes `dynamicImports` as not-first-paint. Both of those are right about first
+    paint and together they left every route unmeasured: **23 lazily-loaded chunks totalling 256.7 KB
+    gzip with no ceiling at all**, so a page could double and the gate would still print GREEN.
+
+    The route list is not a path heuristic — it is the entry's own `dynamicImports`, which is the
+    build's statement of what the router can reach. A route's payload is its transitive closure
+    (chunk + CSS + static imports) **minus whatever the entry already loaded**, because bytes already
+    in the initial payload are not fetched again and counting them twice would budget a cost nobody
+    pays. `Chat` is the case that proves the subtraction matters: its own chunk is 0.16 KB and the
+    figure that matters is 17.71 KB, almost all of it the `Conversations` chunk it pulls in.
+    """
+    entry_keys = [k for k, v in manifest.items() if isinstance(v, dict) and v.get("isEntry")]
+    already: set[str] = set()
+    routes: list[str] = []
+    for key in entry_keys:
+        already |= _collect_files(manifest, key, set())
+        record = manifest[key]
+        routes.extend(record.get("dynamicImports", []) or [])
+
+    payloads: dict[str, int] = {}
+    for key in routes:
+        record = manifest.get(key)
+        if not isinstance(record, dict):
+            continue
+        name = record.get("name") or key
+        files = _collect_files(manifest, key, set()) - already
+        payloads[name] = payloads.get(name, 0) + _sum_gzip(files, dist_dir)
+    return payloads
+
+
 def check(root: pathlib.Path) -> list[str]:
     problems: list[str] = []
     budget = load_budget(root)
@@ -219,6 +297,34 @@ def check(root: pathlib.Path) -> list[str]:
                 f"entry {name!r} initial payload {actual_kb:.1f} KB gzip exceeds "
                 f"budget {max_kb:.1f} KB by {over:.1f} KB"
             )
+
+    # The routes, same discipline: bidirectional and fail-closed. Until this landed the gate
+    # measured the entry and nothing else, so 23 lazily-loaded chunks — every page in the cockpit —
+    # had no ceiling at all while Phase 10 asked for a performance gate over all of them.
+    route_budget = load_route_budget(root)
+    routes = route_payloads(manifest, root / DIST)
+    r_budgeted, r_built = set(route_budget), set(routes)
+
+    for name in sorted(r_built - r_budgeted):
+        kb = routes[name] / 1024
+        problems.append(
+            f"route {name!r} is reachable from the entry ({kb:.1f} KB gzip on navigation) but has "
+            f"no budget in {BUDGET.name}; add an explicit max_gzip_kb — a page nobody budgets is a "
+            f"page that can grow without anyone deciding to let it"
+        )
+    for name in sorted(r_budgeted - r_built):
+        problems.append(
+            f"budget names route {name!r} but the entry no longer reaches it "
+            f"(stale budget, renamed chunk, or a page deleted without its ceiling)"
+        )
+    for name in sorted(r_budgeted & r_built):
+        actual_kb = routes[name] / 1024
+        max_kb = route_budget[name]
+        if routes[name] > max_kb * 1024:
+            problems.append(
+                f"route {name!r} navigation payload {actual_kb:.1f} KB gzip exceeds "
+                f"budget {max_kb:.1f} KB by {actual_kb - max_kb:.1f} KB"
+            )
     return problems
 
 
@@ -253,7 +359,20 @@ def main() -> int:
     detail = ", ".join(
         f"{name} {payloads[name] / 1024:.1f}/{budget[name]:.0f} KB" for name in sorted(budget)
     )
-    print(f"GREEN: {len(budget)} entr(y/ies) within gzip budget ({detail}).")
+    # The routes are reported too, and the WORST one is named. A verdict that says only how many
+    # things passed tells a reader nothing about how close the next failure is — and this section
+    # exists because 23 pages went unmeasured behind a GREEN line about one entry.
+    routes = route_payloads(manifest, root / DIST)
+    route_budget = load_route_budget(root)
+    total_kb = sum(routes.values()) / 1024
+    worst = max(
+        ((n, routes[n] / 1024, route_budget[n]) for n in routes if n in route_budget),
+        key=lambda r: r[1] / r[2],
+        default=None,
+    )
+    tail = (f"; {len(routes)} route(s) within budget, {total_kb:.1f} KB gzip in total"
+            + (f", closest is {worst[0]} at {worst[1]:.1f}/{worst[2]:.1f} KB" if worst else ""))
+    print(f"GREEN: {len(budget)} entr(y/ies) within gzip budget ({detail}){tail}.")
     return 0
 
 
