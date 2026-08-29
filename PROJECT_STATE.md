@@ -8,6 +8,32 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### The second palette has a committed contract now, and `--hi` is a token nothing paints (2026-08-29)
+
+`T-042` found six sub-AA values in `aios.css`'s palette by running a browser. A running test is not a
+committed contract: it finds what its fixtures reach, and it says nothing about the colours a future
+change touches. `contrast-pairs.json` now carries **both** palettes.
+
+**14 new pairs, 92 checks** (was 64): `--ink`, `--ink-muted` and `--cyan-soft` on `bg`, `surface` and
+`raised`; and each of `--cyan`, `--success`, `--warning`, `--mint`, `--danger` on **its own pill
+tint**, at the alpha `aios.css` itself paints (8%, 9% for `.pill.bad`). The mirror assertion routes by
+family — `aios-*` against `aios.css`, everything else against `tokens.ts` — so editing a colour in
+one file and not the other is RED, in either direction, naming which file.
+
+**`--hi` is declared in both `:root` blocks and painted nowhere.** The first draft of the pair list
+included it and `aios-cyan-soft-on-hi` went RED at **4.32:1** — a real number about a background no
+page has. It is not in the list, and the reason is written where the list is: declaring pairs that
+never occur invents work and teaches the next reader to distrust the gate, which costs more than the
+coverage buys. Whether `--hi` should exist at all is a separate question and is not answered here.
+
+**The exemption rule was narrowed rather than left broad.** `aios-*-tint` are composites with no
+token behind them, so they cannot be mirrored; `--menq-color-<name>-tint` **can** be, and is. A
+blanket `endswith("-tint")` rule would have quietly handed back the guarantee `T-042` had just built
+— it was the rule for about ten minutes, and the test that caught it is the one that says so.
+
+Three mutants red: route every name to `tokens.ts` · exempt every `-tint` again · neuter the mirror.
+Plus the real-tree one: edit `--cyan-soft` in `aios.css` alone ⇒ RED naming `aios.css`.
+
 ### `main` is settled at `58e09ed` — the light theme has been swept (2026-08-29)
 
 `T-042` closed the last word in Phase 10's a11y row and, in doing so, found eleven defects in a half
