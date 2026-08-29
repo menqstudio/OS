@@ -25,6 +25,29 @@ def _append_once(ledger_path: str, index: int) -> None:
     _append(_pathlib.Path(ledger_path), "concurrent", {"index": index})
 
 
+#: How long a CONTENDED writer may wait inside these two tests, in place of the production
+#: `_LOCK_TIMEOUT`.
+#:
+#: The production bound is 10 s and it is deliberate: it answers "has the holder wedged?", and a
+#: wedged holder must surface rather than starve every other writer. It is NOT a budget for `n`
+#: threads racing each other, and these tests are exactly that race.
+#:
+#: `_acquire_lock` polls an `O_EXCL` lock file every 10 ms. That is a race, not a queue: a losing
+#: writer does not keep its place, so the wall-clock the LAST writer needs grows like
+#: `n * H(n)` poll cycles, not `n`. For `n = 24`, `H(24) ~ 3.78`, so ~91 cycles — and a cycle on a
+#: loaded Windows runner is a create, a write, an fsync, a replace and an unlink. At ~100 ms per
+#: cycle that lands at ~9 s, just under the production bound, which is why this test passed on
+#: `main` for weeks and then failed on `7eb6bf0` with nine of twenty-four writers timing out — on a
+#: tree byte-identical to the one that had just passed the same job on PR #181.
+#:
+#: So the runner's speed was deciding the verdict of a test about chain integrity. The property
+#: here is *the chain never forks under concurrency*; the production constant is not what is under
+#: test and is left untouched (`CLAUDE.md` §6: prefer the path that does not modify audited
+#: security code). The bound is raised HERE, in proportion to the contention the test creates, so
+#: a genuine deadlock still fails in bounded time rather than hanging.
+_CONTENDED_LOCK_TIMEOUT = 5.0 * 24
+
+
 class AuditLedgerTests(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-audit-"))
@@ -88,10 +111,11 @@ class AuditLedgerTests(unittest.TestCase):
                 errors.append(exc)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with patch("bro_audit_log._LOCK_TIMEOUT", _CONTENDED_LOCK_TIMEOUT):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         self.assertEqual(errors, [])
         records = read_all(self.ledger)
@@ -107,10 +131,13 @@ class AuditLedgerTests(unittest.TestCase):
         n = 16
         ctx = multiprocessing.get_context("fork")
         procs = [ctx.Process(target=_append_once, args=(str(self.ledger), i)) for i in range(n)]
-        for p in procs:
-            p.start()
-        for p in procs:
-            p.join(timeout=30)
+        # `fork` copies this process's memory, so the patch reaches the children. Same reasoning as
+        # the thread test above; this one is POSIX-only, so it has never been the failing one.
+        with patch("bro_audit_log._LOCK_TIMEOUT", _CONTENDED_LOCK_TIMEOUT):
+            for p in procs:
+                p.start()
+            for p in procs:
+                p.join(timeout=30)
         self.assertTrue(all(p.exitcode == 0 for p in procs),
                         [p.exitcode for p in procs])
         records = read_all(self.ledger)
