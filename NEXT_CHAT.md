@@ -1,12 +1,38 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **✅ SETTLED — `main` is at `58e09ed`.** The pull request that records it is PR #173 on `settle-after-172`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **⏭️ CURRENT ACTIVE: PR #174 · branch `design/aios-palette-contract`** (base `main`, tip `f13b565`, task T-043). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Phase 10's a11y and performance rows are closed -- the first Phase-10 boxes to tick. The nearest remaining gap in that area: aios.css carries a SECOND palette that no STATIC gate measures; the browser sweep covers it on every page now, which is how six sub-AA light values were found, but there is no committed contract for the --ink/--cyan/--success family the way contrast-pairs.json is one for --menq-*. Beyond that, Block C stands where the ninth round left it: A-09 route 1 (open by design), I-13's file relocation (an audited engine change, not the production gate), T-023, T-040. Nothing since the ninth round is independently confirmed.
+> T-042 found six sub-AA values in the second palette by running a browser; a running test is not a committed contract. contrast-pairs.json now carries both palettes -- 14 new pairs, 92 checks -- with the mirror assertion routing aios-* to aios.css and everything else to tokens.ts, so a one-sided colour edit is RED in either direction.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The second palette has a committed contract now, and `--hi` is a token nothing paints (2026-08-29)
+
+`T-042` found six sub-AA values in `aios.css`'s palette by running a browser. A running test is not a
+committed contract: it finds what its fixtures reach, and it says nothing about the colours a future
+change touches. `contrast-pairs.json` now carries **both** palettes.
+
+**14 new pairs, 92 checks** (was 64): `--ink`, `--ink-muted` and `--cyan-soft` on `bg`, `surface` and
+`raised`; and each of `--cyan`, `--success`, `--warning`, `--mint`, `--danger` on **its own pill
+tint**, at the alpha `aios.css` itself paints (8%, 9% for `.pill.bad`). The mirror assertion routes by
+family — `aios-*` against `aios.css`, everything else against `tokens.ts` — so editing a colour in
+one file and not the other is RED, in either direction, naming which file.
+
+**`--hi` is declared in both `:root` blocks and painted nowhere.** The first draft of the pair list
+included it and `aios-cyan-soft-on-hi` went RED at **4.32:1** — a real number about a background no
+page has. It is not in the list, and the reason is written where the list is: declaring pairs that
+never occur invents work and teaches the next reader to distrust the gate, which costs more than the
+coverage buys. Whether `--hi` should exist at all is a separate question and is not answered here.
+
+**The exemption rule was narrowed rather than left broad.** `aios-*-tint` are composites with no
+token behind them, so they cannot be mirrored; `--menq-color-<name>-tint` **can** be, and is. A
+blanket `endswith("-tint")` rule would have quietly handed back the guarantee `T-042` had just built
+— it was the rule for about ten minutes, and the test that caught it is the one that says so.
+
+Three mutants red: route every name to `tokens.ts` · exempt every `-tint` again · neuter the mirror.
+Plus the real-tree one: edit `--cyan-soft` in `aios.css` alone ⇒ RED naming `aios.css`.
 
 ### `main` is settled at `58e09ed` — the light theme has been swept (2026-08-29)
 

@@ -23,7 +23,23 @@
       "success-tint": "#deeae3",
       "warning-tint": "#eee6db",
       "danger-tint": "#f3e1e4",
-      "info-tint": "#e0e8f3"
+      "info-tint": "#e0e8f3",
+      "aios-cyan": "#0a71a0",
+      "aios-ink": "#0c1220",
+      "aios-ink-muted": "#5a6478",
+      "aios-bg": "#f4f7fc",
+      "aios-mint": "#0b776e",
+      "aios-success": "#0f794c",
+      "aios-surface": "#ffffff",
+      "aios-danger": "#ba2b37",
+      "aios-raised": "#ffffff",
+      "aios-cyan-soft": "#0679ab",
+      "aios-warning": "#865d00",
+      "aios-cyan-tint": "#ebf4f7",
+      "aios-success-tint": "#ecf4f1",
+      "aios-warning-tint": "#f5f2eb",
+      "aios-mint-tint": "#ebf4f3",
+      "aios-danger-tint": "#f9eced"
     },
     "dark": {
       "bg": "#0c0e13",
@@ -43,7 +59,23 @@
       "success-tint": "#1c332d",
       "warning-tint": "#332d23",
       "danger-tint": "#332730",
-      "info-tint": "#202d3e"
+      "info-tint": "#202d3e",
+      "aios-cyan": "#38bdf8",
+      "aios-ink": "#eaf0f8",
+      "aios-ink-muted": "#8993a8",
+      "aios-bg": "#05070c",
+      "aios-mint": "#34d6c6",
+      "aios-success": "#37d6a0",
+      "aios-surface": "#0b0f18",
+      "aios-danger": "#f0616d",
+      "aios-raised": "#111725",
+      "aios-cyan-soft": "#7de7ff",
+      "aios-warning": "#e9b44c",
+      "aios-cyan-tint": "#0f1d2a",
+      "aios-success-tint": "#0f1f23",
+      "aios-warning-tint": "#1d1c1c",
+      "aios-mint-tint": "#0e1f26",
+      "aios-danger-tint": "#201620"
     }
   },
   "pairs": [
@@ -242,6 +274,104 @@
       "bg": "info-tint",
       "size": "normal",
       "why": "`.badge--info` in ui.css paints the colour as TEXT on a 14% tint of ITSELF. That background was in no pair, so all five light semantics and the dark danger sat between 3.65 and 3.97 while this gate read GREEN over 56 checks. Found by the real-browser axe sweep, 2026-08-29. The tint is a COMPOSITE: recompute it whenever the colour changes, the same rule `selected` carries."
+    },
+    {
+      "id": "aios-ink-on-bg",
+      "fg": "aios-ink",
+      "bg": "aios-bg",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-ink-on-surface",
+      "fg": "aios-ink",
+      "bg": "aios-surface",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-ink-on-raised",
+      "fg": "aios-ink",
+      "bg": "aios-raised",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-ink-muted-on-bg",
+      "fg": "aios-ink-muted",
+      "bg": "aios-bg",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-ink-muted-on-surface",
+      "fg": "aios-ink-muted",
+      "bg": "aios-surface",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-ink-muted-on-raised",
+      "fg": "aios-ink-muted",
+      "bg": "aios-raised",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-cyan-soft-on-bg",
+      "fg": "aios-cyan-soft",
+      "bg": "aios-bg",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-cyan-soft-on-surface",
+      "fg": "aios-cyan-soft",
+      "bg": "aios-surface",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-cyan-soft-on-raised",
+      "fg": "aios-cyan-soft",
+      "bg": "aios-raised",
+      "size": "normal",
+      "why": "`aios.css` ships a SECOND palette and the pages paint with it, while this manifest and `check_token_parity.py` both measure only the `--menq-*` set. The real-browser sweep (`T-042`, 2026-08-29) found six light values below AA there — `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1**. A running test is not a committed contract, so the pairs it proved matter are declared here."
+    },
+    {
+      "id": "aios-cyan-on-cyan-tint",
+      "fg": "aios-cyan",
+      "bg": "aios-cyan-tint",
+      "size": "normal",
+      "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
+    },
+    {
+      "id": "aios-success-on-success-tint",
+      "fg": "aios-success",
+      "bg": "aios-success-tint",
+      "size": "normal",
+      "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
+    },
+    {
+      "id": "aios-warning-on-warning-tint",
+      "fg": "aios-warning",
+      "bg": "aios-warning-tint",
+      "size": "normal",
+      "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
+    },
+    {
+      "id": "aios-mint-on-mint-tint",
+      "fg": "aios-mint",
+      "bg": "aios-mint-tint",
+      "size": "normal",
+      "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
+    },
+    {
+      "id": "aios-danger-on-danger-tint",
+      "fg": "aios-danger",
+      "bg": "aios-danger-tint",
+      "size": "normal",
+      "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
     }
   ]
 }

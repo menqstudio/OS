@@ -75,13 +75,24 @@ def relative_luminance(hex_color: str) -> float:
 
 
 
-#: Names in the manifest that are COMPOSITES, not tokens — they have no counterpart in tokens.ts
-#: and are recomputed from the tokens they are made of.
+#: Names in the manifest that are COMPOSITES, not tokens — they have no counterpart in a source
+#: file and are recomputed from the tokens they are made of.
 _COMPOSITE_NAMES = ("selected",)
+#: The two palettes this repository actually ships, and where each one's source of truth lives.
+#:
+#: There are TWO. `tokens.css`/`tokens.ts` carry the `--menq-*` set that this gate was written for;
+#: `aios.css` carries `--ink`/`--cyan`/`--success`/… and **the pages paint with those**. `T-042`
+#: found six light values in the second palette below WCAG AA by running a browser — `--cyan-soft`
+#: carries `.eyebrow` on nearly every page header and measured 1.99:1 — while every declared pair
+#: was green, because none of them named it. Entries prefixed `aios-` are mirrored against
+#: `aios.css`; everything else against `tokens.ts`.
+_AIOS_PREFIX = "aios-"
+_AIOS_SOURCE = "apps/desktop/src/theme/aios.css"
+_TOKENS_SOURCE = "apps/desktop/src/theme/tokens.ts"
 
 
 def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
-    """The manifest's palettes must equal `tokens.ts` — asserted, not trusted.
+    """The manifest's palettes must equal the files that ship them — asserted, not trusted.
 
     The manifest has always said *"The named colors MUST mirror apps/desktop/src/theme/tokens.ts"*,
     and nothing checked it. That is a hand-maintained copy of the shipping palette used to decide an
@@ -90,32 +101,53 @@ def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
     Found while re-tuning four semantics on 2026-08-29 — `check_token_parity.py` compares
     `tokens.ts` with `tokens.css` and never looks here.
 
-    Composites (`selected`) are exempt BY NAME rather than by pattern-matching whatever is left over:
-    `selected` is an rgba in the tokens and a precomputed composite here, so there is nothing to
-    match. The `*-tint` entries are NOT exempt — they became real tokens on 2026-08-29
-    (`--menq-color-<name>-tint`) precisely so the declared pair and the painted background are the
-    same value.
+    There are TWO palettes and each entry is routed to the file that ships it: `aios-*` against
+    `aios.css`, everything else against `tokens.ts`. That routing is the point — `T-042` found six
+    light values in the aios palette below WCAG AA by running a browser, while every declared pair
+    here was green because none of them named it.
+
+    Exemptions are BY NAME, never by pattern-matching whatever is left over. `selected` is an rgba in
+    the tokens and a precomputed composite here, so there is nothing to match. `aios-*-tint` are
+    composites with no token behind them (`.pill.info` paints `rgb(var(--cyan-rgb)/.08)`; there is no
+    `--cyan-tint`). The `--menq-color-<name>-tint` entries are deliberately **not** exempt: they were
+    made real tokens on 2026-08-29 so the declared pair and the painted background agree, and a
+    blanket `endswith("-tint")` rule would quietly hand that guarantee back.
 
     Called from `main`, not from `evaluate`: `evaluate` grades whatever manifest it is handed and the
     unit tests hand it synthetic ones, while this is a precondition about the SHIPPING files.
     """
-    tokens_ts = root / "apps/desktop/src/theme/tokens.ts"
-    if not tokens_ts.exists():
-        raise ContrastError(f"{tokens_ts} is missing; the manifest's palettes cannot be verified")
-    text = tokens_ts.read_text(encoding="utf-8")
+    sources: dict[str, str] = {}
+    for rel in (_TOKENS_SOURCE, _AIOS_SOURCE):
+        path = root / rel
+        if not path.exists():
+            raise ContrastError(f"{rel} is missing; the manifest's palettes cannot be verified")
+        sources[rel] = path.read_text(encoding="utf-8").lower()
+
     problems: list[str] = []
     for theme, palette in palettes.items():
         for name, value in palette.items():
             if name in _COMPOSITE_NAMES:
                 continue
-            if value.lower() not in text.lower():
+            if name.startswith(_AIOS_PREFIX) and name.endswith("-tint"):
+                # The aios pill tints are composites with no token behind them: `.pill.info` paints
+                # `rgb(var(--cyan-rgb)/.08)` over a surface, and there is no `--cyan-tint` to mirror.
+                # The `--menq-color-<name>-tint` entries are NOT exempt — they were made real tokens
+                # on 2026-08-29 precisely so the declared pair and the painted background agree, and
+                # a blanket `endswith("-tint")` rule would quietly give that guarantee back.
+                continue
+            rel = _AIOS_SOURCE if name.startswith(_AIOS_PREFIX) else _TOKENS_SOURCE
+            if value.lower() not in sources[rel]:
                 problems.append(
-                    f"{theme} palette: {name} = {value} appears nowhere in tokens.ts — the manifest "
+                    f"{theme} palette: {name} = {value} appears nowhere in {rel} — the manifest "
                     f"is grading a colour the app does not ship"
                 )
     if problems:
         joined = "\n  - ".join(problems)
-        raise ContrastError(f"contrast-pairs.json has drifted from tokens.ts:\n  - {joined}")
+        raise ContrastError(
+            "contrast-pairs.json has drifted from the palette it claims to mirror "
+            f"(each line names which file):\n  - {joined}"
+        )
+
 
 def contrast_ratio(fg: str, bg: str) -> float:
     """WCAG contrast ratio in [1, 21]. Order-independent."""
