@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `settle-after-182` · **head** `3c9a5cf` · **task** `T-046` · **PR #183** (the settle commit)
+**Active branch:** `settle-after-182` · **head** `4f9c862` · **task** `T-046` · **PR #183** (the settle commit)
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `40be210`.** The pull request that records it is PR #183 on `settle-after-182`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
