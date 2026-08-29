@@ -103,7 +103,13 @@ class HandoffReady(unittest.TestCase):
         self.work = build_repo(self.tmp)
 
     def gate(self) -> int:
-        return check_handoff_ready.main(self.work)
+        # `env={}` explicitly, never the ambient environment. These tests are about an
+        # ordinary checkout, and when the suite itself runs INSIDE GitHub Actions the
+        # ambient GITHUB_* variables describe a completely different repository -- the gate
+        # then judged this fixture against the real PR's head and went red. That is how a
+        # suite passes on a developer's disk and fails in CI, which is the failure mode this
+        # whole file exists to close, arriving through the test rather than the code.
+        return check_handoff_ready.main(self.work, env={})
 
     def test_a_settled_repository_is_green(self):
         """The positive control. Without it every RED below could be a gate that
@@ -197,7 +203,7 @@ class HandoffReady(unittest.TestCase):
         (solo / "NEXT_CHAT.md").write_text("x\n", encoding="utf-8")
         git(solo, "add", "-A")
         git(solo, "commit", "-qm", "only")
-        self.assertEqual(check_handoff_ready.main(solo), 1)
+        self.assertEqual(check_handoff_ready.main(solo, env={}), 1)
 
 
 class CiCheckout(unittest.TestCase):
