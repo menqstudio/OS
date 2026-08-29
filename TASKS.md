@@ -5,7 +5,7 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
-**Active branch** `gate/canon-budget` · **task** `T-045` · `main` settled at `b190a16`
+**Active branch** `gate/canon-budget` · **task** `T-045` · `main` settled at `96c013a`
 (PR #179) · open and deliberately unmerged: PR #112 (`design/floor-writer-service`).
 
 **Claim a row before you touch anything, and never two agents on one row.**

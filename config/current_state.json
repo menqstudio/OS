@@ -1,12 +1,12 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, which are the fields tools/check_repo_state.py compares against live GitHub. This field carried 74,311 characters of prose until 2026-08-29 (T-045) -- 68% of a file called the machine-readable mirror, inside a read set every session is required to take. It said so itself and grew anyway. The narrative it held is in docs/archive/SESSION_LOG_2026-07_2026-08.md; tools/check_canon_budget.py holds this file to 20 KB so it cannot grow back.",
-  "settled_at_main_head": "b190a164dcfc7e413ac4842a3bc9c3f6ebbfd3e7",
+  "settled_at_main_head": "96c013a4f8d995ab8e24b9c59554d9e3be10b283",
   "sync": {
-    "baseline_main_head_at_sync": "b190a164dcfc7e413ac4842a3bc9c3f6ebbfd3e7",
-    "snapshot_branch": "settle-after-178",
+    "baseline_main_head_at_sync": "96c013a4f8d995ab8e24b9c59554d9e3be10b283",
+    "snapshot_branch": "gate/canon-budget",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field said 'live main is b3010f6 (PR #81 merged, 2026-08-09) ... the only open pull request is the self-carrier #82' for twenty days, through roughly eighty merged pull requests, because nothing compares it with anything (ninth audit I-06; the same field had already been stale by sixteen PRs when it was rewritten [...] docs/archive/SESSION_LOG_2026-07_2026-08.md",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. There are no durable child PRs in prs[] right now (the single active self-carrier is PR #179). PR #179's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is PR #180. PR #180's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). That marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on this branch -- the job died at an earlier step every time. Nothing is exempt."
   },
   "active": {
     "wave": "canon",
@@ -123,7 +123,7 @@
     "branch": "gate/canon-budget",
     "state": "draft",
     "what": "T-045 — canon budget, handoff gate, doc-claims gate, owner contract",
-    "note": "Draft while check_canon_budget is RED on MASTER_EXECUTION_ROADMAP.md.",
+    "note": "Draft until CI is green on the exact head. check_canon_budget is GREEN now; the roadmap fits its ceiling and the four CI jobs that were red on 1a5616d are fixed.",
     "base": "main"
   },
   "next_action_by_carrier": {

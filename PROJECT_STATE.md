@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-29 — `T-045` cut the canonical read set down,
+**Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
 then repaired the four CI jobs that cut turned red. Three were `T-045`'s own: shortening
 `config/current_state.json.purpose` deleted the audit pointer `tools/check_audit_reports.py`
 reads (now the field `code_audit.last_independent_audit`, which a rewrite cannot lose) and the
@@ -16,7 +16,7 @@ carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_
 This file now answers one question `NEXT_CHAT.md` does not: **what is the state of each part
 of the product**. `NEXT_CHAT.md` answers *what the next session does first*.
 
-**Active branch** `gate/canon-budget` · **task** `T-045` · `main` settled at `b190a16`
+**Active branch** `gate/canon-budget` · **task** `T-045` · `main` settled at `96c013a`
 (PR #179) · open and deliberately unmerged: PR #112 (`design/floor-writer-service`).
 
 ## Phases

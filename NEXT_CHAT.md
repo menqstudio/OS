@@ -6,11 +6,14 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `1a5616d` · **task** `T-045` · **PR #180** (draft)
-**`main` is settled at** `b190a16` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
+**Active branch:** `gate/canon-budget` · **head** `3016208` · **task** `T-045` · **PR #180** (draft)
+**`main` is settled at** `96c013a` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
 
-**Next:** take PR #180 out of draft once `gh pr checks 180` is green on the exact head, then
-put the roadmap's structure to the Owner. *The previous handoff said `T-045` was "GREEN on
+**Next:** take PR #180 out of draft once `gh pr checks 180` is green on the exact head. Two
+things must be true at every push: the PR body carries exactly one `AUDIT_CANDIDATE_HEAD: <40-hex>`
+line equal to the pushed head, and `config/current_state.json` names the live `main`. Both were
+wrong here and neither was visible, because the job that checks them died at an earlier step every
+time. Then put the roadmap's structure to the Owner. *The previous handoff said `T-045` was "GREEN on
 every gate it added" and CI said otherwise on that same head — four red jobs, three of them
 `T-045`'s own doing. All four are fixed here; the lesson is the repository's own first rule,
 applied to a claim about gates: run `gh pr checks`, do not read the sentence.* The remaining
