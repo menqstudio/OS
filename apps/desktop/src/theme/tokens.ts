@@ -103,6 +103,14 @@ export interface ColorTokens {
   warning: string;
   danger: string;
   info: string;
+  /** The OPAQUE badge tint: the semantic colour at 14% over `surface`, precomputed.
+   *  `ui.css` used `color-mix(… 14%, transparent)`, so a badge inherited whatever was behind it and
+   *  its contrast was unbounded — measured 4.26:1 on a notification row against 4.54:1 on a plain
+   *  surface. An opaque tint makes the pair deterministic and makes the declared pair exact. */
+  successTint: string;
+  warningTint: string;
+  dangerTint: string;
+  infoTint: string;
   focus: string;
   hover: string;
   selected: string;
@@ -117,10 +125,14 @@ export const lightColors: ColorTokens = {
   border: '#e2e5ea',
   accent: '#3856fe',
   accentText: '#ffffff',
-  success: '#187a42',
-  warning: '#9b5c00',
-  danger: '#c5314a',
-  info: '#246bbf',
+  success: '#156c3a',
+  warning: '#885000',
+  danger: '#ac2b40',
+  info: '#205ea8',
+  successTint: '#deeae3',
+  warningTint: '#eee6db',
+  dangerTint: '#f3e1e4',
+  infoTint: '#e0e8f3',
   focus: '#3856fe',
   hover: 'rgba(56, 86, 254, 0.08)',
   selected: 'rgba(56, 86, 254, 0.12)',
@@ -137,8 +149,12 @@ export const darkColors: ColorTokens = {
   accentText: '#0c0e13',
   success: '#4ade80',
   warning: '#f0b23a',
-  danger: '#f2708a',
+  danger: '#f4869c',
   info: '#6cb2ff',
+  successTint: '#1c332d',
+  warningTint: '#332d23',
+  dangerTint: '#332730',
+  infoTint: '#202d3e',
   focus: '#7c8dff',
   hover: 'rgba(124, 141, 255, 0.12)',
   selected: 'rgba(124, 141, 255, 0.18)',
@@ -201,6 +217,10 @@ const COLOR_VAR: Record<keyof ColorTokens, string> = {
   warning: '--menq-color-warning',
   danger: '--menq-color-danger',
   info: '--menq-color-info',
+  successTint: '--menq-color-success-tint',
+  warningTint: '--menq-color-warning-tint',
+  dangerTint: '--menq-color-danger-tint',
+  infoTint: '--menq-color-info-tint',
   focus: '--menq-color-focus',
   hover: '--menq-color-hover',
   selected: '--menq-color-selected',

@@ -1745,7 +1745,12 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
       checkbox stops meaning anything. The remaining move is an audited **engine** change (root-relative
       loaders; `engine/` is a subtree of `menqstudio/Bro`), **not** the production gate.
 - [ ] O-1..O-5 closed or owner-signed-deferred (each audited).
-- [ ] Every page passes production a11y + performance gates; no placeholder copy. — **three of the
+- [x] Every page passes production a11y + performance gates; no placeholder copy. — **DONE
+      2026-08-29.** The word this row waited on was `production`, and it is answered: axe now runs in
+      real Chromium with the app's stylesheet graph loaded, `color-contrast` enabled, over 23 pages ×
+      2 states × **2 themes** plus the shell and the ⌘K palette — 98 checks. It found **eleven**
+      defects nothing here could see, ten of them in the light theme, and all eleven are fixed. The
+      history below is kept because it is what the row used to say. — *three of the
       four halves are done and measured (2026-08-29); the box stays UNTICKED for the fourth.**
       *a11y:* `pages.a11y.spec.tsx` mounts all **23** route components under axe and the job is green.
       *performance:* every route now has a ceiling — `perf-budget.json` gained a `routes` section and
@@ -1766,7 +1771,8 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
       schema that **does not exist anywhere in the tree**: the approval path across the wall exists on
       neither side and is tracked as `T-021`. This row cannot be finished as written until that is built.
 - [ ] O-1..O-5 remediation (each its own audited engine branch/PR/Owner approval).
-- [ ] Production a11y + performance gate pass over all 22 pages; real HY copy. — **the performance
+- [x] Production a11y + performance gate pass over all 22 pages; real HY copy. — **DONE 2026-08-29**,
+      see the Definition-of-Done row above. — *the performance
       half is done (per-route budgets, 2026-08-29) and `real HY copy` is measured and true:** 238
       locale keys with **2** identical to English (`app.name` = `BroPS`, `chat.you` = `gev`, both
       proper nouns) and **1 170** en/hy pairs across `*.strings.ts` with **7** identical, every one an

@@ -14,12 +14,16 @@
       "border": "#e2e5ea",
       "accent": "#3856fe",
       "accent-text": "#ffffff",
-      "success": "#187a42",
-      "warning": "#9b5c00",
-      "danger": "#c5314a",
-      "info": "#246bbf",
+      "success": "#156c3a",
+      "warning": "#885000",
+      "danger": "#ac2b40",
+      "info": "#205ea8",
       "focus": "#3856fe",
-      "selected": "#e7ebff"
+      "selected": "#e7ebff",
+      "success-tint": "#deeae3",
+      "warning-tint": "#eee6db",
+      "danger-tint": "#f3e1e4",
+      "info-tint": "#e0e8f3"
     },
     "dark": {
       "bg": "#0c0e13",
@@ -32,10 +36,14 @@
       "accent-text": "#0c0e13",
       "success": "#4ade80",
       "warning": "#f0b23a",
-      "danger": "#f2708a",
+      "danger": "#f4869c",
       "info": "#6cb2ff",
       "focus": "#7c8dff",
-      "selected": "#272c47"
+      "selected": "#272c47",
+      "success-tint": "#1c332d",
+      "warning-tint": "#332d23",
+      "danger-tint": "#332730",
+      "info-tint": "#202d3e"
     }
   },
   "pairs": [
@@ -206,6 +214,34 @@
       "fg": "info",
       "bg": "selected",
       "size": "normal"
+    },
+    {
+      "id": "success-on-success-tint",
+      "fg": "success",
+      "bg": "success-tint",
+      "size": "normal",
+      "why": "`.badge--success` in ui.css paints the colour as TEXT on a 14% tint of ITSELF. That background was in no pair, so all five light semantics and the dark danger sat between 3.65 and 3.97 while this gate read GREEN over 56 checks. Found by the real-browser axe sweep, 2026-08-29. The tint is a COMPOSITE: recompute it whenever the colour changes, the same rule `selected` carries."
+    },
+    {
+      "id": "warning-on-warning-tint",
+      "fg": "warning",
+      "bg": "warning-tint",
+      "size": "normal",
+      "why": "`.badge--warning` in ui.css paints the colour as TEXT on a 14% tint of ITSELF. That background was in no pair, so all five light semantics and the dark danger sat between 3.65 and 3.97 while this gate read GREEN over 56 checks. Found by the real-browser axe sweep, 2026-08-29. The tint is a COMPOSITE: recompute it whenever the colour changes, the same rule `selected` carries."
+    },
+    {
+      "id": "danger-on-danger-tint",
+      "fg": "danger",
+      "bg": "danger-tint",
+      "size": "normal",
+      "why": "`.badge--danger` in ui.css paints the colour as TEXT on a 14% tint of ITSELF. That background was in no pair, so all five light semantics and the dark danger sat between 3.65 and 3.97 while this gate read GREEN over 56 checks. Found by the real-browser axe sweep, 2026-08-29. The tint is a COMPOSITE: recompute it whenever the colour changes, the same rule `selected` carries."
+    },
+    {
+      "id": "info-on-info-tint",
+      "fg": "info",
+      "bg": "info-tint",
+      "size": "normal",
+      "why": "`.badge--info` in ui.css paints the colour as TEXT on a 14% tint of ITSELF. That background was in no pair, so all five light semantics and the dark danger sat between 3.65 and 3.97 while this gate read GREEN over 56 checks. Found by the real-browser axe sweep, 2026-08-29. The tint is a COMPOSITE: recompute it whenever the colour changes, the same rule `selected` carries."
     }
   ]
 }

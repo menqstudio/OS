@@ -186,5 +186,51 @@ class RealManifest(unittest.TestCase):
         )
 
 
+
+#: The repository root. CI runs these tests with `working-directory: tools`, so a repo-relative
+#: path resolves against the wrong directory — which is how the first version of this class failed
+#: with FileNotFoundError while the gate it tests was green.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class PalettesMirrorTokens(unittest.TestCase):
+    """The manifest's palettes are a hand-maintained copy of the shipping tokens.
+
+    The file has always SAID they must mirror `tokens.ts`, and until 2026-08-29 nothing checked it.
+    A stale copy makes this gate grade colours the app no longer paints and report GREEN about a
+    palette that is not on screen — which is the same shape as the ninth audit's `I-12`, one file
+    over: a verdict about an artifact nobody verified.
+    """
+
+    def test_the_shipping_manifest_mirrors_tokens_ts(self):
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+    def test_a_drifted_palette_is_refused(self):
+        # The mutation the check exists for: a colour edited in the manifest and not in the tokens.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        manifest["palettes"]["light"]["warning"] = "#111111"
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        self.assertIn("warning", str(caught.exception))
+        self.assertIn("#111111", str(caught.exception))
+
+    def test_selected_is_exempt_because_it_is_a_composite(self):
+        # `selected` is an rgba in the tokens and a precomputed opaque composite here, so there is
+        # nothing for it to match. Exempt BY NAME, not by pattern — a suffix rule would silently
+        # exempt whatever anyone named `*-tint` next, and those ARE real tokens now.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        self.assertIn("selected", manifest["palettes"]["light"])
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+    def test_the_badge_tints_are_NOT_exempt(self):
+        # They became real `--menq-color-<name>-tint` tokens on 2026-08-29 precisely so the declared
+        # pair and the painted background are the same value; exempting them would undo that.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        manifest["palettes"]["light"]["warning-tint"] = "#222222"
+        with self.assertRaises(cc.ContrastError):
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,49 @@ def relative_luminance(hex_color: str) -> float:
     return _LUMA[0] * lr + _LUMA[1] * lg + _LUMA[2] * lb
 
 
+
+#: Names in the manifest that are COMPOSITES, not tokens — they have no counterpart in tokens.ts
+#: and are recomputed from the tokens they are made of.
+_COMPOSITE_NAMES = ("selected",)
+
+
+def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
+    """The manifest's palettes must equal `tokens.ts` — asserted, not trusted.
+
+    The manifest has always said *"The named colors MUST mirror apps/desktop/src/theme/tokens.ts"*,
+    and nothing checked it. That is a hand-maintained copy of the shipping palette used to decide an
+    accessibility verdict: edit the tokens without editing the manifest and this gate goes on
+    grading the colours the app stopped using, reporting GREEN about a palette that is not on screen.
+    Found while re-tuning four semantics on 2026-08-29 — `check_token_parity.py` compares
+    `tokens.ts` with `tokens.css` and never looks here.
+
+    Composites (`selected`) are exempt BY NAME rather than by pattern-matching whatever is left over:
+    `selected` is an rgba in the tokens and a precomputed composite here, so there is nothing to
+    match. The `*-tint` entries are NOT exempt — they became real tokens on 2026-08-29
+    (`--menq-color-<name>-tint`) precisely so the declared pair and the painted background are the
+    same value.
+
+    Called from `main`, not from `evaluate`: `evaluate` grades whatever manifest it is handed and the
+    unit tests hand it synthetic ones, while this is a precondition about the SHIPPING files.
+    """
+    tokens_ts = root / "apps/desktop/src/theme/tokens.ts"
+    if not tokens_ts.exists():
+        raise ContrastError(f"{tokens_ts} is missing; the manifest's palettes cannot be verified")
+    text = tokens_ts.read_text(encoding="utf-8")
+    problems: list[str] = []
+    for theme, palette in palettes.items():
+        for name, value in palette.items():
+            if name in _COMPOSITE_NAMES:
+                continue
+            if value.lower() not in text.lower():
+                problems.append(
+                    f"{theme} palette: {name} = {value} appears nowhere in tokens.ts — the manifest "
+                    f"is grading a colour the app does not ship"
+                )
+    if problems:
+        joined = "\n  - ".join(problems)
+        raise ContrastError(f"contrast-pairs.json has drifted from tokens.ts:\n  - {joined}")
+
 def contrast_ratio(fg: str, bg: str) -> float:
     """WCAG contrast ratio in [1, 21]. Order-independent."""
     l1 = relative_luminance(fg)
@@ -210,6 +253,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         manifest = load_manifest(args.manifest)
+        # The manifest's palettes are a hand-maintained copy of the shipping tokens, and until
+        # 2026-08-29 nothing checked the copy. It is a precondition of the verdict, not part of it,
+        # so it runs here rather than inside `evaluate` — which grades whatever it is handed.
+        if args.manifest == DEFAULT_MANIFEST:
+            _require_palettes_mirror_tokens(manifest.get("palettes", {}), pathlib.Path("."))
         results = evaluate(manifest)
     except ContrastError as exc:
         print(f"RED: {exc}", file=sys.stderr)

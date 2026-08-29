@@ -243,7 +243,13 @@ export function Decisions() {
               ref={isSel ? selRowRef : undefined}
               id={`dec-row-${d.id}`}
               className={`led surface soft rise state-${m.face}${isSel ? ' on' : ''}${stampIds.has(d.id) ? ' dec-stamp' : ''}`}
-              aria-readonly={true}
+              /* `aria-readonly` was here and is not an allowed attribute on a role-less `div`
+                 (axe `aria-allowed-attr`, critical — found by the real-browser sweep). The
+                 intent was real: this ledger is append-only. But an invalid ARIA attribute
+                 communicates nothing to a screen reader while telling a reader of the source
+                 that something was handled, which is worse than the silence it replaced. What
+                 actually says the ledger is not editable is that it contains no controls, and
+                 the container's `role="log"` says what it is. */
               style={{ ['--i' as string]: i + 2, ['--st-rgb' as string]: m.tone } as CSSProperties}
               onClick={() => { setSelectedIndex(i); }}
               onDoubleClick={() => openEvidence(d)}

@@ -69,18 +69,29 @@
 /* ─── TOKENS · LIGHT (first-class, not a naive invert) ─────────────────────── */
 :root[data-theme="light"]{
   --azure:#0A6FE0; --azure-hover:#0A84FF; --azure-soft:#4DA5FF;
-  --cyan:#0EA5E9;  --cyan-soft:#38BDF8;   --cyan-deep:#0A6FE0;
-  --mint:#0E9E92;  --info:#0A6FE0;
+  /* Re-tuned 2026-08-29 at constant hue and saturation, because the real-browser axe sweep
+     measured every one of these BELOW WCAG AA as text on the surfaces they are actually painted
+     on. `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1** on
+     `--bg`; `--cyan` carries `.pill.info` on its own 8% tint at 2.38:1. This is the SECOND
+     palette -- `T-034` re-tuned the `--menq-*` set and `check_contrast.py` measures that one,
+     while the pages paint with these. Old values, for the record:
+     cyan #0EA5E9 (2.39) · cyan-soft #38BDF8 (2.00) · mint #0E9E92 (2.84) ·
+     success #12925B (3.37) · warning #9A6B00 (3.67) · danger #C42D3A (4.18). */
+  --cyan:#0A71A0;  --cyan-soft:#0679AB;   --cyan-deep:#0A6FE0;
+  --mint:#0B776E;  --info:#0A6FE0;
   --bg:#F4F7FC; --surface:#FFFFFF; --raised:#FFFFFF; --hi:#EEF2F9; --line:#DDE3EE;
   --ink:#0C1220; --ink-muted:#5A6478;
-  --success:#12925B; --warning:#9A6B00; --danger:#C42D3A;
+  --success:#0F794C; --warning:#865D00; --danger:#BA2B37;
 
   --azure-rgb:10 111 224; --azure-soft-rgb:77 165 255;
-  --cyan-rgb:14 165 233;  --cyan-soft-rgb:56 189 248; --cyan-deep-rgb:10 111 224;
-  --mint-rgb:14 158 146;
+  /* The triplets move WITH the hexes above. A colour and its own rgb triplet disagreeing is a
+     drift the token-parity gate cannot see, because these are aios.css's palette and not the
+     `--menq-*` one it compares. */
+  --cyan-rgb:10 113 160;  --cyan-soft-rgb:6 121 171; --cyan-deep-rgb:10 111 224;
+  --mint-rgb:11 119 110;
   --bg-rgb:244 247 252; --surface-rgb:255 255 255; --raised-rgb:255 255 255; --hi-rgb:238 242 249; --line-rgb:221 227 238;
   --ink-rgb:12 18 32; --muted-rgb:90 100 120;
-  --success-rgb:18 146 91; --warning-rgb:154 107 0; --danger-rgb:196 45 58;
+  --success-rgb:15 121 76; --warning-rgb:134 93 0; --danger-rgb:186 43 55;
 
   --shadow-1:0 8px 26px -16px rgb(var(--ink-rgb)/.22);
   --shadow-2:0 22px 60px -24px rgb(var(--ink-rgb)/.26);
@@ -382,7 +393,14 @@ body.ignited .shimmer{opacity:1}
    than given rules of their own: five names for three colours is how the fourth gets forgotten. */
 .pill.success{color:var(--success);border-color:rgb(var(--success-rgb)/.28);background:rgb(var(--success-rgb)/.08)}
 .pill.bad{color:var(--danger);border-color:rgb(var(--danger-rgb)/.32);background:rgb(var(--danger-rgb)/.09)}
-.pill.off{opacity:.62}.pill.off::before{box-shadow:none}
+/* `opacity` on TEXT is invisible to the token contrast gate: it checks colour pairs, and a
+   multiplier is not a colour. `.pill.off` used `opacity:.62`, which took muted text from a
+   comfortable 6.53:1 down to a measured 3.07:1 -- below WCAG AA -- while every declared pair
+   stayed green. The de-emphasis is kept where it belongs, on the dot and the border, and the
+   label reads at the muted colour it was always supposed to be. Found by the real-browser axe
+   sweep (2026-08-29). */
+.pill.off{color:var(--ink-muted);border-color:rgb(var(--line-rgb)/.8)}
+.pill.off::before{box-shadow:none;opacity:.62}
 .tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:7px;
   background:rgb(var(--cyan-rgb)/.07);border:1px solid rgb(var(--cyan-rgb)/.14);
   color:var(--azure-soft);font-family:var(--f-mono);font-size:var(--t-micro)}
@@ -2142,7 +2160,11 @@ body.ignited .shimmer{opacity:1}
 .v-command .dock-run:hover{box-shadow:0 0 30px rgb(var(--cyan-rgb)/.7);transform:translateY(-1px)}
 .v-command .dock-run:active{transform:translateY(0)}
 .v-command .cmd-chips{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 4px}
-.v-command .chips-lbl{margin-right:2px;opacity:.75}
+/* Same mechanism as `.pill.off`: `.chips-lbl` is already `.micro` (muted, 10px), and a further
+   `opacity:.75` measured 4.05:1 against the page background -- under the 4.5:1 floor, and
+   invisible to a gate that compares declared colours. The label is muted; it does not need to
+   be muted twice. */
+.v-command .chips-lbl{margin-right:2px}
 .v-command .cmd-chips .chip{cursor:pointer}
 
 /* ── REACTOR PANEL ────────────────────────────────────────────────────────── */

@@ -802,7 +802,12 @@ export function Automations() {
               the conduit is armed/energised (`.au-live`) — a live-field marker, not an
               observed run; a sealed (blocked) or off conduit stays still. */}
           <div className={`sc-diagram ${STATE_CLASS[st]}${st === 'idle' ? ' au-live' : ''}`}>
-            <div className="sc-track">
+            {/* `tabIndex` + a name because this track scrolls horizontally: without a tab stop a
+                keyboard-only reader cannot reach whatever is off the right-hand edge, and
+                without a name a screen reader announces an unlabelled group. Found by the
+                real-browser axe sweep — jsdom has no layout, so it cannot know an element
+                scrolls at all. */}
+            <div className="sc-track" role="group" tabIndex={0} aria-label={L('flowAria')}>
               <span className="sc-rail" aria-hidden="true" />
               <span className="sc-pulse" aria-hidden="true" />
               <span className="sc-node sc-src">

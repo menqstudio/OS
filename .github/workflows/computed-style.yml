@@ -13,7 +13,8 @@ on:
 permissions:
   contents: read
 
-# T-024 — the only gate in this repository that MEASURES the rendered app.
+# T-024 — the only gate in this repository that MEASURES the rendered app, and since 2026-08-29
+# the only one that runs axe's `color-contrast` rule at all.
 #
 # `vitest.config.ts` and `vitest.a11y.config.ts` both set `css: false`, so 713 unit tests and 59
 # axe checks run against a DOM with no stylesheet attached. Two shipped defects came straight out
@@ -59,4 +60,13 @@ jobs:
       # packages it links against.
       - run: npx playwright install --with-deps chromium
 
-      - run: npm run test:browser
+      # One command, both sweeps: the computed-style measurement this job was created for, and
+      # (since 2026-08-29) the ACCESSIBILITY sweep -- axe with `color-contrast` enabled, over the
+      # same 23 pages, with the app's real stylesheet graph loaded. The jsdom a11y job cannot run
+      # that rule at all (`css: false`), and `tools/check_contrast.py` checks 56 declared token
+      # pairs, which is a different claim from "this rendered page passes". The job's CONTEXT name
+      # is unchanged on purpose: it is a required check in config/required-checks.json and
+      # renaming it would take it out of branch protection until the list and the protection API
+      # were updated together. The step says what actually runs.
+      - name: Computed style + accessibility (axe with color-contrast) in real Chromium
+        run: npm run test:browser
