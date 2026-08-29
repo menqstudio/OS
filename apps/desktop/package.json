@@ -29,6 +29,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/browser": "^4.1.10",
     "@vitest/browser-playwright": "^4.1.10",
+    "axe-core": "4.10.2",
     "jest-axe": "^10.0.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.60.0",

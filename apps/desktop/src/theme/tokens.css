@@ -32,10 +32,17 @@
   --menq-color-border: #e2e5ea;
   --menq-color-accent: #3856fe;
   --menq-color-accent-text: #ffffff;
-  --menq-color-success: #187a42;
-  --menq-color-warning: #9b5c00;
-  --menq-color-danger: #c5314a;
-  --menq-color-info: #246bbf;
+  --menq-color-success: #156c3a;
+  --menq-color-warning: #885000;
+  --menq-color-danger: #ac2b40;
+  --menq-color-info: #205ea8;
+  /* Opaque badge tints — the colour at 14% over `surface`, precomputed. `ui.css` used
+     `color-mix(… 14%, transparent)`, so a badge inherited whatever was behind it and its
+     contrast was unbounded: 4.54:1 on a plain surface, 4.26:1 on a notification row. */
+  --menq-color-success-tint: #deeae3;
+  --menq-color-warning-tint: #eee6db;
+  --menq-color-danger-tint: #f3e1e4;
+  --menq-color-info-tint: #e0e8f3;
   --menq-color-focus: #3856fe;
   --menq-color-hover: rgba(56, 86, 254, 0.08);
   --menq-color-selected: rgba(56, 86, 254, 0.12);
@@ -52,8 +59,15 @@
   --menq-color-accent-text: #0c0e13;
   --menq-color-success: #4ade80;
   --menq-color-warning: #f0b23a;
-  --menq-color-danger: #f2708a;
+  --menq-color-danger: #f4869c;
   --menq-color-info: #6cb2ff;
+  /* Opaque badge tints — the colour at 14% over `surface`, precomputed. `ui.css` used
+     `color-mix(… 14%, transparent)`, so a badge inherited whatever was behind it and its
+     contrast was unbounded: 4.54:1 on a plain surface, 4.26:1 on a notification row. */
+  --menq-color-success-tint: #1c332d;
+  --menq-color-warning-tint: #332d23;
+  --menq-color-danger-tint: #332730;
+  --menq-color-info-tint: #202d3e;
   --menq-color-focus: #7c8dff;
   --menq-color-hover: rgba(124, 141, 255, 0.12);
   --menq-color-selected: rgba(124, 141, 255, 0.18);
@@ -70,7 +84,17 @@
   /* Accent aligned to the brops-aios cyan HUD (was an indigo/violet that clashed
      with the redesign). Falls back to the mockup cyan if --cyan is ever absent. */
   --brops-accent: var(--cyan, #38bdf8);
+  /* Near-black on the accent works while the accent is light. The light theme's `--cyan` was
+     re-tuned darker on 2026-08-29 so `.eyebrow` could clear AA as TEXT, and that turned
+     `.btn--primary` into near-black on a mid-blue at 3.5:1. One token cannot be both a
+     readable foreground on a light page and a light background under dark text, so the
+     button's text follows the theme. */
   --brops-accent-text: #04121b;
   --brops-command-surface: var(--menq-color-elevated);
   --brops-agent-card-radius: var(--menq-radius-card);
+}
+
+/* Light theme: the accent is dark enough that near-black text on it measures 3.5:1. */
+:root:not([data-theme="dark"]) {
+  --brops-accent-text: #ffffff;
 }

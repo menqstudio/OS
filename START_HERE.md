@@ -118,6 +118,13 @@ rather than quietly re-rolling.
 **Say what you did not do.** ✅ in the audit ledgers means *independently confirmed*. ◑ means *the
 builder's own unverified claim*. Never promote your own work to ✅.
 
+> **The accessibility gate lives in the BROWSER project, not the a11y one.** `npm run test:a11y` is
+> the fast structural sweep and runs in jsdom with `css: false`, where axe's `color-contrast` rule
+> **cannot execute**. The one that measures colour is `npm run test:browser`
+> (`pages.axe.browser.spec.tsx`, real Chromium, both themes) and it reports under the CI context
+> `Cockpit · computed style (real Chromium)` — a name that predates it. If you change a colour, that
+> is the job to watch, along with `python tools/check_contrast.py`.
+
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
 `python tools/generate_agent_definitions.py --check`. **23 `check_*.py` files exist; 22 are invoked
 by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by

@@ -1,12 +1,101 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-> **✅ SETTLED — `main` is at `90fbcf7`.** The pull request that records it is PR #171 on `settle-after-170`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Start from `docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom.
+> **⏭️ CURRENT ACTIVE: PR #172 · branch `a11y/axe-real-browser`** (base `main`, tip `36ead25`, task T-042). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** The next concrete step is small and named: point axe at the real browser the 'Cockpit / computed style (real Chromium)' workflow already runs. That is the single word -- production -- keeping Phase 10's a11y+performance rows unticked, and it finishes both. After that, Block C is what the ninth round left standing: A-09 route 1 (open by design), I-13's remaining file relocation (an audited engine change, not the production gate), T-023, and T-040. Nothing since the ninth round is independently confirmed.
+> Axe now runs in real Chromium with the stylesheet loaded and color-contrast enabled, over 23 pages x 2 states x 2 themes plus the shell and the command palette. It found eleven defects nothing here could see, ten of them in the light theme, which had never been swept -- including six values in the second palette aios.css ships and every semantic colour on its own badge tint. contrast-pairs.json is now asserted to mirror tokens.ts; it never was.
 >
 > **The last independent audit returned RED -- now for one platform rather than one mechanism.** The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside the 1b decision. Superseding: the THIRD independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ `e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** (A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and **confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder claims and could not refute **9**, which it recommends for the independently-confirmed mark; it also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect surviving one level up rather than closing, on both platforms, demonstrated against the repository's own ledger code. **RED is the standing verdict of record and the gate stays shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is `2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`).
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
+
+### The light theme had never been through an accessibility sweep, and it was carrying eleven defects (2026-08-29)
+
+`T-041` left one word between Phase 10's a11y row and a tick: **`production`**. Axe ran in jsdom with
+`css: false`, where its own docstring says *"the `color-contrast` rule cannot execute here and does
+not."* Pointing axe at the real browser the `computed-style` job already runs closed that word — and
+found eleven defects nothing in this repository could see, ten of them in the **light theme**.
+
+## Three things had to be got right before any finding could be believed
+
+**The engine was five years old.** `@types/jest-axe` — a *types* package — declares a runtime
+dependency on `axe-core@^3.5.5`, and npm hoisted it, so `import axe from 'axe-core'` resolved to
+**3.5.6** while the jsdom sweep used jest-axe's nested **4.10.2**. The old engine reported the ⌘K
+palette's ARIA 1.2 combobox as `aria-required-children`, critical — correct markup, obsolete rule.
+**Pinning `axe-core` to 4.10.2 made that finding disappear**, which is the point: it would have been
+"fixed" by breaking working code. Two sweeps grading the same app by different rulebooks is not a
+disagreement anyone would have noticed.
+
+**The light-theme axis was vacuous the first time.** Setting `document.documentElement.dataset.theme`
+before mounting is overwritten a moment later: `AppProvider` reads `localStorage['brops.theme']` into
+state and writes `data-theme` from an effect. Every "light" test measured the dark theme. **It was
+green, twice.** Seeding the key is what the app itself does, and
+`both themes really differ` is the guard that stops it silently coming back.
+
+**Entrance animations had to settle first.** Nearly everything arrives through `.reveal`, which
+starts at `opacity: 0`; axe composites what it can see, so measuring mid-entrance produced ratios of
+1.01 and 1.02 with foregrounds like `#07090f` on `#05070c` — a description of an animation frame, not
+of anything a reader ever sees.
+
+## What was actually wrong
+
+**`opacity` on text is invisible to a token gate**, because a multiplier is not a colour.
+`.pill.off` used `opacity: .62` and took muted text from a comfortable 6.53:1 to a measured
+**3.07:1**; `.v-command .chips-lbl` was muted twice at `opacity: .75` and measured **4.05:1**. Both
+were green in every declared pair.
+
+**Two invalid ARIA attributes, both critical.** `Approvals` rendered `<button role="listitem"
+aria-pressed>` — `aria-pressed` is not allowed on `listitem`, so a screen reader was handed a list
+item claiming a pressed state, which is neither a control nor a selection; it is `listbox`/`option`
+with `aria-selected` now, which is what the UI actually does. `Decisions` put `aria-readonly` on a
+role-less `div`: the intent was real (the ledger is append-only) but the attribute does nothing while
+telling a reader of the source that something was handled.
+
+**A scrollable region with no keyboard route.** `Automations`' flow diagram scrolls horizontally and
+had no tab stop, so whatever sat off the right-hand edge was unreachable without a mouse. Only a real
+browser can know an element scrolls.
+
+## And then the light theme, which is where the real weight was
+
+`aios.css` carries **its own palette** — `--cyan`, `--cyan-soft`, `--mint`, `--success`, `--warning`,
+`--danger` — and the pages paint with it, while `check_contrast.py` measures the `--menq-*` set.
+`T-034` re-tuned the one the gate measures. Measured on screen, every light value in the other one
+was below AA as text: **`--cyan-soft` at 1.99:1**, carrying `.eyebrow` on nearly every page header;
+`--cyan` 2.38 on `.pill.info`; `--mint` 2.84; `--success` 3.37; `--warning` 3.67; `--danger` 4.18.
+All six re-tuned at constant hue and saturation, with their `-rgb` triplets moved to match.
+
+**Then the badges, and this one is systematic.** `ui.css` paints `.badge--*` as the semantic colour
+on a 14% tint **of itself**. That background was in no declared pair, so **all five light `--menq-*`
+semantics and the dark `danger` sat between 3.65 and 3.97** while the gate read GREEN over 56 checks.
+Four are re-tuned, and the tint stopped being translucent: a `color-mix(… 14%, transparent)`
+background inherits whatever is behind it, so the same badge measured 4.54:1 on a plain surface and
+**4.26:1 inside a notification row**. It is an opaque `--menq-color-<name>-tint` token now, which
+makes a badge's contrast a property of the badge and makes the declared pair exactly the thing that
+is painted. **56 → 64 checks.**
+
+One fix broke another and the sweep caught it: darkening `--cyan` so `.eyebrow` could clear AA turned
+`.btn--primary` into near-black on mid-blue at 3.5:1. One token cannot be both a readable foreground
+on a light page and a light background under dark text, so `--brops-accent-text` follows the theme.
+
+## The gate that was grading a palette the app had stopped shipping
+
+`contrast-pairs.json` has always said *"The named colors MUST mirror tokens.ts"* — and **nothing
+checked it.** A hand-maintained copy of the shipping palette decides an accessibility verdict; edit
+the tokens without editing the manifest and the gate goes on grading colours nobody paints.
+`check_token_parity.py` compares `tokens.ts` with `tokens.css` and never looks here. It is asserted
+now, with four tests; `selected` is exempt by NAME because it is an rgba in the tokens and a
+composite here, and the `*-tint` entries are deliberately **not** exempt.
+
+## What this cost, and what it is worth
+
+`pages.fixtures.tsx` was extracted so both browser sweeps share one page list and one fixture table
+rather than making a third copy. The new sweep is **98 tests** — 23 pages × 2 states × 2 themes, plus
+the shell, the ⌘K palette, and four controls including one that plants an unreadable element and one
+that proves the measured route reports a real number rather than passing everything.
+
+`axe-core` returns `NaN` for backgrounds Chromium computes to `color(srgb …)`. Treating that as a
+pass hides failures on exactly the badges and *selected* rows where `H-03` lived; treating it as a
+failure invents findings in working code. `src/test/contrast.ts` measures them instead — 12 tests,
+four mutants red.
 
 ### `main` is settled at `90fbcf7` — the routes have ceilings now (2026-08-29)
 

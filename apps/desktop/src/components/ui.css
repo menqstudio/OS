@@ -36,12 +36,18 @@
   border: 1px solid transparent; white-space: nowrap;
 }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; }
+/* The four semantic badges take an OPAQUE tint. They used
+   `color-mix(in srgb, C 14%, transparent)`, which meant a badge inherited whatever was behind it
+   and its contrast was unbounded — the same badge measured 4.54:1 on a plain surface and 4.26:1
+   inside a notification row. An opaque token makes the ratio a property of the badge, and makes
+   the `<name>-on-<name>-tint` pair in contrast-pairs.json exactly the thing that is painted.
+   Found by the real-browser axe sweep, 2026-08-29. */
 .badge--neutral { color: var(--brops-muted); background: var(--menq-color-hover); }
 .badge--accent { color: var(--brops-accent); background: var(--menq-color-selected); }
-.badge--success { color: var(--menq-color-success); background: color-mix(in srgb, var(--menq-color-success) 14%, transparent); }
-.badge--warning { color: var(--menq-color-warning); background: color-mix(in srgb, var(--menq-color-warning) 14%, transparent); }
-.badge--danger { color: var(--menq-color-danger); background: color-mix(in srgb, var(--menq-color-danger) 14%, transparent); }
-.badge--info { color: var(--menq-color-info); background: color-mix(in srgb, var(--menq-color-info) 14%, transparent); }
+.badge--success { color: var(--menq-color-success); background: var(--menq-color-success-tint); }
+.badge--warning { color: var(--menq-color-warning); background: var(--menq-color-warning-tint); }
+.badge--danger { color: var(--menq-color-danger); background: var(--menq-color-danger-tint); }
+.badge--info { color: var(--menq-color-info); background: var(--menq-color-info-tint); }
 
 .empty { text-align: center; padding: var(--menq-space-7) var(--menq-space-4); color: var(--brops-muted); }
 .empty-glyph { font-size: 28px; opacity: 0.6; }
