@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
