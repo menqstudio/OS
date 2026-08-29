@@ -8,6 +8,18 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### `main` is settled at `a4ce1cd` — both palettes are under contract (2026-08-29)
+
+Four tasks closed today, all in the same seam and each one found by the previous: `T-041` gave the 23
+routes a performance ceiling · `T-042` put axe in a real browser and found eleven defects, ten in a
+light theme nothing had ever swept · `T-043` turned that browser finding into a committed static
+contract for the palette `aios.css` ships.
+
+**Phase 10's a11y and performance rows are the first Phase-10 boxes to tick.**
+
+Everything from PRs #166, #168, #170, #172 and #174 is ◑ — the Builder's own claim. Standing verdict
+**RED**, production gate **shut**, three refusals untouched.
+
 ### The second palette has a committed contract now, and `--hi` is a token nothing paints (2026-08-29)
 
 `T-042` found six sub-AA values in `aios.css`'s palette by running a browser. A running test is not a
