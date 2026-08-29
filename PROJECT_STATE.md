@@ -8,6 +8,48 @@
 >
 > **The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets. Earlier prose below is HISTORY.
 
+### Six dead tokens deleted, and the other fourteen have a reason now (2026-08-29)
+
+`T-042` found `--hi` by hand — a token declared in both `:root` blocks and painted nowhere — while
+writing a contrast pair for a background no page has. Nobody had looked at the class of problem.
+**20 of 149 custom properties were declared and read by nothing.**
+
+`check_c1_tokens.py` asserts the forward direction: every `var(--x)` resolves to a declaration. That
+is the direction with a visible symptom — Phase 3 shipped two empty states with no padding because
+`--s7` was referenced and never declared. **The reverse was asserted nowhere, and the reverse is where
+residue collects:** `T-033` deleted 1 185 unreachable CSS rules and the custom properties those rules
+read survived the deletion, because nothing counts a declaration nobody reads.
+
+## The measurement was wrong first, and that is worth more than the number
+
+The naive rule `(--[a-z0-9-]+)\s*:` reported **24**. Four of them were `.dt-row--action`,
+`.file-row--dir`, `.tile--link` and `.btn--primary` — a BEM class name contains a double dash and a
+pseudo-class contains a colon, so the scan was reading modifiers as tokens. A declaration is a
+`--name:` whose `--` is not preceded by an identifier character; corrected, the answer is **20**, and
+the lookbehind is the whole correctness of the gate. Deleting the BEM lookbehind turns a test red.
+
+## What the twenty are
+
+**Six deleted** — residue from `T-033`'s rule deletion: `--glow-cyan`, `--hex`, `--hex-clip`,
+`--mtone`, `--vt`, `--vt-rgb`. `--mtone-rgb` survives beside `--mtone` because something still reads
+it, which is the kind of pair a blunter cleanup would have taken both halves of.
+
+**Nine pinned by §C.1** — `--hi`, `--s1`, `--s8`, `--s9`, `--s10`, `--t-hero`, `--t-ui`,
+`--azure-hover`, `--info`. The roadmap's design-token specification names them and
+`check_c1_tokens.py` requires them to exist, so *"the app has not painted it yet"* is not a defect.
+That answers `T-042`'s open note about `--hi` properly: it is not a mistake, it is a specified token
+with no consumer. The exemption is **read from the roadmap**, so it cannot drift from the spec.
+
+**Five allowed by name, each with its reason** — the `--menq-*`/`--brops-*` entries `tokens.ts`
+mirrors. A published contract may carry an entry the app has not used. Listed **by name, never by
+prefix**: a prefix rule would exempt every future token in the family silently, which is the hole the
+gate exists to close. That property was asserted nowhere until a mutant said so — replacing
+`token in ALLOWED` with a `startswith` left every test green — and it has a test now.
+
+The allowlist is also checked from the other side: an entry naming a token that does not exist, or
+one something has started reading, is RED. An exemption that outlives its reason is how the next dead
+token hides.
+
 ### `main` is settled at `cb3ae03` — `T-040` is closed by measurement (2026-08-29)
 
 Five tasks closed today, each found by the last: `T-041` (route budgets) · `T-042` (axe in a real

@@ -59,7 +59,6 @@
   /* elevation + glow */
   --shadow-1:0 8px 26px -14px rgb(var(--bg-rgb)/.75);
   --shadow-2:0 22px 60px -20px rgb(var(--bg-rgb)/.85);
-  --glow-cyan:0 0 40px -8px rgb(var(--cyan-rgb)/.55);
 
   /* ambient intensities (dials may override at runtime) */
   --aurora-op:.5; --mesh-op:.5; --grid-op:.5; --scan-op:.5; --grain-op:.05;
@@ -95,7 +94,6 @@
 
   --shadow-1:0 8px 26px -16px rgb(var(--ink-rgb)/.22);
   --shadow-2:0 22px 60px -24px rgb(var(--ink-rgb)/.26);
-  --glow-cyan:0 0 34px -10px rgb(var(--cyan-rgb)/.42);
   --aurora-op:.28; --mesh-op:.34; --grid-op:.4; --scan-op:.28; --grain-op:.03;
   color-scheme:light;
 }
@@ -841,8 +839,6 @@ body.ignited .shimmer{opacity:1}
    One live instrument: the STATE CENSUS bar. All selectors under .v-agents.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.v-agents{--hex:clamp(54px,7.2vw,80px);
-  --hex-clip:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
 
 /* ── overall split: hero lattice + dossier rail ─────────────────────────── */
 .v-agents .ros-wrap{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
@@ -926,7 +922,6 @@ body.ignited .shimmer{opacity:1}
   .v-agents .dossier{position:static;top:auto}
 }
 @media (max-width:560px){
-  .v-agents{--hex:clamp(52px,15vw,72px)}
   .v-agents .cseg{flex:1 1 auto}
 }
 
@@ -3145,10 +3140,10 @@ body.ignited .shimmer{opacity:1}
   opacity:calc(.34 + var(--sal,60)*.0064);
   filter:blur(calc((100 - var(--sal,60))*.026px));
   transition:transform var(--slow),opacity var(--slow),filter var(--slow);
-  --mtone:var(--azure);--mtone-rgb:var(--azure-rgb)}
-.v-memory .m-pin{--mtone:var(--cyan);--mtone-rgb:var(--cyan-rgb)}
-.v-memory .m-seal{--mtone:var(--mint);--mtone-rgb:var(--mint-rgb)}
-.v-memory .m-vol{--mtone:var(--azure);--mtone-rgb:var(--azure-rgb)}
+  --mtone-rgb:var(--azure-rgb)}
+.v-memory .m-pin{--mtone-rgb:var(--cyan-rgb)}
+.v-memory .m-seal{--mtone-rgb:var(--mint-rgb)}
+.v-memory .m-vol{--mtone-rgb:var(--azure-rgb)}
 @keyframes mDecay{0%,100%{opacity:1}50%{opacity:.62}}
 @keyframes mRecall{0%{box-shadow:0 0 0 0 rgb(var(--mtone-rgb)/.55)}100%{box-shadow:0 0 0 20px rgb(var(--mtone-rgb)/0)}}
 @keyframes mRecallCore{0%,100%{transform:scale(1)}35%{transform:scale(1.35)}}
@@ -3385,7 +3380,7 @@ body.ignited .shimmer{opacity:1}
 
 /* ── HERO SHELL ──────────────────────────────────────────────────────────── */
 .v-research .rc-hero{padding:var(--s5) var(--s5) var(--s4);margin-bottom:var(--s6);
-  --vt:var(--success);--vt-rgb:var(--success-rgb)}
+  }
 @keyframes rc-core{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.09);opacity:1}}
 @keyframes rc-reforge{0%{transform:translate(-50%,-50%) scale(.9);opacity:.4}
   100%{transform:translate(-50%,-50%) scale(1);opacity:1}}
