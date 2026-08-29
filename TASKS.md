@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -22,6 +22,7 @@ confirmed it. Never promote your own work.
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-045** | **The canon has to stay readable, and the handoff has to be checkable.** Merged as PR #180 — ceilings on every canonical file, `check_handoff_ready.py`, `check_doc_claims.py`, `check_state_fields.py`, and the PreToolUse refusal that accepts only a shrinking edit to an over-budget file. Five of its own gates were RED in CI and are fixed; the write-up is in PR #180. ◑ Builder's claim, unaudited | 🔨 Claude | Done | merged `#180` |
+| **T-046** | **The audit ledger's concurrency test let the runner decide the verdict.** `test_concurrent_thread_appends_keep_one_valid_chain` raced 24 threads for one `O_EXCL` lock against the PRODUCTION 10 s bound. That bound answers *has the holder wedged*, not *how long may 24 racers take*; the wait grows like `n·H(n)` poll cycles, so a slow Windows runner turned `main` red on a tree byte-identical to one that had just passed. Bound raised in the TEST only — the engine constant is untouched. **Stays open until several pull requests run the Windows engine job clean:** one green run does not prove an intermittent fixed, which is `T-023`'s lesson | 🔨 Claude | Review | `fix/audit-lock-flake` |
 | **T-004** | **Engine deferred security items O-1..O-5** (roadmap Phase 10). All five OPEN; none needs an Owner-minted artifact. What blocks them is deployment wiring and a second principal. O-1 is the only HIGH and the Owner chose the fix over accepting the risk — closure is the VERIFICATION on a packaged build, not the assertion that the install directory is unwritable. Inventory: `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule plus a targeted fix to the worktree check** (`git rev-parse --show-toplevel` instead of parsing `git worktree list`). Touches security-adjacent code, so it needs its own branch, its own PR and Owner approval; it must not land inside a coordination merge. Until then 10 monorepo-coupled engine tests skip-guard themselves | — | Todo | — |
 | **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half end to end; the request half exists on neither side. Sequenced behind the standing audit: a new input to the engine's trust boundary is not added while the independent verdict is RED | — | Blocked | — |

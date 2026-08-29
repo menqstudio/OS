@@ -6,27 +6,29 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `settle-after-180` · **head** `40a2a44` · **task** `T-045` · **PR #181** (the settle commit)
+**Active branch:** `fix/audit-lock-flake` · **head** `7cdeb09` · **task** `T-046` · **PR #182**
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** merge PR #181 so `main` records the settled state, then claim a row in
-[`TASKS.md`](TASKS.md). `T-045` is merged as PR #180: every canonical file is under a ceiling,
-the roadmap is eleven files under [`docs/roadmap/`](docs/roadmap/) reassembled by
-`tools/roadmap_source.py`, and five gates that were RED in CI are fixed.
+**Next:** merge PR #182 once `gh pr checks 182` is green on the exact head — **and then read
+`main`'s own CI**, not only the PR's. `T-045` (PR #180) and the settle (PR #181) are merged;
+`main` went red after both, the first time from a baseline `test_roadmap_split` could no longer
+reach after a squash merge, the second from an intermittent this PR closes.
 
-*Read `gh pr checks` before believing a sentence about gates.* The handoff before this one said
-`T-045` was "GREEN on every gate it added"; CI showed four red jobs on that same head, and each
-fix exposed the next, because a job dies at its first failing step and everything after it never
-runs. Three things have to be true at every push, and none was: the PR body carries exactly one
+*A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
+red `main`s this session were reported as green because the PR's checks were read and the branch's
+were not. Three more things have to be true at every push: the PR body carries exactly one
 `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the
-live `main`, and the head named here is updated **in its own commit** — an amend moves the hash
-and the handoff then names a commit that no longer exists.
+live `main`, and the head named above moves **in its own commit** — an amend changes the hash and
+the handoff then names a commit that no longer exists.
+
+`T-046` stays open after this merges. One green run does not prove an intermittent fixed; the
+Windows engine job has to come back clean across several pull requests, which is `T-023`'s lesson.
 
 ## Verify before you believe any of this
 

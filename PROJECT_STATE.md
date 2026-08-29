@@ -3,7 +3,7 @@
 **Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
 then repaired the five CI gates that cut turned red — four of them its own. The audit pointer
 and the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`),
-which a rewrite cannot delete. PR #180 carries the detail; it is merged and unaudited.
+which a rewrite cannot delete. PR #180 carries the detail; it is merged and unaudited. `main` was RED after each of the two merges and both were reported as green because the PR's checks were read and the branch's were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closes the second, an intermittent in the audit ledger's concurrency test.
 This file was 3893 lines and **95% of it was a byte-for-byte copy of `NEXT_CHAT.md`** —
 3037 consecutive identical lines from line 2, differing only in the title. The log both
 carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
@@ -11,9 +11,9 @@ This file now answers one question `NEXT_CHAT.md` does not: **what is the state 
 of the product**. `NEXT_CHAT.md` answers *what the next session does first*.
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `0ed757b`.** The pull request that records it is PR #181 on `settle-after-180`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Nothing is open but this. The next independent audit round is what would move the position; everything merged since `5cf9b8c` is the Builder's claim.
+> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
