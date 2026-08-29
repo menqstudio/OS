@@ -40,6 +40,7 @@ Run:  python tools/check_audit_reports.py
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import sys
@@ -143,7 +144,25 @@ def state_audit_pointer(text: str) -> str | None:
 
     That is `A-06` one layer down: the OWNER page and the ledger disagreed with each other, and this
     file disagreed with both while being the one a tool would read.
+
+    **Read as a FIELD first, prose second.** Until `T-045` the only pointer was a sentence inside
+    `purpose`, and a regex over prose is a pointer that any rewrite can delete by accident — which
+    is exactly what happened: `T-045` cut `purpose` from 74,311 characters to one paragraph, the
+    sentence went with it, and this gate turned RED on a file nobody had meant to change here.
+    `code_audit.last_independent_audit` is a field, so the mirror says it the way a machine-readable
+    file should. The prose form is still accepted, because deleting a working pointer to prove a
+    point is not a fix and older documents may still carry it.
     """
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        data = None
+    if isinstance(data, dict):
+        audit = data.get("code_audit")
+        if isinstance(audit, dict):
+            pointer = audit.get("last_independent_audit")
+            if isinstance(pointer, str) and pointer.strip():
+                return pointer.strip()
     m = re.search(r"the last INDEPENDENT audit\s*--\s*(%s/[^\s,]+\.md)" % re.escape(AUDIT_DIR), text)
     return m.group(1) if m else None
 

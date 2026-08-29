@@ -738,9 +738,44 @@ jobs:
       # anchor + docs-reference-active-PR + PR-diff state-doc drift guard).
       - name: Coordination-docs consistency gate
         run: python tools/check_coordination.py
+      # The reverse of check_read_receipt: that one asks whether the session READ the
+      # canon, this one asks whether the canon can still BE read. Every other gate here
+      # can be satisfied by adding text; this is the only one that can only be satisfied
+      # by removing it. The read manifest reached 1917 KB (~386k tokens) with
+      # NEXT_CHAT.md and PROJECT_STATE.md carrying 3037 identical lines, because a
+      # session that appends was compliant and a session that deletes was not.
+      - name: Canonical read set within budget
+        run: python tools/check_canon_budget.py
+      # Could a brand-new session take over from this repository alone? CLAUDE.md's
+      # continuous-documentation law has required that for weeks and nothing checked it.
+      - name: Handoff is ready for a new session
+        run: python tools/check_handoff_ready.py
+      # A field nothing reads cannot be wrong, so nothing corrects it -- which is how
+      # current_state.json's `purpose` reached 74,311 characters inside the file called
+      # the machine-readable mirror (ninth audit I-06).
+      - name: Machine mirror has no field nothing reads
+        run: python tools/check_state_fields.py
+      # Every defect found while cutting the read set down had one shape: something was
+      # written down and nothing checked it was true. This checks the claims that have a
+      # machine-checkable referent -- paths, commits, ticket ids, toolchain versions.
+      - name: Canonical documents make no false checkable claim
+        run: python tools/check_doc_claims.py
+      # An assumption may not enter the record dressed as a fact. Either settle it and write
+      # what it printed, or mark it UNVERIFIED with the experiment that would settle it.
+      - name: No unmarked guess in a canonical document
+        run: python tools/check_no_assumptions.py
+      # Options without a recommendation are a decision passed upward while looking thorough.
+      - name: Alternatives carry a reasoned recommendation
+        run: python tools/check_recommendation.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_coordination
+        run: |
+          python -m unittest test_check_coordination
+          python -m unittest test_check_canon_budget
+          python -m unittest test_check_handoff_ready
+          python -m unittest test_check_doc_claims
+          python -m unittest test_check_recommendation
+          python -m unittest test_roadmap_split
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law

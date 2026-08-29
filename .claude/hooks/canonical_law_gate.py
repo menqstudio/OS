@@ -145,6 +145,139 @@ def canonical_text(receipt_store, changed_only: list[str] | None = None) -> str:
     return text
 
 
+# --- per-turn enforcement -----------------------------------------------------------
+# Session start is one moment and a session is hundreds. Everything injected once
+# competes with everything that arrives afterwards and loses -- which is why the Owner
+# had to say "you forget" about a rule that WAS in CLAUDE.md. So the cheap gates run on
+# every message, and their verdict is restated every message.
+#
+# Only gates that are pure file arithmetic run here. check_doc_claims and
+# check_handoff_ready shell out to git and walk the tree; per-turn they would tax every
+# message to catch something that changes on commit, so they stay in CI and in the
+# handoff. A gate that makes the session slow is a gate somebody removes.
+FAST_GATES = ("check_canon_budget", "check_state_fields")
+
+# How many consecutive turns may pass with the repository unchanged before the session is
+# told to stop and say what is blocking it. Not a limit on thinking: reading, searching and
+# planning legitimately change nothing. It is a limit on how long a session may believe it
+# is progressing while nothing lands. Two full working stretches, then escalation.
+STALL_TURNS = 25
+STALL_AGAIN = 15
+
+
+def _turn_state_path(sid: str) -> pathlib.Path:
+    import hashlib
+    import tempfile
+    safe = hashlib.sha256((sid or "unknown").encode()).hexdigest()[:20]
+    d = pathlib.Path(tempfile.gettempdir()) / "os-canonical-law" / "turns"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{safe}.json"
+
+
+def fast_gate_line() -> str:
+    """Run the file-arithmetic gates and report them in one line, every turn."""
+    import contextlib
+    import io
+    verdicts = []
+    for name in FAST_GATES:
+        try:
+            mod = __import__(name)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mod.main(ROOT)
+            verdicts.append((name, code, buf.getvalue().strip()))
+        except SystemExit as exc:
+            verdicts.append((name, int(exc.code or 1), ""))
+        except Exception as exc:  # noqa: BLE001 - a broken gate must not wedge the turn
+            verdicts.append((name, -1, f"could not run: {exc}"))
+    red = [(n, out) for n, c, out in verdicts if c != 0]
+    if not red:
+        return "GATES: canon budget GREEN, machine mirror GREEN."
+    lines = ["GATES RED -- fix these before adding anything to a canonical document:"]
+    for name, out in red:
+        first = next((ln for ln in out.splitlines() if ln.strip().startswith("-")), "")
+        lines.append(f"  {name}: {first.strip() or 'RED'}")
+        lines.append(f"    run: python3 tools/{name}.py")
+    return "\n".join(lines)
+
+
+def stall_line(sid: str) -> str:
+    """Notice, out loud, when many turns have passed and the repository has not moved.
+
+    A session that has misunderstood the task does not feel stuck; it feels busy. The
+    only signal available from here that does not require judgement is whether anything
+    has LANDED, so that is the signal used -- and its limit is stated rather than hidden:
+    reading and planning legitimately move nothing, so this cannot distinguish careful
+    work from a loop. It does not block. It asks a question the session cannot answer
+    from inside the loop, which is the point.
+    """
+    import json as _json
+    code, head = 0, ""
+    try:
+        import subprocess
+        r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        code, head = r.returncode, (r.stdout or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    if code != 0:
+        return ""
+    path = _turn_state_path(sid)
+    try:
+        state = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        state = {}
+    if state.get("head") != head:
+        state = {"head": head, "turns": 0, "warned": 0}
+    state["turns"] = int(state.get("turns", 0)) + 1
+    turns, warned = state["turns"], int(state.get("warned", 0))
+
+    due = STALL_TURNS if warned == 0 else STALL_TURNS + STALL_AGAIN * warned
+    note = ""
+    if turns >= due:
+        state["warned"] = warned + 1
+        note = (
+            f"\n\nSTALL CHECK: {turns} turns on this session and HEAD has not moved from "
+            f"{head[:7]}. That is fine if you are reading, searching or planning. It is not "
+            f"fine if you are looping.\n"
+            f"  Stop and answer three questions IN THE REPLY, not silently:\n"
+            f"    1. What exactly are you trying to make true?\n"
+            f"    2. What have you tried, and what did each attempt actually print?\n"
+            f"    3. What would tell you that you are on the wrong track?\n"
+            f"  If you cannot answer 2 with output you have SEEN, you are guessing -- say so "
+            f"to the Owner and ask, rather than continuing. Three days of a confident wrong "
+            f"direction costs more than one question.")
+    try:
+        path.write_text(_json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+    return note
+
+
+OWNER_CONTRACT_REL = "config/owner-contract.md"
+
+
+def owner_contract() -> str:
+    """The Owner's working contract, restated on EVERY message.
+
+    Not at session start alone. A rule stated once competes with everything that arrives
+    after it and loses: the session that added this file drifted out of Armenian for
+    several turns and the Owner had to say so. Restating it each turn costs a couple of
+    hundred tokens and removes the failure mode entirely.
+
+    Fail-closed and LOUD if it is missing: a silently absent contract is exactly the
+    condition it exists to prevent, and this repository has already been bitten once by a
+    wall that was off without announcing it (T-019).
+    """
+    path = ROOT / OWNER_CONTRACT_REL
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        return (f"OWNER CONTRACT MISSING ({OWNER_CONTRACT_REL}: {exc}). Nothing is telling "
+                f"you how the Owner wants to be worked with. Restore it from git before "
+                f"answering; do not improvise it.")
+
+
 def session_status(receipt_store, roadmap, sid: str) -> str:
     ok, why = receipt_store.verify(ROOT, sid)
     try:
@@ -170,6 +303,73 @@ def relative(path_str: str) -> str | None:
         return pathlib.Path(path_str).resolve().relative_to(ROOT).as_posix()
     except (ValueError, OSError):
         return None
+
+
+def canon_budget_problem(rel: str | None, tool: str, tool_input: dict) -> str | None:
+    """While a canonical document is over its ceiling, only an edit that SHRINKS it
+    is allowed through.
+
+    Every other gate in this repository can be satisfied by adding: a check to write,
+    a row to append, a document to update. That is why the read manifest reached
+    1917 KB -- a session that appends is compliant and a session that deletes is not
+    rewarded, so nothing ever deleted. NEXT_CHAT.md got to 4034 lines one honest
+    paragraph at a time, and PROJECT_STATE.md is 95% the same file.
+
+    So the refusal is deliberately asymmetric. Over budget, `NEXT_CHAT.md` accepts a
+    write that is smaller than what is there and refuses one that is not. Under
+    budget, nothing here fires at all.
+
+    LIMIT, stated rather than hidden: this sees the Edit/Write tools. A shell
+    redirect appends without passing through here -- the same "SHELL IS NOT GATED"
+    hole this file's own header names -- and `tools/check_canon_budget.py` in CI is
+    the backstop for whatever lands.
+    """
+    if rel is None:
+        return None
+    try:
+        import check_canon_budget as budget
+    except Exception:  # noqa: BLE001 - a missing gate must not wedge the session
+        return None
+    try:
+        ceilings = budget.load_json(ROOT, budget.BUDGET_REL).get("per_file_bytes") or {}
+    except SystemExit:
+        return None
+    cap = ceilings.get(rel)
+    if not isinstance(cap, int):
+        return None
+    try:
+        current = (ROOT / rel).stat().st_size
+    except OSError:
+        return None
+    if current <= cap:
+        return None
+
+    if tool == "Write":
+        content = tool_input.get("content")
+        if not isinstance(content, str):
+            return None
+        after = len(content.encode("utf-8"))
+        if after < current:
+            return None
+        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this write "
+                f"would leave it at {after:,}. While a canonical document is over budget "
+                f"the only edit that is accepted is one that makes it smaller. Move the "
+                f"history to docs/archive/ and leave the live statement behind, then write "
+                f"again. Run `python tools/check_canon_budget.py` to see the whole set.")
+
+    old = tool_input.get("old_string")
+    new = tool_input.get("new_string")
+    if isinstance(old, str) and isinstance(new, str):
+        delta = len(new.encode("utf-8")) - len(old.encode("utf-8"))
+        if delta < 0:
+            return None
+        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this edit "
+                f"adds {delta:,} more. While a canonical document is over budget the only "
+                f"edit that is accepted is one that makes it smaller -- that is the whole "
+                f"point of the ceiling: this repository has never lacked a rule that says "
+                f"write something, only one that says remove something. Archive the history "
+                f"first. `python tools/check_canon_budget.py` names every file and its overage.")
+    return None
 
 
 def handle_pre_tool(data: dict, receipt_store, roadmap, prior_art, sid: str) -> None:
@@ -218,6 +418,13 @@ def handle_pre_tool(data: dict, receipt_store, roadmap, prior_art, sid: str) -> 
         if not art_ok:
             deny("CANONICAL LAW: " + art_why)
             return
+
+    # 5) canon budget -- the only refusal in this file that can only be satisfied
+    #    by removing text rather than adding it.
+    problem = canon_budget_problem(rel, tool, tool_input)
+    if problem:
+        deny("CANONICAL LAW: " + problem)
+        return
 
     if notes:
         context("PreToolUse", "\n\n".join(notes))
@@ -274,7 +481,11 @@ def main() -> int:
         ok, _ = receipt_store.verify(ROOT, sid)
         if not ok:
             receipt_store.record(ROOT, sid)
-        context("UserPromptSubmit", session_status(receipt_store, roadmap, sid))
+        context("UserPromptSubmit",
+                owner_contract()
+                + "\n\n---\n" + session_status(receipt_store, roadmap, sid)
+                + "\n" + fast_gate_line()
+                + stall_line(sid))
         return 0
 
     if event == "pre-tool":

@@ -1,0 +1,143 @@
+{
+  "roadmap_dod_verified_2026_08_04": {
+    "method": "Evidence-based per-phase verification (5 independent reviewers) of MASTER_EXECUTION_ROADMAP.md Definition-of-Done vs the actual codebase; roadmap checkboxes were NOT trusted.",
+    "tally": "Phase 0 Locked; Phase 1 (Bridge) 4/7 MET (contracts+adapter+GovernedEngine variant+bridge CI real; round-trip only in the live kit, streaming absent, badge 2/5 states, Settings toggle disabled/read-only); Phase 2 (Gov Sidecar) 0/5 full (pages exist but the engine-mirror read IPC is unconfigured+fail-closed so governance data is local SQLite, and grant/deny is adjudicated locally); Phase 3 (Desktop Integration) 5/5 substantially MET (shell+router+22 pages+chat; gaps: route ErrorBoundary [now CLOSED 3ecf8de], 1..9 shell keys); Phase 4 (UI/UX) 3/5 MET (component lib+design docs; gaps CLOSED 3ecf8de: token-drift+contrast CI gate, per-page i18n parity guard; still open: orphaned ThemeProvider/tokens.ts, Analytics splits); Phase 5 (Memory/Knowledge) 1/5 (pages+CRUD real; governed research receipts + chat recall NOT built); Phase 6 (Multi-Agent) 0/5 full (agents/command/tasks/projects real data; governed pack dispatch + per-agent receipts NOT built); Phase 7 (Group Chat) 0/4 full (room+roster+@mention+isolation+attribution real; handoff/consensus + verified-in-room NOT built); Phase 8 (Automation) 1/5 (display+CRUD only; NO scheduler/execution at all); Phase 9 (Integrations) 1/5 (page complete; connector backend/secret-delegation NOT built); Phase 10 (Production) 0/6 (signed build/updater/onboarding/T-005/contracts-dedupe/O-1..O-5 all open).",
+    "headline": "~40% genuinely done (foundation + bridge contracts + 22-page shell + component library + local CRUD + the proven crypto chain). The remaining ~60% is the GOVERNANCE SPINE + PRODUCTION. The majority of remaining DoD items REQUIRE verified receipts / governed dispatch / engine adjudication, which cannot be honestly closed until the production trust gate is real — and that gate legitimately requires executor->real-model + session-0 isolation + an INDEPENDENT audit + Owner approval (Owner approval alone does not satisfy the technical/audit prerequisites). The shipped Verified gate stays fail-closed; the badge is never faked.",
+    "closed_this_pass": "Phase-3 route ErrorBoundary; Phase-4 token-drift+contrast CI gate (design-gates.yml) + per-page i18n parity guard; bridge/README stale 'receipt.verified==true' claim corrected to the real desktop-verifies-signed-receipt design; docs/SECURITY_MODEL.md created (Phase-10 doc DoD)."
+  },
+  "custody_and_audit_2026_08_04": {
+    "production_custody_proven_local": "The Owner ran the offline-root ceremony live: win_provision verified the offline seed against the TCB pin 3c83c2bc (else exit 3) + signed the manifest offline; win_live_turn over real named pipes (3 servers + executor, same-account) reached RESULT: trusted_verified(production signer id brops-live-signer-1, epoch 2) production_verified=true bound=true under the REAL production root — the honest graduation from demonstration custody. This is a LOCAL proof on the Owner's box, NOT a CI artifact and NOT the shipped badge.",
+    "builder_audit": "Owner-designated builder-side adversarial audit (5 fresh-context reviewers, one per dimension, tasked to BREAK the chain). Verdict NOT GREEN but CENTRAL GUARANTEE HOLDS: no fresh production forgery, root custody + output->receipt binding + server-side peer-SID gate all sound. Full verdict: apps/desktop/src-tauri/win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md. This is builder evidence, NOT the independent Architect verdict (still PENDING).",
+    "fixed": "P0-2 pipe squat+impersonation (f28b559: client SECURITY_IDENTIFICATION + server FILE_FLAG_FIRST_PIPE_INSTANCE); P0-1 anti-rollback FALSE CLAIM corrected (f28b559: floor signature is a corruption check, the real boundary is the deploy-dir OS write-ACL — no fake verification added; real closure in WINDOWS_ANTIROLLBACK_HARDENING.md); dim1-P2 production_verified/demonstration_custody UI honesty (6fdedb8).",
+    "open_gated": "P0-2/P0-3 executor->real-model + wire containment into the live spawn (needs model image + session-0 isolation); seed-at-rest plaintext TOFU window (cross-account tradeoff); anti-rollback real closure (ACL + per-deploy sealed floor key + TPM counter); receipt/attest key_usage encoding. Shipped platform_governed_execution_supported() stays FALSE until these land + an INDEPENDENT audit passes + Owner approval. Badge never faked."
+  },
+  "keystone_next_2026_08_05": "Production trusted_verified model-image slice (P0-2/P0-3), owner-approved to resume in a fresh focused session. FINDING: the session-0 governed chain (win-live) runs ENTIRELY over HASHES (ResolvedTurn/win_live_turn/executor carry only system_sha256/history_sha256/generation_config_sha256, never raw [...] full text: docs/archive/SESSION_LOG_2026-07_2026-08.md",
+  "closed_stale_prs": [
+    {
+      "number": 13,
+      "reason": "superseded"
+    },
+    {
+      "number": 12,
+      "reason": "superseded after salvage"
+    },
+    {
+      "number": 46,
+      "reason": "superseded — the 3b-1B implementation snapshot consolidated into PR #48 (feat/cockpit-pages)."
+    },
+    {
+      "number": 31,
+      "reason": "superseded — the 3b-1A code + 3b-1B design (now rev-30 GREEN) consolidated into PR #48."
+    },
+    {
+      "number": 32,
+      "reason": "superseded — the execution-binding WIP consolidated into PR #48."
+    }
+  ],
+  "shipped_this_cycle": "First real use of the desktop app by the Owner, and five defects in one session. (1) It refused to talk at all: resolve_provider is fail-closed by design and nothing on a fresh machine supplies the opt-in -- a `dev-ungoverned` cargo feature now supplies it at build time, resolve_provider untouched. [...] full text: docs/archive/SESSION_LOG_2026-07_2026-08.md",
+  "linux_e2e": {
+    "status": "proven",
+    "note": "The FULL 7-service production governed turn ran GREEN on real Linux — the FIRST production trusted_verified proven live (real service accounts, real setuid launcher -> executor, real ed25519 keys + root-signed manifest, verify_and_accept). Proven via engine/ci/live/run_live_turn.sh.",
+    "shipped_desktop": "The SHIPPED desktop app's production 'Verified' is STILL fail-closed: the broker serves UpstreamBlockedExecutor unless $BROPS_BROKER_CONFIG names a deployment config with a TCB-root-signed manifest, which nothing in the shipped app sets; the live chain is proven in the live kit, not yet wired into the desktop runtime. CURRENT_PRODUCTION_VERIFIED stays false for the shipped app."
+  },
+  "merged_prs": [
+    {
+      "number": 33,
+      "reason": "Phase 0 repository-truth remediation; Owner-approved GREEN at 45f3793; merged b6c6712."
+    },
+    {
+      "number": 30,
+      "reason": "Wave 3b-0 isolated-signer design GREEN; merged df3c0ac."
+    },
+    {
+      "number": 54,
+      "reason": "Release-workflow supply-chain hotfix; the setup-node pin named actions/setup-PYTHON's commit so no v* tag push ever produced an installer. Merged 2026-08-06 at a79c662."
+    },
+    {
+      "number": 53,
+      "reason": "Windows LIVE governed-turn machine-proof + the 2026-08-06 independent-audit remediation (F-01/F-02/F-06/F-08/F-13/F-14/F-17/F-07/F-28 and more). Merged 2026-08-06."
+    },
+    {
+      "number": 55,
+      "reason": "Audit F-10 second half: the §2.5 TCB pin manifest and real per-service IPC policies. Merged 2026-08-06."
+    },
+    {
+      "number": 56,
+      "reason": "Round-1 response to the RED remediation audit: P0 closed on both platforms, ledger corrected. Merged 2026-08-06."
+    },
+    {
+      "number": 57,
+      "reason": "Round-2 response: seed-custody P1, F-08 enforcement tests + negative live case, governed-crates CI job, answer-provenance honesty. Merged 2026-08-06."
+    },
+    {
+      "number": 58,
+      "reason": "Ledger accuracy + the ✅/◑ legend after rounds 1-2. Merged 2026-08-06."
+    },
+    {
+      "number": 59,
+      "reason": "The spec-conformance gate: a § reference is a claim the build checks. Merged 2026-08-07."
+    },
+    {
+      "number": 60,
+      "reason": "R3-01: the isolated signer re-verifies chain documents instead of checking existence. Merged 2026-08-07."
+    },
+    {
+      "number": 61,
+      "reason": "Round-3 waves 1-2: the recorder identity borrow, the trust-verdict tautologies, Windows custody and the UI's false governance claims. Merged 2026-08-07."
+    },
+    {
+      "number": 62,
+      "reason": "Round-3 wave 3: durable replay defences, inode-bound store inputs, the Windows twin's missing checks, §1.5 step 4. Merged 2026-08-07 with the live-turn job RED — fixed by PR #63."
+    }
+  ],
+  "desktop_release": {
+    "tag": "brops-desktop-v0.1.0",
+    "name": "BroPS 0.1.0 desktop",
+    "published_at": "2026-08-03",
+    "target": "feat/windows-broker-machineproof",
+    "assets": [
+      "BroPS_0.1.0_x64-setup.exe",
+      "BroPS_0.1.0_x64_en-US.msi"
+    ],
+    "note": "First tagged GitHub Release (2026-08-03): the Windows installer (NSIS .exe + MSI). Cut from the feat/windows-broker-machineproof branch BEFORE PR #53 merged; PR #53 has since merged to main, and this note said 'the branch is NOT merged to main' until 2026-08-09. Shipping the installer does NOT change the fail-closed posture: no function named platform_governed_execution_supported() exists (it is the section 0.1 spec symbol), and what refuses is governed_verification_unconfigured() returning Some(...) unconditionally, connect_broker() refusing off Linux, and the broker falling back to UpstreamBlockedExecutor because nothing sets $BROPS_BROKER_CONFIG. No production trusted_verified renders in the shipped app."
+  },
+  "independent_audit": {
+    "round": 9,
+    "report": "apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md",
+    "head": "5cf9b8cba9860807bb7e15ec3dec2e6a91f3dea8",
+    "tree": "9580b86deffb7be00cac18716f18ae33bc318a3a",
+    "pin_proof": "rev-parse HEAD == 5cf9b8c; rev-parse 5cf9b8c^{tree} == git write-tree on a clean worktree == 9580b86d. Proved before the first file was opened and re-verified after every mutation was restored.",
+    "verdict": "RED",
+    "p0": "none - all three production-gate refusals read at the source and closed for the fourth round running; AnswerProvenance::Governed is constructed only inside #[cfg(test)]; nothing in the tree sets $BROPS_BROKER_CONFIG.",
+    "claims_attacked": 9,
+    "promoted": [
+      "T-033",
+      "T-035",
+      "T-036",
+      "T-037",
+      "T-038",
+      "T-039"
+    ],
+    "reopened": [
+      "A-09",
+      "T-034"
+    ],
+    "held_at_builder_claim": [
+      "T-023"
+    ],
+    "new_findings": "I-01..I-13 (P2 6 / P3 7). Headline I-04: check_contrast.py compares round(ratio,2) >= threshold, so info-on-selected (4.4996) and danger-on-selected (4.4995) ship below WCAG AA while the gate reports GREEN; both are pairs T-034 added.",
+    "authority": "This is the AUDITOR's verdict, not the Builder's. The six promotions are the ledger's independently-confirmed mark; they do NOT open the production gate, which stays shut pending the Owner.",
+    "not_fixed_by_the_auditor": "I-06 (this file's own purpose and sync.live_main_resolution have drifted) and I-09 (AUDIT_LEDGER.md:139 routes the eighth round's browser-suite finding to T-039 instead of T-036) are RECORDED, not repaired. An auditor that edits the defects it finds cannot be checked; remediation is the Builder's."
+  },
+  "notes": {
+    "supply_chain_2026_08_29": "PR #166: gitleaks flagged the I-01 demonstration's restated 64-hex probe as generic-api-key (correct -- a synthetic value and a real one are the same bytes to a scanner); fixed by using the probe already declared in CREDENTIAL_PROBES, with no allowlist entry and no scanner config change. cargo-audit failed on chacha20 0.10.1 being yanked upstream, which is not this branch's doing; bumped to 0.10.2 in Cargo.lock rather than added to the RUSTSEC ignore list.",
+    "contracts_boxes_2026_08_29": "Phase 10's two contracts/ boxes are annotated and deliberately LEFT UNCHECKED. I-13's substance is delivered (contracts/ is the source, versioned in contracts/index.json, drift-gated by check_contracts_single_source.py), but the boxes say 'duplicates deleted' and two copies of five files still exist: drift is impossible, deletion has not happened. The remaining move is an audited engine change, not the production gate. The second box also names an 'approval' schema that exists nowhere in the tree (T-021).",
+    "route_budgets_2026_08_29": "T-041: the bundle gate budgeted one entry and left 23 lazily-loaded route chunks (256.7 KB gzip) with no ceiling, while Phase 10 asked for a performance gate over all 22 pages. perf-budget.json now has a routes section and check_bundle_budget.py enforces it bidirectionally; a route's cost is its closure minus the entry's. The two roadmap rows stay UNTICKED for one word -- 'production' -- because axe runs in jsdom, not against the built app; the computed-style (real Chromium) workflow already has the browser.",
+    "axe_real_browser_2026_08_29": "T-042: axe now runs in real Chromium with CSS and color-contrast enabled over 23 pages x 2 states x 2 themes plus the shell and the command palette (98 checks), which answers the word 'production' in Phase 10's a11y row. It found 11 defects, 10 of them light-theme. Three preconditions had to be fixed first: axe-core 3.5.6 was hoisted by @types/jest-axe and graded the app by ARIA 1.1 (pinned to 4.10.2); the light-theme axis was vacuous because AppProvider overwrites data-theme from an effect (green twice before a guard caught it); and entrance animations had to settle. contrast-pairs.json is now asserted to mirror tokens.ts -- it never was. Static checks 56 -> 64. Both Phase 10 a11y/perf rows are ticked.",
+    "aios_palette_contract_2026_08_29": "T-043: contrast-pairs.json now carries BOTH palettes (14 new pairs, 92 checks, was 64) and the mirror assertion routes by family -- aios-* against aios.css, everything else against tokens.ts. --hi is declared in both :root blocks and painted nowhere, so no pair names it; the first draft did and produced a real 4.32:1 about a background no page has. The -tint exemption is narrowed to the aios family, because --menq-color-<name>-tint are real tokens and a blanket rule would undo T-042.",
+    "t040_timeout_2026_08_29": "T-040 closed by measurement: GroupChat.readout's value arrives 200 ms after mount in isolation against Testing Library's 1000 ms asyncUtilTimeout, while vitest.config.ts had already raised testTimeout to 30 s for the same reason -- the suite raised the timeout it knew about and left the one that fires. asyncUtilTimeout is 5000 ms now; neither --retry nor singleFork was used. The isolated latency is pinned at 1000 ms separately so a real slowdown still fails, and a second test proves the ceiling is in force. 3 consecutive full runs 757/757.",
+    "dead_tokens_2026_08_29": "T-044: check_c1_tokens asserts every var(--x) resolves; nothing asserted the reverse. 20 of 149 custom properties were declared and read by nothing (the naive scan said 24 -- four were BEM modifiers). Six deleted as T-033 residue, nine pinned by §C.1 (including --hi, which answers T-042's open note), five allowed by name with reasons. tools/check_dead_tokens.py is wired into CI; the by-name-not-by-prefix property had no test until a mutant proved it."
+  },
+  "archived_snapshots": "dated snapshot fields (roadmap_dod_verified_2026_08_04, custody_and_audit_2026_08_04, keystone_next_2026_08_05, closed_stale_prs, shipped_this_cycle) moved to docs/archive/current_state_snapshots_2026-08.json on 2026-08-29 (T-045). A mirror of the CURRENT state does not carry three-week-old snapshots.",
+  "_why": "Fields removed from config/current_state.json on 2026-08-29 (T-045) because tools/check_state_fields.py found nothing reads them. `independent_audit` went too: the audit POSITION has one source of record and it is apps/desktop/AUDIT/AUDIT_LEDGER.md — a second copy nothing checks is how the ledger and the mirror came to disagree in the first place. `archived_snapshots`, added an hour earlier by the session that wrote the gate, went with them rather than being exempted; writing yourself the first exemption to your own rule is how the rule dies."
+}
