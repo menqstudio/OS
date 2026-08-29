@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/canon-budget` · **head** `d012cf7` · **task** `T-045` · **PR #180** (ready)
+**Active branch:** `gate/canon-budget` · **head** `893d1bf` · **task** `T-045` · **PR #180** (ready)
 **`main` is settled at** `96c013a` (PR #179) · **also open, deliberately unmerged:** PR #112 (`design/floor-writer-service`)
 
 **Next: merge PR #180.** All 34 checks pass on the exact head and `mergeStateStatus` is
