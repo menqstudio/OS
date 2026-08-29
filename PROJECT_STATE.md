@@ -3,11 +3,11 @@
 **Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
 then repaired the five CI gates that cut turned red — four of them its own. The audit pointer
 and the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`),
-which a rewrite cannot delete; PR #180 carries the detail, merged and unaudited. `main` was RED
-after both of that session's merges and both were called green, because the PR's checks were read
-and the branch's were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182)
-closed the second — an intermittent in the audit ledger's concurrency test — and `main` is at
-`40be210` with all seven workflows green.
+which a rewrite cannot delete; PR #180 carries the detail. `main` was RED after both of that
+session's merges and both were called green, because the PR's checks were read and the branch's
+were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second
+and `main` is at `40be210`, seven workflows green. `T-047` repairs the stamping tool, which could
+not write a PR body at all on the `gh` this box has.
 This file was 3893 lines and **95% of it was a byte-for-byte copy of `NEXT_CHAT.md`** —
 3037 consecutive identical lines from line 2, differing only in the title. The log both
 carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
