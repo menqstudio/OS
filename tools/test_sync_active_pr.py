@@ -122,8 +122,179 @@ class RecordParkedTests(_StateFile):
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+class BannerLocationTests(unittest.TestCase):
+    """The banner is found by MARKER, never by counting lines.
+
+    `rewrite_banners` replaced "every consecutive blockquote line from line 3 down" until
+    2026-08-30. `T-045` then rewrote all three documents and put a purpose note in exactly that
+    position, so the first `--settled` run afterwards overwrote NEXT_CHAT.md's explanation of what
+    the file is and what its ceiling is — and then refused on the SECOND file, leaving one document
+    rewritten and two not. Both halves are pinned here.
+    """
+
+    def setUp(self):
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._real_root = sap.ROOT
+        sap.ROOT = self.root
+        self.addCleanup(lambda: setattr(sap, "ROOT", self._real_root))
+
+    def doc(self, name: str, *, markers: bool = True) -> pathlib.Path:
+        body = "# Title\n\n> **This file is the live handoff and nothing else.** Its ceiling is 12 KB.\n\n"
+        if markers:
+            body += sap.BANNER_OPEN + "\nold banner\n" + sap.BANNER_CLOSE + "\n"
+        body += "\n## Body that must survive\n"
+        p = self.root / name
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_only_the_marked_block_is_replaced(self):
+        """Mutant: go back to lines[2:] ⇒ the purpose note is eaten."""
+        paths = [self.doc(n) for n in sap.BANNER_FILES]
+        sap.rewrite_banners("> **NEW**")
+        for p in paths:
+            text = p.read_text(encoding="utf-8")
+            self.assertIn("> **NEW**", text)
+            self.assertNotIn("old banner", text)
+            self.assertIn("This file is the live handoff", text)
+            self.assertIn("## Body that must survive", text)
+
+    def test_a_file_without_markers_refuses_by_name(self):
+        """Mutant: fall back to line 3 when the markers are absent ⇒ green, and the tool is back to
+        overwriting whatever happens to be there."""
+        self.doc(sap.BANNER_FILES[0])
+        self.doc(sap.BANNER_FILES[1], markers=False)
+        self.doc(sap.BANNER_FILES[2])
+        with self.assertRaises(SystemExit) as cm:
+            sap.rewrite_banners("> **NEW**")
+        self.assertIn(sap.BANNER_FILES[1], str(cm.exception))
+
+    def test_a_refusal_leaves_EVERY_file_untouched(self):
+        """THE REAL DEFECT, as a test: the refusal came after the first file was already written.
+        Mutant: write each file as it is validated ⇒ the first document is rewritten."""
+        first = self.doc(sap.BANNER_FILES[0])
+        self.doc(sap.BANNER_FILES[1], markers=False)
+        self.doc(sap.BANNER_FILES[2])
+        before = first.read_text(encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            sap.rewrite_banners("> **NEW**")
+        self.assertEqual(first.read_text(encoding="utf-8"), before)
+
+    def test_a_second_run_does_not_accumulate(self):
+        """The bug the line-counting version was written to fix must stay fixed: two runs leave one
+        banner, not a fresh first line above a stale tail."""
+        paths = [self.doc(n) for n in sap.BANNER_FILES]
+        sap.rewrite_banners("> **ONE**")
+        sap.rewrite_banners("> **TWO**")
+        for p in paths:
+            text = p.read_text(encoding="utf-8")
+            self.assertNotIn("> **ONE**", text)
+            self.assertEqual(text.count(sap.BANNER_OPEN), 1)
+
+
+class AuditPositionTests(unittest.TestCase):
+    """The verdict in the banner is READ, not typed.
+
+    It was a hard-coded paragraph naming the FOURTH round while the standing verdict was the
+    NINTH — five rounds stale in the one generator that writes three canonical documents at once,
+    under a comment instructing whoever changed the verdict to edit it. Five rounds went by.
+    """
+
+    def test_the_real_repository_names_the_round_the_ledger_announces(self):
+        import check_audit_reports as audit
+        sentence = sap.audit_position_sentence()
+        ordinal = audit.ordinal_of((sap.ROOT / audit.LEDGER).read_text(encoding="utf-8"))
+        self.assertIn(ordinal.upper(), sentence)
+        self.assertIn(audit.state_audit_pointer(
+            (sap.ROOT / "config" / "current_state.json").read_text(encoding="utf-8")), sentence)
+
+    def test_a_state_file_with_no_audit_record_refuses(self):
+        """Mutant: return a sentence anyway ⇒ the banner states a verdict from nowhere, in three
+        canonical files at once, which is this file's whole history."""
+        import tempfile
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "config").mkdir()
+        (root / "config" / "current_state.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            sap.audit_position_sentence(root)
+        self.assertIn("names no last-independent-audit report", str(cm.exception))
+
+    def test_a_record_pointing_at_a_report_that_is_not_filed_refuses(self):
+        import tempfile, json as _json
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "config").mkdir()
+        (root / "config" / "current_state.json").write_text(_json.dumps(
+            {"code_audit": {"last_independent_audit": "apps/desktop/AUDIT/never-filed.md"}}),
+            encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            sap.audit_position_sentence(root)
+        self.assertIn("which does not exist", str(cm.exception))
+
+    def test_a_ledger_announcing_no_round_refuses(self):
+        """The pointer alone is not the position: a report can be filed and the ledger still lead
+        with nothing, and a banner that names a file but no round tells a cold reader less than
+        silence would."""
+        import tempfile, json as _json, check_audit_reports as audit
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "config").mkdir()
+        (root / audit.AUDIT_DIR).mkdir(parents=True)
+        (root / audit.AUDIT_DIR / "r.md").write_text("x", encoding="utf-8")
+        (root / audit.LEDGER).write_text("# Ledger with no round announced\n", encoding="utf-8")
+        (root / "config" / "current_state.json").write_text(_json.dumps(
+            {"code_audit": {"last_independent_audit": f"{audit.AUDIT_DIR}/r.md"}}), encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            sap.audit_position_sentence(root)
+        self.assertIn("announces no round", str(cm.exception))
+
+
+class NoteSurgeryTests(_StateFile):
+    """The note is replaced by scanning its own string, not by finding the end of the block.
+
+    The old slice ran from `"note": "` to the block's closing `"\\n  },`, so it was correct only
+    while `note` was the last key. On 2026-08-30 `base` sat after it and a settle refused — the
+    shape guard doing its job, and the tool unable to do its own. `json.loads` cannot catch this
+    alone: deleting whole key/value pairs leaves valid JSON (A-10, fifth audit).
+    """
+
+    def block(self, note_last: bool):
+        keys = {"number": 180, "branch": "b", "state": "open", "note": "old note"}
+        if not note_last:
+            keys["base"] = "main"
+        self.write({"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                     "snapshot_branch": "b"},
+                    "active": {"branch": "b"}, "settled_at_main_head": "a" * 40,
+                    "current_workflow_pr": keys})
+
+    def test_a_key_after_note_is_not_swallowed(self):
+        """Mutant: go back to text.index('"\\n  },', start) ⇒ `base` disappears, or the shape
+        guard refuses and the settle cannot run at all. Both were reachable; this is which."""
+        self.block(note_last=False)
+        sap.rewrite_state(181, "settle", "the new note", "c" * 40)
+        after = self.read()["current_workflow_pr"]
+        self.assertEqual(after["base"], "main")
+        self.assertEqual(after["note"], "the new note")
+        self.assertEqual(after["number"], 181)
+
+    def test_note_last_still_works(self):
+        self.block(note_last=True)
+        sap.rewrite_state(181, "settle", "the new note", "c" * 40)
+        self.assertEqual(self.read()["current_workflow_pr"]["note"], "the new note")
+
+    def test_an_escaped_quote_in_the_old_note_does_not_end_the_scan(self):
+        """A note is prose written by a session; it will contain a quotation eventually."""
+        self.write({"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                     "snapshot_branch": "b"},
+                    "active": {"branch": "b"}, "settled_at_main_head": "a" * 40,
+                    "current_workflow_pr": {"number": 180, "branch": "b", "state": "open",
+                                            "note": 'it said "green" and it was not',
+                                            "base": "main"}})
+        sap.rewrite_state(181, "settle", "the new note", "c" * 40)
+        after = self.read()["current_workflow_pr"]
+        self.assertEqual(after["note"], "the new note")
+        self.assertEqual(after["base"], "main")
 
 
 class SettledHeadTests(unittest.TestCase):
@@ -182,3 +353,7 @@ class SettledHeadTests(unittest.TestCase):
         # gate downstream still fails closed if the value is wrong.
         self._patch(None)
         self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)
+
+
+if __name__ == "__main__":
+    unittest.main()

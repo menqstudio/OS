@@ -45,16 +45,36 @@ def git(*args: str) -> tuple[int, str]:
     return r.returncode, r.stdout
 
 
+#: The document as it stood immediately before the split, frozen in the tree.
+#:
+#: This was found by walking back 40 commits of `MASTER_EXECUTION_ROADMAP.md` and taking the last
+#: one that still carried the phases. That worked on the branch and stopped working the moment the
+#: branch was SQUASH-merged: the squash folded "correct the roadmap's facts" and "split it" into
+#: one commit, so the newest pre-split version reachable became a document that differs for a
+#: second, unrelated reason, and the test failed claiming the split was lossy when it was not.
+#:
+#: A proof that holds only while one particular commit is reachable is not a proof. The baseline
+#: is a file now. `test_the_frozen_baseline_is_the_real_pre_split_commit` still ties it to
+#: `5512d82^` while that commit is reachable, so the fixture cannot quietly become whatever makes
+#: the comparison pass.
+FIXTURE_REL = "tools/fixtures/roadmap-pre-split.md"
+#: The commit that performed the split. Its parent carries the pre-split document.
+SPLIT_COMMIT = "5512d82"
+
+
 def pre_split_roadmap() -> str | None:
-    """The last committed version of the roadmap that still carried the phases."""
-    code, log = git("log", "--format=%H", "-n", "40", "--", "MASTER_EXECUTION_ROADMAP.md")
-    if code != 0:
+    """The frozen pre-split document, or None if the fixture is missing."""
+    path = ROOT / FIXTURE_REL
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
         return None
-    for sha in log.split():
-        code, text = git("show", f"{sha}:MASTER_EXECUTION_ROADMAP.md")
-        if code == 0 and "## Phase 10 —" in text:
-            return text
-    return None
+
+
+def pre_split_from_git() -> str | None:
+    """The same document read from `SPLIT_COMMIT^`, while that commit is still reachable."""
+    code, text = git("show", f"{SPLIT_COMMIT}^:MASTER_EXECUTION_ROADMAP.md")
+    return text if code == 0 else None
 
 
 class SplitIsLossless(unittest.TestCase):
@@ -66,9 +86,20 @@ class SplitIsLossless(unittest.TestCase):
         the real first attempt, and it silently removed the blank line between every pair
         of phases."""
         before = pre_split_roadmap()
-        if before is None:
-            self.skipTest("no committed pre-split roadmap reachable in the last 40 commits")
+        self.assertIsNotNone(before, f"{FIXTURE_REL} is missing; the baseline is not optional")
         self.assertEqual(before, self.assembled)
+
+    def test_the_frozen_baseline_is_the_real_pre_split_commit(self):
+        """The fixture must be what `5512d82^` actually held, not whatever makes the test above
+        pass. Skips once that commit is gone — at which point the fixture is the only record, which
+        is exactly why it is committed.
+
+        Mutant: edit one character of the fixture ⇒ red here AND red above, so a fixture doctored
+        to fit a lossy assembly cannot survive both."""
+        from_git = pre_split_from_git()
+        if from_git is None:
+            self.skipTest(f"{SPLIT_COMMIT} is no longer reachable; the fixture is the record")
+        self.assertEqual(from_git, pre_split_roadmap())
 
     def test_every_phase_is_present_exactly_once_and_in_order(self):
         """Mutant: sort the phase files lexically ⇒ phase-10 lands after phase-1 ⇒ red."""
