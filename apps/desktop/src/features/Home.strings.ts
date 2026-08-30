@@ -69,13 +69,33 @@ export function taskSummary(lang: Lang, done: number, total: number, active: num
   }
 }
 
-export function activitySummary(lang: Lang, total: number, buckets: number, peak: number): string {
+/** T-057: `seeded` is how many of `total` were FABRICATED by `repo::seed`.
+ *
+ * It is said out loud, not omitted when zero-ish, because this sparkline is the
+ * exact surface those 56 rows were written to animate — a heartbeat drawn from
+ * invented events, presented beside real ones. A reader who is not told cannot
+ * tell. When nothing is seeded the sentence is unchanged, so a real install
+ * reads no differently than before. */
+export function activitySummary(
+  lang: Lang, total: number, buckets: number, peak: number, seeded = 0,
+): string {
+  const base = (() => {
+    switch (lang) {
+      case 'hy':
+        return `${total} վերջին իրադարձ. ${buckets} ընդմիջումով։ Պիկ՝ ${peak} մեկ ընդմիջումում։`;
+      case 'ru':
+        return `${total} недавних событий за ${buckets} интервалов. Пик — ${peak} за интервал.`;
+      default:
+        return `${total} recent events across ${buckets} intervals. Peak ${peak} in an interval.`;
+    }
+  })();
+  if (seeded <= 0) return base;
   switch (lang) {
     case 'hy':
-      return `${total} վերջին իրադարձ. ${buckets} ընդմիջումով։ Պիկ՝ ${peak} մեկ ընդմիջումում։`;
+      return `${base} Դրանցից ${seeded}-ը ցուցադրական սերմ ա, ոչ իրական։`;
     case 'ru':
-      return `${total} недавних событий за ${buckets} интервалов. Пик — ${peak} за интервал.`;
+      return `${base} Из них ${seeded} — демонстрационные, не настоящие.`;
     default:
-      return `${total} recent events across ${buckets} intervals. Peak ${peak} in an interval.`;
+      return `${base} ${seeded} of them are seeded demo data, not real.`;
   }
 }

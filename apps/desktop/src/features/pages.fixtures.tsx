@@ -175,9 +175,9 @@ const DECISIONS: Decision[] = [
 
 const ACTIVITY: ActivityEvent[] = [
   { id: 'ev-1', eventType: 'approval.granted', actorType: 'user', actorId: 'owner',
-    entityType: 'approval', entityId: 'ap-2', createdAt: T1 },
+    entityType: 'approval', entityId: 'ap-2', createdAt: T1, source: null },
   { id: 'ev-2', eventType: 'run.created', actorType: 'agent', actorId: 'seam-builder',
-    entityType: 'run', entityId: 'rn-1', createdAt: T0 },
+    entityType: 'run', entityId: 'rn-1', createdAt: T0, source: null },
 ];
 
 const CONVERSATIONS: Conversation[] = [

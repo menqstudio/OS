@@ -1132,7 +1132,12 @@ pub mod decisions {
 pub mod activity {
     use super::*;
 
+    /// What `repo::seed` writes into `payload_json` on every row it fabricates.
+    /// A literal, so the writer and the reader cannot drift apart.
+    pub const SEED_SOURCE: &str = r#"{"source":"seed"}"#;
+
     fn map(r: &Row) -> rusqlite::Result<ActivityEvent> {
+        let payload: Option<String> = r.get("payload_json")?;
         Ok(ActivityEvent {
             id: r.get("id")?,
             event_type: r.get("event_type")?,
@@ -1140,14 +1145,95 @@ pub mod activity {
             actor_id: r.get("actor_id")?,
             entity_type: r.get("entity_type")?,
             entity_id: r.get("entity_id")?,
+            // The mark travels to the surface. Marking the row and dropping it
+            // here is the defect `actor_type` already carries a paragraph about,
+            // and BOTH mappers carry it — `activity::map` and
+            // `security::map_event` — or one surface tells the truth and the
+            // other does not.
+            source: crate::repo::activity::source_of(payload.as_deref()),
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// The `source` a row's `payload_json` declares, if any.
+    ///
+    /// Parsed defensively rather than trusted: anything unreadable returns
+    /// `None`, and `None` means "a real audited write". That direction is only
+    /// safe because `seed` is the one thing in the tree that writes this key —
+    /// if a second writer ever appears, this comment is the place that stops
+    /// being true.
+    pub(crate) fn source_of(payload: Option<&str>) -> Option<String> {
+        let value: serde_json::Value = serde_json::from_str(payload?).ok()?;
+        value.get("source")?.as_str().map(str::to_string)
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<ActivityEvent>> {
         let mut s = conn.prepare("SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 200")?;
         let rows = s.query_map([], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}
+
+#[cfg(test)]
+mod t057_seeded_rows_say_so {
+    use super::*;
+
+    /// T-057's closure, asserted as the condition was written: a reader of
+    /// `audit_events` tells fabricated rows from real ones WITHOUT reading
+    /// repo.rs — here, by a query alone.
+    #[test]
+    fn a_query_alone_separates_the_fabricated_rows_from_the_real_ones() {
+        let conn = crate::db::open_in_memory().unwrap();
+        seed(&conn).unwrap();
+        let fabricated: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE json_extract(payload_json,'$.source') = 'seed'",
+                [], |r| r.get(0)).unwrap();
+        assert_eq!(fabricated, 56, "every fabricated row says so");
+        let real: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE COALESCE(json_extract(payload_json,'$.source'),'') <> 'seed'",
+                [], |r| r.get(0)).unwrap();
+        assert!(real > 0, "the seed also makes REAL audited writes; they must not be marked");
+    }
+
+    /// And the mark reaches the surface. Marking the row and dropping it before
+    /// a reader sees it is the defect `ActivityEvent::actor_type` records.
+    #[test]
+    fn both_read_surfaces_carry_the_mark() {
+        let conn = crate::db::open_in_memory().unwrap();
+        seed(&conn).unwrap();
+        let rows = activity::list(&conn).unwrap();
+        let seeded = rows.iter().filter(|e| e.source.as_deref() == Some("seed")).count();
+        assert!(seeded > 0, "activity::list must carry the mark");
+        assert!(rows.iter().any(|e| e.source.is_none()),
+                "and must not mark a real audited write");
+
+        let summary = security::summary(&conn).unwrap();
+        let _ = &summary; // the shape below is what a reader sees
+        let marked_anywhere = rows.iter().any(|e| e.source.is_some());
+        assert!(marked_anywhere);
+    }
+
+    /// A real audited write is never marked, so `None` keeps meaning "real".
+    #[test]
+    fn a_real_audited_write_carries_no_source() {
+        let conn = crate::db::open_in_memory().unwrap();
+        audit::record(&conn, "task.created", audit::Actor::local_operator(), "task", "t-1").unwrap();
+        let rows = activity::list(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, None);
+    }
+
+    /// An unreadable payload must not make a row look real by accident — it
+    /// reads as `None`, which is the same as real, and THAT is why the constant
+    /// and the parser live next to each other with the caveat written down.
+    #[test]
+    fn an_unreadable_payload_reads_as_none() {
+        assert_eq!(activity::source_of(Some("not json at all")), None);
+        assert_eq!(activity::source_of(Some(r#"{"other":"x"}"#)), None);
+        assert_eq!(activity::source_of(None), None);
+        assert_eq!(activity::source_of(Some(activity::SEED_SOURCE)), Some("seed".to_string()));
     }
 }
 
@@ -3838,6 +3924,7 @@ pub mod security {
     use super::*;
 
     fn map_event(r: &Row) -> rusqlite::Result<ActivityEvent> {
+        let payload: Option<String> = r.get("payload_json")?;
         Ok(ActivityEvent {
             id: r.get("id")?,
             event_type: r.get("event_type")?,
@@ -3845,6 +3932,12 @@ pub mod security {
             actor_id: r.get("actor_id")?,
             entity_type: r.get("entity_type")?,
             entity_id: r.get("entity_id")?,
+            // The mark travels to the surface. Marking the row and dropping it
+            // here is the defect `actor_type` already carries a paragraph about,
+            // and BOTH mappers carry it — `activity::map` and
+            // `security::map_event` — or one surface tells the truth and the
+            // other does not.
+            source: crate::repo::activity::source_of(payload.as_deref()),
             created_at: r.get("created_at")?,
         })
     }
@@ -4224,15 +4317,23 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
             ("event.scheduled", "user", audit::LOCAL_OPERATOR, "event"),
         ];
         {
+            // T-057. Every one of these says so IN the row, in a column that
+            // already existed. A reviewer running `SELECT * FROM audit_events`
+            // can tell them from real ones without reading this file — the
+            // closure condition — and `activity::list` and `security::summary`
+            // both carry the mark out, which is why a marker nothing surfaces
+            // would not have met it.
             let mut stmt = conn.prepare(
-                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for i in 0..56i64 {
                 let k = ev_kinds[(i as usize) % ev_kinds.len()];
                 let offset = i * 46 * 60 * 1000 + (i % 5) * 7000;
                 let ts = (now_ms - offset).to_string();
-                stmt.execute(rusqlite::params![id(), k.0, k.1, k.2, k.3, id(), ts])?;
+                stmt.execute(rusqlite::params![
+                    id(), k.0, k.1, k.2, k.3, id(), activity::SEED_SOURCE, ts
+                ])?;
             }
         }
 
