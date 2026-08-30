@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `menqstudio-patch-1` · **head** `pending` · **task** `security-policy` · **PR #195**
+**Active branch:** `menqstudio-patch-1` · **head** `9a3407f` · **task** `security-policy` · **PR #195**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #195 · branch `menqstudio-patch-1`** (base `main`, tip `454e5fc`, task security-policy). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
