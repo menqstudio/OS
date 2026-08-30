@@ -15,20 +15,21 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** the TRANSPORT — closing `call_transport_unimplemented`. That is what a customer
-touches. The PRODUCED agent's egress is enforced: `repo.rs`'s `Call` arm decides every call against
-the grant's table and records it; a permitted call is refused for want of a transport, a denied one
-says `egress_not_granted`. The BUILD agent's half of §3.3 — the netns jail — is untouched.
+**Next:** §4's credential store, then the TRANSPORT. Without a credential a call reaches no real
+customer API, so transport-first would be more unreachable code.
+
+The produced agent now **RUNS**: the 60s tick enqueues AND dispatches, up to
+`MAX_DISPATCH_PER_TICK`. It was measured first — `claim_and_run` had ONE non-test caller, a CI demo
+binary, so every piece built for that agent was unreachable from the product. Bundles are **BORN
+DISARMED**; arming needs a natively confirmed grant, disarming does not.
 
 **Two populations, two mechanisms** (Owner, 2026-08-30). The PRODUCED agent's list is the grant's
-`egress` TABLE — grant schema 1→2, so the flow names a row and never a URL (§2.3 rule 6). It has **no
-spawn** and no `Bash`, so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress`,
-is **not** jailed, and `npm install` never meets it; `ai.rs` has **three** spawn sites, not two.
+`egress` TABLE, so the flow names a row and never a URL (§2.3 rule 6); it has no spawn and no `Bash`,
+so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress` and is **not** jailed.
 No class holds `USE_NETWORK`, so every valid lease still names **no** destination.
 
-*A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
-`main`s of one session were called green because the PR's checks were read and the branch's were not.
-A commit named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
+*A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
+named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
 Three more things must be true at every push: the PR body carries exactly one
 `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the live
 `main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a

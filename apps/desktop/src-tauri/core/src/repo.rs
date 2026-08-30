@@ -535,6 +535,8 @@ pub mod approvals {
     pub const INTEGRATION_STATUS_ACTION_TYPE: &str = "Set integration status";
     pub const AUTOMATION_ENTITY_TYPE: &str = "automation";
     pub const AUTOMATION_ENABLED_ACTION_TYPE: &str = "Arm automation";
+    pub const AGENT_BUNDLE_ENTITY_TYPE: &str = "agent_bundle";
+    pub const AGENT_BUNDLE_ARM_ACTION_TYPE: &str = "Arm agent bundle";
 
     /// Verify and spend the grant for a gated write, in the write's own
     /// transaction. Factored out of `runs::claim_step_execution`'s inline pair so
@@ -2635,13 +2637,36 @@ pub mod automations {
                 fired.push(run(conn, &a.id, audit::Actor::scheduler())?);
             }
         }
-        // The produced-agent half of the same tick (T-055). It ENQUEUES and
-        // performs nothing: the tick may write a `flow_runs` row and a
-        // `scheduler_ticks` row and nothing else -- strictly less authority than
-        // the automation half above, which still calls `execute_action`.
+        // The produced-agent half of the same tick. It enqueues AND dispatches.
+        //
+        // Until T-058 it enqueued and performed nothing, and that sentence is no
+        // longer true -- so here is the new ceiling, enumerated rather than
+        // described. A tick may write: a `flow_runs` row, a `scheduler_ticks`
+        // row, a `flow_receipts` row, `audit_events` rows, and whatever a `store`
+        // step's `knowledge::create` writes. Nothing else. That is the SAME
+        // ceiling the automation half above already sits at -- `execute_action`
+        // writes notifications, tasks and knowledge notes on this very tick --
+        // so dispatch adds no class of capability. It closes the gap between the
+        // two halves in favour of the more restrained one: the produced agent's
+        // vocabulary is a closed four-kind type rather than a `verb: arg` string,
+        // it is checked against a digest and a grant, it leaves a receipt, and
+        // `model` and `call` steps are still REFUSED.
+        //
+        // Dispatch reaches only bundles that are ARMED, and arming is a separate
+        // act behind a natively confirmed grant (`agent_runs::set_active`).
+        // Registering a bundle no longer arms it.
+        //
         // A store root that is absent is not an error: no agent has been built.
         if let Some(root) = super::agent_runs::default_store_root() {
             super::agent_runs::enqueue_due(conn, now_ms, &root)?;
+            // Bounded, so one tick cannot become unbounded work: a backlog is
+            // drained across ticks rather than inside one. `claim_and_run`
+            // returns None when nothing is queued, which ends the loop early.
+            for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
+                if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
+                    break;
+                }
+            }
         }
         Ok(fired)
     }
@@ -2686,30 +2711,90 @@ pub mod agent_runs {
     /// The regime a run executed under, recorded ON the receipt. Read once here
     /// rather than at display time, because a receipt that cannot distinguish
     /// "was blocked" from "would have been blocked" is not evidence.
+    /// How many queued runs one 60s tick may dispatch.
+    ///
+    /// A bound, not a tuning knob: without it a backlog makes a single
+    /// unattended tick unbounded work. Four is enough that a handful of agents
+    /// on one interval all run within a tick, and small enough that the loop
+    /// cannot hold the scheduler. What does not fit waits for the next tick.
+    pub const MAX_DISPATCH_PER_TICK: usize = 4;
+
     pub fn enforcement_regime() -> String {
         std::env::var("BRO_ENFORCEMENT").unwrap_or_else(|_| "enforce".to_string())
     }
 
+    /// Record a built bundle. It is created **DISARMED**: no `agent_bundle_active`
+    /// row, so the scheduler resolves no trigger to it and nothing dispatches it.
+    ///
+    /// This function used to write BOTH tables in one call, and to hardcode
+    /// `state = 'approved'` while doing it — so building an agent and arming it
+    /// were the same act, and the arming path could be skipped entirely. That was
+    /// harmless only while the tick performed nothing; the moment the tick
+    /// dispatches, a bundle that arms itself at creation is an unattended
+    /// executor nobody approved. It is the exact defect `automations::create`
+    /// already carries a paragraph about: *"a gate with a one-call way around it
+    /// is not a gate"*. Arming is now reachable only through [`set_active`].
+    ///
+    /// `state` is `'built'`, which is what a freshly written bundle is. Nothing
+    /// here decides that it is approved.
     pub fn register(
         conn: &Connection,
         digest: &str,
         bundle_id: &str,
         bundle_version: u64,
         display_name: &str,
-        interval_ms: i64,
     ) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO agent_bundles(bundle_digest, bundle_id, bundle_version, \
-                 display_name, built_at, state, created_at) VALUES (?1,?2,?3,?4,?5,'approved',?6)",
+                 display_name, built_at, state, created_at) VALUES (?1,?2,?3,?4,?5,'built',?6)",
                 rusqlite::params![digest, bundle_id, bundle_version as i64, display_name, crate::now(), crate::now()],
             )?;
-            tx.execute(
-                "INSERT OR REPLACE INTO agent_bundle_active(bundle_id, bundle_digest, interval_ms, updated_at) \
-                 VALUES (?1,?2,?3,?4)",
-                rusqlite::params![bundle_id, digest, interval_ms, crate::now()],
-            )?;
             super::audit::record(tx, "agent_bundle.registered", audit::Actor::system(), "agent_bundle", digest)?;
+            Ok(())
+        })
+    }
+
+    /// Arm or disarm a bundle — the act the scheduler's dispatch depends on.
+    ///
+    /// **Asymmetric, and deliberately so, exactly as `automations::set_enabled`
+    /// is.** ARMING is the execution-tier act: an armed bundle is claimed and run
+    /// by the 60s tick with nobody present, so it requires a natively confirmed
+    /// grant and consumes it. DISARMING is NOT gated and must never be — it is
+    /// the only way to stop a running agent, and an approval ceremony in front of
+    /// the stop button turns this gate into a denial of service on the operator's
+    /// own safety control.
+    pub fn set_active(
+        conn: &Connection,
+        bundle_id: &str,
+        digest: &str,
+        interval_ms: i64,
+        active: bool,
+        actor: audit::Actor<'_>,
+    ) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            if active {
+                super::approvals::require_and_consume(
+                    tx,
+                    digest,
+                    super::approvals::AGENT_BUNDLE_ENTITY_TYPE,
+                    super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                )?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO agent_bundle_active(bundle_id, bundle_digest, interval_ms, updated_at) \
+                     VALUES (?1,?2,?3,?4)",
+                    rusqlite::params![bundle_id, digest, interval_ms, crate::now()],
+                )?;
+            } else {
+                tx.execute("DELETE FROM agent_bundle_active WHERE bundle_id = ?1", [bundle_id])?;
+            }
+            super::audit::record(
+                tx,
+                if active { "agent_bundle.armed" } else { "agent_bundle.disarmed" },
+                actor,
+                "agent_bundle",
+                digest,
+            )?;
             Ok(())
         })
     }
@@ -2726,7 +2811,11 @@ pub mod agent_runs {
     }
 
     /// Detect due bundles and enqueue. Returns `(due_found, enqueued, refused)`.
-    /// Performs no action, reaches no network, holds no credential, calls no model.
+    ///
+    /// THIS function still performs no action, reaches no network, holds no
+    /// credential and calls no model — but do not read that as a statement
+    /// about the tick, which since T-058 calls `claim_and_run` after this
+    /// returns. The enumerated ceiling for the tick is in `automations::run_due`.
     pub fn enqueue_due(
         conn: &Connection,
         now_ms: i64,
@@ -3072,7 +3161,7 @@ pub mod agent_runs {
             let conn = crate::db::open(":memory:").unwrap();
             let dir = tempfile::tempdir().unwrap();
             let digest = agent_bundle::build(dir.path(), spec).unwrap();
-            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            register_and_arm(&conn, &digest);
             enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
             let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
             // the tempdir must outlive the run
@@ -3085,8 +3174,33 @@ pub mod agent_runs {
             let dir = tempfile::tempdir().unwrap();
             let now_ms = 1_000_000_000i64;
             let digest = agent_bundle::build(dir.path(), &spec(now_ms / 1000)).unwrap();
-            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            register_and_arm(&conn, &digest);
             (conn, dir, digest)
+        }
+
+        /// Register a bundle and arm it THE ONLY WAY THE PRODUCT ALLOWS: with a
+        /// natively confirmed grant. Mirrors `lib.rs`'s `arm` helper for
+        /// automations, and for the same reason — nothing here reaches around
+        /// the gate, because there is nothing to reach around it with.
+        fn register_and_arm(conn: &Connection, digest: &str) {
+            register(conn, digest, "agt-t", 1, "T").unwrap();
+            let ap = super::super::approvals::create(
+                conn,
+                super::super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::AGENT_BUNDLE_ENTITY_TYPE),
+                Some(digest),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            )
+            .unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            )
+            .unwrap();
+            set_active(conn, "agt-t", digest, 60_000, true, audit::Actor::local_operator()).unwrap();
         }
 
         fn state_of(conn: &Connection, id: &str) -> (String, Option<String>) {
@@ -3193,6 +3307,200 @@ pub mod agent_runs {
             assert_eq!(src, format!("flow_run:{id}"));
         }
 
+        // ---- the tick DISPATCHES (T-058) ----------------------------------
+
+        /// `BROPS_AGENT_STORE` is process-global, so the tests that drive
+        /// `run_due` take a lock. Without it they race each other and the
+        /// failure looks like a scheduler bug rather than a test bug.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        fn tick(conn: &Connection, store: &std::path::Path, now_ms: i64) {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("BROPS_AGENT_STORE", store);
+            super::super::automations::run_due(conn, now_ms).unwrap();
+            std::env::remove_var("BROPS_AGENT_STORE");
+        }
+
+        fn arm_grant(conn: &Connection, bundle_id: &str, digest: &str) {
+            let ap = super::super::approvals::create(
+                conn, super::super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::AGENT_BUNDLE_ENTITY_TYPE), Some(digest),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            ).unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            ).unwrap();
+            set_active(conn, bundle_id, digest, 60_000, true, audit::Actor::local_operator()).unwrap();
+        }
+
+        /// BORN DISARMED. Registering a bundle records it and arms nothing, so
+        /// the tick resolves no trigger to it and dispatches nothing.
+        ///
+        /// Before T-058 `register` wrote `agent_bundle_active` in the same call
+        /// and hardcoded `state = 'approved'`: building an agent and arming it
+        /// were one act. That was survivable only while the tick performed
+        /// nothing. It dispatches now.
+        #[test]
+        fn a_registered_bundle_is_not_armed_and_the_tick_ignores_it() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T").unwrap();
+
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0, "registering must not arm");
+            let state: String = conn
+                .query_row("SELECT state FROM agent_bundles WHERE bundle_digest=?1", [&digest], |r| r.get(0))
+                .unwrap();
+            assert_eq!(state, "built", "nothing here decides a bundle is approved");
+
+            tick(&conn, dir.path(), 1_000_000_000);
+            let runs: i64 = conn.query_row("SELECT COUNT(*) FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(runs, 0, "an unarmed bundle must not be dispatched");
+        }
+
+        /// Arming without a natively confirmed grant is refused. A gate with a
+        /// one-call way around it is not a gate.
+        #[test]
+        fn arming_without_a_confirmed_grant_is_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T").unwrap();
+            let refused = set_active(&conn, "agt-t", &digest, 60_000, true, audit::Actor::local_operator());
+            assert!(refused.is_err(), "arming must require a grant");
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0);
+        }
+
+        /// DISARMING is not gated, and must never be: it is the only way to stop
+        /// a running agent, and an approval ceremony in front of the stop button
+        /// is a denial of service on the operator's own safety control.
+        #[test]
+        fn disarming_needs_no_grant() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+            set_active(&conn, "agt-t", &digest, 60_000, false, audit::Actor::local_operator()).unwrap();
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0, "the stop button must work with no ceremony");
+        }
+
+        /// THE POINT OF T-058: the tick RUNS an armed bundle. Before this it
+        /// enqueued and performed nothing, so `claim_and_run` had exactly one
+        /// non-test caller -- a CI demo binary -- and every piece behind it was
+        /// unreachable from the product.
+        #[test]
+        fn the_tick_dispatches_an_armed_bundle_to_completion() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (id, state): (String, String) = conn
+                .query_row("SELECT id, state FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!(state, "done", "the tick must RUN it, not merely queue it");
+            let invoked: String = conn
+                .query_row("SELECT invoked_by FROM flow_runs WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+            assert_eq!(invoked, "run_due");
+        }
+
+        /// Constraint 3: a run the tick performed and no receipt describes is
+        /// worse than a run that did not happen.
+        #[test]
+        fn every_dispatched_run_leaves_a_receipt_naming_the_regime() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (run_id, regime, outcome): (String, String, String) = conn
+                .query_row("SELECT run_id, enforcement_regime, outcome FROM flow_receipts",
+                           [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert!(!regime.is_empty());
+            assert_eq!(outcome, "done");
+            let runs: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE id=?1", [&run_id], |r| r.get(0)).unwrap();
+            assert_eq!(runs, 1, "the receipt must describe a run that exists");
+        }
+
+        /// Constraint 2: the tick gains a CALLER, not a capability. A `call`
+        /// step dispatched by the scheduler is refused exactly as it is when a
+        /// test drives the runner by hand, and the refusal reaches the receipt.
+        #[test]
+        fn a_dispatched_call_step_is_still_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let s = call_spec(1_000_000, Some("evil"), &[("slack-post", "https://slack.example.com")]);
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("egress_not_granted")));
+            let outcome: String = conn
+                .query_row("SELECT outcome FROM flow_receipts", [], |r| r.get(0)).unwrap();
+            assert_eq!(outcome, "refused", "a refused run is still described by a receipt");
+        }
+
+        /// And a `model` step, the other refused kind.
+        #[test]
+        fn a_dispatched_model_step_is_still_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut s = spec(1_000_000);
+            s.steps[1].kind = StepKind::Model;
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("step_kind_not_executable")));
+        }
+
+        /// Constraint 4, the bound: one tick may not become unbounded work.
+        #[test]
+        fn one_tick_dispatches_at_most_the_bound() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let n = MAX_DISPATCH_PER_TICK + 2;
+            for i in 0..n {
+                let mut sp = spec(1_000_000);
+                sp.bundle_id = format!("agt-{i}");
+                let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+                register(&conn, &digest, &sp.bundle_id, 1, "T").unwrap();
+                arm_grant(&conn, &sp.bundle_id, &digest);
+            }
+            tick(&conn, dir.path(), 1_000_000_000);
+            let finished: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE state != 'queued'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(finished as usize, MAX_DISPATCH_PER_TICK,
+                       "one tick must dispatch the bound and no more");
+            let queued: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE state = 'queued'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(queued as usize, n - MAX_DISPATCH_PER_TICK, "the rest waits for the next tick");
+        }
+
         // ---- the produced agent's egress enforcement (design SS3.3) --------
 
         /// THE RED DIRECTION. A `call` step naming a destination the grant does
@@ -3264,7 +3572,7 @@ pub mod agent_runs {
             let mut s = spec(1_000_000);
             s.steps[1].kind = StepKind::Model;
             let digest = agent_bundle::build(dir.path(), &s).unwrap();
-            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            register_and_arm(&conn, &digest);
             enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
             let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
             assert_eq!(state_of(&conn, &id), ("refused".into(), Some("step_kind_not_executable".into())));
