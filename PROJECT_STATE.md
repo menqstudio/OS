@@ -3,7 +3,7 @@
 **Last updated · Վերջին թարմացում:** 2026-08-30 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. A permitted call is still refused for
-want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's half — the namespace and the proxy — is not built. `check_doc_claims` requires a named commit to be an ancestor of
+want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's half is not built. `check_doc_claims` requires a named commit to be an ancestor of
 `main`, so a dead branch hash is refused on the branch, not on `main` after the merge. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
 `T-046`, `T-048`–`T-053` merged.
