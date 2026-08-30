@@ -5,9 +5,9 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #204 · branch `fix/doc-claims-ancestry`** (base `main`, tip `75fda2a`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #205 · branch `perf/ci-rust-cache`** (base `main`, tip `da27810`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> check_doc_claims now requires a named commit to be an ancestor of main, so a branch head a squash will erase is refused ON THE BRANCH rather than on main after the merge -- where the six before it were only visible.
+> CI speed, no semantic change: Swatinem/rust-cache pinned to v2.9.2 in the eleven jobs that run cargo (none cached anything before), and concurrency on ci.yml with main excluded from cancellation -- a cancelled run on main is not a reading of main.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

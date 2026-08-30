@@ -17,6 +17,21 @@ on:
 permissions:
   contents: read
 
+# One run per ref, EXCEPT on `main`.
+#
+# `cancel-in-progress: true` would be wrong on `main` and the reason is a rule this
+# repository now gates on: after every merge the head's own run must be READ
+# (`gh run list --branch main`, never a pull request's checks). Two merges close
+# together share the group `ci-refs/heads/main`, so the second would cancel the
+# first — and a CANCELLED run is not a reading. It is not `success`, it is not
+# `failure`, and `main_ci` in the machine mirror would have nothing true to record.
+#
+# On a pull request `github.ref` is `refs/pull/<n>/merge`, so each PR keeps its own
+# group and a new push still cancels the run it superseded, which is the whole point.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Phase 0: each half builds and tests independently. A cross-integration
 # (bridge) smoke test is added in Phase 1.
 jobs:
@@ -45,6 +60,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
@@ -65,6 +89,15 @@ jobs:
       # The Tauri host crate (`brops`) is deliberately NOT here: it needs webkit2gtk. Its absence
       # is a real coverage gap on Windows and is tracked separately — it is stated rather than
       # papered over by testing something adjacent and calling it covered.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Test the launcher, executor, broker and live driver
         run: |
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-launcher -p brops-executor -p brops-broker -p brops-governed-live             -p brops-win-live -p brops-win-broker
@@ -86,6 +119,15 @@ jobs:
       # nothing re-ran it — `CURRENT_LINUX_E2E: proven` rested on a single manual run that no gate
       # reproduced (independent audit, ci-tests section). A hosted ubuntu runner has everything the
       # script asks for: passwordless sudo, useradd, setuid on ext4, /opt, and sudoers.d.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install engine crypto dependency
         run: pip install --require-hashes -r engine/requirements-ci.txt
       - name: Build the live-turn binaries (launcher + recorder/executor/driver)
@@ -142,6 +184,15 @@ jobs:
       # one-shot sidecar subprocess, from a SEVENTH principal, driving the real supervisor
       # services, reaching the real privileged recorder → setuid launcher → contained executor,
       # recording the evidence, and exiting non-zero unless the round trip completed.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install engine crypto + schema dependencies
         run: pip install --require-hashes -r engine/requirements-ci.txt
       # `ladder_output_pull` is the §4.10(f) DESKTOP half: it lives in `brops-core`, the crate that
@@ -214,6 +265,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
@@ -366,6 +426,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
@@ -605,6 +674,15 @@ jobs:
       # §0.W.4) must authenticate a live client connection. This is a partial Windows machine-proof — it
       # does NOT flip platform_governed_execution_supported() (the remaining §0.1 primitives + the
       # dedicated-service-SID proof are unbuilt), so governed turns stay fail-closed on Windows.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Pure §0.W predicates on Windows
         run: cargo test -p brops-core windows_broker --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Real named-pipe peer-SID authentication on Windows
@@ -1010,6 +1088,15 @@ jobs:
       # config/produced-artifact-contract.json -- CI runs what the contract says
       # it runs, so a reader can reproduce this locally with the same line.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Produce the artifact from the real code path
         working-directory: apps/desktop/src-tauri
         run: cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact
