@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `gate/main-ci-must-be-read` · **head** `f443cca` · **task** `main-ci-gate` · **PR #198**
+**Active branch:** `gate/main-ci-must-be-read` · **head** `9a71489` · **task** `main-ci-gate` · **PR #198**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #198 · branch `gate/main-ci-must-be-read`** (base `main`, tip `dac7080`, task main-ci-gate). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
