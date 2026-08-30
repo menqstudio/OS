@@ -1291,6 +1291,61 @@ pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
     "no prompt is sent for a result that could only be discarded. Provisioning lands in Wave 3b."
 );
 
+/// Whether this build resolves receipt key ids against a real trusted manifest.
+///
+/// It is `false`, and the four call sites that pass
+/// [`brops_core::receipt_store::NoTrustedManifest`] to `verify_and_record_receipt` /
+/// `verify_and_record_held_answer` are why. This constant is not the authority — it NAMES the
+/// authority's state for [`governed_provisioning_missing`], so the pre-flight cannot answer
+/// "provisioned" while every `key_id` still resolves `Unavailable`. Wave 3b flips this in the
+/// same commit that swaps those call sites, or the probe starts lying.
+const GOVERNED_TRUSTED_MANIFEST_PROVISIONED: bool = false;
+
+/// The §3 inputs desktop receipt verification needs, and which of them this install lacks.
+///
+/// PURE, and taking its inputs as arguments rather than reading the constants directly, for one
+/// reason: a probe wired to constants that are all absent can only ever be observed refusing.
+/// This one can be handed a fully provisioned install in a test, so the day the constants are
+/// real there is evidence the answer flips — rather than a function nobody has ever seen return
+/// the empty vector. Order is fixed so the reason reads the same way every time.
+///
+/// Empty result == provisioned. It can only ADD reasons to refuse; there is no input for which
+/// it returns fewer reasons than the state warrants.
+fn governed_provisioning_missing(
+    trusted_manifest: bool,
+    policy_bundle_sha256: &str,
+    containment_evidence_sha256: &str,
+    allowed_executors: &[&str],
+    allowed_builders: &[&str],
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !trusted_manifest {
+        missing.push("trusted key manifest");
+    }
+    // An `absent:` sentinel is not a digest and cannot pass `is_lower_hex64`, so no wire-legal
+    // receipt can satisfy it. Anything that is not 64 lowercase hex is treated as unprovisioned
+    // here too: a value that could not bind is not a binding, whatever it spells.
+    if !is_lower_hex64(policy_bundle_sha256) {
+        missing.push("policy-bundle digest");
+    }
+    if !is_lower_hex64(containment_evidence_sha256) {
+        missing.push("containment-evidence digest");
+    }
+    if allowed_executors.is_empty() {
+        missing.push("allowed executor roster");
+    }
+    if allowed_builders.is_empty() {
+        missing.push("allowed builder roster");
+    }
+    missing
+}
+
+/// A 64-character lowercase hex digest, the shape `receipt::parse_strict` accepts for a hash
+/// field. Local to the probe so that "is this a real digest" has one meaning here.
+fn is_lower_hex64(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// AUDIT FINDING (b). Wave-3a desktop verification cannot succeed for ANY receipt: the key
 /// authority is [`brops_core::receipt_store::NoTrustedManifest`], the two policy digests are
 /// unprovisioned, and both executor/builder rosters are empty. Running the model, building an
@@ -1299,11 +1354,27 @@ pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
 ///
 /// This is the honest pre-flight. `Some(reason)` means the install is not provisioned; the
 /// caller must block, and the reason says so in those words. `None` means verification is
-/// provisioned and the turn may proceed to the model. It returns an `Option` rather than being
-/// a `const` on purpose: the callers stay ordinary reachable code, so the whole verify path is
-/// still compiled and type-checked against the day Wave 3b flips this to `None`.
+/// provisioned and the turn may proceed to the model.
+///
+/// It used to return `Some(...)` unconditionally with the comment "Wave 3b replaces this with
+/// the real provisioning probe". That hardcoding was correct about today and wrong as a design:
+/// the refusal was an ASSERTION about the install rather than a MEASUREMENT of it, so the day
+/// something provisions the inputs, a person has to remember to edit a security function — and
+/// the roadmap's own Phase-1 box stayed open behind a line no measurement could move. It is a
+/// measurement now. On this build it returns exactly what it returned before, because
+/// [`governed_provisioning_missing`] finds all five inputs absent; the behaviour is unchanged
+/// and the tests that pin it are untouched.
 fn governed_verification_unconfigured() -> Option<&'static str> {
-    // Wave 3a: nothing is provisioned. Wave 3b replaces this with the real provisioning probe.
+    let missing = governed_provisioning_missing(
+        GOVERNED_TRUSTED_MANIFEST_PROVISIONED,
+        GOVERNED_POLICY_BUNDLE_ABSENT,
+        GOVERNED_CONTAINMENT_ABSENT,
+        GOVERNED_ALLOWED_EXECUTORS,
+        GOVERNED_ALLOWED_BUILDERS,
+    );
+    if missing.is_empty() {
+        return None;
+    }
     Some(GOVERNED_VERIFICATION_UNCONFIGURED)
 }
 
@@ -2988,6 +3059,92 @@ mod tests {
         // not because a `format!` two hundred lines away assumed it. This test is what keeps it
         // honest and what keeps the compiler from calling it dead.
         assert_eq!(AnswerProvenance::Governed.source_prefix(), "governed research");
+    }
+
+    // ---- the governed provisioning probe (Phase 1's open DoD box) -------------------
+    //
+    // The pre-flight was `Some(...)` hardcoded. These tests exist because a refusal nobody can
+    // observe refusing FOR A REASON is indistinguishable from a refusal that would fire for no
+    // reason at all — and because the provisioned answer had never been produced by any code
+    // path in this repository, in any test, since Wave 3a.
+
+    /// One fully provisioned install, in values only — nothing here provisions anything real.
+    const PROVISIONED_DIGEST: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn this_build_is_unprovisioned_and_the_probe_names_every_missing_input() {
+        let missing = governed_provisioning_missing(
+            GOVERNED_TRUSTED_MANIFEST_PROVISIONED,
+            GOVERNED_POLICY_BUNDLE_ABSENT,
+            GOVERNED_CONTAINMENT_ABSENT,
+            GOVERNED_ALLOWED_EXECUTORS,
+            GOVERNED_ALLOWED_BUILDERS,
+        );
+        assert_eq!(
+            missing,
+            vec![
+                "trusted key manifest",
+                "policy-bundle digest",
+                "containment-evidence digest",
+                "allowed executor roster",
+                "allowed builder roster",
+            ],
+            "the shipped constants must leave every input unprovisioned"
+        );
+        // and the pre-flight therefore still refuses, exactly as before this probe existed
+        assert_eq!(
+            governed_verification_unconfigured(),
+            Some(GOVERNED_VERIFICATION_UNCONFIGURED)
+        );
+    }
+
+    #[test]
+    fn a_fully_provisioned_install_is_not_refused() {
+        // The answer no code path in this repository had ever produced. Without this, the empty
+        // vector is unreachable and the probe is a constant wearing a function's clothes.
+        let missing = governed_provisioning_missing(
+            true,
+            PROVISIONED_DIGEST,
+            PROVISIONED_DIGEST,
+            &["executor-a"],
+            &["builder-a"],
+        );
+        assert!(missing.is_empty(), "provisioned, yet refused for: {missing:?}");
+    }
+
+    #[test]
+    fn any_single_missing_input_still_refuses() {
+        let full = (true, PROVISIONED_DIGEST, PROVISIONED_DIGEST, &["e"][..], &["b"][..]);
+        let cases: [(&str, Vec<&'static str>); 5] = [
+            ("no manifest", governed_provisioning_missing(false, full.1, full.2, full.3, full.4)),
+            ("no policy", governed_provisioning_missing(full.0, "absent:x", full.2, full.3, full.4)),
+            ("no containment", governed_provisioning_missing(full.0, full.1, "absent:x", full.3, full.4)),
+            ("no executors", governed_provisioning_missing(full.0, full.1, full.2, &[], full.4)),
+            ("no builders", governed_provisioning_missing(full.0, full.1, full.2, full.3, &[])),
+        ];
+        for (name, missing) in cases {
+            assert_eq!(missing.len(), 1, "{name}: expected exactly one reason, got {missing:?}");
+        }
+    }
+
+    #[test]
+    fn a_digest_shaped_lie_does_not_count_as_provisioned() {
+        // Uppercase hex, 63 chars, 65 chars, and a non-hex letter are all NOT the shape
+        // `parse_strict` accepts. A value that could never bind must not read as a binding —
+        // this is AUDIT FINDING (a) restated as a rule the probe enforces.
+        for bad in [
+            "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(!is_lower_hex64(bad), "{bad} must not pass as a digest");
+            let missing =
+                governed_provisioning_missing(true, bad, PROVISIONED_DIGEST, &["e"], &["b"]);
+            assert_eq!(missing, vec!["policy-bundle digest"], "for {bad}");
+        }
+        assert!(is_lower_hex64(PROVISIONED_DIGEST));
     }
 
     // T-010 in-body bound: an automation's action (which can drive execution) is

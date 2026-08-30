@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, which are the fields tools/check_repo_state.py compares against live GitHub. This field carried 74,311 characters of prose until 2026-08-29 (T-045) -- 68% of a file called the machine-readable mirror, inside a read set every session is required to take. It said so itself and grew anyway. The narrative it held is in docs/archive/SESSION_LOG_2026-07_2026-08.md; tools/check_canon_budget.py holds this file to 20 KB so it cannot grow back.",
-  "settled_at_main_head": "40be2103f13f9f3ac73e10b8e3ec60238c261c84",
+  "settled_at_main_head": "8e29b6a1f5a1578b0dc542f77ba39acf50e96291",
   "sync": {
-    "baseline_main_head_at_sync": "40be2103f13f9f3ac73e10b8e3ec60238c261c84",
-    "snapshot_branch": "settle-after-182",
+    "baseline_main_head_at_sync": "8e29b6a1f5a1578b0dc542f77ba39acf50e96291",
+    "snapshot_branch": "feat/governed-provisioning-probe",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field said 'live main is b3010f6 (PR #81 merged, 2026-08-09) ... the only open pull request is the self-carrier #82' for twenty days, through roughly eighty merged pull requests, because nothing compares it with anything (ninth audit I-06; the same field had already been stale by sixteen PRs when it was rewritten [...] docs/archive/SESSION_LOG_2026-07_2026-08.md",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is PR #183. PR #183's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). The marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on this branch -- the job died at an earlier step every time. Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is PR #184. PR #184's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). The marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on this branch -- the job died at an earlier step every time. Nothing is exempt."
   },
   "active": {
     "wave": "canon",
-    "task": "T-046",
-    "branch": "settle-after-182"
+    "task": "T-048",
+    "branch": "feat/governed-provisioning-probe"
   },
   "prs": [
     {
@@ -27,7 +27,7 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "T-046",
+    "CURRENT_ACTIVE_TASK": "T-048",
     "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
@@ -119,15 +119,15 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this rea [...] docs/archive/SESSION_LOG_2026-07_2026-08.md"
   ],
   "current_workflow_pr": {
-    "number": 183,
-    "branch": "settle-after-182",
+    "number": 184,
+    "branch": "feat/governed-provisioning-probe",
     "state": "open",
     "what": "The settle for T-046 (PR #182): the state anchor and the three banners move to main 40be210, the merged-since-audit counts are measured rather than carried, and T-047 repairs tools/stamp_pr_head.py, which could not write a PR body on gh 2.46.0 at all, then could not read one back without calling a correct write RED (GitHub returns CRLF).",
-    "note": "Settling the state anchor at main 40be210. Also open, and NOT the carrier: #112 (recorded in prs[], exact-head anchored); this pull request is the commit that records it.",
+    "note": "The desktop governed pre-flight measures its five provisioning inputs instead of asserting they are absent; behaviour on this build is byte-identical and the gate stays shut.",
     "base": "main"
   },
   "next_action_by_carrier": {
     "current": "PR #181 (settle-after-180): merge it so main records the settled state. T-045 merged as PR #180; nothing else is open but PR #112, which is a design proposal parked on purpose.",
-    "_note": "The carrier is current_workflow_pr (#183 on settle-after-182). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "_note": "The carrier is current_workflow_pr (#184 on feat/governed-provisioning-probe). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   }
 }

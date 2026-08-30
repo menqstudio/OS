@@ -2763,6 +2763,13 @@ mount components; not one installs a build, launches it twice, or reads what a p
 when it refuses. That is the same shape as `T-024`'s `css: false` finding one level up: the suite is
 answering a question, correctly, and it is not this one.
 
+## Closed after the cut · Փակված տողեր
+
+| ID | Task | Status | Branch / PR |
+|----|------|--------|-------------|
+| **T-045** | The canon has to stay readable, and the handoff has to be checkable — ceilings on every canonical file, `check_handoff_ready.py`, `check_doc_claims.py`, `check_state_fields.py`, and the PreToolUse refusal that accepts only a shrinking edit to an over-budget file. Five of its own gates were RED in CI and are fixed. ◑ | Done | merged `#180` |
+| **T-047** | `tools/stamp_pr_head.py` could not write a pull-request body on this box at all: it wrote through `gh pr edit`, which resolves the PR over GraphQL and asks for `repository.pullRequest.projectCards`, sunset with Projects (classic). On gh 2.46.0 it dies before writing, so the `AUDIT_CANDIDATE_HEAD` marker stays stale and `check_repo_state.py` reds the next push for an unrelated reason. REST now, and it reads the body back — a read-back that itself called a correct write RED, because GitHub returns bodies in CRLF. 11 tests, mutation-checked. ◑ | Done | merged `#183` |
+
 ## How to claim · Ինչպես claim անել
 1. `git pull` and read this board. · `git pull` ու կարդա board-ը։
 2. On your branch, set your name + `In-Progress` on the row, commit ("claim T-00X"). · Քո branch-ում դիր անունդ + `In-Progress`, commit արա։
