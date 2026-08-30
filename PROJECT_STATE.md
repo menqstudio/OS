@@ -1,23 +1,22 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
 **Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
-then repaired the five CI gates that cut turned red — four of them its own. The audit pointer
-and the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`),
-which a rewrite cannot delete; PR #180 carries the detail. `main` was RED after both of that
-session's merges and both were called green, because the PR's checks were read and the branch's
-were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second
-and `main` is at `40be210`, seven workflows green. `T-048`, `T-049` and `T-050` are merged. `T-052` stops the audit log naming a person who was not
-there: 34 of 40 `audit::record` call sites hardcoded `"user", "gev"` against the rule in that file.
-This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical
-lines from line 2. The log both carried is
+then repaired the five CI gates that cut turned red — four of them its own. The audit pointer and
+the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`), which
+a rewrite cannot delete. `main` was RED after both of that session's merges and both were called
+green: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second,
+and `main` is at `09ed3ce`. `T-048`, `T-049`, `T-050` and `T-052` are merged — the last of them stopped
+the audit log naming a person who was not there, at 34 of 40 `audit::record` call sites. `T-053` closes the
+`lstrip` defect family in the two gates that still carried it and writes down what the root gate does not see.
+This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical lines
+from line 2; the log both carried is
 [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
-It answers one question `NEXT_CHAT.md` does not: **the state of each part of the product**;
-`NEXT_CHAT.md` answers *what the next session does first*.
+It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #189 · branch `t052/audit-attribution`** (base `main`, tip `34c5fb5`, task T-052). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #190 · branch `t053a/lstrip-evidence`** (base `main`, tip `09ed3ce`, task T-053). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The audit log stops naming a person who was not there: 34 of 40 audit::record call sites hardcoded the actor, and a gate now refuses a new one inside the call.
+> `lstrip("./")` strips a character SET, not a prefix — live in two gates, and the reason a worktree-isolated agent could only write through the ungated `Bash` path. What that path does not see is written down now, not remembered.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -84,4 +83,4 @@ history.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-052` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-053` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

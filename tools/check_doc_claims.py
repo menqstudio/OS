@@ -251,10 +251,28 @@ def main(root: pathlib.Path = ROOT) -> int:
             # the code, which is the failure T-045 fixed in this same file once already.
             checked["paths"] += 1
             if not any(c.exists() for c in candidates):
-                hits = [q for q in root.rglob("*" + pathlib.Path(clean).name)
-                        if q.is_file() and q.as_posix().endswith("/" + clean)
-                        and ".git/" not in q.as_posix() and "node_modules" not in q.as_posix()
-                        and "/.claude/worktrees/" not in q.as_posix()]
+                # Every exclusion is matched on the path RELATIVE to `root`, never the
+                # absolute one. With `q.as_posix()` the gate was GREEN in CI and RED for any
+                # agent whose checkout IS a worktree: `root` itself contained
+                # `/.claude/worktrees/`, so EVERY candidate matched the exclusion, `hits` was
+                # empty, and the same five citations were reported as files that do not exist.
+                # That is the machine-dependent verdict this exclusion was added to prevent,
+                # arriving from the other side -- and it is the same character-vs-path defect
+                # family as `lstrip("./")` (T-053).
+                hits = []
+                for q in root.rglob("*" + pathlib.Path(clean).name):
+                    if not q.is_file():
+                        continue
+                    rel_q = q.relative_to(root).as_posix()
+                    if not rel_q.endswith("/" + clean) and rel_q != clean:
+                        continue
+                    if rel_q.startswith(".git/") or "/.git/" in rel_q:
+                        continue
+                    if "node_modules" in rel_q:
+                        continue
+                    if rel_q.startswith(".claude/worktrees/"):
+                        continue
+                    hits.append(q)
                 if len(hits) == 1:
                     continue
             if not any(c.exists() for c in candidates):
