@@ -279,6 +279,44 @@ class TheOtherThreeChecks(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("abc1234def", out)
 
+    def test_a_bare_sha_in_the_canonical_json_is_red(self):
+        """The blind spot, measured 2026-08-30.
+
+        `config/current_state.json` is in the read manifest and this gate has always
+        read it — but every commit id in it is plain text inside a JSON string, and the
+        pattern required BACKTICKS. `38d5d71504ba68b70b015b958cb09109c80e595a` sat in
+        `design_gate.candidate_head_note` for six months naming a branch head a squash
+        merge had erased, invisible to a gate that was reading the very file it was
+        written in. Closing it moved the sha count on the real tree from 36 to 42.
+        """
+        root = build(self.tmp, doc=json.dumps({"note": "head abc1234def"}),
+                     docname="state.json")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("abc1234def", out)
+
+    def test_a_bare_sha_in_PROSE_is_still_ignored(self):
+        """Deliberately narrower than the JSON case, and this is the arm that says so.
+
+        In prose a bare hex word is as likely to be an example, a digest or an id, and
+        the backtick is the author saying 'this is a commit'. In the machine mirror
+        there is no such convention to lean on, which is why the rule is `.json` only.
+        """
+        root = build(self.tmp, doc="the digest abc1234def appears in the payload.\n")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_a_run_id_in_the_canonical_json_is_not_a_commit(self):
+        """An 11-digit GitHub run id is hex-shaped and is a NUMBER.
+
+        The old rule exempted only 7-digit numbers; widening the pattern to bare words
+        made `33307104106` -- a real run id in the real mirror -- match. A hex word with
+        no letter in it and fewer than 40 characters is not a commit.
+        """
+        root = build(self.tmp, doc=json.dumps({"run_id": 33307104106}), docname="state.json")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
     def test_a_ticket_id_in_no_board_is_red(self):
         """Mutant: drop check 3 ⇒ green. A `T-nnn` in prose and on no board points at
         nothing, and reads as if the work were tracked."""

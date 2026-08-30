@@ -215,11 +215,30 @@ def check_handoff_names_reality(root: pathlib.Path, res: Result,
     code3, parent = git(root, "rev-parse", f"{sha}^")
     if code3 == 0:
         accepted.append(parent)
+    # ...and the MERGE BASE with main, which is the only one of the three that survives.
+    #
+    # This repository squash-merges. A branch commit therefore stops existing the moment the
+    # pull request lands, so a handoff naming the branch head names a dead object on `main` --
+    # and `check_doc_claims` refuses it, on `main`, after the merge, where no pull request can
+    # show it. That happened on FOUR consecutive merges (#193, #194, #195, #196), was settled
+    # by hand in #197, and recurred on the very next merge because the settle fixed the
+    # instance and not the mechanism.
+    #
+    # The merge base is a commit on `main`. It survives the squash, so the handoff keeps
+    # pointing at something a fresh clone can resolve. Nothing is lost by preferring it: the
+    # branch's exact head still travels in the pull request body as `AUDIT_CANDIDATE_HEAD`,
+    # which `tools/check_repo_state.py` compares against the live head on every push.
+    code4, base = git(root, "merge-base", sha, "origin/main")
+    if code4 != 0:
+        code4, base = git(root, "merge-base", sha, "main")
+    if code4 == 0 and base:
+        accepted.append(base)
     if not any(re.search(re.escape(c[:7]), live) for c in accepted):
-        res.bad(f"NEXT_CHAT.md's first {LIVE_BLOCK_LINES} lines name neither the current "
-                f"head {sha[:7]} nor its parent "
-                f"{parent[:7] if code3 == 0 else '(none)'}",
-                "put the current head in the live block -- a head named further down is a "
+        res.bad(f"NEXT_CHAT.md's first {LIVE_BLOCK_LINES} lines name none of the current "
+                f"head {sha[:7]}, its parent {parent[:7] if code3 == 0 else '(none)'} or the "
+                f"merge base with main {base[:7] if code4 == 0 and base else '(none)'}",
+                "put a commit the next session can resolve in the live block -- the merge base "
+                "is the one that survives a squash merge, and a head named further down is a "
                 "record, not a handoff")
     if branch != "HEAD" and branch not in live:
         res.bad(f"NEXT_CHAT.md's live block does not name the current branch {branch!r}",

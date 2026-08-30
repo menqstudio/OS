@@ -148,6 +148,39 @@ class HandoffReady(unittest.TestCase):
         git(self.work, "push", "-q", "origin", "HEAD")
         self.assertEqual(self.gate(), 1)
 
+    def test_a_handoff_naming_the_merge_base_is_green(self):
+        """The fix for the failure that recurred on five consecutive merges.
+
+        This repository squash-merges, so a branch commit stops existing the moment
+        the pull request lands. A handoff naming the branch head therefore names a
+        DEAD object on `main` -- and `check_doc_claims` refuses it there, after the
+        merge, where no pull request can show it. #193, #194, #195 and #196 all failed
+        that way; #197 settled it by hand and #198 reproduced it, because the settle
+        fixed the instance and not the mechanism.
+
+        The merge base is a commit on `main`. It survives the squash. Nothing is lost
+        by naming it: the branch's exact head still travels in the pull request body as
+        `AUDIT_CANDIDATE_HEAD`, compared against the live head on every push.
+        """
+        # `main` is where the branch is cut from, and the fixture's default branch is
+        # whatever `git init` chose -- so name it explicitly and push it, the way the
+        # real repository has an origin/main to measure against.
+        git(self.work, "branch", "-f", "main", "HEAD")
+        git(self.work, "push", "-q", "origin", "main")
+        base = head_of(self.work)          # the commit `main` and this branch share
+
+        git(self.work, "checkout", "-q", "-b", "feature")
+        git(self.work, "push", "-q", "-u", "origin", "feature")
+        for n in ("one", "two"):           # two commits, so neither head nor PARENT is the base
+            (self.work / f"{n}.txt").write_text(n + "\n", encoding="utf-8")
+            git(self.work, "add", "-A")
+            git(self.work, "commit", "-qm", n)
+        self.assertNotEqual(head_of(self.work), base)
+
+        write_handoff(self.work, head=base, branch="feature")
+        commit(self.work, "handoff names the merge base")
+        self.assertEqual(self.gate(), 0)
+
     def test_a_handoff_that_does_not_name_the_branch_is_red(self):
         """Mutant: drop the branch check ⇒ green. Head and next-action stay correct,
         so only the branch is missing — a handoff that says WHAT but not WHERE sends
