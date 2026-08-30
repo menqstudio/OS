@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, which are the fields tools/check_repo_state.py compares against live GitHub. This field carried 74,311 characters of prose until 2026-08-29 (T-045) -- 68% of a file called the machine-readable mirror, inside a read set every session is required to take. It said so itself and grew anyway. The narrative it held is in docs/archive/SESSION_LOG_2026-07_2026-08.md; tools/check_canon_budget.py holds this file to 20 KB so it cannot grow back.",
-  "settled_at_main_head": "5898db07ce2de299e15946dc1d04fe07642cf236",
+  "settled_at_main_head": "d745c50360a6902f7c23e75f0ecae6c67512eac8",
   "sync": {
-    "baseline_main_head_at_sync": "5898db07ce2de299e15946dc1d04fe07642cf236",
-    "snapshot_branch": "brand/menq-logo",
+    "baseline_main_head_at_sync": "d745c50360a6902f7c23e75f0ecae6c67512eac8",
+    "snapshot_branch": "t055/produced-artifact-gate-int",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field said 'live main is b3010f6 (PR #81 merged, 2026-08-09) ... the only open pull request is the self-carrier #82' for twenty days, through roughly eighty merged pull requests, because nothing compares it with anything (ninth audit I-06; the same field had already been stale by sixteen PRs when it was rewritten [...] docs/archive/SESSION_LOG_2026-07_2026-08.md",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is PR #189. PR #189's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). The marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on this branch -- the job died at an earlier step every time. Nothing is exempt."
   },
   "active": {
     "wave": "canon",
-    "task": "brand",
-    "branch": "brand/menq-logo"
+    "task": "T-055",
+    "branch": "t055/produced-artifact-gate-int"
   },
   "prs": [
     {
@@ -27,7 +27,7 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "brand",
+    "CURRENT_ACTIVE_TASK": "T-055",
     "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
@@ -119,15 +119,15 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this rea [...] docs/archive/SESSION_LOG_2026-07_2026-08.md"
   ],
   "current_workflow_pr": {
-    "number": 192,
-    "branch": "brand/menq-logo",
+    "number": 193,
+    "branch": "t055/produced-artifact-gate-int",
     "state": "open",
-    "what": "The brand artwork lands under docs/brand/. `git log --all --diff-filter=ADR` over every image extension returns no menq image at any point in this repository's history: the wordmark existed on one disk outside version control, and a disk-cleanup moved it into a root-owned archive the account could not read.",
-    "note": "menq-avatar.png is GENERATED from menq-logo.png, not drawn -- GitHub renders a User avatar as a circle and the 4:3 original would lose the ends of the wordmark. The wall refused all four paths for want of a recorded prior-art search, correctly: the search had been done and never written down.",
+    "what": "T-055's gate: the production half gets a finish line a machine can see. tools/check_produced_artifact.py prints five conditions and which are missing, RED by design until the production half exists. Its RED output is the deliverable. The job runs on every pull request but is NOT a required context -- one that can never pass would block every merge.",
+    "note": "The deferral is a DATED entry in config/deferred-enforcement.json enforced by check_repo_state::verify_deferred_enforcement, which runs inside a REQUIRED context. Its population is DERIVED from workflow job names, so a job required by nothing, excluded by nothing and deferred by nothing is RED -- the arrangement cannot omit its own gate.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #192 (brand/menq-logo): merge on an all-green exact head, then read `gh run list --branch main`. After it: the T-055 produced-artifact gate, then the production-half design splice, then T-055 itself and nothing before it. Nothing else is open but PR #112, parked on purpose.",
-    "_note": "The carrier is current_workflow_pr (#192 on brand/menq-logo). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #193 (t055/produced-artifact-gate-int): merge on an all-green exact head, then read `gh run list --branch main`. After it: the production-half design splice, then T-055 itself and nothing before it. PR #112 stays parked.",
+    "_note": "The carrier is current_workflow_pr (#193 on t055/produced-artifact-gate-int). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   }
 }

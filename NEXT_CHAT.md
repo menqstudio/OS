@@ -6,20 +6,21 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `brand/menq-logo` · **head** `ea83e3a` · **task** `brand` · **PR #192**
+**Active branch:** `t055/produced-artifact-gate-int` · **head** `2eeaa8a` · **task** `T-055` · **PR #193**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #192 · branch `brand/menq-logo`** (base `main`, tip `5898db0`, task brand). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #193 · branch `t055/produced-artifact-gate-int`** (base `main`, tip `d745c50`, task T-055). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The brand had no home in the repository: no `menq*` image appears anywhere in this repository's history, and the wordmark survived on one disk until a cleanup moved it somewhere the account could not read.
+> The production half gets a finish line a machine can see: five conditions, RED by design until it exists, and that RED output IS the deliverable. Not a required context — the deferral is DATED and enforced from inside one that is.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-053a` and `T-053b` are both merged; the shell is settled after the fact and the wall now
-reports what a `Bash` write changed on disk. PR #192 puts the brand artwork under `docs/brand/` — no
-`menq*` image had ever been committed, and the wordmark survived on one disk until a cleanup moved it
-into a root-owned archive. After it: the `T-055` produced-artifact gate, then the production-half design
-splice, then `T-055` itself and nothing before it.
+**Next:** run `python3 tools/check_produced_artifact.py`. It prints the five conditions a customer's first
+produced artifact must meet and which are missing, and is **RED by design** until the production half exists
+— that output is the deliverable, not a job to rerun. Every other piece of work here has a gate and so a
+measurable done; this half had none, and lost every scheduling contest. The context is deliberately NOT
+required — one that can never pass blocks every merge — and that deferral is a DATED entry in
+`config/deferred-enforcement.json`, enforced from inside a context that IS required.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -63,23 +64,23 @@ model is invoked; `connect_broker()` refuses off Linux; and the broker serves
 `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config carrying
 a TCB-root-signed manifest, which nothing in the shipped app sets.
 
-**The standing independent verdict is RED.** Nine rounds have run; the current one is
+**The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
 **20 pull requests, 107 files and 19688 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑.
 
 **Nothing is waiting on the Owner.**
-[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record and
-as of 2026-08-29 it says so explicitly. O-1…O-5 are all OPEN and none needs an
-Owner-minted artifact; what blocks them is deployment wiring and a second principal.
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. O-1…O-5
+are all OPEN and none needs an Owner-minted artifact; what blocks them is deployment wiring and
+a second principal.
 
 **There is no path in this repository to a production trust root.**
 [`docs/DEBIAN_DEPLOYMENT.md`](docs/DEBIAN_DEPLOYMENT.md) states it: `broctl build-registry`
-hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature`
-refuses a development registry whenever the operator pin comes from the production path.
-Everything runnable produces a **development** trust root. That is enough to exercise every
-path end to end and not enough to close O-2, O-3 or O-5.
+hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses
+a development registry whenever the operator pin comes from the production path. Everything
+runnable produces a **development** trust root — enough to exercise every path end to end, and not
+enough to close O-2, O-3 or O-5.
 
 ## How to read the marks
 
@@ -98,11 +99,10 @@ gets none of the five hooks — no read receipt, no phase declaration, no prior-
 Stop guard — and *nothing announces their absence*. That happened for a whole task (T-019)
 before anyone noticed.
 
-**A green test is not a passing check.** When you add a check, delete it once and confirm
-its test goes red, then restore it. `T-045` ran that sweep on its own two gates and found
-**three of seven checks tested by nothing** — the tests were passing on a different
-assertion — plus a fourth with no test at all. All four are isolated and mutation-verified
-now. Of roughly ninety checks swept this way in an earlier wave, four came back green.
+**A green test is not a passing check.** When you add a check, delete it once, **grep the line
+to confirm the mutation applied**, and confirm its test goes red. `T-045` swept its own two gates
+and found **three of seven checks tested by nothing**, plus a fourth with no test at all. Of
+roughly ninety checks swept in an earlier wave, four came back green.
 
 ## Where the state lives
 
@@ -120,4 +120,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: brand` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-055` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

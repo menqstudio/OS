@@ -5,6 +5,7 @@ exact-head drift must be RED, event base/head/number mismatch must be RED, merge
 """
 from __future__ import annotations
 
+import datetime as dt
 import pathlib
 import sys
 import unittest
@@ -673,6 +674,163 @@ class RestSecondRoad(unittest.TestCase):
         rs._REPO_SLUG_CACHE = "a/b"
         self._gh({"--paginate": (0, "[]")})
         self.assertEqual(rs._rest_open_prs(), set(), "genuinely no open PRs is a SET, not None")
+
+
+class DeferredEnforcementTests(unittest.TestCase):
+    """`verify_deferred_enforcement` — T-055. A deferred enforcement has a DATE, and the date bites.
+
+    Written because "we will make it required once the queue drains" is an intention, and every
+    deferred enforcement in this repository so far has ended as a correctly written control wired
+    to nothing. The trigger is a date rather than an observable state on purpose: a state is
+    controlled by the same person who owes the enforcement, so "once the queue drains" is
+    satisfied by never adding a task, which is never.
+    """
+
+    JOB = "Production half · the five conditions (T-055)"
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="deferrals-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.wf = self.root / ".github" / "workflows"
+        self.wf.mkdir(parents=True)
+        (self.wf / "ci.yml").write_text(
+            "jobs:\n  a:\n    name: Required job\n  b:\n    name: " + self.JOB + "\n",
+            encoding="utf-8")
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "check_produced_artifact.py").write_text("#\n", encoding="utf-8")
+        self.expected = {"contexts": ["Required job"], "deliberately_excluded": {}}
+        self.registry = {
+            "max_days_without_sign_off": 7,
+            "deferrals": {self.JOB: {
+                "gate": "tools/check_produced_artifact.py",
+                "workflow": ".github/workflows/ci.yml",
+                "status": "OPEN",
+                "first_declared": "2026-08-30",
+                "deferred_until": "2026-09-06",
+                "reason": "x" * 130,
+                "sign_off": "",
+            }},
+        }
+
+    def run_check(self, today="2026-09-01"):
+        return rs.verify_deferred_enforcement(
+            self.expected, self.registry, self.wf, self.root, dt.date.fromisoformat(today))
+
+    # --------------------------------------------------------------- the happy path
+
+    def test_a_dated_deferral_inside_its_window_is_accepted(self):
+        self.assertEqual(self.run_check("2026-09-01"), [])
+
+    def test_the_last_day_of_the_window_is_still_inside_it(self):
+        self.assertEqual(self.run_check("2026-09-06"), [])
+
+    # --------------------------------------------------------------- the date bites
+
+    def test_the_day_after_the_deadline_is_red(self):
+        problems = self.run_check("2026-09-07")
+        self.assertTrue(any("EXPIRED" in p for p in problems), problems)
+        self.assertTrue(any("still absent from `contexts`" in p for p in problems), problems)
+
+    def test_an_expired_deferral_whose_promise_was_KEPT_is_not_red_for_expiry(self):
+        """Adding the context is what was promised; having done it, the date stops mattering.
+        The stale entry is still reported — as a contradiction, not as an expiry."""
+        self.expected["contexts"].append(self.JOB)
+        problems = self.run_check("2026-09-30")
+        self.assertFalse(any("EXPIRED" in p for p in problems), problems)
+        self.assertTrue(any("is ALSO a required context" in p for p in problems), problems)
+
+    def test_a_deferral_with_no_expiry_is_the_thing_this_registry_prevents(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = None
+        self.assertTrue(any("must be an ISO date" in p for p in self.run_check()))
+
+    def test_a_non_iso_expiry_is_refused(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "next week"
+        self.assertTrue(any("must be an ISO date" in p for p in self.run_check()))
+
+    def test_an_expiry_before_its_declaration_is_refused(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-08-01"
+        self.assertTrue(any("is before `first_declared`" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- extension costs a signature
+
+    def test_extending_past_the_ceiling_needs_a_sign_off(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-10-30"
+        self.assertTrue(any("add a `sign_off`" in p for p in self.run_check()))
+
+    def test_a_signed_extension_is_accepted(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-10-30"
+        self.registry["deferrals"][self.JOB]["sign_off"] = "Owner (Gev), 2026-09-06"
+        self.assertEqual(self.run_check("2026-09-20"), [])
+
+    def test_a_non_open_status_needs_a_sign_off_like_O_1_to_O_5_do(self):
+        self.registry["deferrals"][self.JOB]["status"] = "OWNER-DEFERRED"
+        self.assertTrue(any("needs a non-empty `sign_off`" in p for p in self.run_check()))
+
+    def test_an_unknown_status_is_refused(self):
+        self.registry["deferrals"][self.JOB]["status"] = "later"
+        self.assertTrue(any("is not one of" in p for p in self.run_check()))
+
+    # ------------------------------------------------- the population comes from the filesystem
+
+    def test_a_job_required_by_nothing_and_deferred_by_nothing_is_red(self):
+        (self.wf / "extra.yml").write_text("jobs:\n  z:\n    name: Orphan gate\n", encoding="utf-8")
+        problems = self.run_check()
+        self.assertTrue(any("`Orphan gate` is required by nothing" in p for p in problems), problems)
+
+    def test_a_deliberately_excluded_job_is_covered(self):
+        (self.wf / "extra.yml").write_text("jobs:\n  z:\n    name: Orphan gate\n", encoding="utf-8")
+        self.expected["deliberately_excluded"]["Orphan gate"] = "tag-triggered only"
+        self.assertEqual(self.run_check(), [])
+
+    def test_a_deferral_for_a_job_no_workflow_declares_covers_nothing(self):
+        self.registry["deferrals"]["Imaginary gate"] = dict(
+            self.registry["deferrals"][self.JOB])
+        self.assertTrue(any("defers a context no workflow declares" in p for p in self.run_check()))
+
+    def test_permanent_and_temporary_cannot_both_be_claimed(self):
+        self.expected["deliberately_excluded"][self.JOB] = "permanent"
+        self.assertTrue(any("ALSO in `deliberately_excluded`" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- fail-closed shapes
+
+    def test_a_registry_with_no_deferrals_object_is_a_refusal(self):
+        self.registry = {"max_days_without_sign_off": 7}
+        self.assertTrue(any("has no `deferrals` object" in p for p in self.run_check()))
+
+    def test_no_job_names_found_verified_nothing(self):
+        for path in self.wf.glob("*.yml"):
+            path.unlink()
+        self.assertTrue(any("verified nothing" in p for p in self.run_check()))
+
+    def test_a_deferral_pointing_at_deleted_code_is_refused(self):
+        (self.root / "tools" / "check_produced_artifact.py").unlink()
+        self.assertTrue(any("which does not exist" in p for p in self.run_check()))
+
+    def test_a_reason_too_short_to_say_anything_is_refused(self):
+        self.registry["deferrals"][self.JOB]["reason"] = "later"
+        self.assertTrue(any("`reason` must be at least" in p for p in self.run_check()))
+
+    def test_a_missing_field_is_named(self):
+        del self.registry["deferrals"][self.JOB]["deferred_until"]
+        self.assertTrue(any("is missing `deferred_until`" in p for p in self.run_check()))
+
+    def test_a_missing_ceiling_is_refused(self):
+        del self.registry["max_days_without_sign_off"]
+        self.assertTrue(any("must be a positive integer" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- against the real repository
+
+    def test_this_repository_satisfies_the_rule_today(self):
+        """Every job declared in this repository's workflows is required, excluded or dated.
+
+        Measured, not asserted: this is the same call CI makes. It caught one genuinely
+        uncovered job when it was written -- `Release preflight`, which release.yml runs on
+        tags only and which was therefore in neither list by accident rather than by decision.
+        """
+        repo = pathlib.Path(__file__).resolve().parents[1]
+        self.assertEqual(rs._deferred_enforcement_failures(repo), [])
 
 
 class FileEntryPoint(unittest.TestCase):
