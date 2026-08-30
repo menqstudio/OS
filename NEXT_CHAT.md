@@ -8,9 +8,9 @@
 
 **Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #200 · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #201 · branch `fix/handoff-names-a-dead-branch-commit`** (base `main`, tip `629749c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Design SS3.3 slices 1+2: the execution lease's allowed_egress axis and core/src/egress_proxy.rs, the authorizer. Nothing confines a process and a call step is still refused -- the enforcement point is slice 3.
+> The handoff named a branch commit a squash erased, and main went RED on it for the sixth time. The head line now names the merge base and carries the reason inline, so the rule cannot be evicted separately from what it governs.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
