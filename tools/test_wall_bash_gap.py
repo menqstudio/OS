@@ -38,17 +38,25 @@ and canon moved together, and cannot ask whether the session had the right to wr
 that path. Scope, prior art and the shrink-only budget rule have no CI equivalent,
 because they are properties of the SESSION and CI has no session.
 
-WHY THIS IS A TEST AND NOT A FIX
---------------------------------
+WHY THE PreToolUse GAP IS PINNED RATHER THAN CLOSED
+---------------------------------------------------
 Deciding which paths a shell command writes is undecidable in general. `SHELL_WRITE_FORMS`
 below is the evidence: every entry writes the same protected path, and a PreToolUse
-classifier would have to defeat all of them plus the ones nobody has thought of. The
-recommended containment is therefore content-based and after the fact -- see the T-053
-report. This file pins the CURRENT boundary so that closing it is a visible, deliberate
-edit to a named assertion rather than a silent change in what the wall covers.
+classifier would have to defeat all of them plus the ones nobody has thought of, while
+still waving through the read-only greps every agent here lives on. So `Bash` is NOT added
+to the PreToolUse matcher, and `TheGapDemonstrated` pins that: those assertions stay true.
 
-`test_the_root_wall_sees_no_bash_call_at_any_event` is the assertion a containment
-change is EXPECTED to turn red. That is deliberate: it is what makes the change visible.
+WHAT T-053 ADDED INSTEAD
+------------------------
+A root `PostToolUse` hook matched on `Bash|PowerShell|Shell` that asks the decidable
+question -- what changed on disk -- and fails the turn when a changed path is one the
+session may not write. `TheContainment` below tests it.
+
+Say what it is: DETECTION PLUS HALTING THE TURN, NOT CONTAINMENT. The write has already
+landed and nothing undoes it. The engine's PostToolUse path is the same shape and the same
+limit: `bro_hook.py:148-177` settles a lease and emits `{"decision":"block"}`; there is no
+revert, unlink or restore anywhere in it. A security model that claims containment from
+either one is claiming something neither does.
 """
 from __future__ import annotations
 
@@ -154,25 +162,36 @@ class RootSettingsWiring(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertEqual(self.settings[event], [None])
 
-    def test_the_root_wall_sees_no_bash_call_at_any_event(self):
-        """THE GAP, stated as one assertion.
+    def test_bash_is_seen_AFTER_the_fact_and_never_before_it(self):
+        """The shape of the root wall in one assertion, both halves.
 
-        Every root event either carries a matcher that excludes Bash, or is not a
-        per-tool event at all. There is no PostToolUse at the root either, so the root
-        has neither containment nor detection for a shell write.
+        Before T-053 this asserted that no root event saw Bash at all, and named itself
+        as the assertion a containment change would turn red. It did. What replaces it is
+        the same claim made precisely: Bash is absent from PreToolUse ON PURPOSE, because
+        a reliable pre-execution shell path-check is not possible, and present at
+        PostToolUse, where the decidable question can be asked.
 
-        A containment change is EXPECTED to turn this red. That is the point.
+        Adding Bash to PreToolUse turns this red, which is still the point.
         """
-        self.assertNotIn("PostToolUse", self.settings)
+        self.assertNotIn("Bash", self.settings["PreToolUse"][0])
+        self.assertNotEqual(self.settings["PreToolUse"], ["*"])
+        self.assertEqual(self.settings["PostToolUse"], ["Bash|PowerShell|Shell"])
+        # There is still no PostToolUseFailure at the root: a shell command that FAILED
+        # may still have written before it failed. Named as a known hole rather than
+        # implied to be covered.
         self.assertNotIn("PostToolUseFailure", self.settings)
-        per_tool = {e: m for e, m in self.settings.items() if e.endswith("ToolUse")}
-        self.assertEqual(list(per_tool), ["PreToolUse"])
-        for event, values in per_tool.items():
-            for matcher in values:
-                with self.subTest(event=event, matcher=matcher):
-                    self.assertIsNotNone(matcher)
-                    self.assertNotIn("Bash", matcher)
-                    self.assertNotEqual(matcher, "*")
+
+    def test_the_post_tool_hook_is_the_same_program_as_the_pre_tool_one(self):
+        """One file, one set of predicates. Two copies would let the tool that wrote a
+        file decide whether the rule applied, which is the defect being closed."""
+        settings = load(ROOT_SETTINGS)["hooks"]
+        commands = {event: settings[event][0]["hooks"][0]["command"]
+                    for event in ("PreToolUse", "PostToolUse")}
+        for event, argument in (("PreToolUse", "pre-tool"), ("PostToolUse", "post-tool")):
+            with self.subTest(event=event):
+                self.assertIn("canonical_law_gate.py", commands[event])
+                self.assertTrue(commands[event].rstrip().endswith(argument), commands[event])
+        self.assertNotIn("bro_hook.py", " ".join(commands.values()))
 
 
 class EngineSettingsWiring(unittest.TestCase):
@@ -294,6 +313,208 @@ class TheGapDemonstrated(unittest.TestCase):
         _, out = run_hook("pre-tool", self.payload(
             "Bash", {"command": "grep -rn lstrip tools/"}))
         self.assertIsNone(decision(out))
+
+
+class TheContainment(unittest.TestCase):
+    """The PostToolUse settlement, driven against the real hook and the real tree.
+
+    Every case here runs the hook exactly as `.claude/settings.json` runs it, on a session
+    id that exists only for the test, and asserts on the verdict it printed.
+    """
+
+    def setUp(self):
+        self.sid = f"t053-containment-{os.getpid()}-{self._testMethodName}"
+        subprocess.run([sys.executable, str(TOOLS / "check_read_receipt.py"),
+                        "--session", self.sid, "--record"],
+                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+        subprocess.run([sys.executable, str(TOOLS / "check_roadmap_order.py"),
+                        "--session", self.sid, "--declare", "meta", "--note",
+                        "T-053 self-test of the post-tool shell settlement, driving the "
+                        "real hook against a scratch path in the real tree"],
+                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+
+    def settle(self, command: str = "ls") -> tuple[int, str]:
+        return run_hook("post-tool", {"session_id": self.sid, "tool_name": "Bash",
+                                      "tool_input": {"command": command}})
+
+    def test_a_non_shell_tool_is_not_this_handlers_business(self):
+        """The shell-tool FILTER must be what decides this, so the tree is left in the
+        state that WOULD block: dirty at an out-of-scope path. The first version of this
+        test probed a clean tree and passed with the filter deleted -- caught by the
+        mutation sweep, which is the whole reason the sweep is run.
+        """
+        self.settle()          # baseline
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            # Same payload, same dirty tree; only the tool name differs.
+            _, ignored = run_hook("post-tool", {
+                "session_id": self.sid, "tool_name": "Edit",
+                "tool_input": {"command": f"echo x >> {PROTECTED}"}})
+            _, judged = run_hook("post-tool", {
+                "session_id": self.sid, "tool_name": "Bash",
+                "tool_input": {"command": f"echo x >> {PROTECTED}"}})
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(ignored, "", "a non-shell tool was settled by the shell handler")
+        self.assertEqual(decision(judged), "block", judged)
+
+    def test_a_shell_call_that_changed_nothing_is_allowed(self):
+        self.settle()          # baseline
+        _, out = self.settle()
+        self.assertEqual(out, "", out)
+
+    def test_a_shell_write_to_a_path_outside_scope_blocks_the_turn(self):
+        """The bypass, closed after the fact. A `meta` session writes product code
+        through a shell redirect; the settlement names the path and the reason."""
+        self.settle()          # baseline
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            _, out = self.settle(f"echo x >> {PROTECTED}")
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(out), "block", out)
+        self.assertIn(PROTECTED, out)
+        self.assertIn("declared `meta`", out)
+        self.assertIn("ALREADY LANDED", out)
+
+    def test_it_keeps_reporting_while_the_violation_stands(self):
+        """A gate that reports once and forgets is a notification. The violating path is
+        deliberately left out of the baseline so it is still there next call."""
+        self.settle()
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            self.settle(f"echo x >> {PROTECTED}")
+            _, again = self.settle("ls")
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(again), "block", again)
+
+    def test_reverting_the_path_clears_the_report(self):
+        """Satisfiable, which is the other half of fail-closed: a gate nobody can clear
+        gets switched off."""
+        self.settle()
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        with target.open("ab") as handle:
+            handle.write(b"\n// T-053 self-test\n")
+        self.settle(f"echo x >> {PROTECTED}")
+        target.write_bytes(original)
+        _, out = self.settle("ls")
+        self.assertEqual(out, "", out)
+
+    def test_a_path_the_declaration_DOES_own_is_allowed(self):
+        """The false-positive control, and it earned its place: the first cut treated any
+        edit of a clean TRACKED file as a new file and demanded a prior-art search for it.
+        Found by running the thing, not by reading it."""
+        self.settle()
+        target = TOOLS / "check_no_lstrip_prefix.py"
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n# T-053 self-test\n")
+            _, out = self.settle("echo x >> tools/check_no_lstrip_prefix.py")
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(out, "", out)
+
+    def test_a_new_untracked_file_needs_a_prior_art_search(self):
+        self.settle()
+        target = TOOLS / "t053_selftest_scratch.py"
+        try:
+            target.write_text("x = 1\n", encoding="utf-8")
+            _, out = self.settle("printf x > tools/t053_selftest_scratch.py")
+        finally:
+            target.unlink(missing_ok=True)
+        self.assertEqual(decision(out), "block", out)
+        self.assertIn("prior-art search", out)
+
+    def test_an_UNDECLARED_session_is_blocked_for_any_changed_path(self):
+        """The branch every other test in this class walks past.
+
+        `setUp` declares `meta`, so the "no declaration at all" arm was reachable by
+        nothing until the mutation sweep said so: deleting it left the suite GREEN. An
+        undeclared session has no scope to test a path against, so EVERY changed path is
+        a violation, including one inside `tools/`.
+        """
+        sid = f"t053-undeclared-{os.getpid()}"
+        first = run_hook("post-tool", {"session_id": sid, "tool_name": "Bash",
+                                       "tool_input": {"command": "ls"}})[1]
+        self.assertEqual(first, "", "the baseline call should never block")
+
+        target = TOOLS / "check_no_lstrip_prefix.py"
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n# T-053 self-test\n")
+            _, out = run_hook("post-tool", {"session_id": sid, "tool_name": "Bash",
+                                            "tool_input": {"command": "echo x >> tools/x"}})
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(out), "block", out)
+        self.assertIn("phase declaration", out)
+
+    def test_the_first_shell_call_baselines_a_dirty_tree_rather_than_blaming_it(self):
+        """A session that starts on a dirty tree did not make it dirty."""
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            _, out = self.settle("ls")       # the FIRST call for this session id
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(out, "", out)
+
+
+class TheContainmentUnits(unittest.TestCase):
+    """The pure parts, without driving a subprocess."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
+        try:
+            import canonical_law_gate as wall
+        finally:
+            sys.path.pop(0)
+        self.wall = wall
+
+    def test_the_shell_tool_set_matches_what_the_settings_wire(self):
+        matcher = json.loads(ROOT_SETTINGS.read_text(encoding="utf-8"))
+        block = matcher["hooks"]["PostToolUse"][0]
+        self.assertEqual(set(block["matcher"].split("|")), self.wall.SHELL_TOOLS)
+
+    def test_shell_tools_and_edit_tools_are_disjoint(self):
+        """A tool refused in advance AND settled afterwards would be judged twice."""
+        self.assertEqual(self.wall.SHELL_TOOLS & self.wall.EDIT_TOOLS, set())
+
+    def test_dirty_fingerprints_carries_the_porcelain_code(self):
+        """`??` is what makes a path new; without the code in the value the gate called
+        every edit of a clean tracked file a new file."""
+        state = self.wall.dirty_fingerprints()
+        self.assertIsNotNone(state)
+        for rel, value in state.items():
+            with self.subTest(rel=rel):
+                self.assertRegex(value, r"^.{2}:")
+
+    def test_a_tree_git_cannot_be_asked_about_is_not_a_pass(self):
+        """The gate says so in the context rather than staying silent."""
+        source = (ROOT / ".claude" / "hooks" / "canonical_law_gate.py").read_text(encoding="utf-8")
+        self.assertIn("was NOT settled against the tree. Not a pass.", source)
+
+    def test_the_docstring_states_the_limit_in_the_required_words(self):
+        """The Owner asked for the honest form of this claim in those words; a security
+        model that says 'containment' about either wall is overstating both."""
+        source = (ROOT / ".claude" / "hooks" / "canonical_law_gate.py").read_text(encoding="utf-8")
+        self.assertIn("A RELIABLE PreToolUse SHELL PATH-CHECK IS NOT POSSIBLE", source)
+        self.assertIn("DETECTION PLUS\n  HALTING THE TURN -- NOT CONTAINMENT", source)
 
 
 class TheNamedBackstop(unittest.TestCase):
