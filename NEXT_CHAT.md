@@ -6,19 +6,20 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t053a/lstrip-evidence` · **head** `3e22585` · **task** `T-053` · **PR #190**
+**Active branch:** `t053b/shell-settlement` · **head** `pending` · **task** `T-053b` · **PR #191**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #190 · branch `t053a/lstrip-evidence`** (base `main`, tip `09ed3ce`, task T-053). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #191 · branch `t053b/shell-settlement`** (base `main`, tip `a88ba9f`, task T-053b). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> `lstrip("./")` strips a character SET, not a prefix — live in two gates, and the reason a worktree-isolated agent could only write through the ungated `Bash` path. What that path does not see is written down now, not remembered.
+> The shell is settled AFTER the fact: a `PreToolUse` path-check on a shell command is undecidable, so `PostToolUse` asks what changed on disk instead. Detection plus halting the turn — not containment.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-053` is open on `t053a/lstrip-evidence` — the `lstrip` defect family closed in the two gates
-that still carried it, a tree-wide AST gate that refuses the form, and `test_wall_bash_gap.py`, which records
-what the root coordination gate does **not** see: the engine's wall matches `*` and does see `Bash`; phase
-declaration, meta scope, prior art and the shrink-only canon budget do not. The containment half is `T-053b`.
+**Next:** `T-053b` is open on `t053b/shell-settlement` — the half held for a quiet tree. ONE new event,
+`PostToolUse` on `Bash|PowerShell|Shell`; no existing matcher is touched. Adding `Bash` to `PreToolUse` was
+designed first and **rejected**: which paths a shell command writes is undecidable, and `test_wall_bash_gap.py`
+carries twelve spellings of one write as the corpus. It is detection plus halting the turn, **not
+containment** — the write has already landed.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -27,9 +28,8 @@ Three more things must be true at every push: the PR body carries exactly one
 `main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a
 commit that no longer exists.
 
-`T-046`'s row stays open although it merged: one green run does not prove an intermittent, and the
-Windows engine job must come back clean across several PRs. Stamp with `tools/stamp_pr_head.py
---pr <N>` — REST since `T-047`; `gh pr edit` dies here.
+`T-046`'s row stays open although it merged: one green run does not prove an intermittent. Stamp with
+`tools/stamp_pr_head.py --pr <N>` — REST since `T-047`; `gh pr edit` dies here.
 
 ## Verify before you believe any of this
 
@@ -120,4 +120,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-053` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-053b` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
