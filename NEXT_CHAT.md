@@ -6,27 +6,20 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `main` · **head** `9c0888b` · **task** `settle` · **PR #197**
+**Active branch:** `gate/main-ci-must-be-read` · **head** `pending` · **task** `main-ci-gate` · **PR #198**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #197 · branch `settle/main-after-t055`** (base `main`, tip `9c0888b`, task settle). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #198 · branch `gate/main-ci-must-be-read`** (base `main`, tip `dac7080`, task main-ci-gate). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> `main` was RED on its own runs for four merges and every pull request was green, because the handoff named a BRANCH commit that a squash merge makes unreachable. The settle points it at `main`'s own head.
+> The one rule that had no gate now has one. It does not require `main` to be green — it requires the snapshot to have READ it, with a note whenever the answer is not `success`.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** a gate that refuses when `main`'s OWN run is red. `T-055` is merged and its five conditions
-pass in CI — on evidence **produced during the run** from the real code path, not on anything stored here.
-The store is under `target/`, `git ls-files` does not report it, and the gate refuses one it does report:
-a committed store is a fixture. Reproduce it the way CI does:
-
-```
-cd apps/desktop/src-tauri && cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact
-python3 tools/check_produced_artifact.py
-```
-
-It is still not a required context: one must be OBSERVED green in CI first, the lesson `Windows · §0.W`
-cost on 2026-08-18. It was, on `9c0888b`.
+**Next:** the first `call` step — §3.3's egress, the one thing a customer's agent needs that this head
+refuses. Everything else in the five conditions is built. `config/current_state.json` now carries a
+`main_ci` block, and `tools/check_repo_state.py::main_ci_failures` refuses a snapshot that has not read
+`main`'s own runs: same head, same conclusion, and a note whenever it is not `success`. It does **not**
+require a green `main` — a red one is a fact to work through, an unread one is not.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -126,4 +119,4 @@ roughly ninety checks swept in an earlier wave, four came back green.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: settle` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: main-ci-gate` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

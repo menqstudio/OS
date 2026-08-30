@@ -438,6 +438,60 @@ def verify_main_push(pushed_sha: str, baseline: str, is_ancestor) -> list[str]:
 
 # ---- CI I/O (not unit-tested; the pure functions above are) ----------------------------------------
 
+#: The workflows whose verdict on `main` a session is required to have READ. Not every
+#: workflow: these are the ones whose failure means the repository itself is broken rather
+#: than one surface being unavailable.
+MAIN_CI_WORKFLOWS = ("ci",)
+
+
+def main_ci_failures(declared: object, live: dict) -> list[str]:
+    """Pure half of the main-CI rule. `live` is `{workflow: (head, conclusion, run_id)}`.
+
+    **What this refuses, and what it does not.** It does NOT require `main` to be green.
+    A red `main` is a fact, and a session must be able to keep working while one is being
+    fixed. What it refuses is a snapshot that has not READ it: `config/current_state.json`
+    must carry `main_ci` naming the same head and the same conclusion GitHub reports, and
+    when a conclusion is anything but `success` it must also carry a non-empty `note`.
+
+    **Why it exists.** On 2026-08-30 `main`'s own `ci` was red for four consecutive merges
+    while every pull request was green, and the misses were mine: the rule
+    *"a green PR is not a green main"* is written in `NEXT_CHAT.md`'s second paragraph and
+    had already cost two false "green" reports once before. Every other mistake that night
+    was caught by an artifact. This one had no gate, so it survived exactly as long as
+    attention did — which is the argument for gates in one sentence.
+
+    So the deliverable is not a fix, it is a READING. A red `main` passes here the moment
+    somebody writes down that it is red and why; an unread `main` never passes.
+    """
+    problems: list[str] = []
+    if not isinstance(declared, dict):
+        return [f"config/current_state.json: no `main_ci` block. Read `gh run list --branch main` and "
+                f"record what it said — a green pull request is not a green main, and that rule "
+                f"has cost this repository two false 'green' reports and four unread red merges."]
+    for wf in sorted(live):
+        head, conclusion, run_id = live[wf]
+        entry = declared.get(wf)
+        if not isinstance(entry, dict):
+            problems.append(f"config/current_state.json: `main_ci` does not mention the `{wf}` workflow, "
+                            f"whose newest completed run on main is {conclusion} at {head[:7]}.")
+            continue
+        if entry.get("head") != head:
+            problems.append(
+                f"config/current_state.json: `main_ci.{wf}.head` is {str(entry.get('head'))[:7]!r} and the "
+                f"newest completed `{wf}` run on main is at {head[:7]} — the reading is stale, so it "
+                f"is not a reading of THIS main.")
+        if entry.get("conclusion") != conclusion:
+            problems.append(
+                f"config/current_state.json: `main_ci.{wf}.conclusion` says {entry.get('conclusion')!r} and "
+                f"GitHub says {conclusion!r} for run {run_id}.")
+        elif conclusion != "success" and not str(entry.get("note") or "").strip():
+            problems.append(
+                f"config/current_state.json: `main_ci.{wf}` records {conclusion!r} with no `note`. A red "
+                f"main may stand — an UNSAID red main may not. Say what failed and what is being "
+                f"done, in one line.")
+    return problems
+
+
 def _have_gh() -> bool:
     try:
         return subprocess.run(["gh", "--version"], capture_output=True, timeout=15).returncode == 0
@@ -452,6 +506,39 @@ _REPO_FALLBACK = "menqstudio/OS"
 #: Resolved once per process. `None` means "not yet asked"; a resolved failure is cached as `False`
 #: so a repository with no `gh` context does not pay for three subprocess calls to learn it twice.
 _REPO_SLUG_CACHE: str | bool | None = None
+
+
+def _live_main_ci(slug: str) -> dict | None:
+    """`{workflow: (head_sha, conclusion, run_id)}` for the newest COMPLETED run on main.
+
+    `None` means the reading could not be taken, and every caller REFUSES on it rather than
+    skipping: "I could not check" and "it is fine" are different answers, and conflating them
+    is the exact failure this whole file exists to stop.
+    """
+    live: dict[str, tuple[str, str, int]] = {}
+    for wf in MAIN_CI_WORKFLOWS:
+        try:
+            out = subprocess.run(
+                ["gh", "api",
+                 f"repos/{slug}/actions/workflows/{wf}.yml/runs"
+                 f"?branch=main&status=completed&per_page=1"],
+                capture_output=True, text=True, encoding="utf-8", timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if out.returncode != 0:
+            return None
+        try:
+            runs = json.loads(out.stdout).get("workflow_runs") or []
+        except ValueError:
+            return None
+        if not runs:
+            return None
+        run = runs[0]
+        head, conclusion, rid = run.get("head_sha"), run.get("conclusion"), run.get("id")
+        if not isinstance(head, str) or not isinstance(conclusion, str):
+            return None
+        live[wf] = (head, conclusion, rid)
+    return live
 
 
 def _repo_slug() -> str | None:
@@ -1022,6 +1109,21 @@ def main(argv: list[str] | None = None) -> int:
     # missing: a rule that only runs where a network tool happens to be installed is a rule with a
     # hole in it, and this one has to hold everywhere the checkout does.
     failures += _deferred_enforcement_failures(root)
+
+    # The main-CI reading. Placed with the other live-GitHub roads and fail-closed the same
+    # way: a reading that could not be taken is a refusal, never a skip.
+    slug_for_ci = _repo_slug() if _have_gh() else None
+    if slug_for_ci is None:
+        failures.append("could not resolve the repository to read `main`'s own CI runs — a check "
+                        "that could not run has not passed.")
+    else:
+        live_main = _live_main_ci(slug_for_ci)
+        if live_main is None:
+            failures.append("could not read the newest completed run on `main` for "
+                            f"{', '.join(MAIN_CI_WORKFLOWS)} — a check that could not run has not "
+                            "passed.")
+        else:
+            failures += main_ci_failures(snap.get("main_ci"), live_main)
 
     on_main_push = event_name == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main"
     event = None
