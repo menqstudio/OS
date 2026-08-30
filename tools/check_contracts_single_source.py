@@ -52,8 +52,16 @@ _ALLOWED_SCHEMA_DIRS = (
     "engine/contracts",
     "bridge/contracts",
 )
-#: Never walked: build output and dependency trees carry thousands of unrelated schema files.
-_SKIP_DIRS = {".git", "node_modules", "target", "dist", "dist-ssr", ".venv", "__pycache__", "build"}
+#: Never walked: build output and dependency trees carry thousands of unrelated schema files,
+#: and `worktrees` carries a whole second copy of this repository.
+#:
+#: The Agent tool checks a subagent's isolated copy out under `.claude/worktrees/<agent-id>/`.
+#: On 2026-08-30 that copy put all five `contracts/` schemas and all four `bridge/contracts/`
+#: schemas outside every declared home at once, and this gate reported nine strays on a tree
+#: whose real content was untouched -- RED locally, green in CI, which is a verdict about the
+#: machine rather than the code.
+_SKIP_DIRS = {".git", "node_modules", "target", "dist", "dist-ssr", ".venv", "__pycache__",
+              "build", "worktrees"}
 
 
 def load_index(root: pathlib.Path) -> dict:

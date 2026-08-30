@@ -242,11 +242,19 @@ def main(root: pathlib.Path = ROOT) -> int:
             # Documents legitimately cite a path relative to the subtree they describe
             # (`broker/src/main.rs` under apps/desktop/src-tauri/). Accept a unique
             # suffix match, and only a unique one: two matches is an ambiguous citation.
+            #
+            # `.claude/worktrees/` is excluded for the same reason as `.git/`: the Agent tool
+            # checks a whole second copy of this repository out there so a subagent cannot
+            # collide with the session, and that copy made EVERY subtree-relative citation
+            # ambiguous. This gate went RED on a clean tree with five such findings while CI,
+            # which has no worktree, was green -- a verdict that depended on the machine, not
+            # the code, which is the failure T-045 fixed in this same file once already.
             checked["paths"] += 1
             if not any(c.exists() for c in candidates):
                 hits = [q for q in root.rglob("*" + pathlib.Path(clean).name)
                         if q.is_file() and q.as_posix().endswith("/" + clean)
-                        and ".git/" not in q.as_posix() and "node_modules" not in q.as_posix()]
+                        and ".git/" not in q.as_posix() and "node_modules" not in q.as_posix()
+                        and "/.claude/worktrees/" not in q.as_posix()]
                 if len(hits) == 1:
                     continue
             if not any(c.exists() for c in candidates):

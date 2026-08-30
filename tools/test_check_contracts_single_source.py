@@ -28,6 +28,33 @@ def _schema(version: int = 1, envelope: bool = False) -> dict:
     return {"type": "object", "required": ["schema"], "properties": {"schema": {"const": version}}}
 
 
+class AgentWorktreeIsNotAStray(unittest.TestCase):
+    """The Agent tool checks a subagent's isolated copy of this repository out under
+    `.claude/worktrees/<id>/`. On 2026-08-30 that copy made this gate report nine strays — all
+    five `contracts/` schemas and all four `bridge/contracts/` ones — on a tree whose real
+    content was untouched. RED locally, green in CI: a verdict about the machine."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="contracts-worktree-"))
+
+    def test_a_schema_inside_an_agent_worktree_is_not_a_stray(self):
+        """Mutant: drop "worktrees" from _SKIP_DIRS ⇒ red, reporting the copy as a stray."""
+        root = self.tmp / "root"
+        copy = root / ".claude" / "worktrees" / "agent-abc" / "contracts"
+        copy.mkdir(parents=True)
+        (copy / "execution-lease.schema.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(cs.stray_schema_files(root), [])
+
+    def test_a_real_stray_elsewhere_is_still_reported(self):
+        """The exclusion must not become a blanket amnesty."""
+        root = self.tmp / "root2"
+        stray = root / "vendor"
+        stray.mkdir(parents=True)
+        (stray / "execution-lease.schema.json").write_text("{}", encoding="utf-8")
+        self.assertEqual([p.as_posix() for p in cs.stray_schema_files(root)],
+                         ["vendor/execution-lease.schema.json"])
+
+
 class ContractsSingleSourceTests(unittest.TestCase):
     def _tree(self) -> pathlib.Path:
         """A repository in which the gate is GREEN. Every test breaks exactly one thing about it."""
