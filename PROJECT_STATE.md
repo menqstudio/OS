@@ -3,18 +3,19 @@
 **Last updated · Վերջին թարմացում:** 2026-08-30 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. A permitted call is still refused for
-want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's
-half — the namespace and the proxy — is not built. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
+want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's half —
+the namespace and the proxy — is not built. `check_doc_claims` now requires a named commit to be an ancestor
+of `main`, so a dead branch hash is refused on the branch, not on `main` after the merge. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
-`T-046`, `T-048`–`T-053` are merged.
+`T-046`, `T-048`–`T-053` merged.
 This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`**; that log is in
 [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md). It answers what `NEXT_CHAT.md`
 does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #203 · branch `feat/egress-call-arm`** (base `main`, tip `d8e7bc0`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #204 · branch `fix/doc-claims-ancestry`** (base `main`, tip `75fda2a`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Design SS3.3 slice 3: the PRODUCED agent's egress is enforced at repo.rs's StepKind::Call arm against the grant's name-to-destination table, with one audit record per decision. A permitted call is still refused for want of a transport.
+> check_doc_claims now requires a named commit to be an ancestor of main, so a branch head a squash will erase is refused ON THE BRANCH rather than on main after the merge -- where the six before it were only visible.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -218,11 +218,17 @@ def check_handoff_names_reality(root: pathlib.Path, res: Result,
     # ...and the MERGE BASE with main, which is the only one of the three that survives.
     #
     # This repository squash-merges. A branch commit therefore stops existing the moment the
-    # pull request lands, so a handoff naming the branch head names a dead object on `main` --
-    # and `check_doc_claims` refuses it, on `main`, after the merge, where no pull request can
-    # show it. That happened on FOUR consecutive merges (#193, #194, #195, #196), was settled
-    # by hand in #197, and recurred on the very next merge because the settle fixed the
-    # instance and not the mechanism.
+    # pull request lands, so a handoff naming the branch head names a dead object on `main`.
+    # That happened on SIX merges: four consecutive (#193-#196), settled by hand in #197 --
+    # which fixed the instance and not the mechanism -- then again on the very next merge,
+    # and a sixth time in #200, where the session cut the paragraph carrying this rule to
+    # stay inside the canon budget and then broke the rule it had just deleted.
+    #
+    # Until #204 `check_doc_claims` could only refuse it AFTER the merge, on `main`, where no
+    # pull request could show it: `git cat-file -e` asks whether an object exists HERE, and on
+    # the branch it does. That gate now requires a named commit to be an ANCESTOR of `main`,
+    # so the seventh is refused on the branch. This function's preference for the merge base
+    # is what makes a handoff satisfy that rule by construction rather than by care.
     #
     # The merge base is a commit on `main`. It survives the squash, so the handoff keeps
     # pointing at something a fresh clone can resolve. Nothing is lost by preferring it: the
