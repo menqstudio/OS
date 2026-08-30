@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `feat/egress-authorizer-slice` · **head** `b9f12dd` · **task** `egress-authorizer` · **PR #200**
+**Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #200 · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
@@ -86,11 +86,9 @@ enough to close O-2, O-3 or O-5.
 ## How to read the marks
 
 `✅` an independent audit confirmed it. `◑` the Builder believes it and **nobody else has
-looked** — treat as an unverified claim. `🔴`/`⚠️` open. Both RED verdicts in this
-repository's history came from rows marked `✅` by the session that wrote the fix, so never
-promote your own work. The index is
-[`AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md); read it before believing any tick
-in any prose document.
+looked**. Both RED verdicts here came from rows marked `✅` by the session that wrote the
+fix, so never promote your own work. Read
+[`AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing any tick in prose.
 
 ## Two things that will save you a day
 
