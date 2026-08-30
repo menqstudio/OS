@@ -61,6 +61,17 @@ FIXTURE_REL = "tools/fixtures/roadmap-pre-split.md"
 #: The commit that performed the split. Its parent carries the pre-split document.
 SPLIT_COMMIT = "5512d82"
 
+#: Zero-based line indices where the assembly is ALLOWED to differ from the baseline: the sixteen
+#: Definition-of-Done rows `T-049` finished. Every one of them was left ending mid-clause by
+#: `56e1cd7` ("Make the roadmap fit"), which got the document under its byte ceiling by deleting
+#: the second half of each row -- the budget gate can only be satisfied by removing text, and the
+#: cheapest text to remove was the end of every sentence. `tools/check_truncated_lines.py` is the
+#: counterweight, and this set is the record of what it made necessary.
+REPAIRED_LINES = {
+    603, 604, 605, 606, 607, 608, 609, 612, 613, 614, 615, 617,  # phase 1
+    1457, 1459, 1466, 1468,  # phase 10
+}
+
 
 def pre_split_roadmap() -> str | None:
     """The frozen pre-split document, or None if the fixture is missing."""
@@ -81,13 +92,42 @@ class SplitIsLossless(unittest.TestCase):
     def setUp(self):
         self.assembled = roadmap_source.roadmap_text(ROOT)
 
-    def test_assembly_is_byte_identical_to_the_document_before_the_split(self):
-        """Mutant: join the phase bodies with one newline instead of two ⇒ red. That was
-        the real first attempt, and it silently removed the blank line between every pair
-        of phases."""
+    def test_the_split_lost_nothing_and_every_later_change_is_enumerated(self):
+        """The assembly may differ from the pre-split baseline ONLY at recorded lines.
+
+        This was a flat `assertEqual` until 2026-08-30, and it was right to be: it proved the
+        split itself lost nothing. Then `T-049` repaired sixteen Definition-of-Done rows that
+        `56e1cd7` — "Make the roadmap fit" — had cut in half to get the document under its byte
+        ceiling, leaving every one of them ending mid-clause. Those repairs are a deliberate
+        divergence from the baseline, and there are exactly two honest ways to hold one: rewrite
+        the fixture (which turns this into a snapshot that agrees with whatever it is shown), or
+        ENUMERATE the divergence. Enumerated. The fixture stays byte-identical to `5512d82^`,
+        which the test below still proves, and any line that drifts without being listed here is
+        red exactly as before.
+
+        Mutant: join the phase bodies with one newline instead of two ⇒ red (that was the real
+        first attempt, and it silently removed the blank line between every pair of phases).
+        Mutant: drop one index from REPAIRED_LINES ⇒ red. Mutant: add an unrepaired line to it
+        ⇒ red, because a listed line that does NOT differ is a stale exemption."""
         before = pre_split_roadmap()
         self.assertIsNotNone(before, f"{FIXTURE_REL} is missing; the baseline is not optional")
-        self.assertEqual(before, self.assembled)
+        baseline = before.split("\n")
+        assembled = self.assembled.split("\n")
+        self.assertEqual(len(baseline), len(assembled), "the split changed the line count")
+        differing = {i for i in range(len(baseline)) if baseline[i] != assembled[i]}
+        self.assertEqual(
+            differing, REPAIRED_LINES,
+            "every difference from the pre-split baseline must be a recorded T-049 repair",
+        )
+        for i in sorted(REPAIRED_LINES):
+            self.assertTrue(
+                baseline[i].startswith("- ["),
+                f"line {i + 1} of the baseline is not a checkbox row",
+            )
+            self.assertEqual(
+                baseline[i][:6], assembled[i][:6],
+                f"line {i + 1}: a repair may finish the sentence, never change the checkbox",
+            )
 
     def test_the_frozen_baseline_is_the_real_pre_split_commit(self):
         """The fixture must be what `5512d82^` actually held, not whatever makes the test above

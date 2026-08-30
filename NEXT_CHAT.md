@@ -6,17 +6,17 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `feat/governed-provisioning-probe` · **head** `00a479c` · **task** `T-048` · **PR #184**
+**Active branch:** `fix/truncated-canon` · **head** `19b2af2` · **task** `T-049` · **PR #185**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #184 · branch `feat/governed-provisioning-probe`** (base `main`, tip `8e29b6a`, task T-048). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #185 · branch `fix/truncated-canon`** (base `main`, tip `fdebd5b`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The desktop governed pre-flight measures its five provisioning inputs instead of asserting they are absent; behaviour on this build is byte-identical and the gate stays shut.
+> Sixteen roadmap Definition-of-Done rows ended mid-clause since 56e1cd7 cut them to fit the byte ceiling; a gate refuses that now and the rows are finished from the code.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-048` is open on `feat/governed-provisioning-probe` — the desktop governed pre-flight
-measures its five inputs now instead of asserting them, refusing identically on this build. `main` is at `8e29b6a`, seven workflows
+**Next:** `T-049` is open on `fix/truncated-canon` — sixteen roadmap Definition-of-Done rows ended
+mid-clause since `56e1cd7` cut them to fit the byte ceiling, and a gate now refuses that. `main` is at `8e29b6a`, seven workflows
 green — read from `gh run list --branch main`, not from the pull request.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
@@ -119,4 +119,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-048` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-049` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

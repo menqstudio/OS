@@ -97,20 +97,20 @@ provisioning is unresolved → stop and escalate to Owner/Architect (do not hard
 > 2026-08-10, not against the commit messages the boxes cite.
 
 **Definition of Done.**
-- [x] `task-request` + `bridge-result` contracts defined and tested — **but only `task-request` is
-- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`) — re-run
-- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8,
-- [ ] One governed round-trip proven end-to-end. **Still open, and an independent auditor has now
-- [ ] Governed output delivery through the wall. **Delta-streaming is DESCOPED** (see Scope — a governed
-- [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` at `ci.yml:574-586`, no
-- [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **shipped and
+- [x] `task-request` + `bridge-result` contracts defined and tested — **but only `task-request` is enforced at runtime**: `engine_adapter.py` validates against it, while `bridge-result.schema.json` is loaded nowhere but the bridge tests, so it is a test-only contract.
+- [x] Adapter (`engine_adapter.py`) built; slice-1 tests **10/10** (PR #3, commit `5be8d95`) — re-counted 2026-08-30, still 10 in `bridge/tests/test_engine_adapter.py`, and still built, correct and unreached by the product: its only caller is `bridge/engine_sidecar.py`, behind a provider no shipped turn can start.
+- [x] Opt-in `Provider::GovernedEngine` in desktop `ai.rs` (default OFF) — **transport shipped** (PR #8, slice 2): default-OFF holds, governed needs `BROPS_ALLOW_GOVERNED_ENGINE=1`, and all three callers of `ai::governed_turn` sit after the fail-closed pre-flight that precedes each of them.
+- [ ] One governed round-trip proven end-to-end. **Still open, and an independent auditor confirmed why**: the third audit (`AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`) read the three refusals and found all three shut — `governed_verification_unconfigured`, the Linux-only `connect_broker`, and `build_governed_executor`.
+- [ ] Governed output delivery through the wall. **Delta-streaming stays DESCOPED** (see Scope); the §4.10(f) pull's DESKTOP hop **exists** — `LadderChain::pull` calls `pull_output` in `broker/src/ladder_executor.rs`, driven by `run_verified` — and this row is open only because `build_governed_executor` serves `UpstreamBlockedExecutor` without `$BROPS_BROKER_CONFIG`.
+- [x] Bridge CI leg added and green (PR #3, merged to `main`) — job `bridge` in `ci.yml`, one of that workflow's 18 jobs, with no `paths` filter, so it runs on every push and pull request, and it is one of the 32 required contexts declared in `config/required-checks.json`.
+- [x] Chat receipt badge + governed-provider status control shipped in the cockpit UI — **shipped, reachable, and able to paint only a demonstration badge**: `receiptBadge` in `Conversations.tsx` returns three tones or `null`, with no `pending`/`blocked`/`error` arm, and `demonstration_verified` needs the Windows-only `demonstration_verified_reply`.
 
 **Task checklist.**
-- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`). *Same
-- [x] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence — **done
-- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`) — job `bridge`, one of
-- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX
+- [x] T-003 slice 1 — contract + adapter + tests (verified **10/10**, PR #3, commit `5be8d95`). *Same fact as the adapter row in the Definition of Done above; kept because this is the task ledger, not a second delivery.*
+- [x] Slice 2 — prove one governed round-trip (adapter ↔ real supervisor), record evidence — **done 2026-08-12, on a real Linux runner**: CI job `ladder-governed-turn` runs `engine/ci/live/run_ladder_turn.sh`, driving one `bridge.governed-turn-submit.v1` frame through the real one-shot sidecar; the shipped app does not take this path.
+- [x] Bridge CI leg added to the unified workflow (PR #3, merged `41cf4ff`) — job `bridge` in `ci.yml`, one of that workflow's 18 jobs. *Same fact as the Bridge-CI row in the Definition of Done above.*
+- [x] Slice 2 — ship the chat verified-receipt badge + Settings governed-provider control (per UI/UX §D). *Same fact as the cockpit-UI row in the Definition of Done above; the control is the read-only three-state `default`/`on`/`blocked` reporter, never a switch the webview can flip.*
 - [x] Slice 3 — the §4.10(f) chunked output pull — **done 2026-08-12, on a real Linux runner.**
-- [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands. **Standing — never permanently
+- [ ] Update `PROJECT_STATE.md` + this roadmap when each slice lands. **Standing — never permanently checked**, and it is the row whose neglect left the §4.10(f) rows above calling absent a desktop hop that has been in the broker since Slice 3 (`broker/src/ladder_executor.rs`).
 
 ---
