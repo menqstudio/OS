@@ -13,9 +13,9 @@ This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`**; that l
 does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #203 · branch `feat/egress-call-arm`** (base `main`, tip `d8e7bc0`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #204 · branch `fix/doc-claims-ancestry`** (base `main`, tip `75fda2a`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Design SS3.3 slice 3: the PRODUCED agent's egress is enforced at repo.rs's StepKind::Call arm against the grant's name-to-destination table, with one audit record per decision. A permitted call is still refused for want of a transport.
+> check_doc_claims now requires a named commit to be an ancestor of main, so a branch head a squash will erase is refused ON THE BRANCH rather than on main after the merge -- where the six before it were only visible.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
