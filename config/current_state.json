@@ -141,7 +141,7 @@
       "head": "629749c27a480d388537e62ded5a8f333dfb95e6",
       "conclusion": "failure",
       "run_id": 33313347709,
-      "note": "Coordination gate RED: check_doc_claims found NEXT_CHAT.md naming b9f12dd, a branch commit the squash merge of #200 erased -- the sixth of this family, and the sixth to be invisible until after the merge. PR #201 is the fix."
+      "note": "Coordination gate RED: check_doc_claims found NEXT_CHAT.md naming a commit on feat/egress-authorizer-slice that the squash merge of #200 erased -- the sixth of this family, and the sixth to be invisible until after the merge. The dead id is NOT repeated here: this gate cannot tell a hash written as a POINTER from one written as the SUBJECT of a sentence, so naming the object in the note that explains it is the same defect again. PR #201 is the fix."
     }
   }
 }
