@@ -70,15 +70,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The same in-process database the desktop opens, migrated the same way.
     let db_path = out.join("produced.sqlite3");
     let conn = db::open(&db_path.to_string_lossy())?;
-    repo::agent_runs::register(&conn, &digest, &spec.bundle_id, 1, &spec.display_name, 60_000)?;
+    // BORN DISARMED. Registering records a built bundle and arms nothing.
+    repo::agent_runs::register(&conn, &digest, &spec.bundle_id, 1, &spec.display_name)?;
 
-    // The scheduler's own entry point. `run_due` is what the 60s tick calls, and
-    // it is what writes the run row: nothing here inserts one by hand.
+    // Arming is a separate act behind a natively confirmed grant — the same two
+    // calls `commands::confirm_approval` makes. There is no way around it here
+    // because there is no way around it anywhere, which is the point.
+    let approval = repo::approvals::create(
+        &conn,
+        repo::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+        &spec.display_name,
+        "A2",
+        "medium",
+        Some(repo::approvals::AGENT_BUNDLE_ENTITY_TYPE),
+        Some(&digest),
+        "producer",
+        "sess-producer",
+        &brops_core::id(),
+        repo::audit::Actor::local_operator(),
+    )?;
+    repo::approvals::approve_confirmed(
+        &conn,
+        &approval.id,
+        repo::approvals::NATIVE_CONFIRMER_PRINCIPAL,
+        None,
+        approval.nonce.as_deref().ok_or("approval carries no nonce")?,
+        approval.request_digest.as_deref().ok_or("approval carries no request digest")?,
+        repo::audit::Actor::native_confirmer("native:producer"),
+    )?;
+    repo::agent_runs::set_active(
+        &conn, &spec.bundle_id, &digest, 60_000, true, repo::audit::Actor::local_operator(),
+    )?;
+
+    // The scheduler's own entry point, and now the ONLY thing that runs the flow.
+    // `run_due` is what the 60s tick calls; it enqueues and dispatches. Until
+    // T-058 this file called `claim_and_run` by hand afterwards, so condition 4
+    // of the five — "run_due() has invoked it" — was satisfied by the producer
+    // rather than by the scheduler. That hand call is gone.
     std::env::set_var("BROPS_AGENT_STORE", &store);
     let _ = repo::automations::run_due(&conn, now_ms)?;
 
-    let run_id = repo::agent_runs::claim_and_run(&conn, &store, "producer", now_ms)?
-        .ok_or("no queued run was claimed -- run_due enqueued nothing")?;
+    let run_id: String = conn
+        .query_row("SELECT id FROM flow_runs ORDER BY due_at DESC LIMIT 1", [], |r| r.get(0))
+        .map_err(|_| "run_due enqueued and dispatched nothing")?;
 
     // Export the two JSONL files the gate reads. These are SELECTs over what the
     // code above wrote; the shape is a projection, not a second source of truth.

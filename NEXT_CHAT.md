@@ -8,27 +8,28 @@
 
 **Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #205 · branch `perf/ci-rust-cache`** (base `main`, tip `da27810`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #206 · branch `feat/dispatch-the-produced-agent`** (base `main`, tip `9b2b917`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> CI speed, no semantic change: Swatinem/rust-cache pinned to v2.9.2 in the eleven jobs that run cargo (none cached anything before), and concurrency on ci.yml with main excluded from cancellation -- a cancelled run on main is not a reading of main.
+> The 60s tick enqueues AND dispatches armed bundles, bounded. Bundles are born disarmed and arming needs a natively confirmed grant. claim_and_run had one non-test caller before this -- a CI demo binary -- so the produced agent never ran in the product.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** the TRANSPORT — closing `call_transport_unimplemented`. That is what a customer
-touches. The PRODUCED agent's egress is enforced: `repo.rs`'s `Call` arm decides every call against
-the grant's table and records it; a permitted call is refused for want of a transport, a denied one
-says `egress_not_granted`. The BUILD agent's half of §3.3 — the netns jail — is untouched.
+**Next:** §4's credential store, then the TRANSPORT. Without a credential a call reaches no real
+customer API, so transport-first would be more unreachable code.
+
+The produced agent now **RUNS**: the 60s tick enqueues AND dispatches, up to
+`MAX_DISPATCH_PER_TICK`. It was measured first — `claim_and_run` had ONE non-test caller, a CI demo
+binary, so every piece built for that agent was unreachable from the product. Bundles are **BORN
+DISARMED**; arming needs a natively confirmed grant, disarming does not.
 
 **Two populations, two mechanisms** (Owner, 2026-08-30). The PRODUCED agent's list is the grant's
-`egress` TABLE — grant schema 1→2, so the flow names a row and never a URL (§2.3 rule 6). It has **no
-spawn** and no `Bash`, so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress`,
-is **not** jailed, and `npm install` never meets it; `ai.rs` has **three** spawn sites, not two.
+`egress` TABLE, so the flow names a row and never a URL (§2.3 rule 6); it has no spawn and no `Bash`,
+so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress` and is **not** jailed.
 No class holds `USE_NETWORK`, so every valid lease still names **no** destination.
 
-*A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
-`main`s of one session were called green because the PR's checks were read and the branch's were not.
-A commit named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
+*A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
+named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
 Three more things must be true at every push: the PR body carries exactly one
 `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the live
 `main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a

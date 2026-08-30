@@ -923,14 +923,46 @@ tick (60 s)
        3. re-verify the bundle (§5.3)
        4. INSERT flow_runs(... state='queued')   ── or state='refused' with a typed reason
        5. INSERT scheduler_ticks(...)            ── what this tick did, always
-  (the tick performs no action, reaches no network, holds no credential, calls no model)
+  (the tick reaches no network, holds no credential, calls no model)
+       6. DISPATCH: claim and run up to MAX_DISPATCH_PER_TICK queued rows
 
-executor (separate, not the tick)
+executor (the same tick calls it — see the correction below)
   └─ claims one queued row:  UPDATE flow_runs SET claim_attempt_id=?, state='running'
                              WHERE id=? AND state='queued' AND claim_attempt_id IS NULL
      └─ runs the flow step by step; each `model` step is a governed turn, each `call` step
         goes through §3's enforcement point. Both are fail-closed at this head.
 ```
+
+> **CORRECTED 2026-08-30 (T-058).** The line above read *"the tick performs no action"* and the
+> executor was described as *"separate, not the tick"*. Both were true when written and are false
+> now: `automations::run_due` enqueues **and dispatches**, calling `claim_and_run` up to
+> `MAX_DISPATCH_PER_TICK` times.
+>
+> **Why the separation was dropped.** Nothing else ever called it. Measured before changing
+> anything: `claim_and_run` had exactly ONE non-test caller — `core/src/bin/produce_agent_artifact.rs`,
+> a CI demo binary — and `apps/desktop/src-tauri/src/` called it nowhere. So the produced agent
+> never ran in the shipped product, and every piece built for it (the bundle, the grant, the
+> egress authorizer, the `Call` decision, the receipts) was unreachable code. A separate executor
+> is the better architecture the day something is that executor; until then the separation only
+> meant nothing ran.
+>
+> **What it does NOT add.** No class of capability. The automation half of the same tick already
+> calls `execute_action`, which writes notifications, tasks and knowledge notes unattended. The
+> produced agent sits under that same ceiling and is *more* restrained inside it: a closed
+> four-kind vocabulary instead of a `verb: arg` string, checked against a digest and a grant,
+> leaving a receipt, with `model` and `call` still REFUSED. Dispatch narrows the gap between the
+> two halves in favour of the stricter one.
+>
+> **What it required first.** `agent_runs::register` wrote `agent_bundle_active` in the same call
+> and hardcoded `state = 'approved'` — creation and arming were one act, and the arming path could
+> be skipped entirely. Harmless while the tick performed nothing; an unattended executor nobody
+> approved the moment it dispatches. Registering is now BORN DISARMED, and arming goes through
+> `set_active`, which requires and consumes a natively confirmed grant. Disarming is deliberately
+> ungated, exactly as `automations::set_enabled` is, and for the same reason.
+>
+> **The tick's write set, enumerated rather than described:** `flow_runs`, `scheduler_ticks`,
+> `flow_receipts`, `audit_events`, and whatever a `store` step's `knowledge::create` writes.
+> Nothing else.
 
 The claim shape is taken directly from migration `0013`, which already solved exactly this problem
 for run steps: a one-time `execution_attempt_id` written by an `UPDATE … WHERE … IS NULL`, so a

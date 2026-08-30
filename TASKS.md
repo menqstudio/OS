@@ -5,9 +5,9 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #205 · branch `perf/ci-rust-cache`** (base `main`, tip `da27810`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #206 · branch `feat/dispatch-the-produced-agent`** (base `main`, tip `9b2b917`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> CI speed, no semantic change: Swatinem/rust-cache pinned to v2.9.2 in the eleven jobs that run cargo (none cached anything before), and concurrency on ci.yml with main excluded from cancellation -- a cancelled run on main is not a reading of main.
+> The 60s tick enqueues AND dispatches armed bundles, bounded. Bundles are born disarmed and arming needs a natively confirmed grant. claim_and_run had one non-test caller before this -- a CI demo binary -- so the produced agent never ran in the product.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -20,7 +20,7 @@ claim; ✅ means an independent audit confirmed it. Never promote your own work.
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main` — the gate passes inside the run that merges it and fails on the next read, so its verdict depends on WHEN it runs, not on the code. Fix: accept a reading of any recent `main` and name which head it is of | — | Todo | — |
-| **T-058** | **§3.3 egress — the BUILD agent's half.** The PRODUCED agent is done: the `Call` arm decides against the grant's egress table and records it; an authorized call is refused for want of a transport, a denied one by name. Open: the netns jail and the CONNECT proxy for the population that holds `Bash`, and a `task_class` that can carry `USE_NETWORK` — which is perimeter surgery, since three registries disagree about a third class. ◑ Builder-claimed throughout; nobody else has looked | Bro | In-Progress | `feat/egress-authorizer-slice` |
+| **T-058** | **§4's credential store, then the transport; and §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. Open: §4's `(bundle_digest, slot_id)` binding — without it a call reaches no real API; then the transport; then the netns jail for the population that holds `Bash`, plus a `task_class` carrying `USE_NETWORK` (perimeter surgery, three registries disagree about a third class). ◑ Builder-claimed; nobody else has looked | Bro | In-Progress | `feat/egress-authorizer-slice` |
 | **T-056** | **Every fail-closed check must name what its failure PREVENTS** — merge, session, deploy, release, or nothing — in a registry, not a docstring. A check whose consequence is `nothing` is RED: being named in a runbook is a suggestion. `bro_deploy_preflight` is the worked example. The population is DERIVED from the filesystem, so the gate cannot omit itself. **Deferred behind `T-055` by the Owner; reordering needs a written reason** | — | Todo | — |
 | **T-057** | **56 fabricated audit rows are indistinguishable from real ones.** `repo::seed` writes them by raw SQL (`repo.rs:3275-3278`) and the schema has no `source` column. **Closure: a reviewer reading `audit_events` can tell fabricated from real WITHOUT reading `repo.rs`.** A column nothing surfaces does not close it. Owner: Gev · `deferred_until: 2026-09-06` · behind `T-055` | — | Todo | — |
 | **T-046** | **The Windows engine job must run clean across several PRs** before the ledger's concurrency flake is called fixed — one green run does not prove an intermittent. Open on the EVIDENCE, not the code | — | Todo | merged `#182` |
