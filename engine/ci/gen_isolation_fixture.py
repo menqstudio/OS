@@ -104,11 +104,12 @@ def main(base: str) -> int:
     store = root / "store"
     event_ids = _evidence_chain(store, keys["evidence-recorder"], TASK_ID, 2)
     lease_payload = {
-        "artifact_type": "execution-lease", "key_id": keys["issuer"]["key_id"], "schema": 1,
+        "artifact_type": "execution-lease", "key_id": keys["issuer"]["key_id"], "schema": 2,
         "lease_id": "ci-lease-1", "nonce": "nonce-000000000001", "task_id": TASK_ID,
         "agent_id": AGENT, "session_id": "ci-session-1", "repository": "menqstudio/Bro",
         "branch": TASK_ID, "worktree": str(root / "wt"), "head_sha": CAND_HEAD,
         "tree_identity": CAND_TREE, "allowed_capabilities": ["EXECUTE_CODE", "WRITE_REPOSITORY"],
+        "allowed_egress": [],
         "issued_at_epoch": now - 10, "expires_at_epoch": now + 3600, "max_tool_calls": 1,
         "task_class": "standard-builder", "protected_scope": [],
         "control_plane_digest": "e" * 64, "workspace_id": "ws-1",
