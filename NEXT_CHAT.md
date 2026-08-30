@@ -8,9 +8,9 @@
 
 **Active branch:** `settle-after-182` · **head** `fb6e414` · **task** `T-046` · **PR #183** (the settle commit)
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `40be210`.** The pull request that records it is PR #183 on `settle-after-182`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #184 · branch `feat/governed-provisioning-probe`** (base `main`, tip `8e29b6a`, task T-048). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Nothing is open but this settle. Claim a row in TASKS.md; T-046 merged as PR #182 and its row stays open on evidence, not code. The next independent audit round is what would move the position.
+> The desktop governed pre-flight measures its five provisioning inputs instead of asserting they are absent; behaviour on this build is byte-identical and the gate stays shut.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
