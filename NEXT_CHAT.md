@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `feat/governed-provisioning-probe` · **head** `00a479c` · **task** `T-048` · **PR #184**
+**Active branch:** `fix/truncated-canon` · **head** `19b2af2` · **task** `T-049` · **PR #185**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #185 · branch `fix/truncated-canon`** (base `main`, tip `fdebd5b`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
