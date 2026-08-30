@@ -15,16 +15,16 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** §3.3 slice 3 — the enforcement point. Slices 1+2 are in: `allowed_egress` is a REQUIRED
-lease field (schema 1→2, absent ⇒ `LeaseError`) and `core/src/egress_proxy.rs` is the authorizer,
-23 tests, no network, every check mutation-swept. `call` is still REFUSED, correctly.
+**Next:** §3.3 for the BUILD agent — the netns jail and the CONNECT proxy — or `T-056`. The
+PRODUCED agent is DONE: `repo.rs`'s `Call` arm decides every call against the grant's egress table
+and records it. A permitted call is still refused (`call_transport_unimplemented`, no transport); a
+denied one says `egress_not_granted`. Those two reasons are the only way to see which happened.
 
-**Two populations, two allowlists** (Owner, 2026-08-30 — §3.3 corrected in place). The PRODUCED agent's
-list is `agent_bundle::Grant.egress`, already in the tree and forced empty; it enforces at the `Call` arm
-of `repo.rs` — in-process, **no spawn**, and its closed four-kind vocabulary has no `Bash` to spell around
-a matcher. The BUILD agent keeps a broad fixed `build_egress` and is **not** jailed. `ai.rs` has **three**
-spawn sites, not two. No class holds `USE_NETWORK`, so every valid lease names **no** destination — the
-axis exists, is required, and says "none".
+**Two populations, two mechanisms** (Owner, 2026-08-30). The PRODUCED agent's list is the grant's
+`egress` TABLE — grant schema 1→2, so the flow names a row and never a URL (§2.3 rule 6). It has **no
+spawn** and no `Bash`, so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress`,
+is **not** jailed, and `npm install` never meets it; `ai.rs` has **three** spawn sites, not two.
+No class holds `USE_NETWORK`, so every valid lease still names **no** destination.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.

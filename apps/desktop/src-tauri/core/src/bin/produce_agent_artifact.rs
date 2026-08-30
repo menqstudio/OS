@@ -34,12 +34,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // scheduler refuses to fire past is the point; a grant with no expiry is
         // a grant nobody ever has to look at again.
         grant_expires_at_epoch: now_ms / 1000 + 7 * 24 * 3600,
+        // This agent may not leave the box. Stated, not omitted.
+        egress: vec![],
         steps: vec![
             Step {
                 id: "summarise".into(),
                 kind: StepKind::Store,
                 verb: Some("knowledge_note".into()),
                 argument: Some("read the local invoice list and write what is overdue".into()),
+                call_ref: None,
                 requires: Requires {
                     capabilities: vec!["READ_LOCAL".into(), "WRITE_LOCAL".into()],
                     credential_slots: vec![],
@@ -51,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 kind: StepKind::Store,
                 verb: Some("knowledge_note".into()),
                 argument: Some("record that the chase ran".into()),
+                call_ref: None,
                 requires: Requires {
                     capabilities: vec!["WRITE_LOCAL".into()],
                     credential_slots: vec![],

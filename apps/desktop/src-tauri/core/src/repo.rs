@@ -428,14 +428,37 @@ pub mod audit {
         entity_type: &str,
         entity_id: &str,
     ) -> CoreResult<()> {
+        record_with_payload(conn, event_type, actor, entity_type, entity_id, None)
+    }
+
+    /// The same record, carrying the WHAT alongside the who and the which.
+    ///
+    /// `audit_events.payload_json` has existed since migration 0001 and, until
+    /// this call site, nothing in the tree wrote it and nothing read it — a
+    /// column that answered to nothing. An egress decision is the first event
+    /// whose meaning does not fit in `(event_type, entity)`: "denied" is not a
+    /// record unless it says which destination, under which grant.
+    ///
+    /// The payload is written by trusted repo code from values the runtime
+    /// holds. It is NOT signed, and nothing here makes it tamper-evident
+    /// against whoever can write the database — `local_write_record.rs` says
+    /// the same about its own half. Do not read it as attestation.
+    pub fn record_with_payload(
+        conn: &Connection,
+        event_type: &str,
+        actor: Actor<'_>,
+        entity_type: &str,
+        entity_id: &str,
+        payload_json: Option<&str>,
+    ) -> CoreResult<()> {
         let (actor_type, actor_id) = (actor.kind, actor.id);
         if !is_valid(actor_type, ACTOR_TYPES) {
             return Err(CoreError::Invalid { field: "actor_type", value: actor_type.to_string() });
         }
         conn.execute(
-            "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id(), event_type, actor_type, actor_id, entity_type, entity_id, now()],
+            "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, payload_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id(), event_type, actor_type, actor_id, entity_type, entity_id, payload_json, now()],
         )?;
         Ok(())
     }
@@ -2853,6 +2876,16 @@ pub mod agent_runs {
                     touched.push(format!("knowledge_notes/{}", id.id));
                     steps_run += 1;
                 }
+                StepKind::Call => {
+                    // THE ENFORCEMENT POINT for the produced agent (design SS3.3,
+                    // as corrected: this population has no spawn and no `Bash`,
+                    // so the kernel namespace built for the build agent is not
+                    // the mechanism here — the closed step vocabulary is).
+                    let refusal = authorize_call(conn, &run_id, &bundle, step)?;
+                    finish(conn, &run_id, &digest, "refused",
+                           Some(refusal.as_str()), steps_run, &touched)?;
+                    return Ok(Some(run_id));
+                }
                 _ => {
                     finish(conn, &run_id, &digest, "refused",
                            Some(Refusal::StepKindNotExecutable.as_str()), steps_run, &touched)?;
@@ -2862,6 +2895,98 @@ pub mod agent_runs {
         }
         finish(conn, &run_id, &digest, "done", None, steps_run, &touched)?;
         Ok(Some(run_id))
+    }
+
+    /// Decide one `call` step's destination against the bundle's grant, record
+    /// the decision, and return the refusal the run finishes with.
+    ///
+    /// **Every path returns a refusal, including the authorized one.** That is
+    /// not a hedge: nothing in this tree opens a connection, so an authorized
+    /// call cannot happen, and pretending otherwise would be the approximation
+    /// this slice exists to avoid. The two outcomes are told apart by their
+    /// reason — `egress_not_granted` means the grant said no, and
+    /// `call_transport_unimplemented` means the grant said YES and the
+    /// transport is missing. A reader of `flow_runs.refusal_reason` can see
+    /// which, and that difference is what makes the decision observable.
+    fn authorize_call(
+        conn: &Connection,
+        run_id: &str,
+        bundle: &agent_bundle::VerifiedBundle,
+        step: &agent_bundle::Step,
+    ) -> CoreResult<Refusal> {
+        // A `call` step that names nothing is not a call to somewhere default.
+        let call_ref = match step.call_ref.as_deref() {
+            Some(name) => name,
+            None => return Ok(Refusal::CallRefMissing),
+        };
+
+        // Rebuilt from what is on disk, not carried in memory: a grant that was
+        // valid when it was written is judged again every time it is used.
+        let allowlist = match bundle.grant.egress_allowlist(&bundle.digest) {
+            Ok(allowlist) => allowlist,
+            Err(refusal) => return Ok(refusal),
+        };
+
+        // ONE decision. The flow may name a ROW of the grant and may not name a
+        // destination: a flow is the half a prompt can author, and a destination
+        // stated there would be a destination stated in prose (design SS2.3
+        // rule 6). Resolution and verdict happen together inside the authorizer
+        // — split apart, the verdict could only ever agree with the lookup.
+        let decision = allowlist.authorize_ref(call_ref);
+        record_egress_decision(
+            conn, run_id, decision.event_type(),
+            &format!(
+                "{{\"outcome\":{},\"call_ref\":{},\"destination\":{},\"population\":{},\"grant\":{},\"reason\":{}}}",
+                json_string(if decision.allowed() { "allowed" } else { "denied" }),
+                json_string(call_ref),
+                json_string(&decision.matched.as_ref().map(|d| d.render()).unwrap_or_default()),
+                json_string(decision.population.as_str()),
+                json_string(decision.grant_id.as_str()),
+                json_string(&decision.reason),
+            ),
+        )?;
+
+        Ok(if decision.allowed() {
+            Refusal::CallTransportUnimplemented
+        } else {
+            Refusal::EgressNotGranted
+        })
+    }
+
+    /// One record per decision, allow and deny alike. `run_executor` because no
+    /// person is present at a scheduled run, and the existing `store` arm names
+    /// the same actor for the same reason.
+    fn record_egress_decision(
+        conn: &Connection,
+        run_id: &str,
+        event_type: &str,
+        payload_json: &str,
+    ) -> CoreResult<()> {
+        super::audit::record_with_payload(
+            conn, event_type, audit::Actor::run_executor(), "flow_run", run_id,
+            Some(payload_json),
+        )
+    }
+
+    /// Minimal JSON string escaping. `serde_json::to_string` would do it, but
+    /// this keeps the payload's shape visible at the call site, where a reader
+    /// is deciding whether the record says enough.
+    fn json_string(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('"');
+        for ch in value.chars() {
+            match ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
     }
 
     fn finish(
@@ -2893,24 +3018,66 @@ pub mod agent_runs {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::agent_bundle::{BuildSpec, Requires, Step, StepKind};
+        use crate::agent_bundle::{BuildSpec, EgressEntry, Requires, Step, StepKind};
 
         fn spec(now_s: i64) -> BuildSpec {
             BuildSpec {
                 bundle_id: "agt-t".into(), bundle_version: 1,
                 display_name: "T".into(), built_for: "c".into(),
                 built_at_epoch: now_s, grant_expires_at_epoch: now_s + 3600,
+                egress: vec![],
                 steps: vec![
                     Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
-                           argument: Some("one".into()),
+                           argument: Some("one".into()), call_ref: None,
                            requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
                            next: Some("b".into()) },
                     Step { id: "b".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
-                           argument: Some("two".into()),
+                           argument: Some("two".into()), call_ref: None,
                            requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
                            next: None },
                 ],
             }
+        }
+
+        /// A spec whose second step is a `call` naming `call_ref`, with the
+        /// grant's egress table set to `granted`.
+        fn call_spec(now_s: i64, call_ref: Option<&str>, granted: &[(&str, &str)]) -> BuildSpec {
+            let mut s = spec(now_s);
+            s.egress = granted
+                .iter()
+                .map(|(name, destination)| EgressEntry {
+                    name: (*name).into(),
+                    destination: (*destination).into(),
+                })
+                .collect();
+            s.steps[1].kind = StepKind::Call;
+            s.steps[1].verb = None;
+            s.steps[1].argument = None;
+            s.steps[1].call_ref = call_ref.map(|r| r.to_string());
+            s
+        }
+
+        /// Every audit row this run wrote, as `(event_type, payload_json)`.
+        fn egress_rows(conn: &Connection, run_id: &str) -> Vec<(String, String)> {
+            let mut st = conn
+                .prepare("SELECT event_type, COALESCE(payload_json,'') FROM audit_events \
+                          WHERE entity_type='flow_run' AND entity_id=?1 AND event_type LIKE 'egress.%' \
+                          ORDER BY created_at")
+                .unwrap();
+            let rows = st.query_map([run_id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        }
+
+        fn run_call(spec: &BuildSpec) -> (Connection, String) {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), spec).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            // the tempdir must outlive the run
+            drop(dir);
+            (conn, id)
         }
 
         fn fixture() -> (Connection, tempfile::TempDir, String) {
@@ -3024,6 +3191,69 @@ pub mod agent_runs {
             // can tell a produced-agent write from a human one.
             let src: String = conn.query_row("SELECT source FROM knowledge_notes LIMIT 1", [], |r| r.get(0)).unwrap();
             assert_eq!(src, format!("flow_run:{id}"));
+        }
+
+        // ---- the produced agent's egress enforcement (design SS3.3) --------
+
+        /// THE RED DIRECTION. A `call` step naming a destination the grant does
+        /// not hold is refused, and the refusal is `egress_not_granted` -- not
+        /// `step_kind_not_executable`, which is what it would say if the
+        /// authorizer were not being asked at all.
+        #[test]
+        fn a_call_to_a_destination_the_grant_does_not_name_is_refused() {
+            let s = call_spec(1_000_000, Some("evil"), &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("egress_not_granted".into()))
+            );
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1, "one record per decision");
+            assert_eq!(rows[0].0, "egress.denied");
+            assert!(rows[0].1.contains("\"evil\""), "the record must name what was asked for: {}", rows[0].1);
+        }
+
+        /// THE GREEN DIRECTION, so the refusal above is not a check that cannot
+        /// pass. The grant says yes and the call still does not happen -- but by
+        /// a DIFFERENT name, which is the only way a reader can tell an
+        /// authorized call from a denied one at this head.
+        #[test]
+        fn an_authorized_call_is_refused_by_a_different_name_than_a_denied_one() {
+            let s = call_spec(1_000_000, Some("slack-post"), &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("call_transport_unimplemented".into()))
+            );
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].0, "egress.allowed");
+            assert!(rows[0].1.contains("slack.example.com:443"), "payload: {}", rows[0].1);
+            assert!(rows[0].1.contains("\"produced\""), "the record names the population: {}", rows[0].1);
+        }
+
+        /// A `call` step that names nothing is not a call to somewhere default.
+        #[test]
+        fn a_call_step_naming_no_ref_is_refused_by_its_own_name() {
+            let s = call_spec(1_000_000, None, &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("call_ref_missing".into()))
+            );
+            assert!(egress_rows(&conn, &id).is_empty(), "nothing was decided, so nothing is recorded");
+        }
+
+        /// An empty egress table admits nothing. This is the state every grant
+        /// `for_local_only` writes, and it must not be a hole.
+        #[test]
+        fn an_empty_egress_table_admits_nothing() {
+            let s = call_spec(1_000_000, Some("anything"), &[]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("egress_not_granted".into()))
+            );
         }
 
         /// A step kind this head cannot execute is refused, not approximated.

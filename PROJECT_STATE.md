@@ -1,15 +1,15 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-30 — the §3.3 egress axis exists. `allowed_egress` is a
-REQUIRED execution-lease field (schema 1→2) and `core/src/egress_proxy.rs` decides a destination against a
-grant; neither confines a process yet, and `call` is still refused. The Owner split the populations: the
-produced agent enforces at `repo.rs`'s `Call` arm, the build agent is not jailed. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
+**Last updated · Վերջին թարմացում:** 2026-08-30 — the produced agent's egress is ENFORCED. `repo.rs`'s
+`Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
+table, so the flow never states a URL) and records each decision. A permitted call is still refused for
+want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's
+half — the namespace and the proxy — is not built. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
-`T-046`, `T-048`, `T-049`, `T-050`, `T-052` and `T-053` are merged.
-This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical lines
-from line 2; the log both carried is
-[`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
-It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**.
+`T-046`, `T-048`–`T-053` are merged.
+This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`**; that log is in
+[`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md). It answers what `NEXT_CHAT.md`
+does not: **the state of each part of the product**.
 
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `094ea44`.** The pull request that records it is PR #202 on `chore/settle-at-green-main`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
