@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://menqstudio.dev/schemas/brops.agent-bundle.v1.json",
+  "title": "brops.agent-bundle.v1 — a produced agent's manifest",
+  "description": "The manifest is the only file the loader reads first, and its bytes ARE the bundle digest: sha256(manifest.json) must equal the directory name. Approval state deliberately appears nowhere here, because approving must not change these bytes. No secret, no locator, no host and no URL appears anywhere in a bundle. Implemented by apps/desktop/src-tauri/core/src/agent_bundle.rs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "artifact_type", "bundle_id", "bundle_version", "display_name",
+    "built_for", "built_at_epoch", "flow_ref", "grant_ref", "files"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "artifact_type": { "type": "string", "const": "brops.agent-bundle.v1" },
+    "bundle_id": {
+      "type": "string", "minLength": 1,
+      "description": "The AGENT's identity, stable across versions. Two versions of one agent share this and differ in bundle_version and digest."
+    },
+    "bundle_version": { "type": "integer", "minimum": 1 },
+    "display_name": { "type": "string", "minLength": 1 },
+    "built_for": { "type": "string", "minLength": 1 },
+    "built_at_epoch": { "type": "integer" },
+    "flow_ref": {
+      "type": "string", "pattern": "^[A-Za-z0-9_./-]+$",
+      "description": "Bundle-relative path to the flow. Required even when trivial."
+    },
+    "grant_ref": {
+      "type": "string", "pattern": "^[A-Za-z0-9_./-]+$",
+      "description": "Bundle-relative path to the grant. REQUIRED even when the grant is empty: 'this agent needs nothing' is a statement someone made, and 'there is no file' is not."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "description": "TOTAL over the bundle: every regular file except manifest.json appears exactly once. A file on disk with no entry is a refusal and an entry with no file is a refusal — a partial file table is how an unreviewed prompt rides into an approved bundle.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "bytes"],
+        "properties": {
+          "path": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
