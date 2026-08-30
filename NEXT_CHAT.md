@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t053a/lstrip-evidence` · **head** `7441cd7` · **task** `T-053` · **PR #190**
+**Active branch:** `t053a/lstrip-evidence` · **head** `3e22585` · **task** `T-053` · **PR #190**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #190 · branch `t053a/lstrip-evidence`** (base `main`, tip `09ed3ce`, task T-053). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
