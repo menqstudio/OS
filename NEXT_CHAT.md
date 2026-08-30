@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t054/readme-measured` · **head** `e5b1493` · **task** `T-054` · **PR #188**
+**Active branch:** `t054/readme-measured` · **head** `b311b59` · **task** `T-054` · **PR #188**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #188 · branch `t054/readme-measured`** (base `main`, tip `fe26a78`, task T-054). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
