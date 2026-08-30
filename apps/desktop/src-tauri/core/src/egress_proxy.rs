@@ -3,10 +3,12 @@
 //! Design: `docs/design/PRODUCTION_HALF_DESIGN.md` §3.2 (how an allowlist is
 //! expressed) and §3.3 (which runtime code enforces it).
 //!
-//! §3.3 is NOT IMPLEMENTED. Nothing in this tree refuses an outbound
-//! connection, and this module does not change that: it is the **decision**
-//! that §3.3's enforcement point will ask, and it is not the socket, not the
-//! jail, and not a wiring.
+//! §3.3 is NOT IMPLEMENTED for the BUILD agent: nothing confines that
+//! process, and no socket in this tree is refused. For the PRODUCED agent this
+//! module IS asked — `repo.rs`'s `StepKind::Call` arm decides every call
+//! against the grant here, and records the decision — but the transport of an
+//! authorized call does not exist, so a call that the grant permits is still
+//! refused, by a different name than one it denies.
 //!
 //! ## Two populations, two allowlists, one authorizer
 //!
@@ -54,8 +56,9 @@ pub const NOT_IMPLEMENTED: &[&str] = &[
     "resolve-once-and-pin: the DNS-rebind defence belongs to the code that dials, which \
      does not exist at this head",
     "the network namespace (egress_jail.rs): no process is confined by anything here",
-    "call steps: repo.rs still refuses StepKind::Call — this authorizer is not yet wired \
-     to the produced agent's flow runner",
+    "the TRANSPORT of an authorized call: repo.rs asks this module and refuses either way — \
+     `egress_not_granted` when the grant says no, `call_transport_unimplemented` when it says \
+     yes — because nothing here opens a connection",
     "the build agent's lease field: allowed_egress on the execution lease is design §3.1",
 ];
 
@@ -130,6 +133,9 @@ pub enum GrantError {
     /// The same destination twice. A duplicate means two readings of one
     /// grant disagree about how many authorities it states.
     Duplicate(String),
+    /// Two rows sharing a name, or a row with none. `call_ref` resolution would
+    /// depend on iteration order.
+    DuplicateName(String),
 }
 
 impl GrantError {
@@ -144,16 +150,26 @@ impl GrantError {
             GrantError::MalformedPort(_) => "egress_entry_malformed_port",
             GrantError::TooMany(_) => "egress_grant_too_many_destinations",
             GrantError::Duplicate(_) => "egress_entry_duplicate",
+            GrantError::DuplicateName(_) => "egress_entry_duplicate_name",
         }
     }
 }
 
 /// A parsed, validated allowlist, bound to the grant that stated it.
+/// One row: the NAME a flow may use, and the destination it resolves to. The
+/// name is `None` for a population whose grant is a bare list — the build
+/// agent's, which has no flow to name anything from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Row {
+    name: Option<String>,
+    destination: Destination,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressGrant {
     population: Population,
     grant_id: String,
-    destinations: Vec<Destination>,
+    rows: Vec<Row>,
 }
 
 impl EgressGrant {
@@ -165,21 +181,52 @@ impl EgressGrant {
         grant_id: &str,
         entries: &[String],
     ) -> Result<Self, GrantError> {
+        let named: Vec<(String, String)> = entries
+            .iter()
+            .map(|e| (String::new(), e.clone()))
+            .collect();
+        Self::build(population, grant_id, &named, false)
+    }
+
+    /// Parse a NAMED table — the produced agent's shape, where the flow states
+    /// a name and never a destination (design §2.3 rule 6).
+    pub fn parse_named(
+        population: Population,
+        grant_id: &str,
+        entries: &[(String, String)],
+    ) -> Result<Self, GrantError> {
+        Self::build(population, grant_id, entries, true)
+    }
+
+    fn build(
+        population: Population,
+        grant_id: &str,
+        entries: &[(String, String)],
+        named: bool,
+    ) -> Result<Self, GrantError> {
         if entries.len() > MAX_DESTINATIONS {
             return Err(GrantError::TooMany(entries.len()));
         }
-        let mut destinations: Vec<Destination> = Vec::with_capacity(entries.len());
-        for entry in entries {
+        let mut rows: Vec<Row> = Vec::with_capacity(entries.len());
+        for (name, entry) in entries {
+            if named && (name.is_empty() || rows.iter().any(|r| r.name.as_deref() == Some(name))) {
+                // Two rows with one name means resolution depends on iteration
+                // order, and an authority that does is not an authority.
+                return Err(GrantError::DuplicateName(name.clone()));
+            }
             let dest = parse_entry(entry)?;
-            if destinations.contains(&dest) {
+            if rows.iter().any(|r| r.destination == dest) {
                 return Err(GrantError::Duplicate(entry.clone()));
             }
-            destinations.push(dest);
+            rows.push(Row {
+                name: if named { Some(name.clone()) } else { None },
+                destination: dest,
+            });
         }
         Ok(EgressGrant {
             population,
             grant_id: grant_id.to_string(),
-            destinations,
+            rows,
         })
     }
 
@@ -190,7 +237,7 @@ impl EgressGrant {
         EgressGrant {
             population,
             grant_id: grant_id.to_string(),
-            destinations: Vec::new(),
+            rows: Vec::new(),
         }
     }
 
@@ -202,8 +249,51 @@ impl EgressGrant {
         &self.grant_id
     }
 
-    pub fn destinations(&self) -> &[Destination] {
-        &self.destinations
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Decide a `call_ref`. **This is the produced agent's whole egress
+    /// decision, and it is the only one.**
+    ///
+    /// It resolves and decides in one place on purpose. An earlier version
+    /// looked the name up in the grant and then asked `authorize` about the
+    /// destination it had just found — which can only ever answer "allowed",
+    /// because both came from the same table. A mutation sweep deleted that
+    /// second verdict and every test stayed green. A check that cannot fail is
+    /// worse than no check: it reads like an enforcement and is not one.
+    pub fn authorize_ref(&self, call_ref: &str) -> EgressDecision {
+        match self.rows.iter().find(|r| r.name.as_deref() == Some(call_ref)) {
+            Some(row) => EgressDecision {
+                outcome: Outcome::Allowed,
+                population: self.population,
+                grant_id: self.grant_id.clone(),
+                requested_host: row.destination.host.clone(),
+                requested_port: row.destination.port,
+                matched: Some(row.destination.clone()),
+                reason: format!(
+                    "call_ref {:?} resolves to {} in grant {} ({}, {} row(s))",
+                    call_ref, row.destination.render(), self.grant_id,
+                    self.population.as_str(), self.rows.len()
+                ),
+            },
+            None => EgressDecision {
+                outcome: Outcome::Denied,
+                population: self.population,
+                grant_id: self.grant_id.clone(),
+                requested_host: String::new(),
+                requested_port: 0,
+                matched: None,
+                reason: format!(
+                    "call_ref {:?} names no row of grant {} ({}, {} row(s))",
+                    call_ref, self.grant_id, self.population.as_str(), self.rows.len()
+                ),
+            },
+        }
     }
 
     /// Decide one destination. Exact match on host AND port; an empty grant
@@ -229,8 +319,9 @@ impl EgressGrant {
             }
         };
         let matched = self
-            .destinations
+            .rows
             .iter()
+            .map(|r| &r.destination)
             .find(|d| d.host == normalised && d.port == requested_port);
         match matched {
             Some(d) => EgressDecision {
@@ -245,7 +336,7 @@ impl EgressGrant {
                     d.render(),
                     self.grant_id,
                     self.population.as_str(),
-                    self.destinations.len()
+                    self.rows.len()
                 ),
             },
             None => self.deny(
@@ -257,7 +348,7 @@ impl EgressGrant {
                     requested_port,
                     self.grant_id,
                     self.population.as_str(),
-                    self.destinations.len()
+                    self.rows.len()
                 ),
             ),
         }
@@ -487,7 +578,7 @@ mod tests {
         let g = EgressGrant::empty(Population::Produced, "grant-empty");
         assert!(!g.authorize("api.anthropic.com", 443).allowed());
         assert!(!g.authorize("localhost", 80).allowed());
-        assert!(g.destinations().is_empty());
+        assert!(g.is_empty());
     }
 
     /// The port is part of the destination, not decoration.
@@ -678,6 +769,54 @@ mod tests {
         assert_eq!(d2.population, Population::Produced);
     }
 
+    /// A NAMED table is the produced agent's shape: the flow states a name and
+    /// the grant states where it goes.
+    #[test]
+    fn a_named_table_decides_a_call_ref_and_refuses_an_unnamed_one() {
+        let rows = vec![
+            ("slack-post".to_string(), "https://slack.example.com".to_string()),
+            ("crm".to_string(), "https://crm.example.com:8443".to_string()),
+        ];
+        let g = EgressGrant::parse_named(Population::Produced, "bundle-1", &rows).unwrap();
+        let d = g.authorize_ref("crm");
+        assert!(d.allowed());
+        assert_eq!(d.matched.map(|m| m.render()), Some("crm.example.com:8443".into()));
+        let n = g.authorize_ref("crm2");
+        assert!(!n.allowed());
+        assert!(n.reason.contains("names no row"), "{}", n.reason);
+        assert!(n.reason.contains("bundle-1"), "{}", n.reason);
+    }
+
+    /// Two rows with one name: resolution would depend on iteration order.
+    #[test]
+    fn a_named_table_refuses_a_duplicate_or_empty_name() {
+        let dup = vec![
+            ("a".to_string(), "https://one.example".to_string()),
+            ("a".to_string(), "https://two.example".to_string()),
+        ];
+        assert_eq!(
+            EgressGrant::parse_named(Population::Produced, "g", &dup),
+            Err(GrantError::DuplicateName("a".into()))
+        );
+        let empty = vec![("".to_string(), "https://one.example".to_string())];
+        assert_eq!(
+            EgressGrant::parse_named(Population::Produced, "g", &empty),
+            Err(GrantError::DuplicateName("".into()))
+        );
+    }
+
+    /// An UNNAMED grant — the build agent's shape — resolves no name at all.
+    /// A name is how the produced agent's flow speaks; the build agent has no
+    /// flow, and must not gain one by accident.
+    #[test]
+    fn an_unnamed_grant_resolves_no_call_ref() {
+        let g = grant(&["https://registry.npmjs.org"]);
+        assert!(!g.authorize_ref("registry.npmjs.org").allowed());
+        assert!(!g.authorize_ref("").allowed());
+        // but it still decides a destination, which is its own shape
+        assert!(g.authorize("registry.npmjs.org", 443).allowed());
+    }
+
     /// Every refusal string is distinct and stable: they reach a decision
     /// record, where a reader compares them.
     #[test]
@@ -692,6 +831,7 @@ mod tests {
             GrantError::MalformedPort(String::new()).as_str(),
             GrantError::TooMany(0).as_str(),
             GrantError::Duplicate(String::new()).as_str(),
+            GrantError::DuplicateName(String::new()).as_str(),
         ];
         let mut seen: Vec<&str> = all.to_vec();
         seen.sort_unstable();

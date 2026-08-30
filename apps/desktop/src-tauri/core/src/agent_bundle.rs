@@ -29,13 +29,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::egress_proxy::{EgressGrant, Population};
 use crate::governed_message_store::sha256_hex;
 
 /// Stated, not implied. Every one of these is in the design and NOT in this slice.
 pub const NOT_IMPLEMENTED: &[&str] = &[
     "model steps: a governed turn is refused at this head (governed_verification_unconfigured)",
-    "call steps: NOT IMPLEMENTED — §3.3 designs the egress enforcement point and no code in \
-     this tree enforces a destination against a grant, so a `call` step is refused",
+    "call steps: the destination IS now enforced against the grant — an unnamed `call_ref` is \
+     refused and the decision is recorded. What is NOT IMPLEMENTED is the TRANSPORT: an \
+     authorized call is still refused, because nothing here opens a connection",
     "credential bindings: §4's (bundle_digest, slot_id) binding store",
     "approval: the native confirmation writes no approvals.confirmation_digest for a bundle",
     "eval/cases.jsonl: the cases a build was accepted against",
@@ -47,7 +49,9 @@ pub const NOT_IMPLEMENTED: &[&str] = &[
 pub enum StepKind {
     /// A governed turn. Refused at this head; present so the vocabulary is whole.
     Model,
-    /// An egress named in the grant. Refused at this head — no enforcement point.
+    /// An egress named in the grant. The destination is enforced; the transport
+    /// is not built, so an authorized call is refused with a different reason
+    /// from a denied one — the two refusals are how the decision is observable.
     Call,
     /// A local write, the vocabulary `execute_action` already implements.
     Store,
@@ -63,10 +67,34 @@ pub struct Requires {
     pub credential_slots: Vec<String>,
 }
 
+/// One row of the grant's egress table: a NAME the flow may use, and the
+/// destination it resolves to.
+///
+/// The indirection is design §2.3 rule 6 and it is load-bearing: **the flow
+/// never contains a URL, a host or a key.** A flow is the reviewable half and
+/// can be authored from a prompt; a grant is written by the runtime from values
+/// it holds. If the flow could spell a destination, the destination would be
+/// stated in the half a prompt can reach — the exact defect `commands.rs`
+/// already records for `scope`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EgressEntry {
+    /// What a `call` step's `call_ref` matches. A name, never a URL.
+    pub name: String,
+    /// `https://` + exact lowercase FQDN + optional port. Validated through
+    /// [`crate::egress_proxy`] before it can enter a grant, so a grant cannot
+    /// state an authority the enforcement layer could not deliver.
+    pub destination: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Step {
     pub id: String,
     pub kind: StepKind,
+    /// For `call`: the NAME of an entry in the grant's egress table. Never a
+    /// URL — see [`EgressEntry`]. `None` on a `call` step is a refusal, not a
+    /// default, because a default here would be a destination nobody named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_ref: Option<String>,
     /// For `store`: the verb `execute_action` understands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verb: Option<String>,
@@ -89,17 +117,22 @@ pub struct Flow {
     pub steps: Vec<Step>,
 }
 
-/// The permission grant. `capabilities` is the axis this slice enforces;
-/// `egress` is expressible and empty here, because nothing in this slice may
-/// leave the box and a grant must not state an authority nothing can deliver.
+/// The permission grant. `capabilities` and `egress` are both enforced: a step
+/// may not require a capability the grant withholds, and a `call` step may not
+/// reach a destination the grant does not name.
+///
+/// `egress` is a TABLE, not a list of URLs, so the flow can name a row and
+/// never a destination (§2.3 rule 6). Written by the runtime; a grant whose
+/// `written_by` names prose is refused.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Grant {
     pub schema: u32,
     pub artifact_type: String,
     pub capabilities: Vec<String>,
-    /// `https://` + exact lowercase FQDN + optional port. No wildcards, no IP
-    /// literals, no paths — see design §3.2 for why each is unexpressible.
-    pub egress: Vec<String>,
+    /// The egress table: names the flow may use, and what each resolves to.
+    /// Empty means "this agent may not leave the box", which is the only thing
+    /// an empty table can mean and the state `for_local_only` writes.
+    pub egress: Vec<EgressEntry>,
     pub credential_slots: Vec<String>,
     /// Which runtime component wrote this grant. Not decorative: the gate and
     /// [`Grant::is_prose_writer`] both refuse a writer that names prose.
@@ -107,9 +140,34 @@ pub struct Grant {
     pub expires_at_epoch: i64,
 }
 
+fn named_rows_raw(egress: &[EgressEntry]) -> Vec<(String, String)> {
+    egress.iter().map(|e| (e.name.clone(), e.destination.clone())).collect()
+}
+
+fn named_rows(egress: &[EgressEntry]) -> Result<EgressGrant, crate::egress_proxy::GrantError> {
+    EgressGrant::parse_named(Population::Produced, "grant-validation", &named_rows_raw(egress))
+}
+
+/// One refusal per kind of unusable table, so a reader is sent to the right
+/// place: a name nobody can resolve is a different defect from a destination
+/// nobody can enforce.
+fn refusal_for(err: crate::egress_proxy::GrantError) -> Refusal {
+    match err {
+        crate::egress_proxy::GrantError::DuplicateName(_) => Refusal::EgressTableUnusable,
+        _ => Refusal::EgressNotExpressible,
+    }
+}
+
 /// The runtime component that writes a grant. A literal, so it cannot be a path
 /// a caller supplies and cannot become a prompt file by configuration.
 pub const GRANT_WRITER: &str = "brops_core::agent_bundle::write_grant";
+
+/// The grant shape. Bumped 1 -> 2 when `egress` stopped being a list of URLs
+/// and became a name->destination table: the field's type changed, so a v1 and
+/// a v2 grant are different objects. `Flow` stays at 1 — `call_ref` is an
+/// added optional field, and an old flow still parses and is still refused,
+/// now by name rather than by kind.
+pub const GRANT_SCHEMA: u32 = 2;
 
 impl Grant {
     /// A writer naming a Markdown or prompt file means the grant came from prose.
@@ -122,7 +180,7 @@ impl Grant {
     /// that a prompt could reach.
     pub fn for_local_only(expires_at_epoch: i64) -> Self {
         Grant {
-            schema: 1,
+            schema: GRANT_SCHEMA,
             artifact_type: "brops.agent-grant.v1".into(),
             capabilities: vec!["READ_LOCAL".into(), "WRITE_LOCAL".into()],
             egress: Vec::new(),
@@ -130,6 +188,45 @@ impl Grant {
             written_by: GRANT_WRITER.into(),
             expires_at_epoch,
         }
+    }
+
+    /// A grant that names destinations. Written by the RUNTIME — the caller
+    /// supplies the table, the runtime supplies `written_by` and the schema —
+    /// and every destination is validated through [`crate::egress_proxy`]
+    /// first, so a grant cannot come into existence stating an authority the
+    /// enforcement layer could not deliver.
+    ///
+    /// Refuses a duplicate NAME as well as a duplicate destination: two rows
+    /// with one name means `call_ref` resolution depends on iteration order,
+    /// and an authority that depends on iteration order is not an authority.
+    pub fn for_egress(
+        expires_at_epoch: i64,
+        egress: &[EgressEntry],
+    ) -> Result<Self, Refusal> {
+        // The table must parse as an allowlist. Built here and thrown away:
+        // this call is the validation, and `egress_allowlist` rebuilds it at the
+        // point of use, so a grant read from disk is judged again rather than
+        // trusted because it was valid when it was written.
+        named_rows(egress).map_err(refusal_for)?;
+        let mut grant = Grant::for_local_only(expires_at_epoch);
+        grant.egress = egress.to_vec();
+        Ok(grant)
+    }
+
+    /// The grant's table as an allowlist the authorizer decides against,
+    /// rebuilt from what is on disk rather than carried in memory.
+    ///
+    /// There is deliberately no `resolve_egress` beside this. A lookup here
+    /// plus a verdict there is two decisions from one table, and the second can
+    /// only ever agree — which is exactly what a mutation sweep caught: the
+    /// verdict was deletable with every test still green.
+    pub fn egress_allowlist(&self, grant_id: &str) -> Result<EgressGrant, Refusal> {
+        EgressGrant::parse_named(
+            Population::Produced,
+            grant_id,
+            &named_rows_raw(&self.egress),
+        )
+        .map_err(refusal_for)
     }
 
     /// Every capability a flow's steps require must be inside the grant. Checked
@@ -149,6 +246,21 @@ impl Grant {
                     }
                 }
             }
+            // `call` steps are DELIBERATELY not judged here, and the reason is
+            // worth the paragraph. A copy of the egress decision at load time
+            // refuses the bundle before it is ever queued, which makes the run
+            // path's decision — the one that is recorded, and the one design
+            // §3.3 names as the enforcement point — unreachable for exactly the
+            // cases that matter. Three tests proved it in the first attempt:
+            // they could not obtain a run id at all, because `enqueue_due`
+            // refused the bundle. A check that can only be reached past an
+            // earlier refusal is a check nothing tests. One enforcement point,
+            // where the decision is written down.
+            //
+            // The cost, stated: a bundle whose `call_ref` is not granted still
+            // runs its earlier steps before the call is refused. Those steps
+            // were inside the grant's capabilities, so no authority is
+            // exceeded — the flow simply stops where the grant stops.
         }
         Ok(())
     }
@@ -195,6 +307,24 @@ pub enum Refusal {
     CredentialSlotUnbound,
     FlowUnparseable,
     StepKindNotExecutable,
+    /// A `call` step that names no row of the grant's egress table. Not the
+    /// same fact as naming a row that does not exist: "nobody said where" and
+    /// "somewhere the grant does not allow" call for different answers.
+    CallRefMissing,
+    /// A `call_ref` the grant's table does not contain. THIS is the produced
+    /// agent's egress enforcement: the flow may name a row, and nothing else.
+    EgressNotGranted,
+    /// A destination in the grant that the enforcement layer cannot deliver —
+    /// a wildcard, an IP literal, a path, plaintext. Refused rather than
+    /// narrowed, so a grant never means less than it says.
+    EgressNotExpressible,
+    /// Two rows sharing a name, or a row with none. Resolution would depend on
+    /// iteration order, and an authority that does is not one.
+    EgressTableUnusable,
+    /// The destination was AUTHORIZED and the call still did not happen,
+    /// because nothing in this tree opens a connection. Distinct from every
+    /// refusal above: it is the only one that means the grant said yes.
+    CallTransportUnimplemented,
     Unreadable,
 }
 
@@ -213,6 +343,11 @@ impl Refusal {
             Refusal::CredentialSlotUnbound => "credential_slot_unbound",
             Refusal::FlowUnparseable => "flow_unparseable",
             Refusal::StepKindNotExecutable => "step_kind_not_executable",
+            Refusal::CallRefMissing => "call_ref_missing",
+            Refusal::EgressNotGranted => "egress_not_granted",
+            Refusal::EgressNotExpressible => "egress_not_expressible",
+            Refusal::EgressTableUnusable => "egress_table_unusable",
+            Refusal::CallTransportUnimplemented => "call_transport_unimplemented",
             Refusal::Unreadable => "unreadable",
         }
     }
@@ -334,6 +469,10 @@ pub struct BuildSpec {
     pub built_for: String,
     pub built_at_epoch: i64,
     pub grant_expires_at_epoch: i64,
+    /// The egress table the runtime writes into the grant. Empty is the honest
+    /// default and means "this agent may not leave the box"; it is a field
+    /// rather than an absence so a builder has to state the answer.
+    pub egress: Vec<EgressEntry>,
     pub steps: Vec<Step>,
 }
 
@@ -350,7 +489,7 @@ pub fn build(store_root: &Path, spec: &BuildSpec) -> Result<String, Refusal> {
         max_wall_ms: 120_000,
         steps: spec.steps.clone(),
     };
-    let grant = Grant::for_local_only(spec.grant_expires_at_epoch);
+    let grant = Grant::for_egress(spec.grant_expires_at_epoch, &spec.egress)?;
 
     let flow_bytes = serde_json::to_vec_pretty(&flow).map_err(|_| Refusal::FlowUnparseable)?;
     let grant_bytes = serde_json::to_vec_pretty(&grant).map_err(|_| Refusal::GrantUnparseable)?;
@@ -398,12 +537,13 @@ mod tests {
             built_for: "customer-test".into(),
             built_at_epoch: now,
             grant_expires_at_epoch: now + 3600,
+            egress: vec![],
             steps: vec![
                 Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
-                       argument: Some("one".into()),
+                       argument: Some("one".into()), call_ref: None,
                        requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
                        next: Some("b".into()) },
-                Step { id: "b".into(), kind: StepKind::Branch, verb: None, argument: None,
+                Step { id: "b".into(), kind: StepKind::Branch, verb: None, argument: None, call_ref: None,
                        requires: Requires { capabilities: vec![], credential_slots: vec![] },
                        next: None },
             ],
@@ -571,15 +711,121 @@ mod tests {
         );
     }
 
-    /// The grant this runtime writes carries no egress and no credential slot.
-    /// Nothing in this slice may leave the box, and a grant must not state an
-    /// authority nothing can deliver.
+    /// The local-only grant still states no authority it cannot deliver. This
+    /// is the default and the one `build` writes when a spec names no egress.
     #[test]
     fn the_runtime_grant_states_no_authority_it_cannot_deliver() {
         let g = Grant::for_local_only(0);
         assert!(g.egress.is_empty());
         assert!(g.credential_slots.is_empty());
         assert_eq!(g.written_by, GRANT_WRITER);
+        assert_eq!(g.schema, GRANT_SCHEMA);
+    }
+
+    fn entry(name: &str, destination: &str) -> EgressEntry {
+        EgressEntry { name: name.into(), destination: destination.into() }
+    }
+
+    /// A grant may now name destinations, and the runtime — not a prompt —
+    /// writes them.
+    #[test]
+    fn a_grant_can_name_destinations_and_resolve_a_call_ref_to_one() {
+        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com")]).unwrap();
+        assert_eq!(g.written_by, GRANT_WRITER);
+        let allow = g.egress_allowlist("bundle-1").unwrap();
+        let d = allow.authorize_ref("slack-post");
+        assert!(d.allowed());
+        assert_eq!(d.matched.map(|m| m.render()), Some("slack.example.com:443".into()));
+        // exact match: a call_ref is a name the runtime wrote, not a pattern
+        assert!(!allow.authorize_ref("slack").allowed());
+        assert!(!allow.authorize_ref("slack-post ").allowed());
+        assert!(!allow.authorize_ref("SLACK-POST").allowed());
+        assert!(!allow.authorize_ref("").allowed());
+    }
+
+    /// A destination the enforcement layer could not deliver may not enter a
+    /// grant at all. Refused, not narrowed — a grant must never mean less than
+    /// it says.
+    #[test]
+    fn a_grant_refuses_a_destination_that_cannot_be_enforced() {
+        for bad in [
+            "https://*.githubusercontent.com",
+            "https://169.254.169.254",
+            "http://slack.example.com",
+            "https://slack.example.com/webhook",
+            "https://SLACK.example.com",
+        ] {
+            assert_eq!(
+                Grant::for_egress(0, &[entry("x", bad)]),
+                Err(Refusal::EgressNotExpressible),
+                "{bad}"
+            );
+        }
+    }
+
+    /// Two rows with one name means resolution depends on iteration order.
+    #[test]
+    fn a_grant_refuses_an_egress_table_it_cannot_resolve() {
+        assert_eq!(
+            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("a", "https://two.example")]),
+            Err(Refusal::EgressTableUnusable)
+        );
+        assert_eq!(
+            Grant::for_egress(0, &[entry("", "https://one.example")]),
+            Err(Refusal::EgressTableUnusable)
+        );
+        // and two names for ONE destination is refused by the allowlist itself
+        assert_eq!(
+            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("b", "https://one.example")]),
+            Err(Refusal::EgressNotExpressible)
+        );
+    }
+
+    /// The allowlist is rebuilt from what is on disk, so a grant that was valid
+    /// when written is re-judged every time it is used.
+    #[test]
+    fn the_allowlist_is_rebuilt_from_the_grant_and_carries_the_population() {
+        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com:8443")]).unwrap();
+        let allow = g.egress_allowlist("bundle-digest-1").unwrap();
+        assert_eq!(allow.population(), Population::Produced);
+        assert_eq!(allow.grant_id(), "bundle-digest-1");
+        assert_eq!(allow.len(), 1);
+        assert!(allow.authorize("slack.example.com", 8443).allowed());
+        assert!(!allow.authorize("slack.example.com", 443).allowed());
+        assert!(allow.authorize_ref("slack-post").allowed());
+    }
+
+    /// `covers` judges capabilities and credential slots. It must NOT judge a
+    /// call step's destination: a copy of that decision here refuses the bundle
+    /// before it is queued, which makes the run path's recorded decision
+    /// unreachable. One enforcement point.
+    /// An empty grant resolves no name at all — the state `for_local_only`
+    /// writes, and it must not be a hole.
+    #[test]
+    fn an_empty_grant_resolves_no_call_ref() {
+        let allow = Grant::for_local_only(0).egress_allowlist("bundle-1").unwrap();
+        assert!(allow.is_empty());
+        let d = allow.authorize_ref("anything");
+        assert!(!d.allowed());
+        assert!(d.reason.contains("names no row"), "{}", d.reason);
+    }
+
+    #[test]
+    fn covers_leaves_the_egress_decision_to_the_run_path() {
+        let mut s = spec(1_000_000);
+        s.steps[1].kind = StepKind::Call;
+        s.steps[1].call_ref = Some("nobody-granted-this".into());
+        let grant = Grant::for_local_only(1_000_000 + 3600);
+        let flow = Flow {
+            schema: 1,
+            artifact_type: "brops.agent-flow.v1".into(),
+            flow_id: "f".into(),
+            entry: "a".into(),
+            max_steps: 8,
+            max_wall_ms: 1000,
+            steps: s.steps.clone(),
+        };
+        assert_eq!(grant.covers(&flow), Ok(()), "covers must not pre-empt the run path");
     }
 
     /// A flow with fewer than two steps is not a flow. Stated as a test so the

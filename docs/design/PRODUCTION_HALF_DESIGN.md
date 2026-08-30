@@ -614,6 +614,29 @@ In `engine/agents/authority-policy.json`, a fourth field on `default`, `designat
 >    suggestion. The kernel namespace was invented for the population that holds `Bash`,
 >    which is exactly the population that is not being jailed.
 >
+> **BUILT 2026-08-30 (slice 3), and only this half.** The produced agent's enforcement point
+> exists: `repo.rs`'s `StepKind::Call` arm resolves the step's `call_ref` through the grant's
+> egress table inside `core/src/egress_proxy.rs`, refuses a name the grant does not hold
+> (`egress_not_granted`), and writes one audit record per decision — allow and deny alike, into
+> `audit_events.payload_json`, a column that had existed since migration 0001 and that nothing in
+> the tree wrote or read until this call site.
+>
+> **A call the grant PERMITS is still refused**, by a different name
+> (`call_transport_unimplemented`), because nothing here opens a connection. The two reasons are
+> what make the decision observable in `flow_runs.refusal_reason`; approximating the transport
+> would be the thing this whole ordering exists to avoid.
+>
+> **The grant's `egress` became a name→destination TABLE** (grant schema 1 → 2) so §2.3 rule 6
+> holds in code: the flow names a row and never a URL. A destination that cannot be enforced —
+> wildcard, IP literal, path, plaintext — cannot enter a grant at all.
+>
+> **One decision, not two.** The first attempt looked the name up in the grant and then asked the
+> authorizer about the destination it had just found. A mutation sweep deleted that second verdict
+> and every test stayed green: both came from one table, so it could only ever agree. Resolution
+> and verdict now happen together in `EgressGrant::authorize_ref`. The same sweep also removed a
+> load-time copy of the check from `Grant::covers`, which had refused the bundle before it could be
+> queued and so made the recorded decision unreachable for exactly the denied cases.
+>
 > **Consequence for the file this section names.** §3.3 says
 > `apps/desktop/src-tauri/src/egress_proxy.rs`. The authorizer is instead at
 > **`apps/desktop/src-tauri/core/src/egress_proxy.rs`**: `core` cannot see `src` — the

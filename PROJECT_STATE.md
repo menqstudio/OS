@@ -1,20 +1,20 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-30 — the §3.3 egress axis exists. `allowed_egress` is a
-REQUIRED execution-lease field (schema 1→2) and `core/src/egress_proxy.rs` decides a destination against a
-grant; neither confines a process yet, and `call` is still refused. The Owner split the populations: the
-produced agent enforces at `repo.rs`'s `Call` arm, the build agent is not jailed. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
+**Last updated · Վերջին թարմացում:** 2026-08-30 — the produced agent's egress is ENFORCED. `repo.rs`'s
+`Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
+table, so the flow never states a URL) and records each decision. A permitted call is still refused for
+want of a transport. The lease carries a REQUIRED `allowed_egress` (schema 1→2). The BUILD agent's
+half — the namespace and the proxy — is not built. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
-`T-046`, `T-048`, `T-049`, `T-050`, `T-052` and `T-053` are merged.
-This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical lines
-from line 2; the log both carried is
-[`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
-It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**.
+`T-046`, `T-048`–`T-053` are merged.
+This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`**; that log is in
+[`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md). It answers what `NEXT_CHAT.md`
+does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `094ea44`.** The pull request that records it is PR #202 on `chore/settle-at-green-main`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #203 · branch `feat/egress-call-arm`** (base `main`, tip `d8e7bc0`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> **Next:** Design SS3.3 slice 3: wire the authorizer into the StepKind::Call arm of repo.rs so the PRODUCED agent's Grant.egress is enforced, and let write_grant carry a non-empty egress. The build agent stays unjailed by the Owner's decision (T-058).
+> Design SS3.3 slice 3: the PRODUCED agent's egress is enforced at repo.rs's StepKind::Call arm against the grant's name-to-destination table, with one audit record per decision. A permitted call is still refused for want of a transport.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
