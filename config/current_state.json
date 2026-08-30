@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, which are the fields tools/check_repo_state.py compares against live GitHub. This field carried 74,311 characters of prose until 2026-08-29 (T-045) -- 68% of a file called the machine-readable mirror, inside a read set every session is required to take. It said so itself and grew anyway. The narrative it held is in docs/archive/SESSION_LOG_2026-07_2026-08.md; tools/check_canon_budget.py holds this file to 20 KB so it cannot grow back.",
-  "settled_at_main_head": "34c5fb5a0efb02ade2a5984484ff9a3db32e0484",
+  "settled_at_main_head": "09ed3ce0835997955a5fc426d9d3e4d6de04b698",
   "sync": {
-    "baseline_main_head_at_sync": "34c5fb5a0efb02ade2a5984484ff9a3db32e0484",
-    "snapshot_branch": "t052/audit-attribution",
+    "baseline_main_head_at_sync": "09ed3ce0835997955a5fc426d9d3e4d6de04b698",
+    "snapshot_branch": "t053a/lstrip-evidence",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field said 'live main is b3010f6 (PR #81 merged, 2026-08-09) ... the only open pull request is the self-carrier #82' for twenty days, through roughly eighty merged pull requests, because nothing compares it with anything (ninth audit I-06; the same field had already been stale by sixteen PRs when it was rewritten [...] docs/archive/SESSION_LOG_2026-07_2026-08.md",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is PR #189. PR #189's own exact-head is anchored on its branch via its PR-body AUDIT_CANDIDATE_HEAD marker, kept in lockstep with every push (event head == live headRefOid == marker). The marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on this branch -- the job died at an earlier step every time. Nothing is exempt."
   },
   "active": {
     "wave": "canon",
-    "task": "T-052",
-    "branch": "t052/audit-attribution"
+    "task": "T-053",
+    "branch": "t053a/lstrip-evidence"
   },
   "prs": [
     {
@@ -27,7 +27,7 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "T-052",
+    "CURRENT_ACTIVE_TASK": "T-053",
     "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
