@@ -8,9 +8,9 @@
 
 **Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #205 · branch `perf/ci-rust-cache`** (base `main`, tip `da27810`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #206 · branch `feat/dispatch-the-produced-agent`** (base `main`, tip `9b2b917`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> CI speed, no semantic change: Swatinem/rust-cache pinned to v2.9.2 in the eleven jobs that run cargo (none cached anything before), and concurrency on ci.yml with main excluded from cancellation -- a cancelled run on main is not a reading of main.
+> The 60s tick enqueues AND dispatches armed bundles, bounded. Bundles are born disarmed and arming needs a natively confirmed grant. claim_and_run had one non-test caller before this -- a CI demo binary -- so the produced agent never ran in the product.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
