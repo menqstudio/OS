@@ -15,10 +15,9 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** nothing is open but this settle. Merge it, then claim a row in
-[`TASKS.md`](TASKS.md) before touching anything. `T-046` merged as PR #182 and `main` is at
-`40be210`, where all seven workflows are green — read from `gh run list --branch main`, not
-from the pull request.
+**Next:** `T-048` is open on `feat/governed-provisioning-probe` — the desktop governed pre-flight
+measures its five inputs now instead of asserting them, refusing identically on this build. `main` is at `8e29b6a`, seven workflows
+green — read from `gh run list --branch main`, not from the pull request.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
 red `main`s of the previous session were reported as green because the PR's checks were read and
@@ -29,8 +28,7 @@ commit** — an amend changes the hash and the handoff then names a commit that 
 
 `T-046`'s row stays open although it merged. One green run does not prove an intermittent fixed;
 the Windows engine job has to come back clean across several pull requests — `T-023`'s lesson.
-Stamp with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`, because `gh pr edit` dies
-here before writing.
+Stamp with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`; `gh pr edit` dies here.
 
 ## Verify before you believe any of this
 
@@ -121,4 +119,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-046` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-048` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
