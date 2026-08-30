@@ -132,3 +132,27 @@ Stated so that a reader does not mistake the tables above for completeness.
 ---
 
 <div align="center"><sub>menqstudio · OS · a number on the front page is a measurement or it is nothing</sub></div>
+
+## A gate that works in both directions
+
+2026-08-30, at the end of the night that produced this file. `T-055`'s row was written citing
+`docs/design/PRODUCTION_HALF_DESIGN.md`, a document that exists on an unmerged branch.
+`tools/check_doc_claims.py` refused it:
+
+    RED: TASKS.md references `docs/design/PRODUCTION_HALF_DESIGN.md`, which does not exist.
+         A citation to a file nobody filed is how `A-06` happened — twice
+
+Every earlier finding in this file is a claim that was true once and had gone stale. This one is
+the opposite: a claim that would become true later. **They are the same defect.** A reader cannot
+tell a forward reference from a rotted one — both name a path that does not resolve, and both
+teach the reader that citations in this repository need not be checked.
+
+The remedy is the vocabulary the repository already has. `config/negative-matrix.json` says
+`blocked_on: <what must exist first>` rather than pointing at what does not exist yet, and the
+`T-055` row now says the same thing in prose: the design is *written, not merged; cite it in the
+commit that merges it, not before.*
+
+No waiver was written, and none should be. The gate was not weakened, given an exception, or
+taught that a forward reference is acceptable — the citation was removed instead. This
+repository has waived one of its own rules once before, on 2026-08-14, and three red merges
+followed; a second waiver on the same night would have been the worse defect of the two.
