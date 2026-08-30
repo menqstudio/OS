@@ -15,9 +15,9 @@ It answers one question `NEXT_CHAT.md` does not: **the state of each part of the
 `NEXT_CHAT.md` answers *what the next session does first*.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #186 · branch `chore/ignore-agent-worktrees`** (base `main`, tip `0fc35ca`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #187 · branch `t050/negative-matrix`** (base `main`, tip `50ca6f7`, task T-050). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The agent worktree directory is ignored, so check_handoff_ready stops reading a scratch checkout as uncommitted work.
+> The 242-id negative test matrix has a generated machine mirror and a gate; 29 ids are bound to real tests and 201 are frozen as unreviewed debt.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

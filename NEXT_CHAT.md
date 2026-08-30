@@ -6,11 +6,11 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `chore/ignore-agent-worktrees` · **head** `bd5bdf8` · **task** `T-049` · **PR #186**
+**Active branch:** `t050/negative-matrix` · **head** `42a9607` · **task** `T-050` · **PR #187**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #186 · branch `chore/ignore-agent-worktrees`** (base `main`, tip `0fc35ca`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #187 · branch `t050/negative-matrix`** (base `main`, tip `50ca6f7`, task T-050). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The agent worktree directory is ignored, so check_handoff_ready stops reading a scratch checkout as uncommitted work.
+> The 242-id negative test matrix has a generated machine mirror and a gate; 29 ids are bound to real tests and 201 are frozen as unreviewed debt.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
