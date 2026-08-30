@@ -971,18 +971,23 @@ jobs:
   produced-artifact:
     name: Production half · the five conditions (T-055)
     runs-on: ubuntu-latest
-    # THIS JOB IS RED BY DESIGN AND IS NOT A REQUIRED CONTEXT. Do not "fix" it and do not rerun it.
+    # This job was RED BY DESIGN from the commit that introduced it (#193) until T-055 made it
+    # pass. It is GREEN now, and that changes what it is for: it stops being a statement of what
+    # is missing and becomes the thing that notices if any of the five stops holding.
     #
     # Every other piece of work in this repository has a gate and therefore a measurable "done".
     # The production half — what a paying customer actually receives — had none, so it lost every
-    # scheduling contest to work whose finish line a machine could see. The gate is written first
-    # and left failing; its RED output is the deliverable, and answers "when does a customer see
-    # something?" in five lines.
+    # scheduling contest to work whose finish line a machine could see. Writing the gate first and
+    # leaving it failing is what ended that.
     #
-    # It is deliberately ABSENT from config/required-checks.json at the commit that introduced it:
-    # main carries 33 required contexts with enforce_admins true, so a required context that can
-    # never pass blocks EVERY merge, and fixes were in flight. Adding it is a separate, deliberate
-    # step. That deferral is not a comment anyone has to remember — it is a DATED entry in
+    # It is still ABSENT from config/required-checks.json, and the reason has changed with it.
+    # It is no longer "this can never pass"; it is that a context must be OBSERVED green in CI
+    # before it is required. This repository learned that the expensive way: `Windows · §0.W broker
+    # syscall proof` was made required on 2026-08-18 and failed the same day, and its exclusion
+    # note in config/required-checks.json is the record. Requiring a context on the strength of a
+    # local run is the same mistake in a new place.
+    #
+    # That deferral is not a comment anyone has to remember — it is a DATED entry in
     # config/deferred-enforcement.json, and tools/check_repo_state.py::verify_deferred_enforcement
     # (which runs inside the already-required `Repo-state` context) turns RED once the date passes
     # while this name is still missing from `contexts`.
@@ -998,7 +1003,17 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_produced_artifact
-      - name: The five conditions a customer sees (RED until the production half exists)
+      # The evidence is PRODUCED here, from the real code path, and is never
+      # committed: `store_root` lives under `target/`, and the gate refuses a
+      # store whose files `git ls-files` reports, because a committed store is a
+      # fixture and not a product. The producer command is the one recorded in
+      # config/produced-artifact-contract.json -- CI runs what the contract says
+      # it runs, so a reader can reproduce this locally with the same line.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Produce the artifact from the real code path
+        working-directory: apps/desktop/src-tauri
+        run: cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact
+      - name: The five conditions a customer sees
         run: python tools/check_produced_artifact.py
 
 

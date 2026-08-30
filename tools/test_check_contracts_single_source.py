@@ -74,10 +74,16 @@ class ContractsSingleSourceTests(unittest.TestCase):
         for cid in INTERNAL:
             (root / "engine" / "schemas" / f"{cid}.schema.json").write_text(
                 json.dumps(_schema(), indent=2) + "\n", encoding="utf-8")
+        # The desktop half's own schema, held to the same rule (T-055).
+        desktop = root / "apps" / "desktop" / "src-tauri" / "core" / "schema"
+        desktop.mkdir(parents=True, exist_ok=True)
+        (desktop / "agent-bundle-manifest.schema.json").write_text(
+            json.dumps(_schema(), indent=2) + "\n", encoding="utf-8")
 
         (root / "contracts" / "index.json").write_text(json.dumps({
             "schema": 1, "source_of_record": "contracts/", "vendored_copy": "engine/schemas/",
             "contracts": entries, "engine_internal": {"ids": INTERNAL},
+            "desktop_internal": {"ids": ["agent-bundle-manifest"]},
         }, indent=2), encoding="utf-8")
         (root / "engine" / "schemas" / "registry.json").write_text(json.dumps({
             "schema": 1,
@@ -88,6 +94,36 @@ class ContractsSingleSourceTests(unittest.TestCase):
     # --- the tree the mutations start from -----------------------------------
     def test_a_consistent_tree_is_green(self):
         self.assertEqual(cs.check(self._tree()), [])
+
+    # --- the desktop half, held to the same rule (T-055) ---------------------
+    def test_an_unclassified_desktop_schema_is_red(self):
+        """A schema beside the desktop's code that the index does not name.
+
+        Without this the `desktop_internal` block would be prose. A registry
+        entry nothing reads is exactly the defect T-056 exists to catch, and
+        adding one inside this gate would be a poor joke.
+        """
+        root = self._tree()
+        (root / "apps" / "desktop" / "src-tauri" / "core" / "schema" / "ghost.schema.json").write_text(
+            json.dumps(_schema(), indent=2) + "\n", encoding="utf-8")
+        problems = cs.check(root)
+        self.assertTrue(any("are not listed under `desktop_internal`" in p for p in problems), problems)
+
+    def test_a_desktop_id_with_no_file_is_red(self):
+        root = self._tree()
+        doc = json.loads((root / "contracts" / "index.json").read_text())
+        doc["desktop_internal"]["ids"].append("never-written")
+        (root / "contracts" / "index.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        problems = cs.check(root)
+        self.assertTrue(any("does not have: never-written" in p for p in problems), problems)
+
+    def test_a_schema_classified_on_both_halves_is_red(self):
+        root = self._tree()
+        doc = json.loads((root / "contracts" / "index.json").read_text())
+        doc["desktop_internal"]["ids"].append(CROSS[0])
+        (root / "contracts" / "index.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        problems = cs.check(root)
+        self.assertTrue(any("classified twice" in p for p in problems), problems)
 
     # --- 1. source present ---------------------------------------------------
     def test_a_missing_source_is_red(self):

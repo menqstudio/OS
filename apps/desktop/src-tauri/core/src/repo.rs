@@ -2612,6 +2612,14 @@ pub mod automations {
                 fired.push(run(conn, &a.id, audit::Actor::scheduler())?);
             }
         }
+        // The produced-agent half of the same tick (T-055). It ENQUEUES and
+        // performs nothing: the tick may write a `flow_runs` row and a
+        // `scheduler_ticks` row and nothing else -- strictly less authority than
+        // the automation half above, which still calls `execute_action`.
+        // A store root that is absent is not an error: no agent has been built.
+        if let Some(root) = super::agent_runs::default_store_root() {
+            super::agent_runs::enqueue_due(conn, now_ms, &root)?;
+        }
         Ok(fired)
     }
 
@@ -2624,6 +2632,413 @@ pub mod automations {
             super::audit::record(tx, "automation.deleted", actor, "automation", id)?;
             Ok(())
         })
+    }
+}
+
+/// The produced-agent scheduler half (T-055). Design: `docs/design/PRODUCTION_HALF_DESIGN.md` §5.
+///
+/// Two things are deliberate here and both are refusals rather than fallbacks.
+///
+/// **A tick that finds nothing still writes a row.** `scheduler_ticks` exists
+/// because `lib.rs` discarded `run_due`'s result with `let _ =`, which made a
+/// poisoned mutex, a failed open and a quiet week look identical. A scheduler
+/// that cannot say what it did on a tick cannot be audited unattended.
+///
+/// **A bad bundle is refused, not skipped.** A skipped fire leaves no row, and
+/// "nothing happened" is exactly what a log must not say when something was
+/// tampered with. A refusal leaves a row with a typed reason from a closed set.
+pub mod agent_runs {
+    use super::*;
+    use crate::agent_bundle::{self, Refusal, StepKind};
+    use std::path::{Path, PathBuf};
+
+    /// Where the store lives when the caller names none. `BROPS_AGENT_STORE` is
+    /// read rather than assumed: the desktop's app-data directory is not known
+    /// to this crate, and inventing a path here would be a claim about a layout
+    /// this module cannot see.
+    pub fn default_store_root() -> Option<PathBuf> {
+        std::env::var_os("BROPS_AGENT_STORE").map(PathBuf::from).filter(|p| p.is_dir())
+    }
+
+    /// The regime a run executed under, recorded ON the receipt. Read once here
+    /// rather than at display time, because a receipt that cannot distinguish
+    /// "was blocked" from "would have been blocked" is not evidence.
+    pub fn enforcement_regime() -> String {
+        std::env::var("BRO_ENFORCEMENT").unwrap_or_else(|_| "enforce".to_string())
+    }
+
+    pub fn register(
+        conn: &Connection,
+        digest: &str,
+        bundle_id: &str,
+        bundle_version: u64,
+        display_name: &str,
+        interval_ms: i64,
+    ) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT OR REPLACE INTO agent_bundles(bundle_digest, bundle_id, bundle_version, \
+                 display_name, built_at, state, created_at) VALUES (?1,?2,?3,?4,?5,'approved',?6)",
+                rusqlite::params![digest, bundle_id, bundle_version as i64, display_name, crate::now(), crate::now()],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO agent_bundle_active(bundle_id, bundle_digest, interval_ms, updated_at) \
+                 VALUES (?1,?2,?3,?4)",
+                rusqlite::params![bundle_id, digest, interval_ms, crate::now()],
+            )?;
+            super::audit::record(tx, "agent_bundle.registered", audit::Actor::system(), "agent_bundle", digest)?;
+            Ok(())
+        })
+    }
+
+    fn last_run_ms(conn: &Connection, bundle_id: &str) -> CoreResult<Option<i64>> {
+        let v: Option<String> = conn
+            .query_row(
+                "SELECT due_at FROM flow_runs WHERE bundle_id = ?1 ORDER BY due_at DESC LIMIT 1",
+                [bundle_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.and_then(|s| s.parse::<i64>().ok()))
+    }
+
+    /// Detect due bundles and enqueue. Returns `(due_found, enqueued, refused)`.
+    /// Performs no action, reaches no network, holds no credential, calls no model.
+    pub fn enqueue_due(
+        conn: &Connection,
+        now_ms: i64,
+        store_root: &Path,
+    ) -> CoreResult<(u32, u32, u32)> {
+        let mut rows: Vec<(String, String, i64)> = Vec::new();
+        {
+            let mut st = conn.prepare(
+                "SELECT bundle_id, bundle_digest, interval_ms FROM agent_bundle_active",
+            )?;
+            let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            for row in it {
+                rows.push(row?);
+            }
+        }
+        let (mut due_found, mut enqueued, mut refused) = (0u32, 0u32, 0u32);
+        for (bundle_id, digest, interval_ms) in rows {
+            let due = match last_run_ms(conn, &bundle_id)? {
+                Some(t) => now_ms.saturating_sub(t) >= interval_ms,
+                None => true,
+            };
+            if !due {
+                continue;
+            }
+            due_found += 1;
+            // Re-verify before enqueuing: the bytes may have changed since the
+            // build, and a mismatch is a refusal with a reason, never a skip.
+            let outcome = agent_bundle::verify(&store_root.join(&digest), now_ms / 1000);
+            let (state, reason) = match &outcome {
+                Ok(_) => ("queued", None),
+                Err(r) => ("refused", Some(r.as_str())),
+            };
+            let id = format!("fr-{}-{}", &digest[..12], now_ms);
+            super::atomic(conn, |tx| {
+                tx.execute(
+                    "INSERT OR IGNORE INTO flow_runs(id, bundle_id, bundle_digest, trigger_kind, \
+                     invoked_by, due_at, state, refusal_reason, created_at) \
+                     VALUES (?1,?2,?3,'interval','run_due',?4,?5,?6,?7)",
+                    rusqlite::params![id, bundle_id, digest, now_ms.to_string(), state, reason, crate::now()],
+                )?;
+                super::audit::record(tx, "flow_run.enqueued", audit::Actor::scheduler(), "flow_run", &id)?;
+                Ok(())
+            })?;
+            if state == "queued" { enqueued += 1 } else { refused += 1 }
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO scheduler_ticks(at, due_found, enqueued, refused, error) \
+             VALUES (?1,?2,?3,?4,NULL)",
+            rusqlite::params![now_ms.to_string(), due_found, enqueued, refused],
+        )?;
+        Ok((due_found, enqueued, refused))
+    }
+
+    /// The one-time claim, on its own so it can be tested on its own.
+    ///
+    /// It was folded into `claim_and_run` at first, and a mutation sweep showed
+    /// why that hid it: by the time a second `claim_and_run` ran, the first had
+    /// finished and the row was no longer `queued`, so the test passed on the
+    /// empty SELECT and never reached this guard. Deleting the guard left every
+    /// test green. It is a separate function now, and the test below races two
+    /// claims at one still-queued row.
+    ///
+    /// `true` means this caller owns the run. `false` means somebody else does,
+    /// and the caller must dispatch nothing -- the UPDATE writes 0 rows because
+    /// of `state='queued' AND claim_attempt_id IS NULL`, the shape migration 0013
+    /// established for run steps.
+    pub fn try_claim(
+        conn: &Connection,
+        run_id: &str,
+        session_id: &str,
+        now_ms: i64,
+    ) -> CoreResult<bool> {
+        let attempt = format!("att-{}-{}", session_id, now_ms);
+        let claimed = conn.execute(
+            "UPDATE flow_runs SET state='running', claim_attempt_id=?1, claim_session_id=?2, \
+             claim_started_at=?3 WHERE id=?4 AND state='queued' AND claim_attempt_id IS NULL",
+            rusqlite::params![attempt, session_id, crate::now(), run_id],
+        )?;
+        Ok(claimed == 1)
+    }
+
+    /// Claim exactly one queued run and execute its flow. The claim is the
+    /// one-time shape migration 0013 established: an `UPDATE ... WHERE state =
+    /// 'queued' AND claim_attempt_id IS NULL`, so a second concurrent claim
+    /// writes 0 rows and is refused before any dispatch.
+    pub fn claim_and_run(
+        conn: &Connection,
+        store_root: &Path,
+        session_id: &str,
+        now_ms: i64,
+    ) -> CoreResult<Option<String>> {
+        let next: Option<(String, String)> = conn
+            .query_row(
+                "SELECT id, bundle_digest FROM flow_runs WHERE state = 'queued' \
+                 AND claim_attempt_id IS NULL ORDER BY due_at LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let (run_id, digest) = match next {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        if !try_claim(conn, &run_id, session_id, now_ms)? {
+            return Ok(None); // another claimer won; refused before dispatch
+        }
+
+        let bundle = match agent_bundle::verify(&store_root.join(&digest), now_ms / 1000) {
+            Ok(b) => b,
+            Err(r) => {
+                finish(conn, &run_id, &digest, "refused", Some(r.as_str()), 0, &[])?;
+                return Ok(Some(run_id));
+            }
+        };
+
+        // Execute. Only `store` steps run at this head: a `model` step is a
+        // governed turn and a `call` step needs the §3 enforcement point, and
+        // both are refused rather than approximated.
+        let mut touched: Vec<String> = Vec::new();
+        let mut steps_run = 0u32;
+        for step in &bundle.flow.steps {
+            match step.kind {
+                StepKind::Branch => { steps_run += 1; }
+                StepKind::Store => {
+                    let note = format!(
+                        "{} · step {} · {}",
+                        bundle.manifest.display_name,
+                        step.id,
+                        step.argument.clone().unwrap_or_default()
+                    );
+                    // `source` names the run, not a person: a reader of
+                    // knowledge_notes can tell a produced-agent write from a
+                    // human one without reading this file.
+                    let id = super::knowledge::create(
+                        conn,
+                        crate::domain::NewKnowledgeNote {
+                            title: note,
+                            body: format!(
+                                "Written by flow run {run_id} from bundle {digest}, step {}.",
+                                step.id
+                            ),
+                            source: format!("flow_run:{run_id}"),
+                            tags: "produced-agent".into(),
+                        },
+                        audit::Actor::run_executor(),
+                    )?;
+                    touched.push(format!("knowledge_notes/{}", id.id));
+                    steps_run += 1;
+                }
+                _ => {
+                    finish(conn, &run_id, &digest, "refused",
+                           Some(Refusal::StepKindNotExecutable.as_str()), steps_run, &touched)?;
+                    return Ok(Some(run_id));
+                }
+            }
+        }
+        finish(conn, &run_id, &digest, "done", None, steps_run, &touched)?;
+        Ok(Some(run_id))
+    }
+
+    fn finish(
+        conn: &Connection,
+        run_id: &str,
+        digest: &str,
+        outcome: &str,
+        reason: Option<&str>,
+        steps_run: u32,
+        touched: &[String],
+    ) -> CoreResult<()> {
+        let touched_json = serde_json::to_string(touched).unwrap_or_else(|_| "[]".into());
+        let regime = enforcement_regime();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "UPDATE flow_runs SET state=?1, refusal_reason=?2 WHERE id=?3",
+                rusqlite::params![outcome, reason, run_id],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO flow_receipts(run_id, bundle_digest, enforcement_regime, \
+                 steps_run, touched, outcome, written_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                rusqlite::params![run_id, digest, regime, steps_run, touched_json, outcome, crate::now()],
+            )?;
+            super::audit::record(tx, "flow_run.finished", audit::Actor::run_executor(), "flow_run", run_id)?;
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::agent_bundle::{BuildSpec, Requires, Step, StepKind};
+
+        fn spec(now_s: i64) -> BuildSpec {
+            BuildSpec {
+                bundle_id: "agt-t".into(), bundle_version: 1,
+                display_name: "T".into(), built_for: "c".into(),
+                built_at_epoch: now_s, grant_expires_at_epoch: now_s + 3600,
+                steps: vec![
+                    Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
+                           argument: Some("one".into()),
+                           requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
+                           next: Some("b".into()) },
+                    Step { id: "b".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
+                           argument: Some("two".into()),
+                           requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
+                           next: None },
+                ],
+            }
+        }
+
+        fn fixture() -> (Connection, tempfile::TempDir, String) {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let now_ms = 1_000_000_000i64;
+            let digest = agent_bundle::build(dir.path(), &spec(now_ms / 1000)).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            (conn, dir, digest)
+        }
+
+        fn state_of(conn: &Connection, id: &str) -> (String, Option<String>) {
+            conn.query_row("SELECT state, refusal_reason FROM flow_runs WHERE id=?1", [id],
+                           |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+        }
+
+        /// The tick enqueues, and the row says the scheduler's entry point did it.
+        #[test]
+        fn run_due_enqueues_and_names_itself_as_the_invoker() {
+            let (conn, dir, _d) = fixture();
+            let (found, enq, ref_) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((found, enq, ref_), (1, 1, 0));
+            let by: String = conn.query_row("SELECT invoked_by FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(by, "run_due");
+        }
+
+        /// A tick that found nothing still writes a row: "nothing was due" and
+        /// "the tick did not run" must not look the same. This is the whole
+        /// reason `scheduler_ticks` exists -- `lib.rs` discarded the result.
+        #[test]
+        fn a_tick_that_found_nothing_still_leaves_a_row() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            enqueue_due(&conn, 42, dir.path()).unwrap();
+            let n: i64 = conn.query_row("SELECT count(*) FROM scheduler_ticks", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1);
+        }
+
+        /// A tampered bundle is REFUSED with a reason, never skipped. A skipped
+        /// fire leaves no row, and "nothing happened" is exactly what the log
+        /// must not say when something was tampered with.
+        #[test]
+        fn a_tampered_bundle_is_refused_with_a_reason_not_skipped() {
+            let (conn, dir, digest) = fixture();
+            let flow = dir.path().join(&digest).join("flow.json");
+            let mut b = std::fs::read(&flow).unwrap();
+            b[0] = b' ';
+            std::fs::write(&flow, &b).unwrap();
+            let (found, enq, refused) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((found, enq, refused), (1, 0, 1));
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!(state, "refused");
+            assert_eq!(reason.as_deref(), Some("file_hash_mismatch"));
+        }
+
+        /// The claim is one-time: a second claimer writes 0 rows and is refused
+        /// before any dispatch. Reused from migration 0013 rather than invented.
+        ///
+        /// This races two claims at ONE STILL-QUEUED row on purpose. The earlier
+        /// version called `claim_and_run` twice, which passed for the wrong
+        /// reason -- the first call finished the run, so the second found no
+        /// queued row and never reached the guard at all. Deleting the guard
+        /// left it green.
+        #[test]
+        fn a_second_claim_of_the_same_queued_run_gets_nothing() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0))
+                .unwrap();
+            assert!(try_claim(&conn, &id, "s1", 1_000_000_000).unwrap(), "the first claim owns it");
+            assert!(!try_claim(&conn, &id, "s2", 1_000_000_001).unwrap(),
+                    "a second claim on a claimed run must write 0 rows");
+            let owner: String = conn
+                .query_row("SELECT claim_session_id FROM flow_runs WHERE id=?1", [&id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(owner, "s1", "the loser must not overwrite the winner's claim");
+        }
+
+        /// And a claimed run is not dispatched by the loser either.
+        #[test]
+        fn claim_and_run_declines_a_run_somebody_else_claimed() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0))
+                .unwrap();
+            assert!(try_claim(&conn, &id, "other", 1_000_000_000).unwrap());
+            assert!(claim_and_run(&conn, dir.path(), "s2", 1_000_000_001).unwrap().is_none());
+        }
+
+        /// The run does real, local work and the receipt says what it touched
+        /// and under which regime.
+        #[test]
+        fn a_finished_run_leaves_a_receipt_naming_the_regime_and_what_it_touched() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            assert_eq!(state_of(&conn, &id).0, "done");
+            let (regime, steps, touched): (String, i64, String) = conn
+                .query_row("SELECT enforcement_regime, steps_run, touched FROM flow_receipts WHERE run_id=?1",
+                           [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert!(!regime.is_empty());
+            assert_eq!(steps, 2);
+            let touched: Vec<String> = serde_json::from_str(&touched).unwrap();
+            assert_eq!(touched.len(), 2, "both store steps must be recorded");
+            // The write names the run, not a person: a reader of knowledge_notes
+            // can tell a produced-agent write from a human one.
+            let src: String = conn.query_row("SELECT source FROM knowledge_notes LIMIT 1", [], |r| r.get(0)).unwrap();
+            assert_eq!(src, format!("flow_run:{id}"));
+        }
+
+        /// A step kind this head cannot execute is refused, not approximated.
+        #[test]
+        fn a_model_step_is_refused_because_a_governed_turn_is_not_available() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut s = spec(1_000_000);
+            s.steps[1].kind = StepKind::Model;
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T", 60_000).unwrap();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            assert_eq!(state_of(&conn, &id), ("refused".into(), Some("step_kind_not_executable".into())));
+        }
     }
 }
 

@@ -42,6 +42,10 @@ import sys
 CONTRACTS = pathlib.Path("contracts")
 INDEX = CONTRACTS / "index.json"
 ENGINE_SCHEMAS = pathlib.Path("engine") / "schemas"
+#: The desktop half's equivalent (T-055). Symmetric with ENGINE_SCHEMAS and held to
+#: the same rule: a schema here must be classified by a person, and an id the index
+#: names with no file behind it is refused.
+DESKTOP_SCHEMAS = pathlib.Path("apps") / "desktop" / "src-tauri" / "core" / "schema"
 ENGINE_REGISTRY = ENGINE_SCHEMAS / "registry.json"
 
 #: Trees that legitimately hold their own `*.schema.json` and are not part of this milestone:
@@ -51,6 +55,15 @@ _ALLOWED_SCHEMA_DIRS = (
     "engine/schemas",
     "engine/contracts",
     "bridge/contracts",
+    # The desktop half's own schemas, added by T-055 and symmetric with
+    # `engine/schemas`. It is NOT `contracts/`: every entry in the index there
+    # carries `crosses`, and a schema written and read by `brops-core` alone
+    # does not cross halves -- putting it there would assert a binding that does
+    # not exist, which is the failure this gate is for, arriving from the other
+    # side. The split stays exhaustive rather than assumed because
+    # `contracts/index.json` lists these ids under `desktop_internal`, the way
+    # `engine_internal` already lists the engine's fifteen.
+    "apps/desktop/src-tauri/core/schema",
 )
 #: Never walked: build output and dependency trees carry thousands of unrelated schema files,
 #: and `worktrees` carries a whole second copy of this repository.
@@ -179,6 +192,35 @@ def check(root: pathlib.Path) -> list[str]:
                 f"{', '.join(sorted(phantom))}"
             )
 
+    # The same rule for the desktop half. Without this the `desktop_internal` block
+    # in the index would be prose: a registry entry nothing reads is the defect
+    # T-056 exists to catch, and adding one while writing this gate would be a poor
+    # joke. Deleting either arm below turns a test red.
+    desktop_internal = set(doc.get("desktop_internal", {}).get("ids", []))
+    both = desktop_internal & (declared_cross | internal)
+    if both:
+        problems.append(
+            f"classified twice: {', '.join(sorted(both))} is desktop-internal and also "
+            f"cross-half or engine-internal"
+        )
+    desktop_dir = root / DESKTOP_SCHEMAS
+    if desktop_dir.is_dir():
+        on_disk = {p.name[: -len(".schema.json")] for p in desktop_dir.glob("*.schema.json")}
+        unclassified = on_disk - desktop_internal
+        if unclassified:
+            problems.append(
+                f"{len(unclassified)} schema(s) in {DESKTOP_SCHEMAS} are not listed under "
+                f"`desktop_internal` in {INDEX} — {', '.join(sorted(unclassified))}. A schema "
+                f"nobody classified is a schema nobody is holding to anything, which is the "
+                f"same failure as a stray"
+            )
+        phantom = desktop_internal - on_disk
+        if phantom:
+            problems.append(
+                f"the index names desktop schema(s) that {DESKTOP_SCHEMAS} does not have: "
+                f"{', '.join(sorted(phantom))}"
+            )
+
     for stray in stray_schema_files(root):
         problems.append(
             f"stray schema {stray} lives outside every declared home "
@@ -212,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         f"GREEN: {len(doc['contracts'])} cross-half contract(s) sourced from {CONTRACTS.as_posix()}/ "
         f"and byte-identical in {ENGINE_SCHEMAS.as_posix()}/ ({ids}); "
         f"{len(doc.get('engine_internal', {}).get('ids', []))} engine-internal schemas classified; "
+        f"{len(doc.get('desktop_internal', {}).get('ids', []))} desktop-internal; "
         f"no stray copies."
     )
     return 0

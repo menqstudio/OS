@@ -459,6 +459,10 @@
         "test_containment_missing_when_the_report_cannot_be_read",
         "test_containment_missing_when_the_report_is_empty"
       ]
+    },
+    "§3.3": {
+      "status": "not_implemented",
+      "reason": "The egress enforcement point of docs/design/PRODUCTION_HALF_DESIGN.md §3.3. NOT IMPLEMENTED: no code in this tree enforces a network destination against a grant. Measured -- `USE_NETWORK` is declared in engine/tools/registry.json and assigned to WebSearch/WebFetch with requires_task, requires_scope and requires_work_grant all false, and bro_execution_lease.py fixes CLASS_CAPABILITIES to {EXECUTE_CODE, WRITE_FILESYSTEM, WRITE_REPOSITORY}, so no lease can carry the class at all. T-055 therefore REFUSES a `call` step (agent_bundle::Refusal::StepKindNotExecutable) rather than approximating it: a grant that states an authority nothing can enforce is the defect commands.rs already names."
     }
   }
 }

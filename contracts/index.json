@@ -77,14 +77,34 @@
   "engine_internal": {
     "//": "The other 15 schemas in engine/schemas/ are consumed by the engine alone. Moving them buys churn, not a binding -- CONTRACTS_DEDUPE_PLAN.md M2. Listed so the gate can assert the split is exhaustive rather than assumed.",
     "ids": [
-      "agent-profile", "agent-status", "agent-ui", "completion-manifest", "control-room-command",
-      "dashboard-manifest", "law-record", "meta-layer", "metric-contract", "orchestration-event",
-      "recovery-record", "release-grant", "runtime-dependency", "skill-evolution-proposal",
+      "agent-profile",
+      "agent-status",
+      "agent-ui",
+      "completion-manifest",
+      "control-room-command",
+      "dashboard-manifest",
+      "law-record",
+      "meta-layer",
+      "metric-contract",
+      "orchestration-event",
+      "recovery-record",
+      "release-grant",
+      "runtime-dependency",
+      "skill-evolution-proposal",
       "skill-receipt"
+    ]
+  },
+  "desktop_internal": {
+    "//": "Schemas consumed by the desktop half alone, living beside the code that owns them at apps/desktop/src-tauri/core/schema/. They are NOT contracts: nothing in engine/ reads them, so every entry above carries `crosses` and these carry none. Listed so tools/check_contracts_single_source.py can assert the split is exhaustive rather than assumed -- the same reason engine_internal exists.",
+    "ids": [
+      "agent-bundle-manifest"
     ]
   },
   "wire_protocols_that_stay_put": {
     "//": "M3 of the plan, recorded as a decision so a later reader does not fold them in: these are protocols between two NAMED processes, not shared domain objects, and they are correctly filed next to the process that serves them.",
-    "paths": ["bridge/contracts/", "engine/contracts/"]
+    "paths": [
+      "bridge/contracts/",
+      "engine/contracts/"
+    ]
   }
 }

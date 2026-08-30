@@ -141,17 +141,43 @@ class ProducedArtifactGateTest(unittest.TestCase):
         self.assertEqual(rc, 0, err.getvalue())
         self.assertIn("GREEN:", out.getvalue())
 
-    def test_the_real_repository_is_red_and_says_why_in_five_lines(self):
+    def test_the_real_repository_answers_from_its_store_not_from_this_test(self):
+        """The real tree, both ways -- and this test does not care which.
+
+        It asserted a flat `rc == 1` until `T-055`, when the production half
+        started existing and the assertion became false. Replacing it with a flat
+        `rc == 0` would have been the same mistake in the other direction, and a
+        worse one: the store lives under `target/` and is PRODUCED, so whether it
+        is there depends on whether the producer has run on this machine. A test
+        whose verdict depends on the machine is what `T-045` spent a day
+        removing.
+
+        So this asserts the only thing that is true either way: the verdict
+        follows the store. Absent store -> RED naming condition 1. Present store
+        -> GREEN with all five. Reproduce the second locally with the
+        `producer_command` recorded in the contract.
+        """
         repo = pathlib.Path(__file__).resolve().parents[1]
+        contract = json.loads((repo / "config" / "produced-artifact-contract.json").read_text())
+        store = repo / (contract["store_root"] or "")
+        produced = contract["store_root"] and store.is_dir() and any(store.iterdir())
+
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             rc = gate.main(["--root", str(repo)])
-        self.assertEqual(rc, 1, "the production half does not exist; this gate must be RED")
-        text = err.getvalue()
-        self.assertIn("RED BY DESIGN", text)
-        self.assertIn("When does a customer see something?", text)
-        for n in range(1, 6):
-            self.assertIn(f"  {n}. MISSING", text)
+
+        if produced:
+            self.assertEqual(rc, 0, err.getvalue())
+            text = out.getvalue()
+            self.assertIn("GREEN:", text)
+            for n in range(1, 6):
+                self.assertIn(f"({n})", text)
+        else:
+            self.assertEqual(rc, 1, out.getvalue())
+            text = err.getvalue()
+            self.assertIn("When does a customer see something?", text)
+            self.assertIn("  1. MISSING", text)
+            self.assertIn(contract["producer_command"] or "", text)
 
     # ------------------------------------------------------------- condition 1
 
