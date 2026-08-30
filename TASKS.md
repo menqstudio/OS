@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **✅ SETTLED — `main` is at `40be210`.** The pull request that records it is PR #183 on `settle-after-182`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
+> **Next:** Nothing is open but this settle. Claim a row in TASKS.md; T-046 merged as PR #182 and its row stays open on evidence, not code. The next independent audit round is what would move the position.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -21,8 +21,8 @@ confirmed it. Never promote your own work.
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-045** | **The canon has to stay readable, and the handoff has to be checkable.** Merged as PR #180 — ceilings on every canonical file, `check_handoff_ready.py`, `check_doc_claims.py`, `check_state_fields.py`, and the PreToolUse refusal that accepts only a shrinking edit to an over-budget file. Five of its own gates were RED in CI and are fixed; the write-up is in PR #180. ◑ Builder's claim, unaudited | 🔨 Claude | Done | merged `#180` |
-| **T-046** | **The audit ledger's concurrency test let the runner decide the verdict.** `test_concurrent_thread_appends_keep_one_valid_chain` raced 24 threads for one `O_EXCL` lock against the PRODUCTION 10 s bound. That bound answers *has the holder wedged*, not *how long may 24 racers take*; the wait grows like `n·H(n)` poll cycles, so a slow Windows runner turned `main` red on a tree byte-identical to one that had just passed. Bound raised in the TEST only — the engine constant is untouched. **Stays open until several pull requests run the Windows engine job clean:** one green run does not prove an intermittent fixed, which is `T-023`'s lesson | 🔨 Claude | Review | `fix/audit-lock-flake` |
+| **T-047** | **The tool that stamps `AUDIT_CANDIDATE_HEAD` could not write a pull-request body here.** `tools/stamp_pr_head.py` wrote through `gh pr edit`, which resolves the PR over GraphQL and asks for `repository.pullRequest.projectCards` — sunset with Projects (classic). On gh 2.46.0, what Debian ships, it dies before writing; the marker stays stale and `check_repo_state.py` reds the next push for an unrelated reason. REST now, and it reads the body back — a read-back that then called a correct write RED, because GitHub returns CRLF. 11 tests, mutation-checked | 🔨 Claude | Done | `#183` |
+| **T-046** | **The audit ledger's concurrency test let the runner decide the verdict.** `test_concurrent_thread_appends_keep_one_valid_chain` raced 24 threads for one `O_EXCL` lock against the PRODUCTION 10 s bound, which answers *has the holder wedged*, not *how long may 24 racers take* — so a slow Windows runner turned `main` red on a tree byte-identical to one that had just passed. Bound raised in the TEST only; the engine constant is untouched. Merged as PR #182, and the row is open on the evidence, not the code: **it stays open until several pull requests run the Windows engine job clean**, which is `T-023`'s lesson | — | Todo | merged `#182` |
 | **T-004** | **Engine deferred security items O-1..O-5** (roadmap Phase 10). All five OPEN; none needs an Owner-minted artifact. What blocks them is deployment wiring and a second principal. O-1 is the only HIGH and the Owner chose the fix over accepting the risk — closure is the VERIFICATION on a packaged build, not the assertion that the install directory is unwritable. Inventory: `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule plus a targeted fix to the worktree check** (`git rev-parse --show-toplevel` instead of parsing `git worktree list`). Touches security-adjacent code, so it needs its own branch, its own PR and Owner approval; it must not land inside a coordination merge. Until then 10 monorepo-coupled engine tests skip-guard themselves | — | Todo | — |
 | **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half end to end; the request half exists on neither side. Sequenced behind the standing audit: a new input to the engine's trust boundary is not added while the independent verdict is RED | — | Blocked | — |
@@ -38,12 +38,12 @@ gate is shut and only the Owner opens it, after an independent audit —
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record and
 as of 2026-08-29 nothing there needs the Owner.
 
-The next independent audit round is what would change the position: 17 pull requests, 66
-files and 6496 inserted lines have merged since the ninth round's head and none of it is
+The next independent audit round is what would change the position: 20 pull requests, 107
+files and 19688 inserted lines have merged since the ninth round's head and none of it is
 independently confirmed.
 
 ## Status tokens
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-045` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-046` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

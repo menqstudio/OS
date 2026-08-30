@@ -6,29 +6,31 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `fix/audit-lock-flake` · **head** `7cdeb09` · **task** `T-046` · **PR #182**
+**Active branch:** `settle-after-182` · **head** `fb6e414` · **task** `T-046` · **PR #183** (the settle commit)
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #182 · branch `fix/audit-lock-flake`** (base `main`, tip `7eb6bf0`, task T-046). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **✅ SETTLED — `main` is at `40be210`.** The pull request that records it is PR #183 on `settle-after-182`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The audit ledger's concurrency test raced 24 threads against the PRODUCTION 10 s lock bound, so a slow Windows runner turned main red on a tree that had just passed. The bound is raised in the test only; the engine constant is untouched.
+> **Next:** Nothing is open but this settle. Claim a row in TASKS.md; T-046 merged as PR #182 and its row stays open on evidence, not code. The next independent audit round is what would move the position.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** merge PR #182 once `gh pr checks 182` is green on the exact head — **and then read
-`main`'s own CI**, not only the PR's. `T-045` (PR #180) and the settle (PR #181) are merged;
-`main` went red after both, the first time from a baseline `test_roadmap_split` could no longer
-reach after a squash merge, the second from an intermittent this PR closes.
+**Next:** nothing is open but this settle. Merge it, then claim a row in
+[`TASKS.md`](TASKS.md) before touching anything. `T-046` merged as PR #182 and `main` is at
+`40be210`, where all seven workflows are green — read from `gh run list --branch main`, not
+from the pull request.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
-red `main`s this session were reported as green because the PR's checks were read and the branch's
-were not. Three more things have to be true at every push: the PR body carries exactly one
-`AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the
-live `main`, and the head named above moves **in its own commit** — an amend changes the hash and
-the handoff then names a commit that no longer exists.
+red `main`s of the previous session were reported as green because the PR's checks were read and
+the branch's were not. Three more things have to be true at every push: the PR body carries
+exactly one `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head,
+`config/current_state.json` names the live `main`, and the head named above moves **in its own
+commit** — an amend changes the hash and the handoff then names a commit that no longer exists.
 
-`T-046` stays open after this merges. One green run does not prove an intermittent fixed; the
-Windows engine job has to come back clean across several pull requests, which is `T-023`'s lesson.
+`T-046`'s row stays open although it merged. One green run does not prove an intermittent fixed;
+the Windows engine job has to come back clean across several pull requests — `T-023`'s lesson.
+Stamp with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`, because `gh pr edit` dies
+here before writing.
 
 ## Verify before you believe any of this
 
@@ -65,7 +67,7 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds have run; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**17 pull requests, 66 files and 6496 inserted lines have merged since that head**, and
+**20 pull requests, 107 files and 19688 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑.
 
 **Nothing is waiting on the Owner.**
@@ -119,4 +121,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-045` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-046` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

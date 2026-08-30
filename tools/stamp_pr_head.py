@@ -16,6 +16,17 @@ the gate asks is what GitHub has, not what you have. If those differ you have un
 says so instead of stamping a commit nobody else can see.
 
 Requires `gh` on PATH and authenticated. Network, by nature.
+
+The body is written through the REST endpoint, not `gh pr edit`. On gh 2.46.0 -- the version
+Debian ships and the one this repository is driven from -- `gh pr edit` resolves the PR through
+GraphQL and asks for `repository.pullRequest.projectCards`, which GitHub sunset with Projects
+(classic). The call dies before it writes anything:
+
+    GraphQL: Projects (classic) is being deprecated ... (repository.pullRequest.projectCards)
+
+so the marker silently stayed at whatever it was and `check_repo_state.py` went red on the next
+push for a reason that had nothing to do with the push. `gh api -X PATCH repos/OWNER/REPO/pulls/N`
+touches no GraphQL at all, and this reads the body back afterwards rather than trusting the write.
 """
 from __future__ import annotations
 
@@ -33,6 +44,43 @@ def run(*args: str) -> str:
     if out.returncode != 0:
         raise SystemExit(f"RED: {' '.join(args)} failed:\n{out.stderr.strip()}")
     return out.stdout
+
+
+def restamp(body: str, sha: str) -> str:
+    """The body with EXACTLY one marker, naming `sha`.
+
+    Every existing marker goes first. Appending without stripping is how a body ends up with two,
+    and `check_repo_state.py` requires exactly one -- two markers is the same red as none.
+    """
+    return f"{MARKER.sub('', body).rstrip()}\n\nAUDIT_CANDIDATE_HEAD: {sha}\n"
+
+
+def markers(text: str) -> list[str]:
+    """Every marker in `text`, normalised.
+
+    GitHub returns a PR body with CRLF line endings whatever you wrote, so a raw comparison of
+    `MARKER.findall(sent)` against `MARKER.findall(read_back)` differs by a trailing \r on every
+    match and reports a mismatch that is not one. This was a false RED on PR #183 seconds after
+    the read-back was added — the write had in fact landed correctly.
+    """
+    return [m.strip() for m in MARKER.findall(text.replace("\r\n", "\n"))]
+
+
+def patch_command(repo: str, pr: int) -> list[str]:
+    """The argv that writes a PR body. REST, never `gh pr edit` -- see the module docstring."""
+    return ["gh", "api", "-X", "PATCH", f"repos/{repo}/pulls/{pr}", "--input", "-"]
+
+
+def write_body(repo: str, pr: int, body: str) -> None:
+    """Write the body, then read it back. A write nobody verified is a claim, not a fact."""
+    out = subprocess.run(patch_command(repo, pr), input=json.dumps({"body": body}),
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"RED: writing the body of PR #{pr} failed:\n{out.stderr.strip()}")
+    live = run("gh", "api", f"repos/{repo}/pulls/{pr}", "--jq", ".body")
+    if markers(live) != markers(body):
+        raise SystemExit(f"RED: PR #{pr} was written but reads back with a different marker; "
+                         "check the pull request by hand before pushing again.")
 
 
 def main() -> int:
@@ -56,14 +104,12 @@ def main() -> int:
         raise SystemExit(f"RED: local HEAD {local[:8]} is not what origin has ({pushed[:8]}). "
                          "Push first — the marker must name a commit that exists on GitHub.")
 
-    body = MARKER.sub("", meta["body"]).rstrip()
-    new = f"{body}\n\nAUDIT_CANDIDATE_HEAD: {pushed}\n"
+    new = restamp(meta["body"], pushed)
     if new == meta["body"]:
         print(f"already stamped at {pushed[:8]}")
         return 0
 
-    subprocess.run(["gh", "pr", "edit", str(args.pr), "-R", args.repo, "--body", new],
-                   check=True, capture_output=True, text=True)
+    write_body(args.repo, args.pr, new)
     print(f"PR #{args.pr} ({branch}) stamped at {pushed}")
     print("Now verify against live GitHub:  python tools/check_repo_state.py")
     return 0
