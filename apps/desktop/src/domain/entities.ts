@@ -87,6 +87,11 @@ export interface Decision {
 export interface ActivityEvent {
   id: string;
   eventType: string;
+  /** 'user' | 'agent' | 'system' — see repo::audit::ACTOR_TYPES (L-4a). Added in
+   * T-052: the column was written by every audited repo write and then dropped
+   * here, so no surface could tell a human-originated event from an agent- or
+   * scheduler-originated one. */
+  actorType: string | null;
   actorId: string | null;
   entityType: string | null;
   entityId: string | null;

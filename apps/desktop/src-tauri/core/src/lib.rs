@@ -72,6 +72,35 @@ mod tests {
         db::open_in_memory().expect("open in-memory")
     }
 
+    /// Mint and natively confirm a grant for one T-052-gated act, then return.
+    ///
+    /// It goes through `approvals::create` + `approve_confirmed` -- the same two calls
+    /// `commands::confirm_approval` makes -- so a test that uses it proves the gated
+    /// write works WITH a grant. Nothing here reaches around the gate; there is no
+    /// bypass to reach around it with, which is the point.
+    fn grant(c: &rusqlite::Connection, entity_type: &str, entity_id: &str, action_type: &str) {
+        let ap = repo::approvals::create(
+            c, action_type, "test target", "A2", "medium",
+            Some(entity_type), Some(entity_id), "webview:test", "sess-test", &crate::id(),
+            crate::repo::audit::Actor::local_operator(),
+        )
+        .unwrap();
+        repo::approvals::approve_confirmed(
+            c, &ap.id, repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+            crate::repo::audit::Actor::native_confirmer("native:test"),
+        )
+        .unwrap();
+    }
+
+    /// Arm an automation the only way the product allows: with a confirmed grant.
+    fn arm(c: &rusqlite::Connection, id: &str) {
+        grant(c, repo::approvals::AUTOMATION_ENTITY_TYPE, id,
+              repo::approvals::AUTOMATION_ENABLED_ACTION_TYPE);
+        repo::automations::set_enabled(c, id, true, crate::repo::audit::Actor::local_operator())
+            .unwrap();
+    }
+
     #[test]
     fn migrate_is_idempotent() {
         let c = conn();
@@ -86,19 +115,19 @@ mod tests {
         let p = repo::projects::create(
             &c,
             NewProject { name: "Foundation".into(), description: "".into(), priority: "high".into(), workspace_id: None },
-        )
+         crate::repo::audit::Actor::local_operator(),)
         .unwrap();
         assert_eq!(p.status, "planned");
 
         let t = repo::tasks::create(
             &c,
             NewTask { project_id: Some(p.id.clone()), title: "Build shell".into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None },
-        )
+         crate::repo::audit::Actor::local_operator(),)
         .unwrap();
         assert_eq!(t.status, "inbox");
         assert_eq!(repo::tasks::list_by_project(&c, &p.id).unwrap().len(), 1);
 
-        let done = repo::tasks::set_status(&c, &t.id, "done").unwrap();
+        let done = repo::tasks::set_status(&c, &t.id, "done", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(done.status, "done");
         assert!(done.completed_at.is_some());
         assert_eq!(repo::tasks::list_by_status(&c, "done").unwrap().len(), 1);
@@ -110,17 +139,17 @@ mod tests {
         let p = repo::projects::create(
             &c,
             NewProject { name: "P".into(), description: "".into(), priority: "low".into(), workspace_id: None },
-        ).unwrap();
+         crate::repo::audit::Actor::local_operator(),).unwrap();
         let t = repo::tasks::create(
             &c,
             NewTask { project_id: Some(p.id.clone()), title: "orig".into(), description: "".into(), priority: "low".into(), assigned_agent_id: None },
-        ).unwrap();
-        let up = repo::tasks::update(&c, &t.id, "new title", "a desc", "high").unwrap();
+         crate::repo::audit::Actor::local_operator(),).unwrap();
+        let up = repo::tasks::update(&c, &t.id, "new title", "a desc", "high", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(up.title, "new title");
         assert_eq!(up.description, "a desc");
         assert_eq!(up.priority, "high");
         assert!(matches!(
-            repo::tasks::update(&c, &t.id, "x", "y", "bogus"),
+            repo::tasks::update(&c, &t.id, "x", "y", "bogus", crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "priority", .. })
         ));
         assert_eq!(repo::tasks::list_all(&c).unwrap().len(), 1);
@@ -132,42 +161,42 @@ mod tests {
         let mk = |title: &str| repo::tasks::create(
             &c,
             NewTask { project_id: None, title: title.into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None },
-        ).unwrap();
+         crate::repo::audit::Actor::local_operator(),).unwrap();
         let a = mk("A");
         let b = mk("B");
 
         // A depends on B
-        repo::task_deps::add(&c, &a.id, &b.id).unwrap();
+        repo::task_deps::add(&c, &a.id, &b.id, crate::repo::audit::Actor::local_operator()).unwrap();
         let deps = repo::task_deps::list_for(&c, &a.id).unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id, b.id);
 
         // idempotent
-        repo::task_deps::add(&c, &a.id, &b.id).unwrap();
+        repo::task_deps::add(&c, &a.id, &b.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::task_deps::list_for(&c, &a.id).unwrap().len(), 1);
 
         // self-edge refused
         assert!(matches!(
-            repo::task_deps::add(&c, &a.id, &a.id),
+            repo::task_deps::add(&c, &a.id, &a.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "depends_on_id", .. })
         ));
         // direct cycle refused (B already depends on A? no — A depends on B, so B→A is a cycle)
         assert!(matches!(
-            repo::task_deps::add(&c, &b.id, &a.id),
+            repo::task_deps::add(&c, &b.id, &a.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "depends_on_id", .. })
         ));
 
         // transitive cycle refused: A→B, B→C already; C→A must be rejected
         let cc = mk("C");
-        repo::task_deps::add(&c, &b.id, &cc.id).unwrap(); // B depends on C
+        repo::task_deps::add(&c, &b.id, &cc.id, crate::repo::audit::Actor::local_operator()).unwrap(); // B depends on C
         assert!(matches!(
-            repo::task_deps::add(&c, &cc.id, &a.id), // C→A would close A→B→C→A
+            repo::task_deps::add(&c, &cc.id, &a.id, crate::repo::audit::Actor::local_operator()), // C→A would close A→B→C→A
             Err(CoreError::Invalid { field: "depends_on_id", .. })
         ));
-        repo::task_deps::remove(&c, &b.id, &cc.id).unwrap();
+        repo::task_deps::remove(&c, &b.id, &cc.id, crate::repo::audit::Actor::local_operator()).unwrap();
 
         // removing the edge, then deleting a task cascades
-        repo::task_deps::remove(&c, &a.id, &b.id).unwrap();
+        repo::task_deps::remove(&c, &a.id, &b.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::task_deps::list_for(&c, &a.id).unwrap().len(), 0);
     }
 
@@ -177,7 +206,7 @@ mod tests {
         let err = repo::tasks::create(
             &c,
             NewTask { project_id: Some("does-not-exist".into()), title: "orphan".into(), description: "".into(), priority: "low".into(), assigned_agent_id: None },
-        );
+         crate::repo::audit::Actor::local_operator(),);
         assert!(err.is_err(), "task with unknown project_id must be rejected by FK");
     }
 
@@ -187,7 +216,7 @@ mod tests {
         let err = repo::projects::create(
             &c,
             NewProject { name: "x".into(), description: "".into(), priority: "bogus".into(), workspace_id: None },
-        );
+         crate::repo::audit::Actor::local_operator(),);
         assert!(matches!(err, Err(CoreError::Invalid { field: "priority", .. })));
     }
 
@@ -197,9 +226,9 @@ mod tests {
         let p = repo::projects::create(
             &c,
             NewProject { name: "x".into(), description: "".into(), priority: "low".into(), workspace_id: None },
-        )
+         crate::repo::audit::Actor::local_operator(),)
         .unwrap();
-        assert!(repo::projects::set_status(&c, &p.id, "not-a-status").is_err());
+        assert!(repo::projects::set_status(&c, &p.id, "not-a-status", crate::repo::audit::Actor::local_operator()).is_err());
     }
 
     #[test]
@@ -207,22 +236,22 @@ mod tests {
         let c = conn();
         assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
         // decisions table exists and is usable
-        repo::decisions::create(&c, "T", "gev", "why").unwrap();
+        repo::decisions::create(&c, "T", "gev", "why", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::decisions::list(&c).unwrap().len(), 1);
         // conversations table exists and is usable
-        let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        let conv = repo::chat::create_conversation(&c, "direct", "Bro", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(conv.message_count, 0);
         // knowledge + memory tables exist and are usable
-        repo::knowledge::create(&c, NewKnowledgeNote { title: "K".into(), body: "".into(), source: "".into(), tags: "".into() }).unwrap();
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "K".into(), body: "".into(), source: "".into(), tags: "".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::knowledge::list(&c).unwrap().len(), 1);
-        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "M".into() }).unwrap();
+        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "M".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::memory::list(&c, None).unwrap().len(), 1);
         // runs / events / automations / integrations tables exist and are usable
-        repo::runs::create(&c, "intent", "").unwrap();
+        repo::runs::create(&c, "intent", "", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::runs::list(&c).unwrap().len(), 1);
-        repo::events::create(&c, NewEvent { title: "E".into(), kind: "event".into(), location: "".into(), starts_at: "1".into(), ends_at: None }).unwrap();
+        repo::events::create(&c, NewEvent { title: "E".into(), kind: "event".into(), location: "".into(), starts_at: "1".into(), ends_at: None }, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::events::list(&c).unwrap().len(), 1);
-        repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "".into(), action: "".into() }).unwrap();
+        repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "".into(), action: "".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::automations::list(&c).unwrap().len(), 1);
         repo::integrations::create(&c, "GH", "github").unwrap();
         assert_eq!(repo::integrations::list(&c).unwrap().len(), 1);
@@ -231,12 +260,12 @@ mod tests {
     #[test]
     fn run_status_transitions_and_validates() {
         let c = conn();
-        let r = repo::runs::create(&c, "do the thing", "plan").unwrap();
+        let r = repo::runs::create(&c, "do the thing", "plan", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(r.status, "drafted");
-        let running = repo::runs::set_status(&c, &r.id, "running").unwrap();
+        let running = repo::runs::set_status(&c, &r.id, "running", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(running.status, "running");
         assert!(matches!(
-            repo::runs::set_status(&c, &r.id, "bogus"),
+            repo::runs::set_status(&c, &r.id, "bogus", crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "status", .. })
         ));
     }
@@ -244,7 +273,7 @@ mod tests {
     #[test]
     fn run_steps_advance_lifecycle() {
         let c = conn();
-        let r = repo::runs::create(&c, "ship it", "").unwrap();
+        let r = repo::runs::create(&c, "ship it", "", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::runs::add_step(&c, &r.id, "one", "").unwrap();
         repo::runs::add_step(&c, &r.id, "two", "").unwrap();
         // steps are positioned in insertion order and start pending
@@ -255,27 +284,27 @@ mod tests {
         assert!(steps.iter().all(|s| s.status == "pending"));
 
         // first advance: run -> running, step 1 active
-        let after1 = repo::runs::advance(&c, &r.id).unwrap();
+        let after1 = repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(after1.status, "running");
         let steps = repo::runs::list_steps(&c, &r.id).unwrap();
         assert_eq!(steps[0].status, "active");
         assert_eq!(steps[1].status, "pending");
 
         // second advance: step 1 done, step 2 active
-        repo::runs::advance(&c, &r.id).unwrap();
+        repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).unwrap();
         let steps = repo::runs::list_steps(&c, &r.id).unwrap();
         assert_eq!(steps[0].status, "done");
         assert_eq!(steps[1].status, "active");
 
         // third advance: step 2 done, no pending left -> run succeeded
-        let done = repo::runs::advance(&c, &r.id).unwrap();
+        let done = repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(done.status, "succeeded");
         let steps = repo::runs::list_steps(&c, &r.id).unwrap();
         assert!(steps.iter().all(|s| s.status == "done"));
 
         // a terminated (succeeded) run cannot be advanced again
         assert!(matches!(
-            repo::runs::advance(&c, &r.id),
+            repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "status", .. })
         ));
 
@@ -289,7 +318,7 @@ mod tests {
     #[test]
     fn run_step_result_and_next_runnable() {
         let c = conn();
-        let r = repo::runs::create(&c, "do work", "").unwrap();
+        let r = repo::runs::create(&c, "do work", "", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::runs::add_step(&c, &r.id, "step one", "").unwrap();
         repo::runs::add_step(&c, &r.id, "step two", "").unwrap();
 
@@ -302,7 +331,7 @@ mod tests {
         // completion route): claim the runnable step, then complete its single execution
         // attempt, which marks it done and stores the text.
         let attempt = repo::runs::claim_step_for_execution(&c, &n.id, "sess-test").unwrap();
-        let done = repo::runs::complete_step_execution(&c, &n.id, &attempt, "produced output").unwrap();
+        let done = repo::runs::complete_step_execution(&c, &n.id, &attempt, "produced output", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(done.status, "done");
         assert_eq!(done.result, "produced output");
 
@@ -311,7 +340,7 @@ mod tests {
         assert_eq!(n2.title, "step two");
 
         let attempt2 = repo::runs::claim_step_for_execution(&c, &n2.id, "sess-test").unwrap();
-        repo::runs::complete_step_execution(&c, &n2.id, &attempt2, "second output").unwrap();
+        repo::runs::complete_step_execution(&c, &n2.id, &attempt2, "second output", crate::repo::audit::Actor::local_operator()).unwrap();
         // all steps done -> nothing runnable remains
         assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
     }
@@ -319,7 +348,7 @@ mod tests {
     #[test]
     fn approval_gating_links_and_resolves() {
         let c = conn();
-        let r = repo::runs::create(&c, "gated run", "").unwrap();
+        let r = repo::runs::create(&c, "gated run", "", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky step", "").unwrap();
         assert!(!step.requires_approval);
         let gated = repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
@@ -331,15 +360,14 @@ mod tests {
 
         // request an approval linked to the step
         let ap = repo::approvals::create(
-            &c, "Execute run step", "risky step", "A2", "medium", "gev", Some("run_step"), Some(&step.id),
-            "webview:test", "sess-test", &crate::id(),
-        ).unwrap();
+            &c, "Execute run step", "risky step", "A2", "medium", Some("run_step"), Some(&step.id),
+            "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(ap.entity_id.as_deref(), Some(step.id.as_str()));
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_some());
         assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
 
         // approving flips both queries
-        repo::approvals::approve_confirmed(&c, &ap.id, "native", "native:main", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap()).unwrap();
+        repo::approvals::approve_confirmed(&c, &ap.id, "native", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         assert!(repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
         assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
     }
@@ -347,44 +375,44 @@ mod tests {
     #[test]
     fn advance_blocks_unapproved_gated_step_and_rejected_is_terminal() {
         let c = conn();
-        let r = repo::runs::create(&c, "gated", "").unwrap();
+        let r = repo::runs::create(&c, "gated", "", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::runs::add_step(&c, &r.id, "one", "").unwrap();
         let s2 = repo::runs::add_step(&c, &r.id, "two", "").unwrap();
         repo::runs::set_step_requires_approval(&c, &s2.id, true).unwrap();
 
-        repo::runs::advance(&c, &r.id).unwrap(); // step 1 active
-        repo::runs::advance(&c, &r.id).unwrap(); // step 1 done, gated step 2 active
+        repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).unwrap(); // step 1 active
+        repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).unwrap(); // step 1 done, gated step 2 active
         // a manual advance can't complete the unapproved gated step
         assert!(matches!(
-            repo::runs::advance(&c, &r.id),
+            repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "approval", .. })
         ));
 
         // approve it -> advance now proceeds
-        let ap = repo::approvals::create(&c, "Execute run step", "two", "A2", "medium", "gev", Some("run_step"), Some(&s2.id), "webview:test", "sess-test", &crate::id()).unwrap();
-        repo::approvals::approve_confirmed(&c, &ap.id, "native", "native:main", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap()).unwrap();
-        assert!(repo::runs::advance(&c, &r.id).is_ok());
+        let ap = repo::approvals::create(&c, "Execute run step", "two", "A2", "medium", Some("run_step"), Some(&s2.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::approvals::approve_confirmed(&c, &ap.id, "native", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
+        assert!(repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).is_ok());
 
         // rejected_for: a rejection with no approval blocks
-        let r2 = repo::runs::create(&c, "r2", "").unwrap();
+        let r2 = repo::runs::create(&c, "r2", "", crate::repo::audit::Actor::local_operator()).unwrap();
         let s = repo::runs::add_step(&c, &r2.id, "x", "").unwrap();
-        let rej = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id()).unwrap();
-        repo::approvals::decide(&c, &rej.id, "rejected", None).unwrap();
+        let rej = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::approvals::decide(&c, &rej.id, "rejected", None, crate::repo::audit::Actor::local_operator()).unwrap();
         assert!(repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
         // a later approval clears the rejected-block
-        let ok = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", "gev", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id()).unwrap();
-        repo::approvals::approve_confirmed(&c, &ok.id, "native", "native:main", None, ok.nonce.as_deref().unwrap(), ok.request_digest.as_deref().unwrap()).unwrap();
+        let ok = repo::approvals::create(&c, "Execute run step", "x", "A2", "low", Some("run_step"), Some(&s.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::approvals::approve_confirmed(&c, &ok.id, "native", None, ok.nonce.as_deref().unwrap(), ok.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         assert!(!repo::approvals::rejected_for(&c, &s.id, "run_step", "Execute run step").unwrap());
     }
 
     #[test]
     fn escalate_routes_to_a3_notifies_and_decides_nothing() {
         let c = conn();
-        let ap = repo::approvals::create(&c, "Send external email", "vendor@example.com", "A2", "medium", "gev", None, None, "webview:test", "sess-test", &crate::id()).unwrap();
+        let ap = repo::approvals::create(&c, "Send external email", "vendor@example.com", "A2", "medium", None, None, "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(ap.status, "pending");
 
         let before = repo::notifications::list(&c, None, None).unwrap().len();
-        let esc = repo::approvals::escalate(&c, &ap.id).unwrap();
+        let esc = repo::approvals::escalate(&c, &ap.id, crate::repo::audit::Actor::local_operator()).unwrap();
 
         // Real state transition: routed to the highest review tier, still un-decided (no verdict).
         assert_eq!(esc.status, "escalated");
@@ -397,13 +425,13 @@ mod tests {
         assert!(after.iter().any(|n| n.title == "Escalated for higher review"));
 
         // Pending-only: re-escalating an already-escalated (non-pending) row errors, so it cannot move again.
-        assert!(matches!(repo::approvals::escalate(&c, &ap.id), Err(CoreError::NotFound(_))));
+        assert!(matches!(repo::approvals::escalate(&c, &ap.id, crate::repo::audit::Actor::local_operator()), Err(CoreError::NotFound(_))));
     }
 
     #[test]
     fn set_step_status_cannot_bypass_the_approval_gate() {
         let c = conn();
-        let r = repo::runs::create(&c, "gated", "").unwrap();
+        let r = repo::runs::create(&c, "gated", "", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky", "").unwrap();
         repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
         // directly marking a gated step done (bypassing advance/stream) is refused
@@ -414,15 +442,15 @@ mod tests {
         // other statuses are still fine
         assert!(repo::runs::set_step_status(&c, &step.id, "active").is_ok());
         // once approved, done succeeds
-        let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", "gev", Some("run_step"), Some(&step.id), "webview:test", "sess-test", &crate::id()).unwrap();
-        repo::approvals::approve_confirmed(&c, &ap.id, "native", "native:main", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap()).unwrap();
+        let ap = repo::approvals::create(&c, "Execute run step", "risky", "A2", "medium", Some("run_step"), Some(&step.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::approvals::approve_confirmed(&c, &ap.id, "native", None, ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         assert!(repo::runs::set_step_status(&c, &step.id, "done").is_ok());
     }
 
     #[test]
     fn set_step_status_refuses_a_step_with_a_live_execution_claim() {
         let c = conn();
-        let r = repo::runs::create(&c, "run", "").unwrap();
+        let r = repo::runs::create(&c, "run", "", crate::repo::audit::Actor::local_operator()).unwrap();
         let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
         // Claim the step for execution — this writes execution_attempt_id (the claim token).
         let attempt = repo::runs::claim_step_for_execution(&c, &s.id, "sess-1").unwrap();
@@ -433,14 +461,14 @@ mod tests {
             Err(CoreError::Invalid { field: "status", .. })
         ));
         // The only legitimate mover of a claimed step is the attempt-guarded completion.
-        let done = repo::runs::complete_step_execution(&c, &s.id, &attempt, "result").unwrap();
+        let done = repo::runs::complete_step_execution(&c, &s.id, &attempt, "result", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(done.status, "done");
     }
 
     #[test]
     fn fail_step_and_run_marks_both_failed_in_one_transaction() {
         let c = conn();
-        let r = repo::runs::create(&c, "run", "").unwrap();
+        let r = repo::runs::create(&c, "run", "", crate::repo::audit::Actor::local_operator()).unwrap();
         let s = repo::runs::add_step(&c, &r.id, "step", "").unwrap();
         repo::runs::fail_step_and_run(&c, &s.id, &r.id).unwrap();
         assert_eq!(repo::runs::get_step(&c, &s.id).unwrap().status, "failed");
@@ -451,34 +479,40 @@ mod tests {
     fn automation_run_executes_local_actions_and_logs_the_outcome() {
         let c = conn();
         // notify: raises a real notification
-        let a = repo::automations::create(&c, NewAutomation { name: "greeter".into(), trigger: "manual".into(), action: "notify: hello".into() }).unwrap();
+        let a = repo::automations::create(&c, NewAutomation { name: "greeter".into(), trigger: "manual".into(), action: "notify: hello".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        // T-052: `create` no longer arms. Arming needs a natively confirmed grant.
+        assert!(!a.enabled, "a new automation must be born disarmed");
+        arm(&c, &a.id);
         let before = repo::notifications::list(&c, None, None).unwrap().len();
-        let run = repo::automations::run(&c, &a.id).unwrap();
+        let run = repo::automations::run(&c, &a.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(run.outcome, "ok");
         assert!(run.detail.contains("notified"), "detail was {:?}", run.detail);
         assert_eq!(repo::notifications::list(&c, None, None).unwrap().len(), before + 1);
 
         // task: creates a real task
-        let a2 = repo::automations::create(&c, NewAutomation { name: "maker".into(), trigger: "manual".into(), action: "task: do the thing".into() }).unwrap();
-        let run2 = repo::automations::run(&c, &a2.id).unwrap();
+        let a2 = repo::automations::create(&c, NewAutomation { name: "maker".into(), trigger: "manual".into(), action: "task: do the thing".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &a2.id);
+        let run2 = repo::automations::run(&c, &a2.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(run2.outcome, "ok");
         assert!(run2.detail.contains("created task"));
 
         // note: creates a real knowledge note
-        let a2b = repo::automations::create(&c, NewAutomation { name: "noter".into(), trigger: "manual".into(), action: "note: remember this".into() }).unwrap();
+        let a2b = repo::automations::create(&c, NewAutomation { name: "noter".into(), trigger: "manual".into(), action: "note: remember this".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &a2b.id);
         let before_notes = repo::knowledge::list(&c).unwrap().len();
-        let run2b = repo::automations::run(&c, &a2b.id).unwrap();
+        let run2b = repo::automations::run(&c, &a2b.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(run2b.outcome, "ok");
         assert!(run2b.detail.contains("created note"));
         assert_eq!(repo::knowledge::list(&c).unwrap().len(), before_notes + 1);
 
         // unknown verb: a recorded FAILED run — never a silent no-op and never a hard error
-        let a3 = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "manual".into(), action: "frobnicate: x".into() }).unwrap();
-        assert_eq!(repo::automations::run(&c, &a3.id).unwrap().outcome, "failed");
+        let a3 = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "manual".into(), action: "frobnicate: x".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &a3.id);
+        assert_eq!(repo::automations::run(&c, &a3.id, crate::repo::audit::Actor::local_operator()).unwrap().outcome, "failed");
 
         // disabled: refuses to run at all
-        repo::automations::set_enabled(&c, &a.id, false).unwrap();
-        assert!(repo::automations::run(&c, &a.id).is_err());
+        repo::automations::set_enabled(&c, &a.id, false, crate::repo::audit::Actor::local_operator()).unwrap();
+        assert!(repo::automations::run(&c, &a.id, crate::repo::audit::Actor::local_operator()).is_err());
 
         // the run log records each run, newest first
         let log = repo::automations::list_runs(&c, &a.id).unwrap();
@@ -495,12 +529,14 @@ mod tests {
             .as_millis() as i64;
 
         // interval trigger => scheduled
-        let sched = repo::automations::create(&c, NewAutomation { name: "hourly".into(), trigger: "every: 1m".into(), action: "notify: tick".into() }).unwrap();
+        let sched = repo::automations::create(&c, NewAutomation { name: "hourly".into(), trigger: "every: 1m".into(), action: "notify: tick".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &sched.id);
         // manual trigger => never fired by the scheduler
-        let manual = repo::automations::create(&c, NewAutomation { name: "manual".into(), trigger: "manual".into(), action: "notify: never".into() }).unwrap();
-        // disabled interval => skipped
-        let off = repo::automations::create(&c, NewAutomation { name: "off".into(), trigger: "every: 1m".into(), action: "notify: off".into() }).unwrap();
-        repo::automations::set_enabled(&c, &off.id, false).unwrap();
+        let manual = repo::automations::create(&c, NewAutomation { name: "manual".into(), trigger: "manual".into(), action: "notify: never".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &manual.id);
+        // disarmed interval => skipped. It is created disarmed now (T-052), so this
+        // case needs no `set_enabled` at all.
+        let off = repo::automations::create(&c, NewAutomation { name: "off".into(), trigger: "every: 1m".into(), action: "notify: off".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
 
         // never-run + due => the scheduled one fires; manual + disabled do not.
         let fired = repo::automations::run_due(&c, t0).unwrap();
@@ -526,13 +562,12 @@ mod tests {
     // nonce, and a request digest bound to the current entity state. Returns
     // (step_id, approval_id, nonce, request_digest).
     fn t011_pending(c: &rusqlite::Connection) -> (String, String, String, String) {
-        let r = repo::runs::create(c, "gated", "plan-body").unwrap();
+        let r = repo::runs::create(c, "gated", "plan-body", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(c, &r.id, "risky", "detail").unwrap();
         repo::runs::set_step_requires_approval(c, &step.id, true).unwrap();
         let ap = repo::approvals::create(
-            c, "Execute run step", "risky", "A2", "medium", "gev",
-            Some("run_step"), Some(&step.id), "webview:main", "sess-1", &crate::id(),
-        ).unwrap();
+            c, "Execute run step", "risky", "A2", "medium",
+            Some("run_step"), Some(&step.id), "webview:main", "sess-1", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(ap.origin_principal.as_deref(), Some("webview:main"));
         (step.id, ap.id, ap.nonce.clone().unwrap(), ap.request_digest.clone().unwrap())
     }
@@ -554,23 +589,23 @@ mod tests {
         let (_step, ap_id, nonce, digest) = t011_pending(&c);
         // The requesting window is refused …
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, &ap_id, "webview:main", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, &ap_id, "webview:main", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "approver", .. })
         ));
         // … and so is a DIFFERENT window, which the old `origin == confirmer` equality
         // would have admitted. This assertion fails on the pre-F-30 code.
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, &ap_id, "webview:other", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, &ap_id, "webview:other", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "approver", .. })
         ));
         // The refusal does not depend on the row: an unknown id refuses the same way, so
         // the check cannot be used to probe which approval ids exist.
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, "no-such-approval", "webview:main", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, "no-such-approval", "webview:main", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "approver", .. })
         ));
         // The renderer-independent native confirmation is the one accepted principal.
-        let ok = repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest).unwrap();
+        let ok = repo::approvals::approve_confirmed(&c, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         assert_eq!(ok.status, "approved");
         assert_eq!(ok.confirmation_method.as_deref(), Some("native"));
         assert!(ok.confirmed_at.is_some());
@@ -585,13 +620,12 @@ mod tests {
     #[test]
     fn t011_a_requester_cannot_claim_the_native_authoritys_name() {
         let c = conn();
-        let r = repo::runs::create(&c, "gated", "plan-body").unwrap();
+        let r = repo::runs::create(&c, "gated", "plan-body", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
         let err = repo::approvals::create(
-            &c, "Execute run step", "risky", "A2", "medium", "gev",
+            &c, "Execute run step", "risky", "A2", "medium",
             Some("run_step"), Some(&step.id),
-            repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(),
-        );
+            repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(), crate::repo::audit::Actor::local_operator());
         assert!(matches!(err, Err(CoreError::Invalid { field: "origin_principal", .. })));
         // Nothing was written: the refusal is not a half-created row.
         assert!(repo::approvals::list(&c, None, None).unwrap().is_empty());
@@ -608,7 +642,7 @@ mod tests {
     #[test]
     fn approvals_composition_forbids_self_approval() {
         let c = conn();
-        let r = repo::runs::create(&c, "gated", "plan-body").unwrap();
+        let r = repo::runs::create(&c, "gated", "plan-body", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
         let origins = [
             "webview:main",
@@ -620,9 +654,8 @@ mod tests {
         ];
         for origin in origins {
             let ap = repo::approvals::create(
-                &c, "Execute run step", "risky", "A2", "medium", "gev",
-                Some("run_step"), Some(&step.id), origin, "sess-1", &crate::id(),
-            )
+                &c, "Execute run step", "risky", "A2", "medium",
+                Some("run_step"), Some(&step.id), origin, "sess-1", &crate::id(), crate::repo::audit::Actor::local_operator())
             .unwrap_or_else(|e| panic!("`{origin}` should be a creatable origin: {e:?}"));
             // The stored origin is never the accepted confirmer …
             assert_ne!(
@@ -634,9 +667,8 @@ mod tests {
             assert!(
                 matches!(
                     repo::approvals::approve_confirmed(
-                        &c, &ap.id, origin, "native:main", None,
-                        ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
-                    ),
+                        &c, &ap.id, origin, None,
+                        ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")),
                     Err(CoreError::Invalid { field: "approver", .. })
                 ),
                 "`{origin}` must not be able to approve its own request"
@@ -646,10 +678,9 @@ mod tests {
         // which is what closes the quantifier: there is no origin left to try.
         assert!(matches!(
             repo::approvals::create(
-                &c, "Execute run step", "risky", "A2", "medium", "gev",
+                &c, "Execute run step", "risky", "A2", "medium",
                 Some("run_step"), Some(&step.id),
-                repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(),
-            ),
+                repo::approvals::NATIVE_CONFIRMER_PRINCIPAL, "sess-1", &crate::id(), crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "origin_principal", .. })
         ));
     }
@@ -658,11 +689,11 @@ mod tests {
     fn t011_nonce_replay_is_refused() {
         let c = conn();
         let (_step, ap_id, nonce, digest) = t011_pending(&c);
-        repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest).unwrap();
+        repo::approvals::approve_confirmed(&c, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         // Replaying the SAME nonce is refused (it was consumed), not merely blocked
         // by the status guard.
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::NotFound(_) | CoreError::Invalid { field: "nonce", .. })
         ));
     }
@@ -674,7 +705,7 @@ mod tests {
         // Mutate the underlying step AFTER the approval was raised.
         c.execute("UPDATE run_steps SET title = 'tampered' WHERE id = ?1", [&step_id]).unwrap();
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "request_digest", .. })
         ));
     }
@@ -685,7 +716,7 @@ mod tests {
         // the SAME RunExecutionScope — step_detail (e.g. a safety condition) that the
         // owner sees in the dialog MUST also reach the provider.
         let c = conn();
-        let r = repo::runs::create(&c, "the-intent", "the-plan").unwrap();
+        let r = repo::runs::create(&c, "the-intent", "the-plan", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "the-title", "SAFETY: do not delete data").unwrap();
         let scope = repo::approvals::run_execution_scope(&c, &step.id).unwrap();
         let prompt = scope.provider_json().to_string();
@@ -716,17 +747,15 @@ mod tests {
         // provider execution. The claim (run before any provider call) is the seam —
         // a second concurrent claim is refused, so only one dispatch can happen.
         let c = conn();
-        let r = repo::runs::create(&c, "the-intent", "the-plan").unwrap();
+        let r = repo::runs::create(&c, "the-intent", "the-plan", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky", "detail").unwrap();
         repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
         let ap = repo::approvals::create(
-            &c, "Execute run step", "risky", "A2", "medium", "gev",
-            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
-        ).unwrap();
+            &c, "Execute run step", "risky", "A2", "medium",
+            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
         repo::approvals::approve_confirmed(
-            &c, &ap.id, "native", "native:main", None,
-            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
-        ).unwrap();
+            &c, &ap.id, "native", None,
+            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
 
         // First claim wins: the step is now claimed (attempt id set), grant consumed.
         let attempt = repo::runs::claim_step_for_execution(&c, &step.id, "sess-A").unwrap();
@@ -743,8 +772,8 @@ mod tests {
         ));
 
         // Only the claiming attempt may complete; a stale/duplicate dispatch cannot.
-        assert!(repo::runs::complete_step_execution(&c, &step.id, "wrong-attempt", "x").is_err());
-        let done = repo::runs::complete_step_execution(&c, &step.id, &attempt, "output").unwrap();
+        assert!(repo::runs::complete_step_execution(&c, &step.id, "wrong-attempt", "x", crate::repo::audit::Actor::local_operator()).is_err());
+        let done = repo::runs::complete_step_execution(&c, &step.id, &attempt, "output", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(done.status, "done");
         assert_eq!(done.result, "output");
     }
@@ -752,17 +781,15 @@ mod tests {
     #[test]
     fn t011_provider_failure_does_not_restore_the_grant() {
         let c = conn();
-        let r = repo::runs::create(&c, "i", "p").unwrap();
+        let r = repo::runs::create(&c, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
         let step = repo::runs::add_step(&c, &r.id, "risky", "d").unwrap();
         repo::runs::set_step_requires_approval(&c, &step.id, true).unwrap();
         let ap = repo::approvals::create(
-            &c, "Execute run step", "risky", "A2", "medium", "gev",
-            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
-        ).unwrap();
+            &c, "Execute run step", "risky", "A2", "medium",
+            Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
         repo::approvals::approve_confirmed(
-            &c, &ap.id, "native", "native:main", None,
-            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
-        ).unwrap();
+            &c, &ap.id, "native", None,
+            ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
         let attempt = repo::runs::claim_step_for_execution(&c, &step.id, "sess-A").unwrap();
         // A wrong/stale attempt cannot fail the step (strict attempt check).
         assert!(repo::runs::fail_step_execution(&c, &step.id, "wrong-attempt").is_err());
@@ -781,17 +808,15 @@ mod tests {
         let path = path.to_str().unwrap();
         let (step_id, run_id) = {
             let c1 = db::open(path).unwrap();
-            let r = repo::runs::create(&c1, "i", "p").unwrap();
+            let r = repo::runs::create(&c1, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
             let step = repo::runs::add_step(&c1, &r.id, "risky", "d").unwrap();
             repo::runs::set_step_requires_approval(&c1, &step.id, true).unwrap();
             let ap = repo::approvals::create(
-                &c1, "Execute run step", "risky", "A2", "medium", "gev",
-                Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(),
-            ).unwrap();
+                &c1, "Execute run step", "risky", "A2", "medium",
+                Some("run_step"), Some(&step.id), "webview:main", "sess", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
             repo::approvals::approve_confirmed(
-                &c1, &ap.id, "native", "native:main", None,
-                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
-            ).unwrap();
+                &c1, &ap.id, "native", None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(), crate::repo::audit::Actor::native_confirmer("native:main")).unwrap();
             // Claim under session "dead-session", then drop the connection WITHOUT
             // completing or failing — simulates a crash mid-provider-call.
             repo::runs::claim_step_for_execution(&c1, &step.id, "dead-session").unwrap();
@@ -821,7 +846,7 @@ mod tests {
             .unwrap();
         c.execute("UPDATE runs SET plan = 'malicious-plan' WHERE id = ?1", [&run_id]).unwrap();
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c, &ap_id, "native", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "request_digest", .. })
         ));
     }
@@ -844,31 +869,31 @@ mod tests {
         }; // c1 dropped — simulates app close
         let c2 = db::open(path).unwrap(); // reopen + migrate (idempotent)
         assert!(matches!(
-            repo::approvals::approve_confirmed(&c2, &ap_id, "webview:main", "native:main", None, &nonce, &digest),
+            repo::approvals::approve_confirmed(&c2, &ap_id, "webview:main", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")),
             Err(CoreError::Invalid { field: "approver", .. })
         ));
         // A genuine native confirmation still works after the reopen.
-        assert!(repo::approvals::approve_confirmed(&c2, &ap_id, "native", "native:main", None, &nonce, &digest).is_ok());
+        assert!(repo::approvals::approve_confirmed(&c2, &ap_id, "native", None, &nonce, &digest, crate::repo::audit::Actor::native_confirmer("native:main")).is_ok());
     }
 
     #[test]
     fn advance_rejects_terminal_and_stepless_runs() {
         let c = conn();
         // a run with no steps cannot be advanced (no accidental jump to succeeded)
-        let empty = repo::runs::create(&c, "no plan", "").unwrap();
+        let empty = repo::runs::create(&c, "no plan", "", crate::repo::audit::Actor::local_operator()).unwrap();
         assert!(matches!(
-            repo::runs::advance(&c, &empty.id),
+            repo::runs::advance(&c, &empty.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "steps", .. })
         ));
         assert_eq!(repo::runs::get(&c, &empty.id).unwrap().status, "drafted");
 
         // a cancelled run with pending steps is NOT resurrected by advance
-        let r = repo::runs::create(&c, "cancel me", "").unwrap();
+        let r = repo::runs::create(&c, "cancel me", "", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::runs::add_step(&c, &r.id, "s1", "").unwrap();
         repo::runs::add_step(&c, &r.id, "s2", "").unwrap();
-        repo::runs::set_status(&c, &r.id, "cancelled").unwrap();
+        repo::runs::set_status(&c, &r.id, "cancelled", crate::repo::audit::Actor::local_operator()).unwrap();
         assert!(matches!(
-            repo::runs::advance(&c, &r.id),
+            repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "status", .. })
         ));
         // still cancelled; steps untouched
@@ -879,7 +904,7 @@ mod tests {
     #[test]
     fn run_steps_cascade_delete_with_run() {
         let c = conn();
-        let r = repo::runs::create(&c, "temp", "").unwrap();
+        let r = repo::runs::create(&c, "temp", "", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::runs::add_step(&c, &r.id, "s", "").unwrap();
         assert_eq!(repo::runs::list_steps(&c, &r.id).unwrap().len(), 1);
         c.execute("DELETE FROM runs WHERE id = ?1", [&r.id]).unwrap();
@@ -891,16 +916,187 @@ mod tests {
     #[test]
     fn automation_toggle_and_integration_status() {
         let c = conn();
-        let a = repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "t".into(), action: "x".into() }).unwrap();
-        assert!(a.enabled);
-        let off = repo::automations::set_enabled(&c, &a.id, false).unwrap();
+        let a = repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "t".into(), action: "x".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        assert!(!a.enabled, "born disarmed (T-052)");
+        arm(&c, &a.id);
+        assert!(repo::automations::get(&c, &a.id).unwrap().enabled);
+        // Disarming is deliberately NOT gated: no grant is minted here and it works.
+        let off = repo::automations::set_enabled(&c, &a.id, false, crate::repo::audit::Actor::local_operator()).unwrap();
         assert!(!off.enabled);
 
         let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
         assert_eq!(i.status, "disconnected");
-        let on = repo::integrations::set_status(&c, &i.id, "connected").unwrap();
+        grant(&c, repo::approvals::INTEGRATION_ENTITY_TYPE, &i.id,
+              repo::approvals::INTEGRATION_STATUS_ACTION_TYPE);
+        let on = repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(on.status, "connected");
-        assert!(repo::integrations::set_status(&c, &i.id, "bogus").is_err());
+        // An invalid status is refused before the gate, so it spends no grant.
+        assert!(repo::integrations::set_status(&c, &i.id, "bogus", crate::repo::audit::Actor::local_operator()).is_err());
+    }
+
+    // --- T-052: the three tier-X commands are gated at the authority layer -------
+
+    #[test]
+    fn arming_an_automation_without_a_grant_is_refused() {
+        let c = conn();
+        let a = repo::automations::create(&c, NewAutomation { name: "A".into(), trigger: "every: 1m".into(), action: "notify: x".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        let err = repo::automations::set_enabled(&c, &a.id, true, crate::repo::audit::Actor::local_operator())
+            .expect_err("arming with no approval must be refused");
+        assert!(matches!(&err, CoreError::Invalid { field: "approval", .. }), "got {err:?}");
+        // …and it did not half-happen: the transaction rolled back.
+        assert!(!repo::automations::get(&c, &a.id).unwrap().enabled);
+        // The scheduler therefore cannot reach it either.
+        assert_eq!(repo::automations::run_due(&c, i64::MAX).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn setting_an_integration_status_or_auth_ref_without_a_grant_is_refused() {
+        let c = conn();
+        let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
+        let err = repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator())
+            .expect_err("status change with no approval must be refused");
+        assert!(matches!(&err, CoreError::Invalid { field: "approval", .. }), "got {err:?}");
+        assert_eq!(repo::integrations::get(&c, &i.id).unwrap().status, "disconnected");
+
+        let err = repo::integrations::set_auth_ref(&c, &i.id, Some("engine:gh/token"), crate::repo::audit::Actor::local_operator())
+            .expect_err("auth-ref change with no approval must be refused");
+        assert!(matches!(&err, CoreError::Invalid { field: "approval", .. }), "got {err:?}");
+        assert_eq!(repo::integrations::get(&c, &i.id).unwrap().auth_ref, None);
+    }
+
+    #[test]
+    fn a_grant_for_one_gated_act_never_unlocks_another() {
+        let c = conn();
+        let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
+        // A grant for the auth-ref action, on the right entity, must NOT unlock status.
+        grant(&c, repo::approvals::INTEGRATION_ENTITY_TYPE, &i.id,
+              repo::approvals::INTEGRATION_AUTH_REF_ACTION_TYPE);
+        assert!(repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).is_err());
+        // The wrong-action grant is still unspent, so the right act still works.
+        assert!(repo::integrations::set_auth_ref(&c, &i.id, Some("engine:gh/token"), crate::repo::audit::Actor::local_operator()).is_ok());
+    }
+
+    #[test]
+    fn one_grant_unlocks_exactly_one_gated_write() {
+        let c = conn();
+        let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
+        grant(&c, repo::approvals::INTEGRATION_ENTITY_TYPE, &i.id,
+              repo::approvals::INTEGRATION_STATUS_ACTION_TYPE);
+        assert!(repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).is_ok());
+        // The grant was consumed in that same transaction; a second write needs a new one.
+        assert!(repo::integrations::set_status(&c, &i.id, "disconnected", crate::repo::audit::Actor::local_operator()).is_err());
+    }
+
+    // --- T-052: audit attribution -------------------------------------------------
+
+    #[test]
+    fn an_unattended_scheduler_tick_is_not_recorded_as_a_human() {
+        let c = conn();
+        let a = repo::automations::create(&c, NewAutomation { name: "tick".into(), trigger: "every: 1m".into(), action: "task: from the scheduler".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &a.id);
+        assert_eq!(repo::automations::run_due(&c, i64::MAX).unwrap().len(), 1);
+
+        let rows: Vec<(String, String, String)> = c
+            .prepare("SELECT event_type, actor_type, actor_id FROM audit_events \
+                      WHERE event_type IN ('automation.ran', 'task.created')")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rows.len(), 2, "the tick writes automation.ran and task.created: {rows:?}");
+        for (event, kind, id) in &rows {
+            assert_ne!(kind, "user", "{event} was attributed to a human with nobody present");
+        }
+        let ran = rows.iter().find(|r| r.0 == "automation.ran").unwrap();
+        assert_eq!((ran.1.as_str(), ran.2.as_str()), ("system", "scheduler"));
+        let made = rows.iter().find(|r| r.0 == "task.created").unwrap();
+        assert_eq!((made.1.as_str(), made.2.as_str()), ("system", "automation"));
+    }
+
+    /// Every audit row the SEED causes through `repo::audit::record` is attributed to
+    /// the seed, and nothing the product writes about itself names a person.
+    ///
+    /// The one remaining `"gev"` in a seeded audit row is a demo CHAT MESSAGE, whose
+    /// audit actor is derived from the message's own role and author -- the shape the
+    /// rule at `repo::audit::record` asks for, applied to a fictional conversation. That
+    /// is content, not an attribution this layer invented, so it is asserted here rather
+    /// than quietly excluded.
+    #[test]
+    fn every_audited_seed_write_is_attributed_to_the_seed_and_not_to_a_person() {
+        let c = conn();
+        repo::seed(&c).unwrap();
+        let rows: Vec<(String, String, String)> = c
+            .prepare("SELECT event_type, actor_type, actor_id FROM audit_events")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+
+        let personal: Vec<&(String, String, String)> =
+            rows.iter().filter(|r| r.2 == "gev").collect();
+        assert!(
+            personal.iter().all(|r| r.0 == "message.posted"),
+            "a seeded audit row names a person outside a demo message: {personal:?}"
+        );
+
+        // Every event type the seed reaches ONLY through `repo::audit::record` -- i.e.
+        // excluding the types the fabricated activity-ECG block also inserts directly --
+        // is attributed to the seed. Each of these was `("user", "gev")` before T-052.
+        const ONLY_FROM_RECORD: &[&str] = &[
+            "project.created", "project.status_changed", "task.status_changed",
+            "conversation.created", "knowledge.created", "memory.created",
+            "run.created", "run.status_changed",
+            "event.created", "automation.created", "decision.created",
+        ];
+        for want in ONLY_FROM_RECORD {
+            let seen: Vec<&(String, String, String)> =
+                rows.iter().filter(|r| r.0 == *want).collect();
+            assert!(!seen.is_empty(), "the seed wrote no {want} row at all");
+            for (event, kind, id) in seen {
+                assert_eq!(
+                    (kind.as_str(), id.as_str()),
+                    ("system", "seed"),
+                    "{event} was attributed to {kind}/{id}, not to the seed"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn actor_type_reaches_the_read_surfaces() {
+        let c = conn();
+        let a = repo::automations::create(&c, NewAutomation { name: "t".into(), trigger: "manual".into(), action: "notify: x".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        let _ = a;
+        // `activity::list` and `security::summary` both carry the kind, not just the id.
+        // Before T-052 `ActivityEvent` had no `actor_type` at all, so the column the rule
+        // at repo::audit::record depends on was dropped before any reader saw it.
+        let ev = repo::activity::list(&c).unwrap();
+        assert!(!ev.is_empty());
+        assert!(ev.iter().all(|e| e.actor_type.is_some()), "actor_type must reach activity");
+        assert_eq!(ev[0].actor_type.as_deref(), Some("user"));
+
+        let i = repo::integrations::create(&c, "GitHub", "github").unwrap();
+        grant(&c, repo::approvals::INTEGRATION_ENTITY_TYPE, &i.id,
+              repo::approvals::INTEGRATION_STATUS_ACTION_TYPE);
+        repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).unwrap();
+        let sec = repo::security::summary(&c).unwrap();
+        let changed = sec.sensitive_events.iter()
+            .find(|e| e.event_type == "integration.status_changed")
+            .expect("the status change is a sensitive event");
+        assert_eq!(changed.actor_type.as_deref(), Some("user"));
+        assert_eq!(changed.actor_id.as_deref(), Some(repo::audit::LOCAL_OPERATOR));
+    }
+
+    #[test]
+    fn record_still_refuses_an_actor_kind_outside_the_vocabulary() {
+        let c = conn();
+        let err = repo::audit::record(
+            &c, "x.y", repo::audit::Actor { kind: "root", id: "whoever" }, "task", "t-1",
+        )
+        .expect_err("an unknown actor kind must be refused");
+        assert!(matches!(&err, CoreError::Invalid { field: "actor_type", .. }), "got {err:?}");
     }
 
     #[test]
@@ -923,8 +1119,8 @@ mod tests {
     #[test]
     fn knowledge_search_matches_title_body_tags() {
         let c = conn();
-        repo::knowledge::create(&c, NewKnowledgeNote { title: "Migrations".into(), body: "forward only".into(), source: "".into(), tags: "sqlite".into() }).unwrap();
-        repo::knowledge::create(&c, NewKnowledgeNote { title: "IPC".into(), body: "typed boundary".into(), source: "".into(), tags: "architecture".into() }).unwrap();
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "Migrations".into(), body: "forward only".into(), source: "".into(), tags: "sqlite".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::knowledge::create(&c, NewKnowledgeNote { title: "IPC".into(), body: "typed boundary".into(), source: "".into(), tags: "architecture".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::knowledge::search(&c, "forward").unwrap().len(), 1);
         assert_eq!(repo::knowledge::search(&c, "sqlite").unwrap().len(), 1);
         assert_eq!(repo::knowledge::search(&c, "typed").unwrap().len(), 1);
@@ -949,7 +1145,7 @@ mod tests {
         let p = repo::projects::create(
             &c,
             NewProject { name: "Localization Engine".into(), description: "translate strings".into(), priority: "high".into(), workspace_id: None },
-        ).unwrap();
+         crate::repo::audit::Actor::local_operator(),).unwrap();
 
         // prefix match: "Local" finds "Localization" via the INSERT trigger
         assert_eq!(repo::search::global(&c, "Local").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
@@ -963,7 +1159,7 @@ mod tests {
         assert_eq!(repo::search::global(&c, "\"';--").unwrap().len(), 0);
 
         // UPDATE trigger re-indexes: old term gone, new term found
-        repo::projects::update(&c, &p.id, "Renamed Widget", "translate strings", "high").unwrap();
+        repo::projects::update(&c, &p.id, "Renamed Widget", "translate strings", "high", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::search::global(&c, "Localization").unwrap().iter().filter(|r| r.kind == "project").count(), 0);
         assert_eq!(repo::search::global(&c, "Widget").unwrap().iter().filter(|r| r.kind == "project").count(), 1);
 
@@ -976,8 +1172,8 @@ mod tests {
     #[test]
     fn memory_pin_orders_and_delete_works() {
         let c = conn();
-        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "first".into() }).unwrap();
-        let second = repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "second".into() }).unwrap();
+        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "first".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        let second = repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "second".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         // pin the older one so it sorts to the top
         repo::memory::set_pinned(&c, &second.id, true).unwrap();
         let list = repo::memory::list(&c, None).unwrap();
@@ -985,18 +1181,18 @@ mod tests {
         assert_eq!(list[0].content, "second");
         // bad kind rejected
         assert!(matches!(
-            repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "bogus".into(), content: "x".into() }),
+            repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "bogus".into(), content: "x".into() }, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "kind", .. })
         ));
         // delete removes it
-        repo::memory::delete(&c, &second.id).unwrap();
+        repo::memory::delete(&c, &second.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::memory::list(&c, None).unwrap().len(), 1);
     }
 
     #[test]
     fn chat_post_and_list_ordered() {
         let c = conn();
-        let conv = repo::chat::create_conversation(&c, "group", "room").unwrap();
+        let conv = repo::chat::create_conversation(&c, "group", "room", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "first".into() }).unwrap();
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "second".into() }).unwrap();
 
@@ -1014,21 +1210,21 @@ mod tests {
     #[test]
     fn chat_rejects_bad_role_and_unknown_conversation() {
         let c = conn();
-        let conv = repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
+        let conv = repo::chat::create_conversation(&c, "direct", "Bro", crate::repo::audit::Actor::local_operator()).unwrap();
         assert!(matches!(
             repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "bogus".into(), author: "x".into(), body: "y".into() }),
             Err(CoreError::Invalid { field: "role", .. })
         ));
         assert!(repo::chat::post_message(&c, NewMessage { conversation_id: "nope".into(), role: "user".into(), author: "x".into(), body: "y".into() }).is_err());
-        assert!(repo::chat::create_conversation(&c, "bogus-kind", "x").is_err());
+        assert!(repo::chat::create_conversation(&c, "bogus-kind", "x", crate::repo::audit::Actor::local_operator()).is_err());
     }
 
     #[test]
     fn chat_list_filters_by_kind() {
         let c = conn();
-        repo::chat::create_conversation(&c, "direct", "Bro").unwrap();
-        repo::chat::create_conversation(&c, "group", "room a").unwrap();
-        repo::chat::create_conversation(&c, "group", "room b").unwrap();
+        repo::chat::create_conversation(&c, "direct", "Bro", crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::chat::create_conversation(&c, "group", "room a", crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::chat::create_conversation(&c, "group", "room b", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::chat::list_conversations(&c, Some("group")).unwrap().len(), 2);
         assert_eq!(repo::chat::list_conversations(&c, Some("direct")).unwrap().len(), 1);
         assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 3);
@@ -1037,28 +1233,28 @@ mod tests {
     #[test]
     fn conversation_delete_and_rename() {
         let c = conn();
-        let conv = repo::chat::create_conversation(&c, "group", "old title").unwrap();
+        let conv = repo::chat::create_conversation(&c, "group", "old title", crate::repo::audit::Actor::local_operator()).unwrap();
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "user".into(), author: "gev".into(), body: "hi".into() }).unwrap();
         repo::chat::post_message(&c, NewMessage { conversation_id: conv.id.clone(), role: "agent".into(), author: "Bro".into(), body: "hello".into() }).unwrap();
 
         // rename updates the stored title
-        let renamed = repo::chat::rename_conversation(&c, &conv.id, "new title").unwrap();
+        let renamed = repo::chat::rename_conversation(&c, &conv.id, "new title", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(renamed.title, "new title");
         assert_eq!(repo::chat::get_conversation(&c, &conv.id).unwrap().title, "new title");
 
         // a second conversation so we can watch the list count drop on delete
-        repo::chat::create_conversation(&c, "group", "keep me").unwrap();
+        repo::chat::create_conversation(&c, "group", "keep me", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 2);
 
         // delete removes the conversation and cascades its messages away
-        repo::chat::delete_conversation(&c, &conv.id).unwrap();
+        repo::chat::delete_conversation(&c, &conv.id, crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(repo::chat::list_conversations(&c, None).unwrap().len(), 1);
         assert_eq!(repo::chat::list_messages(&c, &conv.id, None, None).unwrap().len(), 0);
         assert!(repo::chat::get_conversation(&c, &conv.id).is_err());
 
         // deleting/renaming an unknown conversation is a clean NotFound
-        assert!(matches!(repo::chat::delete_conversation(&c, "nope"), Err(CoreError::NotFound(_))));
-        assert!(matches!(repo::chat::rename_conversation(&c, "nope", "x"), Err(CoreError::NotFound(_))));
+        assert!(matches!(repo::chat::delete_conversation(&c, "nope", crate::repo::audit::Actor::local_operator()), Err(CoreError::NotFound(_))));
+        assert!(matches!(repo::chat::rename_conversation(&c, "nope", "x", crate::repo::audit::Actor::local_operator()), Err(CoreError::NotFound(_))));
     }
 
     #[test]
@@ -1097,15 +1293,15 @@ mod tests {
         // T-011: approve is refused at the authority layer — the only approve path is
         // `approve_confirmed` (native confirmation), never `decide`.
         assert!(matches!(
-            repo::approvals::decide(&c, &pending[0].id, "approved", None),
+            repo::approvals::decide(&c, &pending[0].id, "approved", None, crate::repo::audit::Actor::local_operator()),
             Err(CoreError::Invalid { field: "decision", .. })
         ));
         // reject works, is atomic + pending-only.
-        let rejected = repo::approvals::decide(&c, &pending[0].id, "rejected", Some("ok")).unwrap();
+        let rejected = repo::approvals::decide(&c, &pending[0].id, "rejected", Some("ok"), crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(rejected.status, "rejected");
         assert!(rejected.decided_at.is_some());
         // deciding a non-pending approval fails
-        assert!(repo::approvals::decide(&c, &pending[0].id, "rejected", None).is_err());
+        assert!(repo::approvals::decide(&c, &pending[0].id, "rejected", None, crate::repo::audit::Actor::local_operator()).is_err());
     }
 
     #[test]
@@ -1114,12 +1310,12 @@ mod tests {
         let p = repo::projects::create(
             &c,
             NewProject { name: "x".into(), description: "".into(), priority: "low".into(), workspace_id: None },
-        )
+         crate::repo::audit::Actor::local_operator(),)
         .unwrap();
         repo::tasks::create(
             &c,
             NewTask { project_id: Some(p.id), title: "t".into(), description: "".into(), priority: "low".into(), assigned_agent_id: None },
-        )
+         crate::repo::audit::Actor::local_operator(),)
         .unwrap();
         assert!(repo::audit::count(&c).unwrap() >= 2);
     }

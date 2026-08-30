@@ -260,19 +260,19 @@ pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
 #[tauri::command]
 pub fn create_project(state: State<AppState>, input: NewProject) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::create(&conn, input).map_err(|e| e.to_string())
+    repo::projects::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_project_status(state: State<AppState>, id: String, status: String) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::projects::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn update_project(state: State<AppState>, id: String, name: String, description: String, priority: String) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::update(&conn, &id, &name, &description, &priority).map_err(|e| e.to_string())
+    repo::projects::update(&conn, &id, &name, &description, &priority, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- tasks ---
@@ -292,13 +292,13 @@ pub fn list_tasks_by_status(state: State<AppState>, status: String) -> Result<Ve
 #[tauri::command]
 pub fn create_task(state: State<AppState>, input: NewTask) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::create(&conn, input).map_err(|e| e.to_string())
+    repo::tasks::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_task_status(state: State<AppState>, id: String, status: String) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::tasks::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -316,7 +316,7 @@ pub fn update_task(
     priority: String,
 ) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::update(&conn, &id, &title, &description, &priority).map_err(|e| e.to_string())
+    repo::tasks::update(&conn, &id, &title, &description, &priority, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -328,14 +328,14 @@ pub fn list_task_dependencies(state: State<AppState>, task_id: String) -> Result
 #[tauri::command]
 pub fn add_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
     let conn = locked(&state)?;
-    repo::task_deps::add(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::add(&conn, &task_id, &depends_on_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
     repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn remove_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
     let conn = locked(&state)?;
-    repo::task_deps::remove(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::remove(&conn, &task_id, &depends_on_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
     repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
 }
 
@@ -405,7 +405,7 @@ pub fn decide_approval(
     };
     let decided = {
         let conn = locked(&state)?;
-        repo::approvals::decide(&conn, &id, &decision, Some(&note)).map_err(|e| e.to_string())?
+        repo::approvals::decide(&conn, &id, &decision, Some(&note), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?
     };
     Ok(decided)
 }
@@ -454,7 +454,7 @@ pub fn reject_approval(
     let rejected = {
         let conn = locked(&state)?;
         // `decide` is pending-only (WHERE status = 'pending') + atomic + audited.
-        repo::approvals::decide(&conn, &id, "rejected", Some(&note)).map_err(|e| e.to_string())?
+        repo::approvals::decide(&conn, &id, "rejected", Some(&note), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?
     };
     Ok(rejected)
 }
@@ -467,7 +467,7 @@ pub fn reject_approval(
 #[tauri::command]
 pub fn escalate_approval(state: State<AppState>, id: String) -> Result<Approval, String> {
     let conn = locked(&state)?;
-    repo::approvals::escalate(&conn, &id).map_err(|e| e.to_string())
+    repo::approvals::escalate(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// At most ONE native confirmation dialog may be open at a time (design §9.1): a
@@ -586,10 +586,14 @@ pub async fn confirm_approval(
         // principal and no other (audit F-30), so the binding is structural rather than
         // two strings that happen to agree.
         repo::approvals::NATIVE_CONFIRMER_PRINCIPAL,
-        &confirmed_by,
         Some(note),
         &expected_nonce,
         &expected_digest,
+        // The strongest actor this product can establish: `native:<window label>`,
+        // built above from the Tauri window after a renderer-independent dialog the
+        // webview cannot drive. Its id is what lands in `confirmed_by`, so the column
+        // and the audit record cannot name two different confirmers.
+        repo::audit::Actor::native_confirmer(&confirmed_by),
     )
     .map_err(|e| e.to_string())
 }
@@ -619,7 +623,11 @@ pub fn list_decisions(state: State<AppState>) -> Result<Vec<Decision>, String> {
 #[tauri::command]
 pub fn create_decision(state: State<AppState>, title: String, rationale: String) -> Result<Decision, String> {
     let conn = locked(&state)?;
-    repo::decisions::create(&conn, &title, "gev", &rationale).map_err(|e| e.to_string())
+    // The `owner` column was the literal "gev". It is the same guess as the audit
+    // actor was, so it now comes from the same constant: this layer knows a person
+    // at the cockpit recorded the decision, and not which person.
+    let actor = repo::audit::Actor::local_operator();
+    repo::decisions::create(&conn, &title, actor.id, &rationale, actor).map_err(|e| e.to_string())
 }
 
 // --- activity ---
@@ -641,7 +649,7 @@ pub fn list_conversations(state: State<AppState>, kind: Option<String>) -> Resul
 #[tauri::command]
 pub fn create_conversation(state: State<AppState>, kind: String, title: String) -> Result<Conversation, String> {
     let conn = locked(&state)?;
-    repo::chat::create_conversation(&conn, &kind, &title).map_err(|e| e.to_string())
+    repo::chat::create_conversation(&conn, &kind, &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -705,7 +713,7 @@ pub fn save_ask_to_chat(
         // One transaction: conversation + both messages commit together or not at all.
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         let conversation =
-            repo::chat::create_conversation(&tx, "direct", &title).map_err(|e| e.to_string())?;
+            repo::chat::create_conversation(&tx, "direct", &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
         repo::chat::post_message(
             &tx,
             NewMessage {
@@ -796,7 +804,7 @@ pub fn save_ask_to_knowledge(
                 source: format!("{} · {}", claimed.provenance.source_prefix(), claimed.prompt),
                 tags: "research".to_string(),
             },
-        )
+         repo::audit::Actor::local_operator(),)
         .map_err(|e| e.to_string())
     })();
 
@@ -844,7 +852,7 @@ pub fn delete_conversation(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn rename_conversation(state: State<AppState>, id: String, title: String) -> Result<Conversation, String> {
     let conn = locked(&state)?;
-    repo::chat::rename_conversation(&conn, &id, &title).map_err(|e| e.to_string())
+    repo::chat::rename_conversation(&conn, &id, &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Replace a group room's participant roster (the create-modal multi-select). Names are the
@@ -892,7 +900,7 @@ pub fn search_knowledge(state: State<AppState>, query: String) -> Result<Vec<Kno
 #[tauri::command]
 pub fn create_knowledge(state: State<AppState>, input: NewKnowledgeNote) -> Result<KnowledgeNote, String> {
     let conn = locked(&state)?;
-    repo::knowledge::create(&conn, input).map_err(|e| e.to_string())
+    repo::knowledge::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-knowledge`) — see [`forbidden_hard_delete`].
@@ -913,7 +921,7 @@ pub fn list_library(state: State<AppState>) -> Result<Vec<LibraryItem>, String> 
 #[tauri::command]
 pub fn create_library_item(state: State<AppState>, input: NewLibraryItem) -> Result<LibraryItem, String> {
     let conn = locked(&state)?;
-    repo::library::create(&conn, input).map_err(|e| e.to_string())
+    repo::library::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-library-item`) — see [`forbidden_hard_delete`].
@@ -934,7 +942,7 @@ pub fn list_research(state: State<AppState>) -> Result<Vec<ResearchItem>, String
 #[tauri::command]
 pub fn create_research_item(state: State<AppState>, input: NewResearchItem) -> Result<ResearchItem, String> {
     let conn = locked(&state)?;
-    repo::research::create(&conn, input).map_err(|e| e.to_string())
+    repo::research::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-research-item`) — see [`forbidden_hard_delete`].
@@ -955,7 +963,7 @@ pub fn list_memory(state: State<AppState>, scope: Option<String>) -> Result<Vec<
 #[tauri::command]
 pub fn create_memory(state: State<AppState>, input: NewMemoryEntry) -> Result<MemoryEntry, String> {
     let conn = locked(&state)?;
-    repo::memory::create(&conn, input).map_err(|e| e.to_string())
+    repo::memory::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1043,7 +1051,7 @@ pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Resul
     require_len("intent", &intent, MAX_RUN_INTENT_CHARS)?;
     require_len("plan", &plan, MAX_RUN_PLAN_CHARS)?;
     let conn = locked(&state)?;
-    repo::runs::create(&conn, &intent, &plan).map_err(|e| e.to_string())
+    repo::runs::create(&conn, &intent, &plan, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1063,7 +1071,7 @@ pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Res
     if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
         return Err(format!("run is {} (terminal) and cannot change status", run.status));
     }
-    repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::runs::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1106,7 +1114,7 @@ pub fn set_run_step_status(state: State<AppState>, id: String, status: String) -
 #[tauri::command]
 pub fn advance_run(state: State<AppState>, run_id: String) -> Result<Run, String> {
     let conn = locked(&state)?;
-    repo::runs::advance(&conn, &run_id).map_err(|e| e.to_string())
+    repo::runs::advance(&conn, &run_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- AI (live agent replies) ---
@@ -1930,15 +1938,19 @@ pub async fn stream_run_step(
                         &target,
                         "A2",
                         "medium",
-                        "gev",
                         Some(repo::approvals::RUN_STEP_ENTITY_TYPE),
                         Some(&s.id),
                         &format!("webview:{}", window.label()),
                         process_session_id(),
                         &brops_core::id(),
+                        // The `requested_by` column used to be the literal "gev" here,
+                        // beside an `origin_principal` that was already derived from the
+                        // window. One value is now both, so the row cannot claim a
+                        // requester the audit record contradicts.
+                        repo::audit::Actor::local_operator(),
                     )
                     .map_err(|e| e.to_string())?;
-                    let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval");
+                    let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval", repo::audit::Actor::local_operator());
                     Gate::Pending(ap.id)
                 }
             }
@@ -2058,7 +2070,7 @@ pub async fn stream_run_step(
                     .and_then(|v| v.into_iter().next());
                 match existing {
                     Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
                         Ok(c) => c.id,
                         Err(e) => fail_attempt!(e.to_string()),
                     },
@@ -2177,8 +2189,10 @@ pub async fn stream_run_step(
             }
             _ => {}
         }
-        repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full)
-            .and_then(|_| repo::runs::advance(&conn, &run_id))
+        // Not the operator: the step was executed by a model this loop dispatched,
+        // and the person who started the run is not identifiable at this layer.
+        repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full, repo::audit::Actor::run_executor())
+            .and_then(|_| repo::runs::advance(&conn, &run_id, repo::audit::Actor::run_executor()))
     };
     match outcome {
         Ok(_) => {
@@ -2258,7 +2272,7 @@ pub async fn stream_ask(
                     .and_then(|v| v.into_iter().next());
                 match existing {
                     Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
                         Ok(c) => c.id,
                         Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); return Ok(()); }
                     },
@@ -2482,7 +2496,7 @@ pub fn list_events(state: State<AppState>) -> Result<Vec<Event>, String> {
 #[tauri::command]
 pub fn create_event(state: State<AppState>, input: NewEvent) -> Result<Event, String> {
     let conn = locked(&state)?;
-    repo::events::create(&conn, input).map_err(|e| e.to_string())
+    repo::events::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-event`) — see [`forbidden_hard_delete`].
@@ -2506,19 +2520,19 @@ pub fn create_automation(state: State<AppState>, input: NewAutomation) -> Result
     require_len("trigger", &input.trigger, MAX_AUTOMATION_TRIGGER_CHARS)?;
     require_len("action", &input.action, MAX_AUTOMATION_ACTION_CHARS)?;
     let conn = locked(&state)?;
-    repo::automations::create(&conn, input).map_err(|e| e.to_string())
+    repo::automations::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_automation_enabled(state: State<AppState>, id: String, enabled: bool) -> Result<Automation, String> {
     let conn = locked(&state)?;
-    repo::automations::set_enabled(&conn, &id, enabled).map_err(|e| e.to_string())
+    repo::automations::set_enabled(&conn, &id, enabled, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), String> {
     let conn = locked(&state)?;
-    repo::automations::delete(&conn, &id).map_err(|e| e.to_string())
+    repo::automations::delete(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Run an automation NOW: perform its (local, no-AI) action and append a row to its run log,
@@ -2526,7 +2540,7 @@ pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), Strin
 #[tauri::command]
 pub fn run_automation(state: State<AppState>, id: String) -> Result<AutomationRun, String> {
     let conn = locked(&state)?;
-    repo::automations::run(&conn, &id).map_err(|e| e.to_string())
+    repo::automations::run(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// The run history for one automation (newest first).
@@ -2561,7 +2575,7 @@ pub fn create_integration(state: State<AppState>, name: String, provider: String
 #[tauri::command]
 pub fn set_integration_status(state: State<AppState>, id: String, status: String) -> Result<Integration, String> {
     let conn = locked(&state)?;
-    repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::integrations::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Point a connector at where its secret lives. `None` clears the reference.
@@ -2582,7 +2596,7 @@ pub fn set_integration_auth_ref(
     auth_ref: Option<String>,
 ) -> Result<Integration, String> {
     let conn = locked(&state)?;
-    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref()).map_err(|e| e.to_string())
+    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref(), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- global search ---
@@ -2809,7 +2823,7 @@ mod tests {
     /// an author that the real write path would have rejected), the body verbatim.
     fn seeded_room(pairs: &[(&str, &str)]) -> (rusqlite::Connection, String) {
         let conn = brops_core::db::open_in_memory().expect("in-memory db");
-        let conv = repo::chat::create_conversation(&conn, "direct", "room").expect("conversation");
+        let conv = repo::chat::create_conversation(&conn, "direct", "room", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
         for (author, body) in pairs {
             repo::chat::post_message(
                 &conn,
@@ -3278,7 +3292,7 @@ mod tests {
         use brops_core::receipt_store::{issue_challenge, ReceiptOutcome};
 
         let conn = brops_core::db::open_in_memory().unwrap();
-        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c", brops_core::repo::audit::Actor::local_operator()).unwrap();
         let now_ms = 1_700_000_000_000u64;
         let requested_at = now_ms.to_string();
         let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));

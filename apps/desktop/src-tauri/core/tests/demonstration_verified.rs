@@ -18,7 +18,7 @@ fn receipt_of(conn: &rusqlite::Connection, conv_id: &str, msg_id: &str) -> Optio
 #[test]
 fn demonstration_verified_badge_derives_from_the_recorded_row_only() {
     let c = db::open_in_memory().expect("open migrated db");
-    let conv = repo::chat::create_conversation(&c, "direct", "Bro").expect("conversation");
+    let conv = repo::chat::create_conversation(&c, "direct", "Bro", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
     let m = repo::chat::post_message(
         &c,
         NewMessage {
@@ -60,7 +60,7 @@ fn demonstration_verified_badge_derives_from_the_recorded_row_only() {
 #[test]
 fn post_message_demonstration_verified_posts_and_badges_atomically() {
     let c = db::open_in_memory().expect("open migrated db");
-    let conv = repo::chat::create_conversation(&c, "direct", "Bro").expect("conversation");
+    let conv = repo::chat::create_conversation(&c, "direct", "Bro", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
 
     // The combined writer returns the message already carrying the demonstration badge — the reply and
     // its anchor are committed in one transaction, so the returned Message is immediately consistent.
@@ -89,7 +89,7 @@ fn post_message_demonstration_verified_posts_and_badges_atomically() {
 #[test]
 fn a_flag_row_with_no_body_digest_paints_no_badge() {
     let c = db::open_in_memory().expect("open migrated db");
-    let conv = repo::chat::create_conversation(&c, "direct", "Bro").expect("conversation");
+    let conv = repo::chat::create_conversation(&c, "direct", "Bro", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
     let m = repo::chat::post_message(
         &c,
         NewMessage {
@@ -120,7 +120,7 @@ fn a_flag_row_with_no_body_digest_paints_no_badge() {
 #[test]
 fn a_body_digest_that_covers_other_bytes_paints_no_badge() {
     let c = db::open_in_memory().expect("open migrated db");
-    let conv = repo::chat::create_conversation(&c, "direct", "Bro").expect("conversation");
+    let conv = repo::chat::create_conversation(&c, "direct", "Bro", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
     let m = repo::chat::post_message(
         &c,
         NewMessage {

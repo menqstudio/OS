@@ -10,7 +10,7 @@
   },
   "active": {
     "wave": "canon",
-    "task": "T-054",
+    "task": "T-052",
     "branch": "t054/readme-measured"
   },
   "prs": [
@@ -27,7 +27,7 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "T-054",
+    "CURRENT_ACTIVE_TASK": "T-052",
     "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",

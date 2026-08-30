@@ -908,9 +908,16 @@ jobs:
       # added in one place but not the others — or ungated — cannot merge.
       - name: Capability inventory consistency gate
         run: python tools/check_capabilities.py
+      # T-052. The rule at `repo::audit::record` says the actor is passed explicitly by
+      # trusted repo code and never hardcoded 'user'. 34 of the 40 calls in that same file
+      # passed the literal pair "user", "gev" -- including the automation scheduler's
+      # unattended once-a-minute tick, which recorded a named human who was not present.
+      # An audit row that says a person did something they did not do reads as evidence.
+      - name: Audit actor attribution gate (no hardcoded actor)
+        run: python tools/check_audit_actor.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_capabilities
+        run: python -m unittest test_check_capabilities test_check_audit_actor
 
   ledger-ddl:
     name: Supervisor · durable-ledger DDL single-source gate (F-01)
