@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `design/production-half-int` · **head** `pending` · **task** `T-051` · **PR #194**
+**Active branch:** `design/production-half-int` · **head** `6845738` · **task** `T-051` · **PR #194**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #194 · branch `design/production-half-int`** (base `main`, tip `5cb9261`, task T-051). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
