@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t052/audit-attribution` · **head** `PENDING` · **task** `T-052` · **PR #189**
+**Active branch:** `t052/audit-attribution` · **head** `99556bf` · **task** `T-052` · **PR #189**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #189 · branch `t052/audit-attribution`** (base `main`, tip `34c5fb5`, task T-052). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
