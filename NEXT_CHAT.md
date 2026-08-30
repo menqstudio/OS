@@ -6,11 +6,11 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `feat/egress-authorizer-slice` · **head** `b9f12dd` · **task** `egress-authorizer` · **PR #200**
+**Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #200 · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #201 · branch `fix/handoff-names-a-dead-branch-commit`** (base `main`, tip `629749c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Design SS3.3 slices 1+2: the execution lease's allowed_egress axis and core/src/egress_proxy.rs, the authorizer. Nothing confines a process and a call step is still refused -- the enforcement point is slice 3.
+> The handoff named a branch commit a squash erased, and main went RED on it for the sixth time. The head line now names the merge base and carries the reason inline, so the rule cannot be evicted separately from what it governs.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -86,11 +86,9 @@ enough to close O-2, O-3 or O-5.
 ## How to read the marks
 
 `✅` an independent audit confirmed it. `◑` the Builder believes it and **nobody else has
-looked** — treat as an unverified claim. `🔴`/`⚠️` open. Both RED verdicts in this
-repository's history came from rows marked `✅` by the session that wrote the fix, so never
-promote your own work. The index is
-[`AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md); read it before believing any tick
-in any prose document.
+looked**. Both RED verdicts here came from rows marked `✅` by the session that wrote the
+fix, so never promote your own work. Read
+[`AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing any tick in prose.
 
 ## Two things that will save you a day
 

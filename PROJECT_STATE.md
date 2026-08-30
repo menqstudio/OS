@@ -5,16 +5,16 @@ REQUIRED execution-lease field (schema 1→2) and `core/src/egress_proxy.rs` dec
 grant; neither confines a process yet, and `call` is still refused. The Owner split the populations: the
 produced agent enforces at `repo.rs`'s `Call` arm, the build agent is not jailed. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
-`main` was RED after both of that session's merges and both were called green: `gh pr checks` is not `gh run list --branch main`. `T-046`, `T-048`, `T-049`, `T-050`, `T-052` and `T-053` are merged.
+`T-046`, `T-048`, `T-049`, `T-050`, `T-052` and `T-053` are merged.
 This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical lines
 from line 2; the log both carried is
 [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #200 · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #201 · branch `fix/handoff-names-a-dead-branch-commit`** (base `main`, tip `629749c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Design SS3.3 slices 1+2: the execution lease's allowed_egress axis and core/src/egress_proxy.rs, the authorizer. Nothing confines a process and a call step is still refused -- the enforcement point is slice 3.
+> The handoff named a branch commit a squash erased, and main went RED on it for the sixth time. The head line now names the merge base and carries the reason inline, so the rule cannot be evicted separately from what it governs.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
