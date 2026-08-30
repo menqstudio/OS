@@ -767,6 +767,12 @@ jobs:
       # Options without a recommendation are a decision passed upward while looking thorough.
       - name: Alternatives carry a reasoned recommendation
         run: python tools/check_recommendation.py
+      # Every gate above judges content that is PRESENT. This one judges content that was LOST:
+      # eleven Phase-1 Definition-of-Done rows had ended in the middle of a clause since
+      # 2026-08-10, inside the rows check_roadmap_order.py reads to decide which phase a session
+      # may work, and thirty gates passed over them.
+      - name: No roadmap Definition-of-Done row ends mid-sentence
+        run: python tools/check_truncated_lines.py
       - name: Gate self-tests
         working-directory: tools
         run: |
@@ -775,6 +781,7 @@ jobs:
           python -m unittest test_check_handoff_ready
           python -m unittest test_check_doc_claims
           python -m unittest test_check_recommendation
+          python -m unittest test_check_truncated_lines
           python -m unittest test_roadmap_split
 
   canonical-law:
