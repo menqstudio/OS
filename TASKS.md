@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #185 · branch `fix/truncated-canon`** (base `main`, tip `fdebd5b`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #186 · branch `chore/ignore-agent-worktrees`** (base `main`, tip `0fc35ca`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> Sixteen roadmap Definition-of-Done rows ended mid-clause since 56e1cd7 cut them to fit the byte ceiling; a gate refuses that now and the rows are finished from the code.
+> The agent worktree directory is ignored, so check_handoff_ready stops reading a scratch checkout as uncommitted work.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
