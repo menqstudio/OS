@@ -101,6 +101,29 @@ class AgentWorktreeDoesNotMakeCitationsAmbiguous(unittest.TestCase):
         code, out = run(root)
         self.assertEqual(code, 0, out)
 
+    def test_a_root_that_IS_a_worktree_still_resolves_its_own_citations(self):
+        """The direction the first two tests missed, and the one that actually bit.
+
+        The exclusion above was matched on the ABSOLUTE path. When the checkout being
+        graded is itself an agent worktree -- `root` ends in `.claude/worktrees/<id>` --
+        every candidate contained `/.claude/worktrees/`, so the exclusion swallowed the
+        real file too and the citation was reported as one that does not exist. Measured
+        2026-08-30: GREEN from /home/gevorg/os, RED with five findings from a worktree of
+        the same commit. A gate whose verdict depends on where the tree is checked out is
+        the exact failure the exclusion was added to prevent.
+
+        Mutant: match the exclusions on `q.as_posix()` again => this goes red and names
+        `broker/src/main.rs` as a file that does not exist.
+        """
+        nested = self.tmp / ".claude" / "worktrees" / "agent-abc"
+        nested.mkdir(parents=True, exist_ok=True)
+        root = build(nested, doc="See `broker/src/main.rs` for the wiring.\n")
+        real = root / "apps" / "desktop" / "src-tauri" / "broker" / "src"
+        real.mkdir(parents=True, exist_ok=True)
+        (real / "main.rs").write_text("// the real one\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
     def test_a_second_REAL_copy_is_still_ambiguous(self):
         """The exclusion must not become a blanket amnesty: two genuine files that both end in
         the cited suffix are still an ambiguous citation, and still red."""

@@ -370,7 +370,15 @@ def scope_problem(root: pathlib.Path, sid: str, rel_path: str) -> str | None:
     document = receipt_store.load(root, sid) or {}
     if document.get("declared_phase") != META:
         return None
-    rel = str(rel_path).replace("\\", "/").lstrip("./")
+    # `removeprefix`, not `lstrip`: lstrip takes a CHARACTER SET, so `lstrip("./")` turned
+    # `.claude/settings.json` into `claude/settings.json` and `.github/x` into `github/x` --
+    # neither starts with a META_ALLOWED_PREFIX, so a `meta` session was refused from editing
+    # the two directories `meta` exists to cover. Worse in a worktree: an agent working in
+    # `.claude/worktrees/<id>/` had EVERY path mangled, so every Edit/Write was denied and its
+    # only way to write was the ungated Bash path (T-053). Same defect in
+    # check_audit_reports.py:119; check_doc_claims.py had already hit it and fixed it inline.
+    # tools/check_no_lstrip_prefix.py refuses the form now.
+    rel = str(rel_path).replace("\\", "/").removeprefix("./")
     if rel.startswith(META_ALLOWED_PREFIXES) or rel.endswith(META_ALLOWED_SUFFIXES):
         return None
     return (f"this session declared `meta` (repository governance/tooling), which may not edit "

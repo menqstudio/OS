@@ -116,7 +116,12 @@ def newest_report(names: list[str]) -> str | None:
 def authoritative_link(ledger_text: str) -> str | None:
     """The file the ledger calls current — pure/testable."""
     m = re.search(r"\*\*Authoritative current assessment:\*\*\s*\[[^\]]*\]\(([^)\s]+)\)", ledger_text)
-    return m.group(1).split("#", 1)[0].lstrip("./") if m else None
+    # `removeprefix`, not `lstrip`: lstrip takes a CHARACTER SET, so a ledger link written
+    # `](.claude/x)` or `](./docs/x)` lost every leading `.` and `/` character, not the `./`
+    # prefix. No audit report has ever lived under a dotted directory, which is the only
+    # reason this one has not fired yet -- it was found by sweeping for the form, not by a
+    # RED. Same defect as check_roadmap_order.py:373 (T-053).
+    return m.group(1).split("#", 1)[0].removeprefix("./") if m else None
 
 
 def ordinal_of(text: str) -> str | None:

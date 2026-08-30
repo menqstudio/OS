@@ -801,7 +801,18 @@ jobs:
       # closed, and it is the half that cannot be skipped with --no-verify or an env var.
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync
+        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_wall_bash_gap
+      # `lstrip("./")` strips a CHARACTER SET, not a prefix, and reads exactly like a prefix
+      # strip. It was written three times: check_doc_claims.py hit it and fixed it inline
+      # leaving only a comment, and check_roadmap_order.py:373 plus check_audit_reports.py:119
+      # both carried it live at the same head. The first made every `.claude/` and `.github/`
+      # path invisible to the `meta` scope check -- the two directories `meta` exists to cover
+      # -- and mangled every path for an agent working under `.claude/worktrees/`. It also went
+      # the other way: `../tools/x` was laundered into `tools/x`, a traversal arriving inside an
+      # allow-listed prefix. Two of the three gates this job runs were affected, which is why
+      # the sweep lives here (T-053).
+      - name: No `lstrip` used as a path-prefix strip
+        run: python tools/check_no_lstrip_prefix.py
       # Roadmap order: a phase counts as complete only when its Definition-of-Done checkboxes
       # AND its status-board row agree. Flipping one is refused, which is what stops "phase
       # complete" from being a one-character edit.
