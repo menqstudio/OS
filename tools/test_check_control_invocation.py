@@ -209,6 +209,41 @@ class TheFailClosedClaimMustBeHonoured(unittest.TestCase):
         self.assertIn("`why`", out)
 
 
+class ReadingTheWorkflowsIsNotOptional(unittest.TestCase):
+    """The first version imported PyYAML and returned `[]` when that failed —
+    which is what happened on the CI runner. The gate then derived no jobs,
+    concluded nothing blocks a merge, and went RED on every control while
+    passing on the machine that wrote it."""
+
+    def test_the_parser_finds_the_real_workflows_jobs(self):
+        jobs = G._yaml_jobs(ROOT)
+        self.assertGreater(len(jobs), 20, "the text parser must read the real workflows")
+        names = {n for n, _ in jobs}
+        self.assertIn("Coordination · docs consistency gate", names)
+
+    def test_the_parser_needs_no_pyyaml(self):
+        """Import it under a name PyYAML cannot be reached through, and assert
+        the module never asks for it."""
+        src = (ROOT / "tools" / "check_control_invocation.py").read_text(encoding="utf-8")
+        self.assertNotIn("import yaml", src)
+
+    def test_workflows_that_parse_to_nothing_is_a_READING_failure_not_a_verdict(self):
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="t056-p-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        root = build(tmp,
+                     controls={"tools/check_a.py": {"kind": "check", "blocks": "merge"}},
+                     files={"tools/check_a.py": "x = 1\n"})
+        (root / ".github" / "workflows" / "ci.yml").write_text(
+            "name: ci\njobs:\n  gate:\n    name: A job\n", encoding="utf-8")
+        _real = G._yaml_jobs
+        G._yaml_jobs = lambda _r: []   # the parser reads nothing, as it did on CI
+        self.addCleanup(setattr, G, "_yaml_jobs", _real)
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("READING failure", out)
+        self.assertNotIn("Running in CI is not blocking a merge", out)
+
+
 class TheRealTreePasses(unittest.TestCase):
     def test_the_repository_itself_is_green(self):
         code, out = run(ROOT)

@@ -64,19 +64,55 @@ def population(root: pathlib.Path) -> list[str]:
 
 
 def _yaml_jobs(root: pathlib.Path) -> list[tuple[str, str]]:
-    """(job display name, the job's serialised body) for every root workflow."""
-    try:
-        import yaml  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return []
+    """(job display name, the job's raw block) for every root workflow.
+
+    Parsed as TEXT, with no PyYAML. The first version imported yaml and returned
+    `[]` when the import failed — which is what happened on the CI runner, where
+    PyYAML is not installed for this job. The gate then derived no jobs at all,
+    concluded that nothing blocks a merge, and went RED on every control while
+    passing on the machine that wrote it. A dependency that degrades to an empty
+    answer is worse than one that is absent: it turns "I could not look" into
+    "there is nothing there".
+
+    The shape relied on is the one GitHub Actions itself requires: `jobs:` at
+    column 0, each job id at two spaces, `name:` at four.
+    """
     out: list[tuple[str, str]] = []
+    job_re = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+    name_re = re.compile(r"^    name:\s*(.+?)\s*$")
     for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
-        try:
-            doc = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001
-            continue
-        for job, spec in (doc.get("jobs") or {}).items():
-            out.append((spec.get("name") or job, json.dumps(spec)))
+        lines = wf.read_text(encoding="utf-8").splitlines()
+        in_jobs = False
+        cur: str | None = None
+        body: list[str] = []
+        display: str | None = None
+
+        def flush() -> None:
+            if cur is not None:
+                out.append((display or cur, "\n".join(body)))
+
+        for line in lines:
+            if re.match(r"^jobs:\s*$", line):
+                in_jobs = True
+                continue
+            if not in_jobs:
+                continue
+            if line and not line.startswith(" ") and not line.startswith("#"):
+                flush()
+                cur, body, display = None, [], None
+                in_jobs = False
+                continue
+            m = job_re.match(line)
+            if m:
+                flush()
+                cur, body, display = m.group(1), [], None
+                continue
+            if cur is not None:
+                body.append(line)
+                n = name_re.match(line)
+                if n and display is None:
+                    display = n.group(1).strip().strip("'\"")
+        flush()
     return out
 
 
@@ -154,6 +190,21 @@ def main(root: pathlib.Path = ROOT) -> int:
         print(f"RED: {REGISTRY_REL} does not exist; every derived control needs an entry")
         return 1
     registry = json.loads(reg_path.read_text(encoding="utf-8")).get("controls", {})
+    # "I could not read the workflows" and "there are no jobs" are different
+    # answers, and the first must never be reported as the second. Counted
+    # independently of the parser: job-id lines a parser SHOULD have seen.
+    raw = 0
+    for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
+        text = wf.read_text(encoding="utf-8")
+        if re.search(r"^jobs:\s*$", text, re.M):
+            raw += len(re.findall(r"^  [A-Za-z0-9_-]+:\s*$", text, re.M))
+    if raw and not _yaml_jobs(root):
+        print(
+            f"RED: {raw} job-shaped line(s) in .github/workflows and the parser read NONE. "
+            f"That is a READING failure, not a verdict about any control — fix it before "
+            f"believing anything below"
+        )
+        return 1
     facts = derive(root)
     pop = list(facts)
 
