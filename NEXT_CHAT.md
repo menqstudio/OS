@@ -6,22 +6,26 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `menqstudio-patch-1` · **head** `9a3407f` · **task** `security-policy` · **PR #195**
+**Active branch:** `t055/first-produced-artifact` · **head** `pending` · **task** `T-055` · **PR #196**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #195 · branch `menqstudio-patch-1`** (base `main`, tip `454e5fc`, task security-policy). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #196 · branch `t055/first-produced-artifact`** (base `main`, tip `6ac3bc1`, task T-055). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> A security policy that points at artifacts rather than asserting a posture: the governed path is not enabled in shipped builds, and the negatives and the dated deferrals each name a file.
+> The first produced artifact exists, and the gate that was RED by design since #193 prints GREEN — five conditions, produced from the real code path, not a committed fixture.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-055` — the first produced artifact, and nothing before it. Run
-`python3 tools/check_produced_artifact.py`: it prints the five conditions and which are missing, and is **RED
-by design** until the production half exists. `docs/design/PRODUCTION_HALF_DESIGN.md` is the design behind
-those five; it is DESIGN-green only — no independent architect has read it and no product code exists. §3
-names **which runtime code** enforces the network axis, because a grant stated in a prompt is not enforcement;
-§4 puts credential SLOTS in the bundle and the binding outside it, so rotating a key cannot un-approve the
-customer's agent by changing the digest.
+**Next:** the produced-artifact gate is GREEN and it is the first thing to run:
+
+```
+cd apps/desktop/src-tauri && cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact
+python3 tools/check_produced_artifact.py     # five conditions, all MET
+```
+
+The evidence is **produced, never committed** — the store lives under `target/`, and the gate refuses a
+store `git ls-files` reports, because a committed store is a fixture. The context is still not required:
+it must be OBSERVED green in CI first, which is the lesson `Windows · §0.W` cost on 2026-08-18. `T-056`
+is the next task and nothing is ahead of it.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -121,4 +125,4 @@ roughly ninety checks swept in an earlier wave, four came back green.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: security-policy` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-055` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

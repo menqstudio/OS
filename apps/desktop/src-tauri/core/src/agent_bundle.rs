@@ -34,7 +34,8 @@ use crate::governed_message_store::sha256_hex;
 /// Stated, not implied. Every one of these is in the design and NOT in this slice.
 pub const NOT_IMPLEMENTED: &[&str] = &[
     "model steps: a governed turn is refused at this head (governed_verification_unconfigured)",
-    "call steps: egress enforcement is designed in §3.3 and no enforcement point exists yet",
+    "call steps: NOT IMPLEMENTED — §3.3 designs the egress enforcement point and no code in \
+     this tree enforces a destination against a grant, so a `call` step is refused",
     "credential bindings: §4's (bundle_digest, slot_id) binding store",
     "approval: the native confirmation writes no approvals.confirmation_digest for a bundle",
     "eval/cases.jsonl: the cases a build was accepted against",

@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, the fields tools/check_repo_state.py compares against live GitHub. This field held 74,311 characters of prose until 2026-08-29 (T-045): 68% of a file called the machine-readable mirror, inside a read set every session must take. It said so itself and grew anyway. The narrative is in docs/archive/; the ceiling that stops it growing back is in config/canon-budget.json.",
-  "settled_at_main_head": "454e5fcac2689c9f0f912509df9b0f241bf966e4",
+  "settled_at_main_head": "6ac3bc128e5c5f49db9b0ad15689bffb02c010f5",
   "sync": {
-    "baseline_main_head_at_sync": "454e5fcac2689c9f0f912509df9b0f241bf966e4",
-    "snapshot_branch": "menqstudio-patch-1",
+    "baseline_main_head_at_sync": "6ac3bc128e5c5f49db9b0ad15689bffb02c010f5",
+    "snapshot_branch": "t055/first-produced-artifact",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field said 'live main is b3010f6 (PR #81 merged, 2026-08-09) ... the only open pull request is the self-carrier #82' for twenty days, through roughly eighty merged pull requests, because nothing compares it with anything (ninth audit I-06; the same field had already been stale by sixteen PRs when it was rewritten [...] docs/archive/SESSION_LOG_2026-07_2026-08.md",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is current_workflow_pr, whose exact head is anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push (event head == live headRefOid == marker). The marker was ABSENT from #180's body until 2026-08-30, and the live check that says so had never run on that branch -- the job died at an earlier step every time. Nothing is exempt."
   },
   "active": {
     "wave": "canon",
-    "task": "security-policy",
-    "branch": "menqstudio-patch-1"
+    "task": "T-055",
+    "branch": "t055/first-produced-artifact"
   },
   "prs": [
     {
@@ -27,7 +27,7 @@
   ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "security-policy",
+    "CURRENT_ACTIVE_TASK": "T-055",
     "CURRENT_ACTIVE_WAVE": "canon",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
@@ -100,9 +100,9 @@
       "state": "in-progress on gate/canon-budget (PR #180)"
     },
     "production-half": {
-      "status": "design_green_not_built",
-      "code_exists": false,
-      "note": "docs/design/PRODUCTION_HALF_DESIGN.md (T-051). DESIGN-green only: no independent architect has read it and no product code exists. T-055 is the first slice, and tools/check_produced_artifact.py prints its five conditions."
+      "status": "first_slice_built",
+      "code_exists": true,
+      "note": "Design docs/design/PRODUCTION_HALF_DESIGN.md (T-051); first slice T-055. tools/check_produced_artifact.py prints GREEN on all five, produced from the real code path. Model and call steps are refused at this head, so nothing this slice runs can leave the box."
     }
   },
   "product_roadmap": {
@@ -124,15 +124,15 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this rea [...] docs/archive/SESSION_LOG_2026-07_2026-08.md"
   ],
   "current_workflow_pr": {
-    "number": 195,
-    "branch": "menqstudio-patch-1",
+    "number": 196,
+    "branch": "t055/first-produced-artifact",
     "state": "open",
-    "what": "SECURITY.md: a reporting route (GitHub private vulnerability reporting, never a public issue) and a scope section that points at artifacts rather than asserting a posture -- the governed path is NOT enabled in shipped builds, and the declared negatives, the deferred enforcements and their dates each name a file.",
-    "note": "Opened from the GitHub UI, so it carried no canon update and the coordination gates refused it by name. That is the law working, not breaking: a pull request made outside a session still has to say what the repository's active work is. The canon is added here rather than the gate relaxed.",
+    "what": "T-055: the first produced artifact. An agent bundle under a directory named by sha256(manifest.json), a two-step flow, a grant written by the runtime rather than a prompt, a run enqueued by run_due, and a receipt carrying enforcement_regime. The gate RED by design since #193 prints GREEN.",
+    "note": "The tick's authority SHRANK: for a bundle it may write a flow_runs row and a scheduler_ticks row and nothing else. A tampered bundle is REFUSED with a typed reason, never skipped. Three mutation sweeps found three of my own checks tested by nothing.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #195 (menqstudio-patch-1): merge on an all-green exact head, then read `gh run list --branch main`. After it: T-055's code is on t055/first-produced-artifact and needs its canon. PR #112 stays parked.",
+    "current": "PR #196 (t055/first-produced-artifact): merge on an all-green exact head, then read `gh run list --branch main` and confirm the produced-artifact job passed THERE before requiring the context. After it: T-056. PR #112 stays parked.",
     "_note": "The carrier is current_workflow_pr. This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled, so the branches below are advisory prose, not gate inputs."
   }
 }

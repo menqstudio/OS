@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""The production half has a finish line now — and this gate is RED until it is crossed.
+"""The production half has a finish line, and this gate is it.
 
-**Read this first: this gate is RED BY DESIGN, and will stay RED until the production half
-exists.** That is not a defect, a misconfiguration, or a job to rerun. It is the whole point.
+**It was RED BY DESIGN from the commit that introduced it (#193) until `T-055` crossed the
+line.** It is GREEN now, and that changes what a RED means here: it is no longer "this has not
+been built", it is "one of the five stopped holding" — or, on a developer's machine, that the
+evidence has not been produced yet. The RED output names which, and prints the
+`producer_command` that makes it.
 
 WHY IT EXISTS
 -------------
@@ -574,8 +577,12 @@ def main(argv: list[str] | None = None) -> int:
     contract = _load_json(root / CONTRACT)
     producer = _declared(contract, "producer_command") if isinstance(contract, dict) else None
 
-    print("RED: the production half does not exist yet. This gate is RED BY DESIGN until it "
-          "does — it is not a job to rerun.", file=sys.stderr)
+    # Two different facts reach this line and a reader must be able to tell them
+    # apart: nothing has been produced on this machine (run `producer_command`),
+    # or something that used to hold no longer does. The per-condition lines below
+    # say which; this headline must not assert either one.
+    print("RED: the five conditions do not all hold. Each line below says which, and why.",
+          file=sys.stderr)
     print("", file=sys.stderr)
     print("When does a customer see something? When these five lines all read MET:", file=sys.stderr)
     for c in conditions:

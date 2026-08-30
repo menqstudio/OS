@@ -33,7 +33,7 @@
       "status": "OPEN",
       "first_declared": "2026-08-30",
       "deferred_until": "2026-09-06",
-      "reason": "The gate is RED BY DESIGN until the production half exists, which is its entire purpose. main carries 33 required contexts with enforce_admins true, so a required context that can never pass blocks EVERY merge, and four fixes were in flight at the commit that introduced it. The job therefore RUNS on every pull request and its RED output is visible, but the context is not required. Adding `Production half · the five conditions (T-055)` to `contexts` in config/required-checks.json is a separate, deliberate step. This entry defers ENFORCEMENT, not work: the gate, its test and its wiring all landed in the same commit.",
+      "reason": "The gate was RED BY DESIGN from the commit that introduced it (#193) until T-055 implemented the five conditions; it is GREEN now, produced from the real code path by the producer command in config/produced-artifact-contract.json. It stays deferred for a different reason than it was deferred originally: a context must be OBSERVED green in CI before it is required. `Windows · §0.W broker syscall proof` was made required on 2026-08-18 and failed the same day, and its note in config/required-checks.json is that record; requiring this one on the strength of a local run would be the same mistake in a new place. Adding the name to `contexts` -- and to live branch protection, which check_repo_state compares -- is a separate, deliberate step once the job has passed on main.",
       "sign_off": ""
     }
   }
