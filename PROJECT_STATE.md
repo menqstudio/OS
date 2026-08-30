@@ -1,20 +1,18 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-30 — `T-045` cut the canonical read set down,
-then repaired the five CI gates that cut turned red — four of them its own. The audit pointer and
-the toolchain are records now (`code_audit.last_independent_audit`, `config/toolchain.json`), which
-a rewrite cannot delete. `main` was RED after both of that session's merges and both were called
-green: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second,
-and `main` is at `09ed3ce`. `T-048`, `T-049`, `T-050` and `T-052` are merged — the last of them stopped
-the audit log naming a person who was not there, at 34 of 40 `audit::record` call sites. `T-053` closes the
-`lstrip` defect family in the two gates that still carried it and writes down what the root gate does not see.
+**Last updated · Վերջին թարմացում:** 2026-08-30 — the §3.3 egress axis exists. `allowed_egress` is a
+REQUIRED execution-lease field (schema 1→2) and `core/src/egress_proxy.rs` decides a destination against a
+grant; neither confines a process yet, and `call` is still refused. The Owner split the populations: the
+produced agent enforces at `repo.rs`'s `Call` arm, the build agent is not jailed. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
+(`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
+`main` was RED after both of that session's merges and both were called green: `gh pr checks` is not `gh run list --branch main`. `T-046`, `T-048`, `T-049`, `T-050`, `T-052` and `T-053` are merged.
 This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical lines
 from line 2; the log both carried is
 [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #199 · branch `fix/dead-hashes-and-merge-base`** (base `main`, tip `cb2086d`, task dead-hashes). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR (opening) · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task egress-authorizer). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
 > The handoff may name the MERGE BASE, which survives a squash merge — and `check_doc_claims` can now see commit ids in the machine mirror at all, which is why one had been dead there for six months.
 >
@@ -83,4 +81,4 @@ history.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: dead-hashes` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: egress-authorizer` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

@@ -38,7 +38,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
 from bro_audit_log import append as audit_append
 from bro_authorize_specialist import build_mode_grant_payload, sign_mode_grant
-from bro_execution_lease import CLASS_CAPABILITIES
+from bro_execution_lease import CLASS_CAPABILITIES, LEASE_SCHEMA_VERSION
 from bro_skill_receipt import build_skill_receipt
 from bro_protected import SECURITY, STANDARD, TASK_CLASSES
 from bro_repository_state import RepositoryStateError, resolve_state
@@ -159,7 +159,7 @@ def issue_lease(request: TaskRequest, issuer_key: dict, *, workspace_id: str,
     if request.task_class not in CLASS_CAPABILITIES:
         raise SupervisorError(f"unknown task class: {request.task_class!r}")
     payload = {
-        "schema": 1,
+        "schema": LEASE_SCHEMA_VERSION,
         "artifact_type": "execution-lease",
         "key_id": issuer_key["key_id"],
         "lease_id": f"lease-{uuid.uuid4().hex[:16]}",
@@ -173,6 +173,11 @@ def issue_lease(request: TaskRequest, issuer_key: dict, *, workspace_id: str,
         "head_sha": head_sha,
         "tree_identity": tree_identity,
         "allowed_capabilities": sorted(CLASS_CAPABILITIES[request.task_class]),
+        # The destination axis. No class holds USE_NETWORK, so the only
+        # destination set a valid lease can carry today is the empty one --
+        # stated here rather than defaulted, because an absent field is what
+        # makes an axis silently satisfiable.
+        "allowed_egress": [],
         "issued_at_epoch": now,
         "expires_at_epoch": now + ttl_seconds,
         "max_tool_calls": max_tool_calls,

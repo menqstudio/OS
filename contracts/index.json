@@ -31,7 +31,7 @@
     {
       "id": "execution-lease",
       "file": "execution-lease.schema.json",
-      "version": 1,
+      "version": 2,
       "version_pointer": "/properties/schema/const",
       "crosses": "engine -> desktop",
       "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",

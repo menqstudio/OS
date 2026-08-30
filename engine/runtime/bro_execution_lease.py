@@ -28,9 +28,56 @@ CLASS_CAPABILITIES = {
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
+# The lease shape. Bumped 1 -> 2 when allowed_egress became a required field:
+# `additionalProperties: false` plus an exact-set `required` makes a v1 and a v2
+# lease mutually invalid, so this is a version change and not an addition. The
+# same number is the `schema` const in contracts/execution-lease.schema.json and
+# the `version` in contracts/index.json; tools/check_contracts_single_source.py
+# binds those two to each other, and nothing binds either to this line.
+LEASE_SCHEMA_VERSION = 2
+
+# The destination axis (design SS3.1/SS3.2). `https://` + an exact lowercase FQDN +
+# an optional port, and nothing else: no wildcard (an attacker-controlled
+# subdomain is one registration away, and subset comparison must stay decidable),
+# no IP literal (it cannot be re-checked against the NAME the grant stated), no
+# `http://` (an unauthenticated destination grants whoever holds the wire), no
+# path (the only layer that can enforce a destination sees CONNECT host:port and
+# cannot see inside TLS). The final `[a-z]{2,63}` label is what rejects IPv4
+# without a second matcher to keep in step.
+_EGRESS_ENTRY_RE = re.compile(
+    r"https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,63}(:[0-9]{1,5})?"
+)
+MAX_EGRESS_DESTINATIONS = 32
+
 
 class LeaseError(ValueError):
     pass
+
+
+def validate_egress_destinations(value: Any) -> tuple[str, ...]:
+    """Judge the SHAPE of an `allowed_egress` list and return it normalised.
+
+    Module-level and public so each refusal below can be reached by a test on
+    its own terms. Reached only through `validate_execution_lease` in
+    production, but a check that can only be exercised behind two earlier
+    refusals is a check no test can bind to -- which is how four of these came
+    back green under a mutation sweep before this function existed.
+    """
+    if not isinstance(value, list) or any(not isinstance(e, str) for e in value):
+        raise LeaseError("execution lease allowed_egress must be a list of destinations")
+    if len(value) > MAX_EGRESS_DESTINATIONS:
+        raise LeaseError(
+            f"execution lease names more than {MAX_EGRESS_DESTINATIONS} destinations"
+        )
+    if len(set(value)) != len(value):
+        raise LeaseError("execution lease allowed_egress contains a duplicate destination")
+    for entry in value:
+        if not _EGRESS_ENTRY_RE.fullmatch(entry):
+            raise LeaseError(f"execution lease egress destination not expressible: {entry!r}")
+        port = entry.rpartition(":")[2]
+        if port.isdigit() and not (1 <= int(port) <= 65535):
+            raise LeaseError(f"execution lease egress destination port invalid: {entry!r}")
+    return tuple(value)
 
 
 @dataclass(frozen=True)
@@ -46,6 +93,9 @@ class ExecutionLease:
     head_sha: str
     tree_identity: str
     allowed_capabilities: tuple[str, ...]
+    # The destination axis: which network authorities, orthogonal to tool, path
+    # and risk. Empty means "no network" and is the only way to say it.
+    allowed_egress: tuple[str, ...]
     issued_at_epoch: int
     expires_at_epoch: int
     max_tool_calls: int
@@ -110,14 +160,25 @@ def validate_execution_lease(
     required = {
         "schema", "lease_id", "nonce", "task_id", "agent_id", "session_id",
         "repository", "branch", "worktree", "head_sha", "tree_identity",
-        "allowed_capabilities", "issued_at_epoch", "expires_at_epoch", "max_tool_calls",
-        "task_class", "protected_scope", "control_plane_digest", "workspace_id",
+        "allowed_capabilities", "allowed_egress", "issued_at_epoch", "expires_at_epoch",
+        "max_tool_calls", "task_class", "protected_scope", "control_plane_digest",
+        "workspace_id",
     }
     # artifact_type/key_id are injected by the Ed25519 signer (broctl) and echoed
     # back by verify_artifact; tolerate them without weakening the required set.
-    if set(payload) - {"artifact_type", "key_id"} != required:
-        raise LeaseError("execution lease has unexpected or missing keys")
-    if payload.get("schema") != 1:
+    present = set(payload) - {"artifact_type", "key_id"}
+    if present != required:
+        # Name the fields. The single opaque string this replaced said only that
+        # something was wrong with the shape, so an absent allowed_egress and a
+        # typo'd key were the same message -- and `absent => LeaseError` is only a
+        # control if the refusal tells the reader which field was absent.
+        missing_keys = sorted(required - present)
+        unexpected_keys = sorted(present - required)
+        raise LeaseError(
+            "execution lease has unexpected or missing keys "
+            f"(missing={missing_keys}, unexpected={unexpected_keys})"
+        )
+    if payload.get("schema") != LEASE_SCHEMA_VERSION:
         raise LeaseError("unsupported execution lease schema")
 
     lease_id = _require_string(payload.get("lease_id"), "lease_id")
@@ -156,6 +217,22 @@ def validate_execution_lease(
         if actual != expected_value:
             raise LeaseError(f"execution lease binding mismatch: {key}")
 
+    # The destination axis (design SS3.1/SS3.2). REQUIRED and with no minimum:
+    # `[]` is the only way to say "no network", and an absent field is a
+    # LeaseError rather than a permissive default -- that single decision is the
+    # whole difference between this axis and USE_NETWORK, which is
+    # absent-by-default and therefore silently satisfiable wherever it is not
+    # checked.
+    #
+    # The SHAPE is judged here, before the capability block, and the
+    # authority COUPLING below. Judged the other way round, a malformed
+    # destination in a lease that cannot hold USE_NETWORK reports "no
+    # USE_NETWORK" -- a true sentence about the wrong field, and a refusal that
+    # sends its reader to the wrong place. It also made four checks unreachable:
+    # a mutation sweep deleted each of them and every test stayed green, because
+    # a later refusal answered for them.
+    egress = validate_egress_destinations(payload.get("allowed_egress"))
+
     capabilities = payload.get("allowed_capabilities")
     if not isinstance(capabilities, list) or not capabilities or not all(isinstance(x, str) for x in capabilities):
         raise LeaseError("execution lease allowed_capabilities invalid")
@@ -170,6 +247,17 @@ def validate_execution_lease(
     over_grant = sorted(set(allowed) - CLASS_CAPABILITIES[task_class])
     if over_grant:
         raise LeaseError(f"execution lease grants capabilities beyond its class: {over_grant}")
+
+    # A lease may not name a destination it holds no capability to reach. No
+    # class in CLASS_CAPABILITIES carries USE_NETWORK, so at this head every
+    # valid lease carries `[]` -- the axis exists, is required, and states "no
+    # network" for every class that exists. It becomes expressible the day a
+    # class holds USE_NETWORK, and not one commit earlier.
+    if egress and "USE_NETWORK" not in allowed:
+        raise LeaseError(
+            "execution lease names destinations without USE_NETWORK: a grant must not "
+            "state an authority it cannot deliver"
+        )
 
     scope = payload.get("protected_scope")
     if not isinstance(scope, list) or any(not isinstance(p, str) or not p for p in scope):
@@ -203,6 +291,7 @@ def validate_execution_lease(
         head_sha=str(payload["head_sha"]),
         tree_identity=str(payload["tree_identity"]),
         allowed_capabilities=allowed,
+        allowed_egress=egress,
         issued_at_epoch=issued,
         expires_at_epoch=expires,
         max_tool_calls=max_calls,

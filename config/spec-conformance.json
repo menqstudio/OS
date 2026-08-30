@@ -463,6 +463,10 @@
     "§3.3": {
       "status": "not_implemented",
       "reason": "The egress enforcement point of docs/design/PRODUCTION_HALF_DESIGN.md §3.3. NOT IMPLEMENTED: no code in this tree enforces a network destination against a grant. Measured -- `USE_NETWORK` is declared in engine/tools/registry.json and assigned to WebSearch/WebFetch with requires_task, requires_scope and requires_work_grant all false, and bro_execution_lease.py fixes CLASS_CAPABILITIES to {EXECUTE_CODE, WRITE_FILESYSTEM, WRITE_REPOSITORY}, so no lease can carry the class at all. T-055 therefore REFUSES a `call` step (agent_bundle::Refusal::StepKindNotExecutable) rather than approximating it: a grant that states an authority nothing can enforce is the defect commands.rs already names."
+    },
+    "§3.6": {
+      "status": "partial",
+      "missing": "Steps 3, 4 and 5 of the smallest end-to-end slice. IN the tree: step 1 (allowed_egress required on the execution lease, in contracts/ and the byte-identical engine mirror, parsed into ExecutionLease, absent => LeaseError) and step 2's authorizer (core/src/egress_proxy.rs -- the allowlist grammar, the CONNECT target parse, the allow/deny decision, unit-tested with no network). NOT in the tree: the loopback CONNECT listener and its resolve-once-and-pin, egress_jail.rs and the network namespace, the live agent turn proving the kernel refuses an unnamed destination, and any task_class that can hold USE_NETWORK -- so at this head every valid lease names no destination at all."
     }
   }
 }

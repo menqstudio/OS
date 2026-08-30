@@ -6,22 +6,25 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `fix/dead-hashes-and-merge-base` · **head** `cb2086d` (the merge base — it survives the squash) · **task** `dead-hashes` · **PR #199**
+**Active branch:** `feat/egress-authorizer-slice` · **head** `7c2534c` (the merge base — it survives the squash) · **task** `egress-authorizer` · **PR** opening
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #199 · branch `fix/dead-hashes-and-merge-base`** (base `main`, tip `cb2086d`, task dead-hashes). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR (opening) · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task egress-authorizer). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
 > The handoff may name the MERGE BASE, which survives a squash merge — and `check_doc_claims` can now see commit ids in the machine mirror at all, which is why one had been dead there for six months.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** §3.3's egress — the wall before the hole. A `call` step is REFUSED at this head
-(`agent_bundle::Refusal::StepKindNotExecutable`), and that is the correct state: the first slice is the
-enforcement point, not making `call` work. The reverse order is the only way to waste everything built here.
+**Next:** §3.3 slice 3 — the enforcement point. Slices 1+2 are in: `allowed_egress` is a REQUIRED
+lease field (schema 1→2, absent ⇒ `LeaseError`) and `core/src/egress_proxy.rs` is the authorizer,
+23 tests, no network, every check mutation-swept. `call` is still REFUSED, correctly.
 
-This handoff names the **merge base**, not the branch head. A squash merge erases branch commits, so a
-handoff naming one names a dead object on `main` — which failed `check_doc_claims` on five consecutive
-merges, always after the merge, where no pull request could show it.
+**Two populations, two allowlists** (Owner, 2026-08-30 — §3.3 corrected in place). The PRODUCED agent's
+list is `agent_bundle::Grant.egress`, already in the tree and forced empty; it enforces at the `Call` arm
+of `repo.rs` — in-process, **no spawn**, and its closed four-kind vocabulary has no `Bash` to spell around
+a matcher. The BUILD agent keeps a broad fixed `build_egress` and is **not** jailed. `ai.rs` has **three**
+spawn sites, not two. No class holds `USE_NETWORK`, so every valid lease names **no** destination — the
+axis exists, is required, and says "none".
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -30,8 +33,7 @@ Three more things must be true at every push: the PR body carries exactly one
 `main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a
 commit that no longer exists.
 
-`T-046`'s row stays open although it merged: one green run does not prove an intermittent. Stamp with
-`tools/stamp_pr_head.py --pr <N>` — REST since `T-047`; `gh pr edit` dies here.
+Stamp the head with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`; `gh pr edit` dies here.
 
 ## Verify before you believe any of this
 
@@ -49,11 +51,9 @@ python3 tools/check_no_assumptions.py     # no unmarked guess in the canon
 python3 tools/check_handoff_ready.py      # a new session could take over
 ```
 
-Measured 2026-08-29 on **Debian**, cargo 1.97.1 / node 20.20.2 / npm 10.8.2, `cargo` run
-from an ordinary shell. The documents that called this a Windows box were corrected by
-`T-045`. Those three numbers have one source of record now — `config/toolchain.json` —
-because `check_doc_claims.py` compared the documents against whatever machine ran it, and
-the only machine that runs it is a CI runner with a different node.
+Measured on **Debian**, `cargo` from an ordinary shell. The three toolchain numbers have one
+source of record — `config/toolchain.json` — and the documents that called this a Windows box
+were corrected by `T-045`.
 
 ## The position, in four sentences
 
@@ -95,10 +95,8 @@ in any prose document.
 ## Two things that will save you a day
 
 **The wall loads from the SESSION's project root, not the repository you edit.** Open the
-session at the OS checkout itself. A session opened elsewhere that then works inside `OS/`
-gets none of the five hooks — no read receipt, no phase declaration, no prior-art check, no
-Stop guard — and *nothing announces their absence*. That happened for a whole task (T-019)
-before anyone noticed.
+session at the OS checkout itself, or you get none of the five hooks and *nothing announces
+their absence* — it happened for a whole task (T-019). CLAUDE.md §5 has the full list.
 
 **A green test is not a passing check.** When you add a check, delete it once, **grep the line
 to confirm the mutation applied**, and confirm its test goes red. `T-045` swept its own two gates
@@ -121,4 +119,4 @@ roughly ninety checks swept in an earlier wave, four came back green.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: dead-hashes` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: egress-authorizer` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

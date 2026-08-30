@@ -5,7 +5,7 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #199 · branch `fix/dead-hashes-and-merge-base`** (base `main`, tip `cb2086d`, task dead-hashes). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR (opening) · branch `feat/egress-authorizer-slice`** (base `main`, tip `7c2534c`, task egress-authorizer). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
 > The handoff may name the MERGE BASE, which survives a squash merge — and `check_doc_claims` can now see commit ids in the machine mirror at all, which is why one had been dead there for six months.
 >
@@ -19,6 +19,7 @@ claim; ✅ means an independent audit confirmed it. Never promote your own work.
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-058** | **§3.3 egress, slice 3 — the enforcement point.** Slices 1+2 merged: the lease's `allowed_egress` axis and `core/src/egress_proxy.rs` (authorizer only, no socket, no jail). Open: wire the authorizer into the `StepKind::Call` arm of `repo.rs` so the PRODUCED agent's `Grant.egress` is enforced, and let `write_grant` carry a non-empty egress. The build agent stays unjailed by the Owner's decision. ◑ Builder-claimed for slices 1+2; nobody else has looked | Bro | In-Progress | `feat/egress-authorizer-slice` |
 | **T-056** | **Every fail-closed check must name what its failure PREVENTS** — merge, session, deploy, release, or nothing — in a registry, not a docstring. A check whose consequence is `nothing` is RED: being named in a runbook is a suggestion. `bro_deploy_preflight` is the worked example. The population is DERIVED from the filesystem, so the gate cannot omit itself. **Deferred behind `T-055` by the Owner; reordering needs a written reason** | — | Todo | — |
 | **T-057** | **56 fabricated audit rows are indistinguishable from real ones.** `repo::seed` writes them by raw SQL (`repo.rs:3275-3278`) and the schema has no `source` column. **Closure: a reviewer reading `audit_events` can tell fabricated rows from real ones WITHOUT reading `repo.rs`. Adding a column that nothing surfaces does not close this.** Owner: Gev · `deferred_until: 2026-09-06` · behind `T-055`. It is WORK, not a deferred enforcement, so it is a board row: `config/deferred-enforcement.json`'s population is derived from workflow job names | — | Todo | — |
 | **T-046** | **The Windows engine job must run clean across several pull requests** before the ledger's concurrency flake is called fixed — one green run does not prove an intermittent. Merged as PR #182; open on the EVIDENCE, not the code | — | Todo | merged `#182` |
@@ -41,4 +42,4 @@ ninth round's head is unconfirmed.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: dead-hashes` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: egress-authorizer` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

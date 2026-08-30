@@ -585,13 +585,51 @@ In `engine/agents/authority-policy.json`, a fourth field on `default`, `designat
 
 ### 3.3 Which runtime code enforces it
 
+> **CORRECTED 2026-08-30, by the Owner.** Everything below this box was written as
+> though there were one population and one jail. There are **two populations, and they
+> need two different mechanisms** — not one jail carrying two lists.
+>
+> | Who | What it needs | Its allowlist | Its enforcement point |
+> |---|---|---|---|
+> | **Build agent** — Claude Code, writing code | npm, PyPI, crates.io, the git remote | `build_egress`: broad, fixed, declared | **none in this slice.** It holds `Bash`, so only a kernel jail could bind it, and jailing it re-imposes the dependency-install limit the Owner deliberately removed |
+> | **Produced agent** — running a customer flow | one or two hosts, e.g. `*.bitrix24.ru` as a set of exact names | `agent_bundle::Grant.egress`, already in the tree at `core/src/agent_bundle.rs`, currently forced empty | the `StepKind::Call` arm of `core/src/repo.rs` |
+>
+> A produced agent never needs `npm install`; if it does at runtime, that is a defect.
+> So the Owner's rule: the jail goes on the produced agent, never on every development
+> spawn — and the build agent's `npm install` never meets it, because it is another road.
+>
+> **Two facts below are wrong, and are corrected here rather than in place** so the
+> original reasoning stays readable:
+>
+> 1. **"the two spawn sites in `ai.rs`" — there are three.** `ai.rs:501` (the
+>    `claude --version` readiness probe), `ai.rs:2306` (streaming), `ai.rs:2588`
+>    (non-streaming). All three run the same binary. None of the three sets any
+>    environment variable on the child today, so injecting `HTTPS_PROXY` means adding a
+>    `.env(...)` where there is none.
+> 2. **The produced agent has no spawn at all.** `repo.rs`'s flow runner executes
+>    `Branch` and `Store` in-process and refuses `Model` and `Call`; no process is
+>    created. That is not a gap — the produced agent's vocabulary is a closed four-kind
+>    set with no `Bash`, so it *cannot spell around a matcher*, and a direct authorizer
+>    call in the `Call` arm is a real enforcement point rather than a prompt-level
+>    suggestion. The kernel namespace was invented for the population that holds `Bash`,
+>    which is exactly the population that is not being jailed.
+>
+> **Consequence for the file this section names.** §3.3 says
+> `apps/desktop/src-tauri/src/egress_proxy.rs`. The authorizer is instead at
+> **`apps/desktop/src-tauri/core/src/egress_proxy.rs`**: `core` cannot see `src` — the
+> dependency runs `brops` → `brops-core`, one way — so an authorizer in `src` is
+> unreachable from the produced agent's enforcement point. In `core` both populations
+> reach one authorizer, and `core` carries no `tokio`, so it stays pure and network-free.
+> *(status: the authorizer is `implemented`; §3.3's enforcement point remains
+> `not_implemented`, and `config/spec-conformance.json` says so.)*
+
 **No such chokepoint exists today.** There is no process, no line and no primitive in this repository that can refuse an outbound connection — see the nine zero-hit domain-word searches in §3.0. This must be built. *(status: `not_implemented`.)*
 
 There are exactly two candidate layers and only one is honest.
 
 **(1) A tool-call destination check — defence-in-depth, and it MUST be labelled as such.** It would sit in `engine/runtime/bro_policy.py`, fed by a new `destinations` field on `ActionClassification` populated in `_direct_targets`, which today never reads `url`. **Bypassable, and the measurement above proves it rather than argues it:** `Bash` is a granted tool on both routes; `curl …` classifies `UNKNOWN`, `python3 tools/x.py` classifies `EXECUTE_CODE` with `tgts=()`, `npm test` classifies `UNKNOWN`. None of them presents a URL to any matcher, and a test suite that fetches a fixture presents nothing at all. Ship it; never call it the grant.
 
-**(2) A network namespace around the agent process — the enforcement.** The only chokepoint that cannot be spelled around is the kernel, and the only place this repository owns the process boundary is the two spawn sites in `apps/desktop/src-tauri/src/ai.rs` — the streaming agent path and the non-streaming one, each a `tokio::process::Command` followed by `.spawn()`.
+**(2) A network namespace around the agent process — the enforcement.** The only chokepoint that cannot be spelled around is the kernel, and the only place this repository owns the process boundary is the spawn sites in `apps/desktop/src-tauri/src/ai.rs` — **three, not two**: the readiness probe at `ai.rs:501`, the streaming agent path at `ai.rs:2306` and the non-streaming one at `ai.rs:2588`, each a `tokio::process::Command` followed by `.spawn()`. Per the correction box above, this jail is the BUILD agent's mechanism and is not in the first slice.
 
 Enforcement sits **immediately before `.spawn()`**, in a pre-exec hook: the agent CLI and every descendant it forks run in a network namespace holding only `lo`, with no default route, and the single reachable address is a loopback-bound `CONNECT` proxy the app owns. The proxy authorizes each `CONNECT host:port` against the lease's `allowed_egress` and refuses everything else.
 
