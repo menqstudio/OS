@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, the fields tools/check_repo_state.py compares against live GitHub. This field held 74,311 characters of prose until 2026-08-29 (T-045); the narrative is in docs/archive/ and the ceiling is in config/canon-budget.json.",
-  "settled_at_main_head": "629749c27a480d388537e62ded5a8f333dfb95e6",
+  "settled_at_main_head": "094ea44b4f315ae1e7119b2724ec300ad9fa5763",
   "sync": {
-    "baseline_main_head_at_sync": "629749c27a480d388537e62ded5a8f333dfb95e6",
-    "snapshot_branch": "fix/handoff-names-a-dead-branch-commit",
+    "baseline_main_head_at_sync": "094ea44b4f315ae1e7119b2724ec300ad9fa5763",
+    "snapshot_branch": "chore/settle-at-green-main",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is current_workflow_pr, whose exact head is anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "fix/handoff-names-a-dead-branch-commit"
+    "branch": "chore/settle-at-green-main"
   },
   "prs": [
     {
@@ -124,16 +124,16 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree, and config/spec-conformance.json records section 0.1 as partial for exactly that reason. The three real refusals are in CLAUDE.md §6."
   ],
   "current_workflow_pr": {
-    "number": 201,
-    "branch": "fix/handoff-names-a-dead-branch-commit",
+    "number": 202,
+    "branch": "chore/settle-at-green-main",
     "state": "open",
     "what": "The handoff may name the MERGE BASE with main, which survives a squash merge. A branch head does not, so a handoff naming one names a dead object on main -- five consecutive merges failed that way.",
-    "note": "The handoff named a branch commit a squash erased, and main went RED on it for the sixth time. The head line now names the merge base and carries the reason inline, so the rule cannot be evicted separately from what it governs.",
+    "note": "Settling the state anchor at main 094ea44. Also open, and NOT the carrier: #112 (recorded in prs[], exact-head anchored); this pull request is the commit that records it.",
     "base": "main"
   },
   "next_action_by_carrier": {
     "current": "PR #199 (fix/dead-hashes-and-merge-base): merge on an all-green exact head, then read `gh run list --branch main` -- this is the PR that is supposed to stop that being red. After it: §3.3's egress.",
-    "_note": "The carrier is current_workflow_pr (#201 on fix/handoff-names-a-dead-branch-commit). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "_note": "The carrier is current_workflow_pr (#202 on chore/settle-at-green-main). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
