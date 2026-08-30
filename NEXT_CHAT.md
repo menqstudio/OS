@@ -6,21 +6,22 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t055/produced-artifact-gate-int` · **head** `2eeaa8a` · **task** `T-055` · **PR #193**
+**Active branch:** `design/production-half-int` · **head** `6845738` · **task** `T-051` · **PR #194**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #193 · branch `t055/produced-artifact-gate-int`** (base `main`, tip `d745c50`, task T-055). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #194 · branch `design/production-half-int`** (base `main`, tip `5cb9261`, task T-051). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The production half gets a finish line a machine can see: five conditions, RED by design until it exists, and that RED output IS the deliverable. Not a required context — the deferral is DATED and enforced from inside one that is.
+> The production half is designed: the artifact, the flow, the permission grant, the credential path and the scheduled call. Design only — DESIGN-green is not code-green, and no product code exists.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** run `python3 tools/check_produced_artifact.py`. It prints the five conditions a customer's first
-produced artifact must meet and which are missing, and is **RED by design** until the production half exists
-— that output is the deliverable, not a job to rerun. Every other piece of work here has a gate and so a
-measurable done; this half had none, and lost every scheduling contest. The context is deliberately NOT
-required — one that can never pass blocks every merge — and that deferral is a DATED entry in
-`config/deferred-enforcement.json`, enforced from inside a context that IS required.
+**Next:** `T-055` — the first produced artifact, and nothing before it. Run
+`python3 tools/check_produced_artifact.py`: it prints the five conditions and which are missing, and is **RED
+by design** until the production half exists. `docs/design/PRODUCTION_HALF_DESIGN.md` is the design behind
+those five; it is DESIGN-green only — no independent architect has read it and no product code exists. §3
+names **which runtime code** enforces the network axis, because a grant stated in a prompt is not enforcement;
+§4 puts credential SLOTS in the bundle and the binding outside it, so rotating a key cannot un-approve the
+customer's agent by changing the digest.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -120,4 +121,4 @@ roughly ninety checks swept in an earlier wave, four came back green.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-055` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-051` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
