@@ -15,9 +15,9 @@ It answers one question `NEXT_CHAT.md` does not: **the state of each part of the
 `NEXT_CHAT.md` answers *what the next session does first*.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #184 · branch `feat/governed-provisioning-probe`** (base `main`, tip `8e29b6a`, task T-048). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #185 · branch `fix/truncated-canon`** (base `main`, tip `fdebd5b`, task T-049). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The desktop governed pre-flight measures its five provisioning inputs instead of asserting they are absent; behaviour on this build is byte-identical and the gate stays shut.
+> Sixteen roadmap Definition-of-Done rows ended mid-clause since 56e1cd7 cut them to fit the byte ceiling; a gate refuses that now and the rows are finished from the code.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
