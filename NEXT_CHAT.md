@@ -8,9 +8,9 @@
 
 **Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #201 · branch `fix/handoff-names-a-dead-branch-commit`** (base `main`, tip `629749c`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **✅ SETTLED — `main` is at `094ea44`.** The pull request that records it is PR #202 on `chore/settle-at-green-main`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The handoff named a branch commit a squash erased, and main went RED on it for the sixth time. The head line now names the merge base and carries the reason inline, so the rule cannot be evicted separately from what it governs.
+> **Next:** Design SS3.3 slice 3: wire the authorizer into the StepKind::Call arm of repo.rs so the PRODUCED agent's Grant.egress is enforced, and let write_grant carry a non-empty egress. The build agent stays unjailed by the Owner's decision (T-058).
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
