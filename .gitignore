@@ -35,3 +35,10 @@ keys/
 # --- OS / editor ---
 .DS_Store
 *.log
+
+# Agent worktrees. The Agent tool checks out an isolated copy of this repository under
+# .claude/worktrees/<agent-id>/ so a subagent cannot collide with the session's working
+# tree. It is a checkout, not content: committing it would nest the repository inside
+# itself, and leaving it untracked made check_handoff_ready.py report the tree dirty and
+# refuse the handoff for a directory that is not the work.
+.claude/worktrees/
