@@ -6,20 +6,20 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t053b/shell-settlement` · **head** `81c1080` · **task** `T-053b` · **PR #191**
+**Active branch:** `brand/menq-logo` · **head** `ea83e3a` · **task** `brand` · **PR #192**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #191 · branch `t053b/shell-settlement`** (base `main`, tip `a88ba9f`, task T-053b). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #192 · branch `brand/menq-logo`** (base `main`, tip `5898db0`, task brand). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The shell is settled AFTER the fact: a `PreToolUse` path-check on a shell command is undecidable, so `PostToolUse` asks what changed on disk instead. Detection plus halting the turn — not containment.
+> The brand had no home in the repository: no `menq*` image appears anywhere in this repository's history, and the wordmark survived on one disk until a cleanup moved it somewhere the account could not read.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-053b` is open on `t053b/shell-settlement` — the half held for a quiet tree. ONE new event,
-`PostToolUse` on `Bash|PowerShell|Shell`; no existing matcher is touched. Adding `Bash` to `PreToolUse` was
-designed first and **rejected**: which paths a shell command writes is undecidable, and `test_wall_bash_gap.py`
-carries twelve spellings of one write as the corpus. It is detection plus halting the turn, **not
-containment** — the write has already landed.
+**Next:** `T-053a` and `T-053b` are both merged; the shell is settled after the fact and the wall now
+reports what a `Bash` write changed on disk. PR #192 puts the brand artwork under `docs/brand/` — no
+`menq*` image had ever been committed, and the wordmark survived on one disk until a cleanup moved it
+into a root-owned archive. After it: the `T-055` produced-artifact gate, then the production-half design
+splice, then `T-055` itself and nothing before it.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
@@ -120,4 +120,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-053b` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: brand` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
