@@ -119,15 +119,15 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this rea [...] docs/archive/SESSION_LOG_2026-07_2026-08.md"
   ],
   "current_workflow_pr": {
-    "number": 189,
-    "branch": "t052/audit-attribution",
+    "number": 190,
+    "branch": "t053a/lstrip-evidence",
     "state": "open",
-    "what": "The settle for T-046 (PR #182): the state anchor and the three banners move to main 40be210, the merged-since-audit counts are measured rather than carried, and T-047 repairs tools/stamp_pr_head.py, which could not write a PR body on gh 2.46.0 at all, then could not read one back without calling a correct write RED (GitHub returns CRLF).",
-    "note": "The audit log stops naming a person who was not there: 34 of 40 audit::record call sites hardcoded the actor, and a gate now refuses a new one inside the call.",
+    "what": "T-053a: `lstrip(\"./\")` strips a character SET, not a prefix -- live in check_roadmap_order.py and check_audit_reports.py, and the reason a worktree-isolated agent could only write through the ungated Bash path. check_no_lstrip_prefix.py refuses the form tree-wide by AST; check_doc_claims.py's worktree exclusion is matched relative to root, not absolutely.",
+    "note": "test_wall_bash_gap.py records what the ROOT coordination gate does not see -- the engine's wall matches `*` and does see Bash; phase declaration, meta scope, prior art and the shrink-only canon budget do not. The containment half is T-053b, held for a quiet tree.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #181 (settle-after-180): merge it so main records the settled state. T-045 merged as PR #180; nothing else is open but PR #112, which is a design proposal parked on purpose.",
-    "_note": "The carrier is current_workflow_pr (#189 on t052/audit-attribution). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #190 (t053a/lstrip-evidence): merge on an all-green exact head, then read `gh run list --branch main` -- a green PR is not a green main. After it: T-053b (containment) on a tree with no other work in flight, the T-055 produced-artifact gate, and the production-half design splice. Nothing else is open but PR #112, parked on purpose.",
+    "_note": "The carrier is current_workflow_pr (#190 on t053a/lstrip-evidence). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   }
 }
