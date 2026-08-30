@@ -968,6 +968,40 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_spec_references
 
+  produced-artifact:
+    name: Production half · the five conditions (T-055)
+    runs-on: ubuntu-latest
+    # THIS JOB IS RED BY DESIGN AND IS NOT A REQUIRED CONTEXT. Do not "fix" it and do not rerun it.
+    #
+    # Every other piece of work in this repository has a gate and therefore a measurable "done".
+    # The production half — what a paying customer actually receives — had none, so it lost every
+    # scheduling contest to work whose finish line a machine could see. The gate is written first
+    # and left failing; its RED output is the deliverable, and answers "when does a customer see
+    # something?" in five lines.
+    #
+    # It is deliberately ABSENT from config/required-checks.json at the commit that introduced it:
+    # main carries 33 required contexts with enforce_admins true, so a required context that can
+    # never pass blocks EVERY merge, and fixes were in flight. Adding it is a separate, deliberate
+    # step. That deferral is not a comment anyone has to remember — it is a DATED entry in
+    # config/deferred-enforcement.json, and tools/check_repo_state.py::verify_deferred_enforcement
+    # (which runs inside the already-required `Repo-state` context) turns RED once the date passes
+    # while this name is still missing from `contexts`.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # The self-test runs FIRST and must pass. It is the only evidence that this gate can be
+      # satisfied at all: it builds a synthetic tree meeting all five conditions and asserts GREEN.
+      # A gate that has never been observed passing measures nothing, which is the same defect one
+      # level up from the one this gate exists to catch.
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_produced_artifact
+      - name: The five conditions a customer sees (RED until the production half exists)
+        run: python tools/check_produced_artifact.py
+
+
   negative-matrix:
     name: Negative matrix · every declared test ID says what establishes it
     runs-on: ubuntu-latest

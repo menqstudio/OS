@@ -25,6 +25,7 @@ Run context:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import pathlib
@@ -627,6 +628,166 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
 
 
 
+DEFERRED_ENFORCEMENT = pathlib.Path("config") / "deferred-enforcement.json"
+
+#: The same vocabulary tools/check_residual_items.py uses for O-1..O-5, deliberately not a second
+#: one. A status other than OPEN is an audited verdict and may not be asserted by editing a word.
+_DEFERRAL_STATUSES = {"OPEN", "CLOSED", "OWNER-DEFERRED"}
+_DEFERRAL_NEEDS_SIGN_OFF = {"CLOSED", "OWNER-DEFERRED"}
+_DEFERRAL_MIN_REASON = 120
+_DEFERRAL_FIELDS = ("gate", "workflow", "status", "first_declared", "deferred_until", "reason", "sign_off")
+
+
+def workflow_job_names(workflow_dir: pathlib.Path) -> set[str]:
+    """Every job `name:` declared under `.github/workflows/`.
+
+    Same extraction `verify_required_contexts_exist` uses, factored out because two rules now
+    need the same population and two copies of a regex is how they stop agreeing.
+    """
+    names: set[str] = set()
+    if not workflow_dir.is_dir():
+        return names
+    for path in sorted(workflow_dir.glob("*.y*ml")):
+        for m in re.finditer(r"^\s{4,6}name:\s*(.+?)\s*$", path.read_text(encoding="utf-8"), re.M):
+            names.add(m.group(1).strip().strip('"\''))
+    return names
+
+
+def _iso_date(value) -> dt.date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.date.fromisoformat(value.strip())
+    except ValueError:
+        return None
+
+
+def verify_deferred_enforcement(expected: dict, registry: dict, workflow_dir: pathlib.Path,
+                                root: pathlib.Path, today: dt.date) -> list[str]:
+    """A deferred enforcement is an obligation with a DATE, and this is the date's gate.
+
+    **Why this lives here.** ``config/required-checks.json`` is this file's subject already —
+    ``verify_required_contexts_exist`` reads it, and ``verify_branch_protection`` compares it
+    live. And the context this function runs under, ``Repo-state · live GitHub truth verifier``,
+    is REQUIRED in branch protection. A registry of deferrals enforced by a gate that is itself
+    optional would be the exact defect the registry exists to prevent, so it goes where the
+    teeth already are.
+
+    **Why a date and not a state.** ``O-1..O-5`` are work: they close when something is built,
+    so an observable state is the natural trigger for them. A deferred *enforcement* is not
+    that. The risk is not that we fail to notice the state arrived — it is that the state never
+    arrives and the check stays non-required forever, and every state trigger here is controlled
+    by the same person who owes the enforcement. "Once the merge queue drains" is satisfied by
+    never adding a task. A date is not postponable by inaction.
+
+    **The population comes from the filesystem.** Every job ``name:`` declared in a workflow must
+    appear in exactly one of: ``contexts`` (enforced), ``deliberately_excluded`` (permanent, with
+    a reason), or ``deferrals`` (temporary, with a date). Wiring a new job into CI and naming it
+    nowhere is RED — which is what makes it impossible for a gate to quietly omit itself.
+
+    Pure: ``today`` is injected, so the expiry is testable without waiting a week.
+    """
+    problems: list[str] = []
+    contexts = set(expected.get("contexts") or [])
+    context_bases = {re.sub(r"\s*\([^()]*\)$", "", c) for c in contexts}
+    excluded = set((expected.get("deliberately_excluded") or {}))
+
+    deferrals = registry.get("deferrals")
+    if not isinstance(deferrals, dict):
+        return [f"{DEFERRED_ENFORCEMENT.as_posix()} has no `deferrals` object — the deferral "
+                f"registry cannot be read, so no deferral is under any date (fail-closed)."]
+    max_days = registry.get("max_days_without_sign_off")
+    if not isinstance(max_days, int) or max_days <= 0:
+        problems.append(f"{DEFERRED_ENFORCEMENT.as_posix()}: `max_days_without_sign_off` must be a "
+                        f"positive integer; got {max_days!r}. Without it a deferral can be "
+                        f"extended indefinitely at no cost.")
+        max_days = 7
+
+    names = workflow_job_names(workflow_dir)
+    if not names:
+        return problems + [f"no job names found under {workflow_dir.as_posix()} — this check "
+                           f"verified nothing (fail-closed)."]
+
+    for name in sorted(names):
+        if name in contexts or name in context_bases or name in excluded or name in deferrals:
+            continue
+        problems.append(
+            f"the workflow job `{name}` is required by nothing, excluded by nothing and deferred "
+            f"by nothing. Every job must appear in `contexts` or `deliberately_excluded` in "
+            f"{REQUIRED_CHECKS.as_posix()}, or in `deferrals` in "
+            f"{DEFERRED_ENFORCEMENT.as_posix()} with a date. A check nobody requires and nobody "
+            f"declared optional is a check that quietly stops mattering.")
+
+    for name, entry in sorted(deferrals.items()):
+        where = f"{DEFERRED_ENFORCEMENT.as_posix()}: `{name}`"
+        if not isinstance(entry, dict):
+            problems.append(f"{where} is not an object.")
+            continue
+        missing = [f for f in _DEFERRAL_FIELDS if f not in entry]
+        if missing:
+            problems.append(f"{where} is missing {', '.join('`' + m + '`' for m in missing)}.")
+            continue
+        if name in contexts or name in context_bases:
+            problems.append(
+                f"{where} is ALSO a required context. The deferral is satisfied — delete the "
+                f"entry rather than leaving a dated promise beside the thing it promised.")
+        if name in excluded:
+            problems.append(
+                f"{where} is ALSO in `deliberately_excluded`. Permanent and temporary are two "
+                f"different answers and a reader cannot tell which one holds.")
+        if name not in names:
+            problems.append(
+                f"{where} defers a context no workflow declares. A deferral for a job that does "
+                f"not exist reads as coverage and is none.")
+
+        status = entry.get("status")
+        if status not in _DEFERRAL_STATUSES:
+            problems.append(f"{where}: status {status!r} is not one of "
+                            f"{sorted(_DEFERRAL_STATUSES)}.")
+        sign_off = entry.get("sign_off")
+        signed = isinstance(sign_off, str) and sign_off.strip()
+        if status in _DEFERRAL_NEEDS_SIGN_OFF and not signed:
+            problems.append(f"{where}: status `{status}` is an audited verdict and needs a "
+                            f"non-empty `sign_off`. It may not be asserted by editing a word.")
+
+        reason = entry.get("reason")
+        if not isinstance(reason, str) or len(reason.strip()) < _DEFERRAL_MIN_REASON:
+            problems.append(f"{where}: `reason` must be at least {_DEFERRAL_MIN_REASON} "
+                            f"characters saying what is deferred and why.")
+
+        for field in ("gate", "workflow"):
+            rel = entry.get(field)
+            if not isinstance(rel, str) or not (root / rel).exists():
+                problems.append(f"{where}: `{field}` names `{rel}`, which does not exist. A "
+                                f"deferral pointing at deleted code reads as verified.")
+
+        declared = _iso_date(entry.get("first_declared"))
+        until = _iso_date(entry.get("deferred_until"))
+        if declared is None:
+            problems.append(f"{where}: `first_declared` must be an ISO date (YYYY-MM-DD); got "
+                            f"{entry.get('first_declared')!r}.")
+        if until is None:
+            problems.append(f"{where}: `deferred_until` must be an ISO date (YYYY-MM-DD); got "
+                            f"{entry.get('deferred_until')!r}. A deferral with no expiry is the "
+                            f"thing this registry prevents.")
+        if declared is not None and until is not None:
+            if until < declared:
+                problems.append(f"{where}: `deferred_until` ({until}) is before `first_declared` "
+                                f"({declared}).")
+            elif (until - declared).days > max_days and not signed:
+                problems.append(
+                    f"{where}: deferred {(until - declared).days} days from `first_declared`, "
+                    f"which is more than {max_days}. Extending a deferral costs the same "
+                    f"signature a non-OPEN status costs: add a `sign_off`.")
+        if until is not None and today > until and name not in contexts and name not in context_bases:
+            problems.append(
+                f"{where}: EXPIRED. `deferred_until` was {until}, today is {today}, and `{name}` "
+                f"is still absent from `contexts` in {REQUIRED_CHECKS.as_posix()}. Either add the "
+                f"context — which is what was promised — or re-defer with a new date and a "
+                f"`sign_off`. Both show in a diff; letting the date pass does not.")
+    return problems
+
+
 def verify_required_contexts_exist(expected: dict, workflow_dir: pathlib.Path) -> list[str]:
     """Every required context names a job that exists. Pure/testable, offline, no rights needed.
 
@@ -821,6 +982,25 @@ def _live_main_head() -> str | None:
     return parts[0] if parts and _is_sha(parts[0]) else None
 
 
+def _deferred_enforcement_failures(root: pathlib.Path) -> list[str]:
+    """Read the two committed files and hand them to the pure checker. Fail-closed: an
+    unreadable or absent registry is a refusal, because "the file is missing" is exactly the
+    state in which every deferral is unbounded."""
+    problems: list[str] = []
+    docs: dict[str, dict] = {}
+    for rel in (REQUIRED_CHECKS, DEFERRED_ENFORCEMENT):
+        try:
+            docs[rel.as_posix()] = json.loads((root / rel).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            problems.append(f"{rel.as_posix()} is not readable JSON: {exc} — every deferral is "
+                            f"unbounded until it is (fail-closed).")
+    if problems:
+        return problems
+    return verify_deferred_enforcement(
+        docs[REQUIRED_CHECKS.as_posix()], docs[DEFERRED_ENFORCEMENT.as_posix()],
+        root / ".github" / "workflows", root, dt.date.today())
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Live-GitHub exact-head verifier for current_state.json")
     ap.add_argument("--root", default=str(pathlib.Path(__file__).resolve().parents[1]))
@@ -836,6 +1016,12 @@ def main(argv: list[str] | None = None) -> int:
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     failures: list[str] = []
+
+    # T-055. A deferred ENFORCEMENT is an obligation with a date, and this is the date's gate.
+    # Deliberately BEFORE the `gh` availability branch below, which returns early when the CLI is
+    # missing: a rule that only runs where a network tool happens to be installed is a rule with a
+    # hole in it, and this one has to hold everywhere the checkout does.
+    failures += _deferred_enforcement_failures(root)
 
     on_main_push = event_name == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main"
     event = None
