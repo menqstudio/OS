@@ -68,6 +68,17 @@ INLINE_PATH = re.compile(
     r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_.-]+\.(?:" + "|".join(SOURCE_EXT) + r"))`")
 # 7-40 hex in backticks — the shape a commit is always written in here.
 SHA = re.compile(r"`([0-9a-f]{7,40})`")
+#: The same claim without backticks, for the canonical JSON. `config/current_state.json` is in
+#: the read manifest and this gate has always read it -- but every commit id in it is written
+#: as plain text inside a JSON string, and the backticked pattern above could not see one.
+#: `38d5d71504ba68b70b015b958cb09109c80e595a` sat in `design_gate.candidate_head_note` naming a
+#: branch head that a squash merge had erased, invisible to a gate that was reading the file it
+#: was written in.
+#:
+#: Applied to `.json` only, deliberately: in prose, a bare hex word is as likely to be an
+#: example, a digest or an id, and the backtick is the author saying "this is a commit". In the
+#: machine mirror there is no such convention to lean on.
+BARE_SHA = re.compile(r"(?<![0-9a-zA-Z_/-])([0-9a-f]{7,40})(?![0-9a-zA-Z_/-])")
 TICKET = re.compile(r"`?\b([TOAIHBFG]-\d{2,3})\b`?")
 # "cargo 1.97.1", "node 20.20.2", "npm 10.8.2"
 VERSION = re.compile(r"\b(cargo|node|npm|python3?)\s+v?(\d+\.\d+(?:\.\d+)?)\b", re.I)
@@ -281,11 +292,19 @@ def main(root: pathlib.Path = ROOT) -> int:
                     f"file nobody filed is how `A-06` happened — twice")
 
         # 2 — commit-shaped strings resolve.
-        for sha in set(SHA.findall(text)):
+        found_shas = set(SHA.findall(text))
+        if rel.endswith(".json"):
+            found_shas |= set(BARE_SHA.findall(text))
+        for sha in found_shas:
             if sha in NOT_A_SHA or sha in PRE_IMPORT_SHAS or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
                 continue
-            if len(sha) == 7 and not re.search(r"[a-f]", sha):
-                continue  # a bare 7-digit number is not a commit
+            # A hex word with no letter in it is a NUMBER -- a run id, a timestamp, a count --
+            # and not a commit. This was `len(sha) == 7` and had to widen with BARE_SHA: an
+            # 11-digit GitHub run id sits in the mirror and matched. A 40-character all-digit
+            # commit id is possible in principle and has never existed; the check is on the
+            # length that is actually written.
+            if len(sha) < 40 and not re.search(r"[a-f]", sha):
+                continue
             checked["shas"] += 1
             code, _ = git("cat-file", "-e", sha)
             if code != 0:
