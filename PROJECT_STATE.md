@@ -6,13 +6,14 @@ and the toolchain are records now (`code_audit.last_independent_audit`, `config/
 which a rewrite cannot delete; PR #180 carries the detail. `main` was RED after both of that
 session's merges and both were called green, because the PR's checks were read and the branch's
 were not: `gh pr checks` is not `gh run list --branch main`. `T-046` (PR #182) closed the second
-and `main` is at `40be210`, seven workflows green. `T-047` repairs the stamping tool, which could
-not write a PR body at all on the `gh` this box has.
-This file was 3893 lines and **95% of it was a byte-for-byte copy of `NEXT_CHAT.md`** —
-3037 consecutive identical lines from line 2, differing only in the title. The log both
-carried is [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
-This file now answers one question `NEXT_CHAT.md` does not: **what is the state of each part
-of the product**. `NEXT_CHAT.md` answers *what the next session does first*.
+and `main` is at `40be210`, seven workflows green. `T-047` repairs the stamping tool: it could not write
+a PR body at all on this box's `gh`, and its own read-back then called a correct write RED
+because GitHub returns bodies in CRLF.
+This file was 3893 lines, **95% a byte-for-byte copy of `NEXT_CHAT.md`** — 3037 identical
+lines from line 2. The log both carried is
+[`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
+It answers one question `NEXT_CHAT.md` does not: **the state of each part of the product**;
+`NEXT_CHAT.md` answers *what the next session does first*.
 
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `40be210`.** The pull request that records it is PR #183 on `settle-after-182`. Also open, and deliberately not merged here: PR #112 (`design/floor-writer-service`). Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
@@ -51,9 +52,8 @@ disagree, the roadmap wins.
 | frontend | typecheck clean, 758 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulnerabilities |
 
-Toolchain here: cargo 1.97.1, node 20.20.2, npm 10.8.2, with `cargo` run from an ordinary
-shell. Documents saying this is a Windows box and that `cargo` needs PowerShell are stale;
-correcting them is part of `T-045`.
+Toolchain here: cargo 1.97.1, node 20.20.2, npm 10.8.2, `cargo` run from an ordinary shell.
+Documents calling this a Windows box needing PowerShell are stale; `T-045` corrected them.
 
 ## Standing risks
 

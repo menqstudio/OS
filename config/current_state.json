@@ -122,7 +122,7 @@
     "number": 183,
     "branch": "settle-after-182",
     "state": "open",
-    "what": "The settle for T-046 (PR #182): the state anchor and the three banners move to main 40be210, the merged-since-audit counts are measured rather than carried, and T-047 repairs tools/stamp_pr_head.py, which could not write a PR body on gh 2.46.0 at all.",
+    "what": "The settle for T-046 (PR #182): the state anchor and the three banners move to main 40be210, the merged-since-audit counts are measured rather than carried, and T-047 repairs tools/stamp_pr_head.py, which could not write a PR body on gh 2.46.0 at all, then could not read one back without calling a correct write RED (GitHub returns CRLF).",
     "note": "Settling the state anchor at main 40be210. Also open, and NOT the carrier: #112 (recorded in prs[], exact-head anchored); this pull request is the commit that records it.",
     "base": "main"
   },

@@ -55,6 +55,17 @@ def restamp(body: str, sha: str) -> str:
     return f"{MARKER.sub('', body).rstrip()}\n\nAUDIT_CANDIDATE_HEAD: {sha}\n"
 
 
+def markers(text: str) -> list[str]:
+    """Every marker in `text`, normalised.
+
+    GitHub returns a PR body with CRLF line endings whatever you wrote, so a raw comparison of
+    `MARKER.findall(sent)` against `MARKER.findall(read_back)` differs by a trailing \r on every
+    match and reports a mismatch that is not one. This was a false RED on PR #183 seconds after
+    the read-back was added — the write had in fact landed correctly.
+    """
+    return [m.strip() for m in MARKER.findall(text.replace("\r\n", "\n"))]
+
+
 def patch_command(repo: str, pr: int) -> list[str]:
     """The argv that writes a PR body. REST, never `gh pr edit` -- see the module docstring."""
     return ["gh", "api", "-X", "PATCH", f"repos/{repo}/pulls/{pr}", "--input", "-"]
@@ -67,7 +78,7 @@ def write_body(repo: str, pr: int, body: str) -> None:
     if out.returncode != 0:
         raise SystemExit(f"RED: writing the body of PR #{pr} failed:\n{out.stderr.strip()}")
     live = run("gh", "api", f"repos/{repo}/pulls/{pr}", "--jq", ".body")
-    if MARKER.findall(live) != MARKER.findall(body):
+    if markers(live) != markers(body):
         raise SystemExit(f"RED: PR #{pr} was written but reads back with a different marker; "
                          "check the pull request by hand before pushing again.")
 

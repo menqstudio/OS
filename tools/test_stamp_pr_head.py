@@ -49,6 +49,20 @@ class RestampTests(unittest.TestCase):
         self.assertIn("git diff --numstat 5cf9b8c..40be210", st.restamp(body, SHA))
 
 
+class MarkerReadBackTests(unittest.TestCase):
+    """The read-back compares what GitHub returns, which is not byte-identical to what was sent."""
+
+    def test_crlf_read_back_matches_the_lf_body_that_was_sent(self):
+        body = st.restamp("Body.", SHA)
+        self.assertEqual(st.markers(body.replace("\n", "\r\n")), st.markers(body))
+
+    def test_a_different_sha_still_mismatches(self):
+        self.assertNotEqual(st.markers(st.restamp("Body.", OTHER)), st.markers(st.restamp("Body.", SHA)))
+
+    def test_a_dropped_marker_mismatches(self):
+        self.assertNotEqual(st.markers("Body with no marker."), st.markers(st.restamp("Body.", SHA)))
+
+
 class PatchCommandTests(unittest.TestCase):
     def test_writes_over_rest(self):
         argv = st.patch_command("menqstudio/OS", 183)

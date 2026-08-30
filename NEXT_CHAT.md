@@ -30,7 +30,7 @@ commit** — an amend changes the hash and the handoff then names a commit that 
 `T-046`'s row stays open although it merged. One green run does not prove an intermittent fixed;
 the Windows engine job has to come back clean across several pull requests — `T-023`'s lesson.
 Stamp with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`, because `gh pr edit` dies
-on this box's `gh` before writing.
+here before writing.
 
 ## Verify before you believe any of this
 
