@@ -6,7 +6,7 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t053b/shell-settlement` · **head** `pending` · **task** `T-053b` · **PR #191**
+**Active branch:** `t053b/shell-settlement` · **head** `a5539ff` · **task** `T-053b` · **PR #191**
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #191 · branch `t053b/shell-settlement`** (base `main`, tip `a88ba9f`, task T-053b). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
