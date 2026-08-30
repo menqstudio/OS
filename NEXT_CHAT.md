@@ -6,18 +6,17 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `t054/readme-measured` · **head** `b311b59` · **task** `T-054` · **PR #188**
+**Active branch:** `t052/audit-attribution` · **head** `d20af67` · **task** `T-052` · **PR #189**
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #188 · branch `t054/readme-measured`** (base `main`, tip `fe26a78`, task T-054). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #189 · branch `t052/audit-attribution`** (base `main`, tip `34c5fb5`, task T-052). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The README's counts are re-measured and five are corrected; the superseded measurements move to docs/README_CLAIM_HISTORY.md rather than being deleted.
+> The audit log stops naming a person who was not there: 34 of 40 audit::record call sites hardcoded the actor, and a gate now refuses a new one inside the call.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** `T-050` is open on `t050/negative-matrix` — the 242-id negative test matrix has a machine
-mirror and a gate; 29 ids are bound to real tests, 201 are frozen as unreviewed debt. `main` is at `8e29b6a`, seven workflows
-green — read from `gh run list --branch main`, not from the pull request.
+**Next:** `T-052` is open on `t052/audit-attribution` — the audit log stops naming a person who was
+not there, and a gate refuses a new hardcoded actor inside the call rather than on the line.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both
 red `main`s of the previous session were reported as green because the PR's checks were read and
@@ -119,4 +118,4 @@ now. Of roughly ninety checks swept this way in an earlier wave, four came back 
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: T-054` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: T-052` · `CURRENT_ACTIVE_WAVE: canon` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

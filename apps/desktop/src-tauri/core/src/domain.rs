@@ -136,6 +136,16 @@ camel! {
     pub struct ActivityEvent {
         pub id: String,
         pub event_type: String,
+        /// `user` | `agent` | `system` (`repo::audit::ACTOR_TYPES`).
+        ///
+        /// T-052: this field did not exist. The rule at `repo::audit::record` says
+        /// an explicit `actor_type` is what keeps agent-originated events
+        /// "distinguishable from human ones in `security::summary`" -- but the
+        /// struct that summary returns carried only `actor_id`, so the column was
+        /// written to the database and then dropped before it reached any surface.
+        /// Fixing the 34 hardcoded call sites without this would have corrected the
+        /// stored evidence and left the reader unable to see it.
+        pub actor_type: Option<String>,
         pub actor_id: Option<String>,
         pub entity_type: Option<String>,
         pub entity_id: Option<String>,

@@ -972,7 +972,7 @@ mod tests {
 
     /// Create a conversation + issue the matching challenge; return the conv id.
     fn seed_turn(conn: &Connection, fx: &Fx, now: u64) -> String {
-        let conv = crate::repo::chat::create_conversation(conn, "direct", "governed").unwrap();
+        let conv = crate::repo::chat::create_conversation(conn, "direct", "governed", crate::repo::audit::Actor::local_operator()).unwrap();
         issue_challenge(conn, &conv.id, &fx.issued(), now).unwrap();
         conv.id
     }
@@ -1252,7 +1252,7 @@ mod tests {
 
         // Stale: completed_at far older than max_age.
         let fx = Fx::new(now, "nonce-stale");
-        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c", crate::repo::audit::Actor::local_operator()).unwrap();
         issue_challenge(&conn, &conv.id, &fx.issued(), now).unwrap();
         let (env, sig) = fx.wire_of(&fx.fields("receipt-stale"));
         // Move "now" forward well beyond max_age (300s) so the receipt is stale
@@ -1266,7 +1266,7 @@ mod tests {
         // Future: requested/completed ahead of now beyond the skew window.
         let now2 = 5_000_000u64;
         let fut = Fx::new(now2 + 10_000_000, "nonce-future"); // timestamps far ahead of now2
-        let conv2 = crate::repo::chat::create_conversation(&conn, "direct", "c2").unwrap();
+        let conv2 = crate::repo::chat::create_conversation(&conn, "direct", "c2", crate::repo::audit::Actor::local_operator()).unwrap();
         issue_challenge(&conn, &conv2.id, &fut.issued(), now2).unwrap();
         let (e2, s2) = fut.wire_of(&fut.fields("receipt-future"));
         let out2 = vrec(&conn, &fut, &e2, &s2, now2, TrustClass::Development).unwrap();
@@ -1372,7 +1372,7 @@ mod tests {
         fx_b.system = hx(0x77); // changes B's request_sha256 and its receipt/Expected
         assert_ne!(fx_a.request_sha256(), fx_b.request_sha256());
 
-        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let conv = crate::repo::chat::create_conversation(&conn, "direct", "c", crate::repo::audit::Actor::local_operator()).unwrap();
         issue_challenge(&conn, &conv.id, &fx_a.issued(), now).unwrap();
 
         // B's receipt is internally valid (binds to B's Expected), but the durable
@@ -1408,7 +1408,7 @@ mod tests {
         // holding its exact output bytes; ON DELETE RESTRICT REFUSES it, so the
         // evidence stays fully re-verifiable (output_sha256 can still be recomputed
         // from messages.body).
-        let res = crate::repo::chat::delete_conversation(&conn, &conv_id);
+        let res = crate::repo::chat::delete_conversation(&conn, &conv_id, crate::repo::audit::Actor::local_operator());
         assert!(res.is_err(), "deleting a conversation with governed evidence must be refused");
 
         // Everything is intact: the output message, the attempt link, the ledger.
@@ -1469,7 +1469,7 @@ mod tests {
         // Seed the shared DB (conversation + one challenge), then drop the connection.
         {
             let seed = crate::db::open(&path).unwrap();
-            let conv = crate::repo::chat::create_conversation(&seed, "direct", "c").unwrap();
+            let conv = crate::repo::chat::create_conversation(&seed, "direct", "c", crate::repo::audit::Actor::local_operator()).unwrap();
             issue_challenge(&seed, &conv.id, &fx.issued(), now).unwrap();
         }
 

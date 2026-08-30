@@ -4606,7 +4606,7 @@ mod tests {
         // NO agent message, and the one-time nonce terminally consumed.
         use brops_core::receipt::{sha256_hex, Expected, IssuedRequest};
         let conn = brops_core::db::open_in_memory().unwrap();
-        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c", brops_core::repo::audit::Actor::local_operator()).unwrap();
         let now_ms = 1_000_000u64;
         let requested_at = now_ms.to_string();
         let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));
