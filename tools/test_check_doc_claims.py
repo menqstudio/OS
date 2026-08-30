@@ -22,6 +22,7 @@ import json
 import os
 import pathlib
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -256,6 +257,116 @@ class VersionClaims(unittest.TestCase):
         root = build(self.tmp, doc="python3 3.9.0\n")
         code, out = run(root)
         self.assertEqual(code, 0, out)
+
+
+def build_git(tmp: pathlib.Path, *, doc: str, state: object = None,
+              with_origin_main: bool = True) -> tuple[pathlib.Path, str, str, str]:
+    """A root that is a REAL git repository, so the ancestry half can be exercised.
+
+    Returns `(root, base_sha, branch_sha, tree_sha)`. `origin/main` points at
+    `base`, and `branch` is one commit past it — the exact shape of a pull
+    request whose branch commits a squash merge is about to erase.
+    """
+    root = build(tmp, doc=doc)
+    def g(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *args],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    g("init", "--quiet")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "T")
+    g("add", "-A")
+    g("commit", "--quiet", "-m", "base")
+    base = g("rev-parse", "HEAD")
+    tree = g("rev-parse", "HEAD^{tree}")
+    if with_origin_main:
+        g("update-ref", "refs/remotes/origin/main", base)
+    g("commit", "--quiet", "--allow-empty", "-m", "a branch commit a squash erases")
+    branch = g("rev-parse", "HEAD")
+    if state is not None:
+        (root / "config" / "current_state.json").write_text(
+            json.dumps(state), encoding="utf-8")
+    return root, base, branch, tree
+
+
+class TheAncestryOfACommit(unittest.TestCase):
+    """Six merges turned `main` RED on a hash that was fine where it was written.
+
+    `git cat-file -e` asks "does this object exist HERE", and on a pull-request
+    branch a branch commit exists perfectly well. It stops existing when the
+    squash merge erases the branch — after the merge, where no pull request can
+    show it. These tests are about the rule that catches the seventh BEFORE.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="doc-claims-anc-"))
+
+    def test_a_branch_commit_is_red_even_though_it_resolves(self):
+        """Mutant: drop the ancestry check ⇒ green, which is exactly the state
+        the gate was in for six consecutive merges."""
+        root, _base, branch, _tree = build_git(self.tmp, doc="head `PLACEHOLDER`\n")
+        (root / "DOC.md").write_text(f"head `{branch}`\n", encoding="utf-8")
+        # the OLD rule passes on this very hash — that is what made it invisible
+        self.assertEqual(
+            subprocess.run(["git", "-C", str(root), "cat-file", "-e", branch]).returncode, 0)
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("NOT an ancestor", out)
+        self.assertIn(branch, out)
+
+    def test_the_merge_base_is_green(self):
+        """So the refusal above is not a check that cannot pass. The merge base
+        survives the squash, which is why the handoff names it."""
+        root, base, _branch, _tree = build_git(self.tmp, doc="head `PLACEHOLDER`\n")
+        (root / "DOC.md").write_text(f"head `{base}`\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_a_tree_hash_is_skipped_and_not_judged_for_ancestry(self):
+        """`AUDIT_LEDGER.md` names the TREE of each audited head. `merge-base`
+        takes commits; a tree failing an ancestry test would be a true RED about
+        the wrong thing."""
+        root, _base, _branch, tree = build_git(self.tmp, doc="x\n")
+        (root / "DOC.md").write_text(f"tree `{tree}`\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_an_anchored_open_pr_head_is_exempt_by_POSITION(self):
+        """The one commit a canonical document may name that is not on `main`:
+        the head of an open PR, anchored in the mirror where
+        `check_repo_state.py` compares it with live GitHub. Exempt because of
+        the FIELD it sits in, never because of how the hash looks."""
+        root, _base, branch, _tree = build_git(
+            self.tmp, doc="x\n",
+            state={"prs": [{"number": 112, "head": "PLACEHOLDER"}]})
+        (root / "config" / "current_state.json").write_text(
+            json.dumps({"prs": [{"number": 112, "head": branch}]}), encoding="utf-8")
+        (root / "DOC.md").write_text(f"the open PR is at `{branch}`\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_an_unanchored_hash_is_still_red_when_a_mirror_exists(self):
+        """The exemption must not become a hole: a mirror that anchors SOMETHING
+        does not bless every hash in the document."""
+        root, _base, branch, _tree = build_git(
+            self.tmp, doc="x\n", state={"prs": [{"number": 112, "head": "0" * 40}]})
+        (root / "DOC.md").write_text(f"head `{branch}`\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("NOT an ancestor", out)
+
+    def test_no_resolvable_main_says_so_instead_of_judging_the_hash(self):
+        """"I could not check" and "it is fine" are different answers, and so are
+        "I could not check" and "your hash is dead". Fail closed, with the real
+        problem named."""
+        root, _base, branch, _tree = build_git(
+            self.tmp, doc="x\n", with_origin_main=False)
+        subprocess.run(["git", "-C", str(root), "branch", "-m", "not-main"],
+                       capture_output=True, check=False)
+        (root / "DOC.md").write_text(f"head `{branch}`\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("could not resolve", out)
+        self.assertNotIn("NOT an ancestor", out)
 
 
 class TheOtherThreeChecks(unittest.TestCase):

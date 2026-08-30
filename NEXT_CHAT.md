@@ -15,10 +15,10 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** §3.3 for the BUILD agent — the netns jail and the CONNECT proxy — or `T-056`. The
-PRODUCED agent is DONE: `repo.rs`'s `Call` arm decides every call against the grant's egress table
-and records it. A permitted call is still refused (`call_transport_unimplemented`, no transport); a
-denied one says `egress_not_granted`. Those two reasons are the only way to see which happened.
+**Next:** the TRANSPORT — closing `call_transport_unimplemented`. That is what a customer
+touches. The PRODUCED agent's egress is enforced: `repo.rs`'s `Call` arm decides every call against
+the grant's table and records it; a permitted call is refused for want of a transport, a denied one
+says `egress_not_granted`. The BUILD agent's half of §3.3 — the netns jail — is untouched.
 
 **Two populations, two mechanisms** (Owner, 2026-08-30). The PRODUCED agent's list is the grant's
 `egress` TABLE — grant schema 1→2, so the flow names a row and never a URL (§2.3 rule 6). It has **no
@@ -28,12 +28,14 @@ No class holds `USE_NETWORK`, so every valid lease still names **no** destinatio
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* Both red
 `main`s of one session were called green because the PR's checks were read and the branch's were not.
+A commit named in the canon must be an **ancestor of `main`**: `check_doc_claims` refuses a branch
+head on the branch (#204).
 Three more things must be true at every push: the PR body carries exactly one
 `AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the live
 `main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a
 commit that no longer exists.
 
-Stamp the head with `tools/stamp_pr_head.py --pr <N>` — REST since `T-047`; `gh pr edit` dies here.
+Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies here.
 
 ## Verify before you believe any of this
 

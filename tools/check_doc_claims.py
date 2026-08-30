@@ -94,6 +94,14 @@ NOT_A_SHA = {"deadbee", "abcdefa", "1234567", "0000000", "fffffff", "accepted", 
 # a prefix rule before.
 PRE_IMPORT_SHAS = {"6a6882e", "fa1b8cb", "5be8d95"}
 
+# The ONE kind of commit a canonical document may name that is not on `main`: the
+# exact head of an OPEN pull request, anchored in the machine mirror so
+# `tools/check_repo_state.py` can compare it with live GitHub. Exempted BY
+# POSITION -- the mirror fields whose job is to anchor a branch head -- and never
+# by value, because "this hash looked like an anchor" is how an exemption becomes
+# a hole.
+ANCHOR_FIELDS = ("prs[].head", "current_workflow_pr.head")
+
 # Versions a canonical document QUOTES in order to say it was wrong. `CLAUDE.md` and the
 # roadmap both carry "*(The documents said cargo 1.96 ...)*" beside the corrected number,
 # which is the record of the correction and worth keeping -- but it is version-shaped, so a
@@ -112,9 +120,46 @@ QUOTED_STALE_VERSIONS = {
 }
 
 
-def git(*args: str) -> tuple[int, str]:
+def anchored_pr_heads(root: pathlib.Path) -> set[str]:
+    """The branch heads the machine mirror anchors, read from the mirror itself."""
     try:
-        r = subprocess.run(["git", "-C", str(ROOT), *args],
+        state = json.loads((root / "config/current_state.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return set()
+    heads: set[str] = set()
+    for pr in state.get("prs", []) or []:
+        if isinstance(pr, dict) and isinstance(pr.get("head"), str):
+            heads.add(pr["head"])
+    carrier = state.get("current_workflow_pr")
+    if isinstance(carrier, dict) and isinstance(carrier.get("head"), str):
+        heads.add(carrier["head"])
+    return heads
+
+
+def main_ref(root: pathlib.Path) -> str | None:
+    """A resolvable name for `main`, or None.
+
+    `refs/remotes/origin/main` first: in an actions/checkout workspace that is
+    the only one fetched, and gitrevisions never maps a bare `main` onto it --
+    the same fact `tools/check_canonical_sync.py` records, for the same reason.
+    """
+    for candidate in ("refs/remotes/origin/main", "origin/main", "refs/heads/main", "main"):
+        code, _ = git(root, "rev-parse", "--verify", "--quiet", candidate + "^{commit}")
+        if code == 0:
+            return candidate
+    return None
+
+
+def git(root: pathlib.Path, *args: str) -> tuple[int, str]:
+    """git, in the root the CALLER names.
+
+    This took `ROOT` from the module and ignored where it was pointed, so every
+    test ran against the real repository instead of its own fixture — the sha
+    checks passed because a made-up hash is absent from THIS repo too, which is
+    the right answer for the wrong reason.
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args],
                            capture_output=True, text=True, timeout=30)
         return r.returncode, (r.stdout or "").strip()
     except Exception:  # noqa: BLE001
@@ -207,6 +252,10 @@ def main(root: pathlib.Path = ROOT) -> int:
     versions, toolchain_problem = declared_versions(root)
     problems: list[str] = [] if toolchain_problem is None else [toolchain_problem]
     checked = {"paths": 0, "shas": 0, "tickets": 0, "versions": 0}
+    # Resolved once, not per hash: `main` does not move during a run, and a
+    # per-hash lookup would make the verdict depend on how many hashes there are.
+    base = main_ref(root)
+    anchors = anchored_pr_heads(root)
 
     # The record against the machine — only where the machine is the one the record is about.
     in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
@@ -306,11 +355,45 @@ def main(root: pathlib.Path = ROOT) -> int:
             if len(sha) < 40 and not re.search(r"[a-f]", sha):
                 continue
             checked["shas"] += 1
-            code, _ = git("cat-file", "-e", sha)
+            code, _ = git(root, "cat-file", "-e", sha)
             if code != 0:
                 problems.append(
                     f"{rel}: names `{sha}`, which is not an object in this repository. "
                     f"START_HERE.md sat seven merges behind on exactly this")
+                continue
+
+            # Existing is not enough, and six merges proved it. A commit on a
+            # branch resolves perfectly well WHERE IT WAS WRITTEN, and stops
+            # existing the moment a squash merge erases the branch -- so this
+            # gate was green on every pull request and red on `main` afterwards,
+            # where no pull request could show it. Six times.
+            #
+            # The rule that catches the seventh BEFORE the merge: a commit a
+            # canonical document names must be an ancestor of `main`. A merge
+            # base is; a branch head is not. The one exception is a branch head
+            # the mirror anchors for an open PR, exempted by POSITION above.
+            #
+            # Trees and blobs are skipped, not exempted: AUDIT_LEDGER.md names
+            # the TREE of each audited head, `merge-base` takes commits, and a
+            # tree failing an ancestry test would be a true RED about the wrong
+            # thing.
+            kind_code, kind = git(root, "cat-file", "-t", sha)
+            if kind_code != 0 or kind != "commit":
+                continue
+            if any(a == sha or a.startswith(sha) for a in anchors):
+                continue
+            if base is None:
+                problems.append(
+                    f"{rel}: names `{sha}` and this gate could not resolve `main` to judge it "
+                    f"against. That is NOT a verdict about the hash -- it means the ancestry "
+                    f"check did not run. Fetch `main` (CI uses fetch-depth: 0) and re-run")
+                continue
+            anc_code, _ = git(root, "merge-base", "--is-ancestor", sha, base)
+            if anc_code != 0:
+                problems.append(
+                    f"{rel}: names `{sha}`, a commit that is NOT an ancestor of {base}. It "
+                    f"resolves here and will not resolve on `main`: a squash merge erases "
+                    f"branch commits. Name the MERGE BASE, which survives")
 
         # 3 — ticket ids exist somewhere tickets live.
         for tid in set(TICKET.findall(text)):
