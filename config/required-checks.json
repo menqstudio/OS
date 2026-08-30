@@ -24,6 +24,7 @@
     "Governed chain · production crates (cargo test)",
     "Linux · LIVE 7-service governed turn (real uids, setuid launcher)",
     "Linux · §4.10(g) LADDER round trip (adapter → real supervisor → real contained execution)",
+    "Negative matrix · every declared test ID says what establishes it",
     "Node - npm audit (fail-closed high+ filter)",
     "Python - pip-audit (PyPI advisories)",
     "Reachability - nothing implemented-and-uncalled",

@@ -67,6 +67,51 @@ def run(root: pathlib.Path, env_ci: bool = True) -> tuple[int, str]:
     return code, buf.getvalue()
 
 
+class AgentWorktreeDoesNotMakeCitationsAmbiguous(unittest.TestCase):
+    """A subtree-relative citation resolves by UNIQUE suffix match, and the Agent tool checks a
+    whole second copy of the repository out under `.claude/worktrees/<id>/`. On 2026-08-30 that
+    copy made five citations in AUDIT_LEDGER.md, SECURITY.md and ARCHITECTURE.md ambiguous, so
+    this gate went RED on a clean tree while CI, which has no worktree, was green — a verdict
+    that depended on the machine rather than the code."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="doc-claims-worktree-"))
+
+    def _root_citing(self, subtree_path: str) -> pathlib.Path:
+        root = build(self.tmp, doc=f"See `{subtree_path}` for the wiring.\n")
+        real = root / "apps" / "desktop" / "src-tauri" / subtree_path
+        real.parent.mkdir(parents=True, exist_ok=True)
+        real.write_text("// the real one\n", encoding="utf-8")
+        return root
+
+    def test_a_unique_suffix_match_still_resolves(self):
+        """The positive control. Without it the test below could pass on a gate that
+        resolves nothing at all."""
+        root = self._root_citing("broker/src/main.rs")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_a_copy_under_claude_worktrees_does_not_make_it_ambiguous(self):
+        """Mutant: drop the `/.claude/worktrees/` exclusion ⇒ red, with the citation reported
+        as a file that does not exist — which is exactly what it did before this line."""
+        root = self._root_citing("broker/src/main.rs")
+        copy = root / ".claude" / "worktrees" / "agent-abc" / "apps" / "desktop" / "src-tauri" / "broker" / "src"
+        copy.mkdir(parents=True, exist_ok=True)
+        (copy / "main.rs").write_text("// the agent's copy\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_a_second_REAL_copy_is_still_ambiguous(self):
+        """The exclusion must not become a blanket amnesty: two genuine files that both end in
+        the cited suffix are still an ambiguous citation, and still red."""
+        root = self._root_citing("broker/src/main.rs")
+        other = root / "vendor" / "broker" / "src"
+        other.mkdir(parents=True, exist_ok=True)
+        (other / "main.rs").write_text("// a second real one\n", encoding="utf-8")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+
+
 class VersionClaims(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="doc-claims-"))

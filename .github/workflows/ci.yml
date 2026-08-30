@@ -950,6 +950,31 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_spec_references
 
+  negative-matrix:
+    name: Negative matrix · every declared test ID says what establishes it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only. docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md declares 242 negative test
+      # IDs; at the head this job landed on, exactly ONE of them appeared anywhere in .rs/.py/.ts
+      # source — in a docstring saying the control it names is not implemented. 241 obligations
+      # were declared and nothing established any of them. The mirror now records, per ID,
+      # whether a real test binds it, and this job refuses drift between the two.
+      - name: Mirror matches the markdown (generated, not hand-kept)
+        run: python tools/generate_negative_matrix.py --check
+      - name: Every matrix ID says what establishes it
+        run: python tools/check_negative_matrix.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_negative_matrix
+      - name: The implemented slice
+        env:
+          BRO_ENV: ci
+        run: python -m unittest discover -s engine/tests -t engine/tests -p "test_negative_matrix.py"
+
   signer-isolation:
     name: Engine · signer isolation proof (linux, dedicated principals)
     runs-on: ubuntu-latest
