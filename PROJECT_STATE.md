@@ -5,7 +5,7 @@
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
 permitted call is still refused for want of a transport. The BUILD agent's half is not built. `check_doc_claims` requires a named commit to be an ancestor of
-`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. Earlier, `T-045` cut the read set down, then repaired the five CI gates that cut turned red — four its own. The audit pointer and the toolchain are records now
+`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records now
 (`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
 `T-046`, `T-048`–`T-053` merged.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
