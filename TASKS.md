@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 20 KB.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #188 · branch `t054/readme-measured`** (base `main`, tip `fe26a78`, task T-054). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #189 · branch `t052/audit-attribution`** (base `main`, tip `34c5fb5`, task T-052). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The README's counts are re-measured and five are corrected; the superseded measurements move to docs/README_CLAIM_HISTORY.md rather than being deleted.
+> The audit log stops naming a person who was not there: 34 of 40 audit::record call sites hardcoded the actor, and a gate now refuses a new one inside the call.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
