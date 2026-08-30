@@ -6,7 +6,7 @@
   "producer_command": "cd apps/desktop/src-tauri && cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact",
   "producer_command_help": "The command CI runs before the gate to produce store_root, runs_path and receipts_path from the real code path. Recorded so a reader can see what made the evidence. The gate prints it in its RED output; it does not run it.",
   "manifest_filename": "manifest.json",
-  "artifact_schema": "config/produced-artifact/manifest.schema.json",
+  "artifact_schema": "apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json",
   "artifact_schema_help": "Repo-relative path to the committed JSON Schema every manifest must satisfy. Condition 1's defined schema is this file. The gate checks required presence and the declared type per property -- a partial validation, stated as partial.",
   "manifest_keys": {
     "artifact_id": "bundle_id",
