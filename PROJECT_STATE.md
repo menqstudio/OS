@@ -43,9 +43,9 @@ disagree, the roadmap wins.
 
 | | |
 |---|---|
-| engine (Python) | 2002 OK, 10 skipped |
-| Rust workspace, 10 crates | 1012 passed, 0 failed |
-| frontend | typecheck clean, 758 tests / 80 files |
+| engine (Python) | 2043 OK, 10 skipped |
+| Rust workspace, 10 crates | 1110 passed, 0 failed |
+| frontend | typecheck clean, 761 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulnerabilities |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
