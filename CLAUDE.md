@@ -82,16 +82,16 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2002 OK, 10 skipped
-cd apps/desktop/src-tauri && cargo test --workspace              # 1012 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 758 tests / 80 files
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2043 OK, 10 skipped
+cd apps/desktop/src-tauri && cargo test --workspace              # 1110 passed
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
 python3 tools/check_handoff_ready.py                             # a new session could take over
 for g in tools/check_*.py; do python3 "$g"; done                 # see §5 for the ones needing args
 ```
 
-Measured 2026-08-29. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
+Measured 2026-08-31, all three, on this box. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
 
 ## 5. Environment
 
@@ -99,7 +99,7 @@ Measured 2026-08-29. **Verify before claiming green** — never assume, and neve
 
 - **Toolchain:** cargo 1.97.1 · node 20.20.2 · npm 10.8.2, recorded in [`config/toolchain.json`](./config/toolchain.json), which is what `tools/check_doc_claims.py` checks every document against. *(The documents said cargo 1.96 / node 24 / npm 11.)*
 - **Engine tests need `BRO_ENV=ci`** — without it operator-pin gating denies and tests error rather than run.
-- **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **five** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.** *(This bullet's neighbour claimed the root wired "exactly one Stop hook" and was not the wall — false, and false in the direction that tells a reader they are ungoverned when they are not.)*
+- **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **five** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.**
 - **Session-scoped gates cannot see a bare shell.** `check_read_receipt.py` and `check_roadmap_order.py` resolve the session from `CLAUDE_SESSION_ID`, which the hooks set and the Bash tool does not. Pass `--session`, or the RED you get means "could not find the session", not "the gate failed".
 - **Gates needing arguments** (they print usage, not a verdict, when run bare): `check_canonical_sync.py`, `check_prior_art.py`, `check_read_receipt.py`. **Needing a build or a package:** `check_bundle_budget.py` (a Vite manifest, and it refuses a `dist/` older than the tree), `check_runbook_snippets.py` (`cryptography`).
 - **Commit identity:** `user.name "MenQ"`, `user.email "menqstudio@gmail.com"`. End every commit with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
@@ -129,6 +129,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 1. **Do not start execution without Gev's explicit go** («սկսի» / «start»). He front-loads context across several messages — collect, don't act.
 2. **You push and merge**, but **only on an all-green exact head**: `gh run watch --exit-status`, then `gh pr checks`, then merge. Never mid-run. #84 merged with `Repo-state` red and #85/#86 merged in flight, so the head that landed was never the head the checks passed on. **Release and tagging stay the Owner's.**
+   **A queue of open PRs costs N² synchronisation.** `check_repo_state` requires every open PR to be named in `prs[]` at its exact live head, so each merge invalidates every other PR's mirror. Seven open on 2026-08-31 cost six extra mirror commits. Merge one at a time, refreshing only the mirror before each, and settle **once** at the end — that is where you read `gh run list --branch main`. An intermediate red `main` is honest if the mirror records it.
 3. **A documented claim is not evidence.** Twelve comments that were true when written and false when read were found in one week. Check the code, then trust the sentence.
 4. **A green test is not a passing check.** When you add a check, delete it once and confirm its test goes red, then restore it. Of ninety checks swept that way, four came back green — four tests testing nothing. `T-045` ran the same sweep on its own gates and found three of seven checks tested by nothing, plus a fourth with no test at all.
 5. **Say what you did not do.** ✅ means independently confirmed; ◑ means the Builder's own claim. Never promote your own work.
@@ -177,6 +178,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 1. **Մի սկսիր առանց Gev-ի հստակ go-ի** («սկսի»)։ Ինքը նախ context ա տալիս — հավաքիր, մի գործիր։
 2. **Push ու merge անում ես դու**, բայց **միայն ամբողջովին կանաչ ու ճշգրիտ head-ի վրա**։ Release-ը ու tag-ը մնում են Owner-ինը։
+   **N բաց PR արժենում ա N² համաժամանակացում** — ամեն merge հնացնում ա մնացած բոլորի mirror-ը։ Merge արա հերթով, ամեն մեկից առաջ միայն mirror-ը թարմացրու, ու settle արա **մեկ անգամ** վերջում — այնտեղ կարդա `gh run list --branch main`։
 3. **Փաստաթղթված պնդումը ապացույց չի։** Կոդը կարդա, հետո նախադասությանը վստահի։
 4. **Կանաչ թեստը անցած ստուգում չի։** Ավելացնելիս՝ ջնջի մեկ անգամ ու համոզվի որ կարմրում ա։
 5. **Ասա թե ինչ չես արել։** ✅ = անկախ հաստատված, ◑ = builder-ի պնդում։ Սեփական գործդ երբեք ✅ մի դարձրու։

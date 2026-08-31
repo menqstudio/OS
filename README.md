@@ -188,7 +188,7 @@ Do not read a phase percentage anywhere as a promise about behaviour. **Read the
 cd apps/desktop
 npm ci
 npx tsc --noEmit -p tsconfig.json     # types
-npx vitest run                         # 80 files / 758 tests
+npx vitest run                         # 80 files / 761 tests
 npm run build                          # typecheck + vite build
 ```
 

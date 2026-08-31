@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** `fix/one-id-one-row` · **head** `bce6fc1` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
+**Active branch:** `fix/budget-for-structural-entries` · **head** `b8fa975` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #215 · branch `fix/one-id-one-row`** (base `main`, tip `bce6fc1`, task T-063). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #216 · branch `fix/budget-for-structural-entries`** (base `main`, tip `b8fa975`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The board carried two different T-060s and every gate was green; check_coordination now refuses a duplicate task ID by name.
+> The canon budget bounds PROSE, not the prs[] records check_repo_state demands: 13000 -> 16000 for that one file, once, with what stays forbidden written down.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -49,9 +49,9 @@ stated. Until he does, a tag arm would be a guess in a required context.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2002 OK, 10 skipped
-cd apps/desktop/src-tauri && cargo test --workspace              # 1012 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 758 tests / 80 files
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2043 OK, 10 skipped
+cd apps/desktop/src-tauri && cargo test --workspace              # 1110 passed
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real
