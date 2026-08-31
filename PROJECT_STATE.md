@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: T-020, the Floor Writer implementation.** No pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
 >
-> Five states, kept apart on purpose: PR #112's DESIGN is **merged**; the Architect design audit is **done**; five rulings are **issued**; the implementation is **in progress and not Architect-approved**; a production trust claim is **NOT granted** by any of that.
+> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
