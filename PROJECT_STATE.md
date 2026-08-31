@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #207 · branch `feat/credential-store`** (base `main`, tip `6c39dbe`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #214 · branch `feat/version-parity-gate`** (base `main`, tip `4bdd803`, task T-060). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> §4 is a REFERENCE store, not a value store: `credential_bindings.auth_ref`, refused through the same normalize_auth_ref the Integrations page uses. No `Secret` type, because no value arrives.
+> The app version is declared five times across four files and nothing compared them; check_version_parity.py refuses drift and names the file. No v* tag arm -- that needs a release policy the Owner has not stated.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,8 +48,8 @@ disagree, the roadmap wins.
 | frontend | typecheck clean, 758 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulnerabilities |
 
-Toolchain here: cargo 1.97.1, node 20.20.2, npm 10.8.2, `cargo` run from an ordinary shell.
-Documents calling this a Windows box needing PowerShell are stale; `T-045` corrected them.
+Toolchain: `config/toolchain.json`, checked against every canonical document by
+`tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.
 
 ## Standing risks
 
@@ -62,6 +62,13 @@ and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product 
 therefore rewrites a plaintext `.head` and produces no `.head.sig`. This is O-2 and it has
 never run outside a test.
 
+**The app version was unheld across four files.** `package.json`, `tauri.conf.json`,
+`Cargo.toml` and `package-lock.json` (twice) each state it; all say `0.1.0` and nothing compared
+them — `npm ci` exits 0 on a disagreeing lock, measured. `tools/check_version_parity.py` now
+refuses drift and names the file. It does **not** compare a `v*` git tag: `git tag -l` prints only
+`brops-desktop-v0.1.0`, which does not match `v*`, so `release.yml` has never run, and what these
+files mean between tags is a release policy the Owner has not stated.
+
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
 startup, so the first-launch trust path is unreachable on the Debian box this project now
 develops on.
@@ -69,13 +76,6 @@ develops on.
 **Two audit reports went missing and one is unrecoverable.** The fifth round's report was
 never filed and its 15 promotions are not carried; the seventh's was reconstructed from two
 commit messages. `A-06` in the ledger.
-
-## Where things are written down
-
-`NEXT_CHAT.md` next action · `TASKS.md` open tasks · `MASTER_EXECUTION_ROADMAP.md` the plan ·
-`config/current_state.json` the machine mirror · `apps/desktop/AUDIT/AUDIT_LEDGER.md` the
-audit position · `docs/OWNER_ACTION_REQUIRED.md` what is blocked on whom · `docs/archive/`
-history.
 
 ## Status tokens
 

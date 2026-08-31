@@ -858,6 +858,12 @@ jobs:
       # and branch protection is the Owner's to change.
       - name: Controls name what their failure prevents (T-056)
         run: python tools/check_control_invocation.py
+      # The desktop app's version is written five times across four files and nothing
+      # reconciled them -- `npm ci` exits 0 with package.json at 9.9.9 and its lock at
+      # 0.1.0 (measured). This job, not a new one: a new job is a new required context
+      # and branch protection is the Owner's.
+      - name: App version agrees with itself across all four files
+        run: python tools/check_version_parity.py
       - name: Gate self-tests
         working-directory: tools
         run: |
@@ -869,6 +875,7 @@ jobs:
           python -m unittest test_check_truncated_lines
           python -m unittest test_roadmap_split
           python -m unittest test_check_control_invocation
+          python -m unittest test_check_version_parity
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law
