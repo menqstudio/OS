@@ -10,6 +10,7 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { STR } from './Research.strings';
+import { heldLabel, heldNoteKey } from './Research.provenance';
 import type { ResearchItem } from '../domain/entities';
 import type { Lang, Tone } from '../domain/enums';
 
@@ -46,6 +47,138 @@ function statusLabel(L: Localize, status: string): string {
   return (RESEARCH_STATUSES as readonly string[]).includes(status)
     ? L(STATUS_KEY[status as ResearchStatus])
     : status;
+}
+
+// ── §D: the governed run ───────────────────────────────────────────────────────
+//
+// Phase 5 pairs "governed research produces verified receipts" with "results save to
+// knowledge", and §D adds a `blocked` state for "governed provider off / sidecar down → no
+// result". None of it existed: this page was a local CRUD list with no run, no receipt and no
+// refusal — the one page in the phase whose whole point is that it crosses the wall.
+//
+// It runs through `stream_ask`, which is the SAME governed path chat uses: buffered, verified
+// desktop-side, and the answer held server-side under a one-time id rather than streamed into
+// the window. That last part is why saving is a backend command taking the id — the app window
+// never receives the text, so it cannot save something the engine did not produce (P1-6).
+//
+// In the shipped app this will render `blocked`, because the production gate is deliberately
+// shut. That is not a placeholder for a working run; it IS the working run, reporting what the
+// wall said. A version of this page that showed an answer today would be lying.
+type RunState =
+  | { k: 'idle' }
+  | { k: 'running' }
+  | { k: 'held'; resultId: string; provenance: string }
+  | { k: 'saved' }
+  | { k: 'blocked'; reason: string }
+  | { k: 'failed'; reason: string };
+
+function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
+  const [run, setRun] = useState<RunState>({ k: 'idle' });
+  const cancelled = useRef(false);
+
+  // A new record is a new run. Without this, selecting another item keeps the previous
+  // record's held id on screen — and saving it would file one question's answer under
+  // another question's title.
+  useEffect(() => {
+    cancelled.current = false;
+    setRun({ k: 'idle' });
+    return () => { cancelled.current = true; };
+  }, [item.id]);
+
+  const question = (item.question ?? '').trim();
+  const start = () => {
+    if (!question || run.k === 'running') return;
+    cancelled.current = false;
+    setRun({ k: 'running' });
+    void desktop.streamAsk(question, (ev) => {
+      if (cancelled.current) return;
+      // `delta` is ignored on purpose: a governed ask is buffered by construction and the
+      // body is held, not streamed. Painting deltas here would show text that the verify
+      // step may still refuse.
+      if (ev.type === 'ready') {
+        setRun({ k: 'held', resultId: ev.resultId, provenance: ev.provenance });
+      }
+      else if (ev.type === 'blocked') setRun({ k: 'blocked', reason: ev.reason });
+      else if (ev.type === 'error') setRun({ k: 'failed', reason: ev.message });
+    }).catch((e: unknown) => {
+      if (!cancelled.current) {
+        setRun({ k: 'failed', reason: e instanceof Error ? e.message : String(e) });
+      }
+    });
+  };
+  const cancel = () => { cancelled.current = true; setRun({ k: 'idle' }); };
+  const save = () => {
+    if (run.k !== 'held') return;
+    const { resultId } = run;
+    void desktop.saveAskToKnowledge(resultId, item.title)
+      .then(() => setRun({ k: 'saved' }))
+      .catch((e: unknown) => setRun({ k: 'failed', reason: e instanceof Error ? e.message : String(e) }));
+  };
+
+  return (
+    <section
+      className="rsx-section rsx-run"
+      aria-label={L('runPanel')}
+      onKeyDown={(e) => {
+        // §D: "`Enter` run, `Esc` cancel". Not while typing — this panel has no field today,
+        // but a keymap that assumes that stops being true the first time one is added.
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (e.key === 'Enter' && run.k !== 'running') { e.preventDefault(); start(); }
+        else if (e.key === 'Escape' && run.k === 'running') { e.preventDefault(); cancel(); }
+      }}
+    >
+      <div className="sec-head">
+        <h3>{L('runPanel')}</h3>
+        {run.k === 'running' && <span className="pill info">{L('running')}</span>}
+        {run.k === 'held' && (() => {
+          const b = heldLabel(run.provenance);
+          return <span className={`pill ${b.tone}`}>{b.glyph} {L(b.key)}</span>;
+        })()}
+        {run.k === 'saved' && <span className="pill success">✓ {L('savedToKnowledge')}</span>}
+      </div>
+
+      {!question ? (
+        <p className="muted">{L('needQuestion')}</p>
+      ) : (
+        <>
+          <div className="rsx-run-actions">
+            <Button
+              small
+              variant="primary"
+              onClick={start}
+              disabled={run.k === 'running'}
+            >
+              {run.k === 'running' ? L('running') : L('runIt')}
+            </Button>
+            {run.k === 'held' && (
+              <Button small onClick={save}>{L('saveToKnowledge')}</Button>
+            )}
+          </div>
+          <p className="micro muted">{L('runHint')}</p>
+        </>
+      )}
+
+      {/* The outcome. `role="status"` for the ones that are progress, `role="alert"` for the
+          two that mean the thing the owner asked for did not happen. */}
+      {run.k === 'held' && (
+        <p className="rsx-run-out" role="status">{L(heldNoteKey(run.provenance))}</p>
+      )}
+      {run.k === 'blocked' && (
+        <p className="rsx-run-out rsx-run-out--blocked" role="alert">
+          <span className="pill warn">⛒ {L('runBlocked')}</span>
+          <span className="micro muted">{L('runBlockedNote')}</span>
+          <span className="rsx-run-reason">{run.reason}</span>
+        </p>
+      )}
+      {run.k === 'failed' && (
+        <p className="rsx-run-out rsx-run-out--failed" role="alert">
+          <span className="pill bad">⚠ {L('runFailed')}</span>
+          <span className="rsx-run-reason">{run.reason}</span>
+        </p>
+      )}
+    </section>
+  );
 }
 
 // ── Create form (Modal) — fully wired to the REAL create_research_item command ─
@@ -338,6 +471,8 @@ export function Research() {
               : <div className="muted">{L('noFindings')}</div>}
           </section>
 
+          <GovernedRun item={selected} L={L} />
+
           <section className="rsx-section" aria-label={L('detailPanel')}>
             <div className="rsx-foot">
               <div className="rsx-meta">
@@ -417,7 +552,7 @@ export function Research() {
       </div>
 
       <div className="rsx-grid">
-        <section className="rsx-panel surface soft rsx-rail-card" aria-label={L('listPanel')}>
+        <section className="rsx-panel surface soft" aria-label={L('listPanel')}>
           <div className="rsx-rail">
             {toolbarVisible && (
               <div className="rsx-search">
@@ -446,6 +581,18 @@ export function Research() {
 }
 
 const CSS = `
+/* The governed run. A refusal is bordered and deliberate rather than a loose pill: it is a
+   decision the wall made, and it is the state this page will be in until the gate opens. */
+.v-research .rsx-run-actions { display: flex; gap: var(--s3); flex-wrap: wrap; margin-bottom: 6px; }
+.v-research .rsx-run-out { display: flex; flex-direction: column; gap: 6px; margin: var(--s3) 0 0;
+  padding: 10px 12px; border-radius: var(--r); background: rgb(var(--surface-rgb)/.5);
+  border: 1px solid rgb(var(--line-rgb)/.9); }
+.v-research .rsx-run-out--blocked { background: rgb(var(--warning-rgb)/.07);
+  border-color: rgb(var(--warning-rgb)/.32); }
+.v-research .rsx-run-out--failed { background: rgb(var(--danger-rgb)/.07);
+  border-color: rgb(var(--danger-rgb)/.3); }
+.v-research .rsx-run-reason { font-family: var(--f-mono); font-size: 12px;
+  color: var(--ink-muted); word-break: break-word; }
 .v-research .pageHead-lead { display: flex; align-items: flex-start; gap: 14px; }
 .v-research .rsx-glyph { flex: 0 0 auto; margin-top: 2px; }
 .v-research .pageHead .sub { margin-top: 6px; }

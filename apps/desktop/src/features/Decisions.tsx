@@ -11,6 +11,9 @@ import {
   type GovernanceRead,
 } from '../services/governance';
 import type { Decision } from '../domain/entities';
+// `I-11`: the status classifier moved to its own module so a test can hold it to a vocabulary;
+// `app/routes.tsx` types a page module as Record<string, ComponentType>, so it cannot live here.
+import { statusMeta, decisionStatusFamily } from './Decisions.status';
 import { STR } from './Decisions.strings';
 import { BridgePanel } from './Bridge';
 
@@ -44,7 +47,13 @@ const styles = `
 .v-decisions .dec-engine-said p:last-child { margin-bottom: 0; }
 .v-decisions .dec-engine-attr { letter-spacing: .06em; }
 @keyframes dec-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { transform: none; } }
+/* The 100% keyframe MUST restate opacity. This row carries the "rise" class, which is opacity:0
+   until an animation lifts it, and .led.dec-stamp REPLACES that animation with this one using
+   "both". A property missing from the last keyframe gets an implicit 100% built from the
+   UNDERLYING value - rise's opacity:0 - so a stamped decision row animated in and then faded
+   back out to nothing. Same family as the fifth audit's A-01, and found by the check written in
+   answer to it (tools/check_c1_tokens.py::animation_clobber). */
+@keyframes dec-stamp { 0% { opacity: 0; transform: scale(1.12); } 60% { opacity: 1; transform: scale(0.98); } 100% { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .v-decisions .led, .v-decisions .led.dec-stamp { animation: none; }
   /* Keep the .now / .live colours (they carry meaning) but drop the motion. */
@@ -52,17 +61,6 @@ const styles = `
   .v-decisions .dec-chain-strip .wire.live::after { animation: none; }
 }
 `;
-
-// Honest status → presentation map. NEVER returns a "live"/green/verified tone: the
-// desktop cannot verify a decision, so the power mark is `idle` for anything that is
-// not an explicit block/refusal (which reads `alert`). Colour on the ledger dot is
-// carried by `--st-rgb`; a settled decision simply reads neutral, never approved-green.
-function statusMeta(status: string): { face: string; mark: string; tone: string } {
-  const v = (status || '').toLowerCase();
-  if (/block|reject|den|fail|abort|error/.test(v)) return { face: 'blocked', mark: 'alert', tone: 'var(--danger-rgb)' };
-  if (/wait|pend|propos|review|hold|open|draft/.test(v)) return { face: 'waiting', mark: 'idle', tone: 'var(--warning-rgb)' };
-  return { face: 'idle', mark: 'idle', tone: 'var(--muted-rgb)' };
-}
 
 export function Decisions() {
   const { t, lang, focus, clearFocus } = useApp();
@@ -108,8 +106,11 @@ export function Decisions() {
   // (avg confidence, reversal %, evidence coverage) has any backing in the `Decision`
   // entity, so those are omitted; only honestly-countable facts are shown.
   const stats = useMemo(() => {
-    const isBlocked = (d: Decision) => /block|reject|den|fail|abort|error/.test((d.status || '').toLowerCase());
-    const isPending = (d: Decision) => /wait|pend|propos|review|hold|open|draft/.test((d.status || '').toLowerCase());
+    // `I-11`: these two used to restate the classifier's regexes a third time, in a file where a
+    // change to one copy and not the others would show up as a count that disagrees with the row
+    // beside it. One classifier, three readers.
+    const isBlocked = (d: Decision) => decisionStatusFamily(d.status) === 'blocked';
+    const isPending = (d: Decision) => decisionStatusFamily(d.status) === 'waiting';
     return [
       { v: ledger.length, label: L('ledgerCount'), tone: '' },
       { v: new Set(ledger.map((d) => d.owner).filter(Boolean)).size, label: L('owners'), tone: 'info' },
@@ -242,7 +243,13 @@ export function Decisions() {
               ref={isSel ? selRowRef : undefined}
               id={`dec-row-${d.id}`}
               className={`led surface soft rise state-${m.face}${isSel ? ' on' : ''}${stampIds.has(d.id) ? ' dec-stamp' : ''}`}
-              aria-readonly={true}
+              /* `aria-readonly` was here and is not an allowed attribute on a role-less `div`
+                 (axe `aria-allowed-attr`, critical — found by the real-browser sweep). The
+                 intent was real: this ledger is append-only. But an invalid ARIA attribute
+                 communicates nothing to a screen reader while telling a reader of the source
+                 that something was handled, which is worse than the silence it replaced. What
+                 actually says the ledger is not editable is that it contains no controls, and
+                 the container's `role="log"` says what it is. */
               style={{ ['--i' as string]: i + 2, ['--st-rgb' as string]: m.tone } as CSSProperties}
               onClick={() => { setSelectedIndex(i); }}
               onDoubleClick={() => openEvidence(d)}

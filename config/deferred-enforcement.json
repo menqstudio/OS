@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Deferred ENFORCEMENT, with a date on it. Checked by tools/check_repo_state.py::verify_deferred_enforcement,",
+    "which runs inside the ALREADY-REQUIRED context `Repo-state - live GitHub truth verifier`, so an expiry here",
+    "turns a required check RED and blocks merges. A registry enforced by a non-required gate would be the very",
+    "defect this file exists to prevent.",
+    "",
+    "WHY A DATE AND NOT A STATE. O-1..O-5 are WORK: they close when something is built, so an observable state is",
+    "the natural trigger. This is different. It is a deferred ENFORCEMENT, and the risk is not that we forget the",
+    "state arrived -- it is that the state never arrives and the check stays non-required forever. Every state",
+    "trigger here is self-deception, because the state is controlled by the same person who owes the enforcement:",
+    "`once the merge queue drains` is satisfied by never adding a task, which is never. A date cannot be postponed",
+    "by inaction; it can only be postponed by an edit, and an edit shows in a diff.",
+    "",
+    "THE POPULATION IS DERIVED FROM THE FILESYSTEM, NOT FROM THIS FILE. The checker reads every job `name:` in",
+    "`.github/workflows/*.yml` and requires each one to appear in exactly one of: `contexts` in",
+    "config/required-checks.json (enforced), `deliberately_excluded` there (permanently excluded, with a reason),",
+    "or `deferrals` below (temporarily deferred, with a date). A new job wired into a workflow and named nowhere",
+    "is RED. That is what makes it impossible for a gate to quietly omit itself -- including this arrangement's",
+    "own gate.",
+    "",
+    "STATUS AND SIGN-OFF follow tools/check_residual_items.py rather than inventing a second vocabulary: OPEN,",
+    "CLOSED and OWNER-DEFERRED, and a status other than OPEN is an audited verdict that needs a `sign_off`.",
+    "Extending a deferral costs the same signature: `deferred_until` more than 7 days after `first_declared`",
+    "requires a non-empty `sign_off`. Seven days, not thirty, because the work these deferrals wait on is",
+    "measured in nights."
+  ],
+  "max_days_without_sign_off": 7,
+  "deferrals": {
+    "Production half · the five conditions (T-055)": {
+      "gate": "tools/check_produced_artifact.py",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "OPEN",
+      "first_declared": "2026-08-30",
+      "deferred_until": "2026-09-06",
+      "reason": "The gate was RED BY DESIGN from the commit that introduced it (#193) until T-055 implemented the five conditions; it is GREEN now, produced from the real code path by the producer command in config/produced-artifact-contract.json. It stays deferred for a different reason than it was deferred originally: a context must be OBSERVED green in CI before it is required. `Windows · §0.W broker syscall proof` was made required on 2026-08-18 and failed the same day, and its note in config/required-checks.json is that record; requiring this one on the strength of a local run would be the same mistake in a new place. Adding the name to `contexts` -- and to live branch protection, which check_repo_state compares -- is a separate, deliberate step once the job has passed on main.",
+      "sign_off": ""
+    }
+  }
+}

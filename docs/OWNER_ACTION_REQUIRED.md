@@ -6,13 +6,162 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **The standing audit verdict is RED, and it is older than the code.** Two independent audits have
-> run. The second — [`apps/desktop/AUDIT/2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
-> of `main` @ `219c763`, AFTER the first round's remediation — confirmed **4 of 18** blockers closed
-> and left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3). Its P0 was that the supervisor
-> still copied the executing chain's own `output_handle` into the attestation it signed: the F-01
-> signing oracle surviving a fix that addressed F-01's symptom. **It has never been re-run**, on that
-> head or on any of the later ones, so nothing since is independently confirmed. The index is
+> **2026-08-29 — the ninth round's thirteen findings are answered, and NOTHING here needs you.**
+> `I-01`..`I-13` had no owner in `TASKS.md` five days after they were written, twelve were still
+> marked OPEN in the ledger, and `I-04` was marked OPEN two days after its fix merged. All of that is
+> closed in PR #166, on `main` @ `4c98856`.
+>
+> **Every mark is ◑ — the Builder's own claim, not a tick.** `A-09` and `T-034` were each reopened
+> after the session that fixed them called them closed, and repeating that here would be the same
+> mistake with a better patch under it. The standing verdict is still **RED** and the production gate
+> is still **shut**; the three refusals are untouched by this work.
+>
+> **One finding is worth your attention because it changes what "blocked" means.** `I-13` found two
+> Phase-10 boxes filed under the production gate while nothing about them was blocked by a service
+> principal, a launcher, a broker or a deployment. That was true, and it is now built: `contracts/`
+> is the source for the five cross-half schemas, versioned and drift-gated. What remains of it —
+> moving the files out of `engine/schemas/` — is an audited **engine** change, because the engine
+> resolves schema paths relative to its own root and `engine/` is a subtree of `menqstudio/Bro`.
+> Still not your gate; still not a Builder-alone change either.
+>
+> **Deliberately left undone, and said so rather than quietly skipped:** `A-09`'s route 1 (a
+> credential is defined by what a remote system accepts, not by its text — the honest answer is the
+> enumerated surface, not a heuristic), `T-023` (one green run of an intermittent job is not
+> evidence), and `T-040` (a load-only flake, measured and unpatched, with the decisive experiment
+> named in order and `--retry` ruled out).
+
+> **NINTH AUDIT, 2026-08-19 — RED, on `main` @ `5cf9b8c` (tree `9580b86d`, pin proven).** Filed
+> at [`2026-08-19-ninth-audit-5cf9b8c.md`](../apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md).
+> **No P0** — the three production-gate refusals were read at the source and are closed for the
+> fourth round running, `AnswerProvenance::Governed` is constructed only inside `#[cfg(test)]`, and
+> nothing in the tree sets `$BROPS_BROKER_CONFIG`.
+>
+> **Nothing here needs the Owner today.** This round decided the nine Builder claims from PRs
+> #153–#162. **Six earned ✅** (`T-033`, `T-035`, `T-036`, `T-037`, `T-038`, `T-039`), each on a
+> measurement the auditor performed, with every mutation restored byte-exact.
+>
+> **Two are REOPENED, and both are the same shape: a fix that measured itself against the wrong
+> thing.** `T-034` re-tuned five colours to clear WCAG AA and two of them landed at **4.4996** and
+> **4.4995** — *under* the floor — passing only because `check_contrast.py` compares
+> `round(ratio, 2) >= threshold`. Remove the rounding and the gate goes RED on exactly those two
+> pairs, both of which `T-034` itself added. `A-09` replaced an undecidable word-sweep with a
+> *declared eight-leaf free-text register*, and the register calls nine `isContractId` leaves
+> "shape-constrained" while that pattern admits 128 characters of `[a-z0-9._-]` — a 64-hex
+> credential rides straight through with the register silent. Three of its eight entries are also
+> never exercised: **deleting all three leaves the suite green.**
+>
+> **`T-023` is held at ◑ and that is the honest answer, not a harsh one.** The ACE dump and the
+> `icacls` harness fix are both real and both were *read, not run*. The defect exists only on the
+> GitHub runner's inherited `_temp` ACL, and the job is in `deliberately_excluded`, so the
+> repository cannot tell "fixed" from "has not recurred yet" until it runs clean across several
+> pull requests.
+>
+> **One finding touches the roadmap percentages you are asked to trust.** Two Phase-10 boxes —
+> `contracts/` finalisation — are blocked by no production gate, no service principal and no
+> deployment. `contracts/` is a lone 3 012-byte README while `engine/schemas/` holds 21 schemas,
+> and `ARCHITECTURE.md` says so itself. The claimed total of 94/117 is also not derivable: the
+> roadmap counts **92/115** by checkbox and **44/56** by Definition-of-Done, and `94/117` appears
+> nowhere in the tree or in `git log`.
+>
+> _The eighth round's summary, superseded by the above, is kept below for provenance._
+>
+> **EIGHTH AUDIT, 2026-08-18 — RED, on `main` @ `9ae2fd2` (tree `30b3c966`, pin proven).** Filed
+> at [`2026-08-18-eighth-audit-9ae2fd2.md`](../apps/desktop/AUDIT/2026-08-18-eighth-audit-9ae2fd2.md).
+> No P0 — the three production-gate refusals verified closed for the third round running.
+>
+> **This round is the one that mattered for a reason that is not a finding.** Its primary output was
+> a promotion table: 29 marks carried by the sixth and seventh rounds, every one of them ◑ — the
+> Builder's claim, written by the session that wrote the fix — attacked one at a time.
+> **27 earned ✅.** Those are the first independent confirmations this ledger has carried since the
+> fourth round, and they exist because someone who did not build any of it tried to break all of it.
+>
+> **Two did not survive, and they are the honest half.** `A-06` — the audit report that is never
+> filed — **recurred, with the gate for it already in the tree and green.** `A-09` — three routes
+> that get a credential past the no-lease whitelist — was never touched: the roadmap rows were
+> corrected and the limit made executable, but the routes stayed open, and treating that as closed
+> was an overclaim.
+>
+> Its headline finding is `H-01`, and it is about the wall the round before built: **18
+> pull-request-running jobs sat outside branch protection with no reason recorded anywhere** — the
+> whole of `supply-chain.yml`, including secret scanning, action pinning and all four dependency
+> advisory gates. `enforce_admins: true` does nothing about a job that is not required, *"which is
+> where the supply chain lives."* **Fixed the same day: 12 required contexts → 33, with exactly two
+> exclusions, each for a measured reason.**
+>
+> `H-03` is the one worth reading if you read only one: the ⌘K palette's **selected** row — the row
+> the keyboard cursor points at and Enter will take — was the least readable row in the list in the
+> light theme. It was created by the fix for the sixth round's own `A-01`.
+>
+> **SIXTH AUDIT, 2026-08-17 — RED, on `main` @ `b16e572` (pin proved by tree digest
+> `098df1d5`).** Filed at
+> [`2026-08-17-sixth-audit-b16e572.md`](../apps/desktop/AUDIT/2026-08-17-sixth-audit-b16e572.md).
+> It confirmed **all three production-gate refusals still closed** and found **no P0** — so RED
+> stands exactly where it stood, and for the first time it stands on the **surface**.
+>
+> Its headline is `A-01`: **the ⌘K palette, the shell's only modal, has had no CSS at all since
+> 2026-07-28.** Its rules were deleted whole with `layout.css`'s palette section in `0c08dd8`
+> (PR #47) and never replaced, while the component went on rendering every class. No overlay, no
+> backdrop, no panel, no scroll container for 23 rows, and an "active" row that highlighted nothing
+> while `aria-activedescendant` told a screen reader the selection had moved. The page behind stayed
+> clickable while `aria-modal="true"` asserted it was inert. **Nineteen days, three PRs touching the
+> file, 33 green checks each** — including the round that rebuilt its focus trap and reasoned in a
+> comment about *"pressing on the panel's padding"*. The panel had none.
+>
+> **Fixed 2026-08-17, and measured rather than asserted** — see the T-024 entry below.
+> 14 findings in all (P1 1 · P2 7 · P3 6); 20 claim groups attacked and not refuted; 10 rows here or
+> in the ledger found stale or false. Two are fixed (`A-01`, `A-13`) and `A-06` is structurally
+> closed; the rest are `T-025`…`T-032` on the board.
+>
+> **FIFTH AUDIT, 2026-08-16 — RED, on `main` @ `5fe4740`.** Confirmed the three refusals closed, no
+> P0, **11 findings**, and promoted **15 Builder claims to ✅**. Its headline was `A-01`: the round
+> it audited **shipped a rendering regression in the one file whose header argues that a comment is
+> not an honesty property.** The `sigbreathe` rule used the `animation` shorthand, which replaced
+> `.reveal`'s entrance, so the Security integrity instrument rendered at **`opacity:0`** for the
+> whole of the state the pulse was added to depict.
+>
+> **Its report was never filed, and that is the sixth round's `A-06`.** Until 2026-08-17 the ledger
+> named the FOURTH audit as authoritative while this page carried the fifth's verdict — so every
+> `(…, fifth audit)` citation embedded in the source pointed at a document nobody could open. The
+> text is **not recoverable**; its 15 promotions are therefore **not** carried in the ledger as ✅,
+> because a confirmation whose evidence cannot be read is a claim. `tools/check_audit_reports.py`
+> now makes a missing or contradicted report RED in CI rather than invisible.
+>
+> **This page said "All 11 are fixed as of 2026-08-16". That was false** — the sixth audit's `A-08`.
+> Fifth-round `A-06` (six `var(--x, fallback)` edits, five of them to dead CSS that nothing renders)
+> was never touched, and is not fixed today: `c-fill`, `s-dot`, `kdot`, `energy-key` and `vfield`
+> still appear in no `.ts`/`.tsx` under `apps/`. Tracked as `T-029`.
+>
+> **The `css: false` gap that let both `A-01`s ship is now closed by measurement.** It was true that
+> nothing here could have seen either one: both test configs run against a DOM with no stylesheet
+> attached, so an assertion about appearance was really an assertion about a className string. As of
+> 2026-08-17 a third vitest project runs the app in **real Chromium** with real CSS —
+> `npm run test:browser`, 226 assertions over 23 pages × 3 states × 2 motion settings, plus the
+> palette. It is a measurement, not a cleverer read: the fifth audit's `A-01`, deliberately
+> reintroduced, turns it red.
+>
+> **The standing audit verdict is RED — and as of 2026-08-15 it is NOT older than the code.**
+> **Six** independent audits have run. This block said "two", "it is older than the code" and "it
+> has never been re-run" until today, which was true when written and false the moment the third
+> round finished — on the page every banner sends a cold reader to for what is blocked and on whom.
+>
+> * **Third**, [`2026-08-14-zero-trust-audit-e0dd969.md`](../apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md),
+>   of `main` @ `e0dd969`: **RED for materially fewer reasons.** It could **not reopen the second
+>   round's P0** on either platform and **confirmed all three of the gate's refusals closed** at that
+>   head. 5 new findings (`A-01`…`A-05`, P2 1 · P3 4); of 14 Builder claims attacked, **9 survived**
+>   and are the first ✅ this repository's ledger has carried.
+> * **Fourth**, [`2026-08-15-zero-trust-reaudit-0a9a1af.md`](../apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md),
+>   a re-audit of those five fixes against a **pinned snapshot** (`main` moved three times mid-run;
+>   the auditor proved the pin by tree digest): **still RED — now for one platform rather than one
+>   mechanism.** Four of five could not be reopened. `B-01` found the fifth fixed on Linux only while
+>   the ledger row claimed both platforms — closed on Windows the same day. **`B-02` stays OPEN.**
+>
+> **Prior:** [`2026-08-06-remediation-audit.md`](../apps/desktop/AUDIT/2026-08-06-remediation-audit.md),
+> of `main` @ `219c763` — **4 of 18** blockers closed, **45 surviving findings** (1 P0, 5 P1, 13 P2,
+> 26 P3). Its P0 was the supervisor copying the executing chain's own `output_handle` into the
+> attestation it signed: the F-01 signing oracle surviving a fix that addressed F-01's symptom. That
+> P0 is now closed and was attacked twice more without reopening.
+>
+> **What has not changed: the verdict is RED and the gate stays shut.** The index is
 > [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](../apps/desktop/AUDIT/AUDIT_LEDGER.md) and it is now on the
 > canonical read manifest; ◑ there means the Builder believes it closed and nobody else has looked.
 > Until 2026-08-09 that verdict appeared in **no** canonical document, while `NEXT_CHAT.md` opened
@@ -410,33 +559,263 @@ A green CI is not an audit. CI runs the tests we wrote. Audits on this repositor
 on rows the builder had marked closed — which is why a tick in these documents means *independently
 confirmed* and a half-tick means *the builder's unverified claim*.
 
-**Concretely, as of 2026-08-09:** the last independent audit returned **RED** with 45 surviving
-findings, it assessed `main` @ `219c763`, and `main` is now `b3010f6` — so a large part of that
-verdict describes code that has since changed, in both directions, and **nobody who did not build
-this has looked at any of it.** Findings closed since are the Builder's claims. This is the item on
-this page with the longest lead time and nothing else on it substitutes for it.
+**Concretely, as of 2026-08-15:** two more independent rounds have run since, and the header of this
+page carries what they found. The gate is still shut and the standing verdict is still **RED**, but
+the *reason* has changed shape: it is no longer "nobody who did not build this has looked."
+
+This paragraph used to end with exactly that sentence — *"nobody who did not build this has looked at
+any of it"* — beside *"as of 2026-08-09"* and *"`main` is now `b3010f6`"*. All three went false when
+the third round ran, and the fix landed on the block at the top of this page while **this** paragraph,
+four hundred lines down and on the same subject, kept saying the opposite. A page can contradict
+itself in two places and still look maintained from either one; that is the whole failure mode this
+document exists against.
+
+What has **not** changed, and is still the item on this page with the longest lead time: an audit
+covering the **whole chain** at a **current** head. Rounds three and four were scoped — five findings
+and then a re-audit of those five fixes — and `main` has moved many times since `0a9a1af`. Everything
+closed since is the Builder's claim until someone who did not build it says otherwise.
+
+---
+
+## 2a. RESOLVED 2026-08-15 — both Phase-2 decisions taken, by delegation
+
+> **You delegated both** — *"decide for me, and let it be the strongest and most correct, not the
+> easiest and fastest"* — so they are taken, and what follows records **what was decided and why**,
+> including the part where the easiest answer was also the one already written down as correct.
+> Phase 2 is now **8 of 11** boxes ticked. The three that stay open are one fact, tracked as `T-021`.
+>
+> **(i) `sigbreathe` — DECIDED: apply it, bound to state. Built.** The recommendation on this page
+> an hour earlier was to amend §D and keep the surface still. Reading `Security.tsx` instead of the
+> argument about it changed the answer: **the page was already breathing.** `.mc-halo` carried an
+> unconditional `secHalo 2.6s infinite`, so the instrument pulsed hardest in `blocked` — the exact
+> state its own comment two hundred lines above forbade motion in. *An honesty argument written in a
+> comment is not an honesty property of the page.* Amending §D would have ratified the still surface
+> the page did not actually have.
+>
+> "Never animate" and "animate always" were never the only options. The pulse is now bound:
+> `checking` (a chain read genuinely in flight) breathes, `broken` takes the faster danger cadence
+> §D asks for, `blocked` is **still** — which it was not before. It says *"this surface is reading
+> the chain right now"*, a fact, and never *"the chain is alive"*, which the desktop cannot
+> establish. And the obvious third reading — gate the pulse on a **confirmed** chain — was rejected
+> on inspection: `RECORDS_ARE_AUTHENTICATED` is permanently `false`, so that branch could never run,
+> and a branch that cannot run is the shape this repository deletes rather than ships.
+>
+> **(ii) approval-request — DECIDED: opened as `T-021`, still not built here.** Neither option on
+> offer was right. *Build it now* adds a new input to the engine's trust boundary while the standing
+> verdict is **RED**, and breaks Phase 2's own scope line. *Carry it* is how an obligation
+> disappears — and this one is in Phase 2's **acceptance criteria** (*"owner can request an approval
+> that the engine adjudicates"*), so the phase would have closed over a promise kept only in prose.
+> So the task exists, **sequenced explicitly behind the standing audit**, with its five contract
+> invariants written down **now** — no key/lease/nonce/verdict crosses; the desktop requests and
+> never decides; the desktop's own T-010/T-011 authority stays separately named in the UI;
+> `RECORDS_ARE_AUTHENTICATED` stays false; the engine schema change is audited **before** it lands.
+> Fixing them now means the contract test is not designed by whoever is trying to pass it.
+>
+> **Nothing here opened the gate, and nothing here is a claim about the audit.** Both marks are the
+> Builder's until someone who did not write them looks.
+
+*The original statement of the two decisions is kept below, because a decision is only legible
+beside the question it answered.*
+
+## 2a (as posed). Phase 2 is finished except for two decisions, and both are yours
+
+Phase 2 was **checked against the code before anything was built** (T-019, 2026-08-15) — all four
+governance pages already existed when the exemption unlocked the phase, so the first act was
+verification. Six of eleven boxes are ticked with file/line/test evidence. The five that are not
+reduce to **two facts, and neither is a missing page or a build task.** They are on this page because
+the roadmap routes both here, and until today this page did not name either.
+
+**(i) The `sigbreathe` integrity pulse — a §D wording question.** §D specifies a breathing pulse as
+`security`'s motion. `Security.tsx` renders a **non-live** wire instead — *"the chain does not flow —
+nothing is confirmed"* — because the integrity posture is `blocked`. Applying the pulse would satisfy
+§D's letter by painting liveness onto a surface that has established nothing. A Builder resolving this
+by adding the motion would be choosing the spec's letter over its meaning on its own authority, so it
+is left here. **You are deciding between two readings of your own spec**, not approving a change:
+
+| Option | What it means |
+|---|---|
+| Amend §D | motion is conditional on a *confirmed* chain; the still wire is correct and box 1 · 9 ticks as-is |
+| Keep §D literal | the pulse is applied unconditionally, and the page animates a chain it cannot verify |
+
+The recommendation is the first: every other surface in this repository is built to refuse rather
+than to imply. But §D is yours.
+
+**(ii) The approval-REQUEST path does not exist, on either side — and this phase pre-authorised
+that.** There is no `approval-request` schema in `engine/schemas/` (21 schemas; none is one) and no
+desktop→engine command. The `approvals` page's grant/deny/escalate are real and correctly gated —
+behind a native confirmation the webview cannot forge — but they drive the **desktop's own** approval
+system (T-010/T-011 over local SQLite), not a request across the wall. Phase 2's own **Contracts**
+row says an `approval-request` needing an engine schema change is *"an audited engine task, flagged,
+not done here."* It is flagged. **What is yours: whether to open that audited engine task now, or
+carry it into a later phase.** Nothing is blocked on it today — the read half is complete and wired
+end to end.
+
+Boxes 2 · 7 · 11 are unticked for (ii); boxes 1 · 9 for (i). A box whose surface exists but whose
+obligation is unmet stays unticked and says which obligation — which is why five look open on a phase
+that has nothing left to build.
+
+---
+
+## 2b. Who reviews a §I design proposal when there is no Architect (PR #112)
+
+**PR #112 is open and deliberately not merged.** It is the floor-writer service design (T-020) — the
+implementation route for §1b, which you resolved on 2026-08-14 in favour of a service over a setuid
+helper. It is a **§I design proposal**, and §I requires a design review the Builder cannot perform on
+its own work. The session that wrote it caught itself recommending its own merge and corrected that
+before handing over; the precedent (PR #30) is merge only **after** a design review.
+
+There is no Architect. This is the same problem the independent audit had, and the same answer is
+available: **a separate clean-context session in an auditor role** — which is what this repository
+has always meant by "independent", and what produced rounds three and four.
+
+If that route is used, the verdict must be recorded as **what it is**. `OWNER_APPROVED_NOT_ARCHITECT_AUDITED`
+exists for exactly this distinction and is already the value of `CURRENT_DESIGN_GATE`. A design review
+by an auditor session is **not** Architect GREEN, and recording it as one would be the F-02 pattern —
+a claim promoted a grade above what produced it — in the one place a promotion is hardest to see.
+
+`B-02` from the fourth audit sits beside this and stays **OPEN**: the anti-rollback floor has **three**
+claimed owners — the rev-30 addendum §7 P1-7 and `supervisor_ledger.rs:20` say `brops-signer`; the
+DDL, the CAS and the only process that opens the file say the supervisor; the scope-key pin is the
+challenge authority's. The design also introduces an **eighth principal**, which amends the addendum's
+normative §2.5/§2.6 — *"the SEVEN runtime service UIDs"* — and FW-3 is blocked on that amendment.
+Both are §I territory, which is to say: the same review.
+
+**A structural note, found by parking it.** PR #112 went `MERGEABLE` → `CONFLICTING` the moment
+anything else merged, and it will do so again after every merge. It is not a bad rebase — the PR
+writes `NEXT_CHAT.md`, `PROJECT_STATE.md`, `TASKS.md` and `config/current_state.json`, which are the
+**carrier** files every merge rewrites by ritual. A design proposal that claims the carrier cannot be
+parked; it can only be merged or rebased forever. Worth fixing in whichever direction you choose:
+either a §I proposal stays off the carrier files and lives in `docs/design/` alone, or design
+proposals are reviewed and merged promptly rather than parked. Recorded, not acted on — changing
+what a design PR is allowed to touch is itself §I.
+
+---
+
+## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
+
+You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
+actually blocked on** — and the answer is the same five times: **the code half is built and the
+remaining half is a deployment act only you can perform.** Not one of them needs a Builder change.
+
+**And §3 below listed four of them under *"Open, and not waiting on you."*** That heading was false
+for O-1, O-3, O-4 and O-5. It is the same failure this page has now been corrected for three times:
+the one page that answers *"what is waiting on me"* answering **no** when the answer was **yes**.
+Corrected here; §3 keeps only what genuinely is not yours.
+
+Phase 10's exit criterion is *"O-1..O-5 **closed or owner-signed-deferred** (each audited)"*, and
+the mechanism for the second half already exists: `tools/check_residual_items.py` accepts
+`OWNER-DEFERRED` and **refuses any status change without a `Sign-off:` line**. So each of these is
+one decision with two legal answers — **do the act**, or **defer it by name**. Leaving it OPEN is
+the only answer that is not a decision.
+
+| item | sev | the one act that closes it |
+|---|---|---|
+| **O-1** | **HIGH** | Make the control-plane tree **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
+| **O-2** | MEDIUM | **Provision the anchor signer's custody.** The signer mints its own Ed25519 key — no offline root artefact is needed — but until custody is configured `append()` writes a plaintext head and **no deployment is anchored**. **30 tests in [`engine/tests/test_audit_head_anchor.py`](../engine/tests/test_audit_head_anchor.py)** already prove the refusal works, including a ledger whose head was rewritten over dropped records. *(This row said "26 tests" and named no file. The sixth audit reports the auditor running `cargo test -p brops-audit-signer` — 2 passed across three targets — and being unable to locate the 26 anywhere he looked. The count was right when written; the tests live in the engine's **Python** suite, not in the Rust crate whose name matches. Counted again: 30 today. A number with no home is a number nobody can check.)* |
+| **O-3** | MEDIUM | A **deploy step** that mints and rotates the operator-root-signed `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. The code fails closed and the shipped policy already requires it. |
+| **O-4** | LOW | **Pin `control-room-command` in the operator-signed registry.** Both actors are signature-verified today; the shipped registry grants the type to nobody, so the check can never pass on a real install. |
+| **O-5** | LOW | **Mint the evidence-floor anchor offline**, grant its type to that key in the operator-signed registry, and present the file **under a principal the policed account cannot write**. The manifest binding is built and enforced; this is the credential half. |
+
+**None of the five needs an offline-root-signed Owner secret** — the `Owner secret needed: no` in
+the inventory is accurate. What they need is a deployment posture and two provisioning steps.
+O-1 is the only **HIGH**, and it is also the only one with a written, named way to accept the risk
+instead of fixing it.
+
+**What a Builder can still do here is nothing**, and saying so is the point of writing it down:
+every remaining half is an act on a machine you control, with credentials you hold.
+
+---
+
+## 2e. DECISION TAKEN 2026-08-17 — one palette, and it is `--menq-*`
+
+The seventh independent audit's `G-10`/`G-11(a)` found this repository painting with one colour
+system and measuring another. `check_contrast.py` resolves every pair against `--menq-*` hexes in
+`contrast-pairs.json`; the cockpit paints with `aios.css`'s own `--ink`/`--azure`/`--success`
+palette. Both are live — 289 references against 215 — and **not one of the manifest's twelve
+hexes appears anywhere in `aios.css`**. The auditor changed the shipped light-theme `--azure` to
+`#FF0000` in place and `check_c1_tokens`, `check_contrast` and `check_token_parity` all stayed
+GREEN.
+
+The auditor was explicit that no Builder edit closes this: *"two palettes with one gate is a 'one
+contract, two implementations' instance, and this repository's own ledger says it has now found
+that shape eight times"* — and that the question of whether the `--menq-*` system should exist
+at all is §I architecture, not a Builder decision.
+
+**The Owner's answer: `--menq-*` stays.**
+
+What that commits us to, stated so the next session inherits the reasoning rather than the verdict:
+
+* `aios.css`'s **colour tokens** are the duplicate and converge onto `--menq-*`. Its layout, motion
+  and instrument language are not in scope — 417 KB of design is not what "delete the duplicate"
+  meant.
+* §C.1 then pins **one** palette, and `check_contrast` measures the one the app actually paints,
+  which is the property `G-10` found missing.
+* The migration is sequenced **behind a measurement**. The browser suite is the only thing that can
+  prove a colour swap did not change what renders, and `check_contrast` is expected to go **red on
+  the way** — the two palettes are genuinely different colours — before it goes green on the
+  merged one. A find-and-replace that stayed green throughout would mean the gate was not looking.
+
+Tracked as `T-034`, now unblocked.
+
+## 2d. DECISIONS TAKEN 2026-08-17 — four answers, and what each one commits us to
+
+The Owner was given the open decisions as options with a recommendation each, and answered all
+four. Recorded here as **decisions**, not as status, so the next reader inherits the reasoning and
+not just the outcome.
+
+**A — the sixth independent audit runs NOW, on `main` @ `35cc40b`.** Not after `T-021`/`T-022`
+land. Twenty-four merged pull requests have accumulated since the fifth round's pinned head and
+**not one of them has been looked at by anyone who did not write it**. Waiting would have doubled
+that, and the deferred work is itself sequenced *behind* the audit — so "audit once, later" was a
+plan that could never start. The fifth round found a rendering regression **one round** after it
+shipped; the cost of accumulation is measured, not hypothetical.
+
+**B — `T-021`, `T-022` and Phase 9's connectors are built AFTER the audit, if it passes.** Each is a
+**new input to the engine's trust boundary** and the standing verdict is RED. The boxes stay
+**open** in the meantime.
+
+> The Owner was offered a third option — amend the phase scope so those boxes leave by definition,
+> which is the **only** way phases 1–9 could read 100% today — **and declined it.** That is the
+> decision worth recording: a phase that closes because its scope was trimmed to fit is the exact
+> shape every audit round has punished, and 1–9 will reach 100% by being finished, not by being
+> re-described.
+
+**C — PR #112's §I design review goes to a separate auditor-role session.** The same route that
+produced rounds three and four. Its verdict is recorded as **what it is**:
+`OWNER_APPROVED_NOT_ARCHITECT_AUDITED`, never as Architect GREEN. Note the standing cost of the
+delay — #112 writes the four carrier files, so it **conflicts after every merge** and will need a
+rebase whenever it is finally taken.
+
+**D — O-1 is to be DONE, not deferred.** It is the only **HIGH** of the five and the only one with
+a written way to accept the risk instead; the Owner chose the fix. **O-2…O-5 keep no new
+instruction and therefore stay OPEN** — which §2c says plainly is the one answer that is not a
+decision. They remain five sentences away from being settled.
+
+**What O-1 needs from you, exactly.** Make the control-plane tree **unwritable by the account that
+runs the engine**, then *prove it on the real install* — the item's own words are that a packaged
+install *"gives it for free"* on `Program Files` / `/opt` / `/Applications`, and that this
+**"needs verifying on a packaged build rather than asserting."** The assertion is not the closure;
+the verification is. On Debian that is a bind mount
+([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). When it is verified, the item's status line
+moves to `CLOSED` **with a `Sign-off:` line** — `tools/check_residual_items.py` refuses the change
+without one.
 
 ---
 
 ## 3. Open, and not waiting on you
 
-Recorded so nothing reads as closed that is not. These are being worked.
+Recorded so nothing reads as closed that is not.
 
-- **O-3 — the engine can now see it.** `BRO_TRUSTED_REGISTRY_ROOT` redirects where the registry is
-  read, fail-closed, with the operator-root pin deliberately staying where it was: a redirect that
-  carried the anchor along would have handed over the whole thing. Proven in both directions against
-  the real verifier, including that a token accepted by *a* provisioned registry is still refused by
-  *this* deployment's. **The startup wiring landed on 2026-08-09.** `Provisioned::engine_env()` now
-  returns all **five** variables — `BRO_TRUSTED_REGISTRY_ROOT` plus `BRO_OPERATOR_ROOT_PUBKEY_FILE`,
-  `BRO_OPERATOR_REGISTRY_MIN_FILE`, `BRO_CONDUCTOR_SESSION_TOKEN` and `BRO_SESSION_ID` — and
-  `apps/desktop/src-tauri/src/engine_trust.rs` applies the set to the engine child at the one seam
-  that launches it, whole or not at all, refusing by name when an inherited anchor disagrees.
-  `apps/desktop/src-tauri/tests/o3_conductor_session.rs` proves it against the real Python:
-  accepted with the export, refused without it and refused pointed elsewhere. What is left is **not**
-  an export — it is that the desktop's engine entry point (the bridge sidecar's real mode) is itself
-  fail-closed until Wave 3b, so a desktop turn does not yet reach `authorize_conductor_stop`.
-  *(This bullet has been corrected twice: it once said "the variable ... it already writes", then
-  said nothing exported any of the five. Neither is true now.)*
+> **This line used to say "These are being worked", and both items below said the opposite** — the
+> sixth audit's `A-14`. One ends *"Not done unilaterally — CI depends on it today"* and the other
+> ends *"recorded honestly instead"* of being fixed. Neither is being worked; both are **parked with
+> a stated reason**, which is a different and more honest thing to be. §2c had already corrected
+> this heading's scope by moving four O-items out and left the standing claim about the two that
+> remained.
+
+> **Four O-items used to be listed here and are not any more** — they moved to §2c, because their
+> remaining halves are yours. What stays below is genuinely not waiting on you.
+
 - **The committed `engine/config/trusted-keys.json` is a fixture, not a deployment default.** It is
   `production: false`, carries no private half anywhere in the tree, and a real deployment with a
   file pin has never been able to anchor on it. Its cost is confusion rather than forgery: it is the
@@ -444,22 +823,11 @@ Recorded so nothing reads as closed that is not. These are being worked.
   it under `engine/tests/fixtures/` so an unconfigured deployment fails closed with "cannot read
   trusted key registry" instead of quietly loading a development registry. Four dependents would
   name it explicitly. Not done unilaterally — CI depends on it today.
-- **O-5 — deliberately not minted at install.** At install no task exists, and an anchor the app
-  mints by reading the store the check polices would restate the store's own claim under a
-  signature: worse than none, because it looks like corroboration. `mint_floor_anchor` exists and is
-  proven against the real verifier; when it is called is a design question, not a provisioning one.
-- **O-1 — a packaged install gives it for free.** The item wants the control plane unwritable by the
-  account that runs the engine. `Program Files`, `/Applications` and `/opt` are not writable by that
-  account. Needs verifying on a packaged build rather than asserting.
 - **Windows key-material permissions are inherited, not set.** `secure_owner_only_file` has no
   non-unix branch, so on Windows the private keys carry the app data directory's ACL — per-user by
   default, plus SYSTEM and Administrators. Failing closed there would mean the app never starts on
   its primary platform, so it is recorded honestly instead: in `PROVISIONING.json`, in
   `POSTURE.txt`, and on stderr at first launch.
-- **The minted registry grants `control-room-command`**, which the committed engine registry grants
-  to nobody. O-4's code half is closed, so pointing the engine at this registry also provisions
-  O-4's key. A consequence worth a decision rather than a silent side effect.
-
 ---
 
 *Update this file in the same commit as any change to what it claims. A page about what is blocked

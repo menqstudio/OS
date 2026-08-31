@@ -17,6 +17,21 @@ on:
 permissions:
   contents: read
 
+# One run per ref, EXCEPT on `main`.
+#
+# `cancel-in-progress: true` would be wrong on `main` and the reason is a rule this
+# repository now gates on: after every merge the head's own run must be READ
+# (`gh run list --branch main`, never a pull request's checks). Two merges close
+# together share the group `ci-refs/heads/main`, so the second would cancel the
+# first — and a CANCELLED run is not a reading. It is not `success`, it is not
+# `failure`, and `main_ci` in the machine mirror would have nothing true to record.
+#
+# On a pull request `github.ref` is `refs/pull/<n>/merge`, so each PR keeps its own
+# group and a new push still cancels the run it superseded, which is the whole point.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Phase 0: each half builds and tests independently. A cross-integration
 # (bridge) smoke test is added in Phase 1.
 jobs:
@@ -45,6 +60,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Test the SQLite data core
         run: cargo test -p brops-core --manifest-path apps/desktop/src-tauri/Cargo.toml
 
@@ -65,6 +89,15 @@ jobs:
       # The Tauri host crate (`brops`) is deliberately NOT here: it needs webkit2gtk. Its absence
       # is a real coverage gap on Windows and is tracked separately — it is stated rather than
       # papered over by testing something adjacent and calling it covered.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Test the launcher, executor, broker and live driver
         run: |
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-launcher -p brops-executor -p brops-broker -p brops-governed-live             -p brops-win-live -p brops-win-broker
@@ -86,6 +119,15 @@ jobs:
       # nothing re-ran it — `CURRENT_LINUX_E2E: proven` rested on a single manual run that no gate
       # reproduced (independent audit, ci-tests section). A hosted ubuntu runner has everything the
       # script asks for: passwordless sudo, useradd, setuid on ext4, /opt, and sudoers.d.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install engine crypto dependency
         run: pip install --require-hashes -r engine/requirements-ci.txt
       - name: Build the live-turn binaries (launcher + recorder/executor/driver)
@@ -142,6 +184,15 @@ jobs:
       # one-shot sidecar subprocess, from a SEVENTH principal, driving the real supervisor
       # services, reaching the real privileged recorder → setuid launcher → contained executor,
       # recording the evidence, and exiting non-zero unless the round trip completed.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install engine crypto + schema dependencies
         run: pip install --require-hashes -r engine/requirements-ci.txt
       # `ladder_output_pull` is the §4.10(f) DESKTOP half: it lives in `brops-core`, the crate that
@@ -214,6 +265,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
@@ -366,6 +426,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
@@ -466,8 +535,51 @@ jobs:
 
           $work = Join-Path $env:RUNNER_TEMP 'brops-standard-account-run'
           New-Item -ItemType Directory -Force -Path $work | Out-Null
-          icacls $work /grant 'brops-ci:(OI)(CI)(F)' /T /C /Q | Out-Null
+
+          # T-023, answered on its fourth occurrence by the ACL dump added for exactly this.
+          #
+          # The refusal was `BRO_OPERATOR_ROOT_PUBKEY_FILE must not be writable by non-owner
+          # principals`, intermittent across #125, #132, #155 and #157 and cleared by a rerun each
+          # time. With the ACE printed it stopped being ambiguous on the first firing:
+          #
+          #   [ace #3 grants FILE_WRITE_DATA, FILE_APPEND_DATA, DELETE
+          #    (mask 0x001301BF, flags 0x10, INHERITED) to NT AUTHORITY\Authenticated Users (S-1-5-11)]
+          #
+          # INHERITED, and Authenticated Users. So the anchor really was writable by every
+          # authenticated principal on the box, the check was RIGHT to refuse, and the defect is
+          # here: this directory is created under RUNNER_TEMP and inherited its DACL, while the
+          # `/grant` below only ADDED to it. The row named both candidate fixes and the evidence
+          # chose this one -- the harness, not the check. Teaching the check to ignore inherited
+          # ACEs would have made CI quiet by deleting the Windows half of O-2.
+          #
+          # `/inheritance:r` drops the inherited ACEs and `/grant:r` then states the whole DACL.
+          # Only principals the custody check treats as owner-equivalent are granted, BY SID so a
+          # non-English runner cannot miss them: SYSTEM (S-1-5-18) and BUILTIN\Administrators
+          # (S-1-5-32-544) -- which is how the outer step, running as the runner admin, keeps its
+          # access to the script it writes and the stdout it reads back. `brops-ci` is granted
+          # because it has to create the fixtures, and it is the OWNER of everything it creates
+          # here, which is the ACE the check skips. `$env:USERNAME` is deliberately NOT granted: an
+          # explicit ACE for the runner admin would inherit onto operator-root.pub as a non-owner
+          # write and reproduce this exact refusal one principal over.
+          icacls $work /inheritance:r /grant:r `
+            '*S-1-5-18:(OI)(CI)(F)' `
+            '*S-1-5-32-544:(OI)(CI)(F)' `
+            'brops-ci:(OI)(CI)(F)' /T /C /Q | Out-Null
           $global:LASTEXITCODE = 0
+
+          # Verified, not assumed. A silent icacls failure would put the run straight back to the
+          # intermittent refusal with no way to tell the two apart, which is the state this whole
+          # change exists to leave behind.
+          $acl = (icacls $work) -join "`n"
+          $global:LASTEXITCODE = 0
+          foreach ($bad in @('Authenticated Users', 'Everyone')) {
+            if ($acl -match [regex]::Escape($bad)) {
+              throw ("the work directory still grants '$bad' after /inheritance:r, so the anchor " +
+                     "would inherit a non-owner write ACE and the custody check would refuse it. " +
+                     "That is T-023 and it is a real refusal, not a flake. Full ACL:`n$acl")
+            }
+          }
+          Write-Host "work-directory DACL (inheritance removed):`n$acl"
 
           # A batch file rather than an argument string: `Start-Process -Credential` builds a
           # fresh environment block for the new logon, so the variables have to be set on the
@@ -562,6 +674,15 @@ jobs:
       # §0.W.4) must authenticate a live client connection. This is a partial Windows machine-proof — it
       # does NOT flip platform_governed_execution_supported() (the remaining §0.1 primitives + the
       # dedicated-service-SID proof are unbuilt), so governed turns stay fail-closed on Windows.
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
       - name: Pure §0.W predicates on Windows
         run: cargo test -p brops-core windows_broker --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Real named-pipe peer-SID authentication on Windows
@@ -695,9 +816,66 @@ jobs:
       # anchor + docs-reference-active-PR + PR-diff state-doc drift guard).
       - name: Coordination-docs consistency gate
         run: python tools/check_coordination.py
+      # The reverse of check_read_receipt: that one asks whether the session READ the
+      # canon, this one asks whether the canon can still BE read. Every other gate here
+      # can be satisfied by adding text; this is the only one that can only be satisfied
+      # by removing it. The read manifest reached 1917 KB (~386k tokens) with
+      # NEXT_CHAT.md and PROJECT_STATE.md carrying 3037 identical lines, because a
+      # session that appends was compliant and a session that deletes was not.
+      - name: Canonical read set within budget
+        run: python tools/check_canon_budget.py
+      # Could a brand-new session take over from this repository alone? CLAUDE.md's
+      # continuous-documentation law has required that for weeks and nothing checked it.
+      - name: Handoff is ready for a new session
+        run: python tools/check_handoff_ready.py
+      # A field nothing reads cannot be wrong, so nothing corrects it -- which is how
+      # current_state.json's `purpose` reached 74,311 characters inside the file called
+      # the machine-readable mirror (ninth audit I-06).
+      - name: Machine mirror has no field nothing reads
+        run: python tools/check_state_fields.py
+      # Every defect found while cutting the read set down had one shape: something was
+      # written down and nothing checked it was true. This checks the claims that have a
+      # machine-checkable referent -- paths, commits, ticket ids, toolchain versions.
+      - name: Canonical documents make no false checkable claim
+        run: python tools/check_doc_claims.py
+      # An assumption may not enter the record dressed as a fact. Either settle it and write
+      # what it printed, or mark it UNVERIFIED with the experiment that would settle it.
+      - name: No unmarked guess in a canonical document
+        run: python tools/check_no_assumptions.py
+      # Options without a recommendation are a decision passed upward while looking thorough.
+      - name: Alternatives carry a reasoned recommendation
+        run: python tools/check_recommendation.py
+      # Every gate above judges content that is PRESENT. This one judges content that was LOST:
+      # eleven Phase-1 Definition-of-Done rows had ended in the middle of a clause since
+      # 2026-08-10, inside the rows check_roadmap_order.py reads to decide which phase a session
+      # may work, and thirty gates passed over them.
+      - name: No roadmap Definition-of-Done row ends mid-sentence
+        run: python tools/check_truncated_lines.py
+      # T-056. A check nothing invokes is a suggestion, and this gate is in its own
+      # derived population: leaving it out of a REQUIRED job would make it declare
+      # `blocks: nothing` about itself, which is the exact defect it exists to catch.
+      # It sits in this job rather than a new one because a new job is a new context
+      # and branch protection is the Owner's to change.
+      - name: Controls name what their failure prevents (T-056)
+        run: python tools/check_control_invocation.py
+      # The desktop app's version is written five times across four files and nothing
+      # reconciled them -- `npm ci` exits 0 with package.json at 9.9.9 and its lock at
+      # 0.1.0 (measured). This job, not a new one: a new job is a new required context
+      # and branch protection is the Owner's.
+      - name: App version agrees with itself across all four files
+        run: python tools/check_version_parity.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_coordination
+        run: |
+          python -m unittest test_check_coordination
+          python -m unittest test_check_canon_budget
+          python -m unittest test_check_handoff_ready
+          python -m unittest test_check_doc_claims
+          python -m unittest test_check_recommendation
+          python -m unittest test_check_truncated_lines
+          python -m unittest test_roadmap_split
+          python -m unittest test_check_control_invocation
+          python -m unittest test_check_version_parity
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law
@@ -716,12 +894,31 @@ jobs:
       # closed, and it is the half that cannot be skipped with --no-verify or an env var.
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync
+        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_wall_bash_gap test_check_main_ci
+      # `lstrip("./")` strips a CHARACTER SET, not a prefix, and reads exactly like a prefix
+      # strip. It was written three times: check_doc_claims.py hit it and fixed it inline
+      # leaving only a comment, and check_roadmap_order.py:373 plus check_audit_reports.py:119
+      # both carried it live at the same head. The first made every `.claude/` and `.github/`
+      # path invisible to the `meta` scope check -- the two directories `meta` exists to cover
+      # -- and mangled every path for an agent working under `.claude/worktrees/`. It also went
+      # the other way: `../tools/x` was laundered into `tools/x`, a traversal arriving inside an
+      # allow-listed prefix. Two of the three gates this job runs were affected, which is why
+      # the sweep lives here (T-053).
+      - name: No `lstrip` used as a path-prefix strip
+        run: python tools/check_no_lstrip_prefix.py
       # Roadmap order: a phase counts as complete only when its Definition-of-Done checkboxes
       # AND its status-board row agree. Flipping one is refused, which is what stops "phase
       # complete" from being a one-character edit.
       - name: Roadmap completion is stated the same way in both places
         run: python tools/check_roadmap_order.py
+      # The audit trail has to be openable (sixth audit, A-06). The FIFTH round's report was never
+      # written to the repository: the ledger went on naming the FOURTH as authoritative while the
+      # OWNER page carried the fifth's verdict and its 15 promotions to ✅, so every citation the
+      # round embedded in source comments pointed at a document nobody could open. The auditor is
+      # deliberately read-only on the tree, so filing the report is the Builder's step — and an
+      # unwritten Builder step is one nobody notices. This is the half that fails closed.
+      - name: Every audit citation opens, and the ledger agrees with the OWNER page
+        run: python tools/check_audit_reports.py
       # The update law, per PR. Stricter than check_coordination's any-one-state-file rule:
       # EVERY required document, and no environment bypass.
       - name: Code and canon moved together
@@ -739,6 +936,16 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # NOTE: this job CANNOT read branch protection. `administration` is not a valid
+      # GITHUB_TOKEN permission scope - adding it made GitHub reject the whole workflow file,
+      # which produced the failure mode `unparseable_workflows` now catches: zero jobs, the run
+      # listed by filename, and the pull request reading as blocked on missing contexts.
+      #
+      # So `verify_branch_protection` runs only where the caller has admin rights - locally,
+      # or Owner-run. In CI it reports SKIPPED with the reason. What CI verifies instead is the
+      # half that needs no rights: every context in `config/required-checks.json` names a job
+      # that actually exists in a workflow. That catches the likely drift - a renamed job - and
+      # says so; it does not catch protection being turned off, and does not claim to.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -749,12 +956,44 @@ jobs:
         with:
           python-version: "3.12"
       # Offline unit tests of the pure functions (merge->main-push GREEN, exact-head drift RED, ...).
+      # sync_active_pr is tested in the SAME job as the gate that reads its output: it is the
+      # generator that writes config/current_state.json, and every stale-canon incident this
+      # repository has recorded was manufactured there. Tests are wired one-by-one here (there is no
+      # discover over tools/), so a test file that is not named on this line does not run at all.
+      #
+      # That warning was accurate and insufficient. `test_renderer_broker_schemas` — 13 tests of the
+      # renderer<->broker governed-turn schema contracts (rev-30 §4.10(g)) — was named on no line in
+      # any workflow and had never run in CI; the sixth independent audit found it (A-12). Naming a
+      # trap in a comment does not close it, so `check_reachability.py::unrun_test_modules` now
+      # sweeps BACKWARD: any tools/test_*.py that no workflow names is RED. Forgetting this line is
+      # now a build failure rather than a quiet nothing.
       - name: pure-function self-tests
         working-directory: tools
-        run: python -m unittest test_check_repo_state
+        run: python -m unittest test_check_repo_state test_sync_active_pr test_stamp_pr_head test_check_schema_mirrors test_renderer_broker_schemas test_check_audit_reports test_check_contracts_single_source test_check_dead_tokens
       # LIVE, fail-closed: verify config/current_state.json against real GitHub PR state. A merged PR
       # still recorded 'open' (the volatile-snapshot failure mode) fails this job. gh auto-auths via
       # the workflow token.
+      # M1 of the contracts dedupe (docs/design/CONTRACTS_DEDUPE_PLAN.md): the Rust structs that
+      # claim to mirror an engine schema were bound to it by nothing but a doc comment. A schema
+      # can gain a required field, or a mirror lose one, and nothing notices until a real payload
+      # fails somewhere expensive. This is the binding, and it needs no file to move.
+      - name: Schema mirrors (Rust structs vs engine schemas)
+        run: python tools/check_schema_mirrors.py
+
+      # M2 of the same plan, and the ninth audit's I-13: contracts/ was a lone README describing an
+      # intention while engine/schemas/ held the files, and nothing about that was blocked by the
+      # production gate. contracts/ is the SOURCE now; the engine keeps a byte-identical vendored
+      # copy because its loaders are root-relative and engine/ is a subtree of menqstudio/Bro.
+      # Editing one side alone is RED, and a new engine schema must be classified by a person.
+      - name: Contracts single source (contracts/ vs engine/schemas/)
+        run: python tools/check_contracts_single_source.py
+
+      # The reverse of check_c1_tokens: that one asserts every `var(--x)` RESOLVES, this one asserts
+      # every declaration is READ. T-033 deleted 1185 unreachable CSS rules and the custom properties
+      # they read survived, because nothing counted a declaration nobody reads -- 20 of 149 were dead.
+      - name: Dead design tokens (declared and read by nothing)
+        run: python tools/check_dead_tokens.py
+
       - name: Live GitHub truth check (fail-closed)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -773,9 +1012,16 @@ jobs:
       # added in one place but not the others — or ungated — cannot merge.
       - name: Capability inventory consistency gate
         run: python tools/check_capabilities.py
+      # T-052. The rule at `repo::audit::record` says the actor is passed explicitly by
+      # trusted repo code and never hardcoded 'user'. 34 of the 40 calls in that same file
+      # passed the literal pair "user", "gev" -- including the automation scheduler's
+      # unattended once-a-minute tick, which recorded a named human who was not present.
+      # An audit row that says a person did something they did not do reads as evidence.
+      - name: Audit actor attribution gate (no hardcoded actor)
+        run: python tools/check_audit_actor.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_capabilities
+        run: python -m unittest test_check_capabilities test_check_audit_actor
 
   ledger-ddl:
     name: Supervisor · durable-ledger DDL single-source gate (F-01)
@@ -814,6 +1060,89 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_spec_references
+
+  produced-artifact:
+    name: Production half · the five conditions (T-055)
+    runs-on: ubuntu-latest
+    # This job was RED BY DESIGN from the commit that introduced it (#193) until T-055 made it
+    # pass. It is GREEN now, and that changes what it is for: it stops being a statement of what
+    # is missing and becomes the thing that notices if any of the five stops holding.
+    #
+    # Every other piece of work in this repository has a gate and therefore a measurable "done".
+    # The production half — what a paying customer actually receives — had none, so it lost every
+    # scheduling contest to work whose finish line a machine could see. Writing the gate first and
+    # leaving it failing is what ended that.
+    #
+    # It is still ABSENT from config/required-checks.json, and the reason has changed with it.
+    # It is no longer "this can never pass"; it is that a context must be OBSERVED green in CI
+    # before it is required. This repository learned that the expensive way: `Windows · §0.W broker
+    # syscall proof` was made required on 2026-08-18 and failed the same day, and its exclusion
+    # note in config/required-checks.json is the record. Requiring a context on the strength of a
+    # local run is the same mistake in a new place.
+    #
+    # That deferral is not a comment anyone has to remember — it is a DATED entry in
+    # config/deferred-enforcement.json, and tools/check_repo_state.py::verify_deferred_enforcement
+    # (which runs inside the already-required `Repo-state` context) turns RED once the date passes
+    # while this name is still missing from `contexts`.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # The self-test runs FIRST and must pass. It is the only evidence that this gate can be
+      # satisfied at all: it builds a synthetic tree meeting all five conditions and asserts GREEN.
+      # A gate that has never been observed passing measures nothing, which is the same defect one
+      # level up from the one this gate exists to catch.
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_produced_artifact
+      # The evidence is PRODUCED here, from the real code path, and is never
+      # committed: `store_root` lives under `target/`, and the gate refuses a
+      # store whose files `git ls-files` reports, because a committed store is a
+      # fixture and not a product. The producer command is the one recorded in
+      # config/produced-artifact-contract.json -- CI runs what the contract says
+      # it runs, so a reader can reproduce this locally with the same line.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
+      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
+      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
+      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
+      # taken before the toolchain is selected is keyed on the runner's preinstalled
+      # compiler and never hits. That is upstream's own instruction at this sha.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Produce the artifact from the real code path
+        working-directory: apps/desktop/src-tauri
+        run: cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact
+      - name: The five conditions a customer sees
+        run: python tools/check_produced_artifact.py
+
+
+  negative-matrix:
+    name: Negative matrix · every declared test ID says what establishes it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Stdlib only. docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md declares 242 negative test
+      # IDs; at the head this job landed on, exactly ONE of them appeared anywhere in .rs/.py/.ts
+      # source — in a docstring saying the control it names is not implemented. 241 obligations
+      # were declared and nothing established any of them. The mirror now records, per ID,
+      # whether a real test binds it, and this job refuses drift between the two.
+      - name: Mirror matches the markdown (generated, not hand-kept)
+        run: python tools/generate_negative_matrix.py --check
+      - name: Every matrix ID says what establishes it
+        run: python tools/check_negative_matrix.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_negative_matrix
+      - name: The implemented slice
+        env:
+          BRO_ENV: ci
+        run: python -m unittest discover -s engine/tests -t engine/tests -p "test_negative_matrix.py"
 
   signer-isolation:
     name: Engine · signer isolation proof (linux, dedicated principals)

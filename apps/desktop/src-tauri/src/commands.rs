@@ -153,6 +153,68 @@ const MAX_PENDING_ANSWERS: usize = 32;
 struct PendingAnswer {
     prompt: String,
     answer: String,
+    /// HOW this answer was produced, carried from the site that produced it.
+    ///
+    /// The sixth independent audit's `A-05`: `save_ask_to_knowledge` wrote
+    /// `"governed research · {prompt}"` unconditionally, and this struct had no field that
+    /// could have contradicted it. Two paths stash into this one map — a governed turn held
+    /// under an untrusted manifest, and the ungoverned development stream, which runs no turn,
+    /// issues no challenge and produces no receipt. On a shipped install the governed branch is
+    /// blocked before the model runs and never stashes, **so the only configuration in which
+    /// that note could be written was the one where its provenance string was false.**
+    ///
+    /// A field the save path cannot guess is the fix. Provenance is a property of the
+    /// PRODUCTION of an answer, and it was being asserted at the point of persistence by code
+    /// that had no way to know it.
+    provenance: AnswerProvenance,
+}
+
+/// What actually happened behind an answer, in decreasing order of trust.
+///
+/// Deliberately not a boolean. `governed` and `ungoverned` are not the only states this app can
+/// be in — the one it is in on every developer machine today is neither, and flattening it into
+/// either would reproduce `A-05` in the other direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerProvenance {
+    /// A governed turn ran and its receipt verified against a TRUSTED manifest.
+    ///
+    /// Nothing constructs this yet, and that is correct rather than an omission:
+    /// `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no shipped
+    /// install can reach a trusted verification. It exists so the day one can, the note says so
+    /// because the producing site said so — not because a `format!` two hundred lines away
+    /// assumed it.
+    Governed,
+    /// A governed turn ran; the receipt verified desktop-side against NO trusted manifest.
+    /// `ReceiptOutcome::DevelopmentUntrustedHeld`.
+    DevelopmentUntrusted,
+    /// No governed turn at all — the `BROPS_ALLOW_UNGOVERNED=1` development stream. No challenge,
+    /// no receipt, no verification.
+    Ungoverned,
+}
+
+impl AnswerProvenance {
+    /// The `source` prefix a persisted note carries. Written so a reader who knows nothing about
+    /// this codebase can tell the three apart, because that reader is the point of the field.
+    fn source_prefix(self) -> &'static str {
+        match self {
+            Self::Governed => "governed research",
+            Self::DevelopmentUntrusted => "development-untrusted research (no trusted manifest)",
+            Self::Ungoverned => "UNGOVERNED research (no governed turn, no receipt)",
+        }
+    }
+
+    /// The wire token the renderer switches on.
+    ///
+    /// Deliberately the SAME vocabulary `receiptBadge()` already uses for chat messages
+    /// (`Conversations.tsx`), so one outcome does not get two names depending on which surface a
+    /// reader is looking at. `ungoverned` is new because no chat path can produce it.
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Governed => "trusted_verified",
+            Self::DevelopmentUntrusted => "development_untrusted",
+            Self::Ungoverned => "ungoverned",
+        }
+    }
 }
 
 fn pending_answers() -> &'static Mutex<HashMap<String, PendingAnswer>> {
@@ -161,7 +223,11 @@ fn pending_answers() -> &'static Mutex<HashMap<String, PendingAnswer>> {
 }
 
 /// Stash a server-generated answer under a fresh opaque id and return that id.
-fn stash_pending_answer(prompt: String, answer: String) -> String {
+///
+/// `provenance` is REQUIRED rather than defaulted. A default would be a guess made at the wrong
+/// end of the pipeline, which is exactly the defect this parameter closes (`A-05`) — and the
+/// compiler now refuses a new stash site that has not decided what it is producing.
+fn stash_pending_answer(prompt: String, answer: String, provenance: AnswerProvenance) -> String {
     let result_id = brops_core::id();
     let mut pending = pending_answers().lock().unwrap_or_else(|p| p.into_inner());
     if pending.len() >= MAX_PENDING_ANSWERS {
@@ -169,7 +235,7 @@ fn stash_pending_answer(prompt: String, answer: String) -> String {
             pending.remove(&k);
         }
     }
-    pending.insert(result_id.clone(), PendingAnswer { prompt, answer });
+    pending.insert(result_id.clone(), PendingAnswer { prompt, answer, provenance });
     result_id
 }
 
@@ -194,19 +260,19 @@ pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
 #[tauri::command]
 pub fn create_project(state: State<AppState>, input: NewProject) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::create(&conn, input).map_err(|e| e.to_string())
+    repo::projects::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_project_status(state: State<AppState>, id: String, status: String) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::projects::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn update_project(state: State<AppState>, id: String, name: String, description: String, priority: String) -> Result<Project, String> {
     let conn = locked(&state)?;
-    repo::projects::update(&conn, &id, &name, &description, &priority).map_err(|e| e.to_string())
+    repo::projects::update(&conn, &id, &name, &description, &priority, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- tasks ---
@@ -226,13 +292,13 @@ pub fn list_tasks_by_status(state: State<AppState>, status: String) -> Result<Ve
 #[tauri::command]
 pub fn create_task(state: State<AppState>, input: NewTask) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::create(&conn, input).map_err(|e| e.to_string())
+    repo::tasks::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_task_status(state: State<AppState>, id: String, status: String) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::tasks::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -250,7 +316,7 @@ pub fn update_task(
     priority: String,
 ) -> Result<Task, String> {
     let conn = locked(&state)?;
-    repo::tasks::update(&conn, &id, &title, &description, &priority).map_err(|e| e.to_string())
+    repo::tasks::update(&conn, &id, &title, &description, &priority, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -262,14 +328,14 @@ pub fn list_task_dependencies(state: State<AppState>, task_id: String) -> Result
 #[tauri::command]
 pub fn add_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
     let conn = locked(&state)?;
-    repo::task_deps::add(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::add(&conn, &task_id, &depends_on_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
     repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn remove_task_dependency(state: State<AppState>, task_id: String, depends_on_id: String) -> Result<Vec<Task>, String> {
     let conn = locked(&state)?;
-    repo::task_deps::remove(&conn, &task_id, &depends_on_id).map_err(|e| e.to_string())?;
+    repo::task_deps::remove(&conn, &task_id, &depends_on_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
     repo::task_deps::list_for(&conn, &task_id).map_err(|e| e.to_string())
 }
 
@@ -339,7 +405,7 @@ pub fn decide_approval(
     };
     let decided = {
         let conn = locked(&state)?;
-        repo::approvals::decide(&conn, &id, &decision, Some(&note)).map_err(|e| e.to_string())?
+        repo::approvals::decide(&conn, &id, &decision, Some(&note), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?
     };
     Ok(decided)
 }
@@ -388,7 +454,7 @@ pub fn reject_approval(
     let rejected = {
         let conn = locked(&state)?;
         // `decide` is pending-only (WHERE status = 'pending') + atomic + audited.
-        repo::approvals::decide(&conn, &id, "rejected", Some(&note)).map_err(|e| e.to_string())?
+        repo::approvals::decide(&conn, &id, "rejected", Some(&note), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?
     };
     Ok(rejected)
 }
@@ -401,7 +467,7 @@ pub fn reject_approval(
 #[tauri::command]
 pub fn escalate_approval(state: State<AppState>, id: String) -> Result<Approval, String> {
     let conn = locked(&state)?;
-    repo::approvals::escalate(&conn, &id).map_err(|e| e.to_string())
+    repo::approvals::escalate(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// At most ONE native confirmation dialog may be open at a time (design §9.1): a
@@ -520,10 +586,14 @@ pub async fn confirm_approval(
         // principal and no other (audit F-30), so the binding is structural rather than
         // two strings that happen to agree.
         repo::approvals::NATIVE_CONFIRMER_PRINCIPAL,
-        &confirmed_by,
         Some(note),
         &expected_nonce,
         &expected_digest,
+        // The strongest actor this product can establish: `native:<window label>`,
+        // built above from the Tauri window after a renderer-independent dialog the
+        // webview cannot drive. Its id is what lands in `confirmed_by`, so the column
+        // and the audit record cannot name two different confirmers.
+        repo::audit::Actor::native_confirmer(&confirmed_by),
     )
     .map_err(|e| e.to_string())
 }
@@ -553,7 +623,11 @@ pub fn list_decisions(state: State<AppState>) -> Result<Vec<Decision>, String> {
 #[tauri::command]
 pub fn create_decision(state: State<AppState>, title: String, rationale: String) -> Result<Decision, String> {
     let conn = locked(&state)?;
-    repo::decisions::create(&conn, &title, "gev", &rationale).map_err(|e| e.to_string())
+    // The `owner` column was the literal "gev". It is the same guess as the audit
+    // actor was, so it now comes from the same constant: this layer knows a person
+    // at the cockpit recorded the decision, and not which person.
+    let actor = repo::audit::Actor::local_operator();
+    repo::decisions::create(&conn, &title, actor.id, &rationale, actor).map_err(|e| e.to_string())
 }
 
 // --- activity ---
@@ -575,7 +649,7 @@ pub fn list_conversations(state: State<AppState>, kind: Option<String>) -> Resul
 #[tauri::command]
 pub fn create_conversation(state: State<AppState>, kind: String, title: String) -> Result<Conversation, String> {
     let conn = locked(&state)?;
-    repo::chat::create_conversation(&conn, &kind, &title).map_err(|e| e.to_string())
+    repo::chat::create_conversation(&conn, &kind, &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -639,7 +713,7 @@ pub fn save_ask_to_chat(
         // One transaction: conversation + both messages commit together or not at all.
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         let conversation =
-            repo::chat::create_conversation(&tx, "direct", &title).map_err(|e| e.to_string())?;
+            repo::chat::create_conversation(&tx, "direct", &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())?;
         repo::chat::post_message(
             &tx,
             NewMessage {
@@ -667,6 +741,74 @@ pub fn save_ask_to_chat(
     if result.is_err() {
         // The write failed after the claim — put the answer back so it can be
         // retried instead of being silently lost.
+        pending_answers()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(result_id, claimed);
+    }
+    result
+}
+
+/// Persist a finished governed research answer (from `stream_ask`) as a knowledge note.
+///
+/// Phase 5's Definition of Done pairs "governed research produces verified receipts" with
+/// "results save to knowledge". The receipt half already existed — `stream_ask` runs the
+/// governed turn, verifies it desktop-side and holds the body under a one-time id — and the
+/// save half had only [`save_ask_to_chat`], which files the pair as a conversation. Research
+/// belongs in the knowledge store, and routing it through the chat path would have meant
+/// either a conversation nobody asked for or the webview carrying the body itself.
+///
+/// SAME RULE AS `save_ask_to_chat`, and it is the reason this is a command rather than two
+/// existing ones composed in the renderer: the webview passes ONLY the opaque one-time
+/// `result_id` and a display `title`. The body is taken from the server-held entry that id
+/// names, so a compromised renderer cannot mint a knowledge note with text the server never
+/// generated (P1-6). "Read the answer, then write it back through `create_knowledge_note`"
+/// would hand the webview exactly the authority this closes.
+///
+/// The id is consumed on use. If the write fails the answer is put back, so a disk error
+/// costs a retry rather than the result.
+///
+/// The note's `source` records HOW the answer was produced and carries the query verbatim — a
+/// knowledge entry whose provenance is "somebody typed it" and one whose provenance is "a governed
+/// turn answered this question" are different claims, and the store should not flatten them.
+///
+/// **That paragraph used to say "records that this came from a governed run", and the code wrote
+/// `"governed research · {prompt}"` unconditionally.** The sixth independent audit's `A-05`: two
+/// paths stash into one map, and on a shipped install the governed one is blocked before the model
+/// runs — so the only configuration in which this command could fire was the ungoverned one, where
+/// the string was false. The command was flattening the exact distinction its own doc comment
+/// argues for.
+///
+/// The provenance now travels with the answer from the site that produced it
+/// ([`AnswerProvenance`]) and is written verbatim. This command asserts nothing about how the text
+/// came to exist, because it is not in a position to know.
+#[tauri::command]
+pub fn save_ask_to_knowledge(
+    state: State<AppState>,
+    result_id: String,
+    title: String,
+) -> Result<brops_core::domain::KnowledgeNote, String> {
+    require_len("title", &title, MAX_CONVERSATION_TITLE_CHARS)?;
+    let claimed = claim_pending_answer(&result_id)
+        .ok_or_else(|| "unknown or already-saved result id".to_string())?;
+
+    let result = (|| -> Result<brops_core::domain::KnowledgeNote, String> {
+        let conn = locked(&state)?;
+        repo::knowledge::create(
+            &conn,
+            brops_core::domain::NewKnowledgeNote {
+                title: title.clone(),
+                body: claimed.answer.clone(),
+                // Provenance, not decoration — and REPORTED, not assumed. The prefix comes from
+                // the producing site; the query is the question this body answers.
+                source: format!("{} · {}", claimed.provenance.source_prefix(), claimed.prompt),
+                tags: "research".to_string(),
+            },
+         repo::audit::Actor::local_operator(),)
+        .map_err(|e| e.to_string())
+    })();
+
+    if result.is_err() {
         pending_answers()
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -710,7 +852,7 @@ pub fn delete_conversation(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn rename_conversation(state: State<AppState>, id: String, title: String) -> Result<Conversation, String> {
     let conn = locked(&state)?;
-    repo::chat::rename_conversation(&conn, &id, &title).map_err(|e| e.to_string())
+    repo::chat::rename_conversation(&conn, &id, &title, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Replace a group room's participant roster (the create-modal multi-select). Names are the
@@ -758,7 +900,7 @@ pub fn search_knowledge(state: State<AppState>, query: String) -> Result<Vec<Kno
 #[tauri::command]
 pub fn create_knowledge(state: State<AppState>, input: NewKnowledgeNote) -> Result<KnowledgeNote, String> {
     let conn = locked(&state)?;
-    repo::knowledge::create(&conn, input).map_err(|e| e.to_string())
+    repo::knowledge::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-knowledge`) — see [`forbidden_hard_delete`].
@@ -779,7 +921,7 @@ pub fn list_library(state: State<AppState>) -> Result<Vec<LibraryItem>, String> 
 #[tauri::command]
 pub fn create_library_item(state: State<AppState>, input: NewLibraryItem) -> Result<LibraryItem, String> {
     let conn = locked(&state)?;
-    repo::library::create(&conn, input).map_err(|e| e.to_string())
+    repo::library::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-library-item`) — see [`forbidden_hard_delete`].
@@ -800,7 +942,7 @@ pub fn list_research(state: State<AppState>) -> Result<Vec<ResearchItem>, String
 #[tauri::command]
 pub fn create_research_item(state: State<AppState>, input: NewResearchItem) -> Result<ResearchItem, String> {
     let conn = locked(&state)?;
-    repo::research::create(&conn, input).map_err(|e| e.to_string())
+    repo::research::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-research-item`) — see [`forbidden_hard_delete`].
@@ -821,7 +963,7 @@ pub fn list_memory(state: State<AppState>, scope: Option<String>) -> Result<Vec<
 #[tauri::command]
 pub fn create_memory(state: State<AppState>, input: NewMemoryEntry) -> Result<MemoryEntry, String> {
     let conn = locked(&state)?;
-    repo::memory::create(&conn, input).map_err(|e| e.to_string())
+    repo::memory::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -909,7 +1051,7 @@ pub fn create_run(state: State<AppState>, intent: String, plan: String) -> Resul
     require_len("intent", &intent, MAX_RUN_INTENT_CHARS)?;
     require_len("plan", &plan, MAX_RUN_PLAN_CHARS)?;
     let conn = locked(&state)?;
-    repo::runs::create(&conn, &intent, &plan).map_err(|e| e.to_string())
+    repo::runs::create(&conn, &intent, &plan, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -929,7 +1071,7 @@ pub fn set_run_status(state: State<AppState>, id: String, status: String) -> Res
     if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
         return Err(format!("run is {} (terminal) and cannot change status", run.status));
     }
-    repo::runs::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::runs::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -972,7 +1114,7 @@ pub fn set_run_step_status(state: State<AppState>, id: String, status: String) -
 #[tauri::command]
 pub fn advance_run(state: State<AppState>, run_id: String) -> Result<Run, String> {
     let conn = locked(&state)?;
-    repo::runs::advance(&conn, &run_id).map_err(|e| e.to_string())
+    repo::runs::advance(&conn, &run_id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- AI (live agent replies) ---
@@ -997,7 +1139,17 @@ pub enum StreamEvent {
     /// One-shot `stream_ask` finished: the full answer is held server-side under
     /// this opaque one-time id. The webview passes it to `save_ask_to_chat` to
     /// persist the pair — it never carries the agent body itself (P1-6).
-    Ready { result_id: String },
+    ///
+    /// `provenance` says HOW the held answer was produced, because the renderer cannot tell and
+    /// was guessing. The sixth audit's `A-05` found the Research page rendering *"Verified ·
+    /// held"* and *"Verified desktop-side and held by the backend"* for an outcome that is
+    /// `development_untrusted` at best and, on the only path a shipped install can reach,
+    /// unreceipted entirely. Fixing only the words would have left the page unable to tell those
+    /// two apart, so the fact travels instead.
+    ///
+    /// This is not a P1-6 loosening. Provenance is a claim ABOUT the answer, not the answer: the
+    /// body stays server-side and the webview still holds nothing but an opaque id.
+    Ready { result_id: String, provenance: &'static str },
     /// Bro handed work to a specialist. Carries the delegation as an already-shaped JSON object
     /// rather than a typed struct so the OMISSION of a field is expressible: an absent `tools`
     /// means capability could not be established, and the renderer says "unknown" instead of
@@ -1147,6 +1299,61 @@ pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
     "no prompt is sent for a result that could only be discarded. Provisioning lands in Wave 3b."
 );
 
+/// Whether this build resolves receipt key ids against a real trusted manifest.
+///
+/// It is `false`, and the four call sites that pass
+/// [`brops_core::receipt_store::NoTrustedManifest`] to `verify_and_record_receipt` /
+/// `verify_and_record_held_answer` are why. This constant is not the authority — it NAMES the
+/// authority's state for [`governed_provisioning_missing`], so the pre-flight cannot answer
+/// "provisioned" while every `key_id` still resolves `Unavailable`. Wave 3b flips this in the
+/// same commit that swaps those call sites, or the probe starts lying.
+const GOVERNED_TRUSTED_MANIFEST_PROVISIONED: bool = false;
+
+/// The §3 inputs desktop receipt verification needs, and which of them this install lacks.
+///
+/// PURE, and taking its inputs as arguments rather than reading the constants directly, for one
+/// reason: a probe wired to constants that are all absent can only ever be observed refusing.
+/// This one can be handed a fully provisioned install in a test, so the day the constants are
+/// real there is evidence the answer flips — rather than a function nobody has ever seen return
+/// the empty vector. Order is fixed so the reason reads the same way every time.
+///
+/// Empty result == provisioned. It can only ADD reasons to refuse; there is no input for which
+/// it returns fewer reasons than the state warrants.
+fn governed_provisioning_missing(
+    trusted_manifest: bool,
+    policy_bundle_sha256: &str,
+    containment_evidence_sha256: &str,
+    allowed_executors: &[&str],
+    allowed_builders: &[&str],
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !trusted_manifest {
+        missing.push("trusted key manifest");
+    }
+    // An `absent:` sentinel is not a digest and cannot pass `is_lower_hex64`, so no wire-legal
+    // receipt can satisfy it. Anything that is not 64 lowercase hex is treated as unprovisioned
+    // here too: a value that could not bind is not a binding, whatever it spells.
+    if !is_lower_hex64(policy_bundle_sha256) {
+        missing.push("policy-bundle digest");
+    }
+    if !is_lower_hex64(containment_evidence_sha256) {
+        missing.push("containment-evidence digest");
+    }
+    if allowed_executors.is_empty() {
+        missing.push("allowed executor roster");
+    }
+    if allowed_builders.is_empty() {
+        missing.push("allowed builder roster");
+    }
+    missing
+}
+
+/// A 64-character lowercase hex digest, the shape `receipt::parse_strict` accepts for a hash
+/// field. Local to the probe so that "is this a real digest" has one meaning here.
+fn is_lower_hex64(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// AUDIT FINDING (b). Wave-3a desktop verification cannot succeed for ANY receipt: the key
 /// authority is [`brops_core::receipt_store::NoTrustedManifest`], the two policy digests are
 /// unprovisioned, and both executor/builder rosters are empty. Running the model, building an
@@ -1155,11 +1362,27 @@ pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
 ///
 /// This is the honest pre-flight. `Some(reason)` means the install is not provisioned; the
 /// caller must block, and the reason says so in those words. `None` means verification is
-/// provisioned and the turn may proceed to the model. It returns an `Option` rather than being
-/// a `const` on purpose: the callers stay ordinary reachable code, so the whole verify path is
-/// still compiled and type-checked against the day Wave 3b flips this to `None`.
+/// provisioned and the turn may proceed to the model.
+///
+/// It used to return `Some(...)` unconditionally with the comment "Wave 3b replaces this with
+/// the real provisioning probe". That hardcoding was correct about today and wrong as a design:
+/// the refusal was an ASSERTION about the install rather than a MEASUREMENT of it, so the day
+/// something provisions the inputs, a person has to remember to edit a security function — and
+/// the roadmap's own Phase-1 box stayed open behind a line no measurement could move. It is a
+/// measurement now. On this build it returns exactly what it returned before, because
+/// [`governed_provisioning_missing`] finds all five inputs absent; the behaviour is unchanged
+/// and the tests that pin it are untouched.
 fn governed_verification_unconfigured() -> Option<&'static str> {
-    // Wave 3a: nothing is provisioned. Wave 3b replaces this with the real provisioning probe.
+    let missing = governed_provisioning_missing(
+        GOVERNED_TRUSTED_MANIFEST_PROVISIONED,
+        GOVERNED_POLICY_BUNDLE_ABSENT,
+        GOVERNED_CONTAINMENT_ABSENT,
+        GOVERNED_ALLOWED_EXECUTORS,
+        GOVERNED_ALLOWED_BUILDERS,
+    );
+    if missing.is_empty() {
+        return None;
+    }
     Some(GOVERNED_VERIFICATION_UNCONFIGURED)
 }
 
@@ -1715,15 +1938,19 @@ pub async fn stream_run_step(
                         &target,
                         "A2",
                         "medium",
-                        "gev",
                         Some(repo::approvals::RUN_STEP_ENTITY_TYPE),
                         Some(&s.id),
                         &format!("webview:{}", window.label()),
                         process_session_id(),
                         &brops_core::id(),
+                        // The `requested_by` column used to be the literal "gev" here,
+                        // beside an `origin_principal` that was already derived from the
+                        // window. One value is now both, so the row cannot claim a
+                        // requester the audit record contradicts.
+                        repo::audit::Actor::local_operator(),
                     )
                     .map_err(|e| e.to_string())?;
-                    let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval");
+                    let _ = repo::runs::set_status(&conn, &run_id, "awaiting_approval", repo::audit::Actor::local_operator());
                     Gate::Pending(ap.id)
                 }
             }
@@ -1843,7 +2070,7 @@ pub async fn stream_run_step(
                     .and_then(|v| v.into_iter().next());
                 match existing {
                     Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
                         Ok(c) => c.id,
                         Err(e) => fail_attempt!(e.to_string()),
                     },
@@ -1962,8 +2189,10 @@ pub async fn stream_run_step(
             }
             _ => {}
         }
-        repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full)
-            .and_then(|_| repo::runs::advance(&conn, &run_id))
+        // Not the operator: the step was executed by a model this loop dispatched,
+        // and the person who started the run is not identifiable at this layer.
+        repo::runs::complete_step_execution(&conn, &step.id, &attempt, &full, repo::audit::Actor::run_executor())
+            .and_then(|_| repo::runs::advance(&conn, &run_id, repo::audit::Actor::run_executor()))
     };
     match outcome {
         Ok(_) => {
@@ -2043,7 +2272,7 @@ pub async fn stream_ask(
                     .and_then(|v| v.into_iter().next());
                 match existing {
                     Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)") {
+                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
                         Ok(c) => c.id,
                         Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); return Ok(()); }
                     },
@@ -2133,8 +2362,14 @@ pub async fn stream_ask(
             match outcome {
                 // Accepted + held: stash the VERIFIED body under a one-time id (never post it).
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => {
-                    let result_id = stash_pending_answer(prompt, body);
-                    let _ = on_event.send(StreamEvent::Ready { result_id });
+                    // The outcome's own name is the provenance. Verified desktop-side against no
+                    // trusted manifest is not "governed", and the note this may become must not
+                    // say it was.
+                    let provenance = AnswerProvenance::DevelopmentUntrusted;
+                    let result_id = stash_pending_answer(prompt, body, provenance);
+                    let _ = on_event.send(StreamEvent::Ready {
+                        result_id, provenance: provenance.wire(),
+                    });
                 }
                 // Blocked (every Wave 3a governed ask): a turn-level notice, no held answer leaks.
                 Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
@@ -2169,8 +2404,17 @@ pub async fn stream_ask(
         Ok(answer) => {
             // Hold the SERVER-generated answer under an opaque one-time id; hand
             // the webview only the id (never the body) for a later save.
-            let result_id = stash_pending_answer(prompt, answer);
-            let _ = on_event.send(StreamEvent::Ready { result_id });
+            //
+            // This is the `BROPS_ALLOW_UNGOVERNED=1` development stream: a plain
+            // `ai::generate_stream` with no governed turn, no challenge, no receipt and no
+            // verification. It is also — because the governed branch is blocked before the model
+            // runs on every shipped install — the ONLY path that reaches a save today. Whatever
+            // this becomes must say so.
+            let provenance = AnswerProvenance::Ungoverned;
+            let result_id = stash_pending_answer(prompt, answer, provenance);
+            let _ = on_event.send(StreamEvent::Ready {
+                result_id, provenance: provenance.wire(),
+            });
         }
         Err(e) => {
             let _ = on_event.send(StreamEvent::Error { message: e });
@@ -2252,7 +2496,7 @@ pub fn list_events(state: State<AppState>) -> Result<Vec<Event>, String> {
 #[tauri::command]
 pub fn create_event(state: State<AppState>, input: NewEvent) -> Result<Event, String> {
     let conn = locked(&state)?;
-    repo::events::create(&conn, input).map_err(|e| e.to_string())
+    repo::events::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// FORBIDDEN (tier L2, `deny-delete-event`) — see [`forbidden_hard_delete`].
@@ -2276,19 +2520,19 @@ pub fn create_automation(state: State<AppState>, input: NewAutomation) -> Result
     require_len("trigger", &input.trigger, MAX_AUTOMATION_TRIGGER_CHARS)?;
     require_len("action", &input.action, MAX_AUTOMATION_ACTION_CHARS)?;
     let conn = locked(&state)?;
-    repo::automations::create(&conn, input).map_err(|e| e.to_string())
+    repo::automations::create(&conn, input, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_automation_enabled(state: State<AppState>, id: String, enabled: bool) -> Result<Automation, String> {
     let conn = locked(&state)?;
-    repo::automations::set_enabled(&conn, &id, enabled).map_err(|e| e.to_string())
+    repo::automations::set_enabled(&conn, &id, enabled, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), String> {
     let conn = locked(&state)?;
-    repo::automations::delete(&conn, &id).map_err(|e| e.to_string())
+    repo::automations::delete(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Run an automation NOW: perform its (local, no-AI) action and append a row to its run log,
@@ -2296,7 +2540,7 @@ pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), Strin
 #[tauri::command]
 pub fn run_automation(state: State<AppState>, id: String) -> Result<AutomationRun, String> {
     let conn = locked(&state)?;
-    repo::automations::run(&conn, &id).map_err(|e| e.to_string())
+    repo::automations::run(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// The run history for one automation (newest first).
@@ -2331,7 +2575,7 @@ pub fn create_integration(state: State<AppState>, name: String, provider: String
 #[tauri::command]
 pub fn set_integration_status(state: State<AppState>, id: String, status: String) -> Result<Integration, String> {
     let conn = locked(&state)?;
-    repo::integrations::set_status(&conn, &id, &status).map_err(|e| e.to_string())
+    repo::integrations::set_status(&conn, &id, &status, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 /// Point a connector at where its secret lives. `None` clears the reference.
@@ -2352,7 +2596,7 @@ pub fn set_integration_auth_ref(
     auth_ref: Option<String>,
 ) -> Result<Integration, String> {
     let conn = locked(&state)?;
-    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref()).map_err(|e| e.to_string())
+    repo::integrations::set_auth_ref(&conn, &id, auth_ref.as_deref(), repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
 // --- global search ---
@@ -2579,7 +2823,7 @@ mod tests {
     /// an author that the real write path would have rejected), the body verbatim.
     fn seeded_room(pairs: &[(&str, &str)]) -> (rusqlite::Connection, String) {
         let conn = brops_core::db::open_in_memory().expect("in-memory db");
-        let conv = repo::chat::create_conversation(&conn, "direct", "room").expect("conversation");
+        let conv = repo::chat::create_conversation(&conn, "direct", "room", brops_core::repo::audit::Actor::local_operator()).expect("conversation");
         for (author, body) in pairs {
             repo::chat::post_message(
                 &conn,
@@ -2772,13 +3016,149 @@ mod tests {
         assert!(claim_pending_answer("nonexistent-forged-id").is_none());
 
         // A server-generated answer round-trips through the opaque id unchanged.
-        let id = stash_pending_answer("what is 2+2?".to_string(), "4".to_string());
+        let id = stash_pending_answer(
+            "what is 2+2?".to_string(), "4".to_string(), AnswerProvenance::Ungoverned);
         let first = claim_pending_answer(&id).expect("first claim returns the stashed answer");
         assert_eq!(first.prompt, "what is 2+2?");
         assert_eq!(first.answer, "4");
 
         // One-time: the same id cannot be used to save the answer again.
         assert!(claim_pending_answer(&id).is_none(), "second claim must be refused");
+    }
+
+    // A-05, sixth independent audit. `save_ask_to_knowledge` wrote
+    // `"governed research · {prompt}"` unconditionally, and on a shipped install the ONLY path
+    // that can reach it is the ungoverned development stream — so the single configuration in
+    // which the note could be written was the one where its provenance was false.
+    //
+    // These pin the property that fixes it: provenance is decided where the answer is PRODUCED
+    // and travels with it. A save path cannot know how a body came to exist, so it must not say.
+    #[test]
+    fn provenance_travels_with_the_answer_it_describes() {
+        let id = stash_pending_answer(
+            "q".to_string(), "a".to_string(), AnswerProvenance::DevelopmentUntrusted);
+        let claimed = claim_pending_answer(&id).expect("stashed");
+        assert_eq!(claimed.provenance, AnswerProvenance::DevelopmentUntrusted);
+    }
+
+    #[test]
+    fn the_ungoverned_stream_never_produces_a_note_that_says_governed() {
+        // THE DEFECT, as a test. `BROPS_ALLOW_UNGOVERNED=1` runs a plain generate_stream: no
+        // turn, no challenge, no receipt, no verification.
+        let prefix = AnswerProvenance::Ungoverned.source_prefix();
+        let source = format!("{} · {}", prefix, "what did the engine decide?");
+        assert!(!source.starts_with("governed research"),
+                "the ungoverned path must not stamp `governed research`: {source}");
+        assert!(source.contains("UNGOVERNED"),
+                "a reader must be able to see this at a glance: {source}");
+        assert!(source.contains("no receipt"), "say WHY it is ungoverned: {source}");
+    }
+
+    #[test]
+    fn a_held_development_answer_is_not_described_as_governed_either() {
+        // The other stash site. `DevelopmentUntrustedHeld` verified desktop-side against NO
+        // trusted manifest — which is not the same claim as governed, and the renderer's own
+        // receiptBadge() already maps it to a warning and refuses to promote it.
+        let source = AnswerProvenance::DevelopmentUntrusted.source_prefix();
+        assert!(!source.starts_with("governed research"), "{source}");
+        assert!(source.contains("no trusted manifest"), "name the missing thing: {source}");
+    }
+
+    #[test]
+    fn the_governed_prefix_exists_and_is_reachable_only_from_a_trusted_verification() {
+        // Constructed HERE and nowhere else in the crate, deliberately.
+        // `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no
+        // shipped install can reach a trusted verification and nothing may claim one. The variant
+        // exists so that the day one can, the note says so because the PRODUCING site said so —
+        // not because a `format!` two hundred lines away assumed it. This test is what keeps it
+        // honest and what keeps the compiler from calling it dead.
+        assert_eq!(AnswerProvenance::Governed.source_prefix(), "governed research");
+    }
+
+    // ---- the governed provisioning probe (Phase 1's open DoD box) -------------------
+    //
+    // The pre-flight was `Some(...)` hardcoded. These tests exist because a refusal nobody can
+    // observe refusing FOR A REASON is indistinguishable from a refusal that would fire for no
+    // reason at all — and because the provisioned answer had never been produced by any code
+    // path in this repository, in any test, since Wave 3a.
+
+    /// One fully provisioned install, in values only — nothing here provisions anything real.
+    const PROVISIONED_DIGEST: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn this_build_is_unprovisioned_and_the_probe_names_every_missing_input() {
+        let missing = governed_provisioning_missing(
+            GOVERNED_TRUSTED_MANIFEST_PROVISIONED,
+            GOVERNED_POLICY_BUNDLE_ABSENT,
+            GOVERNED_CONTAINMENT_ABSENT,
+            GOVERNED_ALLOWED_EXECUTORS,
+            GOVERNED_ALLOWED_BUILDERS,
+        );
+        assert_eq!(
+            missing,
+            vec![
+                "trusted key manifest",
+                "policy-bundle digest",
+                "containment-evidence digest",
+                "allowed executor roster",
+                "allowed builder roster",
+            ],
+            "the shipped constants must leave every input unprovisioned"
+        );
+        // and the pre-flight therefore still refuses, exactly as before this probe existed
+        assert_eq!(
+            governed_verification_unconfigured(),
+            Some(GOVERNED_VERIFICATION_UNCONFIGURED)
+        );
+    }
+
+    #[test]
+    fn a_fully_provisioned_install_is_not_refused() {
+        // The answer no code path in this repository had ever produced. Without this, the empty
+        // vector is unreachable and the probe is a constant wearing a function's clothes.
+        let missing = governed_provisioning_missing(
+            true,
+            PROVISIONED_DIGEST,
+            PROVISIONED_DIGEST,
+            &["executor-a"],
+            &["builder-a"],
+        );
+        assert!(missing.is_empty(), "provisioned, yet refused for: {missing:?}");
+    }
+
+    #[test]
+    fn any_single_missing_input_still_refuses() {
+        let full = (true, PROVISIONED_DIGEST, PROVISIONED_DIGEST, &["e"][..], &["b"][..]);
+        let cases: [(&str, Vec<&'static str>); 5] = [
+            ("no manifest", governed_provisioning_missing(false, full.1, full.2, full.3, full.4)),
+            ("no policy", governed_provisioning_missing(full.0, "absent:x", full.2, full.3, full.4)),
+            ("no containment", governed_provisioning_missing(full.0, full.1, "absent:x", full.3, full.4)),
+            ("no executors", governed_provisioning_missing(full.0, full.1, full.2, &[], full.4)),
+            ("no builders", governed_provisioning_missing(full.0, full.1, full.2, full.3, &[])),
+        ];
+        for (name, missing) in cases {
+            assert_eq!(missing.len(), 1, "{name}: expected exactly one reason, got {missing:?}");
+        }
+    }
+
+    #[test]
+    fn a_digest_shaped_lie_does_not_count_as_provisioned() {
+        // Uppercase hex, 63 chars, 65 chars, and a non-hex letter are all NOT the shape
+        // `parse_strict` accepts. A value that could never bind must not read as a binding —
+        // this is AUDIT FINDING (a) restated as a rule the probe enforces.
+        for bad in [
+            "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(!is_lower_hex64(bad), "{bad} must not pass as a digest");
+            let missing =
+                governed_provisioning_missing(true, bad, PROVISIONED_DIGEST, &["e"], &["b"]);
+            assert_eq!(missing, vec!["policy-bundle digest"], "for {bad}");
+        }
+        assert!(is_lower_hex64(PROVISIONED_DIGEST));
     }
 
     // T-010 in-body bound: an automation's action (which can drive execution) is
@@ -2912,7 +3292,7 @@ mod tests {
         use brops_core::receipt_store::{issue_challenge, ReceiptOutcome};
 
         let conn = brops_core::db::open_in_memory().unwrap();
-        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c").unwrap();
+        let conv = brops_core::repo::chat::create_conversation(&conn, "direct", "c", brops_core::repo::audit::Actor::local_operator()).unwrap();
         let now_ms = 1_700_000_000_000u64;
         let requested_at = now_ms.to_string();
         let (sys_h, hist_h, gen_h) = (sha256_hex(b"sys"), sha256_hex(b"hist"), sha256_hex(b"gen"));

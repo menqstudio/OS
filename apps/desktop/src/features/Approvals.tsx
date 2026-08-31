@@ -195,6 +195,11 @@ export function Approvals() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // A MODIFIED KEY IS SOMEBODY ELSE'S SHORTCUT. `e.key.toLowerCase() === 'g'` matched
+      // Ctrl+G / Cmd+G, so find-next staged a grant dialog and preventDefault swallowed the
+      // browser's own binding (A-11, fifth audit). Pre-existing for `d`/`e`; this round widened
+      // it to the grant path, which is the one where a mistaken keystroke matters most.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const list = data ?? [];
       if (list.length === 0) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((i) => Math.min(i + 1, list.length - 1)); return; }
@@ -492,7 +497,15 @@ export function Approvals() {
           <b className="mono">{items.length}</b>{L('inQueueSuffix')}
         </span>
       </div>
-      <div className="queue" role="list" aria-label={L('approvalQueueAria')}>
+      {/* `listbox`/`option`, not `list`/`listitem` — found by the real-browser axe sweep
+          (`aria-allowed-attr`, critical). These rows are a single-select list: clicking one
+          decides which approval the panel above shows. That was expressed as a `<button>`
+          re-roled to `listitem` carrying `aria-pressed`, and `aria-pressed` is not an allowed
+          attribute on `listitem` — so a screen reader was handed a list item claiming a
+          pressed state, which is neither a control nor a selection. The pattern that means
+          what this UI does is listbox/option with `aria-selected`, and it keeps the buttons
+          individually focusable. */}
+      <div className="queue" role="listbox" aria-label={L('approvalQueueAria')}>
         {items.map((a, i) => {
           const m = statusMeta(a.status, L);
           const rw = parseWhen(a.requestedAt);
@@ -500,11 +513,11 @@ export function Approvals() {
           const rowPending = a.status === 'pending';
           return (
             <button
-              type="button" role="listitem"
+              type="button" role="option"
               key={a.id}
               className={`q-row surface soft rise state-${m.face}${isSel ? ' on' : ''}`}
               style={{ '--i': i + 2 } as CSSProperties}
-              aria-pressed={isSel}
+              aria-selected={isSel}
               aria-label={`${a.actionType}, ${a.target}, ${m.lbl}`}
               onClick={() => setSelected(i)}
             >

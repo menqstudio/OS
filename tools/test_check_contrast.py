@@ -186,5 +186,117 @@ class RealManifest(unittest.TestCase):
         )
 
 
+
+#: The repository root. CI runs these tests with `working-directory: tools`, so a repo-relative
+#: path resolves against the wrong directory — which is how the first version of this class failed
+#: with FileNotFoundError while the gate it tests was green.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class PalettesMirrorTokens(unittest.TestCase):
+    """The manifest's palettes are a hand-maintained copy of the shipping tokens.
+
+    The file has always SAID they must mirror `tokens.ts`, and until 2026-08-29 nothing checked it.
+    A stale copy makes this gate grade colours the app no longer paints and report GREEN about a
+    palette that is not on screen — which is the same shape as the ninth audit's `I-12`, one file
+    over: a verdict about an artifact nobody verified.
+    """
+
+    def test_the_shipping_manifest_mirrors_tokens_ts(self):
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+    def test_a_drifted_palette_is_refused(self):
+        # The mutation the check exists for: a colour edited in the manifest and not in the tokens.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        manifest["palettes"]["light"]["warning"] = "#111111"
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        self.assertIn("warning", str(caught.exception))
+        self.assertIn("#111111", str(caught.exception))
+
+    def test_selected_is_exempt_because_it_is_a_composite(self):
+        # `selected` is an rgba in the tokens and a precomputed opaque composite here, so there is
+        # nothing for it to match. Exempt BY NAME, not by pattern — a suffix rule would silently
+        # exempt whatever anyone named `*-tint` next, and those ARE real tokens now.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        self.assertIn("selected", manifest["palettes"]["light"])
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+    def test_the_badge_tints_are_NOT_exempt(self):
+        # The `--menq-*` tints became real tokens on 2026-08-29 precisely so the declared pair and
+        # the painted background are the same value; exempting them would undo that. The exemption
+        # is narrowed to the `aios-*-tint` entries, which are composites with no token behind them —
+        # `.pill.info` paints `rgb(var(--cyan-rgb)/.08)` and there is no `--cyan-tint` to mirror.
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        manifest["palettes"]["light"]["warning-tint"] = "#222222"
+        with self.assertRaises(cc.ContrastError):
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+
+
+class TwoPalettes(unittest.TestCase):
+    """There are TWO palettes, and until 2026-08-29 this gate measured one of them.
+
+    `tokens.css`/`tokens.ts` carry the `--menq-*` set. `aios.css` carries `--ink`/`--cyan`/
+    `--success`/… and **the pages paint with those**. `T-042` found six light values in the second
+    palette below WCAG AA by running a browser — `--cyan-soft` carries `.eyebrow` on nearly every
+    page header and measured **1.99:1** — while every declared pair here was green, because none of
+    them named it. A running test is not a committed contract; these are.
+    """
+
+    def _manifest(self):
+        return cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+
+    def test_both_palettes_are_declared(self):
+        pal = self._manifest()["palettes"]["light"]
+        self.assertIn("muted", pal, "the --menq-* family must still be here")
+        self.assertIn("aios-cyan-soft", pal, "the aios family is the one that was missing")
+        self.assertIn("aios-ink-muted", pal)
+
+    def test_the_aios_entries_are_mirrored_against_aios_css_not_tokens_ts(self):
+        # The routing IS the point: `aios-cyan-soft` is `#0679ab`, a value that appears in aios.css
+        # and nowhere in tokens.ts. Checking it against tokens.ts would refuse a correct manifest.
+        manifest = self._manifest()
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        aios = (REPO_ROOT / cc._AIOS_SOURCE).read_text(encoding="utf-8").lower()
+        tokens = (REPO_ROOT / cc._TOKENS_SOURCE).read_text(encoding="utf-8").lower()
+        value = manifest["palettes"]["light"]["aios-cyan-soft"]
+        self.assertIn(value, aios)
+        self.assertNotIn(value, tokens)
+
+    def test_a_drifted_aios_entry_is_refused(self):
+        manifest = self._manifest()
+        manifest["palettes"]["light"]["aios-cyan-soft"] = "#123456"
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        self.assertIn("aios.css", str(caught.exception))
+
+    def test_the_eyebrow_pair_is_declared_and_is_the_one_that_was_failing(self):
+        # `--cyan-soft` on `--bg` is `.eyebrow` on the page background: the 1.99:1 that started this.
+        manifest = self._manifest()
+        ids = {p["id"] for p in manifest["pairs"]}
+        self.assertIn("aios-cyan-soft-on-bg", ids)
+        pal = manifest["palettes"]["light"]
+        self.assertGreaterEqual(
+            cc.contrast_ratio(pal["aios-cyan-soft"], pal["aios-bg"]), 4.5,
+            "the value that measured 1.99:1 in the browser must now clear AA",
+        )
+
+    def test_the_aios_tints_ARE_exempt_because_no_token_backs_them(self):
+        # The other half of the rule, so the narrowing is pinned in both directions.
+        manifest = self._manifest()
+        manifest["palettes"]["light"]["aios-cyan-tint"] = "#010203"
+        cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+
+    def test_no_pair_names_a_background_the_app_never_paints(self):
+        # `--hi` is declared in both :root blocks and painted NOWHERE. An early draft of the aios
+        # pairs included it and produced a real number about a background no page has — declaring
+        # pairs that never occur invents work and teaches the next reader to distrust the gate.
+        ids = {p["id"] for p in self._manifest()["pairs"]}
+        self.assertFalse([i for i in ids if i.endswith("-on-hi")],
+                         "no pair may name --hi until something paints it")
+
+
 if __name__ == "__main__":
     unittest.main()

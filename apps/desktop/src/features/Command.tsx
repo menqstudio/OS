@@ -29,6 +29,15 @@ const styles = `
   font-family:var(--f-mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-muted)}
 .v-command .cmd-actions{display:flex;gap:8px}
 .v-command .cmd-live{margin:0;font-size:var(--t-small,13px);line-height:1.5}
+/* The dispatch outcome. A refusal reads as a bordered, deliberate statement rather than a
+   loose warning pill, because it is a decision the system made and not an accident. */
+.v-command .cmd-outcome{display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  padding:10px 12px;border-radius:var(--r,12px);
+  background:rgb(var(--danger-rgb)/.07);border:1px solid rgb(var(--danger-rgb)/.3)}
+.v-command .cmd-outcome--blocked{background:rgb(var(--warning-rgb)/.07);
+  border-color:rgb(var(--warning-rgb)/.32)}
+.v-command .cmd-outcome-reason{font-family:var(--f-mono);font-size:12px;
+  color:var(--ink-muted);word-break:break-word;flex:1 1 100%}
 .v-command .cmd-runs{display:grid;gap:8px;max-height:58vh;overflow-y:auto;padding-right:2px}
 .v-command .cmd-runs .led{grid-template-columns:1fr auto;align-items:center;gap:10px;padding:11px 13px}
 .v-command .cmd-runs .led-pick{display:grid;gap:5px;text-align:left;background:none;border:0;padding:0;
@@ -173,6 +182,13 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
     }
   };
 
+  // Is this outcome the WALL refusing, or something broken? The same classification the
+  // Analytics read path already uses, applied to the one action on this page that crosses
+  // the wall. Unrecognised text falls through to "failed": calling an unknown error a
+  // governed refusal would be the fail-open direction, claiming the system is fine.
+  const dispatchBlocked = execError !== null
+    && /denied|not permitted|permission|blocked|forbidden|refus|unauthori|governed/i.test(execError);
+
   const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled';
   const items: RunStep[] = steps.data ?? [];
   const anyFailed = run.status === 'failed' || items.some((s) => s.status === 'failed');
@@ -266,7 +282,25 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
               <Button small variant="ghost" onClick={() => setRoute('approvals')}>{t('command.goToApprovals')}</Button>
             </p>
           )}
-          {execError && <p className="cmd-live" style={{ marginTop: 8 }}><span className="pill warn">⚠ {execError}</span></p>}
+          {/* §D `blocked`: "dispatch denied by wall → reason". A governed REFUSAL and a
+              network failure used to render identically — one warn pill with the raw string,
+              announced to nobody. They are opposite events: a refusal is the wall doing its
+              job and nothing ran; a failure is something broken. Telling the owner they are
+              the same thing teaches them to read the wall as a bug.
+              `role="alert"` because a dispatch the owner just pressed and that did NOT happen
+              is the definition of something a screen-reader user must be told immediately —
+              the surrounding `aria-live="polite"` region would queue it behind the stream. */}
+          {execError && (
+            <p className={`cmd-live cmd-outcome${dispatchBlocked ? ' cmd-outcome--blocked' : ''}`}
+               role="alert" style={{ marginTop: 8 }}>
+              <span className={`pill ${dispatchBlocked ? 'warn' : 'danger'}`}>
+                {dispatchBlocked ? `⛒ ${L('dispatchBlocked')}` : `⚠ ${L('dispatchFailed')}`}
+              </span>
+              {dispatchBlocked && <span className="micro muted">{L('dispatchBlockedNote')}</span>}
+              {/* The engine's words, never paraphrased — the reason IS the finding. */}
+              <span className="cmd-outcome-reason">{execError}</span>
+            </p>
+          )}
         </div>
       </div>
 
@@ -276,7 +310,11 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
           <span className="eyebrow">{L('dispatchTrace')}</span>
           {executing && <span className="pill info">{L('live')}</span>}
         </div>
-        <div className="timeline cmd-trace" aria-live="polite" aria-label={t('command.steps')}>
+        {/* §D: "trace `role=log aria-live`". It carried the live region and not the role, so a
+            screen reader was told the content had changed without being told what kind of thing
+            it was reading. `log` is the role for an append-only record where the newest entry
+            is the one that matters — which is exactly what a dispatch trace is. */}
+        <div className="timeline cmd-trace" role="log" aria-live="polite" aria-label={t('command.steps')}>
           {/* decorative LIVE pulse riding the rail — only while a step streams and
               only when motion is allowed; the real progress is the .now node below */}
           {executing && !reduced && <span className="cmd-pulse" aria-hidden="true" />}

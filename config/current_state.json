@@ -1,24 +1,34 @@
 {
   "schema": 2,
-  "purpose": "Machine-readable current-state SNAPSHOT for menqstudio/OS. STATE: one design proposal in review. main is at settled_at_main_head (dc8d867, PR #111 merged 2026-08-15). The active branch is design/floor-writer-service, carried by current_workflow_pr #112: docs/design/FLOOR_WRITER_SERVICE_DESIGN.md, the roadmap-section-I step-1 proposal for the Owner's 1b decision (floor-writer service, taken 2026-08-14). It is a PROPOSAL, not an implementation: no product code, no gate movement, and the Architect audit that the 1b decision itself requires has not run. B-02 and A-01's root close when that design is Architect-GREEN and built, not when this proposal merges. The standing independent-audit verdict is RED.",
-  "settled_at_main_head": "dc8d867a04c3eba085fee4ecaef9408416bef483",
+  "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
+  "settled_at_main_head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
   "sync": {
-    "baseline_main_head_at_sync": "dc8d867a04c3eba085fee4ecaef9408416bef483",
+    "baseline_main_head_at_sync": "363c51c6242ed43b11a9bcd273394c27c78e7251",
     "snapshot_branch": "design/floor-writer-service",
-    "live_main_resolution": "Read settled_at_main_head: live main is dc8d867 (PR #111 merged, 2026-08-15). This field said 'live main is b3010f6 (PR #81 merged)' for six days and through several merges; check_repo_state compares settled_at_main_head against live main by ANCESTOR, so that is the field to trust and this sentence is prose.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. prs[] is empty: there are no durable child PRs. The self-carrier is current_workflow_pr #112, whose exact head must equal the AUDIT_CANDIDATE_HEAD marker in its own body on every pull_request run."
+    "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
-    "wave": "floor-writer",
-    "task": "T-020",
+    "wave": "production-half",
+    "task": "egress-authorizer",
     "branch": "design/floor-writer-service"
   },
-  "prs": [],
+  "prs": [
+    {
+      "number": 217,
+      "branch": "feat/provisioning-preflight",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "implementation",
+      "head": "b689f13d7f09a38998f0398743c590bc246250e6",
+      "why_listed": "Open and NOT the carrier: the provisioning preflight, lifted off the stale branch at-main-2. Its exact head is anchored here. Whichever of #112 and #217 the Owner merges first makes the other's mirror stale -- T-059 at N=2 -- so the second one needs a mirror refresh before it merges."
+    }
+  ],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
-    "CURRENT_ACTIVE_TASK": "T-020",
-    "CURRENT_ACTIVE_WAVE": "floor-writer",
-    "CURRENT_FLOOR_WRITER_DESIGN": "PROPOSAL_PENDING_ARCHITECT_AUDIT",
+    "CURRENT_ACTIVE_TASK": "egress-authorizer",
+    "CURRENT_ACTIVE_WAVE": "production-half",
     "CURRENT_PHASE0": "done",
     "CURRENT_DESIGN_GATE": "OWNER_APPROVED_NOT_ARCHITECT_AUDITED",
     "CURRENT_DESIGN_CANDIDATE": "rev-30",
@@ -37,7 +47,7 @@
   },
   "design_gate": {
     "candidate": "rev-30 (docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md) carried on PR #48",
-    "candidate_head_note": "The exact audit HEAD is PR #48's live head 38d5d71504ba68b70b015b958cb09109c80e595a, recorded in the PR #48 body AUDIT_CANDIDATE_HEAD marker.",
+    "candidate_head_note": "The audit HEAD was PR #48's branch head, recorded in that PR's body AUDIT_CANDIDATE_HEAD marker. That branch hash stopped resolving when #48 was squash-merged; the commit that survives is the merge on main, 08544d0.",
     "last_reviewed_candidate": "rev-30",
     "last_architect_verdict": "GREEN",
     "last_architect_verdict_scope": "rev-30 = Architect DESIGN GREEN (relayed by the Owner). Supersedes the stale rev-27 RED / rev-28 pending history.",
@@ -47,25 +57,10 @@
   },
   "code_audit": {
     "builder_passes": "3 independent adversarial security passes converged: 10 -> 6 -> 1 P1, ALL fixed; trust-boundary / chain / manifest CLEAN.",
+    "last_independent_audit": "apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md",
+    "last_independent_audit_note": "The report tools/check_audit_reports.py binds the ledger and docs/OWNER_ACTION_REQUIRED.md to. The NINTH round, of main @ 5cf9b8c, verdict RED with no P0. It lived inside the purpose paragraph until 2026-08-29 (T-045), where a rewrite deleted it by accident; a field cannot be lost that way.",
     "authority": "This is the BUILDER's evidence only. The external Architect CODE-audit gate is still PENDING; builder convergence is NOT the Architect verdict.",
     "gate": "ARCHITECT_PENDING"
-  },
-  "custody_and_audit_2026_08_04": {
-    "production_custody_proven_local": "The Owner ran the offline-root ceremony live: win_provision verified the offline seed against the TCB pin 3c83c2bc (else exit 3) + signed the manifest offline; win_live_turn over real named pipes (3 servers + executor, same-account) reached RESULT: trusted_verified(production signer id brops-live-signer-1, epoch 2) production_verified=true bound=true under the REAL production root — the honest graduation from demonstration custody. This is a LOCAL proof on the Owner's box, NOT a CI artifact and NOT the shipped badge.",
-    "builder_audit": "Owner-designated builder-side adversarial audit (5 fresh-context reviewers, one per dimension, tasked to BREAK the chain). Verdict NOT GREEN but CENTRAL GUARANTEE HOLDS: no fresh production forgery, root custody + output->receipt binding + server-side peer-SID gate all sound. Full verdict: apps/desktop/src-tauri/win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md. This is builder evidence, NOT the independent Architect verdict (still PENDING).",
-    "fixed": "P0-2 pipe squat+impersonation (f28b559: client SECURITY_IDENTIFICATION + server FILE_FLAG_FIRST_PIPE_INSTANCE); P0-1 anti-rollback FALSE CLAIM corrected (f28b559: floor signature is a corruption check, the real boundary is the deploy-dir OS write-ACL — no fake verification added; real closure in WINDOWS_ANTIROLLBACK_HARDENING.md); dim1-P2 production_verified/demonstration_custody UI honesty (6fdedb8).",
-    "open_gated": "P0-2/P0-3 executor->real-model + wire containment into the live spawn (needs model image + session-0 isolation); seed-at-rest plaintext TOFU window (cross-account tradeoff); anti-rollback real closure (ACL + per-deploy sealed floor key + TPM counter); receipt/attest key_usage encoding. Shipped platform_governed_execution_supported() stays FALSE until these land + an INDEPENDENT audit passes + Owner approval. Badge never faked."
-  },
-  "roadmap_dod_verified_2026_08_04": {
-    "method": "Evidence-based per-phase verification (5 independent reviewers) of MASTER_EXECUTION_ROADMAP.md Definition-of-Done vs the actual codebase; roadmap checkboxes were NOT trusted.",
-    "tally": "Phase 0 Locked; Phase 1 (Bridge) 4/7 MET (contracts+adapter+GovernedEngine variant+bridge CI real; round-trip only in the live kit, streaming absent, badge 2/5 states, Settings toggle disabled/read-only); Phase 2 (Gov Sidecar) 0/5 full (pages exist but the engine-mirror read IPC is unconfigured+fail-closed so governance data is local SQLite, and grant/deny is adjudicated locally); Phase 3 (Desktop Integration) 5/5 substantially MET (shell+router+22 pages+chat; gaps: route ErrorBoundary [now CLOSED 3ecf8de], 1..9 shell keys); Phase 4 (UI/UX) 3/5 MET (component lib+design docs; gaps CLOSED 3ecf8de: token-drift+contrast CI gate, per-page i18n parity guard; still open: orphaned ThemeProvider/tokens.ts, Analytics splits); Phase 5 (Memory/Knowledge) 1/5 (pages+CRUD real; governed research receipts + chat recall NOT built); Phase 6 (Multi-Agent) 0/5 full (agents/command/tasks/projects real data; governed pack dispatch + per-agent receipts NOT built); Phase 7 (Group Chat) 0/4 full (room+roster+@mention+isolation+attribution real; handoff/consensus + verified-in-room NOT built); Phase 8 (Automation) 1/5 (display+CRUD only; NO scheduler/execution at all); Phase 9 (Integrations) 1/5 (page complete; connector backend/secret-delegation NOT built); Phase 10 (Production) 0/6 (signed build/updater/onboarding/T-005/contracts-dedupe/O-1..O-5 all open).",
-    "headline": "~40% genuinely done (foundation + bridge contracts + 22-page shell + component library + local CRUD + the proven crypto chain). The remaining ~60% is the GOVERNANCE SPINE + PRODUCTION. The majority of remaining DoD items REQUIRE verified receipts / governed dispatch / engine adjudication, which cannot be honestly closed until the production trust gate is real — and that gate legitimately requires executor->real-model + session-0 isolation + an INDEPENDENT audit + Owner approval (Owner approval alone does not satisfy the technical/audit prerequisites). The shipped Verified gate stays fail-closed; the badge is never faked.",
-    "closed_this_pass": "Phase-3 route ErrorBoundary; Phase-4 token-drift+contrast CI gate (design-gates.yml) + per-page i18n parity guard; bridge/README stale 'receipt.verified==true' claim corrected to the real desktop-verifies-signed-receipt design; docs/SECURITY_MODEL.md created (Phase-10 doc DoD)."
-  },
-  "linux_e2e": {
-    "status": "proven",
-    "note": "The FULL 7-service production governed turn ran GREEN on real Linux — the FIRST production trusted_verified proven live (real service accounts, real setuid launcher -> executor, real ed25519 keys + root-signed manifest, verify_and_accept). Proven via engine/ci/live/run_live_turn.sh.",
-    "shipped_desktop": "The SHIPPED desktop app's production 'Verified' is STILL fail-closed: the broker serves UpstreamBlockedExecutor unless $BROPS_BROKER_CONFIG names a deployment config with a TCB-root-signed manifest, which nothing in the shipped app sets; the live chain is proven in the live kit, not yet wired into the desktop runtime. CURRENT_PRODUCTION_VERIFIED stays false for the shipped app."
   },
   "waves": {
     "3a": {
@@ -88,7 +83,7 @@
       "code_exists": true,
       "impl_pr": 48,
       "design_pr": 48,
-      "note": "Design rev-30 = Architect DESIGN GREEN. Implementation consolidated on feat/cockpit-pages (PR #48); 3 builder security passes converged (all P1 fixed) but the external Architect CODE-audit is still pending. Design-green != code-green."
+      "note": "Design rev-30 = Architect DESIGN GREEN. Implementation consolidated on feat/cockpit-pages (PR #48); the external Architect CODE audit is still owed. Detail: docs/archive/."
     },
     "3b-2": {
       "status": "implemented_live",
@@ -100,137 +95,54 @@
       "code_exists": true,
       "note": "production trust resolver implemented + wired in the live kit; drove the first live production trusted_verified. Not yet wired into the shipped desktop runtime."
     },
-    "floor-writer": {
-      "status": "design_proposal_pending_architect_audit",
-      "code_exists": false,
-      "note": "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md rev 1 (2026-08-15, authored against main dc8d867). The roadmap-section-I step-1 proposal for OWNER_ACTION_REQUIRED section 1b, decided by the Owner 2026-08-14 (a floor-writer service owns the marks; the setuid helper is not taken). It proposes one resident principal that owns bro_completion's per-task anti-rollback marks AND serves the deployment's install_id, closing 1b, A-01's root and B-02 at one boundary. It is also an AMENDMENT REQUEST to the rev-30 addendum's normative section 2.5 (TCB_ARTIFACTS) and section 2.6 (seven runtime principals become eight) - only the Architect may ratify that. Slices FW-0..FW-3 are defined; none of them is started, and FW-3 is blocked on the amendment. No product code, no gate movement."
+    "canon": {
+      "what": "Cut the canonical read set to something a session can actually be handed, and make the rules that keep it that way enforceable rather than remembered.",
+      "state": "in-progress on gate/canon-budget (PR #180)"
+    },
+    "production-half": {
+      "status": "first_slice_built",
+      "code_exists": true,
+      "note": "Design docs/design/PRODUCTION_HALF_DESIGN.md (T-051); first slice T-055. check_produced_artifact prints GREEN on all five from the real code path. SS3.3 slices 1+2 and the dispatch have merged; a call step is decided against the grant and then refused for want of a transport, so nothing this wave runs can leave the box."
     }
   },
-  "closed_stale_prs": [
-    {
-      "number": 13,
-      "reason": "superseded"
-    },
-    {
-      "number": 12,
-      "reason": "superseded after salvage"
-    },
-    {
-      "number": 46,
-      "reason": "superseded — the 3b-1B implementation snapshot consolidated into PR #48 (feat/cockpit-pages)."
-    },
-    {
-      "number": 31,
-      "reason": "superseded — the 3b-1A code + 3b-1B design (now rev-30 GREEN) consolidated into PR #48."
-    },
-    {
-      "number": 32,
-      "reason": "superseded — the execution-binding WIP consolidated into PR #48."
-    }
-  ],
-  "merged_prs": [
-    {
-      "number": 33,
-      "reason": "Phase 0 repository-truth remediation; Owner-approved GREEN at 45f3793; merged b6c6712."
-    },
-    {
-      "number": 30,
-      "reason": "Wave 3b-0 isolated-signer design GREEN; merged df3c0ac."
-    },
-    {
-      "number": 54,
-      "reason": "Release-workflow supply-chain hotfix; the setup-node pin named actions/setup-PYTHON's commit so no v* tag push ever produced an installer. Merged 2026-08-06 at a79c662."
-    },
-    {
-      "number": 53,
-      "reason": "Windows LIVE governed-turn machine-proof + the 2026-08-06 independent-audit remediation (F-01/F-02/F-06/F-08/F-13/F-14/F-17/F-07/F-28 and more). Merged 2026-08-06."
-    },
-    {
-      "number": 55,
-      "reason": "Audit F-10 second half: the §2.5 TCB pin manifest and real per-service IPC policies. Merged 2026-08-06."
-    },
-    {
-      "number": 56,
-      "reason": "Round-1 response to the RED remediation audit: P0 closed on both platforms, ledger corrected. Merged 2026-08-06."
-    },
-    {
-      "number": 57,
-      "reason": "Round-2 response: seed-custody P1, F-08 enforcement tests + negative live case, governed-crates CI job, answer-provenance honesty. Merged 2026-08-06."
-    },
-    {
-      "number": 58,
-      "reason": "Ledger accuracy + the ✅/◑ legend after rounds 1-2. Merged 2026-08-06."
-    },
-    {
-      "number": 59,
-      "reason": "The spec-conformance gate: a § reference is a claim the build checks. Merged 2026-08-07."
-    },
-    {
-      "number": 60,
-      "reason": "R3-01: the isolated signer re-verifies chain documents instead of checking existence. Merged 2026-08-07."
-    },
-    {
-      "number": 61,
-      "reason": "Round-3 waves 1-2: the recorder identity borrow, the trust-verdict tautologies, Windows custody and the UI's false governance claims. Merged 2026-08-07."
-    },
-    {
-      "number": 62,
-      "reason": "Round-3 wave 3: durable replay defences, inode-bound store inputs, the Windows twin's missing checks, §1.5 step 4. Merged 2026-08-07 with the live-turn job RED — fixed by PR #63."
-    }
-  ],
   "product_roadmap": {
     "note": "MASTER_EXECUTION_ROADMAP.md v1.0 Locked. Whole v1 app NOT finished — large multi-wave build remains. The chain is now proven live on Linux, but the shipped desktop 'Verified' stays fail-closed until the live chain is wired into the desktop runtime and the Architect CODE-audit passes.",
     "phase_0": "done",
     "phase_1": "in_progress",
     "phases_2_to_10": "not_done",
-    "cockpit": "22-page cockpit built + wired to real backends; app functional. Phase-4 shared component-library primitives added (DataTable, Drawer, Rail, StatTile/TileGroup, Mark/LiveMark, InlineAlert, and a Beatline chart with accessible summary + table fallback) with full state/keyboard/aria/reduced-motion coverage, catalogued in docs/DESIGN_SYSTEM.md, plus a tokens.ts<->tokens.css drift gate (tools/check_token_parity.py). The library was then EXTENDED (interactive StripChart, horizontal BarChart, a panel-variant Rail, a responsive Mark) and the six Phase-3/4 pages refactored onto the primitives (Home tiles, Conversations/Command rails, Activity strip, Analytics bars, Shell mark; the Agents radial lattice is intentionally bespoke, documented). Phase-2 (Governance Sidecar) desktop READ-ONLY governance IPC added (src-tauri/src/governance.rs: read decision-ledger / evidence-chain / verifier-verdicts / engine approval-queue -> typed Ok|Blocked|Unreachable, schema-validated, mirror-never-decide by construction) and the four governance pages wired to it, rendering honest blocked/unreachable from the real result (the engine has no governance.read op yet, so every surface is blocked today -- the expected Phase-2 DoD state). frontend typecheck + 153 tests + 11 axe specs + bundle-budget (84.6/130) all green; cargo test -p brops 59 (17 new governance).",
-    "ai_entry_points_governed": "Phase 2 COMPLETE on main (#50/#51/#52 merged): all four AI surfaces — stream_reply (main seam), reply_in_conversation (#50), stream_ask (#51), stream_run_step (#52) — now route through ai::governed_turn. The generic provider entries (ai::generate / ai::generate_stream) are a dev-only fallthrough (BROPS_ALLOW_UNGOVERNED), fail-closed by default; no production command reaches the model provider except through the governance wall. NoTrustedManifest fail-closed means production still Blocks (no trusted_verified ships). Higher-phase surfaces (automations, group chat, integrations) are built in Phases 6-9 and are governed by construction there.",
-    "windows_production_isolation": "governed-turn machine-PROVEN in the live kit; SHIPPED gate still false (release blocker for the shipped app). The PURE §0.W core (core/src/windows_broker.rs) covers all five primitives cross-platform + unit-tested; TWO real syscall primitives (named-pipe peer-SID auth via ImpersonateNamedPipeClient; Authenticode via WinVerifyTrust) run on a windows-latest CI runner (crate brops-win-broker). NEW: the brops-win-live crate (apps/desktop/src-tauri/win-live) is the Rust twin of the Linux engine/ci/live kit and PROVES the FULL Windows governed turn to production trusted_verified: (1) an in-process full crypto chain (challenge -> lease -> attest -> sign -> verify_and_accept -> production_verified=true bound=true) that is HOST-INDEPENDENT and runs on the Linux CI runner (cargo test -p brops-win-live), so the one cross-impl boundary (the signer's JCS(payload) vs brops-core ReceiptEnvelope::payload_jcs) is byte-exact; (2) the same GovernedChain over REAL \\\\.\\pipe\\ named pipes across three separate Windows processes, same-account -> trusted_verified (production signer key, epoch 2); (3) the peer-SID gate fail-closed BOTH directions (correct broker SID -> verified, wrong broker SID -> blocked); (4) CROSS-ACCOUNT -> challenge-authority/supervisor/isolated-signer each as a DISTINCT dedicated Windows service account (session-0, batch logon), peer-SID authed across real account boundaries -> trusted_verified (see win-live/proof/CROSS_ACCOUNT_PROOF.md + win_live_proof.ps1). REMAINING to flip platform_governed_execution_supported() true in the SHIPPED app: the broker as its OWN dedicated service account (blocked by a session-0 console-launch STATUS_DLL_INIT_FAILED 0xC0000142 limitation that also affects the previously-working pipe_proof — environment, orthogonal to the chain), CreateProcessAsUser under a restricted token + STARTUPINFOEX handle list, CNG key custody, and a SEPARATE Architect audit of the Windows broker. Until then platform_governed_execution_supported() stays false on Windows and the shipped app fails closed.",
-    "windows_live_proof": "PROVEN in the brops-win-live kit (PR #53): in-process CI-portable crypto chain + real-named-pipe same-account (3 processes) + peer-SID gate both directions + cross-account (3 distinct dedicated service accounts). An INDEPENDENT adversarial audit (Architect-role, zero-trust) returned Linux/core-chain GREEN (verify_and_accept unforgeable by an in-scope adversary; shipped app genuinely fail-closed) and Windows-kit YELLOW with three P1/P2 gaps, ALL now ADDRESSED: (P1-a) the production-trust root is TCB-PINNED (compiled-in crate::tcb, never config.json; a config root that disagrees is refused); (P1-b) a production ManifestResolver now verifies the manifest vs the TCB root + anti-rollback + resolves the production key INSIDE the chain resolution, feeding the pinned key verify_and_accept verifies under (no more verify-beside-acceptance side-call); (P2) the anti-rollback floor is now PERSISTED atomically on resolve. A follow-up INDEPENDENT RE-AUDIT confirmed all three originals CLOSED and surfaced two residuals, now also fixed: R1 (the anti-rollback floor is TCB-SIGNED — floor.sig under a compiled-in TCB floor key — so a config-dir adversary who resets floor.json to replay an older genuinely-root-signed manifest is REJECTED on load; unit-tested) and R2 (the supervisor-attestation key is now resolved through resolve_production_key, enforcing trust_class/validity-window/revocation, not a bare key_id lookup), and R3 (attest-run is now BOUND to a supervisor-minted accept-open lease — one-time consume of the leased execution_attempt_id — so the supervisor never attests a run it did not itself lease). The restricted-token executor launch primitive (CreateRestrictedToken + CreateProcessAsUserW, §0.1 primitive 4) is also proven (win-broker restricted_launch). The broker-in-session-0 concern is closed by running the broker as SYSTEM (the TCB principal). The broker-in-session-0 concern is now CLOSED: the full cross-account turn is proven with the broker running as SYSTEM (LocalSystem) — the correct TCB deployment (holds SeAssignPrimaryToken/SeImpersonate, runs cleanly in session 0) — plus the three servers as distinct dedicated service accounts, peer-SID authed (allowlist = the broker SYSTEM SID S-1-5-18) -> trusted_verified. The earlier 0xC0000142 limitation only affected a NON-privileged service-account CONSOLE process doing child-spawning, not SYSTEM. Seed custody is now DONE: each principal seed is under per-user DPAPI (CryptProtectData, seal-on-first-use TOFU) so it is no longer plaintext at rest — only the owning service account can decrypt it (proven: a 64-byte plaintext seed becomes a 262-byte DPAPI blob after first server read, and a restart transparently unseals it). INDEPENDENT AUDIT VERDICT: GREEN for the shipped fail-closed posture + the crypto-verification core — three independent adversarial passes confirm NO in-scope adversary can forge a production trusted_verified, and ALL findings (P1-a, P1-b, P2, R1, R2, R3, plus A root-private-off-the-box and D atomic-signed-floor) are closed and wired; see win-live/proof/WINDOWS_BROKER_AUDIT_VERDICT.md. The Owner waived the external ChatGPT/Architect audit; this independent audit stands as the gate verdict. platform_governed_execution_supported() stays FALSE (correctly); flipping the Windows governed gate to true is a separate deployment-hardening step; enablement work is UNDERWAY: (1) production key custody ROOT DONE — the TCB compiles in only the root PUBLIC key, the operator's offline root private signs the manifest via win_provision --root-key and is NEVER on the serving box (proven: keys/root.seed absent, turn still trusted_verified); the runtime floor-integrity key remains a compiled-in constant to harden. (2) DONE — the broker now runs as a dedicated NON-SYSTEM service account (brops-broker), proven cross-account -> trusted_verified with the three servers as their own accounts (this required building the win-live bins with -C target-feature=+crt-static; the earlier 0xC0000142 was a debug-CRT DLL dependency a limited session-0 service account could not load), so the broker cannot read the signer service's memory/DPAPI seed and allowed_broker_sid is that account's exclusive SID. (3) closed against the in-scope login-user adversary via an ACL-protected TCB-signed floor (the deploy ACL grants floor write only to the broker principal and denies the interactive login user; floor.sig adds tamper-evidence), with hardware TPM/monotonic freshness remaining only for the full-admin-compromise case (out of scope, same class as admin-defeats-DPAPI). Net: all three enablement conditions are addressed end-to-end; what remains is the runtime floor-key custody sub-item, TPM anti-rollback for admin compromise, and the Owner decision to flip the shipped gate + wire the chain into the desktop runtime. Does NOT ship trusted_verified; the shipped Windows gate stays fail-closed."
+    "cockpit": "22-page cockpit built and wired to real backends; the app is functional. The Phase-4 shared component library (DataTable, Drawer, Rail, StatTile/TileGroup, Mark/LiveMark, InlineAlert and an accessible Beatline chart) is catalogued in docs/DESIGN_SYSTEM.md, with a tokens drift gate. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
+    "ai_entry_points_governed": "Phase 2 COMPLETE on main (#50/#51/#52): all four AI surfaces -- stream_reply, reply_in_conversation, stream_ask and stream_run_step -- route through ai::governed_turn. The generic provider entries are a dev-only fallthrough behind BROPS_ALLOW_UNGOVERNED and fail closed by default. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
+    "windows_production_isolation": "Machine-PROVEN in the live kit; the SHIPPED gate is still false and remains a release blocker.",
+    "windows_live_proof": "PROVEN in the brops-win-live kit (PR #53): in-process crypto chain, real named-pipe same-account, peer-SID gate both directions, and cross-account with three dedicated service accounts. An independent adversarial audit returned Linux/core-chain GREEN. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md."
   },
-  "desktop_release": {
-    "tag": "brops-desktop-v0.1.0",
-    "name": "BroPS 0.1.0 desktop",
-    "published_at": "2026-08-03",
-    "target": "feat/windows-broker-machineproof",
-    "assets": [
-      "BroPS_0.1.0_x64-setup.exe",
-      "BroPS_0.1.0_x64_en-US.msi"
-    ],
-    "note": "First tagged GitHub Release (2026-08-03): the Windows installer (NSIS .exe + MSI). Cut from the feat/windows-broker-machineproof branch BEFORE PR #53 merged; PR #53 has since merged to main, and this note said 'the branch is NOT merged to main' until 2026-08-09. Shipping the installer does NOT change the fail-closed posture: no function named platform_governed_execution_supported() exists (it is the section 0.1 spec symbol), and what refuses is governed_verification_unconfigured() returning Some(...) unconditionally, connect_broker() refusing off Linux, and the broker falling back to UpstreamBlockedExecutor because nothing sets $BROPS_BROKER_CONFIG. No production trusted_verified renders in the shipped app."
-  },
-  "shipped_this_cycle": {
-    "range": "1bda438..462edc5",
-    "branch_head": "462edc5",
-    "ci": "green",
-    "custody": "Production key custody graduated: offline root-key ceremony (win_gen_root + CUSTODY_CEREMONY.md); the operator's production root is TCB-pinned with its private half OFFLINE, and a SEPARATE compiled-in demonstration anchor drives the in-process proof/tests; per-principal seeds sealed at rest via DPAPI (TOFU).",
-    "in_app_agent": "The in-app Bro became a bounded, owner-authorized coding agent with file tools + Bash in acceptEdits, behind a hard --disallowedTools deny-list (never push/delete/install); the agent-mode 'claude CLI timed out' bug is fixed (runs with --setting-sources \"\" + a 900s budget vs a chat's 180s).",
-    "cockpit_ux": "Chat Stop button (cancels the turn, keeps the partial via cancel_reply) + type-while-thinking queue + 1-click copy, in direct and group chat; responsive hamburger drawer below 860px + 1560px wide-screen cap + lighter ambient; right-click open-in-new-window (open_window) + route<->URL-hash sync + Esc-close. i18n/nav/capability(cancel_reply+open_window declared for the T-010 gate)/undici(7.29.0) fixes.",
-    "audits": "Every finding from TWO independent adversarial audits fixed; the Windows-broker independent verdict is GREEN and the Owner waived the external ChatGPT/Architect audit (three adversarial passes stand as the gate verdict). Group-chat speaker attribution preserved in the model transcript.",
-    "schema_at_head": "Migrations run through 0020 (…0018_demonstration_verified, 0019_approval_escalated_status, 0020_automation_runs — the automation execution run-log) and SCHEMA_VERSION=20, committed on PR #53. brops-core migration tests updated to 19 and assert the new tables/guards; capability gate GREEN at 80 gated commands + 6 explicitly allowlisted-ungated (the check_capabilities checker now sees module-scoped commands and enforces an INTENTIONALLY_UNGATED allowlist).",
-    "post_97483f2_this_cycle": "Six commits after the earlier 97483f2 pointer, all on PR #53: 10de331+62f31a4 supply-chain reconciliation (cryptography kept at 46.0.3 — the 50.0.0 bump broke the engine governance runtime — with the 3 X.509/PKCS#7 advisories GHSA-m2h6/g6cj/jwv3 waived in pip-audit-ignore, justified because the engine uses only Ed25519; undici pinned ^7.29.0); 3a68bc1 group-chat speaker-attribution hardening (sanitize colon-strip + roster authority guard so the renderer can't forge a 'Name:' attribution, roster carried into the model system prompt, participant rail made truthful); d658de2 annotated the Wave-3a governed-accept author hardcode as a documented latent gap (P0-1; fail-closed today); a6e69c6 added proof::in_process_turn_output — the governed chain can now sign+bind a REAL reply's bytes (the wiring foundation), still fail-closed and unused by the shipped runtime. No gate/trust-semantics change; shipped 'Verified' stays fail-closed. Then an audit-remediation pass (from the comprehensive what's-left audit) added 7ed23a3 (this head-pointer refresh + roadmap canonical banner — P1-5/P2-4) and 75af658 (per-page smoke tests for Approvals/Command/Files locking their mirror-never-decide honesty invariants + jsdom matchMedia/scrollIntoView test stubs — P2-1; frontend suite 14 files / 166 tests green, tsc clean). Two further coverage passes extended P2-1 to the next-tier surfaces: c89f818 (Security integrity-never-fabricated + Notifications mark-read + Agents roster; ResizeObserver test stub — CI 19/19 green) and 7e95316 (Projects + Tasks store-mirror). Eight previously-untested pages now have smoke tests locking their mirror-never-fabricate invariants; full suite 19 files / 172 tests green, tsc clean. The audit's P1-2 (consolidate the 4 copy-pasted governed blocks in commands.rs) and P0-1 (Wave-3a governed-accept author) were DEFERRED as trust-critical refactors whose payoff is gated on the live-wiring that needs the sidecar/custody infra — not landed unreviewed. Then d2364d7 closed the ENTIRE P2-1 gap (smoke tests for the remaining 11 pages — Knowledge/Memory/Research/Library/Calendar/Automations/Integrations/Analytics/Activity/Settings/Home; every feature page now has a dedicated test; 30 files / 183 tests green), and 6a79780 landed a safe pure-verifier Windows-broker hardening slice (P1-3): windows_broker.rs verify_startupinfo_handle_list now rejects a DuplicateHandleSlot (a repeated 0..=6 slot would have smuggled an extra inherited handle past the FD-count floor) — strictly more fail-closed, no trust/gate change, brops-core 15/15 green. The remaining Windows hardening (real CreateProcessAsUser + restricted-token + STARTUPINFOEX syscalls, CNG key custody, dedicated service account) stays gated on a Windows session-0 test environment + a separate Architect audit; P2-2 (engine test worktree skips) stays deferred as it is tied to the enforcement-wall root-model (Phase-1 decision), not a harness bug.",
-    "session_audit_and_features_2026_08_04": "Latest additive work on PR #53 (head 9a67a91): (1) shipped the opt-in live-CHAT DEMONSTRATION-verified reply — a 'Demo-verify' action produces one reply INSIDE the in-process governed chain over the configured model (BROPS_SELFTEST_MODEL_CMD), verifies it, and surfaces a DB-derived 'demonstration_verified' 'Verified · demo' info-badge via MESSAGE_RECEIPT_PROJECTION COALESCE over the additive 0018 table; real crypto + real answer but demonstration custody, NEVER production trusted_verified; command demonstration_verified_reply, migration 0018, T-010-declared. (2) Wired the Approvals Escalate action for real (escalate_approval command, repo::approvals::escalate → status 'escalated' + level A3 + owner notification, non-verdict/decides-nothing, migration 0019 status guard). (3) Ran TWO multi-agent code audits (an area-based sweep = 20 confirmed; a 10-dimension deep audit = 19 confirmed incl. 1 HIGH), each finding adversarially verified before fixing, and fixed every confirmed non-gated finding: HIGH honesty (demonstration_verified_reply trusted the renderer author verbatim → author-forgery + transcript injection; now sanitize_author + roster validation + byte-exact verified body + atomic post+record); the T-010 capability-checker BLIND SPOT (its regex matched only commands::/files::, so governed_turn_execute + the 4 governance::read_* mirrors + governed_trust_selftest were outside the manifest AND invisible to the checker — now captures every module prefix + reconciles against an explicit INTENTIONALLY_UNGATED allowlist so a new module-scoped command that is neither declared nor allowlisted fails CI; build.rs invariant + checker self-tests updated); state-machine guards (set_step_status rejects moving a live-claimed step — closes a T-011 in-flight side-step; set_run_status rejects forcing 'succeeded'/un-terminating a terminal run); Rust fail-closed (servers.rs accept_open non-string identity panic → refuse; restricted_launch integrity hard-fail + privilege fail-open → fail-closed; atomic reject-fail; open_window count-then-build TOCTOU → mutex; demonstration subprocess bounded — backgrounded stdin + 9MiB stdout cap + 180s recv_timeout, std-only); frontend (MessageThread unmount stream-cancel leak; recall reflects session turns; receiptBadge demo + fail-closed honesty tests; DirListing.truncated + Approval T-011 provenance TS fields + Files truncation banner); dead-code (5 unused desktop wrappers removed; set_step_result removed — a dead fn that duplicated the gate and lacked the execution-attempt guard, a latent T-011 bypass). Plus a tauri-dev launch fix (vite server.watch.ignored ['**/src-tauri/**'] so the watcher can't crash on brops_lib.dll during a cargo rebuild). Then (f56a1b8) also DID the previously-deferred audit P1-2: consolidated the ~90-line copy-pasted governed conversation pipeline in stream_reply + reply_in_conversation into one shared run_governed_conversation_turn helper (byte-identical verify wiring, callers only deliver the ReceiptOutcome; stream_ask/stream_run_step left out as they use the held-answer verify path) — host 62 + core 235 green. All CI green, PR #53 CLEAN/MERGEABLE. Cardinal held: production trusted_verified never became fakeable; shipped 'Verified' stays fail-closed. Only genuinely owner-gated engine-gaps remain (win_executor placeholder output + verify_image not wired at runtime → need pinned model image + Windows session-0 containment). BEYOND the audit (9a67a91): shipped Phase-8 automation EXECUTION — a real 'Run now' (repo::automations::run + run_automation/list_automation_runs commands, migration 0020 automation_runs, SCHEMA_VERSION 20) that fires an automation's action via a small honest verb vocabulary: notify/task run LOCALLY and reversibly, an unknown verb is a recorded 'failed' run, a disabled automation refuses. The page's governance copy was corrected to the truth (local actions run directly; any model/engine-reaching action routes through the governed, fail-closed chain). No AI action fires ungoverned; production trusted_verified untouched. Roadmap Phase 8 moves from display-only toward execution. Then the local SCHEDULER (0442d89): a 60s background tick in setup() fires each enabled automation whose interval trigger (every: N{m|h|d}) is due, running its LOCAL action and logging it (repo::automations::run_due + parse_interval_ms; internal, no new command); only local non-AI actions fire unattended. Phase 8 now has real execution AND scheduling. Also (3cd1a10) surfaced the real automation run-history in the conduit detail, and (6df1a2f) added a first-run ONBOARDING overlay (Phase 10) — a localStorage-gated 3-step honest intro (local actions run directly; AI is governed/fail-closed; production Verified stated as not-yet-enabled, never faked)."
-  },
-  "next_action": "AUTHORED, NOT AUDITED: docs/design/FLOOR_WRITER_SERVICE_DESIGN.md rev 1 is the roadmap-section-I step-1 proposal the 1b decision has been waiting for since 2026-08-14. The next event on it is an ARCHITECT AUDIT (section-I step 2; the ownership matrix makes it mandatory-before-implementation for engine security code), and its section 9 lists the five things the Builder could not decide. No FW slice may start before that verdict, and FW-3 additionally needs the section 2.5/2.6 amendment ratified. PRIOR TEXT, still true and unchanged by this proposal: NO independent audit has passed; the standing verdict is RED. Broker chain-wiring code is DONE + fail-closed: main() build_governed_executor is config-driven -- $BROPS_BROKER_CONFIG with a TCB-root-signed manifest serves the real LinuxGovernedTurnChain, otherwise it falls back to UpstreamBlockedExecutor (Blocks every turn), so shipped behaviour is UNCHANGED until a trusted manifest is provisioned. REMAINING to actually expose production trusted_verified in the shipped app (all Owner-gated): (a) the shipped AI surfaces route through Path B (commands.rs stream_reply -> ai::governed_turn -> receipt_store NoTrustedManifest), NOT the broker binary -- either provision a real ReceiptKeyAuthority for Path B or route the surfaces through the broker; (b) carry the per-conversation request-envelope facts on the renderer->broker request (the resolver uses config-static facts today); (c) run the challenge-authority/supervisor/isolated-signer servers + provision a trusted manifest; (d) an INDEPENDENT audit of the whole chain that returns something other than RED; (e) OWNER approval to expose 'Verified'. Do NOT expose 'Verified' before (d) and (e).",
+  "next_action": "NO independent audit has passed. This field opened \"The independent CODE-audit is GREEN\" until 2026-08-09, contradicting code_audit.gate (ARCHITECT_PENDING) in this same file, and it was about a WAIVER rather than a pass. The history is in docs/archive/SESSION_LOG_2026-07_2026-08.md.",
   "stop_gates": [
-    "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md is a PROPOSAL and nothing may be built on it. The 1b decision's own text is 'Owner approval (given) -> Architect audit -> implement. No implementation lands on this decision alone.' FW-1/FW-2/FW-3 are all unstarted; FW-3 is additionally blocked until the Architect ratifies the amendment to the rev-30 addendum's section 2.5 (TCB_ARTIFACTS) and section 2.6 (SEVEN runtime service UIDs becomes eight). Bypassing section-I change control is itself a stop condition. B-02 stays OPEN until that design is Architect-GREEN AND built.",
     "Shipped-desktop production trusted_verified stays fail-closed (build_governed_executor falls back to UpstreamBlockedExecutor because nothing sets $BROPS_BROKER_CONFIG, governed_verification_unconfigured() returns Some(...) unconditionally, and connect_broker() refuses off Linux) until the live-proven chain is wired into the desktop runtime AND an INDEPENDENT audit passes AND the Owner approves.",
-    "The standing independent-audit verdict is RED. apps/desktop/AUDIT/2026-08-06-remediation-audit.md (main @ 219c763) confirmed 4 of 18 blockers closed and left 45 surviving findings, 1 P0. No independent audit has been run since, on that head or any later one. Closures claimed after it are the Builder's; the ledger marks them and they are not a pass.",
-    "Design rev-30 is Architect DESIGN GREEN, but design-GREEN is NOT code-GREEN. The external Architect CODE-audit on PR #48 was never run: the Owner waived it (CURRENT_CODE_AUDIT: ARCHITECT_PENDING records that it did not run). A waiver is not a pass, and this file said \"the independent CODE-audit is GREEN\" in next_action until 2026-08-09.",
-    "PR #48 is MERGED into main (with Phase-2 slices #49/#50/#51/#52), as is everything through PR #81. The remaining shipped-app gate is wiring the live-proven chain into the desktop runtime before production trusted_verified can render; do NOT expose 'Verified' before that + an independent audit + Owner approval.",
-    "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree (config/spec-conformance.json records section 0.1 as partial for exactly this reason, and this list named it as though it were real until 2026-08-09). The Windows broker remains a release blocker until the remaining hardening (broker as its own dedicated service account, CreateProcessAsUser + restricted token + STARTUPINFOEX, CNG key custody) lands AND a SEPARATE independent audit of the Windows broker passes. A proof kit is not the shipped gate."
+    "The standing independent-audit verdict is RED -- the NINTH round, apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md, no P0. The round-by-round history is in apps/desktop/AUDIT/AUDIT_LEDGER.md; do not restate it here. Everything merged since that head is unconfirmed and carries the Builder's mark.",
+    "Design rev-30 is Architect DESIGN GREEN, and design-GREEN is NOT code-GREEN. The external Architect CODE-audit on PR #48 was never run; the Owner waived it, recorded as CURRENT_CODE_AUDIT: ARCHITECT_PENDING.",
+    "The remaining shipped-app gate is wiring the live-proven chain into the desktop runtime before production is claimed. The pull-request history that got here is in git and in AUDIT_LEDGER.md.",
+    "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
     "number": 112,
     "branch": "design/floor-writer-service",
-    "base": "main",
-    "exact_candidate_source": "The exact head is the single 'AUDIT_CANDIDATE_HEAD: <40-hex>' marker in the PR #112 body.",
-    "note": "Carries docs/design/FLOOR_WRITER_SERVICE_DESIGN.md rev 1 - a proposal for the Architect to audit. Nothing else is open."
+    "state": "open",
+    "what": "The floor-writer service design (T-020, roadmap SSI step 1). The anti-rollback floor's writer is the party the floor exists to constrain: _refuse_self_owned_floor demands a directory the process cannot write, _advance_head_floor writes it in that same process, and the two have no intersection. A PROPOSAL: nothing is implemented and merging it is not approving it.",
+    "note": "The floor-writer design is re-verified against this head and NOT superseded: PRODUCTION_HALF_DESIGN is the output half, this is the containment half. Still a PROPOSAL awaiting the Architect.",
+    "base": "main"
   },
   "next_action_by_carrier": {
-    "_note": "The carrier is current_workflow_pr (#112 on design/floor-writer-service). No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs.",
-    "open": "HOLD #112 open for the Architect's section-I step-2 audit. CI is 33/33 SUCCESS on the exact head 693bc4295380b47ef9ee752a56073c34069075c5, which is still the head, so the merge is available -- but this repository's precedent for a DESIGN pull request is that it merges AFTER its verdict: PR #30 (Wave 3b-0) merged at df3c0ac only once rev 5 was Architect DESIGN GREEN. An earlier draft of this field said 'merge #112 so main records the proposal'; that would have had a Builder land a section-I proposal before the audit the same section mandates. Merging it is the Owner's or the Architect's call.",
-    "merged": "the Architect audits the proposal (its section 9 is the checklist: the three-way ownership contradiction, the section 2.5/2.6 amendment, served-pin vs config-file, the A-E matrix question, the stale _head_floor_dir warning). No FW slice starts before that verdict."
+    "current": "PR #112 (design/floor-writer-service): the OWNER merges -- he said so for this task, for #112 and #217 both. The design is re-verified against main 363c51c and NOT superseded; what it waits on is the ARCHITECT audit, SSI step 2, not a merge. After both merge, delete origin/at-main-2 -- never before. origin/docs/evidence-bash-gap is already gone: zero unique files and zero unique lines.",
+    "_note": "The carrier is current_workflow_pr (#214 on feat/version-parity-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
-  "keystone_next_2026_08_05": "Production trusted_verified model-image slice (P0-2/P0-3), owner-approved to resume in a fresh focused session. FINDING: the session-0 governed chain (win-live) runs ENTIRELY over HASHES (ResolvedTurn/win_live_turn/executor carry only system_sha256/history_sha256/generation_config_sha256, never raw prompt; win_executor emits a constant, executor build_output is a SHA-256 stand-in). Wiring a real model = a trust-chain extension: carry raw system/history in the request envelope + verify sha256==pinned hash at the boundary; plumb raw prompt request->broker->resolved->execution->contained executor stdin; win_executor runs an env-gated GENERIC local model command (owner's choice; mirror demo run_demonstration_model/BROPS_SELFTEST_MODEL_CMD) and emits the reply for content-addressing. ALL fail-closed; platform_governed_execution_supported() STAYS false, main() keeps UpstreamBlockedExecutor (win-live PROOF KIT, not shipped runtime). Trust-critical: design->implement->verify, never rush. Exposing production Verified still needs owner pinned MODEL + 3 servers running + INDEPENDENT audit + owner approval. Linux broker already config-driven drop-in; broker+desktop client LINUX-ONLY (SO_PEERCRED); Windows session-0 cross-account containment PROVEN (0xC0000142 was a debug-CRT DLL dep, fixed by release bins)."
+  "main_ci": {
+    "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
+    "ci": {
+      "head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
+      "conclusion": "success",
+      "run_id": 33363971782,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #216 merged. Stale by construction while T-059 is open."
+    }
+  },
+  "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
 }

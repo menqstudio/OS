@@ -29,7 +29,22 @@
 > Architect-ի աուդիտն ա։ Այս փաստաթղթի տակ ոչ մի product code չի land-ում, ու ոչ մի դարպաս չի բացվում։
 >
 > **Revision history (non-normative appendix rule: history never redefines a current contract).**
-> - **rev 1** (this document) — first proposal. Authored 2026-08-15 against `main` @ `dc8d867`.
+> - **rev 1** — first proposal. Authored 2026-08-15 against `main` @ `dc8d867`.
+> - **rev 1, re-verified 2026-08-31 against `main` @ `363c51c`** — no clause changed; this line records
+>   what was re-measured, because a sixteen-day-old design that nobody re-read is a design nobody can cite.
+>   **It is NOT superseded by [`PRODUCTION_HALF_DESIGN.md`](./PRODUCTION_HALF_DESIGN.md)**, which designs the
+>   OUTPUT half and says so in its own scope note — *"It does not extend the containment half"*. This is a
+>   containment-half defect: who may write the anti-rollback marks. That document cites the anti-rollback
+>   floor (§4, the credential store's custody argument) as an EXISTING guard, which is the same floor whose
+>   writer this proposal is about.
+>   **Every `file:line` in §0 still resolves**, checked one by one rather than assumed:
+>   `bro_completion.py:541` is still `def _refuse_self_owned_floor`, `:805` is still `def _advance_head_floor`,
+>   the `.. warning::` block quoted from `:488-503` still names *"a floor-writer service or a setuid helper"*
+>   at `:502`, `bro_custody.py:87` is still `ENV_PIN_SELF_OWNED_ACK`, and
+>   `test_completion_head_binding.HeadFloorConfigurationContradictionTests` still exists (`:594`).
+>   The `B-02` row that points here by path moved to
+>   [`AUDIT_LEDGER_ARCHIVE.md`](../../apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md); the pointer survived the move.
+>   Still **PROPOSAL**, still waiting on §I step 2 — the Architect audit. Nothing here was implemented.
 
 ---
 

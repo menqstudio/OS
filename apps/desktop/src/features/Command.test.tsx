@@ -73,3 +73,64 @@ describe('Command — real run ledger + step chain (never fabricated)', () => {
     expect(invokeMock).toHaveBeenCalledWith('list_run_steps', expect.objectContaining({ runId: 'r-1' }));
   });
 });
+
+// §D `blocked`: "dispatch denied by wall → reason".
+//
+// A governed REFUSAL and a network failure used to render identically: one warn pill with the
+// raw string, announced to nobody. They are opposite events — a refusal is the wall doing its
+// job and nothing ran, a failure is something broken — and showing them the same way teaches
+// the owner to read the wall as a bug.
+async function dispatchFailingWith(message: string) {
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === 'list_runs') return Promise.resolve([RUN]);
+    if (cmd === 'list_run_steps') return Promise.resolve([STEP]);
+    if (cmd === 'stream_run_step') return Promise.reject(new Error(message));
+    return Promise.resolve(null);
+  });
+  render(<AppProvider><ToastProvider><Command /></ToastProvider></AppProvider>);
+  fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+  await screen.findByText('Gather the source figures');
+  fireEvent.click(screen.getByRole('button', { name: 'Execute step' }));
+  return await screen.findByRole('alert');
+}
+
+describe('Command — a refusal at the wall is not a failure', () => {
+  it('renders a governed refusal as a refusal, with the engine reason verbatim', async () => {
+    const alert = await dispatchFailingWith('permission denied: lease not granted for path /etc');
+    expect(alert.className).toContain('cmd-outcome--blocked');
+    // The engine's own words, never paraphrased — the reason IS the finding.
+    expect(alert.textContent).toContain('lease not granted for path /etc');
+  });
+
+  it('renders a real failure as a failure, not as a governed refusal', async () => {
+    const alert = await dispatchFailingWith('connection reset by peer');
+    expect(alert.className).not.toContain('cmd-outcome--blocked');
+    expect(alert.textContent).toContain('connection reset by peer');
+  });
+
+  it('an unrecognised error falls through to FAILED, not to blocked', async () => {
+    // The fail-open direction would be calling an unknown error a governed refusal — that
+    // claims the system is fine when nothing established it.
+    const alert = await dispatchFailingWith('E_SOMETHING_NEW');
+    expect(alert.className).not.toContain('cmd-outcome--blocked');
+  });
+
+  it('the dispatch trace is a log, not an unnamed live region', async () => {
+    // §D: "trace `role=log aria-live`". It had the live region and not the role, so a screen
+    // reader was told the content changed without being told what kind of thing it was reading.
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+    await screen.findByText('Gather the source figures');
+    const trace = await screen.findByRole('log');
+    expect(trace).toHaveAttribute('aria-live', 'polite');
+    expect(trace).toHaveAccessibleName();
+  });
+
+  it('the outcome is announced, not queued behind the output stream', async () => {
+    // role=alert, because a dispatch the owner just pressed and that did NOT happen is the
+    // definition of something a screen-reader user must be told immediately. The surrounding
+    // aria-live="polite" region would hold it until the stream went quiet.
+    const alert = await dispatchFailingWith('permission denied');
+    expect(alert).toHaveAttribute('role', 'alert');
+  });
+});

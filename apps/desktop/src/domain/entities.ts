@@ -87,6 +87,18 @@ export interface Decision {
 export interface ActivityEvent {
   id: string;
   eventType: string;
+  /** 'user' | 'agent' | 'system' — see repo::audit::ACTOR_TYPES (L-4a). Added in
+   * T-052: the column was written by every audited repo write and then dropped
+   * here, so no surface could tell a human-originated event from an agent- or
+   * scheduler-originated one. */
+  actorType: string | null;
+  /** `'seed'` when `repo::seed` FABRICATED this row for the demo, `null` when a
+   * real audited write produced it. T-057: 56 rows were written straight into
+   * `audit_events` to give the activity sparkline "a real heartbeat", and
+   * nothing told them apart — so the one surface those rows exist to animate
+   * was the surface being lied to. Same shape as `actorType` above: marking the
+   * row is only half of it, the mark has to arrive here. */
+  source: string | null;
   actorId: string | null;
   entityType: string | null;
   entityId: string | null;

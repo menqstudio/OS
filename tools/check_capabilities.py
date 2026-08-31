@@ -12,6 +12,11 @@ check keeps the three inventories from drifting apart as commands are added:
       == AppManifest commands  (src-tauri/build.rs)
       == capability-policy inventory  (capabilities/command-policy.json)
 
+T-052 adds two rules over the execution/spend tier: every tier-X `allow` command must
+DECLARE a `protection` (`native-confirm` or, honestly, `none`), and a command that claims
+`native-confirm` must be backed by the enforcing constants in the Rust authority layer --
+so the policy file cannot award itself a gate it does not have.
+
 and additionally asserts each policy `grant` matches the actual capability grants in
 `capabilities/default.json` (allow-<cmd> / deny-<cmd>). A command added in one place
 but not the others — or granted against its declared tier — **fails CI**. No manual
@@ -35,6 +40,20 @@ LIB_RS = DESKTOP / "src" / "lib.rs"
 BUILD_RS = DESKTOP / "build.rs"
 POLICY = DESKTOP / "command-policy.json"
 DEFAULT_CAP = DESKTOP / "capabilities" / "default.json"
+REPO_RS = DESKTOP / "core" / "src" / "repo.rs"
+
+# T-052. A tier-X command claiming `"protection": "native-confirm"` is claiming that a
+# natively confirmed approval grant is verified and consumed in the authority layer before
+# its write commits. That claim is checked against the source, not believed: each of these
+# names the constants `repo::approvals::require_and_consume` must be called with for that
+# command. A policy file can therefore not award itself a protection it does not have --
+# which is this repository's characteristic defect, an honest sentence that stopped being
+# true and nothing noticed.
+NATIVE_CONFIRM_ENFORCEMENT = {
+    "set_integration_auth_ref": ("INTEGRATION_ENTITY_TYPE", "INTEGRATION_AUTH_REF_ACTION_TYPE"),
+    "set_integration_status": ("INTEGRATION_ENTITY_TYPE", "INTEGRATION_STATUS_ACTION_TYPE"),
+    "set_automation_enabled": ("AUTOMATION_ENTITY_TYPE", "AUTOMATION_ENABLED_ACTION_TYPE"),
+}
 
 # Commands deliberately registered OUTSIDE the window capability manifest. Tauri makes an
 # app command that is registered in generate_handler! but absent from the manifest
@@ -170,6 +189,8 @@ def check(root: pathlib.Path) -> list[str]:
     # not capture this — an "allow" can be consistent yet unsafe (irreversible delete
     # with no undo/confirmation).
     safe_protection = {"soft-delete", "native-confirm"}
+    # X may honestly declare itself ungated; L2 may not.
+    x_protection = {"native-confirm", "none"}
     for cmd, spec in sorted(policy.items()):
         tier = spec.get("tier")
         grant = spec.get("grant")
@@ -191,6 +212,56 @@ def check(root: pathlib.Path) -> list[str]:
                 f"{sorted(safe_protection)} (plus a matching test); got "
                 f"{spec.get('protection')!r}. Until protected it must be 'deny'."
             )
+        # T-052: X is the execution/spend tier. Every X 'allow' must SAY whether it is
+        # gated. It may say 'none' -- 18 of the 21 do, and that is the honest record of an
+        # ungated execution-tier command rather than the silence this file kept before.
+        if tier == "X" and grant == "allow":
+            declared = spec.get("protection")
+            if declared not in x_protection:
+                problems.append(
+                    f"{cmd}: tier X (execution/spend) with grant 'allow' must declare a "
+                    f"'protection' of {sorted(x_protection)}; got {declared!r}. Say 'none' "
+                    f"if it is ungated -- an undeclared execution-tier command is how the "
+                    f"three T-052 commands stayed ungated without anything saying so."
+                )
+
+    # T-052: a claimed 'native-confirm' must be backed by the enforcing constants in the
+    # authority layer, in the same repository, at this head. A missing authority layer is
+    # RED, not an exception and not a pass: a claim nothing can be checked against is
+    # exactly the thing this rule exists to refuse.
+    repo_path = root / REPO_RS
+    repo_src = repo_path.read_text(encoding="utf-8") if repo_path.exists() else ""
+    if not repo_src and any(
+        s.get("protection") == "native-confirm" for s in policy.values()
+    ):
+        problems.append(
+            f"{REPO_RS} is missing, so no 'native-confirm' claim in the policy can be "
+            f"checked against the authority layer that is supposed to enforce it"
+        )
+    for cmd, spec in sorted(policy.items()):
+        if spec.get("protection") != "native-confirm" or spec.get("tier") != "X":
+            continue
+        consts = NATIVE_CONFIRM_ENFORCEMENT.get(cmd)
+        if consts is None:
+            problems.append(
+                f"{cmd}: claims 'native-confirm' but NATIVE_CONFIRM_ENFORCEMENT names no "
+                f"enforcing constants for it, so nothing checks the claim"
+            )
+            continue
+        missing = [c for c in consts if f"approvals::{c}," not in repo_src]
+        if missing:
+            problems.append(
+                f"{cmd}: claims 'native-confirm' but {REPO_RS} never passes "
+                f"{missing} to the approval gate"
+            )
+    # The trailing "(" matters: without it this matched `require_and_consume_RENAMED`
+    # as a prefix and the mutation test came back GREEN -- a check testing nothing, the
+    # exact failure mode CLAUDE.md's "a green test is not a passing check" rule sweeps for.
+    if repo_src and "approvals::require_and_consume(" not in repo_src:
+        problems.append(
+            "repo.rs has no `approvals::require_and_consume` call: the shared "
+            "verify-and-consume helper every 'native-confirm' claim rests on is gone"
+        )
 
     # 3) Design invariant: generic decide_approval must be DENIED to the window
     #    (approve requires renderer-independent native confirmation, T-011).
@@ -223,11 +294,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    n = len(policy_commands(root))
+    policy = policy_commands(root)
+    n = len(policy)
+    x_allow = [c for c, s in policy.items() if s.get("tier") == "X" and s.get("grant") == "allow"]
+    confirmed = [c for c in x_allow if policy[c].get("protection") == "native-confirm"]
     print(
         f"GREEN: capability inventory consistent ({n} gated commands; gated-registered == "
         f"manifest == policy == capability grants; {len(INTENTIONALLY_UNGATED)} explicitly "
-        f"allowlisted-ungated; decide_approval denied, reject_approval granted)."
+        f"allowlisted-ungated; decide_approval denied, reject_approval granted; "
+        f"{len(x_allow)} tier-X allow commands all declare a protection, "
+        f"{len(confirmed)} of them 'native-confirm' backed by the enforcing constants in "
+        f"repo.rs)."
     )
     return 0
 

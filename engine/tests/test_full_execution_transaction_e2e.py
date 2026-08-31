@@ -178,11 +178,11 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
 
     def _lease_body(self, control_plane_digest, workspace_id):
         return {
-            "schema": 1, "lease_id": "lease-exec-e2e-1", "nonce": "exec-lease-nonce-000001",
+            "schema": 2, "lease_id": "lease-exec-e2e-1", "nonce": "exec-lease-nonce-000001",
             "task_id": self.task_id, "agent_id": AGENT, "session_id": SID,
             "repository": "menqstudio/Bro", "branch": BRANCH, "worktree": str(ROOT),
             "head_sha": HEAD, "tree_identity": TREE,
-            "allowed_capabilities": ["WRITE_REPOSITORY"],
+            "allowed_capabilities": ["WRITE_REPOSITORY"], "allowed_egress": [],
             "issued_at_epoch": self.now, "expires_at_epoch": self.now + 3600, "max_tool_calls": 8,
             "task_class": "standard-builder", "protected_scope": [],
             "control_plane_digest": control_plane_digest, "workspace_id": workspace_id,

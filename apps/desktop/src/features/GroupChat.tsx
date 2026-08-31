@@ -4,7 +4,7 @@ import {
   Badge, Button, EmptyState, ErrorState, FormRow, Input, Select, Skeleton,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
-import { useAsync } from '../hooks/useAsync';
+import { useAsync, established } from '../hooks/useAsync';
 import type { Tone } from '../domain/enums';
 import { Conversations } from './Conversations';
 import { STR } from './GroupChat.strings';
@@ -67,6 +67,11 @@ const MALFORMED_KEY: Record<MalformedProblem, Key> = {
  *  into the shared chat styling that `<Conversations>` brings with it. */
 const VIEW_CSS = `
 .v-group .cs-deck{margin-top:18px;padding:16px 18px}
+.v-group .cs-readout{display:flex;flex-wrap:wrap;gap:18px 26px;margin:0 0 16px;padding:12px 14px;
+  border-radius:var(--r);background:rgb(var(--surface-rgb)/.5);border:1px solid rgb(var(--line-rgb)/.9)}
+.v-group .cs-readout-cell{display:flex;flex-direction:column;gap:2px}
+.v-group .cs-readout-cell dt{color:var(--ink-muted);letter-spacing:.06em}
+.v-group .cs-readout-cell dd{margin:0;font-size:18px;font-weight:700;line-height:1.1}
 .v-group .cs-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
 .v-group .cs-note{margin:0 0 14px;font-size:12px;color:var(--ink-muted);line-height:1.55;max-width:78ch}
 .v-group .cs-roompick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
@@ -260,6 +265,85 @@ function RoundCard({ round, verdict, old }: {
  * from the finished direct path. The one thing that surface cannot know is that in a group room
  * it is NOT the whole story, so `delegationScopeNote` above it says exactly which turns reach it.
  */
+/**
+ * §D's room readout: **participants / handoffs / messages** and `grpElapsed`.
+ *
+ * Every figure is derived from something this deck already read, and each one that CANNOT be
+ * established says so instead of showing a zero. That distinction is the point of the component:
+ * "no handoffs happened" and "handoffs are not observable from here" are different facts, and a
+ * `0` states the first while meaning the second.
+ *
+ * Handoffs are the case in question. The delegation trail arrives on the LIVE `StreamEvent`
+ * channel while a turn runs; it is not reconstructable from the stored messages. So a room the
+ * owner has merely opened shows "—", and the count appears once turns have run in this session.
+ */
+function RoomReadout(
+  { room, participants, messageCount, rounds, handoffs, live, L }: {
+    room: { createdAt: string };
+    /** `null` = the roster was not established for THIS room. A measured zero is `0`. */
+    participants: number | null;
+    /** `null` = the message read was not established for THIS room. */
+    messageCount: number | null;
+    /** `null` = derived from a message read that was not established. */
+    rounds: number | null;
+    handoffs: number;
+    live: boolean;
+    L: (k: Key) => string;
+  },
+) {
+  const started = Number(room.createdAt);
+  const elapsed = Number.isFinite(started) && started > 0
+    ? formatElapsed(Date.now() - started)
+    : null;
+  // EVERY figure tests `=== null`, and none tests truthiness — sixth independent audit, `A-07`.
+  //
+  // Participants used to read `roster.length > 0 ? String(roster.length) : NOT_ESTABLISHED`, one
+  // line above a `messageCount === null` that was already correct. Measured with the real
+  // component: a roster read that SUCCEEDS returning `[]` and one that REJECTS both rendered `—`,
+  // so an empty room and an unreadable one were indistinguishable — and the measured zero was
+  // reported as *not established*, the inverse of the sin this component's docstring names.
+  //
+  // Rounds used to render `String(rounds)` unconditionally. Both it and Messages therefore stated
+  // a measured `0` for a value nobody had established, because `useAsync` never clears `data` and
+  // the caller's null guard only held on the very first load.
+  const figure = (n: number | null) => (n === null ? NOT_ESTABLISHED : String(n));
+  const cells: Array<[string, string]> = [
+    [L('readoutParticipants'), figure(participants)],
+    [L('readoutMessages'), figure(messageCount)],
+    [L('readoutRounds'), figure(rounds)],
+    // Absence and unobservability, kept apart.
+    [L('readoutHandoffs'), live ? String(handoffs) : NOT_ESTABLISHED],
+    [L('readoutElapsed'), elapsed ?? NOT_ESTABLISHED],
+  ];
+  return (
+    <dl className="cs-readout" aria-label={L('readoutLabel')}>
+      {cells.map(([k, v]) => (
+        <div className="cs-readout-cell" key={k}>
+          <dt className="micro">{k}</dt>
+          <dd className="mono">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** An em dash means "not established" — never a measured zero. */
+const NOT_ESTABLISHED = '—';
+
+
+/** Coarse, honest elapsed: a room open for two days does not need its seconds. NOT exported —
+ *  `routes.tsx` lazy-loads this module as a map of components, so a non-component export here
+ *  is a type error rather than a style preference. */
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return NOT_ESTABLISHED;
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return '<1m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
 function RoomDelegations({ roomId, state }: { roomId: string; state: GroupDelegations }) {
   const { lang } = useApp();
   const L = (k: Key) => STR[k][lang] ?? STR[k].en;
@@ -325,7 +409,13 @@ function ConsensusDeck() {
     [roomId],
   );
 
-  const transcript = useMemo(() => readConsensusTranscript(messages.data ?? []), [messages.data]);
+  // Derived from the ESTABLISHED read, not from whatever `data` happens to hold. On a room switch
+  // `useAsync` keeps the previous room's messages until the new read lands, so deriving from
+  // `messages.data` rendered the last room's rounds — and the last room's round CARD — under the
+  // new room's name (sixth audit, `A-07`, one step past the readout it names).
+  const establishedMessages = established(messages);
+  const transcript = useMemo(
+    () => readConsensusTranscript(establishedMessages ?? []), [establishedMessages]);
   const rounds = transcript.rounds;
   const latest = rounds.length > 0 ? rounds[rounds.length - 1] : null;
   const latestVerdict = latest ? evaluateConsensus(latest.rule, latest.asked, latest.positions) : null;
@@ -499,12 +589,22 @@ function ConsensusDeck() {
             </Button>
           </div>
 
-          {messages.loading && messages.data === null && <Skeleton rows={3} />}
+          <RoomReadout
+            room={room}
+            participants={established(roster)?.length ?? null}
+            messageCount={establishedMessages === null ? null : establishedMessages.length}
+            rounds={establishedMessages === null ? null : rounds.length}
+            handoffs={askTrail(delegations).length}
+            live={delegations !== NO_GROUP_DELEGATIONS}
+            L={L}
+          />
+
+          {messages.loading && <Skeleton rows={3} />}
           {messages.error && (
             <ErrorState message={messages.error} onRetry={messages.reload} retryLabel={t('action.retry')} />
           )}
 
-          {messages.data !== null && !messages.error && rounds.length === 0 && (
+          {establishedMessages !== null && rounds.length === 0 && (
             <EmptyState glyph="⚖" title={L('noRounds')} hint={L('noRoundsHint')} />
           )}
 

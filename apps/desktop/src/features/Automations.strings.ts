@@ -282,6 +282,14 @@ export const STR = {
     ru: 'Выберите канал, чтобы выковать его схему.',
   },
   trigger: { en: 'Trigger', hy: 'Բռնկիչ', ru: 'Триггер' },
+  // The diagram track scrolls horizontally, so it needs a name and a tab stop or a keyboard
+  // user cannot reach the part of it that is off-screen (axe `scrollable-region-focusable`,
+  // found by the real-browser sweep -- jsdom has no layout and cannot know an element scrolls).
+  flowAria: {
+    en: 'Automation flow diagram — scrollable',
+    hy: 'Ավտոմատացման հոսքի սխեմա — ոլորվող',
+    ru: 'Схема потока автоматизации — прокручиваемая',
+  },
   governed: { en: 'Governed', hy: 'Կառավարվող', ru: 'Управляемо' },
   guard: { en: 'guard', hy: 'պահապան', ru: 'страж' },
   action: { en: 'action', hy: 'գործողություն', ru: 'действие' },

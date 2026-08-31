@@ -40,6 +40,44 @@ class PriorArtTests(unittest.TestCase):
         os.environ["BRO_RECEIPT_DIR"] = str(self.store)
         self.addCleanup(os.environ.pop, "BRO_RECEIPT_DIR", None)
 
+    # --- which declaration is read, when there is more than one -------------
+
+    def test_declaring_twice_keeps_ONE_record_and_it_is_the_second(self):
+        """Measured before changing anything, and it contradicts the note that
+        sent me here: `declare` filters out the existing entry for a target
+        before appending, so a re-declaration REPLACES rather than accumulates.
+        The gate's own "then re-declare" remedy is reachable."""
+        root = _tree()
+        receipts.record(root, "s1")
+        prior_art.declare(root, "s1", "tools/x.py", SEARCHED, "FIRST", DECISION_NEW)
+        prior_art.declare(root, "s1", "tools/x.py", SEARCHED, "SECOND", DECISION_NEW)
+        entries = [d for d in prior_art.declarations(root, "s1") if d["target"] == "tools/x.py"]
+        self.assertEqual(len(entries), 1, entries)
+        self.assertEqual(entries[0]["found"], "SECOND")
+
+    def test_the_LATEST_declaration_is_read_even_if_two_somehow_exist(self):
+        """This is the arm the change is actually for, and it is honest about
+        what it proves: it writes two records for one target DIRECTLY, which
+        `declare` will not do today. `declaration_for` used to return the first,
+        so its correctness depended on a dedup happening somewhere else and
+        silently — any future writer that appends without filtering would have
+        made the gate read a stale record with nothing to say so.
+
+        Mutant: return the first ⇒ this fails and the one above still passes,
+        which is exactly the coupling being removed."""
+        root = _tree()
+        receipts.record(root, "s1")
+        prior_art.declare(root, "s1", "tools/x.py", SEARCHED, "FIRST", DECISION_NEW)
+        doc = prior_art.receipt_store.load(root, "s1")
+        stale = dict(doc["prior_art"][0])
+        fresh = dict(stale, found="SECOND")
+        doc["prior_art"] = [stale, fresh]
+        prior_art.receipt_store.write_receipt(root, "s1", doc)
+
+        entry = prior_art.declaration_for(root, "s1", "tools/x.py")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["found"], "SECOND", "the latest declaration is the one that counts")
+
     def test_an_undeclared_new_file_is_refused(self):
         root = _tree()
         receipts.record(root, "s1")

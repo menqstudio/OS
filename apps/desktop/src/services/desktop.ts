@@ -225,6 +225,12 @@ export const desktop = {
   // server pulls the held question+answer and persists the pair.
   saveAskToChat: (resultId: string, title: string) =>
     invoke<Conversation>('save_ask_to_chat', { resultId, title }),
+  // Same one-time id, same rule: the webview passes the id and a title, never the body. A
+  // governed research answer belongs in the knowledge store, and "read it, then write it back
+  // through create_knowledge_note" would hand the renderer exactly the authority `stream_ask`'s
+  // held-answer design exists to withhold.
+  saveAskToKnowledge: (resultId: string, title: string) =>
+    invoke<KnowledgeNote>('save_ask_to_knowledge', { resultId, title }),
   deleteConversation: (id: string) => invoke<void>('delete_conversation', { id }),
   renameConversation: (id: string, title: string) =>
     invoke<Conversation>('rename_conversation', { id, title }),
@@ -402,8 +408,20 @@ export type StreamEvent =
   // produced (Wave 3a Blocks every governed turn). The UI shows a transient turn-level
   // notice, never a persisted reply. `reason` is the machine verdict.
   | { type: 'blocked'; reason: string }
-  // stream_ask only: the full answer is held server-side under this one-time id.
-  | { type: 'ready'; resultId: string }
+  // stream_ask only: the full answer is held server-side under this one-time id, and
+  // `provenance` says HOW it was produced.
+  //
+  // The sixth audit's `A-05`: the Research page rendered "Verified · held" for an outcome that is
+  // `development_untrusted` at best and, on the only path a shipped install can reach, has no
+  // receipt at all. The page could not have known — the event did not say — so the fact now
+  // travels, rather than the words being softened around a guess.
+  //
+  // The vocabulary is deliberately the one `receiptBadge()` already uses for chat messages, so one
+  // outcome does not get two names on two surfaces. `ungoverned` is new because no chat path can
+  // produce it. Typed `string` and not a union on purpose: this crosses the IPC boundary, where a
+  // narrow type is a hope about the backend rather than a guarantee — the renderer's fallback arm
+  // is what actually holds.
+  | { type: 'ready'; resultId: string; provenance: string }
   // Bro handed work to a specialist, mid-turn, on this same channel.
   //
   // `delegation` is typed `unknown` DELIBERATELY. The Rust side sends an already-shaped JSON

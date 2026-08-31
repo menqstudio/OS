@@ -215,6 +215,37 @@ export const STR = {
     ru: 'Канал',
   },
 
+  // -- rank scrubber (AnScrub) --------------------------------------------------
+  // §D asks for a scrubber. The engine exposes ONE all-time aggregate with no time
+  // dimension, so a TIME scrubber would be inventing an axis — exactly what this page
+  // refuses to do in its other three panels. What this one scrubs is real: the rank
+  // cut-off, how far down the ranked distribution is shown.
+  scrubLabel: {
+    en: 'Show top nodes',
+    hy: 'Ցույց տալ առաջին հանգույցները',
+    ru: 'Показать первые узлы',
+  },
+  scrubTop: {
+    en: 'top',
+    hy: 'առաջին',
+    ru: 'первые',
+  },
+  scrubOf: {
+    en: 'of',
+    hy: '-ը',
+    ru: 'из',
+  },
+  scrubAll: {
+    en: 'all nodes',
+    hy: 'բոլոր հանգույցները',
+    ru: 'все узлы',
+  },
+  scrubHint: {
+    en: 'Ranked by value. Arrows, Home and End move the cut.',
+    hy: 'Դասավորված ըստ արժեքի։ Սլաքները, Home-ը և End-ը շարժում են սահմանը։',
+    ru: 'Отсортировано по значению. Стрелки, Home и End двигают срез.',
+  },
+
   // -- page header ------------------------------------------------------------
   intelCentre: {
     en: 'INTELLIGENCE CENTRE · ANALYTICS',

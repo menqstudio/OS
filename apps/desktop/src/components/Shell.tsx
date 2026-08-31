@@ -67,14 +67,78 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [dockFocus, setDockFocus] = useState(0);
   // On narrow screens the side rail is an off-canvas drawer; this toggles it.
   const [navOpen, setNavOpen] = useState(false);
-  // Right-click context menu (Open in new window). Suppressed inside text fields so
-  // the native edit menu still works there.
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Right-click menu.
+   *
+   * It used to carry one item — *Open in new window* — and suppress the native menu everywhere
+   * except inside a text field. So right-clicking a chat reply, a file name, an error message or
+   * anything else selectable offered no **Copy**, and the app felt broken in the one place every
+   * desktop app behaves the same way.
+   *
+   * The menu is now the standard set, and which items appear is decided by what was actually
+   * clicked rather than by a fixed list: Copy and Cut only when there is something to copy or cut,
+   * Paste only in a field that can receive it. An item that cannot do anything is not shown, which
+   * is more useful than one that is shown greyed out and less misleading than one that is shown
+   * live and silently does nothing.
+   */
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number; y: number; editable: boolean; selection: string;
+  } | null>(null);
   const onAppContextMenu = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
+    const el = e.target as HTMLElement;
+    const field = el.closest<HTMLElement>('input, textarea, [contenteditable="true"]');
     e.preventDefault();
-    setCtxMenu({ x: e.clientX, y: e.clientY });
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      editable: field !== null && !(field as HTMLInputElement).readOnly,
+      selection: (window.getSelection()?.toString() ?? '').trim(),
+    });
   };
+  /**
+   * A message when opening a second window fails, shown instead of swallowed.
+   *
+   * `open_window` can refuse for a real reason — the concurrent-window cap is eight — and the only
+   * evidence used to be a line in a console the packaged app has no way to show. "It does nothing"
+   * and "it refused and told nobody" look identical from the outside, and only one of them is a bug.
+   */
+  const [windowError, setWindowError] = useState<string | null>(null);
+
+  /**
+   * The clipboard actions, run against the real selection after the menu closes.
+   *
+   * `execCommand` is deprecated and is still the only thing that acts on the document's own
+   * selection in a webview without a permission prompt; `navigator.clipboard.readText()` is the
+   * paste half, because `execCommand('paste')` is blocked for security in every modern engine.
+   * Focus is restored first — the menu button took it when it was clicked, and a copy with nothing
+   * selected copies nothing.
+   */
+  const runCtx = useCallback((action: 'copy' | 'cut' | 'paste' | 'selectAll') => {
+    const menu = ctxMenu;
+    setCtxMenu(null);
+    if (!menu) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (active && 'blur' in active) active.blur();
+    window.setTimeout(() => {
+      if (action === 'paste') {
+        void navigator.clipboard.readText().then((text) => {
+          const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+          if (el && ('value' in el)) {
+            const start = el.selectionStart ?? el.value.length;
+            const end = el.selectionEnd ?? start;
+            el.value = el.value.slice(0, start) + text + el.value.slice(end);
+            // React tracks the value on the DOM node; without an input event the state behind a
+            // controlled field never learns about the paste and the next render wipes it.
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.selectionStart = el.selectionEnd = start + text.length;
+          }
+        }).catch(() => { /* clipboard unreadable — nothing to paste, and nothing to report */ });
+        return;
+      }
+      document.execCommand(action === 'selectAll' ? 'selectAll' : action);
+    }, 0);
+  }, [ctxMenu]);
+
   // Escape closes the transient overlays (nav drawer, context menu).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -240,11 +304,34 @@ export function Shell({ children }: { children: React.ReactNode }) {
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
           />
           <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
+            {ctxMenu.selection !== '' && (
+              <button type="button" role="menuitem" onClick={() => runCtx('copy')}>
+                {t('action.copy')}
+              </button>
+            )}
+            {ctxMenu.selection !== '' && ctxMenu.editable && (
+              <button type="button" role="menuitem" onClick={() => runCtx('cut')}>
+                {t('action.cut')}
+              </button>
+            )}
+            {ctxMenu.editable && (
+              <button type="button" role="menuitem" onClick={() => runCtx('paste')}>
+                {t('action.paste')}
+              </button>
+            )}
+            <button type="button" role="menuitem" onClick={() => runCtx('selectAll')}>
+              {t('action.selectAll')}
+            </button>
             <button
               type="button"
               role="menuitem"
               onClick={() => {
-                void desktop.openWindow(route).catch((e) => console.error('open_window failed:', e));
+                // The failure used to go to `console.error`, which in a packaged desktop app is a
+                // place nobody can look — so "it just does nothing" was the only symptom available.
+                // It reports now.
+                void desktop.openWindow(route).catch((err) => {
+                  setWindowError(err instanceof Error ? err.message : String(err));
+                });
                 setCtxMenu(null);
               }}
             >
@@ -252,6 +339,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </>
+      )}
+
+      {windowError !== null && (
+        <div className="inline-alert inline-alert--error ctx-window-error" role="alert">
+          <b>{t('action.windowFailed')}</b>
+          <span>{windowError}</span>
+          <button type="button" onClick={() => setWindowError(null)} aria-label="Dismiss">✕</button>
+        </div>
       )}
     </>
   );

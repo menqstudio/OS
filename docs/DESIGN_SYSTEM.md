@@ -179,6 +179,33 @@ deterministic ring geometry — was extracted to `ringPositions(n)` in
 `components/charts/geometry.ts` (pure, tested) and is consumed by the page. That
 keeps the shared, testable part in the library without forcing a bad abstraction.
 
+### `usePrefersReducedMotion()` — the one export this page had not documented
+
+The library ships 28 exports and this catalogue described 27. The missing one was the hook that
+implements §C.1's *"every component honors `prefers-reduced-motion`"* — which is the wrong export
+to leave undocumented, because a component author who does not know it exists writes the media
+query again, or, more often, does not.
+
+```tsx
+const reduced = usePrefersReducedMotion();
+// … the value drives BEHAVIOUR, not just CSS:
+const shown = useCountUp(total, reduced);      // reduced → jump to the number, do not animate to it
+<div className={`reactor${executing && !reduced ? ' dispatching' : ''}`} />
+```
+
+Use it when the motion is **produced in JavaScript** — a count-up, a `requestAnimationFrame` loop,
+a class toggled while something streams. Use a `@media (prefers-reduced-motion: reduce)` block when
+the motion is **declared in CSS**. Both are required and neither replaces the other: a CSS media
+query cannot stop a `setInterval` from re-rendering, and the hook cannot reach a keyframe.
+
+It subscribes to the media query rather than reading it once, so a user who changes the system
+setting while the app is open gets the change immediately — the same reason the theme follows
+`prefers-color-scheme` live.
+
+**Reduced motion does not mean no feedback.** §C.1 says *"disable drift/ember/reveal animations,
+keep opacity state changes"*: the surface must still show that something happened, it just must not
+move to say so.
+
 ### Tones and the `statusTone` map
 
 `Tone` (`enums.ts`) = `'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'`.

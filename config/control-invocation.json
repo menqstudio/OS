@@ -1,0 +1,299 @@
+{
+  "_comment": [
+    "T-056. One question per control: what does its failure PREVENT? merge | session | deploy | release | nothing.",
+    "The POPULATION IS DERIVED from the filesystem by tools/check_control_invocation.py - tools/check_*.py plus engine/tools/*.py - and is never a list here. A gate holding a list can omit itself; a gate globbing its own directory cannot, and check_control_invocation.py appears in its own population by construction.",
+    "`blocks` is DERIVED and this file may not disagree with it: the gate re-reads the workflows, the shell scripts those jobs run, one narrow transitive hop (a real import or an argv-shaped filename, comments stripped - a mention is not a call), the hooks, and config/required-checks.json. Running in CI is NOT blocking a merge; two controls here run in CI under contexts nobody requires.",
+    "`kind` is DECLARED because no derivation can answer it: a `check` renders a verdict, a `tool` does something. A tool may block nothing without argument. A CHECK whose own text says fail-closed and whose failure prevents nothing must carry `unenforced_reason` and `tracked_by` - that pair is the freeze, so the debt sits where a reader meets it and a new one cannot appear without somebody writing the sentence."
+  ],
+  "controls": {
+    "engine/tools/bro_authorize_specialist.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_backup.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_bind_workspace.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_deploy_preflight.py": {
+      "kind": "check",
+      "blocks": "nothing",
+      "why": "Zero non-test callers. It is named three times in engine/docs/OPERATOR_RUNBOOK.md, which is a request that somebody run it, and once each in TASKS.md, docs/OWNER_ACTION_REQUIRED.md and docs/SECURITY_MODEL.md. No workflow job, no hook and no script invokes it, so nothing is prevented when it would have refused.",
+      "unenforced_reason": "It calls itself a fail-closed deployment-posture preflight and has zero non-test callers, so no deployment is stopped by it refusing. This is T-056's worked example and the reason this registry exists: being named in a runbook three times is a suggestion, and a suggestion is not a consequence.",
+      "tracked_by": "TASKS.md"
+    },
+    "engine/tools/bro_docs_freshness.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_live_validate.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_monitor.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_run_receipt.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_skill_receipt.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_supervisor.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_traceability.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/bro_validate.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/broctl.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · governance runtime (python)"
+    },
+    "engine/tools/brops_isolation_prover.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Engine · signer isolation proof (linux, dedicated principals)"
+    },
+    "engine/tools/brops_live_runstate.py": {
+      "kind": "tool",
+      "blocks": "nothing",
+      "why": "The authoritative live RunStateProvider. It answers a question at runtime; it does not gate a pipeline."
+    },
+    "engine/tools/brops_receipt_signer.py": {
+      "kind": "tool",
+      "blocks": "nothing",
+      "why": "The isolated receipt SIGNER. It produces a signature."
+    },
+    "engine/tools/brops_sign_flow.py": {
+      "kind": "tool",
+      "blocks": "nothing",
+      "why": "Composes supervisor evidence-production and signing into one outcome. A composer."
+    },
+    "engine/tools/brops_signer_service.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · signer isolation proof (linux, dedicated principals)"
+    },
+    "engine/tools/brops_supervisor_attest.py": {
+      "kind": "tool",
+      "blocks": "nothing",
+      "why": "Supervisor evidence-production plus run attestation. A producer."
+    },
+    "engine/tools/brops_supervisor_service.py": {
+      "kind": "tool",
+      "blocks": "merge",
+      "invoked_by": "Engine · signer isolation proof (linux, dedicated principals)"
+    },
+    "tools/check_action_pins.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Action pins - consistency gate (F-46)"
+    },
+    "tools/check_ai_surfaces.py": {
+      "kind": "check",
+      "blocks": "nothing",
+      "why": "It runs on every pull request, but in the `AI-surface inventory gate` job, whose context is not among the 33 required in config/required-checks.json — so a red run there blocks no merge. Measured 2026-08-31 by reading that file, not assumed.",
+      "unenforced_reason": "Its own text says fail-closed and it runs on every pull request - but in the `AI-surface inventory gate` job, whose context is NOT among the 33 required in config/required-checks.json, and in a workflow that is additionally `paths:`-filtered. A red run there does not block a merge. This is recorded rather than fixed because making the context required is a branch-protection change, which is the Owner's act and not a gate's.",
+      "tracked_by": "TASKS.md"
+    },
+    "tools/check_audit_actor.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Capability · inventory gate (T-010)"
+    },
+    "tools/check_audit_reports.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
+    "tools/check_bundle_budget.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · frontend bundle-size budget (build + check)"
+    },
+    "tools/check_c1_tokens.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · design tokens (drift + contrast)"
+    },
+    "tools/check_canon_budget.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_canonical_sync.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
+    "tools/check_capabilities.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Capability · inventory gate (T-010)"
+    },
+    "tools/check_contracts_single_source.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Repo-state · live GitHub truth verifier"
+    },
+    "tools/check_contrast.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · design tokens (drift + contrast)"
+    },
+    "tools/check_control_invocation.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_coordination.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_dead_tokens.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Repo-state · live GitHub truth verifier"
+    },
+    "tools/check_doc_claims.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_handoff_ready.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_i18n_parity.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · design tokens (drift + contrast)"
+    },
+    "tools/check_ledger_ddl_parity.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Supervisor · durable-ledger DDL single-source gate (F-01)"
+    },
+    "tools/check_negative_matrix.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Negative matrix · every declared test ID says what establishes it"
+    },
+    "tools/check_no_assumptions.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_no_lstrip_prefix.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
+    "tools/check_prior_art.py": {
+      "kind": "check",
+      "blocks": "session",
+      "invoked_by": ".claude/hooks"
+    },
+    "tools/check_produced_artifact.py": {
+      "kind": "check",
+      "blocks": "nothing",
+      "why": "Runs in `Production half · the five conditions (T-055)`, which is NOT among the 33 required contexts in config/required-checks.json. Its failure therefore stops nothing: a red T-055 job does not block a merge. Measured 2026-08-31, not assumed - the job name is absent from that file."
+    },
+    "tools/check_reachability.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Reachability - nothing implemented-and-uncalled"
+    },
+    "tools/check_read_receipt.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
+    "tools/check_recommendation.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_release_signing.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Release signing + updater - fail-closed coupling gate"
+    },
+    "tools/check_repo_state.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Repo-state · live GitHub truth verifier"
+    },
+    "tools/check_residual_items.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Residual engine items O-1..O-5 - inventory gate"
+    },
+    "tools/check_roadmap_order.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
+    "tools/check_runbook_snippets.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Runbooks - pasted Python matches the code it calls"
+    },
+    "tools/check_schema_mirrors.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Repo-state · live GitHub truth verifier"
+    },
+    "tools/check_spec_references.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Spec · every § reference declares whether it is implemented"
+    },
+    "tools/check_state_fields.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_token_parity.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · design tokens (drift + contrast)"
+    },
+    "tools/check_truncated_lines.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_version_parity.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
+    }
+  }
+}

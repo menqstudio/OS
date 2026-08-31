@@ -13,7 +13,7 @@ import { Activity } from './Activity';
 
 function setup() {
   invokeMock.mockImplementation((cmd: string) => {
-    if (cmd === 'list_activity') return Promise.resolve([{ id: 'ev-1', eventType: 'task.created', actorId: 'gev', entityType: 'task', entityId: 't-1', createdAt: '1700000000000' }]);
+    if (cmd === 'list_activity') return Promise.resolve([{ id: 'ev-1', eventType: 'task.created', actorType: 'user', actorId: 'local-operator', entityType: 'task', entityId: 't-1', createdAt: '1700000000000' }]);
     return Promise.resolve(null);
   });
   return render(<AppProvider><ToastProvider><Activity /></ToastProvider></AppProvider>);

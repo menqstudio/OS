@@ -32,6 +32,38 @@ fn a_connector(c: &Connection) -> Integration {
     repo::integrations::create(c, "Slack", "slack").expect("create connector")
 }
 
+/// Mint and natively confirm the T-052 grant `set_auth_ref` now requires, through the
+/// real approval path -- `approvals::create` then `approve_confirmed`, exactly the two
+/// calls `commands::confirm_approval` makes. One grant unlocks one write: `set_auth_ref`
+/// consumes it in the same transaction, so a test that sets a reference twice must call
+/// this twice, and that is the property under test rather than an inconvenience.
+fn grant_auth_ref(c: &Connection, integration_id: &str) {
+    let ap = repo::approvals::create(
+        c,
+        repo::approvals::INTEGRATION_AUTH_REF_ACTION_TYPE,
+        "test connector",
+        "A2",
+        "medium",
+        Some(repo::approvals::INTEGRATION_ENTITY_TYPE),
+        Some(integration_id),
+        "webview:test",
+        "sess-test",
+        &brops_core::id(),
+        brops_core::repo::audit::Actor::local_operator(),
+    )
+    .expect("mint approval");
+    repo::approvals::approve_confirmed(
+        c,
+        &ap.id,
+        repo::approvals::NATIVE_CONFIRMER_PRINCIPAL,
+        None,
+        ap.nonce.as_deref().unwrap(),
+        ap.request_digest.as_deref().unwrap(),
+        brops_core::repo::audit::Actor::native_confirmer("native:test"),
+    )
+    .expect("native confirmation");
+}
+
 /// Everything an error message can reach: the rendered `Display` text.
 fn message(e: &CoreError) -> String {
     e.to_string()
@@ -92,8 +124,9 @@ fn a_reference_round_trips_through_the_record() {
     let c = conn();
     let created = a_connector(&c);
 
+    grant_auth_ref(&c, &created.id);
     let updated =
-        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:slack/bot-token")).unwrap();
+        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:slack/bot-token"), brops_core::repo::audit::Actor::local_operator()).unwrap();
     assert_eq!(updated.auth_ref.as_deref(), Some("engine:slack/bot-token"));
 
     // ...and it is durable, not just returned.
@@ -114,7 +147,8 @@ fn a_reference_round_trips_through_the_record() {
         "vault:kv/data/brops/smtp",
         "  engine:trimmed/ref  ",
     ] {
-        let r = repo::integrations::set_auth_ref(&c, &created.id, Some(good)).unwrap();
+        grant_auth_ref(&c, &created.id);
+        let r = repo::integrations::set_auth_ref(&c, &created.id, Some(good), brops_core::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(r.auth_ref.as_deref(), Some(good.trim()), "`{good}` must round-trip");
     }
 }
@@ -123,13 +157,17 @@ fn a_reference_round_trips_through_the_record() {
 fn a_reference_can_be_cleared_back_to_no_reference() {
     let c = conn();
     let created = a_connector(&c);
-    repo::integrations::set_auth_ref(&c, &created.id, Some("vault:kv/data/brops/smtp")).unwrap();
+    grant_auth_ref(&c, &created.id);
+    repo::integrations::set_auth_ref(&c, &created.id, Some("vault:kv/data/brops/smtp"), brops_core::repo::audit::Actor::local_operator()).unwrap();
 
     // Clearing is a truthful state change, not an error — and both spellings of "clear"
     // (no value at all, and an empty box in the UI) mean the same thing.
     for clear in [None, Some(""), Some("   ")] {
-        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:x/y")).unwrap();
-        let cleared = repo::integrations::set_auth_ref(&c, &created.id, clear).unwrap();
+        grant_auth_ref(&c, &created.id);
+        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:x/y"), brops_core::repo::audit::Actor::local_operator()).unwrap();
+        // Clearing is gated too, so it needs its own grant: one approval, one write.
+        grant_auth_ref(&c, &created.id);
+        let cleared = repo::integrations::set_auth_ref(&c, &created.id, clear, brops_core::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(cleared.auth_ref, None, "clearing must yield no reference, not ''");
     }
 }
@@ -158,7 +196,7 @@ fn secret_shaped_and_malformed_values_are_refused() {
         "engine:naïve/ref",                         // outside the reference alphabet
         "e:x",                                      // too short to be a scheme we know
     ] {
-        let err = match repo::integrations::set_auth_ref(&c, &created.id, Some(bad)) {
+        let err = match repo::integrations::set_auth_ref(&c, &created.id, Some(bad), brops_core::repo::audit::Actor::local_operator()) {
             Ok(_) => panic!("`{bad}` must be refused"),
             Err(e) => e,
         };
@@ -182,7 +220,7 @@ fn secret_shaped_and_malformed_values_are_refused() {
 
     // A key-sized blob does not fit at all.
     let blob = format!("engine:{}", "a".repeat(400));
-    assert!(repo::integrations::set_auth_ref(&c, &created.id, Some(&blob)).is_err());
+    assert!(repo::integrations::set_auth_ref(&c, &created.id, Some(&blob), brops_core::repo::audit::Actor::local_operator()).is_err());
 
     // And after all of that, the record still holds nothing.
     assert_eq!(repo::integrations::get(&c, &created.id).unwrap().auth_ref, None);
@@ -196,7 +234,8 @@ fn the_documented_limit_is_real_a_wellformed_reference_may_still_be_a_secret() {
     // that keeps credentials out is the one outside this file: they must never arrive.
     let c = conn();
     let created = a_connector(&c);
-    let r = repo::integrations::set_auth_ref(&c, &created.id, Some("engine:hunter2")).unwrap();
+    grant_auth_ref(&c, &created.id);
+    let r = repo::integrations::set_auth_ref(&c, &created.id, Some("engine:hunter2"), brops_core::repo::audit::Actor::local_operator()).unwrap();
     assert_eq!(r.auth_ref.as_deref(), Some("engine:hunter2"));
 }
 
@@ -207,8 +246,10 @@ fn setting_a_reference_audits_the_event_but_never_the_reference() {
     let c = conn();
     let created = a_connector(&c);
     let secret_looking = "vault:kv/data/brops/smtp";
-    repo::integrations::set_auth_ref(&c, &created.id, Some(secret_looking)).unwrap();
-    repo::integrations::set_auth_ref(&c, &created.id, None).unwrap();
+    grant_auth_ref(&c, &created.id);
+    repo::integrations::set_auth_ref(&c, &created.id, Some(secret_looking), brops_core::repo::audit::Actor::local_operator()).unwrap();
+    grant_auth_ref(&c, &created.id);
+    repo::integrations::set_auth_ref(&c, &created.id, None, brops_core::repo::audit::Actor::local_operator()).unwrap();
 
     let events: Vec<String> = c
         .prepare("SELECT event_type FROM audit_events WHERE entity_id = ?1 ORDER BY created_at, id")
@@ -242,8 +283,9 @@ fn naming_a_reference_does_not_connect_anything() {
     let created = a_connector(&c);
     assert_eq!(created.status, "disconnected");
 
+    grant_auth_ref(&c, &created.id);
     let after =
-        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:slack/bot-token")).unwrap();
+        repo::integrations::set_auth_ref(&c, &created.id, Some("engine:slack/bot-token"), brops_core::repo::audit::Actor::local_operator()).unwrap();
     assert_eq!(after.status, "disconnected", "a reference must not enable a connector");
     assert_eq!(after.provider, created.provider);
     assert_eq!(after.name, created.name);
@@ -253,14 +295,14 @@ fn naming_a_reference_does_not_connect_anything() {
 #[test]
 fn setting_a_reference_on_an_unknown_connector_is_not_found() {
     let c = conn();
-    let err = repo::integrations::set_auth_ref(&c, "no-such-connector", Some("engine:x/y"))
+    let err = repo::integrations::set_auth_ref(&c, "no-such-connector", Some("engine:x/y"), brops_core::repo::audit::Actor::local_operator())
         .expect_err("an unknown connector must not be silently created");
     assert!(matches!(err, CoreError::NotFound(_)), "got {err}");
 
     // A refusal is decided BEFORE the row is looked up only when the value is bad — an
     // invalid reference for an unknown connector is still an `auth_ref` refusal, and
     // still says nothing about the value.
-    let err = repo::integrations::set_auth_ref(&c, "no-such-connector", Some("sk-live-AAAABBBB"))
+    let err = repo::integrations::set_auth_ref(&c, "no-such-connector", Some("sk-live-AAAABBBB"), brops_core::repo::audit::Actor::local_operator())
         .expect_err("a secret-shaped value must be refused");
     assert!(matches!(err, CoreError::Invalid { field: "auth_ref", .. }), "got {err}");
     assert!(!message(&err).contains("sk-live-AAAABBBB"));

@@ -5,6 +5,7 @@ exact-head drift must be RED, event base/head/number mismatch must be RED, merge
 """
 from __future__ import annotations
 
+import datetime as dt
 import pathlib
 import sys
 import unittest
@@ -176,6 +177,47 @@ class CarrierExactHeadTests(unittest.TestCase):
                             for p in rs.verify_carrier_exact_head(CARRIER_HEAD, CARRIER_HEAD, marker)))
 
 
+class ExternalPrAnchorTests(unittest.TestCase):
+    """fifth audit, A-05: the docstring claimed four anchors and delivered one.
+
+    `branch`, `base` and `draft` were each checked only *if the snapshot bothered to state them*,
+    so an entry of `{number, merge_state, head}` satisfied "anchored to an exact live head, branch,
+    base and draft flag" while anchoring only the head. Omission is now a failure, which is what
+    makes the sentence true.
+    """
+    def _live(self):
+        return {112: {"state": "OPEN", "isDraft": False, "headRefName": "design/floor-writer",
+                      "baseRefName": "main", "headRefOid": HEAD_31}}
+
+    def _entry(self, **over):
+        e = {"number": 112, "branch": "design/floor-writer", "base": "main",
+             "draft": False, "merge_state": "open", "head": HEAD_31}
+        e.update(over)
+        return e
+
+    def test_a_complete_entry_passes(self):
+        self.assertEqual(rs.compare_external_prs({"prs": [self._entry()]}, self._live()), [])
+
+    def test_head_only_entry_is_REFUSED(self):
+        thin = {"number": 112, "merge_state": "open", "head": HEAD_31}
+        f = rs.compare_external_prs({"prs": [thin]}, self._live())
+        self.assertTrue(any("omits `branch`" in p for p in f), f)
+        self.assertTrue(any("omits `base`" in p for p in f), f)
+        self.assertTrue(any("omits `draft`" in p for p in f), f)
+
+    def test_each_omission_is_reported_on_its_own(self):
+        for field, needle in (("branch", "omits `branch`"), ("base", "omits `base`"),
+                              ("draft", "omits `draft`")):
+            entry = self._entry()
+            del entry[field]
+            f = rs.compare_external_prs({"prs": [entry]}, self._live())
+            self.assertTrue(any(needle in p for p in f), (field, f))
+
+    def test_a_stated_but_wrong_value_still_fails(self):
+        f = rs.compare_external_prs({"prs": [self._entry(branch="wrong")]}, self._live())
+        self.assertTrue(any("but GitHub head branch" in p for p in f), f)
+
+
 class CarrierPostMergeTests(unittest.TestCase):
     def test_merged_with_correct_post_merge_is_green(self):
         snap = _snapshot()
@@ -208,6 +250,188 @@ class CarrierPostMergeTests(unittest.TestCase):
 
     def test_open_carrier_is_noop(self):
         self.assertEqual(rs.verify_carrier_post_merge({"state": "OPEN"}, _snapshot()), [])
+
+
+class SettledSnapshotTests(unittest.TestCase):
+    """The carrier stopped being OPEN. What must the snapshot then say?
+
+    The third arm of this rule used to demand that the carrier itself still be open, which is
+    unsatisfiable once a second pull request is parked open across a merge (main RED -> the repair PR
+    must self-carry -> merging it re-creates the condition). These tests pin BOTH halves: an open PR
+    named nowhere is still RED, and an open PR named in prs[] is GREEN.
+    """
+    def _snap(self, prs=None):
+        snap = _snapshot()
+        snap["settled_at_main_head"] = MAIN
+        snap["prs"] = prs if prs is not None else []
+        return snap
+
+    def _yes(self, a, b):  # is_ancestor stub: settled is on main
+        return True
+
+    #: A carrier merge commit whose FIRST PARENT is the settled head these fixtures record.
+    #: Supplied to every call, because as of the sixth audit's A-11 the pin FAILS CLOSED: a
+    #: missing mergeCommit or an unresolvable parent is a refusal, not a skip. Before that they
+    #: were silently skipped, and the auditor measured the repository's own first commit passing.
+    MERGE = "f" * 40
+
+    def _parent(self, sha):  # first_parent stub: the merge landed on MAIN
+        return MAIN if sha == self.MERGE else None
+
+    def test_open_carrier_is_noop(self):
+        self.assertEqual(rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes), [])
+
+    # --- seventh audit, G-05: the fifth door, and the test that pinned it open -----------------
+    #
+    # This was `test_unresolvable_state_is_noop`, asserting `[]` for an empty carrier state — three
+    # lines above the two tests `A-11` rewrote for saying exactly the same thing in different
+    # words. `A-11`'s own sentence applies: *"a check that could not run has not passed."*
+    # `_is_noop` in the name is what stopped anyone noticing, including the round that rewrote its
+    # neighbours.
+    #
+    # An empty state short-circuits ALL FOUR of `A-11`'s doors before any is reached, so this was
+    # the largest fail-open in the function and the only one with a test defending it.
+
+    def test_an_unreadable_carrier_state_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(33, "", self._snap(), {33}, MAIN, self._yes,
+                                       self.MERGE, self._parent)
+        self.assertTrue(any("could not be read" in p for p in f), f)
+
+    def test_an_unreadable_state_does_not_let_a_missing_settled_head_through(self):
+        # What the fail-open actually cost: with no settled_at_main_head at all, it returned clean.
+        snap = self._snap()
+        del snap["settled_at_main_head"]
+        self.assertNotEqual(
+            rs.verify_settled_snapshot(33, "", snap, {33}, MAIN, self._yes, self.MERGE, self._parent),
+            [])
+
+    def test_an_OPEN_carrier_is_still_a_legitimate_skip(self):
+        # The half of the old guard that was right, kept separate so the two cannot be confused
+        # again — and note it needs no live measurements at all, which is why it is a skip.
+        self.assertEqual(
+            rs.verify_settled_snapshot(33, "OPEN", self._snap(), {33}, MAIN, self._yes,
+                                       self.MERGE, self._parent), [])
+
+    def test_merged_without_settled_head_is_red(self):
+        snap = self._snap(); snap.pop("settled_at_main_head")
+        self.assertTrue(any("records no settled_at_main_head" in p
+                            for p in rs.verify_settled_snapshot(33, "MERGED", snap, set(), MAIN, self._yes, self.MERGE, self._parent)))
+
+    def test_settled_head_not_on_main_is_red(self):
+        f = rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), NEWMAIN, lambda a, b: False, self.MERGE, self._parent)
+        self.assertTrue(any("is not an ancestor of live main" in p for p in f))
+
+    def test_merged_with_nothing_open_is_green(self):
+        self.assertEqual(rs.verify_settled_snapshot(33, "MERGED", self._snap(), set(), MAIN,
+                                                    self._yes, self.MERGE, self._parent), [])
+
+    def test_open_pr_named_nowhere_is_red(self):
+        # the staleness the rule exists for: #112 is open and this file mentions it nowhere.
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112}, MAIN, self._yes, self.MERGE, self._parent)
+        self.assertTrue(any("#112 is open and unnamed" in p for p in f), f)
+
+    def test_every_unnamed_open_pr_is_listed(self):
+        f = rs.verify_settled_snapshot(113, "MERGED", self._snap(), {112, 120}, MAIN, self._yes, self.MERGE, self._parent)
+        self.assertTrue(any("#112, #120 are open and unnamed" in p for p in f), f)
+
+    def test_open_pr_carried_in_prs_is_green(self):
+        # THE DEADLOCK REGRESSION. A parked PR recorded in prs[] is named, so main is not RED —
+        # and it is not a free pass either: compare_external_prs anchors it to an exact live head.
+        snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
+                            "draft": False, "merge_state": "open", "head": HEAD_31}])
+        self.assertEqual(rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent), [])
+
+    def test_repair_pr_cannot_be_forced_to_carry_the_parked_pr(self):
+        # The other half of the deadlock, stated as a test: the repair PR self-carries (#114) while
+        # #112 stays parked in prs[]. Under the old rule this was RED with no legal way out.
+        snap = self._snap([{"number": 112, "branch": "design/floor-writer", "base": "main",
+                            "draft": False, "merge_state": "open", "head": HEAD_31}])
+        self.assertEqual(rs.verify_settled_snapshot(114, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent), [])
+
+    # --- fifth audit, A-05: the safety net was a fail-open --------------------------------------
+    def test_unknown_open_set_REFUSES_rather_than_assuming_nothing_is_open(self):
+        # open_prs_now() used to return an empty set when gh failed, and an empty set is the most
+        # PERMISSIVE answer this rule can receive — "no pull requests are open" — returned exactly
+        # when the truth is unknown. None now means unknown, and unknown is a refusal.
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), None, MAIN, self._yes, self.MERGE, self._parent)
+        self.assertTrue(any("could not be determined" in p for p in f), f)
+
+    def test_the_refusal_does_not_fire_while_the_carrier_is_still_open(self):
+        self.assertEqual(rs.verify_settled_snapshot(118, "OPEN", self._snap(), None, MAIN, self._yes), [])
+
+    # --- fifth audit, A-07: an ancestor check alone can never go stale --------------------------
+    # `settled_at_main_head` means "the main this carrier merged into", which is EXACTLY the merge
+    # commit's first parent. The audit's own suggestion — "settled must be at or after the merge
+    # commit" — is unsatisfiable for a self-carrier, because the snapshot is written inside the
+    # pull request, before the merge it would have to postdate. That version went red on main
+    # within a minute of shipping; these tests pin the version that is both exact and satisfiable.
+    def test_settled_that_is_not_the_mains_the_carrier_merged_into_is_red(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: "9" * 40)
+        self.assertTrue(any("is not the main that carrier" in p for p in f), f)
+
+    def test_settled_equal_to_the_merges_first_parent_is_green(self):
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: MAIN), [])
+
+    def test_a_self_carrier_written_before_its_own_merge_is_SATISFIABLE(self):
+        # The regression that matters: the snapshot records the main it branched from, the merge
+        # lands on that same commit, and this must be GREEN. The first version of the rule made
+        # this state impossible to reach and turned main red on every merge.
+        snap = self._snap(); snap["settled_at_main_head"] = MAIN
+        self.assertEqual(
+            rs.verify_settled_snapshot(118, "MERGED", snap, set(), NEWMAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: MAIN), [])
+
+    # --- sixth audit, A-11: the two fail-opens BESIDE the one that was fixed --------------------
+    #
+    # These two tests used to be named `…_does_not_invent_a_failure` and asserted `[]`. That is the
+    # defect, encoded as intent: the auditor measured `settled_at_main_head` set to the
+    # REPOSITORY'S OWN FIRST COMMIT passing, because a missing `mergeCommit` or an unresolvable
+    # first parent skipped the pin entirely and nothing was logged.
+    #
+    # "Does not invent a failure" was the wrong frame. A check that could not run has not passed —
+    # and the auditor's aside is the sharp part: these are exactly the paths a `gh`-less
+    # environment takes, so the environment least able to verify anything was the one that
+    # verified least and said so least. `open_prs_now()` was given this same treatment for the
+    # fifth audit's `A-05`; these two sat beside it, quiet.
+
+    def test_an_unresolvable_first_parent_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN,
+                                       first_parent=lambda _: None)
+        self.assertTrue(any("could not be resolved" in p for p in f), f)
+
+    def test_no_merge_commit_available_REFUSES_rather_than_skipping(self):
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=None, first_parent=self._parent)
+        self.assertTrue(any("no mergeCommit" in p for p in f), f)
+
+    def test_no_first_parent_RESOLVER_refuses_too(self):
+        # The third door into the same room: a caller that simply does not supply the resolver.
+        f = rs.verify_settled_snapshot(118, "MERGED", self._snap(), set(), MAIN, self._yes,
+                                       carrier_merge_commit=NEWMAIN)
+        self.assertTrue(any("no first-parent resolver" in p for p in f), f)
+
+    def test_the_first_commit_ever_made_no_longer_passes_through_a_skipped_pin(self):
+        # The auditor's own measurement, as a regression. With the pin skipped this was GREEN.
+        snap = self._snap()
+        snap["settled_at_main_head"] = "0" * 40
+        for kwargs in ({"carrier_merge_commit": None, "first_parent": self._parent},
+                       {"carrier_merge_commit": NEWMAIN, "first_parent": lambda _: None},
+                       {"carrier_merge_commit": NEWMAIN}):
+            f = rs.verify_settled_snapshot(118, "MERGED", snap, set(), MAIN, self._yes, **kwargs)
+            self.assertTrue(f, f"a skipped pin must not pass: {kwargs}")
+
+    def test_malformed_prs_entries_do_not_launder_an_open_pr(self):
+        # a non-dict, a null number and a string number must NOT count as "named".
+        snap = self._snap(["112", {"number": None}, {"number": "112"}])
+        self.assertTrue(any("#112 is open and unnamed" in p
+                            for p in rs.verify_settled_snapshot(113, "MERGED", snap, {112}, MAIN, self._yes, self.MERGE, self._parent)))
 
 
 class CarrierStateTests(unittest.TestCase):
@@ -284,5 +508,384 @@ class MainPushTests(unittest.TestCase):
         self.assertTrue(any("not an ancestor" in p for p in f))
 
 
+
+class RestSecondRoad(unittest.TestCase):
+    """The REST fallback — eighth audit `H-05`, and the first tests it has ever had.
+
+    `grep -c "_rest_" tools/test_check_repo_state.py` returned **0** when the audit ran. This is the
+    one piece of code the seventh round added that no gate covered, written during a live GitHub
+    outage and merged the same day, and it sits behind a REQUIRED status check.
+    """
+
+    def setUp(self):
+        rs._REPO_SLUG_CACHE = None
+        self.addCleanup(setattr, rs, "_REPO_SLUG_CACHE", None)
+
+    def _gh(self, mapping, default=None):
+        """Patch `subprocess.run` in the module under test; dispatch on the joined argv."""
+        class R:
+            def __init__(self, rc, out, err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def run(cmd, **_kw):
+            key = " ".join(cmd)
+            for needle, value in mapping.items():
+                if needle in key:
+                    if isinstance(value, Exception):
+                        raise value
+                    return R(*value)
+            if default is None:
+                raise AssertionError("unexpected subprocess call: " + key)
+            return R(*default)
+
+        real = rs.subprocess.run
+        rs.subprocess.run = run
+        self.addCleanup(setattr, rs.subprocess, "run", real)
+
+    # ---- the slug the REST road addresses -----------------------------------------------------
+
+    def test_the_slug_comes_from_gh_not_from_a_literal(self):
+        self._gh({"repo view": (0, '{"nameWithOwner":"someone/fork"}')})
+        self.assertEqual(rs._repo_slug(), "someone/fork")
+
+    def test_the_slug_is_resolved_once_and_cached(self):
+        calls = []
+
+        class R:
+            returncode, stdout, stderr = 0, '{"nameWithOwner":"a/b"}', ""
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            return R()
+
+        real = rs.subprocess.run
+        rs.subprocess.run = run
+        self.addCleanup(setattr, rs.subprocess, "run", real)
+        self.assertEqual(rs._repo_slug(), "a/b")
+        self.assertEqual(rs._repo_slug(), "a/b")
+        self.assertEqual(len(calls), 1, "resolved once per process, not per REST call")
+
+    def test_an_unresolvable_slug_REFUSES_rather_than_guessing(self):
+        # The whole point of H-05: in a fork, guessing `menqstudio/OS` answers about a DIFFERENT
+        # repository than the GraphQL road did, and nothing downstream could tell.
+        for reply in [(1, "", "gh: not a repository"), (0, ""), (0, "not json"),
+                      (0, '{"nameWithOwner":null}'), (0, '{"nameWithOwner":"no-slash"}'),
+                      (0, '{"nameWithOwner":"https://github.com/a/b"}')]:
+            with self.subTest(reply=reply):
+                rs._REPO_SLUG_CACHE = None
+                self._gh({"repo view": reply})
+                self.assertIsNone(rs._repo_slug())
+        rs._REPO_SLUG_CACHE = None
+        self._gh({"repo view": OSError("gh not installed")})
+        self.assertIsNone(rs._repo_slug())
+
+    def test_a_failed_slug_makes_every_REST_road_refuse(self):
+        rs._REPO_SLUG_CACHE = False
+        self._gh({})                      # any REST call at all would raise AssertionError
+        self.assertIsNone(rs._rest_pull(153))
+        self.assertIsNone(rs._rest_open_prs())
+        data, why = rs._live_protection()
+        self.assertIsNone(data)
+        self.assertIn("slug unresolved", why)
+
+    # ---- _rest_pull ---------------------------------------------------------------------------
+
+    def test_rest_pull_maps_RESTs_merged_vocabulary_to_GraphQLs(self):
+        # REST says `state:"closed"` + `merged:true`; GraphQL says `MERGED`. Mapping a merged PR to
+        # CLOSED would tell verify_settled_snapshot the wrong story about the settle.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": (0, '{"state":"closed","merged":true,"draft":false,'
+                                 '"head":{"ref":"h","sha":"' + MAIN + '"},"base":{"ref":"main"},'
+                                 '"merge_commit_sha":"' + NEWMAIN + '","body":"b"}')})
+        pr = rs._rest_pull(9)
+        self.assertEqual(pr["state"], "MERGED")
+        self.assertEqual(pr["mergeCommit"], {"oid": NEWMAIN})
+        self.assertEqual(pr["headRefOid"], MAIN)
+        self.assertEqual(pr["baseRefName"], "main")
+
+    def test_rest_pull_uppercases_the_unmerged_states(self):
+        for rest_state, expected in [("open", "OPEN"), ("closed", "CLOSED")]:
+            with self.subTest(rest_state=rest_state):
+                rs._REPO_SLUG_CACHE = "a/b"
+                self._gh({"pulls/9": (0, '{"state":"' + rest_state + '","merged":false,'
+                                         '"head":{},"base":{}}')})
+                self.assertEqual(rs._rest_pull(9)["state"], expected)
+
+    def test_rest_pull_with_no_merge_commit_reports_None_not_a_fake_oid(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": (0, '{"state":"open","merged":false,"head":{},"base":{},'
+                                 '"merge_commit_sha":null}')})
+        self.assertIsNone(rs._rest_pull(9)["mergeCommit"])
+
+    def test_rest_pull_refuses_a_reply_with_no_state(self):
+        # A reply with no `state` must fail closed rather than becoming the empty string, which
+        # would uppercase to '' and compare unequal to every real state — a silent permanent
+        # mismatch that reads as drift instead of as an unanswered read.
+        rs._REPO_SLUG_CACHE = "a/b"
+        for body in ['{"merged":false}', '[]', 'null', '"a string"']:
+            with self.subTest(body=body):
+                self._gh({"pulls/9": (0, body)})
+                self.assertIsNone(rs._rest_pull(9))
+
+    def test_rest_pull_returns_None_when_the_SECOND_road_fails_too(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"pulls/9": rs.subprocess.CalledProcessError(1, "gh")})
+        self.assertIsNone(rs._rest_pull(9))
+        self._gh({"pulls/9": (0, "{not json")})
+        self.assertIsNone(rs._rest_pull(9))
+
+    # ---- _rest_open_prs -----------------------------------------------------------------------
+
+    def test_rest_open_prs_reads_the_shape_gh_ACTUALLY_emits(self):
+        # MEASURED against gh 2.97.0 on 2026-08-18: `--paginate` over a genuinely two-page result
+        # returns ONE merged array — zero newlines, zero `][`. This is the shape that must work.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, '[{"number":153},{"number":112}]')})
+        self.assertEqual(rs._rest_open_prs(), {153, 112})
+
+    def test_rest_open_prs_also_reads_the_two_shapes_the_normalisation_defends(self):
+        # Neither is emitted by gh 2.97.0 — both have been emitted by other versions, which is why
+        # the branches are kept. Pinned so a future tidy-up cannot remove them silently.
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, '[{"number":1}][{"number":2}]')})
+        self.assertEqual(rs._rest_open_prs(), {1, 2}, "concatenated arrays")
+        self._gh({"--paginate": (0, '[{"number":3}]\n[{"number":4}]\n')})
+        self.assertEqual(rs._rest_open_prs(), {3, 4}, "newline-delimited pages")
+
+    def test_rest_open_prs_never_truncates_a_multi_page_answer(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        every = list(range(1, 251))
+        body = "[" + ",".join('{"number":' + str(n) + '}' for n in every) + "]"
+        self._gh({"--paginate": (0, body)})
+        self.assertEqual(rs._rest_open_prs(), set(every))
+
+    def test_rest_open_prs_refuses_rather_than_returning_the_empty_set(self):
+        # An empty set is the MOST PERMISSIVE answer available ("nothing is open"), returned exactly
+        # when the truth is unknown. That was A-05 in the fifth audit; None is the honest answer.
+        rs._REPO_SLUG_CACHE = "a/b"
+        for reply in [(1, "", "503"), (0, ""), (0, "   "), (0, "[{not json")]:
+            with self.subTest(reply=reply):
+                self._gh({"--paginate": reply})
+                self.assertIsNone(rs._rest_open_prs())
+        self._gh({"--paginate": OSError("gh vanished")})
+        self.assertIsNone(rs._rest_open_prs())
+
+    def test_an_empty_open_set_is_distinguishable_from_a_failure(self):
+        rs._REPO_SLUG_CACHE = "a/b"
+        self._gh({"--paginate": (0, "[]")})
+        self.assertEqual(rs._rest_open_prs(), set(), "genuinely no open PRs is a SET, not None")
+
+
+class DeferredEnforcementTests(unittest.TestCase):
+    """`verify_deferred_enforcement` — T-055. A deferred enforcement has a DATE, and the date bites.
+
+    Written because "we will make it required once the queue drains" is an intention, and every
+    deferred enforcement in this repository so far has ended as a correctly written control wired
+    to nothing. The trigger is a date rather than an observable state on purpose: a state is
+    controlled by the same person who owes the enforcement, so "once the queue drains" is
+    satisfied by never adding a task, which is never.
+    """
+
+    JOB = "Production half · the five conditions (T-055)"
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="deferrals-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.wf = self.root / ".github" / "workflows"
+        self.wf.mkdir(parents=True)
+        (self.wf / "ci.yml").write_text(
+            "jobs:\n  a:\n    name: Required job\n  b:\n    name: " + self.JOB + "\n",
+            encoding="utf-8")
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "check_produced_artifact.py").write_text("#\n", encoding="utf-8")
+        self.expected = {"contexts": ["Required job"], "deliberately_excluded": {}}
+        self.registry = {
+            "max_days_without_sign_off": 7,
+            "deferrals": {self.JOB: {
+                "gate": "tools/check_produced_artifact.py",
+                "workflow": ".github/workflows/ci.yml",
+                "status": "OPEN",
+                "first_declared": "2026-08-30",
+                "deferred_until": "2026-09-06",
+                "reason": "x" * 130,
+                "sign_off": "",
+            }},
+        }
+
+    def run_check(self, today="2026-09-01"):
+        return rs.verify_deferred_enforcement(
+            self.expected, self.registry, self.wf, self.root, dt.date.fromisoformat(today))
+
+    # --------------------------------------------------------------- the happy path
+
+    def test_a_dated_deferral_inside_its_window_is_accepted(self):
+        self.assertEqual(self.run_check("2026-09-01"), [])
+
+    def test_the_last_day_of_the_window_is_still_inside_it(self):
+        self.assertEqual(self.run_check("2026-09-06"), [])
+
+    # --------------------------------------------------------------- the date bites
+
+    def test_the_day_after_the_deadline_is_red(self):
+        problems = self.run_check("2026-09-07")
+        self.assertTrue(any("EXPIRED" in p for p in problems), problems)
+        self.assertTrue(any("still absent from `contexts`" in p for p in problems), problems)
+
+    def test_an_expired_deferral_whose_promise_was_KEPT_is_not_red_for_expiry(self):
+        """Adding the context is what was promised; having done it, the date stops mattering.
+        The stale entry is still reported — as a contradiction, not as an expiry."""
+        self.expected["contexts"].append(self.JOB)
+        problems = self.run_check("2026-09-30")
+        self.assertFalse(any("EXPIRED" in p for p in problems), problems)
+        self.assertTrue(any("is ALSO a required context" in p for p in problems), problems)
+
+    def test_a_deferral_with_no_expiry_is_the_thing_this_registry_prevents(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = None
+        self.assertTrue(any("must be an ISO date" in p for p in self.run_check()))
+
+    def test_a_non_iso_expiry_is_refused(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "next week"
+        self.assertTrue(any("must be an ISO date" in p for p in self.run_check()))
+
+    def test_an_expiry_before_its_declaration_is_refused(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-08-01"
+        self.assertTrue(any("is before `first_declared`" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- extension costs a signature
+
+    def test_extending_past_the_ceiling_needs_a_sign_off(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-10-30"
+        self.assertTrue(any("add a `sign_off`" in p for p in self.run_check()))
+
+    def test_a_signed_extension_is_accepted(self):
+        self.registry["deferrals"][self.JOB]["deferred_until"] = "2026-10-30"
+        self.registry["deferrals"][self.JOB]["sign_off"] = "Owner (Gev), 2026-09-06"
+        self.assertEqual(self.run_check("2026-09-20"), [])
+
+    def test_a_non_open_status_needs_a_sign_off_like_O_1_to_O_5_do(self):
+        self.registry["deferrals"][self.JOB]["status"] = "OWNER-DEFERRED"
+        self.assertTrue(any("needs a non-empty `sign_off`" in p for p in self.run_check()))
+
+    def test_an_unknown_status_is_refused(self):
+        self.registry["deferrals"][self.JOB]["status"] = "later"
+        self.assertTrue(any("is not one of" in p for p in self.run_check()))
+
+    # ------------------------------------------------- the population comes from the filesystem
+
+    def test_a_job_required_by_nothing_and_deferred_by_nothing_is_red(self):
+        (self.wf / "extra.yml").write_text("jobs:\n  z:\n    name: Orphan gate\n", encoding="utf-8")
+        problems = self.run_check()
+        self.assertTrue(any("`Orphan gate` is required by nothing" in p for p in problems), problems)
+
+    def test_a_deliberately_excluded_job_is_covered(self):
+        (self.wf / "extra.yml").write_text("jobs:\n  z:\n    name: Orphan gate\n", encoding="utf-8")
+        self.expected["deliberately_excluded"]["Orphan gate"] = "tag-triggered only"
+        self.assertEqual(self.run_check(), [])
+
+    def test_a_deferral_for_a_job_no_workflow_declares_covers_nothing(self):
+        self.registry["deferrals"]["Imaginary gate"] = dict(
+            self.registry["deferrals"][self.JOB])
+        self.assertTrue(any("defers a context no workflow declares" in p for p in self.run_check()))
+
+    def test_permanent_and_temporary_cannot_both_be_claimed(self):
+        self.expected["deliberately_excluded"][self.JOB] = "permanent"
+        self.assertTrue(any("ALSO in `deliberately_excluded`" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- fail-closed shapes
+
+    def test_a_registry_with_no_deferrals_object_is_a_refusal(self):
+        self.registry = {"max_days_without_sign_off": 7}
+        self.assertTrue(any("has no `deferrals` object" in p for p in self.run_check()))
+
+    def test_no_job_names_found_verified_nothing(self):
+        for path in self.wf.glob("*.yml"):
+            path.unlink()
+        self.assertTrue(any("verified nothing" in p for p in self.run_check()))
+
+    def test_a_deferral_pointing_at_deleted_code_is_refused(self):
+        (self.root / "tools" / "check_produced_artifact.py").unlink()
+        self.assertTrue(any("which does not exist" in p for p in self.run_check()))
+
+    def test_a_reason_too_short_to_say_anything_is_refused(self):
+        self.registry["deferrals"][self.JOB]["reason"] = "later"
+        self.assertTrue(any("`reason` must be at least" in p for p in self.run_check()))
+
+    def test_a_missing_field_is_named(self):
+        del self.registry["deferrals"][self.JOB]["deferred_until"]
+        self.assertTrue(any("is missing `deferred_until`" in p for p in self.run_check()))
+
+    def test_a_missing_ceiling_is_refused(self):
+        del self.registry["max_days_without_sign_off"]
+        self.assertTrue(any("must be a positive integer" in p for p in self.run_check()))
+
+    # --------------------------------------------------------------- against the real repository
+
+    def test_this_repository_satisfies_the_rule_today(self):
+        """Every job declared in this repository's workflows is required, excluded or dated.
+
+        Measured, not asserted: this is the same call CI makes. It caught one genuinely
+        uncovered job when it was written -- `Release preflight`, which release.yml runs on
+        tags only and which was therefore in neither list by accident rather than by decision.
+        """
+        repo = pathlib.Path(__file__).resolve().parents[1]
+        self.assertEqual(rs._deferred_enforcement_failures(repo), [])
+
+
+class FileEntryPoint(unittest.TestCase):
+    """The file's own entry point must run the whole file -- ninth audit `I-05`.
+
+    `unittest.main()` sat four lines above `class RestSecondRoad`, so a direct
+    `python tools/test_check_repo_state.py` collected 74 tests, printed `OK`, and never reached the
+    14 the eighth round had just added for the REST second road. CI's `python -m unittest` form
+    imports the module and always ran all 88, so the file was genuinely covered -- by one of its two
+    entry points. A gate that is right in CI and wrong from the command line is worse than one that
+    is wrong in both, because the command line is where a person checks before pushing.
+    """
+
+    #: The entry point and the class statements, as they appear at column 0. Matching on whole
+    #: lines rather than on substrings is deliberate: this class quotes both strings in its own
+    #: assertions, and a substring count would find those quotations too.
+    ENTRY = 'if __name__ == "__main__":'
+
+    def _lines(self):
+        return pathlib.Path(__file__).read_text(encoding="utf-8").splitlines()
+
+    def _index_of(self, predicate):
+        return [i for i, line in enumerate(self._lines()) if predicate(line)]
+
+    def test_the_entry_point_is_the_last_statement_in_the_file(self):
+        entries = self._index_of(lambda ln: ln == self.ENTRY)
+        classes = self._index_of(lambda ln: ln.startswith("class "))
+        self.assertTrue(entries and classes)
+        self.assertGreater(
+            entries[-1], classes[-1],
+            "unittest.main() must come after every class, or the classes below it never run",
+        )
+
+    def test_there_is_exactly_one_entry_point(self):
+        self.assertEqual(len(self._index_of(lambda ln: ln == self.ENTRY)), 1)
+
+    def test_both_entry_points_collect_the_same_number_of_tests(self):
+        # The measurement the finding is made of, taken rather than asserted: load the module the
+        # way `-m unittest` does and the way a direct run does, and compare the counts.
+        loader = unittest.TestLoader()
+        module = sys.modules[__name__]
+        from_module = loader.loadTestsFromModule(module).countTestCases()
+        from_names = loader.loadTestsFromNames(
+            [f"{module.__name__}.{n}" for n, o in vars(module).items()
+             if isinstance(o, type) and issubclass(o, unittest.TestCase)]
+        ).countTestCases()
+        self.assertEqual(from_module, from_names)
+        self.assertGreaterEqual(from_module, 88, "the REST second road's 14 must be in the count")
+
+# Ninth audit `I-05`. This entry point used to sit FOUR LINES ABOVE `class RestSecondRoad`, so
+# `python tools/test_check_repo_state.py` collected the 74 classes defined before it and printed
+# `OK` while silently dropping the 14 the eighth round added -- exactly the tests written because
+# that code had no coverage. CI runs `python -m unittest test_check_repo_state`, which imports the
+# whole module and was never fooled, so the two entry points disagreed and only the quiet one was
+# wrong. Keeping it last is the fix; `test_this_file_has_one_entry_point_and_it_is_last` is what
+# stops it drifting back up the file.
 if __name__ == "__main__":
     unittest.main()

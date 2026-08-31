@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "purpose": "The toolchain of the DEVELOPMENT machine the canonical documents describe. tools/check_doc_claims.py compares every `cargo 1.97.1` / `node 20.20.2` / `npm 10.8.2` claim in the canonical read set against THIS file, and compares this file against the real machine when it is running on one. Until 2026-08-30 it compared the documents directly against whatever machine it ran on -- and it runs in CI, where the machine is a GitHub runner with a different node. So a gate written to catch `cargo 1.96` on a 1.97.1 box could only ever be red in CI, and the four canonical files it named were CORRECT. The claim needs one source of record; this is it.",
+  "machine": "Debian 13 (Linux 6.12.95+deb13-amd64), the Owner's box. Not a Windows box: five canonical documents said cargo needed PowerShell because Git Bash's `link` shadows MSVC's `link.exe`, which was true of the previous machine.",
+  "measured": "2026-08-29",
+  "how_to_update": "Run `cargo --version`, `node -v`, `npm -v` on the development box and paste what they print, in the same commit as the documents you are correcting. Do not edit a number here to make a document pass -- the direction is machine -> this file -> documents.",
+  "versions": {
+    "cargo": "1.97.1",
+    "node": "20.20.2",
+    "npm": "10.8.2"
+  }
+}

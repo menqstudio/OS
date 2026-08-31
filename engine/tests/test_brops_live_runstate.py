@@ -87,10 +87,11 @@ class LiveRunStateProviderTests(unittest.TestCase):
     def _lease_payload(self, **over):
         p = {
             "artifact_type": "execution-lease", "key_id": self.keys["issuer"]["key_id"],
-            "schema": 1, "lease_id": "lease-1", "nonce": "nonce-000000000001", "task_id": self.task_id,
+            "schema": 2, "lease_id": "lease-1", "nonce": "nonce-000000000001", "task_id": self.task_id,
             "agent_id": AGENT, "session_id": "session-1", "repository": "menqstudio/Bro",
             "branch": self.task_id, "worktree": self.worktree, "head_sha": CAND_HEAD,
             "tree_identity": CAND_TREE, "allowed_capabilities": ["EXECUTE_CODE", "WRITE_REPOSITORY"],
+            "allowed_egress": [],
             "issued_at_epoch": NOW - 10, "expires_at_epoch": NOW + 100, "max_tool_calls": 1,
             "task_class": "standard-builder", "protected_scope": [],
             "control_plane_digest": "e" * 64, "workspace_id": "ws-1",

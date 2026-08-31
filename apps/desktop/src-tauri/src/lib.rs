@@ -101,6 +101,75 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// is not unconditional. `engine_trust` states the precedence rule — whole-set or nothing,
 /// agreement permitted, disagreement refused by name in both directions — and that module's
 /// documentation is where it is argued rather than here.
+/// Move aside a machine anchor whose trust store no longer exists, so a REINSTALL can start.
+///
+/// The two halves live in different places on purpose — the anchor under `%ProgramData%`, the key
+/// store under `%APPDATA%` — and the uninstaller removes only the second. So the next install found
+/// the anchor, took it as "this machine is already provisioned", went to verify the store, and
+/// aborted on a file that no longer exists:
+///
+/// ```text
+/// trust provisioning failed while re-hashing a provisioned file
+/// (…\studio.menq.brops\trust\POSTURE.txt): The system cannot find the path specified
+/// ```
+///
+/// The app then panicked in the setup hook and the window closed before anything could be read, so
+/// the only symptom was "it opens and shuts". Every reinstall on every machine hits this.
+///
+/// **The condition is narrow, and that is the whole of its safety.** An anchor is retired only when
+/// the trust directory is **entirely absent** — an uninstall. A store that is PRESENT but whose
+/// files were deleted or edited is left exactly as it was, and provisioning still refuses it by
+/// name: that is tampering, and `provision.rs` has tests pinning that refusal.
+///
+/// Nothing is deleted. The anchor is renamed with a timestamp, so a machine that hits this by some
+/// other route still has its old material to look at.
+fn retire_orphaned_anchor(machine_root: &std::path::Path, app_data_dir: &std::path::Path) {
+    let anchor_dir = machine_root.join("trust-anchor");
+    let store_dir = app_data_dir.join("trust");
+    let has_anchor = anchor_dir.join("PROVISIONING.json").is_file();
+    let has_store = store_dir.exists();
+
+    // Both present, or both absent: nothing to reconcile. Both present is the normal case and
+    // provisioning verifies it properly; both absent is a genuine first launch and it mints.
+    if has_anchor == has_store {
+        return;
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Exactly one of the two halves is here, so whichever it is cannot be checked against anything
+    // and cannot be used. Move that one aside; the pair is then re-minted together.
+    let (from, to, why) = if has_anchor {
+        (
+            anchor_dir.clone(),
+            machine_root.join(format!("trust-anchor.orphaned-{stamp}")),
+            "named a key store that no longer exists",
+        )
+    } else {
+        (
+            store_dir.clone(),
+            app_data_dir.join(format!("trust.orphaned-{stamp}")),
+            "has no anchor to verify it against",
+        )
+    };
+    match std::fs::rename(&from, &to) {
+        Ok(()) => eprintln!(
+            "BroPS: {} {why}, which is what a half-removed install leaves behind. It has been moved \
+             to {} and a fresh pair will be minted. Nothing was deleted.",
+            from.display(),
+            to.display()
+        ),
+        // Not fatal here: provisioning refuses a moment later with its own message, which names the
+        // file and the reason. Failing here would replace a precise refusal with a vague one.
+        Err(e) => eprintln!(
+            "BroPS: could not retire {}: {e}. Provisioning will refuse below and say why.",
+            from.display()
+        ),
+    }
+}
+
 fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     // The audit signer's published identity, if this machine has one. It has to be in hand
     // HERE and not later: `provision` destroys the operator root before it returns, which
@@ -115,6 +184,7 @@ fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error
     // deployment that cannot name one has nowhere to put its trust anchor and must be told so
     // rather than quietly provisioned into a directory it can rewrite.
     let root = machine_root()?;
+    retire_orphaned_anchor(&root, dir);
     let anchor = brops_provision::published_anchor_custody(&root)?;
     let provisioned = brops_provision::provision_with_anchor(dir, &root, anchor.as_ref())?;
     // The wiring line O-3 was open on. Recorded rather than exported: `engine_trust::apply`
@@ -161,8 +231,102 @@ fn machine_root() -> Result<std::path::PathBuf, brops_provision::ProvisionError>
     brops_provision::anchor::default_machine_root()
 }
 
+/// Where the development build keeps its one-line project file — beside the app's own data, never
+/// inside a repository, so a checkout can never carry somebody else's grant to a different machine.
+#[cfg(feature = "dev-ungoverned")]
+fn dev_config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .map(|p| p.join("brops"))
+}
+
+/// The folder this build lets the agent work in — chosen automatically on first launch.
+///
+/// The install has to work the same on the thousandth machine as on the first, so there is no
+/// question to answer and no file to edit: the app creates its own workspace and uses that.
+///
+/// **`~/BroPS`, and it is not an arbitrary pick.** It is the workspace this application already
+/// defines for itself — the same default the Files surface is confined to (`BROPS_FILES_ROOT`,
+/// `apps/desktop/SECURITY.md`). Using it means the agent's reach and the file browser's reach are
+/// the same folder, which is one thing to reason about rather than two, and it is a directory the
+/// app made rather than one that already had somebody's work in it.
+///
+/// The value is written to `project-dir.txt` on first use, so it is visible and editable: point that
+/// line anywhere else and the app follows it. `BROPS_PROJECT_DIR` still overrides both.
+#[cfg(feature = "dev-ungoverned")]
+fn dev_project_dir() -> Option<String> {
+    let config = dev_config_dir()?;
+    let record = config.join("project-dir.txt");
+
+    // An existing line wins — that is how this gets pointed at a real repository.
+    if let Ok(text) = std::fs::read_to_string(&record) {
+        if let Some(dir) = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with('#') && std::path::Path::new(l).is_dir())
+        {
+            return Some(dir.to_string());
+        }
+    }
+
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)?;
+    let workspace = home.join("BroPS");
+    std::fs::create_dir_all(&workspace).ok()?;
+    let dir = workspace.to_string_lossy().into_owned();
+
+    let _ = std::fs::create_dir_all(&config);
+    let _ = std::fs::write(
+        &record,
+        format!(
+            "# The folder Bro may READ, EDIT, WRITE and run commands in.\r\n\
+             #\r\n\
+             # Created automatically on first launch. To work somewhere else, replace the path\r\n\
+             # below with an absolute path of your own and restart BroPS.\r\n\
+             # Blank it to turn the agent off and leave chat working.\r\n\
+             {dir}\r\n"
+        ),
+    );
+    Some(dir)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // DEVELOPMENT BUILD ONLY (`--features dev-ungoverned`). Compiled out entirely otherwise.
+    //
+    // `resolve_provider` is deliberately fail-closed: with nothing set it refuses rather than
+    // quietly running an ungoverned model, and that refusal is what the shipped binary does. This
+    // does not weaken it -- it supplies the same explicit opt-in the refusal asks for, at the point
+    // where the owner chose to install a binary whose file name says `dev-ungoverned`.
+    //
+    // Set BEFORE the builder, because `provider_env()` reads the process environment on first use.
+    // It never selects the metered remote provider: an ambient ANTHROPIC_API_KEY still requires an
+    // explicit BROPS_AI_PROVIDER=anthropic, so the default here is the LOCAL sandboxed CLI.
+    #[cfg(feature = "dev-ungoverned")]
+    // SAFETY: single-threaded startup, before any thread that could read the environment exists.
+    unsafe {
+        std::env::set_var("BROPS_ALLOW_UNGOVERNED", "1");
+
+        // AGENT MODE. `ai.rs` turns the coding agent on from one fact — `bro_agent_dir().is_some()`,
+        // i.e. `BROPS_PROJECT_DIR` naming a real directory — and with it a turn gets
+        // Read/Edit/Write/Grep/Glob/Bash/Task under `--permission-mode acceptEdits`.
+        //
+        // Nothing in the UI sets it (`BROPS_PROJECT_DIR` appears in no `.ts`/`.tsx`), so a fresh
+        // install on another machine had nothing at all and the agent stayed off. This build
+        // remembers the folder per machine and, when it has none, ASKS (see `setup` below) — so the
+        // thousandth install needs the same two clicks as the first and no second setup step.
+        //
+        // An explicitly-set environment variable still wins: it is how a scripted or headless
+        // install points the agent at a tree without a person at the screen.
+        if std::env::var_os("BROPS_PROJECT_DIR").is_none() {
+            if let Some(dir) = dev_project_dir() {
+                std::env::set_var("BROPS_PROJECT_DIR", dir);
+            }
+        }
+    }
+
     tauri::Builder::default()
         // T-011: renderer-independent native confirmation dialog for privileged
         // approvals (driven from Rust in `confirm_approval`).
@@ -260,6 +424,7 @@ pub fn run() {
             commands::post_message,
             commands::post_user_message,
             commands::save_ask_to_chat,
+            commands::save_ask_to_knowledge,
             commands::delete_conversation,
             commands::rename_conversation,
             commands::list_knowledge,
@@ -350,5 +515,107 @@ mod tests {
         // Releasing the first lets a later instance acquire it.
         drop(first);
         assert!(acquire_instance_lock(dir.path()).is_ok());
+    }
+}
+
+/// Half-removed installs — the state an uninstall leaves and the state the first fix for it left.
+///
+/// The Owner found both of these by installing the app, in that order, minutes apart. Neither is
+/// reachable from a test that mounts a component: the first needs an uninstall to have happened, and
+/// the second needs the first fix to have run. What makes them testable at all is that
+/// `retire_orphaned_anchor` takes both roots as parameters instead of reading `%ProgramData%` and
+/// `%APPDATA%` itself — so the pair can be built in a temp directory and driven from either side.
+#[cfg(test)]
+mod half_removed_install {
+    use super::retire_orphaned_anchor;
+
+    /// Build a machine root + app data dir with whichever halves are asked for.
+    fn scene(anchor: bool, store: bool) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let machine = tmp.path().join("ProgramData");
+        let app = tmp.path().join("AppData");
+        std::fs::create_dir_all(&machine).unwrap();
+        std::fs::create_dir_all(&app).unwrap();
+        if anchor {
+            let dir = machine.join("trust-anchor");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("PROVISIONING.json"), b"{}").unwrap();
+        }
+        if store {
+            let dir = app.join("trust");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("POSTURE.txt"), b"posture").unwrap();
+        }
+        (tmp, machine, app)
+    }
+
+    fn names(dir: &std::path::Path, prefix: &str) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(prefix))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The uninstall case. The uninstaller removes the key store and leaves the anchor, so the next
+    /// launch verified a store that was gone and panicked in the setup hook — the window closed
+    /// before the message could be read, and the only symptom was "it opens and shuts".
+    #[test]
+    fn an_anchor_whose_key_store_is_gone_is_retired_rather_than_verified() {
+        let (_tmp, machine, app) = scene(true, false);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(!machine.join("trust-anchor").exists(), "the orphaned anchor must not still be live");
+        let retired = names(&machine, "trust-anchor.orphaned-");
+        assert_eq!(retired.len(), 1, "exactly one retired anchor, got {retired:?}");
+        // Moved, never deleted: a machine that reached this state by some other route keeps its
+        // material to look at.
+        assert!(machine.join(&retired[0]).join("PROVISIONING.json").is_file());
+    }
+
+    /// The mirror case, which the first fix for the one above created. Retiring the anchor left a
+    /// `trust` directory with nothing to verify it against, and provisioning refused THAT instead —
+    /// the Owner hit it minutes later. A fix for one direction of a symmetric fault is half a fix.
+    #[test]
+    fn a_key_store_with_no_anchor_is_retired_too() {
+        let (_tmp, machine, app) = scene(false, true);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(!app.join("trust").exists(), "the orphaned store must not still be live");
+        let retired = names(&app, "trust.orphaned-");
+        assert_eq!(retired.len(), 1, "exactly one retired store, got {retired:?}");
+        assert!(app.join(&retired[0]).join("POSTURE.txt").is_file());
+    }
+
+    /// Both halves present is the normal case, and it must be left completely alone — this is where
+    /// a real verification happens, and where TAMPERING is caught. A retirement here would turn
+    /// "somebody edited a provisioned file" into "mint a fresh one", which is the refusal
+    /// `provision.rs` has tests pinning.
+    #[test]
+    fn a_complete_pair_is_never_touched_even_though_it_may_be_tampered() {
+        let (_tmp, machine, app) = scene(true, true);
+        // A store whose file was altered still has BOTH halves; deciding it is tamper or not is the
+        // verifier's job, not this function's.
+        std::fs::write(app.join("trust").join("POSTURE.txt"), b"altered").unwrap();
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(machine.join("trust-anchor").exists(), "anchor must survive");
+        assert!(app.join("trust").exists(), "store must survive for the verifier to judge");
+        assert!(names(&machine, "trust-anchor.orphaned-").is_empty());
+        assert!(names(&app, "trust.orphaned-").is_empty());
+    }
+
+    /// Neither half present is a genuine first launch. Nothing to retire, and nothing created — the
+    /// mint that follows is what makes the directories.
+    #[test]
+    fn a_first_launch_is_left_to_mint() {
+        let (_tmp, machine, app) = scene(false, false);
+        retire_orphaned_anchor(&machine, &app);
+
+        assert!(names(&machine, "trust-anchor").is_empty());
+        assert!(names(&app, "trust").is_empty());
     }
 }

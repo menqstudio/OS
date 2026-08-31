@@ -63,6 +63,90 @@
    -1); it should not paint a persistent outline when focused that way. */
 .content:focus { outline: none; }
 
+/* --- ⌘K command palette ----------------------------------------------------
+   RESTORED. These rules lived here until `0c08dd8` (PR #47, "UI refreshes",
+   2026-07-28), which deleted the section whole. `CommandPalette.tsx` kept
+   rendering every one of the classes, so for nineteen days the app's only modal
+   was a stack of unstyled block divs in normal flow: no overlay, no backdrop,
+   no panel box, no width limit, no scroll container for 23 nav rows, and an
+   `active` row that highlighted nothing while `aria-activedescendant` told a
+   screen reader the selection had moved. Three PRs touched the component in that
+   window — one of them rebuilding its focus trap and reasoning in a comment about
+   "the panel's padding" — and 33 checks were green on each.
+
+   Found by the sixth independent audit (A-01), which measured it in Chromium
+   rather than reading the component. `CommandPalette.browser.spec.tsx` now
+   asserts each property below as behaviour — scrim covers the viewport, page
+   behind is not hittable, list scrolls, active row is distinct — so deleting a
+   rule here turns that suite red instead of shipping silently.
+
+   Two of them are load-bearing beyond appearance. The scrim is what makes
+   `aria-modal="true"` (CommandPalette.tsx:173) true for a sighted user: without
+   it the page behind stays clickable and the attribute is a promise kept only to
+   assistive technology. And `.palette-item.active` is the only thing a sighted
+   keyboard user has to follow the cursor the arrow keys move. */
+.palette-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgb(0 0 0 / .5);
+  display: grid; place-items: start center;
+  padding: 12vh var(--menq-space-4) var(--menq-space-4);
+}
+.palette {
+  width: min(620px, 92vw); max-height: 76vh; display: flex; flex-direction: column;
+  gap: var(--menq-space-3); padding: var(--menq-space-3);
+  background: var(--brops-surface); border: 1px solid var(--brops-border);
+  border-radius: var(--menq-radius-md); box-shadow: 0 24px 60px rgb(0 0 0 / .45);
+}
+.palette > input {
+  width: 100%; padding: 10px 12px;
+  background: var(--brops-bg); color: var(--brops-text);
+  border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md);
+}
+.palette > input:focus-visible { outline: 2px solid var(--brops-accent); outline-offset: 1px; }
+/* Bounded, and scrollable. 23 nav rows plus entity results do not fit anywhere. */
+.palette-list { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; }
+.palette-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--brops-muted); padding: var(--menq-space-3) var(--menq-space-2) var(--menq-space-2);
+}
+.palette-item {
+  display: flex; align-items: center; gap: var(--menq-space-3);
+  /* 3px of the padding is given to the active row's marker below, so the text does not
+     shift by 3px when the keyboard cursor lands on it. */
+  padding: 9px 10px; border-left: 3px solid transparent; border-radius: var(--menq-radius-md);
+  color: var(--brops-text); cursor: pointer;
+}
+.palette-item:hover { background: var(--menq-color-hover); }
+/* The keyboard cursor. `aria-activedescendant` moves with the arrow keys; this is the half a
+   sighted user can see, and it was missing entirely until the sixth audit's `A-01`.
+
+   THE FIRST FIX MADE IT THE LEAST READABLE ROW IN THE LIST — seventh audit `G-10` deferred it,
+   eighth audit `H-03` measured it live. It read
+   `color: var(--brops-accent)` on `background: var(--menq-color-selected)`, which is
+   `--cyan` (the aios palette) painted on a `--menq-*` tint — the two-palette collision `T-034`
+   names, inside one declaration. Composited with the repository's own `contrast_ratio`:
+
+     light   #0EA5E9 on #e8ebff = 2.34:1     inactive row 18.58:1
+     dark    #38BDF8 on #272c47 = 6.38:1
+
+   AA normal wants 4.50. The row `aria-activedescendant` points at, and that Enter will take, was
+   eight times harder to read than every row around it in the light theme.
+
+   `--menq-color-accent` does not fix it either: 4.34:1 light, still under the floor. That was the
+   audit's proposed remedy and it was correctly marked UNVERIFIED.
+
+   So selection is no longer signalled by the TEXT COLOUR at all. The label stays at
+   `--brops-text` (15.71:1 light, 12.06:1 dark) and the cursor is carried by a left marker in the
+   accent — 4.34:1 light and 4.62:1 dark against the row, above the 3:1 WCAG 1.4.11 floor for a
+   non-text indicator — plus the tinted background and the weight. Three signals, none of which
+   asks anyone to read low-contrast text. */
+.palette-item.active {
+  background: var(--menq-color-selected);
+  border-left-color: var(--menq-color-accent);
+  color: var(--brops-text);
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px 1fr; }
   /* The brand wordmark collapses via `.mark--responsive .mark-text` in ui.css. */

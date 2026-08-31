@@ -238,6 +238,19 @@ that will not. Such a box may accept the residual risk by name:
   `engine/docs/OPERATOR_RUNBOOK.md`. The code half is done. The custody half is **builder work plus one
   elevated install action**, not a key the Owner has to hold — and until it runs, the ledger's
   tamper-evidence does not exist outside the test suite.
+- **Closure requires, added 2026-08-30 and measured rather than argued —** *deleting the ledger must
+  be detected as tampering.* Today it is not, and this is a stronger statement than "the anchor is
+  missing". Driving the real `bro_audit_log` functions: two appends give `verify() → 2`; `unlink` the
+  ledger's parent; the next `append()` **succeeds**, returning `seq 0` and `prev_hash 000…0`; the file
+  now holds one record and `verify()` returns **1** — GREEN. No exception is raised at any point. Two
+  prior records are gone and the chain declares itself intact, because a chain that begins at genesis
+  with a matching head *is* intact on its own terms. **An absent record and a never-written record are
+  indistinguishable.** The consequence for any artifact that cites a chain head: a receipt naming head
+  `X` cannot be checked against the ledger, because after a restart `verify()` passes and `X` is simply
+  not there — *"this ledger is valid"* is provable and *"this ledger is the one the receipt names"* is
+  not. Closure therefore also requires that a verifier be able to demand **"prove head `X` is in this
+  chain"**, and that a chain which restarted REFUSE rather than report GREEN. Reproduced independently
+  by the Owner and by the Builder, same output.
 
 **The defect, and what changed.** The append-only ledger's tamper-evidence terminated in a head pointer. The
 signed anchor (`.head.sig`, artifact type `audit-head`) is what makes that pointer unforgeable — and nothing

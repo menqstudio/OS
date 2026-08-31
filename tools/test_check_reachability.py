@@ -885,10 +885,54 @@ class ToolsGateReachabilityTests(GateTestCase):
     def declare_gates(self, tools_gates):
         self.declare(tauri_commands=self.BASELINE, tools_gates=tools_gates)
 
+    def write_test_module(self, name="test_check_thing.py"):
+        path = self.tmp / "tools" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("import unittest\n", encoding="utf-8")
+        return f"tools/{name}"
+
     def test_a_gate_no_workflow_runs_is_red(self):
         self.write_gate()
         self.write_workflow("jobs:\n  x:\n    steps:\n      - run: echo hi\n")
         self.assertRed("is executed by NO workflow")
+
+    # --- the BACKWARD sweep (sixth independent audit, A-12) --------------------------------
+    #
+    # Section 5 above asks "is every gate run?". Nothing asked "is every TEST run?", and
+    # `tools/test_renderer_broker_schemas.py` had been answering no for some time: 13 tests, green
+    # when run by hand, named by no workflow, invisible to CI. The audit named the shape as well as
+    # the instance — the round that added four test files verified those four were wired and never
+    # asked which existing ones were not. A forward sweep proves what you just added is connected;
+    # only a backward sweep finds what quietly came loose.
+
+    def test_a_test_module_no_workflow_names_is_red(self):
+        self.write_gate()
+        self.write_test_module()
+        self.write_workflow(
+            "jobs:\n  x:\n    steps:\n      - run: python tools/check_thing.py\n")
+        self.assertRed("is named by no workflow")
+
+    def test_a_test_module_a_workflow_names_is_green(self):
+        # Matched on the module STEM, because these run as
+        # `python -m unittest test_check_thing` from a tools/ working directory — the path never
+        # appears in the workflow at all.
+        self.write_gate()
+        self.write_test_module()
+        self.write_workflow(
+            "jobs:\n  x:\n    steps:\n      - run: python tools/check_thing.py\n"
+            "      - run: python -m unittest test_check_thing\n")
+        self.assertGreen()
+
+    def test_the_backward_sweep_has_no_declarations_escape_hatch(self):
+        # Deliberate asymmetry, stated as a test so nobody "fixes" it later. A GATE can have a
+        # real reason to be un-run — a per-session tool whose caller is a hook. Its TESTS cannot:
+        # if the gate runs in CI, the tests that prove the gate correct belong beside it.
+        self.write_gate()
+        self.write_test_module()
+        self.write_workflow(
+            "jobs:\n  x:\n    steps:\n      - run: python tools/check_thing.py\n")
+        self.declare_gates({"tools/test_check_thing.py": {"reason": self.REASON}})
+        self.assertRed("is named by no workflow")
 
     def test_a_gate_a_workflow_runs_is_green(self):
         self.write_gate()

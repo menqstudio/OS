@@ -1,0 +1,72 @@
+name: computed-style
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+# T-024 — the only gate in this repository that MEASURES the rendered app, and since 2026-08-29
+# the only one that runs axe's `color-contrast` rule at all.
+#
+# `vitest.config.ts` and `vitest.a11y.config.ts` both set `css: false`, so 713 unit tests and 59
+# axe checks run against a DOM with no stylesheet attached. Two shipped defects came straight out
+# of that gap:
+#
+#   * fifth audit A-01 — an `animation` shorthand replaced `.reveal`'s entrance and the Security
+#     instrument rendered fully populated at `opacity: 0`. A unit test asserted the class name was
+#     present. It was.
+#   * sixth audit A-01 — the ⌘K palette's CSS was deleted whole in PR #47 on 2026-07-28 and never
+#     replaced. For nineteen days the app's only modal was unstyled block divs with a clickable
+#     page behind it, through three PRs and 33 green checks each.
+#
+# Neither is visible to a check that reads source. Both are one `getComputedStyle` away.
+#
+# Chromium is a real cost — roughly 120 MB — so the browser binary is cached on the lockfile, and
+# only chromium is installed rather than the full browser set.
+jobs:
+  cockpit-computed-style:
+    name: Cockpit · computed style (real Chromium)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+
+      # Keyed on the lockfile: the pinned playwright version decides the browser build, so a
+      # dependency bump invalidates the cache and a code change does not.
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json') }}
+
+      # `--with-deps` installs the shared libraries headless Chromium needs on a bare runner; it is
+      # required even on a cache hit, because the cache carries the browser and not the apt
+      # packages it links against.
+      - run: npx playwright install --with-deps chromium
+
+      # One command, both sweeps: the computed-style measurement this job was created for, and
+      # (since 2026-08-29) the ACCESSIBILITY sweep -- axe with `color-contrast` enabled, over the
+      # same 23 pages, with the app's real stylesheet graph loaded. The jsdom a11y job cannot run
+      # that rule at all (`css: false`), and `tools/check_contrast.py` checks 56 declared token
+      # pairs, which is a different claim from "this rendered page passes". The job's CONTEXT name
+      # is unchanged on purpose: it is a required check in config/required-checks.json and
+      # renaming it would take it out of branch protection until the list and the protection API
+      # were updated together. The step says what actually runs.
+      - name: Computed style + accessibility (axe with color-contrast) in real Chromium
+        run: npm run test:browser

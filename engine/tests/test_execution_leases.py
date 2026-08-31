@@ -12,11 +12,13 @@ sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from bro_execution_lease import (
+    MAX_EGRESS_DESTINATIONS,
     LeaseError,
     finalize_execution_lease,
     load_execution_lease_from_env,
     quarantine_execution_lease,
     reserve_execution_lease,
+    validate_egress_destinations,
     validate_execution_lease,
 )
 
@@ -36,7 +38,7 @@ def task(worktree: str):
 
 def payload(worktree: str, now: int = 1000):
     return {
-        "schema": 1,
+        "schema": 2,
         "lease_id": "lease-000000000001",
         "nonce": "nonce-000000000001",
         "task_id": "task-lease-1",
@@ -48,6 +50,7 @@ def payload(worktree: str, now: int = 1000):
         "head_sha": "a" * 40,
         "tree_identity": "b" * 64,
         "allowed_capabilities": ["WRITE_REPOSITORY", "EXECUTE_CODE"],
+        "allowed_egress": [],
         "issued_at_epoch": now - 10,
         "expires_at_epoch": now + 100,
         "max_tool_calls": 1,
@@ -118,6 +121,106 @@ class ExecutionLeaseTests(unittest.TestCase):
             over["allowed_capabilities"] = ["DESTRUCTIVE"]
             with self.assertRaises(LeaseError):
                 self.validate(over, temp, required=("DESTRUCTIVE",))
+
+    # ---- the destination axis (design SS3.1/SS3.2) --------------------------
+
+    def test_absent_allowed_egress_is_a_lease_error_that_names_the_field(self):
+        """`[]` is the only way to say "no network". An ABSENT field must be a
+        refusal and never a permissive default -- that single decision is what
+        separates this axis from USE_NETWORK, which is absent-by-default and
+        therefore silently satisfiable everywhere it is not checked. The refusal
+        must also NAME the field: an opaque shape error makes `absent =>
+        LeaseError` unusable as a control, because nobody can tell which key
+        was missing."""
+        with tempfile.TemporaryDirectory() as temp:
+            value = payload(temp)
+            del value["allowed_egress"]
+            with self.assertRaises(LeaseError) as caught:
+                self.validate(value, temp)
+            self.assertIn("allowed_egress", str(caught.exception))
+
+    def test_an_empty_egress_list_is_the_valid_state_at_this_head(self):
+        """No class in CLASS_CAPABILITIES holds USE_NETWORK, so every valid
+        lease today names no destination. The axis exists and states "none"."""
+        with tempfile.TemporaryDirectory() as temp:
+            lease = self.validate(payload(temp), temp)
+            self.assertEqual(lease.allowed_egress, ())
+
+    def test_naming_a_destination_without_use_network_is_denied(self):
+        """A grant must not state an authority it cannot deliver. Because the
+        class refuses USE_NETWORK first, this is the refusal every non-empty
+        egress list meets at this head."""
+        with tempfile.TemporaryDirectory() as temp:
+            value = payload(temp)
+            value["allowed_egress"] = ["https://api.anthropic.com"]
+            with self.assertRaisesRegex(LeaseError, "without USE_NETWORK"):
+                self.validate(value, temp)
+
+    def test_unexpressible_destinations_are_refused_not_narrowed(self):
+        """Each of these states an authority the enforcement layer cannot
+        deliver, so the grant is refused rather than quietly reduced.
+
+        Asserted on THIS refusal's own message. Asserting only `LeaseError`
+        let a later refusal answer for these checks: a mutation sweep deleted
+        the regex, the ceiling, the duplicate test and the port range, and
+        every test stayed green because no lease at this head can hold
+        USE_NETWORK, so every non-empty list was already doomed."""
+        unexpressible = [
+            "https://*.githubusercontent.com",   # a wildcard is one registration from a bypass
+            "https://169.254.169.254",           # an IP cannot be re-checked against the NAME
+            "https://127.0.0.1:443",
+            "http://api.anthropic.com",          # plaintext grants whoever holds the wire
+            "https://api.anthropic.com/v1/x",    # CONNECT cannot see a path inside TLS
+            "https://API.Anthropic.com",         # folded, the text stops being what a reader compares
+            "https://localhost",                 # a single label is not an FQDN
+            "https://a.example:0",               # not a port
+            "https://a.example:99999",
+        ]
+        for entry in unexpressible:
+            with self.assertRaisesRegex(LeaseError, r"not expressible|port invalid", msg=entry):
+                validate_egress_destinations([entry])
+
+    def test_an_expressible_destination_is_accepted_by_the_shape_check(self):
+        """So the refusals above are not a check that cannot pass."""
+        self.assertEqual(
+            validate_egress_destinations(["https://api.anthropic.com:443"]),
+            ("https://api.anthropic.com:443",),
+        )
+        self.assertEqual(validate_egress_destinations([]), ())
+
+    def test_egress_list_shape_is_bounded_and_unique(self):
+        with self.assertRaisesRegex(LeaseError, "must be a list of destinations"):
+            validate_egress_destinations("https://api.anthropic.com")
+        with self.assertRaisesRegex(LeaseError, "must be a list of destinations"):
+            validate_egress_destinations([1])
+        with self.assertRaisesRegex(LeaseError, "more than 32 destinations"):
+            validate_egress_destinations(
+                [f"https://h{i}.example" for i in range(MAX_EGRESS_DESTINATIONS + 1)]
+            )
+        with self.assertRaisesRegex(LeaseError, "duplicate destination"):
+            validate_egress_destinations(["https://a.example", "https://a.example"])
+
+    def test_a_malformed_destination_reports_its_own_field_not_use_network(self):
+        """The ordering fix, stated as a test: shape is judged before the
+        authority coupling, so a wildcard in a lease that cannot hold
+        USE_NETWORK says so -- rather than a true sentence about the wrong
+        field that sends its reader to the wrong place."""
+        with tempfile.TemporaryDirectory() as temp:
+            value = payload(temp)
+            value["allowed_egress"] = ["https://*.evil.example"]
+            with self.assertRaisesRegex(LeaseError, "not expressible"):
+                self.validate(value, temp)
+
+    def test_a_schema_1_lease_is_refused(self):
+        """v1 and v2 are mutually invalid: `additionalProperties: false` plus an
+        exact-set `required` means a v1 lease cannot carry allowed_egress and a
+        v2 lease must. Accepting a v1 shape would leave two incompatible
+        objects both claiming to be the same version."""
+        with tempfile.TemporaryDirectory() as temp:
+            value = payload(temp)
+            value["schema"] = 1
+            with self.assertRaises(LeaseError):
+                self.validate(value, temp)
 
     def test_protected_scope_class_rules_enforced(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -24,8 +24,14 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
+#: Where the shared banner starts and ends in each of them. See rewrite_banners().
+BANNER_OPEN = "<!-- BANNER -->"
+BANNER_CLOSE = "<!-- /BANNER -->"
 STATE = ROOT / "config" / "current_state.json"
 
 #: The one sentence every banner ends with. It states the SHIPPED fail-closed posture, so it is
@@ -44,49 +50,77 @@ STATE = ROOT / "config" / "current_state.json"
 #: Two cold reads in a row concluded the audit had come back clean: NEXT_CHAT.md led with the FIRST
 #: audit's "all code facts CONFIRMED, none refuted" and the SECOND audit's RED verdict appeared in
 #: no canonical file at all. A verdict that lives only in a report nobody is routed to is not a
-#: verdict the repository has. Change this string when -- and only when -- an independent audit
-#: actually returns a different one.
-AUDIT_POSITION_SENTENCE = (
-    "**The last independent audit returned RED -- now for one platform rather than one mechanism.** "
-    "The FOURTH round -- `apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md`, a re-audit "
-    "of the third round's five fixes against a **pinned snapshot** of `main` @ `0a9a1af` (the "
-    "auditor proved the pin: `rev-parse 0a9a1af^{tree}` == its own `write-tree`, because main moved "
-    "three times mid-run) -- could **not reopen four of the five**. `B-01`: the fifth, `A-01`, was "
-    "fixed on Python/Linux only while this ledger's row claimed **both platforms** -- the F-02 "
-    "pattern the ledger exists to catch. Closed on Windows 2026-08-15. `B-02` (the pin sits in the "
-    "authority, not the supervisor that owns the floor) stays **OPEN** as a topology question beside "
-    "the 1b decision. Superseding: the THIRD "
-    "independent audit -- `apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md`, of `main` @ "
-    "`e0dd969`, auditor-role-only and READ-ONLY on the tree -- raised **5 new findings** "
-    "(A-01..A-05, P2 1 / P3 4), **could not reopen the previous round's P0** on either platform, and "
-    "**confirmed all three of the gate's refusals closed** at that head. It attacked 14 Builder "
-    "claims and could not refute **9**, which it recommends for the independently-confirmed mark; it "
-    "also found **4 ledger rows stale** and **2 false**. Its headline is **A-01**: the anti-rollback "
-    "floor is scoped by `install_id`, which the broker chooses -- the R-07/R-10 bootstrap defect "
-    "surviving one level up rather than closing, on both platforms, demonstrated against the "
-    "repository's own ledger code. **RED is the standing verdict of record and the gate stays "
-    "shut.** The index is `apps/desktop/AUDIT/AUDIT_LEDGER.md`; the superseded round is "
-    "`2026-08-06-remediation-audit.md` (45 findings, 1 P0, at `219c763`)."
-)
-#: This constant said "122 surviving findings (1 P0, 7 P1, 32 P2, 82 P3) across its three rounds"
-#: until 2026-08-14. That figure is in NEITHER audit report. The remediation audit's own verdict
-#: table says 45 (P0 1 / P1 5 / P2 13 / P3 26) and the document carries exactly 45 R-numbered
-#: rows, R-01..R-45, whose priorities sum to the same split. Every occurrence of "122" in that
-#: report is a line number or a line count. "across its three rounds" was invented with it.
+#: verdict the repository has.
 #:
-#: It mattered because THIS constant is what stamps the audit position into NEXT_CHAT.md,
-#: PROJECT_STATE.md and TASKS.md at once -- the same generator that stamped the false
-#: "the broker hands out UpstreamBlockedExecutor" sentence into three canonical files before
-#: 2026-08-09. The one file that had it right was apps/desktop/AUDIT/AUDIT_LEDGER.md, which is
-#: the file every reader is sent to for the audit position, and which said 45 while six other
-#: documents said 122. Where this sentence and the report disagree, the report wins: read it.
+#: It was a hard-coded paragraph until 2026-08-30, and by then it described the FOURTH round while
+#: the standing verdict was the NINTH -- five rounds stale, in the one generator that stamps the
+#: audit position into three canonical documents at once. Its own comment said "change this string
+#: when an independent audit returns a different one", and five did. The same comment records that
+#: this constant once carried a finding count ("122") that appears in neither report, and that the
+#: file which had it right was the ledger -- the file every reader is sent to.
+#:
+#: So it is READ now, from the two places that already have to be correct: the record
+#: `code_audit.last_independent_audit` in the machine mirror (which `check_audit_reports.py` binds
+#: to the ledger and to docs/OWNER_ACTION_REQUIRED.md) and the round ordinal the ledger announces.
+#: A sentence assembled from records cannot go stale on its own, and it refuses rather than guesses.
+def audit_position_sentence(root: pathlib.Path = ROOT) -> str:
+    """One line naming the standing verdict, its round and its report. Fail-closed.
 
-FAIL_CLOSED_SENTENCE = (
-    "**The governed surfaces stay fail-closed.** `governed_verification_unconfigured()` returns "
-    "Some(...) unconditionally before the model is invoked, `connect_broker()` refuses off Linux, "
-    "and the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a "
-    "deployment config with a TCB-root-signed manifest -- which nothing in the shipped app sets."
-)
+    Deliberately SHORT. The paragraph it replaces was 2.3 KB and went into three canonical files,
+    which is 7 KB of a read set held to 350 KB -- and the reader who needs the detail is one link
+    away, at the ledger, which is where every other document sends them.
+    """
+    try:
+        import check_audit_reports as audit
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"RED: cannot read the audit position: {exc}. Nothing has been written.")
+    state = root / "config" / "current_state.json"
+    try:
+        pointer = audit.state_audit_pointer(state.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"RED: cannot read {state}: {exc}. Nothing has been written.")
+    if not pointer:
+        raise SystemExit(
+            "RED: config/current_state.json names no last-independent-audit report, so the banner "
+            "would state a verdict from nowhere. Set code_audit.last_independent_audit. "
+            "Nothing has been written.")
+    if not (root / pointer).is_file():
+        raise SystemExit(f"RED: the audit record names {pointer}, which does not exist. "
+                         f"Nothing has been written.")
+    ledger = root / audit.LEDGER
+    ordinal = audit.ordinal_of(ledger.read_text(encoding="utf-8")) if ledger.is_file() else None
+    if not ordinal:
+        raise SystemExit("RED: the audit ledger announces no round, so the banner cannot name one. "
+                         "Nothing has been written.")
+    return ("**Standing verdict: RED** -- the " + ordinal.upper() + " round, `" + pointer
+            + "`. Check any tick in prose against `" + audit.LEDGER + "` before believing it.")
+
+
+#: The shipped fail-closed posture used to be a fourth paragraph in the banner, repeated in all
+#: three documents. It is not repeated any more: it is in `CLAUDE.md` §6 and in `NEXT_CHAT.md`'s
+#: body, and a banner is a banner. The three banners came to 1.9 KB each on 2026-08-30 and put all
+#: three files over their ceilings at once, with `check_canon_budget` also reporting NEXT_CHAT.md
+#: and TASKS.md as 23% one document — the generator re-manufacturing exactly the duplication the
+#: budget exists to remove. What survives here is the state, the next action, and the verdict; the
+#: verdict survives because two cold reads in a row concluded the audit had come back clean.
+BANNER_MAX_BYTES = 900
+
+
+def _bounded(banner: str) -> str:
+    """Refuse a banner too large to be repeated three times. Fail-closed, with the number.
+
+    A banner is written into every canonical state document at once, so its size is multiplied by
+    three inside a read set held to 350 KB. This is the cheap check that stops the next long
+    paragraph from being discovered by `check_canon_budget` after the write.
+    """
+    size = len(banner.encode("utf-8"))
+    if size > BANNER_MAX_BYTES:
+        raise SystemExit(
+            f"RED: the banner is {size} bytes against a ceiling of {BANNER_MAX_BYTES}, and it is "
+            f"written into {len(BANNER_FILES)} canonical documents at once. Shorten it — the "
+            f"detail belongs in the body of one file, not in the first paragraph of three. "
+            f"Nothing has been written.")
+    return banner
 
 
 def live_main_head() -> str:
@@ -111,6 +145,225 @@ def live_main_head() -> str:
     return sha
 
 
+def carrier_merge_commit(number: int) -> str | None:
+    """The 40-hex merge commit of a pull request, or None if it is not merged / cannot be read.
+
+    Fail-soft on purpose: the caller uses this only to AVOID moving a field that is already right,
+    and a `gh` outage must not turn a settle into a refusal. What it must never do is answer
+    confidently and wrongly, so anything that is not a 40-hex sha is None.
+    """
+    out = subprocess.run(["gh", "pr", "view", str(number), "--json", "mergeCommit"],
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0:
+        return None
+    try:
+        commit = (json.loads(out.stdout or "{}").get("mergeCommit") or {}).get("oid") or ""
+    except json.JSONDecodeError:
+        return None
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
+
+
+def settled_head_for(head: str, carrier_no: int | None) -> str:
+    """What `settled_at_main_head` must be, computed the way its VERIFIER computes it.
+
+    `check_repo_state.verify_settled_snapshot` pins the field to the first parent of the carrier's
+    merge commit — *"the main that carrier #N merged into"*. `--settled` wrote the live main head
+    instead, which is the same commit only while the carrier is still open. Run the documented
+    ritual in the documented order — merge, pull, settle — and the generator produces a snapshot its
+    own gate refuses, naming the merge commit where the pin wants that commit's parent.
+
+    That happened on 2026-08-17 and is recorded rather than quietly patched, because it is the
+    SECOND time a generator and a gate have disagreed about this one field. The first was the
+    unsatisfiable floor the fifth audit's `A-07` fix shipped, which turned main red within the hour.
+    **A generator that can emit a state its own verifier rejects is a defect even when the verifier
+    is right**, because what it teaches whoever hits it is that the gate is noise.
+
+    So the rule is DERIVED from the fact the gate reads rather than restated beside it: if the
+    carrier has merged and its merge commit is the head being settled at, the settled head is that
+    commit's first parent. Otherwise — carrier still open, `gh` unreadable, someone settling from a
+    branch — it is the live main head, which is what the field meant before the carrier existed.
+    """
+    if carrier_no is None:
+        return head
+    merged_as = carrier_merge_commit(carrier_no)
+    if not merged_as or merged_as != head:
+        return head
+    out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", f"{head}^1"],
+                         capture_output=True, text=True)
+    parent = out.stdout.strip()
+    return parent if re.fullmatch(r"[0-9a-f]{40}", parent) else head
+
+
+def _rest_open_prs() -> list[dict] | None:
+    """Open pull requests from REST (v3), in the shape `live_open_prs()` returns. None on failure.
+
+    Paginated: a truncated list would look like "these are all the open pull requests", and every
+    caller here treats the set as complete - `parked_roles()` refuses on an undeclared one, and a
+    missing entry would let a parked PR go unnamed, which is the state `verify_settled_snapshot`
+    turns main red for.
+    """
+    out = subprocess.run(
+        ["gh", "api", "--paginate", "repos/menqstudio/OS/pulls?state=open&per_page=100"],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0 or not (out.stdout or "").strip():
+        return None
+    try:
+        rows: list[dict] = []
+        for chunk in out.stdout.replace("][", "],[").split("\n"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            data = json.loads(chunk)
+            for pr in (data if isinstance(data, list) else [data]):
+                rows.append({
+                    "number": int(pr["number"]),
+                    "headRefName": (pr.get("head") or {}).get("ref"),
+                    "headRefOid": (pr.get("head") or {}).get("sha"),
+                    "baseRefName": (pr.get("base") or {}).get("ref"),
+                    "isDraft": bool(pr.get("draft")),
+                    "title": pr.get("title"),
+                })
+        return sorted(rows, key=lambda p: p["number"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def live_open_prs() -> list[dict]:
+    """Every pull request GitHub says is open right now, with the fields prs[] is anchored on.
+
+    Read live, never assumed. `--settled` used to hard-code "Nothing else is open" into the snapshot
+    note and "The only thing open is PR #N" into all three banners, without ever asking. On
+    2026-08-15 that stamped both sentences while PR #112 -- a parked design proposal -- was open, so
+    the settle that removed three stale claims manufactured a fourth in the same commit. A generator
+    that asserts a fact it never measured is the mechanism behind most of this repository's stale
+    canon; the fix belongs here, not in the file it writes.
+    """
+    out = subprocess.run(
+        ["gh", "pr", "list", "--state", "open", "--json",
+         "number,headRefName,headRefOid,baseRefName,isDraft,title"],
+        # encoding is EXPLICIT: `text=True` decodes with the process locale, which on this Windows
+        # host is cp1252, and a PR title containing an em-dash came back as "â€”" and was written
+        # into the snapshot that way. gh emits UTF-8 on every platform; say so rather than inherit
+        # whatever the console happens to be.
+        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+    if out.returncode != 0:
+        # v4 unreachable - try v3 before refusing. `gh pr list` and `gh pr view` speak GraphQL
+        # exclusively, and on 2026-08-17 a GitHub Partial System Outage took every one of them
+        # down while REST answered throughout. `check_repo_state.py` carries the same fallback and
+        # the same reasoning: a second road to the same fact is not a relaxation, and the refusal
+        # below still stands when BOTH roads fail.
+        rest = _rest_open_prs()
+        if rest is None:
+            raise SystemExit("RED: `gh pr list` failed AND the REST fallback failed, so this tool "
+                             "cannot know what is open and will not guess: "
+                             + (out.stderr or "").strip())
+        return rest
+    try:
+        return sorted(json.loads(out.stdout or "[]"), key=lambda p: p["number"])
+    except (ValueError, KeyError) as exc:
+        raise SystemExit(f"RED: could not parse `gh pr list` output: {exc}")
+
+
+def parked_roles(parked: list[dict], pairs: list[str] | None) -> dict[int, str]:
+    """Resolve each parked PR's role from --parked-role, or refuse. Never guessed.
+
+    `check_coordination` holds prs[] to a closed enum of roles, and the role is a claim about what a
+    pull request IS -- a design proposal is not an implementation, and the difference decides who is
+    allowed to merge it. Inferring it from a title or a branch name would be this tool asserting
+    something it cannot measure, which is the failure live_open_prs() exists to stop. So: refuse, and
+    print the exact command. Checked BEFORE anything is written, so a refusal leaves no half-settled
+    file behind.
+    """
+    roles: dict[int, str] = {}
+    for pair in pairs or []:
+        num, _, role = pair.partition("=")
+        try:
+            roles[int(num.strip().lstrip("#"))] = role.strip()
+        except ValueError:
+            raise SystemExit(f"RED: --parked-role expects NUMBER=ROLE, got {pair!r}")
+    known = {p.get("number") for p in (json.loads(STATE.read_text(encoding="utf-8")).get("prs") or [])
+             if isinstance(p, dict)}
+    missing, bad = [], []
+    for p in parked:
+        n = p["number"]
+        if n in known:
+            continue                     # already recorded; its role is whatever the file says
+        if n not in roles:
+            missing.append(p)
+        elif roles[n] not in PR_ROLES:
+            bad.append((n, roles[n]))
+    if bad:
+        raise SystemExit("RED: --parked-role value not in " + repr(PR_ROLES) + ": "
+                         + ", ".join(f"#{n}={r!r}" for n, r in bad))
+    if missing:
+        raise SystemExit(
+            "RED: these pull requests are open, are not the carrier, and have no role yet:\n"
+            + "".join(f"    #{p['number']}  {p.get('title') or ''}\n" for p in missing)
+            + "A settled snapshot has to NAME every open pull request (check_repo_state), and every\n"
+              "prs[] entry has to declare a role from " + repr(PR_ROLES) + " (check_coordination).\n"
+              "Re-run with, for example:  --parked-role "
+            + " --parked-role ".join(f"{p['number']}=design" for p in missing))
+    return roles
+
+
+def record_parked_prs(parked: list[dict], roles: dict[int, str]) -> list[int]:
+    """Put every open pull request that is NOT the carrier into prs[], with its exact live head.
+
+    `check_repo_state.verify_settled_snapshot` refuses a settled snapshot that names no open pull
+    request, and `compare_external_prs` then anchors each prs[] entry to an exact live head, branch,
+    base and draft flag. So this is not bookkeeping: an entry written here is a live claim that goes
+    RED the moment the parked PR moves. Every value comes from GitHub, so the entry cannot be a
+    guess. Insertion is targeted text surgery -- re-dumping this 109 KB file through json.dumps
+    would reformat all of it and bury the change.
+    """
+    if not parked:
+        return []
+    text = STATE.read_text(encoding="utf-8")
+    have = {p.get("number") for p in (json.loads(text).get("prs") or []) if isinstance(p, dict)}
+    new = [p for p in parked if p["number"] not in have]
+    if not new:
+        return []
+    rows = "".join(
+        '    {"number": %d, "branch": %s, "base": %s, "draft": %s, "merge_state": "open", '
+        '"role": %s, "head": %s, "why_listed": %s},\n'
+        % (p["number"], json.dumps(p["headRefName"]), json.dumps(p["baseRefName"]),
+           "true" if p["isDraft"] else "false", json.dumps(roles[p["number"]]),
+           json.dumps(p["headRefOid"]),
+           json.dumps("Open and NOT the carrier: " + str(p.get("title") or "").strip()
+                      + ". Listed so the settled snapshot names it; its exact head is anchored."))
+        for p in new)
+    if '"prs": [],' in text:
+        text = text.replace('"prs": [],', '"prs": [\n' + rows.rstrip(",\n") + "\n  ],", 1)
+    elif '"prs": [\n' in text:
+        text = text.replace('"prs": [\n', '"prs": [\n' + rows, 1)
+    else:
+        raise SystemExit("RED: could not locate the prs[] array to record the parked pull requests")
+    json.loads(text)                     # never leave it unreadable
+    STATE.write_text(text, encoding="utf-8")
+    return [p["number"] for p in new]
+
+
+def _json_string_end(text: str, start: int) -> int:
+    """Index just past the closing quote of the JSON string beginning at `start`.
+
+    Backslash escapes are honoured, so a note containing `\\"` does not end the scan early. Written
+    because the alternative — finding the end of the enclosing block — makes the surgery depend on
+    which key happens to be last.
+    """
+    if text[start] != '"':
+        raise SystemExit("RED: the note is not where this tool expects it. Nothing has been written.")
+    i = start + 1
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            return i + 1
+        i += 1
+    raise SystemExit("RED: unterminated string in the snapshot. Nothing has been written.")
+
+
 def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)              # parse first: refuse to touch a file we cannot read back
@@ -124,6 +377,14 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
 
     swap(f'"baseline_main_head_at_sync": "{data["sync"]["baseline_main_head_at_sync"]}"',
          f'"baseline_main_head_at_sync": "{head}"', "baseline head")
+    # `settled_at_main_head` moves WITH the baseline. Only `--settled` used to touch it, so three
+    # ordinary syncs in a row left it three merges behind while the gate stayed green -- the check
+    # could not see it, because an ancestor-of-main test can never go stale (A-07, fifth audit).
+    # The field means "the main this carrier merged into", which is the same live head the baseline
+    # is being set to, so writing one and not the other was never coherent.
+    if data.get("settled_at_main_head"):
+        swap(f'"settled_at_main_head": "{data["settled_at_main_head"]}"',
+             f'"settled_at_main_head": "{head}"', "settled head")
     swap(f'"snapshot_branch": "{data["sync"]["snapshot_branch"]}"',
          f'"snapshot_branch": "{branch}"', "snapshot branch")
     swap(f'    "branch": "{data["active"]["branch"]}"\n  }},',
@@ -138,12 +399,31 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
          f"self-carrier is PR #{pr}). PR #{pr}'s own exact-head", "self-carrier")
 
     # The note is prose; replace it wholesale rather than patching around the old text.
+    #
+    # The span is found by SCANNING the JSON string, not by looking for the block's closing
+    # `"\n  },`. That earlier slice ran from `"note": "` to the end of the block, so it was
+    # correct only while `note` was the last key — and on 2026-08-30 it was not: `base` had been
+    # written after it, the slice would have swallowed `base` whole, and the settle refused. The
+    # refusal was right and the fix is not to reorder the file to suit the tool. `json.loads`
+    # cannot catch this on its own, because deleting whole key/value pairs leaves valid JSON
+    # (A-10, fifth audit); the shape comparison below is what caught it, and it stays.
     start = text.index('"note": "', text.index('"current_workflow_pr"'))
-    end = text.index('"\n  },', start) + 1
+    end = _json_string_end(text, start + len('"note": '))
     text = text[:start] + '"note": ' + json.dumps(summary) + text[end:]
     changed.append("note")
 
-    json.loads(text)                     # and parse again: never leave it unreadable
+    after = json.loads(text)             # and parse again: never leave it unreadable
+    # A parse guard that cannot see the damage it was placed to catch is not a guard, so compare
+    # the key set: this function is allowed to change the VALUES of current_workflow_pr, never
+    # its shape.
+    before_keys = set((data.get("current_workflow_pr") or {}).keys())
+    after_keys = set((after.get("current_workflow_pr") or {}).keys())
+    if before_keys != after_keys:
+        raise SystemExit(
+            "RED: rewriting the note changed the SHAPE of current_workflow_pr — lost "
+            + ", ".join(sorted(before_keys - after_keys) or ["nothing"])
+            + "; gained " + ", ".join(sorted(after_keys - before_keys) or ["nothing"])
+            + ". The note slice assumes `note` is the last key of the block. Nothing was written.")
     STATE.write_text(text, encoding="utf-8")
     return changed
 
@@ -158,18 +438,32 @@ def rewrite_banners(banner: str) -> None:
     check — the coordination gate saw a banner that did not name the active branch, which is a
     symptom two steps downstream of the cause.
 
-    The block is every consecutive blockquote line from line 3 down. All of it is replaced.
+    **Located by MARKER, never by line number.** It replaced "every consecutive blockquote line
+    from line 3 down" until 2026-08-30. `T-045` then rewrote all three documents and put a
+    *purpose* note in that position -- NEXT_CHAT.md's says what the file is for and what its
+    ceiling is -- so the first `--settled` run after that quietly overwrote it, and stopped
+    half-way through the second file leaving one document rewritten and two not. A tool that
+    locates canonical text by counting lines will eventually delete something else.
+
+    The markers are `<!-- BANNER -->` and `<!-- /BANNER -->`, the same idiom
+    `tools/roadmap_source.py` uses for `<!-- PHASES -->`. A file without them is REFUSED by name
+    rather than guessed at, and the refusal happens for ALL files before any is written, so a
+    partial rewrite is not reachable.
     """
+    found: list[tuple[pathlib.Path, str, int, int]] = []
     for name in BANNER_FILES:
         p = ROOT / name
-        lines = p.read_text(encoding="utf-8").split(chr(10))
-        if not lines[2].startswith("> **"):
-            raise SystemExit(f"RED: {name} line 3 is not the shared banner; refusing to overwrite it")
-        end = 2
-        while end + 1 < len(lines) and lines[end + 1].startswith(">"):
-            end += 1
-        rebuilt = lines[:2] + banner.split(chr(10)) + lines[end + 1:]
-        p.write_text(chr(10).join(rebuilt), encoding="utf-8")
+        text = p.read_text(encoding="utf-8")
+        i = text.find(BANNER_OPEN)
+        j = text.find(BANNER_CLOSE)
+        if i < 0 or j < 0 or j < i:
+            raise SystemExit(
+                f"RED: {name} carries no {BANNER_OPEN} ... {BANNER_CLOSE} block, so this tool "
+                f"cannot tell the shared banner from the rest of the document. Add the markers "
+                f"around the state block. Nothing has been written.")
+        found.append((p, text, i + len(BANNER_OPEN), j))
+    for p, text, i, j in found:
+        p.write_text(text[:i] + chr(10) + banner + chr(10) + text[j:], encoding="utf-8")
 
 def rewrite_carrier_block(pr: int, branch: str) -> bool:
     """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
@@ -205,16 +499,55 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
     return True
 
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
-           banner: str | None = None) -> int:
+           banner: str | None = None, role_pairs: list[str] | None = None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
 
     `check_repo_state` refuses a snapshot that still names a merged carrier, because the reader it
     misleads is a person or an agent arriving at the repository cold — and CI never noticed, since
     the PR-event checks only run on a `pull_request` and after the merge nothing asked.
     """
+    # Measure and validate FIRST. parked_roles() refuses when an open pull request has no declared
+    # role, and a refusal has to leave the tree untouched -- a half-settled snapshot (new
+    # settled_at_main_head, no prs[] entry) is precisely the RED state this whole change is about.
+    parked = [p for p in live_open_prs() if p["number"] != pr]
+    roles = parked_roles(parked, role_pairs)
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
-    line = '  "settled_at_main_head": "' + head + '",\n'
+
+    # AND REFUSE TO LEAVE A MERGED CARRIER NAMED — seventh independent audit, `G-06`.
+    #
+    # `--settled` without `--pr`/`--branch` skipped `rewrite_carrier_block` behind `if pr and
+    # branch:` with no warning, printed *"banners point at main, not at a deleted branch"*, and
+    # exited 0 — while `current_workflow_pr` went on naming a merged pull request on a branch that
+    # had been deleted. That is the exact staleness this mode's docstring says it exists to remove,
+    # and it passes `verify_settled_snapshot` because a present-and-correct `settled_at_main_head`
+    # satisfies every arm.
+    #
+    # It is also not hypothetical: PR #146 carried a snapshot naming #145 for this reason, the
+    # Repo-state gate refused it correctly, and it was merged anyway because `main` had no required
+    # checks (`G-01`). Two defects, one commit.
+    #
+    # Refusing rather than nulling the carrier: `check_coordination` requires the human documents
+    # to name `active.branch`, so an empty carrier would cascade there, and a mode that quietly
+    # produces a different snapshot shape is how the next reader gets surprised. The message names
+    # the flags, because a refusal whose fix is undocumented is a trap this file already carries
+    # two long comments about.
+    if not (pr and branch):
+        current = (data.get("current_workflow_pr") or {}).get("number")
+        if isinstance(current, int) and carrier_merge_commit(current):
+            raise SystemExit(
+                f"RED: --settled would leave current_workflow_pr naming #{current}, which has "
+                f"MERGED. The snapshot would send a reader to a pull request that is closed and a "
+                f"branch that is probably deleted — the staleness this mode exists to remove.\n"
+                f"  Run it as the settle commit's OWN pull request:\n"
+                f"    python tools/sync_active_pr.py --settled --pr <N> --branch <branch> …\n"
+                f"  Nothing has been written.")
+    # Computed the way the GATE computes it, not assumed to be the live head — see
+    # settled_head_for(). The carrier is whichever PR the snapshot currently names, because that is
+    # the one whose merge this settle is recording.
+    carrier_no = pr or ((data.get("current_workflow_pr") or {}).get("number"))
+    settled = settled_head_for(head, carrier_no)
+    line = '  "settled_at_main_head": "' + settled + '",\n'
     existing = re.search(r'^\s*"settled_at_main_head":.*\n', text, re.M)
     if existing:
         text = text[: existing.start()] + line + text[existing.end() :]
@@ -239,11 +572,18 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # And the settle commit's OWN pull request becomes the carrier. While it is open, it is the one
     # thing that is open, and the exact-head anchor has to point at it -- otherwise the snapshot
     # names a merged PR's dead branch and the gate refuses the very commit that resolves it.
+    parked_phrase = ("Nothing else is open" if not parked else
+                     "Also open, and NOT the carrier: "
+                     + ", ".join("#" + str(p["number"]) for p in parked)
+                     + " (recorded in prs[], exact-head anchored)")
     if pr and branch:
         rewrite_state(pr, branch,
-                      "Settling the state anchor at main " + head[:7] + ". Nothing else is open; "
-                      "this pull request is the commit that records it.", head)
+                      "Settling the state anchor at main " + head[:7] + ". " + parked_phrase
+                      + "; this pull request is the commit that records it.", head)
         rewrite_carrier_block(pr, branch)
+    added = record_parked_prs(parked, roles)
+    if added:
+        print("  recorded in prs[]: " + ", ".join("#" + str(n) for n in added))
 
     last = (data.get("current_workflow_pr") or {}).get("number")
     tail = ("\n>\n> **Next:** " + next_up) if next_up else ""
@@ -256,14 +596,21 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # at once. `--banner` could not be used to work around it either: main() parsed the flag and
     # never passed it to this function. A banner that reads as nonsense is not a smaller failure
     # than one that reads as a lie; it is the first thing a cold reader meets in every state file.
-    carrier = ((" The only thing open is PR #" + str(pr) + " on `" + branch
-                + "`, the pull request that records it.") if pr and branch
-               else " Nothing is open.")
+    # "The only thing open" is a measurement, not a phrase. See live_open_prs(): it was hard-coded
+    # and it was wrong the day a design proposal was parked open for review.
+    others = ("" if not parked else
+              " Also open, and deliberately not merged here: "
+              + ", ".join("PR #" + str(p["number"]) + " (`" + p["headRefName"] + "`)"
+                          for p in parked) + ".")
+    carrier = (((" The pull request that records it is PR #" + str(pr) + " on `" + branch + "`."
+                 if parked else
+                 " The only thing open is PR #" + str(pr) + " on `" + branch
+                 + "`, the pull request that records it.") + others) if pr and branch
+               else ((" Nothing is open." if not parked else " Open:" + others)))
     rewrite_banners(banner or (
-        "> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
-        + " Start from "
-        "`docs/OWNER_ACTION_REQUIRED.md`, the one page that says what is blocked and on whom."
-        + tail + "\n>\n> " + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY."))
+        _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
+                 + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
+                 + tail + "\n>\n> " + audit_position_sentence())))
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -273,6 +620,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pr", type=int, help="required unless --settled")
     ap.add_argument("--branch", help="required unless --settled")
+    # The task id used to be the string literal "T-017" inside the banner, so every PR this tool
+    # touched announced the same task whatever it was doing -- a hard-coded fact in the tool that
+    # writes three canonical banners at a time, which is the shape of the ninth audit's `I-06`.
+    ap.add_argument("--task", default=None,
+                    help="the TASKS.md id this PR carries; the banner says `unstated` without it")
     ap.add_argument("--summary", help="required unless --settled")
     ap.add_argument("--settled", action="store_true",
                     help="nothing is open: record the main everything merged into, and say so in "
@@ -282,26 +634,41 @@ def main() -> int:
                     help="with --settled: one line on what happens next, for whoever reads this "
                          "repository cold")
     ap.add_argument("--banner", help="the human banner; defaults to a line built from --summary")
+    ap.add_argument("--parked-role", action="append", metavar="NUMBER=ROLE",
+                    help="with --settled: the role of an open pull request that is NOT the "
+                         "carrier, e.g. 112=design. Never inferred; see parked_roles().")
     args = ap.parse_args()
 
     head = live_main_head()
     if args.settled:
-        return settle(head, args.next_up, args.pr, args.branch, args.banner)
+        return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
     changed = rewrite_state(args.pr, args.branch, args.summary, head)
     rewrite_carrier_block(args.pr, args.branch)
+    # A pull request parked open while another one carries the snapshot has to be named in the
+    # banner too, not only in --settled's. `check_coordination` requires every OPEN prs[] entry's
+    # branch to appear in all three banner documents, and it is right to: a reader who is told
+    # "CURRENT ACTIVE: PR #115" and nothing else will not discover that #112 is sitting there
+    # waiting on them. Same omission as the hard-coded "Nothing else is open", one mode over.
+    parked = [p for p in live_open_prs() if p["number"] != args.pr]
+    also = ("" if not parked else
+            " Also open, and not this PR's work: "
+            + ", ".join("PR #" + str(p["number"]) + " on `" + p["headRefName"] + "`"
+                        for p in parked) + ".")
     banner = args.banner or (
         f"> **⏭️ CURRENT ACTIVE: PR #{args.pr} · branch `{args.branch}`** (base `main`, tip "
-        f"`{head[:7]}`, task T-017).\n>\n> {args.summary}\n>\n> "
-        + AUDIT_POSITION_SENTENCE + chr(10) + ">" + chr(10) + "> " + FAIL_CLOSED_SENTENCE + " Earlier prose below is HISTORY.")
+        f"`{head[:7]}`, task {args.task or 'unstated'}).{also}\n>\n> {args.summary}\n>\n> "
+        + audit_position_sentence())
 
     # This call went missing in an edit, and the line below kept announcing it. A message that
     # reports work it did not do is worse than silence: the banner stayed stale while the tool
     # said it had been rewritten, and the only thing that caught it was reading the file.
-    rewrite_banners(banner)
+    rewrite_banners(_bounded(banner))
 
-    print(f"state anchor → PR #{args.pr} on {args.branch}, main {head[:7]}")
+    # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
+    # files had already been rewritten, so the tool reported failure for work it had done.
+    print(f"state anchor -> PR #{args.pr} on {args.branch}, main {head[:7]}")
     print(f"  fields changed: {', '.join(changed)}")
     print(f"  banners rewritten: {', '.join(BANNER_FILES)}")
     print("\nNot committed. Run the two gates, then commit with the work:")

@@ -587,18 +587,51 @@ export function Automations() {
     };
   }, [filtered.length, stateFilter]);
 
-  // Page shortcut: `n` opens the authoring form (suppressed while typing / modal).
+  // Page shortcuts: `n` opens the authoring form, `/` jumps to the state filter (§D: "`n` new,
+  // `/` filter, arrow-nav, `Enter` open"). `/` was the one binding of the four that did not
+  // exist — and on every other page in this cockpit `/` puts the cursor in a search box, so a
+  // keyboard user arriving here pressed it and got a literal slash typed nowhere.
+  //
+  // This page filters with a CHIP GROUP rather than a text field, so `/` moves focus to the
+  // filter instead of into an input: the active chip if there is one, else the first. From there
+  // the group's own arrow handling takes over. Binding `/` to "open a search box that does not
+  // exist" would have meant building a second filter to satisfy a keystroke.
+  const filterRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (creating || pendingDelete) return;
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); setCreating(true); }
+      else if (e.key === '/') {
+        const chips = filterRef.current?.querySelectorAll<HTMLButtonElement>('button');
+        if (!chips?.length) return;
+        e.preventDefault();
+        const active = Array.from(chips).find((c) => c.getAttribute('aria-pressed') === 'true');
+        (active ?? chips[0]).focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [creating, pendingDelete]);
+
+  /** Arrow / Home / End across the filter chips, once `/` has put focus there. A group you can
+   *  reach and then have to Tab through one chip at a time is half a shortcut. */
+  const onFilterKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const chips = Array.from(filterRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+    if (chips.length === 0) return;
+    const at = chips.indexOf(document.activeElement as HTMLButtonElement);
+    const move = (to: number) => {
+      e.preventDefault();
+      chips[Math.max(0, Math.min(chips.length - 1, to))].focus();
+    };
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') move(at < 0 ? 0 : at + 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') move(at < 0 ? chips.length - 1 : at - 1);
+    else if (e.key === 'Home') move(0);
+    else if (e.key === 'End') move(chips.length - 1);
+  };
 
   const governLine = L('govern');
   const telemetryPending = L('telemetry');
@@ -769,7 +802,12 @@ export function Automations() {
               the conduit is armed/energised (`.au-live`) — a live-field marker, not an
               observed run; a sealed (blocked) or off conduit stays still. */}
           <div className={`sc-diagram ${STATE_CLASS[st]}${st === 'idle' ? ' au-live' : ''}`}>
-            <div className="sc-track">
+            {/* `tabIndex` + a name because this track scrolls horizontally: without a tab stop a
+                keyboard-only reader cannot reach whatever is off the right-hand edge, and
+                without a name a screen reader announces an unlabelled group. Found by the
+                real-browser axe sweep — jsdom has no layout, so it cannot know an element
+                scrolls at all. */}
+            <div className="sc-track" role="group" tabIndex={0} aria-label={L('flowAria')}>
               <span className="sc-rail" aria-hidden="true" />
               <span className="sc-pulse" aria-hidden="true" />
               <span className="sc-node sc-src">
@@ -1014,7 +1052,13 @@ export function Automations() {
         {/* ── AUTOMATION INDEX (quiet data tier) ─────────────────────────────── */}
         <div className="sec-head" style={{ marginTop: 26 }}>
           <h2>{L('automationIndex')}</h2>
-          <div className="afilter" role="group" aria-label={L('filterByState')}>
+          <div
+            className="afilter"
+            role="group"
+            aria-label={L('filterByState')}
+            ref={filterRef}
+            onKeyDown={onFilterKeyDown}
+          >
             {FILTERS.map((f) => (
               <button
                 key={f}

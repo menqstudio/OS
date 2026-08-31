@@ -83,6 +83,8 @@ _BOARD_END_RE = re.compile(r"(?m)^#{1,3}\s+(?!#)")
 # (the 22-page index, the ownership matrix); scoping to the board SECTION and to a
 # three-column shape keeps them from being read as phases.
 _BOARD_ROW_RE = re.compile(r"(?m)^\|\s*(\d+)\s*\|([^|]*)\|([^|]*)\|\s*$")
+#: The FIRST `n/m` in a board cell -- the row's headline count (ninth audit `I-07`).
+_FRACTION_RE = re.compile(r"\b(\d+)/(\d+)\b")
 
 
 class RoadmapError(RuntimeError):
@@ -90,8 +92,12 @@ class RoadmapError(RuntimeError):
 
 
 def _text(root: pathlib.Path) -> str:
+    """The whole roadmap, assembled from the main file plus docs/roadmap/phase-N.md."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     try:
-        return (root / ROADMAP).read_text(encoding="utf-8")
+        import roadmap_source
+        return roadmap_source.roadmap_text(root)
     except OSError as exc:
         raise RoadmapError(f"{ROADMAP} is unreadable: {exc}") from exc
 
@@ -158,6 +164,49 @@ def board_state(root: pathlib.Path) -> dict[int, dict]:
     return board
 
 
+def phase_checkbox_counts(root: pathlib.Path) -> dict[int, tuple[int, int]]:
+    """{phase: (checked, total)} over EVERY checkbox in the phase section, not just the DoD block.
+
+    The board rows print this fraction, and until the ninth audit nothing compared the two. `I-07`:
+    Phase 8's row said 8/10 and Phase 9's said 8/9 while their sections held 7/9 and 7/9. Phases 3-7
+    matched exactly, which is what established that the fraction is meant to be countable rather
+    than editorial -- five rows agreeing by coincidence is not a thing that happens.
+    """
+    text = _text(root)
+    starts = [(int(m.group(1)), m.start()) for m in _PHASE_RE.finditer(text)]
+    counts: dict[int, tuple[int, int]] = {}
+    for index, (number, start) in enumerate(starts):
+        end = starts[index + 1][1] if index + 1 < len(starts) else len(text)
+        boxes = _CHECKBOX_RE.findall(text[start:end])
+        counts[number] = (sum(1 for b in boxes if b != " "), len(boxes))
+    return counts
+
+
+def fraction_problems(root: pathlib.Path) -> list[str]:
+    """A board row that prints `n/m` must print the fraction its own section counts.
+
+    Only the FIRST fraction in a row is read. A corrected row keeps the superseded number in a
+    parenthetical -- that is how this repository records a correction rather than erasing it -- and
+    a check that read every fraction would make writing the history down a failure.
+    """
+    problems: list[str] = []
+    counts = phase_checkbox_counts(root)
+    for number, detail in board_state(root).items():
+        match = _FRACTION_RE.search(detail["cell"])
+        if not match:
+            continue                  # a row may say nothing; it may not say a wrong thing
+        printed = (int(match.group(1)), int(match.group(2)))
+        counted = counts.get(number)
+        if counted is None:
+            continue                  # orphan rows are reported by structural_problems
+        if printed != counted:
+            problems.append(
+                f"Phase {number}: the status board prints {printed[0]}/{printed[1]} but its own "
+                f"section counts {counted[0]}/{counted[1]} checkboxes. The fraction is a count, "
+                "not a summary -- correct the row or tick the box")
+    return problems
+
+
 def structural_problems(root: pathlib.Path) -> list[str]:
     """The roadmap's two completion surfaces must agree, phase by phase."""
     problems: list[str] = []
@@ -183,6 +232,9 @@ def structural_problems(root: pathlib.Path) -> list[str]:
     orphans = sorted(set(board) - set(dod))
     if orphans:
         problems.append(f"status board rows with no matching phase section: {orphans}")
+    # Ninth audit `I-07`: this gate compared completeness as a BOOLEAN and never read the printed
+    # fractions, so a row could say 8/10 over a section counting 7/9 and stay green for two rounds.
+    problems.extend(fraction_problems(root))
     return problems
 
 
@@ -318,7 +370,15 @@ def scope_problem(root: pathlib.Path, sid: str, rel_path: str) -> str | None:
     document = receipt_store.load(root, sid) or {}
     if document.get("declared_phase") != META:
         return None
-    rel = str(rel_path).replace("\\", "/").lstrip("./")
+    # `removeprefix`, not `lstrip`: lstrip takes a CHARACTER SET, so `lstrip("./")` turned
+    # `.claude/settings.json` into `claude/settings.json` and `.github/x` into `github/x` --
+    # neither starts with a META_ALLOWED_PREFIX, so a `meta` session was refused from editing
+    # the two directories `meta` exists to cover. Worse in a worktree: an agent working in
+    # `.claude/worktrees/<id>/` had EVERY path mangled, so every Edit/Write was denied and its
+    # only way to write was the ungated Bash path (T-053). Same defect in
+    # check_audit_reports.py:119; check_doc_claims.py had already hit it and fixed it inline.
+    # tools/check_no_lstrip_prefix.py refuses the form now.
+    rel = str(rel_path).replace("\\", "/").removeprefix("./")
     if rel.startswith(META_ALLOWED_PREFIXES) or rel.endswith(META_ALLOWED_SUFFIXES):
         return None
     return (f"this session declared `meta` (repository governance/tooling), which may not edit "

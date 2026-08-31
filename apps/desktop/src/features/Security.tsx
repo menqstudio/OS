@@ -20,6 +20,28 @@ import { STR } from './Security.strings';
 // `blocked` state. The instrument NEVER shows a confident SECURE/verified posture
 // or a live/green mark: the core power-mark and posture pill are driven straight
 // from the real load state — idle/alert/blocked — never forced live.
+//
+// # Motion (§D: "Motion: integrity pulse (`sigbreathe`)")
+//
+// The pulse is APPLIED, and it is BOUND to state. This box sat unticked on the roadmap
+// as "deliberately not applied", on the reasoning that a breathing instrument would
+// paint liveness onto a chain nothing has confirmed. That reasoning is right and the
+// conclusion drawn from it was wrong twice over:
+//
+//   1. The page was ALREADY breathing. `.mc-halo` carried an unconditional
+//      `secHalo 2.6s infinite`, so the instrument pulsed hardest in `blocked` — the
+//      exact thing the comment two hundred lines above said it must not do. An honesty
+//      argument written in a comment is not an honesty property of the page.
+//   2. "Never animate" and "animate always" are not the only options. `checking` is a
+//      chain read genuinely IN FLIGHT: motion there depicts something that is actually
+//      happening. `broken` is an alert and §D asks for the faster danger cadence.
+//      `blocked` is now, correctly, STILL.
+//
+// So the pulse says "this surface is reading the chain right now" — a fact the desktop
+// can establish — and never "the chain is alive", which it cannot: `RECORDS_ARE_AUTHENTICATED`
+// is permanently `false` (see `governance.rs`). A pulse gated on a CONFIRMED chain would
+// have been a branch that can never run, which is the shape this repository deletes
+// rather than ships.
 
 /** Derived integrity of the evidence chain, from the real load state only.
  *  `verified` is intentionally NOT a value: the desktop has no chain-read
@@ -161,7 +183,13 @@ export function Security() {
       role="region"
       aria-labelledby="sec-integrity-h"
       tabIndex={0}
-      className={`sec-section mani surface soft lg hud reveal sec-int--${integrity}`}
+      className={`sec-section mani surface soft lg hud reveal sec-int--${integrity}${
+        // §D's `sigbreathe` integrity pulse, BOUND to the one state that has liveness in
+        // it. See the motion note in the module header. The class is in the DOM, not only
+        // in the stylesheet, so a test can assert it per state and a mutation that applies
+        // it unconditionally is caught.
+        integrity === 'checking' ? ' sigbreathe' : ''
+      }`}
       style={cv(1)}
     >
       <HudChrome />
@@ -193,7 +221,10 @@ export function Security() {
         </div>
       </div>
 
-      {/* Non-live wire: the chain does not flow — nothing is confirmed. */}
+      {/* Non-live wire: the chain does not flow — nothing is confirmed. `.wire.live`
+          exists in aios.css and is deliberately not used: a travelling dot would depict
+          evidence moving, and no evidence has been authenticated here. Unlike the halo,
+          this one was already honest. */}
       <div className="wire" />
       {/* Honest link chain: the three engine-truth surfaces, NONE confirmed
           (no `.done`/`.now`) — mirroring the blocked posture, not implying trust. */}
@@ -326,7 +357,7 @@ export function Security() {
   return (
     <>
       <style>{SEC_STYLE}</style>
-      <div className="v-security sec-page" onKeyDown={onKeyDown}>
+      <div className="v-security" onKeyDown={onKeyDown}>
         <header className="pageHead reveal" style={cv(0)}>
           <div>
             <span className="eyebrow">{L('eyebrowCore')}</span>
@@ -392,10 +423,37 @@ const SEC_STYLE = `
   position: absolute; inset: 8px; border-radius: 50%;
   border: 1.5px solid rgb(var(--int-rgb)/.5);
   box-shadow: 0 0 40px -6px rgb(var(--int-rgb)/.5), inset 0 0 22px -8px rgb(var(--int-rgb)/.6);
-  animation: secHalo 2.6s ease-in-out infinite;
 }
-.v-security .sec-int--broken .mc-halo { animation-duration: 1.6s; }
+/* MOTION IS BOUND TO STATE. This halo used to animate unconditionally, which meant the
+   instrument breathed hardest in "blocked" — the one state where nothing is established.
+   The page argued in its own comments that a pulse would paint liveness onto an
+   unconfirmed chain, and then painted it anyway, two hundred lines down in a stylesheet.
+   "checking" is a read genuinely in flight; "broken" is an alert and takes the faster
+   cadence §D asks for; "blocked" is still. */
+.v-security .sec-int--checking .mc-halo { animation: secHalo 2.6s ease-in-out infinite; }
+.v-security .sec-int--broken .mc-halo { animation: secHalo 1.6s ease-in-out infinite; }
 @keyframes secHalo { 0%,100% { transform: scale(1); opacity: .85; } 50% { transform: scale(1.06); opacity: .45; } }
+/* §D: "Motion: integrity pulse (sigbreathe)". The keyframe is the shared one from
+   aios.css; --tone-rgb is what it reads, so the instrument hands it the cyan of the
+   checking tone. It is applied by the sigbreathe class, which the component adds only
+   in "checking" — the pulse means "this surface is reading the chain right now", which
+   is a fact, and not "the chain is alive", which the desktop cannot establish. */
+/* THE ENTRANCE ANIMATION MUST STAY IN THE LIST. This instrument carries the "reveal" class,
+   which is "opacity:0; transform:translateY(14px); animation:reveal var(--enter) forwards"
+   (aios.css) - the entrance animation is the ONLY thing that makes it visible. The first
+   version of this rule used the animation SHORTHAND at higher specificity, which REPLACES the
+   animation list, so reveal never ran and the instrument rendered at opacity:0, displaced 14px,
+   for the whole of "checking". Measured in a real browser by the fifth independent audit
+   (A-01); no test in this repository could see it, because vitest runs with css:false and
+   Security.test.tsx asserts the class name, not the paint. tools/check_c1_tokens.py checks it
+   statically now, and putting the shorthand back turns that gate RED.
+   The delay is restated because the shorthand resets animation-delay too, and the reveal class
+   sets it separately on the line below its own shorthand. */
+.v-security .mani.sigbreathe {
+  --tone-rgb: var(--cyan-rgb);
+  animation: reveal var(--enter) forwards, sigbreathe 2.6s cubic-bezier(.4,0,.2,1) infinite;
+  animation-delay: calc(var(--i, 0) * var(--stagger)), 0s;
+}
 .v-security .mc-read { min-width: 0; flex: 1 1 300px; }
 .v-security .mc-detail { color: var(--ink-muted); font-size: var(--t-small); margin: var(--s2) 0 0; max-width: 64ch; }
 .v-security .mc-reason { color: var(--ink-muted); text-transform: none; letter-spacing: .01em; margin: 6px 0 0; }
@@ -453,6 +511,8 @@ const SEC_STYLE = `
   .v-security .astats { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .v-security .mc-halo { animation: none; }
+  .v-security .sec-int--checking .mc-halo,
+  .v-security .sec-int--broken .mc-halo,
+  .v-security .mani.sigbreathe { animation: none; }
 }
 `;

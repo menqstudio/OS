@@ -118,13 +118,25 @@ rather than quietly re-rolling.
 **Say what you did not do.** ✅ in the audit ledgers means *independently confirmed*. ◑ means *the
 builder's own unverified claim*. Never promote your own work to ✅.
 
+> **The accessibility gate lives in the BROWSER project, not the a11y one.** `npm run test:a11y` is
+> the fast structural sweep and runs in jsdom with `css: false`, where axe's `color-contrast` rule
+> **cannot execute**. The one that measures colour is `npm run test:browser`
+> (`pages.axe.browser.spec.tsx`, real Chromium, both themes) and it reports under the CI context
+> `Cockpit · computed style (real Chromium)` — a name that predates it. If you change a colour, that
+> is the job to watch, along with `python tools/check_contrast.py`.
+
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check`. **19 `check_*.py` files exist; 18 are wired
-into workflows** (the one that is not, `check_prior_art.py`, is session-side by design). Three of
-the 19 need arguments and print usage instead of a verdict when that loop runs them bare:
+`python tools/generate_agent_definitions.py --check`. **23 `check_*.py` files exist; 22 are invoked
+by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by
+design). *(Measured at this head with `for f in tools/check_*.py; do grep -rqF "tools/$(basename $f)"
+.github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 — the ninth audit
+filed it as `I-10`, the **second consecutive round** in which these counts were wrong, so the method
+is written down here rather than the number alone.)* Three of the 23 need arguments and print usage
+instead of a verdict when that loop runs them bare:
 `check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
 Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
-wants a Vite manifest from `npm run build`, and `check_runbook_snippets.py` fails closed unless
+wants a Vite manifest from `npm run build` **and, since `I-12`, refuses to grade a `dist/` older than
+the tree, so it says `the build is stale` after any checkout until you rebuild**, and `check_runbook_snippets.py` fails closed unless
 `cryptography` imports. Both are green in CI. *(This paragraph said "15 gates, all expected GREEN"
 until 2026-08-14, which set up a reader to treat five non-verdicts as failures — or worse, to stop
 counting.)* The engine suite needs `BRO_ENV=ci` or operator-pin gating denies and the tests error
@@ -149,8 +161,14 @@ rather than run.
 *builder-ի սեփական չստուգված պնդում*։ Երբեք սեփական գործդ ✅ մի դարձրու։
 
 **PR բացելուց առաջ վազեցրու gate-երը։** `for g in tools/check_*.py; do python "$g"; done` գումարած
-`python tools/generate_agent_definitions.py --check` — 15 gate, բոլորը սպասվում են GREEN։ Engine-ի
-suite-ին պետք ա `BRO_ENV=ci`, այլապես operator-pin gating-ը մերժում ա ու տեստերը error են տալիս։
+`python tools/generate_agent_definitions.py --check` — **23 `check_*.py` ֆայլ կա; 22-ը workflow-ներում
+կանչված են ուղիով**, չկանչվածը `check_prior_art.py`-ն ա (դիզայնով session-side)։ Դրանցից **երեքը**
+արգումենտ են ուզում ու bare վազելիս verdict-ի փոխարեն usage են տպում՝ `check_canonical_sync.py`,
+`check_prior_art.py`, `check_read_receipt.py`; **երկուսը** RED են չկառուցված մեքենայի վրա՝
+`check_bundle_budget.py` (Vite manifest) ու `check_runbook_snippets.py` (`cryptography`)։
+*(Այս տողը գրում էր «15 gate, բոլորը GREEN» — անգլերեն կեսը գրում էր 19/18, ու իններորդ աուդիտը դա
+գրանցեց որպես `I-10`՝ **երկրորդ անընդմեջ ռաունդը**, երբ այս թվերը սխալ են։ Չափված ա այս head-ի վրա։)*
+Engine-ի suite-ին պետք ա `BRO_ENV=ci`, այլապես operator-pin gating-ը մերժում ա ու տեստերը error են տալիս։
 
 ---
 

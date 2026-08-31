@@ -26,7 +26,11 @@ fn page(limit: Option<u32>, offset: Option<u32>) -> (i64, i64) {
 /// transaction (`seed`, `runs::advance` calling `set_status`), the work joins
 /// it instead of nesting a second BEGIN, and the outer transaction owns
 /// commit/rollback.
-fn atomic<T, F>(conn: &Connection, f: F) -> CoreResult<T>
+/// `pub(crate)` since T-058's §4 slice: `credentials` writes a binding and its
+/// audit row in one transaction, and lives outside this module because a
+/// credential store is not a repository of domain rows. Still crate-internal —
+/// nothing outside this crate opens a transaction.
+pub(crate) fn atomic<T, F>(conn: &Connection, f: F) -> CoreResult<T>
 where
     F: FnOnce(&Connection) -> CoreResult<T>,
 {
@@ -74,7 +78,7 @@ fn map_task(r: &Row) -> rusqlite::Result<Task> {
 pub mod projects {
     use super::*;
 
-    pub fn create(conn: &Connection, input: NewProject) -> CoreResult<Project> {
+    pub fn create(conn: &Connection, input: NewProject, actor: audit::Actor<'_>) -> CoreResult<Project> {
         if !is_valid(&input.priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: input.priority });
         }
@@ -86,7 +90,7 @@ pub mod projects {
                  VALUES (?1, ?2, ?3, ?4, 'planned', ?5, ?6, ?6)",
                 rusqlite::params![id, input.workspace_id, input.name, input.description, input.priority, now],
             )?;
-            super::audit::record(tx, "project.created", "user", "gev", "project", &id)?;
+            super::audit::record(tx, "project.created", actor, "project", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -106,7 +110,7 @@ pub mod projects {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Project> {
+    pub fn set_status(conn: &Connection, id: &str, status: &str, actor: audit::Actor<'_>) -> CoreResult<Project> {
         if !is_valid(status, PROJECT_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
@@ -118,14 +122,14 @@ pub mod projects {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "project.status_changed", "user", "gev", "project", id)?;
+            super::audit::record(tx, "project.status_changed", actor, "project", id)?;
             Ok(())
         })?;
         get(conn, id)
     }
 
     /// Edit a project's name, description, and priority.
-    pub fn update(conn: &Connection, id: &str, name: &str, description: &str, priority: &str) -> CoreResult<Project> {
+    pub fn update(conn: &Connection, id: &str, name: &str, description: &str, priority: &str, actor: audit::Actor<'_>) -> CoreResult<Project> {
         if !is_valid(priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
         }
@@ -137,7 +141,7 @@ pub mod projects {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "project.updated", "user", "gev", "project", id)?;
+            super::audit::record(tx, "project.updated", actor, "project", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -147,7 +151,7 @@ pub mod projects {
 pub mod tasks {
     use super::*;
 
-    pub fn create(conn: &Connection, input: NewTask) -> CoreResult<Task> {
+    pub fn create(conn: &Connection, input: NewTask, actor: audit::Actor<'_>) -> CoreResult<Task> {
         if !is_valid(&input.priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: input.priority });
         }
@@ -159,7 +163,7 @@ pub mod tasks {
                  VALUES (?1, ?2, ?3, ?4, 'inbox', ?5, ?6, ?7, ?7)",
                 rusqlite::params![id, input.project_id, input.title, input.description, input.priority, input.assigned_agent_id, now],
             )?;
-            super::audit::record(tx, "task.created", "user", "gev", "task", &id)?;
+            super::audit::record(tx, "task.created", actor, "task", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -196,7 +200,7 @@ pub mod tasks {
     }
 
     /// Edit a task's title, description, and priority.
-    pub fn update(conn: &Connection, id: &str, title: &str, description: &str, priority: &str) -> CoreResult<Task> {
+    pub fn update(conn: &Connection, id: &str, title: &str, description: &str, priority: &str, actor: audit::Actor<'_>) -> CoreResult<Task> {
         if !is_valid(priority, PRIORITIES) {
             return Err(CoreError::Invalid { field: "priority", value: priority.to_string() });
         }
@@ -208,13 +212,13 @@ pub mod tasks {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "task.updated", "user", "gev", "task", id)?;
+            super::audit::record(tx, "task.updated", actor, "task", id)?;
             Ok(())
         })?;
         get(conn, id)
     }
 
-    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Task> {
+    pub fn set_status(conn: &Connection, id: &str, status: &str, actor: audit::Actor<'_>) -> CoreResult<Task> {
         if !is_valid(status, TASK_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
@@ -227,7 +231,7 @@ pub mod tasks {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "task.status_changed", "user", "gev", "task", id)?;
+            super::audit::record(tx, "task.status_changed", actor, "task", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -242,7 +246,7 @@ pub mod task_deps {
     /// Record that `task_id` depends on `depends_on_id`. Refuses a self-edge and
     /// any cycle — direct OR transitive (A→B→C→A) — via a reachability walk;
     /// duplicates are idempotent.
-    pub fn add(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
+    pub fn add(conn: &Connection, task_id: &str, depends_on_id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         if task_id == depends_on_id {
             return Err(CoreError::Invalid { field: "depends_on_id", value: "a task cannot depend on itself".into() });
         }
@@ -271,14 +275,14 @@ pub mod task_deps {
                 "INSERT OR IGNORE INTO task_dependencies(task_id, depends_on_id) VALUES (?1, ?2)",
                 rusqlite::params![task_id, depends_on_id],
             )?;
-            super::audit::record(tx, "task.dependency_added", "user", "gev", "task", task_id)?;
+            super::audit::record(tx, "task.dependency_added", actor, "task", task_id)?;
             Ok(())
         })
     }
 
     /// Remove a dependency edge. Errors when the edge does not exist and audits
     /// the removal — dropping a blocker is a sensitive graph mutation (L-3f).
-    pub fn remove(conn: &Connection, task_id: &str, depends_on_id: &str) -> CoreResult<()> {
+    pub fn remove(conn: &Connection, task_id: &str, depends_on_id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute(
                 "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_id = ?2",
@@ -287,7 +291,7 @@ pub mod task_deps {
             if changed == 0 {
                 return Err(CoreError::NotFound(format!("dependency {task_id} -> {depends_on_id}")));
             }
-            super::audit::record(tx, "task.dependency_removed", "user", "gev", "task", task_id)?;
+            super::audit::record(tx, "task.dependency_removed", actor, "task", task_id)?;
             Ok(())
         })
     }
@@ -310,26 +314,155 @@ pub mod audit {
     /// The actor kinds an audit event may carry (L-4a).
     pub const ACTOR_TYPES: &[&str] = &["user", "agent", "system"];
 
-    /// Record an audit event. `actor_type` is passed explicitly by trusted repo
-    /// code (never hardcoded `'user'`), so agent-originated events stay
-    /// distinguishable from human ones in `security::summary` (L-4a). Call
-    /// sites at the command layer must derive `actor_id` from trusted context,
-    /// not from the request body.
+    /// The actor id recorded for a write a person made at this cockpit.
+    ///
+    /// It is deliberately NOT a personal name. This desktop has no login, no
+    /// account and no operator credential, so the only thing the command layer
+    /// can establish about a webview-originated write is *that a human drove the
+    /// cockpit* -- never WHICH human. The literal `"gev"` that stood at 34 call
+    /// sites until T-052 asserted a named person for every audited write in the
+    /// product, including the ones no person was present for: the automation
+    /// scheduler ticks once a minute and wrote `automation.ran`, `task.created`
+    /// and `knowledge.created` rows attributed to that person. A guessed actor is
+    /// worse than an absent one, because it reads as evidence.
+    pub const LOCAL_OPERATOR: &str = "local-operator";
+
+    /// The in-process automation scheduler (`automations::run_due`, spawned from
+    /// `lib.rs` on a 60s tick). Nothing human is present when it fires.
+    pub const SCHEDULER: &str = "scheduler";
+
+    /// An automation's own declared action (`automations::execute_action`), which
+    /// creates tasks and knowledge notes on the automation's behalf.
+    pub const AUTOMATION: &str = "automation";
+
+    /// Who caused an audited write.
+    ///
+    /// Carrying the pair together is what stops a call site from silently
+    /// asserting a human: there is no `Default`, so **every** audited write must
+    /// name its actor and the compiler enumerates any that does not. Build one
+    /// with [`Actor::local_operator`], [`Actor::scheduler`], [`Actor::automation`]
+    /// or [`Actor::agent`] rather than assembling the fields, so the trust basis
+    /// for the value is written down beside it.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Actor<'a> {
+        /// One of [`ACTOR_TYPES`]; [`record`] rejects anything else.
+        pub kind: &'a str,
+        pub id: &'a str,
+    }
+
+    impl<'a> Actor<'a> {
+        /// A person acting at this cockpit -- an unauthenticated local human.
+        /// See [`LOCAL_OPERATOR`] for why the id is not a name.
+        pub const fn local_operator() -> Actor<'static> {
+            Actor { kind: "user", id: LOCAL_OPERATOR }
+        }
+
+        /// The product's own runtime, where no more specific component can be
+        /// named: startup reconciliation of a crashed session's claim
+        /// (`runs::reconcile_abandoned_executions`) and the gate enforcing a
+        /// rejected approval (`runs::fail_step_and_run`). These are the two sites
+        /// that already carried `("system", "system")` before T-052 and they keep
+        /// exactly those values -- naming them `reconciler` or `approval-gate`
+        /// would be a relabel this layer cannot establish, and a more specific
+        /// actor that is guessed is worse than a vague one that is true.
+        pub const fn system() -> Actor<'static> {
+            Actor { kind: "system", id: "system" }
+        }
+
+        /// The starter workspace written by `repo::seed` at first launch. Nobody
+        /// created these rows; before T-052 the seed minted ~40 audit records
+        /// naming a person for rows the product wrote to itself.
+        pub const fn seed() -> Actor<'static> {
+            Actor { kind: "system", id: "seed" }
+        }
+
+        /// The unattended scheduler tick. No human is present.
+        pub const fn scheduler() -> Actor<'static> {
+            Actor { kind: "system", id: SCHEDULER }
+        }
+
+        /// An automation performing its own declared action.
+        pub const fn automation() -> Actor<'static> {
+            Actor { kind: "system", id: AUTOMATION }
+        }
+
+        /// The human who answered the renderer-independent native confirmation
+        /// dialog (T-011). `id` is `native:<window label>`, built by
+        /// `commands::confirm_approval` from the Tauri window -- the webview cannot
+        /// forge it, which is what makes `user` an established fact here and not an
+        /// assumption.
+        pub const fn native_confirmer(id: &'a str) -> Actor<'a> {
+            Actor { kind: "user", id }
+        }
+
+        /// The streaming run executor completing a step after the provider
+        /// returned (`commands::stream_run_step`). Not the person who started the
+        /// run: by the time this writes, the work was done by a model dispatched
+        /// by this loop, and the operator's identity is not something this layer
+        /// can establish anyway.
+        pub const fn run_executor() -> Actor<'static> {
+            Actor { kind: "system", id: "run-executor" }
+        }
+
+        /// A named agent. `id` must come from trusted context (a server-minted
+        /// author), never from a request body.
+        pub const fn agent(id: &'a str) -> Actor<'a> {
+            Actor { kind: "agent", id }
+        }
+
+        /// An actor carried by already-trusted row data: the message role/author
+        /// pair. The webview allowlist (`commands::WEBVIEW_MESSAGE_ROLES`) narrows
+        /// the role a renderer may post to `user`; agent and system roles are
+        /// minted server-side only.
+        pub const fn from_message(role: &'a str, author: &'a str) -> Actor<'a> {
+            Actor { kind: role, id: author }
+        }
+    }
+
+    /// Record an audit event. The [`Actor`] is passed explicitly by trusted repo
+    /// code (never hardcoded `'user'`), so agent- and system-originated events
+    /// stay distinguishable from human ones in `security::summary` (L-4a) -- the
+    /// `actor_type` column reaches that surface through `ActivityEvent`. Call
+    /// sites at the command layer must derive the actor from trusted context, not
+    /// from the request body.
     pub fn record(
         conn: &Connection,
         event_type: &str,
-        actor_type: &str,
-        actor_id: &str,
+        actor: Actor<'_>,
         entity_type: &str,
         entity_id: &str,
     ) -> CoreResult<()> {
+        record_with_payload(conn, event_type, actor, entity_type, entity_id, None)
+    }
+
+    /// The same record, carrying the WHAT alongside the who and the which.
+    ///
+    /// `audit_events.payload_json` has existed since migration 0001 and, until
+    /// this call site, nothing in the tree wrote it and nothing read it — a
+    /// column that answered to nothing. An egress decision is the first event
+    /// whose meaning does not fit in `(event_type, entity)`: "denied" is not a
+    /// record unless it says which destination, under which grant.
+    ///
+    /// The payload is written by trusted repo code from values the runtime
+    /// holds. It is NOT signed, and nothing here makes it tamper-evident
+    /// against whoever can write the database — `local_write_record.rs` says
+    /// the same about its own half. Do not read it as attestation.
+    pub fn record_with_payload(
+        conn: &Connection,
+        event_type: &str,
+        actor: Actor<'_>,
+        entity_type: &str,
+        entity_id: &str,
+        payload_json: Option<&str>,
+    ) -> CoreResult<()> {
+        let (actor_type, actor_id) = (actor.kind, actor.id);
         if !is_valid(actor_type, ACTOR_TYPES) {
             return Err(CoreError::Invalid { field: "actor_type", value: actor_type.to_string() });
         }
         conn.execute(
-            "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id(), event_type, actor_type, actor_id, entity_type, entity_id, now()],
+            "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, payload_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id(), event_type, actor_type, actor_id, entity_type, entity_id, payload_json, now()],
         )?;
         Ok(())
     }
@@ -386,6 +519,46 @@ pub mod approvals {
     /// another action can never unlock a step (M-2).
     pub const RUN_STEP_ENTITY_TYPE: &str = "run_step";
     pub const RUN_STEP_ACTION_TYPE: &str = "Execute run step";
+
+    /// T-052 gating tuples for the three tier-X commands that reached the
+    /// authority layer with no gate at all: `set_integration_auth_ref`,
+    /// `set_integration_status` and `set_automation_enabled` were each
+    /// `{"tier": "X", "grant": "allow"}` in `command-policy.json` and nothing
+    /// else. X is the execution/spend tier: pointing a connector at a credential
+    /// locator, declaring a connector connected, and arming an automation that
+    /// then fires unattended once a minute are all acts a compromised renderer
+    /// could perform silently.
+    ///
+    /// They use the SAME mechanism as the run-step gate — `approved_for` +
+    /// `consume_for` over the full (entity_id, entity_type, action_type) tuple,
+    /// inside the write's own transaction — so a grant minted for one of them can
+    /// never unlock another, and only `approve_confirmed` (renderer-independent
+    /// native confirmation, T-011) can produce a satisfying grant.
+    pub const INTEGRATION_ENTITY_TYPE: &str = "integration";
+    pub const INTEGRATION_AUTH_REF_ACTION_TYPE: &str = "Set integration credential reference";
+    pub const INTEGRATION_STATUS_ACTION_TYPE: &str = "Set integration status";
+    pub const AUTOMATION_ENTITY_TYPE: &str = "automation";
+    pub const AUTOMATION_ENABLED_ACTION_TYPE: &str = "Arm automation";
+    pub const AGENT_BUNDLE_ENTITY_TYPE: &str = "agent_bundle";
+    pub const AGENT_BUNDLE_ARM_ACTION_TYPE: &str = "Arm agent bundle";
+    pub const CREDENTIAL_BINDING_ENTITY_TYPE: &str = "credential_binding";
+    pub const CREDENTIAL_BIND_ACTION_TYPE: &str = "Bind agent credential";
+
+    /// Verify and spend the grant for a gated write, in the write's own
+    /// transaction. Factored out of `runs::claim_step_execution`'s inline pair so
+    /// the three T-052 gates cannot drift from it: a check that verified without
+    /// consuming would let one approval unlock a command forever.
+    pub fn require_and_consume(
+        tx: &Connection,
+        entity_id: &str,
+        entity_type: &str,
+        action_type: &str,
+    ) -> CoreResult<()> {
+        if !approved_for(tx, entity_id, entity_type, action_type)? {
+            return Err(CoreError::Invalid { field: "approval", value: "required".into() });
+        }
+        consume_for(tx, entity_id, entity_type, action_type)
+    }
 
     fn map(r: &Row) -> rusqlite::Result<Approval> {
         Ok(Approval {
@@ -616,13 +789,16 @@ pub mod approvals {
         target: &str,
         level: &str,
         risk_level: &str,
-        requested_by: &str,
         entity_type: Option<&str>,
         entity_id: Option<&str>,
         origin_principal: &str,
         origin_session_id: &str,
         nonce: &str,
+        // Who is asking. Its id is what lands in the `requested_by` column, so the
+        // row and the audit record can never name two different requesters.
+        actor: audit::Actor<'_>,
     ) -> CoreResult<Approval> {
+        let requested_by = actor.id;
         // F-30: the requester may not record itself under the native authority's name.
         // This is one half of the composition that replaced the unsatisfiable
         // self-approval equality; see [`NATIVE_CONFIRMER_PRINCIPAL`]. It is checked
@@ -651,7 +827,7 @@ pub mod approvals {
             let created: Approval = tx.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map)?;
             let digest = request_digest(tx, &created)?;
             tx.execute("UPDATE approvals SET request_digest = ?1 WHERE id = ?2", rusqlite::params![digest, id])?;
-            super::audit::record(tx, "approval.requested", "user", requested_by, "approval", &id)?;
+            super::audit::record(tx, "approval.requested", actor, "approval", &id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
@@ -675,11 +851,13 @@ pub mod approvals {
         conn: &Connection,
         id: &str,
         confirmer_principal: &str,
-        confirmed_by: &str,
         note: Option<&str>,
         expected_nonce: &str,
         expected_request_digest: &str,
+        // Who confirmed. Its id is what lands in the `confirmed_by` column.
+        actor: audit::Actor<'_>,
     ) -> CoreResult<Approval> {
+        let confirmed_by = actor.id;
         // F-30: only the renderer-independent native authority may confirm. Checked
         // before anything is read, so it depends on no row and therefore cannot be used
         // to probe which approval ids exist. See [`NATIVE_CONFIRMER_PRINCIPAL`].
@@ -741,7 +919,7 @@ pub mod approvals {
             if changed == 0 {
                 return Err(CoreError::NotFound(format!("pending approval {id}")));
             }
-            super::audit::record(tx, "approval.decided", "user", confirmed_by, "approval", id)?;
+            super::audit::record(tx, "approval.decided", actor, "approval", id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
@@ -828,7 +1006,7 @@ pub mod approvals {
     /// the native-confirmation markers that `approved_for` requires. `decide` refuses
     /// `"approved"` at the authority layer so the invariant cannot be bypassed even if
     /// a command were mis-wired. `decision` must be `"rejected"`.
-    pub fn decide(conn: &Connection, id: &str, decision: &str, note: Option<&str>) -> CoreResult<Approval> {
+    pub fn decide(conn: &Connection, id: &str, decision: &str, note: Option<&str>, actor: audit::Actor<'_>) -> CoreResult<Approval> {
         if !is_valid(decision, APPROVAL_DECISIONS) {
             return Err(CoreError::Invalid { field: "decision", value: decision.to_string() });
         }
@@ -846,7 +1024,7 @@ pub mod approvals {
             if changed == 0 {
                 return Err(CoreError::NotFound(format!("pending approval {id}")));
             }
-            super::audit::record(tx, "approval.decided", "user", "gev", "approval", id)?;
+            super::audit::record(tx, "approval.decided", actor, "approval", id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
@@ -858,7 +1036,7 @@ pub mod approvals {
     /// it needs no engine adjudication, but it is still pending-only + atomic + audited, and the
     /// owner-facing notification makes the escalation visible. Re-escalating a non-pending row is
     /// a no-op error (NotFound), so an already-decided or already-escalated approval cannot move.
-    pub fn escalate(conn: &Connection, id: &str) -> CoreResult<Approval> {
+    pub fn escalate(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<Approval> {
         super::atomic(conn, |tx| {
             let changed = tx.execute(
                 "UPDATE approvals SET status = 'escalated', level = 'A3' WHERE id = ?1 AND status = 'pending'",
@@ -874,7 +1052,7 @@ pub mod approvals {
                  VALUES (?1, 'approval_required', 'warning', 'Escalated for higher review', ?2, NULL, ?3)",
                 rusqlite::params![crate::id(), format!("{target} was escalated to A3 review."), now()],
             )?;
-            super::audit::record(tx, "approval.escalated", "user", "gev", "approval", id)?;
+            super::audit::record(tx, "approval.escalated", actor, "approval", id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM approvals WHERE id = ?1", [id], map).map_err(not_found(id))
@@ -935,7 +1113,7 @@ pub mod decisions {
         })
     }
 
-    pub fn create(conn: &Connection, title: &str, owner: &str, rationale: &str) -> CoreResult<Decision> {
+    pub fn create(conn: &Connection, title: &str, owner: &str, rationale: &str, actor: audit::Actor<'_>) -> CoreResult<Decision> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -944,7 +1122,7 @@ pub mod decisions {
                  VALUES (?1, ?2, 'proposed', ?3, ?4, ?5, ?5)",
                 rusqlite::params![id, title, owner, rationale, now],
             )?;
-            super::audit::record(tx, "decision.created", "user", "gev", "decision", &id)?;
+            super::audit::record(tx, "decision.created", actor, "decision", &id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM decisions WHERE id = ?1", [id.clone()], map).map_err(not_found(&id))
@@ -960,21 +1138,119 @@ pub mod decisions {
 pub mod activity {
     use super::*;
 
+    /// What `repo::seed` writes into `payload_json` on every row it fabricates.
+    /// A literal, so the writer and the reader cannot drift apart.
+    pub const SEED_SOURCE: &str = r#"{"source":"seed"}"#;
+
     fn map(r: &Row) -> rusqlite::Result<ActivityEvent> {
+        let payload: Option<String> = r.get("payload_json")?;
         Ok(ActivityEvent {
             id: r.get("id")?,
             event_type: r.get("event_type")?,
+            actor_type: r.get("actor_type")?,
             actor_id: r.get("actor_id")?,
             entity_type: r.get("entity_type")?,
             entity_id: r.get("entity_id")?,
+            // The mark travels to the surface. Marking the row and dropping it
+            // here is the defect `actor_type` already carries a paragraph about,
+            // and BOTH mappers carry it — `activity::map` and
+            // `security::map_event` — or one surface tells the truth and the
+            // other does not.
+            source: crate::repo::activity::source_of(payload.as_deref()),
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// The `source` a row's `payload_json` declares, if any.
+    ///
+    /// Parsed defensively rather than trusted: anything unreadable returns
+    /// `None`, and `None` means "a real audited write". That direction is only
+    /// safe because `seed` is the one thing in the tree that writes this key —
+    /// if a second writer ever appears, this comment is the place that stops
+    /// being true.
+    pub(crate) fn source_of(payload: Option<&str>) -> Option<String> {
+        let value: serde_json::Value = serde_json::from_str(payload?).ok()?;
+        value.get("source")?.as_str().map(str::to_string)
     }
 
     pub fn list(conn: &Connection) -> CoreResult<Vec<ActivityEvent>> {
         let mut s = conn.prepare("SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 200")?;
         let rows = s.query_map([], map)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+}
+
+#[cfg(test)]
+mod t057_seeded_rows_say_so {
+    use super::*;
+
+    /// T-057's closure, asserted as the condition was written: a reader of
+    /// `audit_events` tells fabricated rows from real ones WITHOUT reading
+    /// repo.rs — here, by a query alone.
+    #[test]
+    fn a_query_alone_separates_the_fabricated_rows_from_the_real_ones() {
+        let conn = crate::db::open_in_memory().unwrap();
+        seed(&conn).unwrap();
+        let fabricated: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE json_extract(payload_json,'$.source') = 'seed'",
+                [], |r| r.get(0)).unwrap();
+        assert_eq!(fabricated, 56, "every fabricated row says so");
+        let real: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE COALESCE(json_extract(payload_json,'$.source'),'') <> 'seed'",
+                [], |r| r.get(0)).unwrap();
+        assert!(real > 0, "the seed also makes REAL audited writes; they must not be marked");
+    }
+
+    /// And the mark reaches the surface. Marking the row and dropping it before
+    /// a reader sees it is the defect `ActivityEvent::actor_type` records.
+    #[test]
+    fn both_read_surfaces_carry_the_mark() {
+        let conn = crate::db::open_in_memory().unwrap();
+        seed(&conn).unwrap();
+        let rows = activity::list(&conn).unwrap();
+        let seeded = rows.iter().filter(|e| e.source.as_deref() == Some("seed")).count();
+        assert!(seeded > 0, "activity::list must carry the mark");
+        assert!(rows.iter().any(|e| e.source.is_none()),
+                "and must not mark a real audited write");
+
+        // The SECOND surface, asserted on ITS OWN rows. Until this existed the
+        // test computed the summary, threw it away, and closed on a restatement
+        // of the assertion above -- so `security::map_event` could drop `source`
+        // entirely with every test still green.
+        let summary = security::summary(&conn).unwrap();
+        assert!(
+            !summary.sensitive_events.is_empty(),
+            "the seed must produce sensitive events, or the assertion below asserts nothing"
+        );
+        let marked = summary
+            .sensitive_events
+            .iter()
+            .filter(|e| e.source.as_deref() == Some("seed"))
+            .count();
+        assert!(marked > 0, "security::summary must carry the mark too");
+    }
+
+    /// A real audited write is never marked, so `None` keeps meaning "real".
+    #[test]
+    fn a_real_audited_write_carries_no_source() {
+        let conn = crate::db::open_in_memory().unwrap();
+        audit::record(&conn, "task.created", audit::Actor::local_operator(), "task", "t-1").unwrap();
+        let rows = activity::list(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, None);
+    }
+
+    /// An unreadable payload must not make a row look real by accident — it
+    /// reads as `None`, which is the same as real, and THAT is why the constant
+    /// and the parser live next to each other with the caveat written down.
+    #[test]
+    fn an_unreadable_payload_reads_as_none() {
+        assert_eq!(activity::source_of(Some("not json at all")), None);
+        assert_eq!(activity::source_of(Some(r#"{"other":"x"}"#)), None);
+        assert_eq!(activity::source_of(None), None);
+        assert_eq!(activity::source_of(Some(activity::SEED_SOURCE)), Some("seed".to_string()));
     }
 }
 
@@ -1104,7 +1380,7 @@ pub mod chat {
          COUNT(m.id) AS message_count, MAX(m.created_at) AS last_message_at \
          FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id";
 
-    pub fn create_conversation(conn: &Connection, kind: &str, title: &str) -> CoreResult<Conversation> {
+    pub fn create_conversation(conn: &Connection, kind: &str, title: &str, actor: audit::Actor<'_>) -> CoreResult<Conversation> {
         if !is_valid(kind, CONVERSATION_KINDS) {
             return Err(CoreError::Invalid { field: "kind", value: kind.to_string() });
         }
@@ -1115,7 +1391,7 @@ pub mod chat {
                 "INSERT INTO conversations(id, kind, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
                 rusqlite::params![id, kind, title, now],
             )?;
-            super::audit::record(tx, "conversation.created", "user", "gev", "conversation", &id)?;
+            super::audit::record(tx, "conversation.created", actor, "conversation", &id)?;
             Ok(())
         })?;
         get_conversation(conn, &id)
@@ -1193,7 +1469,7 @@ pub mod chat {
             )?;
             // The message role doubles as the audit actor type: user messages
             // audit as 'user', agent messages as 'agent' (L-4a).
-            super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
+            super::audit::record(tx, "message.posted", super::audit::Actor::from_message(&input.role, &input.author), "conversation", &input.conversation_id)?;
             Ok(())
         })?;
         let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
@@ -1263,7 +1539,7 @@ pub mod chat {
                     crate::governed_message_store::sha256_hex(input.body.as_bytes())
                 ],
             )?;
-            super::audit::record(tx, "message.posted", &input.role, &input.author, "conversation", &input.conversation_id)?;
+            super::audit::record(tx, "message.posted", super::audit::Actor::from_message(&input.role, &input.author), "conversation", &input.conversation_id)?;
             Ok(())
         })?;
         let sql = format!("SELECT m.*, {MESSAGE_TRUST_COLUMNS} FROM messages m WHERE m.id = ?1");
@@ -1272,13 +1548,13 @@ pub mod chat {
 
     /// Delete a conversation and (via the FK cascade) all of its messages.
     /// Rejects an unknown conversation.
-    pub fn delete_conversation(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete_conversation(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "conversation.deleted", "user", "gev", "conversation", id)?;
+            super::audit::record(tx, "conversation.deleted", actor, "conversation", id)?;
             Ok(())
         })
     }
@@ -1322,7 +1598,7 @@ pub mod chat {
 
     /// Rename a conversation and bump its activity timestamp. Rejects an unknown
     /// conversation.
-    pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> CoreResult<Conversation> {
+    pub fn rename_conversation(conn: &Connection, id: &str, title: &str, actor: audit::Actor<'_>) -> CoreResult<Conversation> {
         super::atomic(conn, |tx| {
             let changed = tx.execute(
                 "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
@@ -1331,7 +1607,7 @@ pub mod chat {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "conversation.renamed", "user", "gev", "conversation", id)?;
+            super::audit::record(tx, "conversation.renamed", actor, "conversation", id)?;
             Ok(())
         })?;
         get_conversation(conn, id)
@@ -1364,7 +1640,7 @@ pub mod knowledge {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewKnowledgeNote) -> CoreResult<KnowledgeNote> {
+    pub fn create(conn: &Connection, input: NewKnowledgeNote, actor: audit::Actor<'_>) -> CoreResult<KnowledgeNote> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -1383,7 +1659,7 @@ pub mod knowledge {
                 &lwr::knowledge_content_sha256(&input.title, &input.body, &input.source, &input.tags),
                 &now,
             )?;
-            super::audit::record(tx, "knowledge.created", "user", "gev", "knowledge_note", &id)?;
+            super::audit::record(tx, "knowledge.created", actor, "knowledge_note", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -1436,7 +1712,7 @@ pub mod knowledge {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             // Read first so the `deleted` record can pin WHAT was removed. The record
             // carries no FK to the note precisely so it outlives it — the one write
@@ -1454,7 +1730,7 @@ pub mod knowledge {
                 &digest(&note),
                 &now(),
             )?;
-            super::audit::record(tx, "knowledge.deleted", "user", "gev", "knowledge_note", id)?;
+            super::audit::record(tx, "knowledge.deleted", actor, "knowledge_note", id)?;
             Ok(())
         })
     }
@@ -1480,7 +1756,7 @@ pub mod memory {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewMemoryEntry) -> CoreResult<MemoryEntry> {
+    pub fn create(conn: &Connection, input: NewMemoryEntry, actor: audit::Actor<'_>) -> CoreResult<MemoryEntry> {
         if !is_valid(&input.kind, MEMORY_KINDS) {
             return Err(CoreError::Invalid { field: "kind", value: input.kind });
         }
@@ -1502,7 +1778,7 @@ pub mod memory {
                 &lwr::memory_content_sha256(&input.scope, &input.kind, &input.content, false),
                 &now,
             )?;
-            super::audit::record(tx, "memory.created", "user", "gev", "memory_entry", &id)?;
+            super::audit::record(tx, "memory.created", actor, "memory_entry", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -1576,7 +1852,7 @@ pub mod memory {
         get(conn, id)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             // Read first so the `deleted` record pins WHAT was removed (see
             // `knowledge::delete` for why the record carries no FK to the row).
@@ -1593,7 +1869,7 @@ pub mod memory {
                 &digest(&entry),
                 &now(),
             )?;
-            super::audit::record(tx, "memory.deleted", "user", "gev", "memory_entry", id)?;
+            super::audit::record(tx, "memory.deleted", actor, "memory_entry", id)?;
             Ok(())
         })
     }
@@ -1614,7 +1890,7 @@ pub mod library {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewLibraryItem) -> CoreResult<LibraryItem> {
+    pub fn create(conn: &Connection, input: NewLibraryItem, actor: audit::Actor<'_>) -> CoreResult<LibraryItem> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -1623,7 +1899,7 @@ pub mod library {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
                 rusqlite::params![id, input.title, input.kind, input.body, input.tags, now],
             )?;
-            super::audit::record(tx, "library.created", "user", "gev", "library_item", &id)?;
+            super::audit::record(tx, "library.created", actor, "library_item", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -1640,13 +1916,13 @@ pub mod library {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM library_items WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "library.deleted", "user", "gev", "library_item", id)?;
+            super::audit::record(tx, "library.deleted", actor, "library_item", id)?;
             Ok(())
         })
     }
@@ -1667,7 +1943,7 @@ pub mod research {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewResearchItem) -> CoreResult<ResearchItem> {
+    pub fn create(conn: &Connection, input: NewResearchItem, actor: audit::Actor<'_>) -> CoreResult<ResearchItem> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -1676,7 +1952,7 @@ pub mod research {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
                 rusqlite::params![id, input.title, input.question, input.findings, input.status, now],
             )?;
-            super::audit::record(tx, "research.created", "user", "gev", "research_item", &id)?;
+            super::audit::record(tx, "research.created", actor, "research_item", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -1693,13 +1969,13 @@ pub mod research {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM research_items WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "research.deleted", "user", "gev", "research_item", id)?;
+            super::audit::record(tx, "research.deleted", actor, "research_item", id)?;
             Ok(())
         })
     }
@@ -1719,7 +1995,7 @@ pub mod runs {
         })
     }
 
-    pub fn create(conn: &Connection, intent: &str, plan: &str) -> CoreResult<Run> {
+    pub fn create(conn: &Connection, intent: &str, plan: &str, actor: audit::Actor<'_>) -> CoreResult<Run> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -1728,7 +2004,7 @@ pub mod runs {
                  VALUES (?1, ?2, 'drafted', ?3, ?4, ?4)",
                 rusqlite::params![id, intent, plan, now],
             )?;
-            super::audit::record(tx, "run.created", "user", "gev", "run", &id)?;
+            super::audit::record(tx, "run.created", actor, "run", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -1744,7 +2020,7 @@ pub mod runs {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Run> {
+    pub fn set_status(conn: &Connection, id: &str, status: &str, actor: audit::Actor<'_>) -> CoreResult<Run> {
         if !is_valid(status, RUN_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
@@ -1756,7 +2032,7 @@ pub mod runs {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "run.status_changed", "user", "gev", "run", id)?;
+            super::audit::record(tx, "run.status_changed", actor, "run", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -1863,10 +2139,12 @@ pub mod runs {
             }
             // Gated step: verify + consume the grant now, before dispatch (M-2).
             if step.requires_approval {
-                if !super::approvals::approved_for(tx, id, super::approvals::RUN_STEP_ENTITY_TYPE, super::approvals::RUN_STEP_ACTION_TYPE)? {
-                    return Err(CoreError::Invalid { field: "approval", value: "required".into() });
-                }
-                super::approvals::consume_for(tx, id, super::approvals::RUN_STEP_ENTITY_TYPE, super::approvals::RUN_STEP_ACTION_TYPE)?;
+                super::approvals::require_and_consume(
+                    tx,
+                    id,
+                    super::approvals::RUN_STEP_ENTITY_TYPE,
+                    super::approvals::RUN_STEP_ACTION_TYPE,
+                )?;
             }
             Ok(())
         })?;
@@ -1876,7 +2154,7 @@ pub mod runs {
     /// Complete a claimed execution -> `done`, storing the result. The grant was
     /// already consumed at claim, so this does not re-gate; only the claiming attempt
     /// (on a still-runnable step) may complete — a stale/duplicate dispatch fails.
-    pub fn complete_step_execution(conn: &Connection, id: &str, attempt: &str, result: &str) -> CoreResult<RunStep> {
+    pub fn complete_step_execution(conn: &Connection, id: &str, attempt: &str, result: &str, actor: audit::Actor<'_>) -> CoreResult<RunStep> {
         super::atomic(conn, |tx| {
             let n = tx.execute(
                 "UPDATE run_steps SET result = ?1, status = 'done', updated_at = ?2
@@ -1886,7 +2164,7 @@ pub mod runs {
             if n == 0 {
                 return Err(CoreError::Invalid { field: "attempt", value: "stale or invalid execution attempt".into() });
             }
-            super::audit::record(tx, "run_step.executed", "user", "gev", "run_step", id)?;
+            super::audit::record(tx, "run_step.executed", actor, "run_step", id)?;
             Ok(())
         })?;
         get_step(conn, id)
@@ -1941,7 +2219,7 @@ pub mod runs {
                     "UPDATE runs SET status = 'failed', updated_at = ?1 WHERE id = ?2",
                     rusqlite::params![now(), run_id],
                 )?;
-                super::audit::record(tx, "execution.abandoned", "system", "system", "run_step", step_id)?;
+                super::audit::record(tx, "execution.abandoned", audit::Actor::system(), "run_step", step_id)?;
                 reconciled += 1;
             }
             Ok(())
@@ -2046,7 +2324,7 @@ pub mod runs {
                 "UPDATE runs SET status = 'failed', updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now(), run_id],
             )?;
-            super::audit::record(tx, "run_step.rejected", "system", "system", "run_step", step_id)?;
+            super::audit::record(tx, "run_step.rejected", audit::Actor::system(), "run_step", step_id)?;
             Ok(())
         })
     }
@@ -2060,7 +2338,7 @@ pub mod runs {
     ///
     /// Rejects advancing a terminated run (succeeded/failed/cancelled) or a run
     /// with no steps. All reads and state changes share one transaction.
-    pub fn advance(conn: &Connection, run_id: &str) -> CoreResult<Run> {
+    pub fn advance(conn: &Connection, run_id: &str, actor: audit::Actor<'_>) -> CoreResult<Run> {
         super::atomic(conn, |tx| {
             let run = get(tx, run_id)?;
             if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
@@ -2146,7 +2424,7 @@ pub mod runs {
                         rusqlite::params![now, step_id],
                     )?;
                     if run.status != "running" {
-                        set_status(tx, run_id, "running")?;
+                        set_status(tx, run_id, "running", actor)?;
                     }
                 }
                 None => {
@@ -2159,10 +2437,10 @@ pub mod runs {
                         |r| r.get(0),
                     )?;
                     let terminal = if failed > 0 { "failed" } else { "succeeded" };
-                    set_status(tx, run_id, terminal)?;
+                    set_status(tx, run_id, terminal, actor)?;
                 }
             }
-            super::audit::record(tx, "run.advanced", "user", "gev", "run", run_id)?;
+            super::audit::record(tx, "run.advanced", actor, "run", run_id)?;
             Ok(())
         })?;
         get(conn, run_id)
@@ -2185,7 +2463,7 @@ pub mod events {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewEvent) -> CoreResult<Event> {
+    pub fn create(conn: &Connection, input: NewEvent, actor: audit::Actor<'_>) -> CoreResult<Event> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
@@ -2194,7 +2472,7 @@ pub mod events {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
                 rusqlite::params![id, input.title, input.kind, input.location, input.starts_at, input.ends_at, now],
             )?;
-            super::audit::record(tx, "event.created", "user", "gev", "event", &id)?;
+            super::audit::record(tx, "event.created", actor, "event", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -2210,13 +2488,13 @@ pub mod events {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM events WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "event.deleted", "user", "gev", "event", id)?;
+            super::audit::record(tx, "event.deleted", actor, "event", id)?;
             Ok(())
         })
     }
@@ -2237,16 +2515,24 @@ pub mod automations {
         })
     }
 
-    pub fn create(conn: &Connection, input: NewAutomation) -> CoreResult<Automation> {
+    /// Declare an automation. It is created **disarmed** (`enabled = 0`).
+    ///
+    /// It used to be created with `enabled = 1`, which made the T-052 arming gate
+    /// on [`set_enabled`] worthless: `create_automation` is itself tier X with
+    /// `grant: allow`, so anyone who could reach it could mint an already-armed
+    /// automation and never touch the gated path at all. A gate with a one-call
+    /// way around it is not a gate. Arming is now reachable only through
+    /// [`set_enabled`], which requires a natively confirmed grant.
+    pub fn create(conn: &Connection, input: NewAutomation, actor: audit::Actor<'_>) -> CoreResult<Automation> {
         let now = now();
         let id = id();
         super::atomic(conn, |tx| {
             tx.execute(
                 "INSERT INTO automations(id, name, trigger, action, enabled, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+                 VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
                 rusqlite::params![id, input.name, input.trigger, input.action, now],
             )?;
-            super::audit::record(tx, "automation.created", "user", "gev", "automation", &id)?;
+            super::audit::record(tx, "automation.created", actor, "automation", &id)?;
             Ok(())
         })?;
         get(conn, &id)
@@ -2262,7 +2548,18 @@ pub mod automations {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    pub fn set_enabled(conn: &Connection, id: &str, enabled: bool) -> CoreResult<Automation> {
+    /// Arm or disarm an automation.
+    ///
+    /// **The T-052 tier-X gate is asymmetric, deliberately.** ARMING is the
+    /// execution-tier act: an enabled automation with an `every: <N>{m|h|d}`
+    /// trigger is fired unattended by the 60s scheduler loop and writes tasks and
+    /// knowledge notes with nobody present, so it requires a natively confirmed
+    /// grant. DISARMING is not gated and must never be: it is the only way to stop
+    /// a running automation, and putting an approval ceremony in front of the stop
+    /// button would turn this gate into a denial of service on the operator's own
+    /// safety control. Gating both directions would have been the symmetrical
+    /// answer and the wrong one.
+    pub fn set_enabled(conn: &Connection, id: &str, enabled: bool, actor: audit::Actor<'_>) -> CoreResult<Automation> {
         super::atomic(conn, |tx| {
             let changed = tx.execute(
                 "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
@@ -2271,7 +2568,15 @@ pub mod automations {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "automation.toggled", "user", "gev", "automation", id)?;
+            if enabled {
+                super::approvals::require_and_consume(
+                    tx,
+                    id,
+                    super::approvals::AUTOMATION_ENTITY_TYPE,
+                    super::approvals::AUTOMATION_ENABLED_ACTION_TYPE,
+                )?;
+            }
+            super::audit::record(tx, "automation.toggled", actor, "automation", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -2327,6 +2632,10 @@ pub mod automations {
                         priority: "normal".to_string(),
                         assigned_agent_id: None,
                     },
+                    // The automation's own action authored this row, whoever set the
+                    // automation running. Recording it as a human is what made an
+                    // unattended 3am tick indistinguishable from someone typing.
+                    audit::Actor::automation(),
                 )?;
                 Ok(("ok", format!("created task: {arg}")))
             }
@@ -2339,6 +2648,7 @@ pub mod automations {
                         source: "automation".to_string(),
                         tags: String::new(),
                     },
+                    audit::Actor::automation(),
                 )?;
                 Ok(("ok", format!("created note: {arg}")))
             }
@@ -2348,7 +2658,7 @@ pub mod automations {
 
     /// Run an automation NOW: perform its action (locally, fail-closed for anything AI) and append a
     /// row to the run log, returning it. A disabled automation refuses to run.
-    pub fn run(conn: &Connection, id: &str) -> CoreResult<AutomationRun> {
+    pub fn run(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<AutomationRun> {
         let automation = get(conn, id)?;
         if !automation.enabled {
             return Err(CoreError::Invalid {
@@ -2364,7 +2674,7 @@ pub mod automations {
                 "INSERT INTO automation_runs(id, automation_id, ran_at, outcome, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![run_id, id, now, outcome, detail],
             )?;
-            super::audit::record(tx, "automation.ran", "user", "gev", "automation", id)?;
+            super::audit::record(tx, "automation.ran", actor, "automation", id)?;
             Ok(())
         })?;
         conn.query_row("SELECT * FROM automation_runs WHERE id = ?1", [&run_id], map_run)
@@ -2425,21 +2735,1136 @@ pub mod automations {
                 None => true,
             };
             if due {
-                fired.push(run(conn, &a.id)?);
+                // Unattended: this loop runs on a 60s timer with nobody at the
+                // cockpit, so the run is the scheduler's, not a person's.
+                fired.push(run(conn, &a.id, audit::Actor::scheduler())?);
+            }
+        }
+        // The produced-agent half of the same tick. It enqueues AND dispatches.
+        //
+        // Until T-058 it enqueued and performed nothing, and that sentence is no
+        // longer true -- so here is the new ceiling, enumerated rather than
+        // described. A tick may write: a `flow_runs` row, a `scheduler_ticks`
+        // row, a `flow_receipts` row, `audit_events` rows, and whatever a `store`
+        // step's `knowledge::create` writes. Nothing else. That is the SAME
+        // ceiling the automation half above already sits at -- `execute_action`
+        // writes notifications, tasks and knowledge notes on this very tick --
+        // so dispatch adds no class of capability. It closes the gap between the
+        // two halves in favour of the more restrained one: the produced agent's
+        // vocabulary is a closed four-kind type rather than a `verb: arg` string,
+        // it is checked against a digest and a grant, it leaves a receipt, and
+        // `model` and `call` steps are still REFUSED.
+        //
+        // Dispatch reaches only bundles that are ARMED, and arming is a separate
+        // act behind a natively confirmed grant (`agent_runs::set_active`).
+        // Registering a bundle no longer arms it.
+        //
+        // A store root that is absent is not an error: no agent has been built.
+        if let Some(root) = super::agent_runs::default_store_root() {
+            super::agent_runs::enqueue_due(conn, now_ms, &root)?;
+            // Bounded, so one tick cannot become unbounded work: a backlog is
+            // drained across ticks rather than inside one. `claim_and_run`
+            // returns None when nothing is queued, which ends the loop early.
+            for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
+                if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
+                    break;
+                }
             }
         }
         Ok(fired)
     }
 
-    pub fn delete(conn: &Connection, id: &str) -> CoreResult<()> {
+    pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
         super::atomic(conn, |tx| {
             let changed = tx.execute("DELETE FROM automations WHERE id = ?1", [id])?;
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "automation.deleted", "user", "gev", "automation", id)?;
+            super::audit::record(tx, "automation.deleted", actor, "automation", id)?;
             Ok(())
         })
+    }
+}
+
+/// The produced-agent scheduler half (T-055). Design: `docs/design/PRODUCTION_HALF_DESIGN.md` §5.
+///
+/// Two things are deliberate here and both are refusals rather than fallbacks.
+///
+/// **A tick that finds nothing still writes a row.** `scheduler_ticks` exists
+/// because `lib.rs` discarded `run_due`'s result with `let _ =`, which made a
+/// poisoned mutex, a failed open and a quiet week look identical. A scheduler
+/// that cannot say what it did on a tick cannot be audited unattended.
+///
+/// **A bad bundle is refused, not skipped.** A skipped fire leaves no row, and
+/// "nothing happened" is exactly what a log must not say when something was
+/// tampered with. A refusal leaves a row with a typed reason from a closed set.
+pub mod agent_runs {
+    use super::*;
+    use crate::agent_bundle::{self, Refusal, StepKind};
+    use std::path::{Path, PathBuf};
+
+    /// Where the store lives when the caller names none. `BROPS_AGENT_STORE` is
+    /// read rather than assumed: the desktop's app-data directory is not known
+    /// to this crate, and inventing a path here would be a claim about a layout
+    /// this module cannot see.
+    pub fn default_store_root() -> Option<PathBuf> {
+        std::env::var_os("BROPS_AGENT_STORE").map(PathBuf::from).filter(|p| p.is_dir())
+    }
+
+    /// The regime a run executed under, recorded ON the receipt. Read once here
+    /// rather than at display time, because a receipt that cannot distinguish
+    /// "was blocked" from "would have been blocked" is not evidence.
+    /// How many queued runs one 60s tick may dispatch.
+    ///
+    /// A bound, not a tuning knob: without it a backlog makes a single
+    /// unattended tick unbounded work. Four is enough that a handful of agents
+    /// on one interval all run within a tick, and small enough that the loop
+    /// cannot hold the scheduler. What does not fit waits for the next tick.
+    pub const MAX_DISPATCH_PER_TICK: usize = 4;
+
+    pub fn enforcement_regime() -> String {
+        std::env::var("BRO_ENFORCEMENT").unwrap_or_else(|_| "enforce".to_string())
+    }
+
+    /// Record a built bundle. It is created **DISARMED**: no `agent_bundle_active`
+    /// row, so the scheduler resolves no trigger to it and nothing dispatches it.
+    ///
+    /// This function used to write BOTH tables in one call, and to hardcode
+    /// `state = 'approved'` while doing it — so building an agent and arming it
+    /// were the same act, and the arming path could be skipped entirely. That was
+    /// harmless only while the tick performed nothing; the moment the tick
+    /// dispatches, a bundle that arms itself at creation is an unattended
+    /// executor nobody approved. It is the exact defect `automations::create`
+    /// already carries a paragraph about: *"a gate with a one-call way around it
+    /// is not a gate"*. Arming is now reachable only through [`set_active`].
+    ///
+    /// `state` is `'built'`, which is what a freshly written bundle is. Nothing
+    /// here decides that it is approved.
+    pub fn register(
+        conn: &Connection,
+        digest: &str,
+        bundle_id: &str,
+        bundle_version: u64,
+        display_name: &str,
+    ) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "INSERT OR REPLACE INTO agent_bundles(bundle_digest, bundle_id, bundle_version, \
+                 display_name, built_at, state, created_at) VALUES (?1,?2,?3,?4,?5,'built',?6)",
+                rusqlite::params![digest, bundle_id, bundle_version as i64, display_name, crate::now(), crate::now()],
+            )?;
+            super::audit::record(tx, "agent_bundle.registered", audit::Actor::system(), "agent_bundle", digest)?;
+            Ok(())
+        })
+    }
+
+    /// Arm or disarm a bundle — the act the scheduler's dispatch depends on.
+    ///
+    /// **Asymmetric, and deliberately so, exactly as `automations::set_enabled`
+    /// is.** ARMING is the execution-tier act: an armed bundle is claimed and run
+    /// by the 60s tick with nobody present, so it requires a natively confirmed
+    /// grant and consumes it. DISARMING is NOT gated and must never be — it is
+    /// the only way to stop a running agent, and an approval ceremony in front of
+    /// the stop button turns this gate into a denial of service on the operator's
+    /// own safety control.
+    pub fn set_active(
+        conn: &Connection,
+        bundle_id: &str,
+        digest: &str,
+        interval_ms: i64,
+        active: bool,
+        actor: audit::Actor<'_>,
+    ) -> CoreResult<()> {
+        super::atomic(conn, |tx| {
+            if active {
+                super::approvals::require_and_consume(
+                    tx,
+                    digest,
+                    super::approvals::AGENT_BUNDLE_ENTITY_TYPE,
+                    super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                )?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO agent_bundle_active(bundle_id, bundle_digest, interval_ms, updated_at) \
+                     VALUES (?1,?2,?3,?4)",
+                    rusqlite::params![bundle_id, digest, interval_ms, crate::now()],
+                )?;
+            } else {
+                tx.execute("DELETE FROM agent_bundle_active WHERE bundle_id = ?1", [bundle_id])?;
+            }
+            super::audit::record(
+                tx,
+                if active { "agent_bundle.armed" } else { "agent_bundle.disarmed" },
+                actor,
+                "agent_bundle",
+                digest,
+            )?;
+            Ok(())
+        })
+    }
+
+    fn last_run_ms(conn: &Connection, bundle_id: &str) -> CoreResult<Option<i64>> {
+        let v: Option<String> = conn
+            .query_row(
+                "SELECT due_at FROM flow_runs WHERE bundle_id = ?1 ORDER BY due_at DESC LIMIT 1",
+                [bundle_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.and_then(|s| s.parse::<i64>().ok()))
+    }
+
+    /// Detect due bundles and enqueue. Returns `(due_found, enqueued, refused)`.
+    ///
+    /// THIS function still performs no action, reaches no network, holds no
+    /// credential and calls no model — but do not read that as a statement
+    /// about the tick, which since T-058 calls `claim_and_run` after this
+    /// returns. The enumerated ceiling for the tick is in `automations::run_due`.
+    pub fn enqueue_due(
+        conn: &Connection,
+        now_ms: i64,
+        store_root: &Path,
+    ) -> CoreResult<(u32, u32, u32)> {
+        let mut rows: Vec<(String, String, i64)> = Vec::new();
+        {
+            let mut st = conn.prepare(
+                "SELECT bundle_id, bundle_digest, interval_ms FROM agent_bundle_active",
+            )?;
+            let it = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            for row in it {
+                rows.push(row?);
+            }
+        }
+        let (mut due_found, mut enqueued, mut refused) = (0u32, 0u32, 0u32);
+        for (bundle_id, digest, interval_ms) in rows {
+            let due = match last_run_ms(conn, &bundle_id)? {
+                Some(t) => now_ms.saturating_sub(t) >= interval_ms,
+                None => true,
+            };
+            if !due {
+                continue;
+            }
+            due_found += 1;
+            // Re-verify before enqueuing: the bytes may have changed since the
+            // build, and a mismatch is a refusal with a reason, never a skip.
+            let outcome = agent_bundle::verify(&store_root.join(&digest), now_ms / 1000);
+            let (state, reason) = match &outcome {
+                Ok(_) => ("queued", None),
+                Err(r) => ("refused", Some(r.as_str())),
+            };
+            let id = format!("fr-{}-{}", &digest[..12], now_ms);
+            super::atomic(conn, |tx| {
+                tx.execute(
+                    "INSERT OR IGNORE INTO flow_runs(id, bundle_id, bundle_digest, trigger_kind, \
+                     invoked_by, due_at, state, refusal_reason, created_at) \
+                     VALUES (?1,?2,?3,'interval','run_due',?4,?5,?6,?7)",
+                    rusqlite::params![id, bundle_id, digest, now_ms.to_string(), state, reason, crate::now()],
+                )?;
+                super::audit::record(tx, "flow_run.enqueued", audit::Actor::scheduler(), "flow_run", &id)?;
+                Ok(())
+            })?;
+            if state == "queued" { enqueued += 1 } else { refused += 1 }
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO scheduler_ticks(at, due_found, enqueued, refused, error) \
+             VALUES (?1,?2,?3,?4,NULL)",
+            rusqlite::params![now_ms.to_string(), due_found, enqueued, refused],
+        )?;
+        Ok((due_found, enqueued, refused))
+    }
+
+    /// The one-time claim, on its own so it can be tested on its own.
+    ///
+    /// It was folded into `claim_and_run` at first, and a mutation sweep showed
+    /// why that hid it: by the time a second `claim_and_run` ran, the first had
+    /// finished and the row was no longer `queued`, so the test passed on the
+    /// empty SELECT and never reached this guard. Deleting the guard left every
+    /// test green. It is a separate function now, and the test below races two
+    /// claims at one still-queued row.
+    ///
+    /// `true` means this caller owns the run. `false` means somebody else does,
+    /// and the caller must dispatch nothing -- the UPDATE writes 0 rows because
+    /// of `state='queued' AND claim_attempt_id IS NULL`, the shape migration 0013
+    /// established for run steps.
+    pub fn try_claim(
+        conn: &Connection,
+        run_id: &str,
+        session_id: &str,
+        now_ms: i64,
+    ) -> CoreResult<bool> {
+        let attempt = format!("att-{}-{}", session_id, now_ms);
+        let claimed = conn.execute(
+            "UPDATE flow_runs SET state='running', claim_attempt_id=?1, claim_session_id=?2, \
+             claim_started_at=?3 WHERE id=?4 AND state='queued' AND claim_attempt_id IS NULL",
+            rusqlite::params![attempt, session_id, crate::now(), run_id],
+        )?;
+        Ok(claimed == 1)
+    }
+
+    /// Claim exactly one queued run and execute its flow. The claim is the
+    /// one-time shape migration 0013 established: an `UPDATE ... WHERE state =
+    /// 'queued' AND claim_attempt_id IS NULL`, so a second concurrent claim
+    /// writes 0 rows and is refused before any dispatch.
+    pub fn claim_and_run(
+        conn: &Connection,
+        store_root: &Path,
+        session_id: &str,
+        now_ms: i64,
+    ) -> CoreResult<Option<String>> {
+        let next: Option<(String, String)> = conn
+            .query_row(
+                "SELECT id, bundle_digest FROM flow_runs WHERE state = 'queued' \
+                 AND claim_attempt_id IS NULL ORDER BY due_at LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let (run_id, digest) = match next {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        if !try_claim(conn, &run_id, session_id, now_ms)? {
+            return Ok(None); // another claimer won; refused before dispatch
+        }
+
+        let bundle = match agent_bundle::verify(&store_root.join(&digest), now_ms / 1000) {
+            Ok(b) => b,
+            Err(r) => {
+                finish(conn, &run_id, &digest, "refused", Some(r.as_str()), 0, &[])?;
+                return Ok(Some(run_id));
+            }
+        };
+
+        // Execute. Only `store` steps run at this head: a `model` step is a
+        // governed turn and a `call` step needs the §3 enforcement point, and
+        // both are refused rather than approximated.
+        let mut touched: Vec<String> = Vec::new();
+        let mut steps_run = 0u32;
+        for step in &bundle.flow.steps {
+            match step.kind {
+                StepKind::Branch => { steps_run += 1; }
+                StepKind::Store => {
+                    let note = format!(
+                        "{} · step {} · {}",
+                        bundle.manifest.display_name,
+                        step.id,
+                        step.argument.clone().unwrap_or_default()
+                    );
+                    // `source` names the run, not a person: a reader of
+                    // knowledge_notes can tell a produced-agent write from a
+                    // human one without reading this file.
+                    let id = super::knowledge::create(
+                        conn,
+                        crate::domain::NewKnowledgeNote {
+                            title: note,
+                            body: format!(
+                                "Written by flow run {run_id} from bundle {digest}, step {}.",
+                                step.id
+                            ),
+                            source: format!("flow_run:{run_id}"),
+                            tags: "produced-agent".into(),
+                        },
+                        audit::Actor::run_executor(),
+                    )?;
+                    touched.push(format!("knowledge_notes/{}", id.id));
+                    steps_run += 1;
+                }
+                StepKind::Call => {
+                    // THE ENFORCEMENT POINT for the produced agent (design SS3.3,
+                    // as corrected: this population has no spawn and no `Bash`,
+                    // so the kernel namespace built for the build agent is not
+                    // the mechanism here — the closed step vocabulary is).
+                    let refusal = authorize_call(conn, &run_id, &bundle, step)?;
+                    finish(conn, &run_id, &digest, "refused",
+                           Some(refusal.as_str()), steps_run, &touched)?;
+                    return Ok(Some(run_id));
+                }
+                _ => {
+                    finish(conn, &run_id, &digest, "refused",
+                           Some(Refusal::StepKindNotExecutable.as_str()), steps_run, &touched)?;
+                    return Ok(Some(run_id));
+                }
+            }
+        }
+        finish(conn, &run_id, &digest, "done", None, steps_run, &touched)?;
+        Ok(Some(run_id))
+    }
+
+    /// Decide one `call` step's destination against the bundle's grant, record
+    /// the decision, and return the refusal the run finishes with.
+    ///
+    /// **Every path returns a refusal, including the authorized one.** That is
+    /// not a hedge: nothing in this tree opens a connection, so an authorized
+    /// call cannot happen, and pretending otherwise would be the approximation
+    /// this slice exists to avoid. The two outcomes are told apart by their
+    /// reason — `egress_not_granted` means the grant said no, and
+    /// `call_transport_unimplemented` means the grant said YES and the
+    /// transport is missing. A reader of `flow_runs.refusal_reason` can see
+    /// which, and that difference is what makes the decision observable.
+    fn authorize_call(
+        conn: &Connection,
+        run_id: &str,
+        bundle: &agent_bundle::VerifiedBundle,
+        step: &agent_bundle::Step,
+    ) -> CoreResult<Refusal> {
+        // A `call` step that names nothing is not a call to somewhere default.
+        let call_ref = match step.call_ref.as_deref() {
+            Some(name) => name,
+            None => return Ok(Refusal::CallRefMissing),
+        };
+
+        // Rebuilt from what is on disk, not carried in memory: a grant that was
+        // valid when it was written is judged again every time it is used.
+        let allowlist = match bundle.grant.egress_allowlist(&bundle.digest) {
+            Ok(allowlist) => allowlist,
+            Err(refusal) => return Ok(refusal),
+        };
+
+        // ONE decision. The flow may name a ROW of the grant and may not name a
+        // destination: a flow is the half a prompt can author, and a destination
+        // stated there would be a destination stated in prose (design SS2.3
+        // rule 6). Resolution and verdict happen together inside the authorizer
+        // — split apart, the verdict could only ever agree with the lookup.
+        let decision = allowlist.authorize_ref(call_ref);
+
+        // §4: the step names SLOTS, never a value. Checked only when the
+        // destination was allowed — a denied egress makes the credential
+        // irrelevant, and asking about one anyway would put a slot name in the
+        // record of a call that was never going to happen.
+        //
+        // `is_bound` and NOT `reference_of`: the only question here is whether
+        // the operator has named a reference for the slot. The reference itself
+        // is not read, because there is nothing to hand it to yet -- and no
+        // VALUE exists on this side of the boundary to read at all.
+        let slots = &step.requires.credential_slots;
+        let mut missing: Option<&str> = None;
+        if decision.allowed() {
+            for slot in slots {
+                if !crate::credentials::is_bound(conn, &bundle.digest, slot)? {
+                    missing = Some(slot.as_str());
+                    break;
+                }
+            }
+        }
+        // THREE outcomes a reviewer must be able to tell apart, in one record
+        // beside the egress verdict: nothing was needed, the operator provided
+        // it, or a declared slot has no value bound for THIS digest. The
+        // refusal reason distinguishes the two that refuse; the payload
+        // distinguishes all three. The slot NAME appears; a value never does,
+        // and nothing on this path has read one.
+        let credential_state = if !decision.allowed() {
+            "not_reached"
+        } else if slots.is_empty() {
+            "none_required"
+        } else if missing.is_some() {
+            "absent"
+        } else {
+            "present"
+        };
+
+        record_egress_decision(
+            conn, run_id, decision.event_type(),
+            &format!(
+                "{{\"outcome\":{},\"call_ref\":{},\"destination\":{},\"population\":{},\"grant\":{},\"credential\":{},\"slots\":{},\"missing_slot\":{},\"reason\":{}}}",
+                json_string(if decision.allowed() { "allowed" } else { "denied" }),
+                json_string(call_ref),
+                json_string(&decision.matched.as_ref().map(|d| d.render()).unwrap_or_default()),
+                json_string(decision.population.as_str()),
+                json_string(decision.grant_id.as_str()),
+                json_string(credential_state),
+                json_string(&slots.join(",")),
+                json_string(missing.unwrap_or("")),
+                json_string(&decision.reason),
+            ),
+        )?;
+
+        if !decision.allowed() {
+            return Ok(Refusal::EgressNotGranted);
+        }
+        if missing.is_some() {
+            return Ok(Refusal::CredentialBindingMissing);
+        }
+        Ok(Refusal::CallTransportUnimplemented)
+    }
+
+    /// One record per decision, allow and deny alike. `run_executor` because no
+    /// person is present at a scheduled run, and the existing `store` arm names
+    /// the same actor for the same reason.
+    fn record_egress_decision(
+        conn: &Connection,
+        run_id: &str,
+        event_type: &str,
+        payload_json: &str,
+    ) -> CoreResult<()> {
+        super::audit::record_with_payload(
+            conn, event_type, audit::Actor::run_executor(), "flow_run", run_id,
+            Some(payload_json),
+        )
+    }
+
+    /// Minimal JSON string escaping. `serde_json::to_string` would do it, but
+    /// this keeps the payload's shape visible at the call site, where a reader
+    /// is deciding whether the record says enough.
+    fn json_string(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('"');
+        for ch in value.chars() {
+            match ch {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn finish(
+        conn: &Connection,
+        run_id: &str,
+        digest: &str,
+        outcome: &str,
+        reason: Option<&str>,
+        steps_run: u32,
+        touched: &[String],
+    ) -> CoreResult<()> {
+        let touched_json = serde_json::to_string(touched).unwrap_or_else(|_| "[]".into());
+        let regime = enforcement_regime();
+        super::atomic(conn, |tx| {
+            tx.execute(
+                "UPDATE flow_runs SET state=?1, refusal_reason=?2 WHERE id=?3",
+                rusqlite::params![outcome, reason, run_id],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO flow_receipts(run_id, bundle_digest, enforcement_regime, \
+                 steps_run, touched, outcome, written_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                rusqlite::params![run_id, digest, regime, steps_run, touched_json, outcome, crate::now()],
+            )?;
+            super::audit::record(tx, "flow_run.finished", audit::Actor::run_executor(), "flow_run", run_id)?;
+            Ok(())
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::agent_bundle::{BuildSpec, EgressEntry, Requires, Step, StepKind};
+
+        fn spec(now_s: i64) -> BuildSpec {
+            BuildSpec {
+                bundle_id: "agt-t".into(), bundle_version: 1,
+                display_name: "T".into(), built_for: "c".into(),
+                built_at_epoch: now_s, grant_expires_at_epoch: now_s + 3600,
+                egress: vec![],
+                credential_slots: vec![],
+                steps: vec![
+                    Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
+                           argument: Some("one".into()), call_ref: None,
+                           requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
+                           next: Some("b".into()) },
+                    Step { id: "b".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
+                           argument: Some("two".into()), call_ref: None,
+                           requires: Requires { capabilities: vec!["WRITE_LOCAL".into()], credential_slots: vec![] },
+                           next: None },
+                ],
+            }
+        }
+
+        /// A spec whose second step is a `call` naming `call_ref`, with the
+        /// grant's egress table set to `granted`.
+        fn call_spec_creds(
+            now_s: i64, call_ref: Option<&str>, granted: &[(&str, &str)], slots: &[&str],
+        ) -> BuildSpec {
+            let mut s = call_spec(now_s, call_ref, granted);
+            s.credential_slots = slots.iter().map(|x| x.to_string()).collect();
+            s.steps[1].requires.credential_slots = slots.iter().map(|x| x.to_string()).collect();
+            s
+        }
+
+        fn bind_slot(conn: &Connection, digest: &str, slot: &str, auth_ref: &str) {
+            let entity = crate::credentials::approval_entity_id(digest, slot);
+            let ap = super::super::approvals::create(
+                conn, super::super::approvals::CREDENTIAL_BIND_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::CREDENTIAL_BINDING_ENTITY_TYPE), Some(&entity),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            ).unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            ).unwrap();
+            crate::credentials::bind(conn, digest, slot, auth_ref, audit::Actor::local_operator()).unwrap();
+        }
+
+        fn call_spec(now_s: i64, call_ref: Option<&str>, granted: &[(&str, &str)]) -> BuildSpec {
+            let mut s = spec(now_s);
+            s.egress = granted
+                .iter()
+                .map(|(name, destination)| EgressEntry {
+                    name: (*name).into(),
+                    destination: (*destination).into(),
+                })
+                .collect();
+            s.steps[1].kind = StepKind::Call;
+            s.steps[1].verb = None;
+            s.steps[1].argument = None;
+            s.steps[1].call_ref = call_ref.map(|r| r.to_string());
+            s
+        }
+
+        /// Every audit row this run wrote, as `(event_type, payload_json)`.
+        fn egress_rows(conn: &Connection, run_id: &str) -> Vec<(String, String)> {
+            let mut st = conn
+                .prepare("SELECT event_type, COALESCE(payload_json,'') FROM audit_events \
+                          WHERE entity_type='flow_run' AND entity_id=?1 AND event_type LIKE 'egress.%' \
+                          ORDER BY created_at")
+                .unwrap();
+            let rows = st.query_map([run_id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        }
+
+        fn run_call(spec: &BuildSpec) -> (Connection, String) {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), spec).unwrap();
+            register_and_arm(&conn, &digest);
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            // the tempdir must outlive the run
+            drop(dir);
+            (conn, id)
+        }
+
+        fn fixture() -> (Connection, tempfile::TempDir, String) {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let now_ms = 1_000_000_000i64;
+            let digest = agent_bundle::build(dir.path(), &spec(now_ms / 1000)).unwrap();
+            register_and_arm(&conn, &digest);
+            (conn, dir, digest)
+        }
+
+        /// Register a bundle and arm it THE ONLY WAY THE PRODUCT ALLOWS: with a
+        /// natively confirmed grant. Mirrors `lib.rs`'s `arm` helper for
+        /// automations, and for the same reason — nothing here reaches around
+        /// the gate, because there is nothing to reach around it with.
+        fn register_and_arm(conn: &Connection, digest: &str) {
+            register(conn, digest, "agt-t", 1, "T").unwrap();
+            let ap = super::super::approvals::create(
+                conn,
+                super::super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::AGENT_BUNDLE_ENTITY_TYPE),
+                Some(digest),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            )
+            .unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            )
+            .unwrap();
+            set_active(conn, "agt-t", digest, 60_000, true, audit::Actor::local_operator()).unwrap();
+        }
+
+        fn state_of(conn: &Connection, id: &str) -> (String, Option<String>) {
+            conn.query_row("SELECT state, refusal_reason FROM flow_runs WHERE id=?1", [id],
+                           |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+        }
+
+        /// The tick enqueues, and the row says the scheduler's entry point did it.
+        #[test]
+        fn run_due_enqueues_and_names_itself_as_the_invoker() {
+            let (conn, dir, _d) = fixture();
+            let (found, enq, ref_) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((found, enq, ref_), (1, 1, 0));
+            let by: String = conn.query_row("SELECT invoked_by FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(by, "run_due");
+        }
+
+        /// A tick that found nothing still writes a row: "nothing was due" and
+        /// "the tick did not run" must not look the same. This is the whole
+        /// reason `scheduler_ticks` exists -- `lib.rs` discarded the result.
+        #[test]
+        fn a_tick_that_found_nothing_still_leaves_a_row() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            enqueue_due(&conn, 42, dir.path()).unwrap();
+            let n: i64 = conn.query_row("SELECT count(*) FROM scheduler_ticks", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1);
+        }
+
+        /// A tampered bundle is REFUSED with a reason, never skipped. A skipped
+        /// fire leaves no row, and "nothing happened" is exactly what the log
+        /// must not say when something was tampered with.
+        #[test]
+        fn a_tampered_bundle_is_refused_with_a_reason_not_skipped() {
+            let (conn, dir, digest) = fixture();
+            let flow = dir.path().join(&digest).join("flow.json");
+            let mut b = std::fs::read(&flow).unwrap();
+            b[0] = b' ';
+            std::fs::write(&flow, &b).unwrap();
+            let (found, enq, refused) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((found, enq, refused), (1, 0, 1));
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!(state, "refused");
+            assert_eq!(reason.as_deref(), Some("file_hash_mismatch"));
+        }
+
+        /// The claim is one-time: a second claimer writes 0 rows and is refused
+        /// before any dispatch. Reused from migration 0013 rather than invented.
+        ///
+        /// This races two claims at ONE STILL-QUEUED row on purpose. The earlier
+        /// version called `claim_and_run` twice, which passed for the wrong
+        /// reason -- the first call finished the run, so the second found no
+        /// queued row and never reached the guard at all. Deleting the guard
+        /// left it green.
+        #[test]
+        fn a_second_claim_of_the_same_queued_run_gets_nothing() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0))
+                .unwrap();
+            assert!(try_claim(&conn, &id, "s1", 1_000_000_000).unwrap(), "the first claim owns it");
+            assert!(!try_claim(&conn, &id, "s2", 1_000_000_001).unwrap(),
+                    "a second claim on a claimed run must write 0 rows");
+            let owner: String = conn
+                .query_row("SELECT claim_session_id FROM flow_runs WHERE id=?1", [&id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(owner, "s1", "the loser must not overwrite the winner's claim");
+        }
+
+        /// And a claimed run is not dispatched by the loser either.
+        #[test]
+        fn claim_and_run_declines_a_run_somebody_else_claimed() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0))
+                .unwrap();
+            assert!(try_claim(&conn, &id, "other", 1_000_000_000).unwrap());
+            assert!(claim_and_run(&conn, dir.path(), "s2", 1_000_000_001).unwrap().is_none());
+        }
+
+        /// The run does real, local work and the receipt says what it touched
+        /// and under which regime.
+        #[test]
+        fn a_finished_run_leaves_a_receipt_naming_the_regime_and_what_it_touched() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            assert_eq!(state_of(&conn, &id).0, "done");
+            let (regime, steps, touched): (String, i64, String) = conn
+                .query_row("SELECT enforcement_regime, steps_run, touched FROM flow_receipts WHERE run_id=?1",
+                           [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert!(!regime.is_empty());
+            assert_eq!(steps, 2);
+            let touched: Vec<String> = serde_json::from_str(&touched).unwrap();
+            assert_eq!(touched.len(), 2, "both store steps must be recorded");
+            // The write names the run, not a person: a reader of knowledge_notes
+            // can tell a produced-agent write from a human one.
+            let src: String = conn.query_row("SELECT source FROM knowledge_notes LIMIT 1", [], |r| r.get(0)).unwrap();
+            assert_eq!(src, format!("flow_run:{id}"));
+        }
+
+        // ---- the tick DISPATCHES (T-058) ----------------------------------
+
+        /// `BROPS_AGENT_STORE` is process-global, so the tests that drive
+        /// `run_due` take a lock. Without it they race each other and the
+        /// failure looks like a scheduler bug rather than a test bug.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        fn tick(conn: &Connection, store: &std::path::Path, now_ms: i64) {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("BROPS_AGENT_STORE", store);
+            super::super::automations::run_due(conn, now_ms).unwrap();
+            std::env::remove_var("BROPS_AGENT_STORE");
+        }
+
+        fn arm_grant(conn: &Connection, bundle_id: &str, digest: &str) {
+            let ap = super::super::approvals::create(
+                conn, super::super::approvals::AGENT_BUNDLE_ARM_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::AGENT_BUNDLE_ENTITY_TYPE), Some(digest),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            ).unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            ).unwrap();
+            set_active(conn, bundle_id, digest, 60_000, true, audit::Actor::local_operator()).unwrap();
+        }
+
+        /// BORN DISARMED. Registering a bundle records it and arms nothing, so
+        /// the tick resolves no trigger to it and dispatches nothing.
+        ///
+        /// Before T-058 `register` wrote `agent_bundle_active` in the same call
+        /// and hardcoded `state = 'approved'`: building an agent and arming it
+        /// were one act. That was survivable only while the tick performed
+        /// nothing. It dispatches now.
+        #[test]
+        fn a_registered_bundle_is_not_armed_and_the_tick_ignores_it() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T").unwrap();
+
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0, "registering must not arm");
+            let state: String = conn
+                .query_row("SELECT state FROM agent_bundles WHERE bundle_digest=?1", [&digest], |r| r.get(0))
+                .unwrap();
+            assert_eq!(state, "built", "nothing here decides a bundle is approved");
+
+            tick(&conn, dir.path(), 1_000_000_000);
+            let runs: i64 = conn.query_row("SELECT COUNT(*) FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(runs, 0, "an unarmed bundle must not be dispatched");
+        }
+
+        /// Arming without a natively confirmed grant is refused. A gate with a
+        /// one-call way around it is not a gate.
+        #[test]
+        fn arming_without_a_confirmed_grant_is_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register(&conn, &digest, "agt-t", 1, "T").unwrap();
+            let refused = set_active(&conn, "agt-t", &digest, 60_000, true, audit::Actor::local_operator());
+            assert!(refused.is_err(), "arming must require a grant");
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0);
+        }
+
+        /// DISARMING is not gated, and must never be: it is the only way to stop
+        /// a running agent, and an approval ceremony in front of the stop button
+        /// is a denial of service on the operator's own safety control.
+        #[test]
+        fn disarming_needs_no_grant() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+            set_active(&conn, "agt-t", &digest, 60_000, false, audit::Actor::local_operator()).unwrap();
+            let active: i64 = conn
+                .query_row("SELECT COUNT(*) FROM agent_bundle_active", [], |r| r.get(0)).unwrap();
+            assert_eq!(active, 0, "the stop button must work with no ceremony");
+        }
+
+        /// THE POINT OF T-058: the tick RUNS an armed bundle. Before this it
+        /// enqueued and performed nothing, so `claim_and_run` had exactly one
+        /// non-test caller -- a CI demo binary -- and every piece behind it was
+        /// unreachable from the product.
+        #[test]
+        fn the_tick_dispatches_an_armed_bundle_to_completion() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (id, state): (String, String) = conn
+                .query_row("SELECT id, state FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!(state, "done", "the tick must RUN it, not merely queue it");
+            let invoked: String = conn
+                .query_row("SELECT invoked_by FROM flow_runs WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+            assert_eq!(invoked, "run_due");
+        }
+
+        /// Constraint 3: a run the tick performed and no receipt describes is
+        /// worse than a run that did not happen.
+        #[test]
+        fn every_dispatched_run_leaves_a_receipt_naming_the_regime() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &spec(1_000_000)).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (run_id, regime, outcome): (String, String, String) = conn
+                .query_row("SELECT run_id, enforcement_regime, outcome FROM flow_receipts",
+                           [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert!(!regime.is_empty());
+            assert_eq!(outcome, "done");
+            let runs: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE id=?1", [&run_id], |r| r.get(0)).unwrap();
+            assert_eq!(runs, 1, "the receipt must describe a run that exists");
+        }
+
+        /// Constraint 2: the tick gains a CALLER, not a capability. A `call`
+        /// step dispatched by the scheduler is refused exactly as it is when a
+        /// test drives the runner by hand, and the refusal reaches the receipt.
+        #[test]
+        fn a_dispatched_call_step_is_still_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let s = call_spec(1_000_000, Some("evil"), &[("slack-post", "https://slack.example.com")]);
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("egress_not_granted")));
+            let outcome: String = conn
+                .query_row("SELECT outcome FROM flow_receipts", [], |r| r.get(0)).unwrap();
+            assert_eq!(outcome, "refused", "a refused run is still described by a receipt");
+        }
+
+        /// And a `model` step, the other refused kind.
+        #[test]
+        fn a_dispatched_model_step_is_still_refused() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut s = spec(1_000_000);
+            s.steps[1].kind = StepKind::Model;
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register_and_arm(&conn, &digest);
+            tick(&conn, dir.path(), 1_000_000_000);
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("step_kind_not_executable")));
+        }
+
+        /// Constraint 4, the bound: one tick may not become unbounded work.
+        #[test]
+        fn one_tick_dispatches_at_most_the_bound() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let n = MAX_DISPATCH_PER_TICK + 2;
+            for i in 0..n {
+                let mut sp = spec(1_000_000);
+                sp.bundle_id = format!("agt-{i}");
+                let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+                register(&conn, &digest, &sp.bundle_id, 1, "T").unwrap();
+                arm_grant(&conn, &sp.bundle_id, &digest);
+            }
+            tick(&conn, dir.path(), 1_000_000_000);
+            let finished: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE state != 'queued'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(finished as usize, MAX_DISPATCH_PER_TICK,
+                       "one tick must dispatch the bound and no more");
+            let queued: i64 = conn
+                .query_row("SELECT COUNT(*) FROM flow_runs WHERE state = 'queued'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(queued as usize, n - MAX_DISPATCH_PER_TICK, "the rest waits for the next tick");
+        }
+
+        // ---- SS4: which slot, never the value -----------------------------
+
+        /// A declared slot with NO value bound for this digest is refused, by a
+        /// name of its own -- not `call_transport_unimplemented`, which is what
+        /// it would say if the credential were not being checked at all.
+        #[test]
+        fn a_declared_slot_with_no_binding_is_refused_by_its_own_name() {
+            let sp = call_spec_creds(1_000_000, Some("slack-post"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id),
+                       ("refused".into(), Some("credential_binding_missing".into())));
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].1.contains("\"credential\":\"absent\""), "{}", rows[0].1);
+            assert!(rows[0].1.contains("slack_bot"), "the record must name the SLOT: {}", rows[0].1);
+        }
+
+        /// Bound: the grant said yes, the operator named a REFERENCE for the
+        /// slot, and the call still does not happen -- for want of a transport,
+        /// by that name. The record says `present` and carries neither a value
+        /// (none exists on this side) nor the reference.
+        #[test]
+        fn a_bound_slot_reaches_the_transport_refusal_and_leaks_no_reference() {
+            let sp = call_spec_creds(1_000_000, Some("slack-post"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+            register_and_arm(&conn, &digest);
+            bind_slot(&conn, &digest, "slack_bot", "engine:slack/bot-token");
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("call_transport_unimplemented")));
+
+            let payload: String = conn
+                .query_row("SELECT COALESCE(payload_json,'') FROM audit_events WHERE event_type='egress.allowed'",
+                           [], |r| r.get(0)).unwrap();
+            assert!(payload.contains("\"credential\":\"present\""), "{payload}");
+            assert!(payload.contains("slack_bot"), "the SLOT is named: {payload}");
+            assert!(!payload.contains("bot-token"),
+                    "the REFERENCE must never reach a record: {payload}");
+
+            // and nowhere else either
+            let leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE COALESCE(payload_json,'') LIKE '%bot-token%'",
+                [], |r| r.get(0)).unwrap();
+            assert_eq!(leaks, 0);
+            let receipt_leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM flow_receipts WHERE touched LIKE '%bot-token%'", [], |r| r.get(0)).unwrap();
+            assert_eq!(receipt_leaks, 0);
+            let run_leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM flow_runs WHERE COALESCE(refusal_reason,'') LIKE '%bot-token%'",
+                [], |r| r.get(0)).unwrap();
+            assert_eq!(run_leaks, 0);
+        }
+
+        /// The third outcome: nothing was needed. Distinct in the record from
+        /// "the operator named a reference", even though both refuse for the same
+        /// reason -- the reason distinguishes the refusal, the payload
+        /// distinguishes the credential state.
+        #[test]
+        fn a_call_needing_no_credential_says_none_required() {
+            let sp = call_spec(1_000_000, Some("slack-post"),
+                               &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id),
+                       ("refused".into(), Some("call_transport_unimplemented".into())));
+            let rows = egress_rows(&conn, &id);
+            assert!(rows[0].1.contains("\"credential\":\"none_required\""), "{}", rows[0].1);
+        }
+
+        /// A denied destination must not put a slot name in the record of a
+        /// call that was never going to happen.
+        #[test]
+        fn a_denied_destination_does_not_reach_the_credential_check() {
+            let sp = call_spec_creds(1_000_000, Some("evil"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id), ("refused".into(), Some("egress_not_granted".into())));
+            let rows = egress_rows(&conn, &id);
+            assert!(rows[0].1.contains("\"credential\":\"not_reached\""), "{}", rows[0].1);
+            // and the slot NAME must not appear at all. A mutation sweep found
+            // this: dropping the `decision.allowed()` guard left every other
+            // assertion green, because `credential_state` is computed from the
+            // egress verdict first -- but the loop still ran and would have put
+            // the slot into `missing_slot`, in the record of a call that was
+            // never going to happen.
+            assert!(rows[0].1.contains("\"missing_slot\":\"\""),
+                    "a denied call must assert nothing about a credential: {}", rows[0].1);
+        }
+
+        /// A slot the GRANT does not declare is a different fact, refused
+        /// earlier and by a different name -- at LOAD time, so the bundle never
+        /// runs at all. "Never allowed one" and "not provided one" must stay
+        /// distinguishable.
+        #[test]
+        fn a_slot_the_grant_does_not_declare_refuses_the_bundle_at_load() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut sp = call_spec(1_000_000, Some("slack-post"),
+                                   &[("slack-post", "https://slack.example.com")]);
+            // the STEP requires it; the grant declares nothing
+            sp.steps[1].requires.credential_slots = vec!["slack_bot".into()];
+            let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+            register_and_arm(&conn, &digest);
+            let (_found, enqueued, refused) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((enqueued, refused), (0, 1), "the bundle must be refused before it runs");
+            let reason: Option<String> = conn
+                .query_row("SELECT refusal_reason FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(reason.as_deref(), Some("credential_slot_unbound"));
+        }
+
+        // ---- the produced agent's egress enforcement (design SS3.3) --------
+
+        /// THE RED DIRECTION. A `call` step naming a destination the grant does
+        /// not hold is refused, and the refusal is `egress_not_granted` -- not
+        /// `step_kind_not_executable`, which is what it would say if the
+        /// authorizer were not being asked at all.
+        #[test]
+        fn a_call_to_a_destination_the_grant_does_not_name_is_refused() {
+            let s = call_spec(1_000_000, Some("evil"), &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("egress_not_granted".into()))
+            );
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1, "one record per decision");
+            assert_eq!(rows[0].0, "egress.denied");
+            assert!(rows[0].1.contains("\"evil\""), "the record must name what was asked for: {}", rows[0].1);
+        }
+
+        /// THE GREEN DIRECTION, so the refusal above is not a check that cannot
+        /// pass. The grant says yes and the call still does not happen -- but by
+        /// a DIFFERENT name, which is the only way a reader can tell an
+        /// authorized call from a denied one at this head.
+        #[test]
+        fn an_authorized_call_is_refused_by_a_different_name_than_a_denied_one() {
+            let s = call_spec(1_000_000, Some("slack-post"), &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("call_transport_unimplemented".into()))
+            );
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].0, "egress.allowed");
+            assert!(rows[0].1.contains("slack.example.com:443"), "payload: {}", rows[0].1);
+            assert!(rows[0].1.contains("\"produced\""), "the record names the population: {}", rows[0].1);
+        }
+
+        /// A `call` step that names nothing is not a call to somewhere default.
+        #[test]
+        fn a_call_step_naming_no_ref_is_refused_by_its_own_name() {
+            let s = call_spec(1_000_000, None, &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("call_ref_missing".into()))
+            );
+            assert!(egress_rows(&conn, &id).is_empty(), "nothing was decided, so nothing is recorded");
+        }
+
+        /// An empty egress table admits nothing. This is the state every grant
+        /// `for_local_only` writes, and it must not be a hole.
+        #[test]
+        fn an_empty_egress_table_admits_nothing() {
+            let s = call_spec(1_000_000, Some("anything"), &[]);
+            let (conn, id) = run_call(&s);
+            assert_eq!(
+                state_of(&conn, &id),
+                ("refused".into(), Some("egress_not_granted".into()))
+            );
+        }
+
+        /// A step kind this head cannot execute is refused, not approximated.
+        #[test]
+        fn a_model_step_is_refused_because_a_governed_turn_is_not_available() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut s = spec(1_000_000);
+            s.steps[1].kind = StepKind::Model;
+            let digest = agent_bundle::build(dir.path(), &s).unwrap();
+            register_and_arm(&conn, &digest);
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            assert_eq!(state_of(&conn, &id), ("refused".into(), Some("step_kind_not_executable".into())));
+        }
     }
 }
 
@@ -2502,7 +3927,10 @@ pub mod integrations {
     /// is checkable here. What actually protects the boundary is this function refusing
     /// anything not positively recognisable as a reference, plus the standing rule that a
     /// credential must never arrive at this process at all.
-    fn normalize_auth_ref(raw: Option<&str>) -> CoreResult<Option<String>> {
+    /// `pub(crate)` since §4: `credentials::bind` refuses anything this does not
+    /// recognise as a reference, calling the SAME function rather than a second
+    /// copy of the rule. Two copies of one rule is two things to drift.
+    pub(crate) fn normalize_auth_ref(raw: Option<&str>) -> CoreResult<Option<String>> {
         let value = match raw.map(str::trim) {
             None | Some("") => return Ok(None),
             Some(v) => v,
@@ -2579,7 +4007,7 @@ pub mod integrations {
 
     /// Set a connector's local status. This records the desired state; it does
     /// not itself reach any external service.
-    pub fn set_status(conn: &Connection, id: &str, status: &str) -> CoreResult<Integration> {
+    pub fn set_status(conn: &Connection, id: &str, status: &str, actor: audit::Actor<'_>) -> CoreResult<Integration> {
         if !is_valid(status, INTEGRATION_STATUSES) {
             return Err(CoreError::Invalid { field: "status", value: status.to_string() });
         }
@@ -2591,7 +4019,15 @@ pub mod integrations {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, "integration.status_changed", "user", "gev", "integration", id)?;
+            // T-052 tier-X gate: verified and spent inside this transaction, so the
+            // status change and the grant it consumed commit or roll back together.
+            super::approvals::require_and_consume(
+                tx,
+                id,
+                super::approvals::INTEGRATION_ENTITY_TYPE,
+                super::approvals::INTEGRATION_STATUS_ACTION_TYPE,
+            )?;
+            super::audit::record(tx, "integration.status_changed", actor, "integration", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -2620,6 +4056,7 @@ pub mod integrations {
         conn: &Connection,
         id: &str,
         auth_ref: Option<&str>,
+        actor: audit::Actor<'_>,
     ) -> CoreResult<Integration> {
         let normalized = normalize_auth_ref(auth_ref)?;
         let event = if normalized.is_some() {
@@ -2635,7 +4072,17 @@ pub mod integrations {
             if changed == 0 {
                 return Err(CoreError::NotFound(id.to_string()));
             }
-            super::audit::record(tx, event, "user", "gev", "integration", id)?;
+            // T-052 tier-X gate. It covers CLEARING the reference too: dropping a
+            // connector's credential locator is as much an execution-tier act as
+            // setting one, and an ungated clear would be a silent way to break a
+            // connector.
+            super::approvals::require_and_consume(
+                tx,
+                id,
+                super::approvals::INTEGRATION_ENTITY_TYPE,
+                super::approvals::INTEGRATION_AUTH_REF_ACTION_TYPE,
+            )?;
+            super::audit::record(tx, event, actor, "integration", id)?;
             Ok(())
         })?;
         get(conn, id)
@@ -2682,12 +4129,20 @@ pub mod security {
     use super::*;
 
     fn map_event(r: &Row) -> rusqlite::Result<ActivityEvent> {
+        let payload: Option<String> = r.get("payload_json")?;
         Ok(ActivityEvent {
             id: r.get("id")?,
             event_type: r.get("event_type")?,
+            actor_type: r.get("actor_type")?,
             actor_id: r.get("actor_id")?,
             entity_type: r.get("entity_type")?,
             entity_id: r.get("entity_id")?,
+            // The mark travels to the surface. Marking the row and dropping it
+            // here is the defect `actor_type` already carries a paragraph about,
+            // and BOTH mappers carry it — `activity::map` and
+            // `security::map_event` — or one surface tells the truth and the
+            // other does not.
+            source: crate::repo::activity::source_of(payload.as_deref()),
             created_at: r.get("created_at")?,
         })
     }
@@ -2921,14 +4376,14 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
             agents::create(conn, slug, name, role, model)?;
         }
 
-        let p1 = projects::create(conn, NewProject { name: "BroPS Desktop Foundation".into(), description: "React + Tauri app shell and core runtime.".into(), priority: "high".into(), workspace_id: None })?;
-        let p2 = projects::create(conn, NewProject { name: "Localization HY/EN/RU".into(), description: "Trilingual runtime parity.".into(), priority: "high".into(), workspace_id: None })?;
-        projects::set_status(conn, &p1.id, "active")?;
+        let p1 = projects::create(conn, NewProject { name: "BroPS Desktop Foundation".into(), description: "React + Tauri app shell and core runtime.".into(), priority: "high".into(), workspace_id: None }, audit::Actor::seed())?;
+        let p2 = projects::create(conn, NewProject { name: "Localization HY/EN/RU".into(), description: "Trilingual runtime parity.".into(), priority: "high".into(), workspace_id: None }, audit::Actor::seed())?;
+        projects::set_status(conn, &p1.id, "active", audit::Actor::seed())?;
 
-        tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Implement app shell + routing".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
-        let t2 = tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Command palette (Ctrl/Cmd+K)".into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None })?;
-        tasks::set_status(conn, &t2.id, "active")?;
-        tasks::create(conn, NewTask { project_id: Some(p2.id.clone()), title: "Russian dictionary parity".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None })?;
+        tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Implement app shell + routing".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None }, audit::Actor::seed())?;
+        let t2 = tasks::create(conn, NewTask { project_id: Some(p1.id.clone()), title: "Command palette (Ctrl/Cmd+K)".into(), description: "".into(), priority: "normal".into(), assigned_agent_id: None }, audit::Actor::seed())?;
+        tasks::set_status(conn, &t2.id, "active", audit::Actor::seed())?;
+        tasks::create(conn, NewTask { project_id: Some(p2.id.clone()), title: "Russian dictionary parity".into(), description: "".into(), priority: "high".into(), assigned_agent_id: None }, audit::Actor::seed())?;
 
         conn.execute(
             "INSERT INTO approvals(id, action_type, target, level, risk_level, status, requested_by, requested_at)
@@ -2944,47 +4399,54 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
             rusqlite::params![id(), now(), id()],
         )?;
 
-        decisions::create(conn, "Trilingual product scope (HY/EN/RU)", "gev", "Newest explicit decision supersedes bilingual wording (D-009).")?;
-        decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).")?;
+        decisions::create(conn, "Trilingual product scope (HY/EN/RU)", "gev", "Newest explicit decision supersedes bilingual wording (D-009).", audit::Actor::seed())?;
+        decisions::create(conn, "Foundation v1 is Locked", "gev", "Reviewed, canonicalized, Phase 1 UX added (D-010).", audit::Actor::seed())?;
 
-        let direct = chat::create_conversation(conn, "direct", "Bro")?;
+        let direct = chat::create_conversation(conn, "direct", "Bro", audit::Actor::seed())?;
         chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "user".into(), author: "gev".into(), body: "Bro, where does the desktop build stand?".into() })?;
         chat::post_message(conn, NewMessage { conversation_id: direct.id.clone(), role: "agent".into(), author: "Bro".into(), body: "Data core is green and CRUD is wired to real SQLite. Chat is now persisted too.".into() })?;
 
-        let room = chat::create_conversation(conn, "group", "Foundation room")?;
+        let room = chat::create_conversation(conn, "group", "Foundation room", audit::Actor::seed())?;
         chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Mason".into(), body: "Schema reached v3 — conversations and messages added.".into() })?;
         chat::post_message(conn, NewMessage { conversation_id: room.id.clone(), role: "agent".into(), author: "Probe".into(), body: "Chat repository covered by unit tests.".into() })?;
 
-        knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() })?;
-        knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Typed IPC boundary".into(), body: "React reaches SQLite only through #[tauri::command]s; no raw SQL crosses the boundary.".into(), source: "docs/architecture".into(), tags: "architecture,ipc".into() }, audit::Actor::seed())?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Forward-only migrations".into(), body: "Schema advances one numbered migration at a time; runner is idempotent.".into(), source: "src-tauri/core/db.rs".into(), tags: "sqlite,migrations".into() }, audit::Actor::seed())?;
 
-        let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() })?;
+        let m = memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "Respond in Armenian; work only in menqstudio/BroPS.".into() }, audit::Actor::seed())?;
         memory::set_pinned(conn, &m.id, true)?;
-        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() })?;
+        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "Foundation v1 is Locked (D-010).".into() }, audit::Actor::seed())?;
 
-        let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI")?;
+        let r1 = runs::create(conn, "Wire the remaining workspaces to the backend", "schema → repos → commands → UI", audit::Actor::seed())?;
         runs::add_step(conn, &r1.id, "Design schema", "migration 0005")?;
         runs::add_step(conn, &r1.id, "Write repositories", "")?;
         let gated = runs::add_step(conn, &r1.id, "Register commands", "")?;
         runs::set_step_requires_approval(conn, &gated.id, true)?; // demo: this step needs approval to run
         runs::add_step(conn, &r1.id, "Build the screens", "")?;
-        runs::advance(conn, &r1.id)?; // moves the run to running with the first step active
-        runs::create(conn, "Draft the Phase 6 verification report", "")?;
+        runs::advance(conn, &r1.id, audit::Actor::seed())?; // moves the run to running with the first step active
+        runs::create(conn, "Draft the Phase 6 verification report", "", audit::Actor::seed())?;
 
         let start = now();
-        events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None })?;
-        events::create(conn, NewEvent { title: "Foundation sync".into(), kind: "meeting".into(), location: "Group Chat".into(), starts_at: start, ends_at: None })?;
+        events::create(conn, NewEvent { title: "Phase 5 review".into(), kind: "review".into(), location: "Desktop".into(), starts_at: start.clone(), ends_at: None }, audit::Actor::seed())?;
+        events::create(conn, NewEvent { title: "Foundation sync".into(), kind: "meeting".into(), location: "Group Chat".into(), starts_at: start, ends_at: None }, audit::Actor::seed())?;
 
-        let a1 = automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() })?;
-        let a2 = automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() })?;
-        automations::set_enabled(conn, &a2.id, false)?;
-        let _ = a1;
+        // Seeded automations are DISARMED. `create` no longer arms them, and arming
+        // is gated on a natively confirmed approval the seed cannot produce -- which
+        // is the point: a starter workspace must not ship an unattended executor the
+        // operator never approved.
+        automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() }, audit::Actor::seed())?;
+        automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() }, audit::Actor::seed())?;
 
-        let i1 = integrations::create(conn, "GitHub", "github")?;
-        integrations::set_status(conn, &i1.id, "connected")?;
+        // Every seeded connector stays `disconnected`, the state `create` gives it.
+        // The seed used to mark GitHub and Linear "connected", which was a claim the
+        // product made about itself and could not support: nothing was configured
+        // and nothing was ever contacted -- `create_integration`'s own doc comment
+        // says so in those words. It is also the state the T-052 gate on
+        // `set_status` now requires a natively confirmed grant to leave, and no seed
+        // can honestly mint one.
+        integrations::create(conn, "GitHub", "github")?;
         integrations::create(conn, "Slack", "slack")?;
-        let i3 = integrations::create(conn, "Linear", "linear")?;
-        integrations::set_status(conn, &i3.id, "connected")?;
+        integrations::create(conn, "Linear", "linear")?;
         integrations::create(conn, "PagerDuty", "pagerduty")?;
 
         // ── Richer starter content ────────────────────────────────────────────
@@ -3022,10 +4484,10 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         }
 
         // More projects + tasks across statuses so the boards read as active work.
-        let p3 = projects::create(conn, NewProject { name: "AI-OS Cockpit Redesign".into(), description: "Adopt the brops-aios HUD across every view.".into(), priority: "high".into(), workspace_id: None })?;
-        projects::set_status(conn, &p3.id, "active")?;
-        let p4 = projects::create(conn, NewProject { name: "ISP Dispatch Automations".into(), description: "Outage, ONT provisioning and subscriber flows.".into(), priority: "normal".into(), workspace_id: None })?;
-        projects::set_status(conn, &p4.id, "active")?;
+        let p3 = projects::create(conn, NewProject { name: "AI-OS Cockpit Redesign".into(), description: "Adopt the brops-aios HUD across every view.".into(), priority: "high".into(), workspace_id: None }, audit::Actor::seed())?;
+        projects::set_status(conn, &p3.id, "active", audit::Actor::seed())?;
+        let p4 = projects::create(conn, NewProject { name: "ISP Dispatch Automations".into(), description: "Outage, ONT provisioning and subscriber flows.".into(), priority: "normal".into(), workspace_id: None }, audit::Actor::seed())?;
+        projects::set_status(conn, &p4.id, "active", audit::Actor::seed())?;
         for (proj, title, prio, done) in [
             (&p3, "Port the ambient shell", "high", true),
             (&p3, "Reskin the twelve hero views", "high", true),
@@ -3035,35 +4497,48 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
             (&p4, "ONT auto-provision flow", "normal", false),
             (&p4, "Subscriber welcome sequence", "low", true),
         ] {
-            let tk = tasks::create(conn, NewTask { project_id: Some(proj.id.clone()), title: title.into(), description: "".into(), priority: prio.into(), assigned_agent_id: None })?;
-            tasks::set_status(conn, &tk.id, if done { "done" } else { "active" })?;
+            let tk = tasks::create(conn, NewTask { project_id: Some(proj.id.clone()), title: title.into(), description: "".into(), priority: prio.into(), assigned_agent_id: None }, audit::Actor::seed())?;
+            tasks::set_status(conn, &tk.id, if done { "done" } else { "active" }, audit::Actor::seed())?;
         }
 
         // A spread of audit events so the activity ECG has a real heartbeat
         // (varied types + actors, jittered across the last ~44 hours).
+        // The human rows carry `LOCAL_OPERATOR`, not a person's name. These are
+        // FABRICATED events written straight into the evidence table for the activity
+        // ECG, and a fabricated row that names a real person is indistinguishable from
+        // a real one that does -- which is the whole reason the 34 call sites above
+        // stopped naming him. The agent and system ids are role names, not people.
         let ev_kinds: [(&str, &str, &str, &str); 11] = [
             ("task.created", "agent", "forge", "task"),
             ("task.completed", "agent", "probe", "task"),
             ("run.advanced", "system", "scheduler", "run"),
-            ("message.posted", "user", "gev", "message"),
+            ("message.posted", "user", audit::LOCAL_OPERATOR, "message"),
             ("approval.requested", "agent", "lezu", "approval"),
-            ("decision.recorded", "user", "gev", "decision"),
+            ("decision.recorded", "user", audit::LOCAL_OPERATOR, "decision"),
             ("agent.dispatched", "system", "conductor", "agent"),
             ("automation.fired", "system", "scheduler", "automation"),
             ("knowledge.added", "agent", "mason", "note"),
             ("verification.blocked", "system", "broker", "receipt"),
-            ("event.scheduled", "user", "gev", "event"),
+            ("event.scheduled", "user", audit::LOCAL_OPERATOR, "event"),
         ];
         {
+            // T-057. Every one of these says so IN the row, in a column that
+            // already existed. A reviewer running `SELECT * FROM audit_events`
+            // can tell them from real ones without reading this file — the
+            // closure condition — and `activity::list` and `security::summary`
+            // both carry the mark out, which is why a marker nothing surfaces
+            // would not have met it.
             let mut stmt = conn.prepare(
-                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO audit_events(id, event_type, actor_type, actor_id, entity_type, entity_id, payload_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for i in 0..56i64 {
                 let k = ev_kinds[(i as usize) % ev_kinds.len()];
                 let offset = i * 46 * 60 * 1000 + (i % 5) * 7000;
                 let ts = (now_ms - offset).to_string();
-                stmt.execute(rusqlite::params![id(), k.0, k.1, k.2, k.3, id(), ts])?;
+                stmt.execute(rusqlite::params![
+                    id(), k.0, k.1, k.2, k.3, id(), activity::SEED_SOURCE, ts
+                ])?;
             }
         }
 
@@ -3096,15 +4571,15 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         )?;
 
         // More decisions for the chamber + ledger.
-        decisions::create(conn, "Adopt the brops-aios HUD design", "gev", "The mockup is the target look; port it view by view onto real IPC.")?;
-        decisions::create(conn, "Seed a live starter workspace", "gev", "Ship honest starter rows so the cockpit reads as a live network, trust stays fail-closed.")?;
-        decisions::create(conn, "Per-view CSS is route-lazy", "mason", "Each view's instrument CSS ships in its own chunk to keep first paint lean.")?;
-        decisions::create(conn, "Fonts are separate assets", "pixel", "Variable fonts moved out of the CSS payload into /fonts.")?;
-        decisions::create(conn, "Windows broker runs non-SYSTEM", "shield", "A dedicated low-privilege principal completes the governed turn.")?;
-        decisions::create(conn, "Approvals stay human-in-the-loop", "gev", "No step auto-runs; A2+ actions gate on a deliberate confirm.")?;
+        decisions::create(conn, "Adopt the brops-aios HUD design", "gev", "The mockup is the target look; port it view by view onto real IPC.", audit::Actor::seed())?;
+        decisions::create(conn, "Seed a live starter workspace", "gev", "Ship honest starter rows so the cockpit reads as a live network, trust stays fail-closed.", audit::Actor::seed())?;
+        decisions::create(conn, "Per-view CSS is route-lazy", "mason", "Each view's instrument CSS ships in its own chunk to keep first paint lean.", audit::Actor::seed())?;
+        decisions::create(conn, "Fonts are separate assets", "pixel", "Variable fonts moved out of the CSS payload into /fonts.", audit::Actor::seed())?;
+        decisions::create(conn, "Windows broker runs non-SYSTEM", "shield", "A dedicated low-privilege principal completes the governed turn.", audit::Actor::seed())?;
+        decisions::create(conn, "Approvals stay human-in-the-loop", "gev", "No step auto-runs; A2+ actions gate on a deliberate confirm.", audit::Actor::seed())?;
 
         // Richer conversations so the chat canvas reads as active.
-        let c3 = chat::create_conversation(conn, "direct", "Redesign")?;
+        let c3 = chat::create_conversation(conn, "direct", "Redesign", audit::Actor::seed())?;
         for (role, author, body) in [
             ("user", "gev", "Bro, the cockpit should look like the aios mockup."),
             ("agent", "Bro", "Porting the ambient shell and every view onto real IPC now — trust badges stay fail-closed."),
@@ -3114,7 +4589,7 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         ] {
             chat::post_message(conn, NewMessage { conversation_id: c3.id.clone(), role: role.into(), author: author.into(), body: body.into() })?;
         }
-        let c4 = chat::create_conversation(conn, "group", "Dispatch room")?;
+        let c4 = chat::create_conversation(conn, "group", "Dispatch room", audit::Actor::seed())?;
         for (author, body) in [
             ("Sentry", "NOC alarm cleared on the Kentron node."),
             ("Relay", "Subscriber notifications delivered for the affected block."),
@@ -3125,20 +4600,20 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         }
 
         // More runs + steps for the command reactor.
-        let r3 = runs::create(conn, "Outage auto-dispatch: Kentron", "correlate → locate → dispatch → notify")?;
+        let r3 = runs::create(conn, "Outage auto-dispatch: Kentron", "correlate → locate → dispatch → notify", audit::Actor::seed())?;
         runs::add_step(conn, &r3.id, "Correlate NOC alarms", "3 signals crossed")?;
         runs::add_step(conn, &r3.id, "Locate fault node", "OLT-Kentron-04")?;
         let g3 = runs::add_step(conn, &r3.id, "Dispatch nearest crew", "")?;
         runs::set_step_requires_approval(conn, &g3.id, true)?;
         runs::add_step(conn, &r3.id, "Notify subscribers", "")?;
-        runs::advance(conn, &r3.id)?;
-        let r4 = runs::create(conn, "ONT auto-provision batch", "detect → bind profile → remote reset")?;
+        runs::advance(conn, &r3.id, audit::Actor::seed())?;
+        let r4 = runs::create(conn, "ONT auto-provision batch", "detect → bind profile → remote reset", audit::Actor::seed())?;
         runs::add_step(conn, &r4.id, "Detect new ONTs", "12 serials")?;
         runs::add_step(conn, &r4.id, "Bind service profile", "")?;
         runs::add_step(conn, &r4.id, "Remote reset", "")?;
         runs::add_step(conn, &r4.id, "Confirm online", "")?;
-        runs::advance(conn, &r4.id)?;
-        runs::create(conn, "Draft the redesign verification report", "")?;
+        runs::advance(conn, &r4.id, audit::Actor::seed())?;
+        runs::create(conn, "Draft the redesign verification report", "", audit::Actor::seed())?;
 
         // A spread of calendar events (past, today and upcoming) with durations.
         let day = 86_400_000i64;
@@ -3163,27 +4638,27 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
                 location: loc.into(),
                 starts_at: start.to_string(),
                 ends_at: Some((start + dur * 60_000).to_string()),
-            })?;
+            }, audit::Actor::seed())?;
         }
 
-        // More automations for the manifold (mixed enabled/disabled).
+        // More automations for the manifold. The fourth column used to be an
+        // "enabled" flag; it is gone rather than left reading `true` next to a row
+        // that is disarmed, which is the kind of sentence that is true when written
+        // and false when read.
         let extra_autos = [
-            ("Outage auto-dispatch", "noc.alarm = critical", "dispatch nearest crew", true),
-            ("ONT auto-provision", "olt.new_ont detected", "bind profile + remote reset", true),
-            ("Subscriber welcome", "subscriber.activated", "send welcome sequence", true),
-            ("SLA breach alert", "downtime > sla_threshold", "draft credit + notify finance", false),
+            ("Outage auto-dispatch", "noc.alarm = critical", "dispatch nearest crew"),
+            ("ONT auto-provision", "olt.new_ont detected", "bind profile + remote reset"),
+            ("Subscriber welcome", "subscriber.activated", "send welcome sequence"),
+            ("SLA breach alert", "downtime > sla_threshold", "draft credit + notify finance"),
         ];
-        for (name, trigger, action, enabled) in extra_autos {
-            let au = automations::create(conn, NewAutomation { name: name.into(), trigger: trigger.into(), action: action.into() })?;
-            if !enabled {
-                automations::set_enabled(conn, &au.id, false)?;
-            }
+        for (name, trigger, action) in extra_autos {
+            automations::create(conn, NewAutomation { name: name.into(), trigger: trigger.into(), action: action.into() }, audit::Actor::seed())?;
         }
 
         // A little more knowledge + memory depth.
-        knowledge::create(conn, NewKnowledgeNote { title: "Fail-closed trust".into(), body: "With no production manifest the store resolves NoTrustedManifest; the UI never shows a verified badge it cannot prove.".into(), source: "core/production_trust.rs".into(), tags: "governance,trust".into() })?;
-        knowledge::create(conn, NewKnowledgeNote { title: "Ambient layer".into(), body: "Aurora, mesh field, grid, scanline and cursor light render behind every view at negative z-index.".into(), source: "components/Ambient.tsx".into(), tags: "design,ui".into() })?;
-        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "The cockpit must look full and alive, like the aios mockup.".into() })?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Fail-closed trust".into(), body: "With no production manifest the store resolves NoTrustedManifest; the UI never shows a verified badge it cannot prove.".into(), source: "core/production_trust.rs".into(), tags: "governance,trust".into() }, audit::Actor::seed())?;
+        knowledge::create(conn, NewKnowledgeNote { title: "Ambient layer".into(), body: "Aurora, mesh field, grid, scanline and cursor light render behind every view at negative z-index.".into(), source: "components/Ambient.tsx".into(), tags: "design,ui".into() }, audit::Actor::seed())?;
+        memory::create(conn, NewMemoryEntry { scope: "global".into(), kind: "preference".into(), content: "The cockpit must look full and alive, like the aios mockup.".into() }, audit::Actor::seed())?;
 
         Ok(())
     })

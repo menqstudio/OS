@@ -74,6 +74,81 @@ def relative_luminance(hex_color: str) -> float:
     return _LUMA[0] * lr + _LUMA[1] * lg + _LUMA[2] * lb
 
 
+
+#: Names in the manifest that are COMPOSITES, not tokens — they have no counterpart in a source
+#: file and are recomputed from the tokens they are made of.
+_COMPOSITE_NAMES = ("selected",)
+#: The two palettes this repository actually ships, and where each one's source of truth lives.
+#:
+#: There are TWO. `tokens.css`/`tokens.ts` carry the `--menq-*` set that this gate was written for;
+#: `aios.css` carries `--ink`/`--cyan`/`--success`/… and **the pages paint with those**. `T-042`
+#: found six light values in the second palette below WCAG AA by running a browser — `--cyan-soft`
+#: carries `.eyebrow` on nearly every page header and measured 1.99:1 — while every declared pair
+#: was green, because none of them named it. Entries prefixed `aios-` are mirrored against
+#: `aios.css`; everything else against `tokens.ts`.
+_AIOS_PREFIX = "aios-"
+_AIOS_SOURCE = "apps/desktop/src/theme/aios.css"
+_TOKENS_SOURCE = "apps/desktop/src/theme/tokens.ts"
+
+
+def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
+    """The manifest's palettes must equal the files that ship them — asserted, not trusted.
+
+    The manifest has always said *"The named colors MUST mirror apps/desktop/src/theme/tokens.ts"*,
+    and nothing checked it. That is a hand-maintained copy of the shipping palette used to decide an
+    accessibility verdict: edit the tokens without editing the manifest and this gate goes on
+    grading the colours the app stopped using, reporting GREEN about a palette that is not on screen.
+    Found while re-tuning four semantics on 2026-08-29 — `check_token_parity.py` compares
+    `tokens.ts` with `tokens.css` and never looks here.
+
+    There are TWO palettes and each entry is routed to the file that ships it: `aios-*` against
+    `aios.css`, everything else against `tokens.ts`. That routing is the point — `T-042` found six
+    light values in the aios palette below WCAG AA by running a browser, while every declared pair
+    here was green because none of them named it.
+
+    Exemptions are BY NAME, never by pattern-matching whatever is left over. `selected` is an rgba in
+    the tokens and a precomputed composite here, so there is nothing to match. `aios-*-tint` are
+    composites with no token behind them (`.pill.info` paints `rgb(var(--cyan-rgb)/.08)`; there is no
+    `--cyan-tint`). The `--menq-color-<name>-tint` entries are deliberately **not** exempt: they were
+    made real tokens on 2026-08-29 so the declared pair and the painted background agree, and a
+    blanket `endswith("-tint")` rule would quietly hand that guarantee back.
+
+    Called from `main`, not from `evaluate`: `evaluate` grades whatever manifest it is handed and the
+    unit tests hand it synthetic ones, while this is a precondition about the SHIPPING files.
+    """
+    sources: dict[str, str] = {}
+    for rel in (_TOKENS_SOURCE, _AIOS_SOURCE):
+        path = root / rel
+        if not path.exists():
+            raise ContrastError(f"{rel} is missing; the manifest's palettes cannot be verified")
+        sources[rel] = path.read_text(encoding="utf-8").lower()
+
+    problems: list[str] = []
+    for theme, palette in palettes.items():
+        for name, value in palette.items():
+            if name in _COMPOSITE_NAMES:
+                continue
+            if name.startswith(_AIOS_PREFIX) and name.endswith("-tint"):
+                # The aios pill tints are composites with no token behind them: `.pill.info` paints
+                # `rgb(var(--cyan-rgb)/.08)` over a surface, and there is no `--cyan-tint` to mirror.
+                # The `--menq-color-<name>-tint` entries are NOT exempt — they were made real tokens
+                # on 2026-08-29 precisely so the declared pair and the painted background agree, and
+                # a blanket `endswith("-tint")` rule would quietly give that guarantee back.
+                continue
+            rel = _AIOS_SOURCE if name.startswith(_AIOS_PREFIX) else _TOKENS_SOURCE
+            if value.lower() not in sources[rel]:
+                problems.append(
+                    f"{theme} palette: {name} = {value} appears nowhere in {rel} — the manifest "
+                    f"is grading a colour the app does not ship"
+                )
+    if problems:
+        joined = "\n  - ".join(problems)
+        raise ContrastError(
+            "contrast-pairs.json has drifted from the palette it claims to mirror "
+            f"(each line names which file):\n  - {joined}"
+        )
+
+
 def contrast_ratio(fg: str, bg: str) -> float:
     """WCAG contrast ratio in [1, 21]. Order-independent."""
     l1 = relative_luminance(fg)
@@ -155,11 +230,19 @@ def evaluate(manifest: dict) -> list[Result]:
                     fg=fg_hex,
                     bg=bg_hex,
                     size=size,
-                    # Round to 2dp for stable reporting; compare on the rounded
-                    # value so a printed 4.50 is never reported as a failure.
-                    ratio=round(ratio, 2),
+                    # NINTH AUDIT. This used to compare `round(ratio, 2) >= threshold`, with the
+                    # reasoning "so a printed 4.50 is never reported as a failure". It is the wrong
+                    # way round: it made the gate PASS two pairs WCAG fails. `info-on-selected` was
+                    # 4.4996 and `danger-on-selected` 4.4995 -- both below AA, both printing 4.50,
+                    # and both pairs the previous change had just added. A gate that rounds toward
+                    # passing is a gate that reports the number it wants.
+                    #
+                    # The comparison is on the RAW ratio now. The displayed value keeps 2dp, and
+                    # gains a third when the extra digit is what decides -- so a reader can see WHY
+                    # a 4.50 failed instead of doubting the gate.
+                    ratio=round(ratio, 4) if abs(ratio - threshold) < 0.01 else round(ratio, 2),
                     threshold=threshold,
-                    passed=round(ratio, 2) >= threshold,
+                    passed=ratio >= threshold,
                 )
             )
     return results
@@ -187,7 +270,9 @@ def _format(r: Result) -> str:
     mark = "ok " if r.passed else "XX "
     return (
         f"  {mark}{r.pair_id:<24} {r.theme:<5} "
-        f"{r.fg} on {r.bg}  {r.ratio:>5.2f}:1  "
+        # Print every digit that was stored. When the gate rounded to 2dp AND compared on the
+        # rounded value, a 4.4996 failure printed as "4.50" and read as a bug in the gate.
+        f"{r.fg} on {r.bg}  {r.ratio:>7g}:1  "
         f"(need {r.threshold:.1f} · {r.size})"
     )
 
@@ -200,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         manifest = load_manifest(args.manifest)
+        # The manifest's palettes are a hand-maintained copy of the shipping tokens, and until
+        # 2026-08-29 nothing checked the copy. It is a precondition of the verdict, not part of it,
+        # so it runs here rather than inside `evaluate` — which grades whatever it is handed.
+        if args.manifest == DEFAULT_MANIFEST:
+            _require_palettes_mirror_tokens(manifest.get("palettes", {}), pathlib.Path("."))
         results = evaluate(manifest)
     except ContrastError as exc:
         print(f"RED: {exc}", file=sys.stderr)

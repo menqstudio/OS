@@ -44,11 +44,17 @@ def _build_rs(cmds: list[str]) -> str:
     )
 
 
+# Commands the fixture treats as execution/spend tier, so the T-052 X rules are exercised.
+X_TIER = {"write_file", "set_integration_status"}
+
+
 def _tier(cmd: str) -> str:
     if cmd in ("decide_approval", "reject_approval"):
         return "A"
     if cmd.startswith("delete_"):
         return "L2"
+    if cmd in X_TIER:
+        return "X"
     return "R"
 
 
@@ -59,8 +65,34 @@ def _policy(grants: dict[str, str], protection: dict[str, str] | None = None) ->
         spec = {"tier": _tier(c), "grant": g}
         if _tier(c) == "L2":
             spec["protection"] = protection.get(c, "none")
+        elif _tier(c) == "X" and g == "allow":
+            # T-052: every tier-X allow must DECLARE a protection. The fixture default is
+            # the honest one, 'none'; a test that wants otherwise passes it explicitly.
+            spec["protection"] = protection.get(c, "none")
         commands[c] = spec
     return json.dumps({"window": "main", "commands": commands}, indent=2)
+
+
+# The minimal authority layer a `native-confirm` claim is checked against. It carries the
+# real symbol names, so a rename in repo.rs makes these tests wrong in the direction that
+# is noticed rather than silently green.
+REPO_RS_ENFORCING = """
+pub mod approvals {
+    pub const INTEGRATION_ENTITY_TYPE: &str = "integration";
+    pub const INTEGRATION_STATUS_ACTION_TYPE: &str = "Set integration status";
+    pub fn require_and_consume(tx: &Connection) {}
+}
+pub mod integrations {
+    pub fn set_status() {
+        super::approvals::require_and_consume(
+            tx,
+            id,
+            super::approvals::INTEGRATION_ENTITY_TYPE,
+            super::approvals::INTEGRATION_STATUS_ACTION_TYPE,
+        );
+    }
+}
+"""
 
 
 def _default_cap(grants: dict[str, str]) -> str:
@@ -82,6 +114,7 @@ class CheckCapabilitiesTests(unittest.TestCase):
         cmds: list[str],
         grants: dict[str, str],
         protection: dict[str, str] | None = None,
+        repo_rs: str | None = None,
     ) -> None:
         base = root / cc.DESKTOP
         (base / "src").mkdir(parents=True, exist_ok=True)
@@ -90,6 +123,10 @@ class CheckCapabilitiesTests(unittest.TestCase):
         (base / "build.rs").write_text(_build_rs(cmds), encoding="utf-8")
         (base / "command-policy.json").write_text(_policy(grants, protection), encoding="utf-8")
         (base / "capabilities" / "default.json").write_text(_default_cap(grants), encoding="utf-8")
+        (base / "core" / "src").mkdir(parents=True, exist_ok=True)
+        (base / "core" / "src" / "repo.rs").write_text(
+            repo_rs if repo_rs is not None else REPO_RS_ENFORCING, encoding="utf-8"
+        )
 
     def _consistent(self):
         # delete_memory is an L2 hard-delete: denied by default (no protection mode).
@@ -194,6 +231,93 @@ class CheckCapabilitiesTests(unittest.TestCase):
         (base / "src" / "lib.rs").write_text(_lib_rs(cmds, ungated=partial), encoding="utf-8")
         problems = cc.check(root)
         self.assertTrue(any("stale allowlist" in p for p in problems), problems)
+
+
+class TierXProtectionRules(unittest.TestCase):
+    """T-052. X is the execution/spend tier; `set_integration_auth_ref`,
+    `set_integration_status` and `set_automation_enabled` were all `{"tier": "X",
+    "grant": "allow"}` with nothing else, and the file had no way to say so."""
+
+    def _tmp(self) -> pathlib.Path:
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return pathlib.Path(d.name)
+
+    def _base(self):
+        cmds = ["list_projects", "decide_approval", "reject_approval", "write_file",
+                "set_integration_status", "delete_memory"]
+        grants = {
+            "list_projects": "allow", "decide_approval": "deny", "reject_approval": "allow",
+            "write_file": "allow", "set_integration_status": "allow", "delete_memory": "deny",
+        }
+        return cmds, grants
+
+    def _write(self, root, cmds, grants, protection=None, repo_rs=None):
+        helper = CheckCapabilitiesTests()
+        helper._write(root, cmds, grants, protection, repo_rs)
+
+    def test_a_tier_x_allow_declaring_protection_none_is_green(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants)
+        self.assertEqual(cc.check(root), [])
+
+    def test_a_tier_x_allow_with_no_declared_protection_is_red(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants)
+        policy_path = root / cc.POLICY
+        doc = json.loads(policy_path.read_text(encoding="utf-8"))
+        del doc["commands"]["write_file"]["protection"]
+        policy_path.write_text(json.dumps(doc), encoding="utf-8")
+        problems = cc.check(root)
+        self.assertTrue(any("must declare a 'protection'" in p for p in problems), problems)
+
+    def test_native_confirm_backed_by_the_enforcing_constants_is_green(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants, protection={"set_integration_status": "native-confirm"})
+        self.assertEqual(cc.check(root), [])
+
+    def test_native_confirm_without_the_enforcing_constants_is_red(self):
+        # The policy claims a gate; the authority layer never passes the tuple. This is the
+        # rule that stops a JSON file awarding itself a protection it does not have.
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants,
+                    protection={"set_integration_status": "native-confirm"},
+                    repo_rs="pub fn nothing() { approvals::require_and_consume(tx); }\n")
+        problems = cc.check(root)
+        self.assertTrue(any("never passes" in p for p in problems), problems)
+
+    def test_losing_the_shared_verify_and_consume_helper_is_red(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants, repo_rs="pub fn nothing() {}\n")
+        problems = cc.check(root)
+        self.assertTrue(
+            any("require_and_consume" in p for p in problems), problems)
+
+    def test_a_command_claiming_native_confirm_that_the_gate_cannot_check_is_red(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants)
+        policy_path = root / cc.POLICY
+        doc = json.loads(policy_path.read_text(encoding="utf-8"))
+        doc["commands"]["write_file"]["protection"] = "native-confirm"
+        policy_path.write_text(json.dumps(doc), encoding="utf-8")
+        problems = cc.check(root)
+        self.assertTrue(
+            any("NATIVE_CONFIRM_ENFORCEMENT names no enforcing constants" in p
+                for p in problems), problems)
+
+    def test_a_missing_authority_layer_is_red_and_never_a_silent_pass(self):
+        root = self._tmp()
+        cmds, grants = self._base()
+        self._write(root, cmds, grants, protection={"set_integration_status": "native-confirm"})
+        (root / cc.REPO_RS).unlink()
+        problems = cc.check(root)
+        self.assertTrue(any("is missing" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

@@ -36,12 +36,18 @@
   border: 1px solid transparent; white-space: nowrap;
 }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; }
+/* The four semantic badges take an OPAQUE tint. They used
+   `color-mix(in srgb, C 14%, transparent)`, which meant a badge inherited whatever was behind it
+   and its contrast was unbounded — the same badge measured 4.54:1 on a plain surface and 4.26:1
+   inside a notification row. An opaque token makes the ratio a property of the badge, and makes
+   the `<name>-on-<name>-tint` pair in contrast-pairs.json exactly the thing that is painted.
+   Found by the real-browser axe sweep, 2026-08-29. */
 .badge--neutral { color: var(--brops-muted); background: var(--menq-color-hover); }
 .badge--accent { color: var(--brops-accent); background: var(--menq-color-selected); }
-.badge--success { color: var(--menq-color-success); background: color-mix(in srgb, var(--menq-color-success) 14%, transparent); }
-.badge--warning { color: var(--menq-color-warning); background: color-mix(in srgb, var(--menq-color-warning) 14%, transparent); }
-.badge--danger { color: var(--menq-color-danger); background: color-mix(in srgb, var(--menq-color-danger) 14%, transparent); }
-.badge--info { color: var(--menq-color-info); background: color-mix(in srgb, var(--menq-color-info) 14%, transparent); }
+.badge--success { color: var(--menq-color-success); background: var(--menq-color-success-tint); }
+.badge--warning { color: var(--menq-color-warning); background: var(--menq-color-warning-tint); }
+.badge--danger { color: var(--menq-color-danger); background: var(--menq-color-danger-tint); }
+.badge--info { color: var(--menq-color-info); background: var(--menq-color-info-tint); }
 
 .empty { text-align: center; padding: var(--menq-space-7) var(--menq-space-4); color: var(--brops-muted); }
 .empty-glyph { font-size: 28px; opacity: 0.6; }
@@ -227,6 +233,19 @@
 .cal-more { font-size: 11px; color: var(--brops-muted); padding-left: 2px; }
 .cal-agenda-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--brops-muted); margin-top: var(--menq-space-3); font-weight: 600; }
+/* The run-history section — seventh independent audit, `G-07`.
+   `Calendar.tsx` renders `<section className="cal-runs" aria-label={L('runHistory')}>` and the
+   class was selected by nothing. Three of the four unstyled classes that audit found sat on
+   elements already carrying `surface soft` or a `.v-*` view class, so they were dead hooks and
+   were deleted; this one carried NO other class, so the whole run-history block had no rules at
+   all. Its children were already styled — `.cal-agenda-heading` above, and the list below — which
+   is why nothing looked obviously broken: the section simply had no separation from the agenda
+   items it follows. */
+.cal-runs { display: flex; flex-direction: column; gap: var(--menq-space-2);
+  margin-top: var(--menq-space-4); padding-top: var(--menq-space-3);
+  border-top: 1px solid var(--brops-border); }
+.cal-run-list { list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--menq-space-2); }
 .agenda-card { display: flex; align-items: center; justify-content: space-between; gap: var(--menq-space-3);
   flex-wrap: wrap; padding: 10px 12px; background: var(--brops-surface);
   border: 1px solid var(--brops-border); border-radius: var(--menq-radius-md); }
@@ -378,6 +397,11 @@
 .chart-table > summary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); border-radius: var(--menq-radius-sm); }
 .chart-table table { width: 100%; border-collapse: collapse; margin-top: var(--menq-space-3); }
 .chart-table caption { text-align: left; }
+/* Visually hidden, still announced. `.chart-caption` was this rule under a name that only made
+   sense inside a chart, so every other surface that needed it either re-declared the same six
+   properties locally (Analytics, Security both did) or used a glyph and hoped. `.sr-only` is the
+   name the rest of the world uses; the chart keeps its own so nothing has to be renamed. */
+.sr-only,
 .chart-caption { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .chart-table th, .chart-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--brops-border);

@@ -28,7 +28,9 @@ const MIGRATION_0021: &str = include_str!("../schema/0021_store_write_records.sq
 const MIGRATION_0022: &str = include_str!("../schema/0022_integration_auth_ref.sql");
 const MIGRATION_0023: &str = include_str!("../schema/0023_receipt_attempt_message_unique.sql");
 const MIGRATION_0024: &str = include_str!("../schema/0024_demonstration_badge_binding.sql");
-pub const SCHEMA_VERSION: i64 = 24;
+const MIGRATION_0025: &str = include_str!("../schema/0025_agent_bundles.sql");
+const MIGRATION_0026: &str = include_str!("../schema/0026_credential_bindings.sql");
+pub const SCHEMA_VERSION: i64 = 26;
 
 /// Open a database file with foreign keys and WAL enabled, and migrate it.
 pub fn open(path: &str) -> CoreResult<Connection> {
@@ -100,6 +102,8 @@ pub fn migrate(conn: &Connection) -> CoreResult<()> {
         (22, MIGRATION_0022),
         (23, MIGRATION_0023),
         (24, MIGRATION_0024),
+        (25, MIGRATION_0025),
+        (26, MIGRATION_0026),
     ] {
         if is_applied(conn, version)? {
             continue;

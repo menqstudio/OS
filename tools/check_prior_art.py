@@ -130,11 +130,26 @@ def declarations(root: pathlib.Path, sid: str) -> list[dict]:
 
 
 def declaration_for(root: pathlib.Path, sid: str, rel_path: str) -> dict | None:
+    """The LATEST declaration for a path, not the first.
+
+    Measured 2026-08-31 before changing anything: today this cannot differ,
+    because `declare` filters out any existing entry for the same target before
+    appending, so a target never has two records. Declaring twice stores one
+    entry -- the second -- and this function already returned it. The gate's own
+    "then re-declare" remedy is reachable, contrary to what a note of mine said.
+
+    It returns the last anyway, and the reason is not a live bug. As written,
+    this function's correctness DEPENDED on a dedup happening somewhere else,
+    silently: any future writer that appends without filtering would make the
+    gate read a stale record and nothing would say so. Reading the last is
+    correct whether or not that dedup exists, which removes the coupling.
+    """
     rel = str(rel_path).replace("\\", "/")
+    latest = None
     for entry in declarations(root, sid):
         if str(entry.get("target", "")).replace("\\", "/") == rel:
-            return entry
-    return None
+            latest = entry
+    return latest
 
 
 def declare(root: pathlib.Path, sid: str, rel_path: str, searched: str,

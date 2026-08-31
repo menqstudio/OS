@@ -6,5 +6,77 @@
       "max_gzip_kb": 156
     }
   },
-  "//growth-2026-08-07": "Raised 150 -> 156. The index payload is 94 KB gzip of JS and 57 KB of CSS. The JS grew ~7 KB in the phase-1..10 wave, and the cause is structural rather than fat: `services/desktop.ts` is the single typed IPC boundary, and `Shell.tsx` and `CommandPalette.tsx` are eager and import the whole `desktop` object -- so every wrapper added for a lazily-loaded feature lands in the initial chunk. The wave added wrappers for five new commands plus the governed-turn attempt and the ledger reads. FOLLOW-UP, and the real fix: split the boundary so eager shell code imports only what it uses (`hasBackend` and the handful of commands the shell actually calls), letting the rest chunk with the route that needs it. That is a refactor of a deliberately-single boundary, so it is not being done under a CI failure at the end of a long wave. Tighten this back the moment it lands."
+  "//growth-2026-08-07": "Raised 150 -> 156. The index payload is 94 KB gzip of JS and 57 KB of CSS. The JS grew ~7 KB in the phase-1..10 wave, and the cause is structural rather than fat: `services/desktop.ts` is the single typed IPC boundary, and `Shell.tsx` and `CommandPalette.tsx` are eager and import the whole `desktop` object -- so every wrapper added for a lazily-loaded feature lands in the initial chunk. The wave added wrappers for five new commands plus the governed-turn attempt and the ledger reads. FOLLOW-UP, and the real fix: split the boundary so eager shell code imports only what it uses (`hasBackend` and the handful of commands the shell actually calls), letting the rest chunk with the route that needs it. That is a refactor of a deliberately-single boundary, so it is not being done under a CI failure at the end of a long wave. Tighten this back the moment it lands.",
+  "//routes": "Per-ROUTE budget: the gzipped bytes the browser fetches when NAVIGATING to that page -- the route chunk plus its transitively-imported chunks and CSS, MINUS whatever the entry already loaded. The route list is the entry's own dynamicImports, so a new page is RED until somebody gives it a ceiling. Added 2026-08-29: the gate had measured the entry and nothing else, leaving 23 chunks and 256.7 KB gzip with no ceiling while Phase 10 asked for a performance gate over all 22 pages. Each ceiling was set at the measured size x 1.25, rounded up to the nearest 0.5 KB (minimum 2.0) -- headroom for ordinary work, not for a rewrite. Lower one when a page gets smaller; raise one only with a reviewed reason, the same rule as entries.",
+  "routes": {
+    "Activity": {
+      "max_gzip_kb": 14.5
+    },
+    "Agents": {
+      "max_gzip_kb": 19.0
+    },
+    "Analytics": {
+      "max_gzip_kb": 12.5
+    },
+    "Approvals": {
+      "max_gzip_kb": 10.0
+    },
+    "Automations": {
+      "max_gzip_kb": 23.5
+    },
+    "Bridge": {
+      "max_gzip_kb": 2.5
+    },
+    "Calendar": {
+      "max_gzip_kb": 7.0
+    },
+    "Chat": {
+      "max_gzip_kb": 22.5
+    },
+    "Command": {
+      "max_gzip_kb": 8.0
+    },
+    "Decisions": {
+      "max_gzip_kb": 13.0
+    },
+    "Files": {
+      "max_gzip_kb": 10.5
+    },
+    "GroupChat": {
+      "max_gzip_kb": 36.0
+    },
+    "Home": {
+      "max_gzip_kb": 13.5
+    },
+    "Integrations": {
+      "max_gzip_kb": 18.0
+    },
+    "Knowledge": {
+      "max_gzip_kb": 18.0
+    },
+    "Library": {
+      "max_gzip_kb": 8.5
+    },
+    "Memory": {
+      "max_gzip_kb": 17.5
+    },
+    "Notifications": {
+      "max_gzip_kb": 9.0
+    },
+    "Projects": {
+      "max_gzip_kb": 8.5
+    },
+    "Research": {
+      "max_gzip_kb": 11.0
+    },
+    "Security": {
+      "max_gzip_kb": 12.5
+    },
+    "Settings": {
+      "max_gzip_kb": 13.5
+    },
+    "Tasks": {
+      "max_gzip_kb": 18.0
+    }
+  }
 }

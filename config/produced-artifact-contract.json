@@ -1,0 +1,40 @@
+{
+  "contract_version": 1,
+  "why": "tools/check_produced_artifact.py reads this file and nothing else to learn WHERE the production half's five facts live and WHAT they are called. Every locator below ships null, which means the implementation has not decided yet, and the gate reports it as such. The gate holds no opinion about the shape of a produced artifact: the names are declared here, the field-level definition lives in the schema artifact_schema points at, and the gate only follows and re-derives. Filling a locator in does not make the gate green -- it makes the gate go and look, and an absent thing is RED. docs/design/PRODUCTION_HALF_DESIGN.md is the design under review; this file deliberately does not depend on it.",
+  "store_root": "apps/desktop/src-tauri/target/produced-artifact/agents",
+  "store_root_help": "Repo-relative directory holding the produced-agent store: one subdirectory per artifact, each containing the manifest named by manifest_filename. It MUST NOT be tracked in git -- the gate refuses a store whose files git ls-files reports, because a committed fixture is a fixture and not a product. Produce it with producer_command.",
+  "producer_command": "cd apps/desktop/src-tauri && cargo run -q -p brops-core --bin produce_agent_artifact -- target/produced-artifact",
+  "producer_command_help": "The command CI runs before the gate to produce store_root, runs_path and receipts_path from the real code path. Recorded so a reader can see what made the evidence. The gate prints it in its RED output; it does not run it.",
+  "manifest_filename": "manifest.json",
+  "artifact_schema": "apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json",
+  "artifact_schema_help": "Repo-relative path to the committed JSON Schema every manifest must satisfy. Condition 1's defined schema is this file. The gate checks required presence and the declared type per property -- a partial validation, stated as partial.",
+  "manifest_keys": {
+    "artifact_id": "bundle_id",
+    "flow": "flow_ref",
+    "grant": "grant_ref"
+  },
+  "manifest_keys_help": "Manifest key names, chosen by the implementation. artifact_id is the value run rows reference; flow and grant are paths relative to the artifact directory.",
+  "flow_steps_key": "steps",
+  "flow_steps_key_help": "Key in the flow document holding the ordered list of steps. Condition 2 needs more than one.",
+  "grant_axis_keys": [
+    "capabilities",
+    "egress",
+    "credential_slots"
+  ],
+  "grant_writer_key": "written_by",
+  "grant_help": "grant_axis_keys are the grant's axes -- capabilities, paths, domains, or whatever the implementation calls them; at least one must be non-empty. grant_writer_key names the field recording which runtime component wrote the grant. Condition 3 refuses a grant that lives under a prompts directory, and refuses a writer value that names a Markdown or prompt file, because a grant stated in a prompt is a grant stated in prose.",
+  "runs_path": "apps/desktop/src-tauri/target/produced-artifact/runs.jsonl",
+  "run_keys": {
+    "run_id": "run_id",
+    "artifact_id": "artifact_id",
+    "invoked_by": "invoked_by"
+  },
+  "run_invoked_by": "run_due",
+  "runs_help": "runs_path is a repo-relative JSONL of run rows. Condition 4 needs at least one row whose artifact_id names an artifact in the store and whose invoked_by equals run_invoked_by. run_due is not a guess: apps/desktop/src-tauri/core/src/repo.rs defines it and apps/desktop/src-tauri/src/lib.rs calls it, and the gate re-grounds that by finding the definition before believing the evidence.",
+  "receipts_path": "apps/desktop/src-tauri/target/produced-artifact/receipts.jsonl",
+  "receipt_keys": {
+    "run_id": "run_id",
+    "enforcement_regime": "enforcement_regime"
+  },
+  "receipts_help": "receipts_path is a repo-relative JSONL of receipts. Condition 5 needs a receipt whose run_id equals the condition-4 run row's id and whose enforcement_regime is a non-empty string. Measured 2026-08-30: grep -rn enforcement_regime over the tree printed nothing at all."
+}

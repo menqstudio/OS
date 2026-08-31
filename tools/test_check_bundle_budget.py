@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -46,7 +47,7 @@ class CheckBundleBudgetTests(unittest.TestCase):
         desktop = root / cb.DESKTOP
         dist = root / cb.DIST
         (dist / ".vite").mkdir(parents=True, exist_ok=True)
-        (desktop / "perf-budget.json").write_text(json.dumps(budget, indent=2), encoding="utf-8")
+        (desktop / "perf-budget.json").write_text(json.dumps({**budget, "routes": budget.get("routes", {})}, indent=2), encoding="utf-8")
         (dist / ".vite" / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         for rel, data in files.items():
             p = dist / rel
@@ -169,7 +170,7 @@ class CheckBundleBudgetTests(unittest.TestCase):
         desktop = root / cb.DESKTOP
         desktop.mkdir(parents=True, exist_ok=True)
         (desktop / "perf-budget.json").write_text(
-            json.dumps({"entries": {"index": {"max_gzip_kb": 100}}}), encoding="utf-8"
+            json.dumps({"entries": {"index": {"max_gzip_kb": 100}}, "routes": {}}), encoding="utf-8"
         )
         with self.assertRaises(SystemExit):
             cb.check(root)
@@ -181,6 +182,189 @@ class CheckBundleBudgetTests(unittest.TestCase):
         manifest, files = self._single_entry(js, css)
         bad = {"entries": {"index": {"max_gzip_kb": -5}}}
         self._write(root, bad, manifest, files)
+        with self.assertRaises(SystemExit):
+            cb.check(root)
+
+
+class FreshnessTests(unittest.TestCase):
+    """The gate must refuse to grade a build older than the tree — ninth audit `I-12`.
+
+    The finding is a measurement, not a theory: the gate reported GREEN at 151.6 KB against a
+    `dist/` built BEFORE the deletion whose effect it was being cited to prove, then GREEN again
+    at 133.0 KB after a rebuild of the identical tree. Two numbers, one source, both "GREEN".
+    """
+
+    def _tree(self, source_offset: float):
+        """A complete fake desktop tree; `source_offset` seconds are added to the source mtime."""
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root = pathlib.Path(d.name)
+        desktop, dist = root / cb.DESKTOP, root / cb.DIST
+        (dist / "assets").mkdir(parents=True, exist_ok=True)
+        (dist / ".vite").mkdir(parents=True, exist_ok=True)
+        (desktop / "src" / "features").mkdir(parents=True, exist_ok=True)
+        js = _bytes_for_gzip_kb(10)
+        (dist / "assets" / "index-abc123.js").write_bytes(js)
+        manifest = {"index.html": {"file": "assets/index-abc123.js", "name": "index",
+                                   "src": "index.html", "isEntry": True}}
+        mpath = dist / ".vite" / "manifest.json"
+        mpath.write_text(json.dumps(manifest), encoding="utf-8")
+        (desktop / "perf-budget.json").write_text(
+            json.dumps({"entries": {"index": {"max_gzip_kb": 500}}, "routes": {}}), encoding="utf-8")
+        base = mpath.stat().st_mtime
+        for name in ("src/features/Home.tsx", "index.html", "vite.config.ts", "package.json"):
+            p = desktop / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x", encoding="utf-8")
+            os.utime(p, (base + source_offset, base + source_offset))
+        return root, desktop, mpath, base
+
+    def test_a_source_newer_than_the_manifest_is_red(self):
+        root, _, _, _ = self._tree(source_offset=60)
+        problems = cb.check(root)
+        self.assertTrue(problems, "a stale build must not be graded")
+        self.assertTrue(problems[0].startswith("the build is stale"), problems)
+
+    def test_a_build_newer_than_every_source_is_green(self):
+        root, _, _, _ = self._tree(source_offset=-60)
+        self.assertEqual(cb.check(root), [])
+
+    def test_editing_a_test_file_does_not_make_the_build_stale(self):
+        # A gate that reds when a `.test.tsx` is touched gets switched off within a week, and it
+        # would be wrong: no test file is in the bundle it measures.
+        root, desktop, mpath, base = self._tree(source_offset=-60)
+        for name in ("src/features/Home.test.tsx", "src/features/Home.spec.ts", "src/notes.md"):
+            p = desktop / name
+            p.write_text("x", encoding="utf-8")
+            os.utime(p, (base + 600, base + 600))
+        self.assertEqual(cb.check(root), [])
+
+    def test_the_staleness_report_names_the_offending_file(self):
+        # A refusal a person cannot act on gets worked around; the message has to say WHICH file.
+        root, desktop, mpath, base = self._tree(source_offset=-60)
+        p = desktop / "src" / "features" / "Late.tsx"
+        p.write_text("x", encoding="utf-8")
+        os.utime(p, (base + 600, base + 600))
+        problems = cb.check(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Late.tsx", problems[0])
+
+    def test_staleness_is_reported_instead_of_a_size_verdict_not_beside_it(self):
+        # The point of failing first: a precise-looking KB number next to the wrong tree is the
+        # thing that made this finding possible, so a stale build reports ONE problem, not two.
+        root, desktop, mpath, base = self._tree(source_offset=60)
+        (desktop / "perf-budget.json").write_text(
+            json.dumps({"entries": {"index": {"max_gzip_kb": 0.001}}, "routes": {}}), encoding="utf-8")
+        problems = cb.check(root)
+        self.assertEqual(len(problems), 1)
+        self.assertNotIn("exceeds", problems[0])
+
+
+
+class RouteBudgetTests(unittest.TestCase):
+    """Every page the router can reach has a ceiling — Phase 10's performance half.
+
+    The box asks for a *"production a11y + performance gate pass over all 22 pages"*. The a11y half
+    covered all of them; the performance half covered the entry and nothing else, because
+    `entry_payloads` reads only `isEntry` records and `_collect_files` deliberately excludes
+    `dynamicImports` as not-first-paint. Both are right about first paint, and together they left
+    **23 lazily-loaded chunks totalling 256.7 KB gzip with no ceiling**: a page could double and the
+    gate would still print GREEN about one entry.
+    """
+
+    def _tree(self, route_budgets, entry_kb=10, route_kb=8, shared_kb=6):
+        """A build with one entry, one route that pulls a shared chunk, and one that does not."""
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root = pathlib.Path(d.name)
+        desktop, dist = root / cb.DESKTOP, root / cb.DIST
+        (dist / "assets").mkdir(parents=True, exist_ok=True)
+        (dist / ".vite").mkdir(parents=True, exist_ok=True)
+        blobs = {
+            "assets/index.js": _bytes_for_gzip_kb(entry_kb),
+            "assets/heavy.js": _bytes_for_gzip_kb(route_kb),
+            "assets/light.js": _bytes_for_gzip_kb(1),
+            "assets/shared.js": _bytes_for_gzip_kb(shared_kb),
+        }
+        for rel, data in blobs.items():
+            (dist / rel).write_bytes(data)
+        manifest = {
+            "index.html": {"file": "assets/index.js", "name": "index", "src": "index.html",
+                           "isEntry": True,
+                           "dynamicImports": ["src/features/Heavy.tsx", "src/features/Light.tsx"]},
+            "src/features/Heavy.tsx": {"file": "assets/heavy.js", "name": "Heavy",
+                                       "src": "src/features/Heavy.tsx", "isDynamicEntry": True,
+                                       "imports": ["index.html"]},
+            "src/features/Light.tsx": {"file": "assets/light.js", "name": "Light",
+                                       "src": "src/features/Light.tsx", "isDynamicEntry": True,
+                                       "imports": ["index.html", "_shared.js"]},
+            "_shared.js": {"file": "assets/shared.js", "name": "shared", "imports": ["index.html"]},
+        }
+        (dist / ".vite" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (desktop / "perf-budget.json").write_text(json.dumps(
+            {"entries": {"index": {"max_gzip_kb": 500}}, "routes": route_budgets}), encoding="utf-8")
+        return root, dist
+
+    def _gz(self, path):
+        return len(gzip.compress(path.read_bytes(), compresslevel=9, mtime=0))
+
+    def test_a_route_within_budget_is_green(self):
+        root, _ = self._tree({"Heavy": {"max_gzip_kb": 500}, "Light": {"max_gzip_kb": 500}})
+        self.assertEqual(cb.check(root), [])
+
+    def test_a_route_with_no_budget_is_red(self):
+        # The finding itself: a page nobody budgets is a page that can grow without a decision.
+        root, _ = self._tree({"Light": {"max_gzip_kb": 500}})
+        problems = cb.check(root)
+        self.assertTrue(any("route 'Heavy'" in p and "no budget" in p for p in problems), problems)
+
+    def test_an_empty_routes_section_is_red_once_per_route(self):
+        root, _ = self._tree({})
+        problems = cb.check(root)
+        self.assertEqual(len([p for p in problems if "no budget" in p]), 2, problems)
+
+    def test_a_stale_route_budget_is_red(self):
+        root, _ = self._tree({"Heavy": {"max_gzip_kb": 500}, "Light": {"max_gzip_kb": 500},
+                              "Deleted": {"max_gzip_kb": 9}})
+        self.assertTrue(any("route 'Deleted'" in p and "no longer reaches" in p
+                            for p in cb.check(root)))
+
+    def test_a_route_over_budget_is_red(self):
+        root, _ = self._tree({"Heavy": {"max_gzip_kb": 0.5}, "Light": {"max_gzip_kb": 500}})
+        self.assertTrue(any("route 'Heavy'" in p and "exceeds" in p for p in cb.check(root)))
+
+    def test_bytes_the_entry_already_loaded_are_not_charged_twice(self):
+        # The subtraction is the whole reason the number means anything. `Heavy` imports only the
+        # entry, so its navigation cost is its own chunk -- not its chunk plus the entry again.
+        root, dist = self._tree({"Heavy": {"max_gzip_kb": 500}, "Light": {"max_gzip_kb": 500}})
+        manifest = json.loads((dist / ".vite" / "manifest.json").read_text(encoding="utf-8"))
+        routes = cb.route_payloads(manifest, dist)
+        self.assertEqual(routes["Heavy"], self._gz(dist / "assets/heavy.js"))
+
+    def test_a_shared_chunk_a_route_pulls_in_IS_charged_to_it(self):
+        # The other half: `Light` is a 1 KB chunk that drags in a 6 KB shared one, so budgeting the
+        # chunk alone would understate the page by six times. This is the real `Chat` case, where
+        # the page's own chunk is 0.16 KB and the number that matters is 17.71 KB.
+        root, dist = self._tree({"Heavy": {"max_gzip_kb": 500}, "Light": {"max_gzip_kb": 500}})
+        manifest = json.loads((dist / ".vite" / "manifest.json").read_text(encoding="utf-8"))
+        routes = cb.route_payloads(manifest, dist)
+        expected = self._gz(dist / "assets/light.js") + self._gz(dist / "assets/shared.js")
+        self.assertEqual(routes["Light"], expected)
+        self.assertGreater(routes["Light"], self._gz(dist / "assets/light.js") * 4)
+
+    def test_deleting_the_routes_section_entirely_raises(self):
+        # An optional section is one a refactor can delete without anything noticing. Empty is
+        # allowed -- a build with no lazily-loaded routes is a real thing -- but absent is not.
+        root, _ = self._tree({"Heavy": {"max_gzip_kb": 500}, "Light": {"max_gzip_kb": 500}})
+        budget_path = root / cb.DESKTOP / "perf-budget.json"
+        doc = json.loads(budget_path.read_text(encoding="utf-8"))
+        del doc["routes"]
+        budget_path.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            cb.check(root)
+
+    def test_a_route_budget_with_a_bad_number_raises(self):
+        root, _ = self._tree({"Heavy": {"max_gzip_kb": 0}, "Light": {"max_gzip_kb": 500}})
         with self.assertRaises(SystemExit):
             cb.check(root)
 
