@@ -82,8 +82,8 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2043 OK, 10 skipped
-cd apps/desktop/src-tauri && cargo test --workspace              # 1110 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2069 OK, 10 skipped
+cd apps/desktop/src-tauri && cargo test --workspace              # 1147 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
@@ -99,7 +99,7 @@ Measured 2026-08-31, all three, on this box. **Verify before claiming green** �
 
 - **Toolchain:** cargo 1.97.1 · node 20.20.2 · npm 10.8.2, recorded in [`config/toolchain.json`](./config/toolchain.json), which is what `tools/check_doc_claims.py` checks every document against. *(The documents said cargo 1.96 / node 24 / npm 11.)*
 - **Engine tests need `BRO_ENV=ci`** — without it operator-pin gating denies and tests error rather than run.
-- **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **five** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.**
+- **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **six** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.**
 - **Session-scoped gates cannot see a bare shell.** `check_read_receipt.py` and `check_roadmap_order.py` resolve the session from `CLAUDE_SESSION_ID`, which the hooks set and the Bash tool does not. Pass `--session`, or the RED you get means "could not find the session", not "the gate failed".
 - **Gates needing arguments** (they print usage, not a verdict, when run bare): `check_canonical_sync.py`, `check_prior_art.py`, `check_read_receipt.py`. **Needing a build or a package:** `check_bundle_budget.py` (a Vite manifest, and it refuses a `dist/` older than the tree), `check_runbook_snippets.py` (`cryptography`).
 - **Commit identity:** `user.name "MenQ"`, `user.email "menqstudio@gmail.com"`. End every commit with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
@@ -156,7 +156,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 Toolchain՝ cargo 1.97.1 · node 20.20.2 · npm 10.8.2։ *(Փաստաթղթերը գրում էին 1.96 / 24 / 11։)*
 
-**⚠ Wall-ը բեռնվում ա SESSION-ի project root-ից, ոչ էն repo-ից որ խմբագրում ես։** `.claude/settings.json`-ը միացնում ա **հինգ** event։ Ուրիշ տեղից բացված սեսիան, որ հետո աշխատում ա `OS/`-ի ներսում, դրանցից **ոչ մեկը չի ստանում**, ու ոչինչ չի ազդարարում բացակայությունը։ **Բացիր սեսիան հենց այս checkout-ից։**
+**⚠ Wall-ը բեռնվում ա SESSION-ի project root-ից, ոչ էն repo-ից որ խմբագրում ես։** `.claude/settings.json`-ը միացնում ա **վեց** event։ Ուրիշ տեղից բացված սեսիան, որ հետո աշխատում ա `OS/`-ի ներսում, դրանցից **ոչ մեկը չի ստանում**, ու ոչինչ չի ազդարարում բացակայությունը։ **Բացիր սեսիան հենց այս checkout-ից։**
 
 Engine-ի թեստերին պետք ա `BRO_ENV=ci`։ Commit identity՝ `MenQ` / `menqstudio@gmail.com`, trailer-ը՝ `Co-Authored-By: Claude Opus 5`։
 

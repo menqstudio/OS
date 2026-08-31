@@ -14,18 +14,22 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** the TRANSPORT. §4 landed as a REFERENCE store — the desktop names where a secret lives
-and never holds one (migration 0022), so the transport is what carries a reference across the wall.
+**Next: FINISH T-020's FW-1 correction — it is mid-flight, not merge-ready.** The Architect
+BLOCKED `#219` at its frozen head (B1–B7 · C1–C7). The boundary rewrite is done and measured on this
+box: kernel `SO_PEERCRED` peer identity checked against a **per-op** allowlist, all scope from the
+TCB-owned `BROPS_FLOOR_WRITER_CONFIG`, **no `install_id` on the wire in either direction** (a request
+carrying one is `malformed`), roster and floor in ONE document committed by ONE rename, and a closed
+two-posture resolver in `bro_completion.py` — an unconfigured floor now REFUSES instead of silently
+meaning "local". 26 negatives in `engine/tests/test_floor_writer.py`.
 
-The produced agent now **RUNS**: the 60s tick enqueues AND dispatches, up to
-`MAX_DISPATCH_PER_TICK`. It was measured first — `claim_and_run` had ONE non-test caller, a CI demo
-binary, so every piece built for that agent was unreachable from the product. Bundles are **BORN
-DISARMED**; arming needs a natively confirmed grant, disarming does not.
+**What is NOT done, and the head is deliberately NOT frozen:** provisioning (B6), the real
+distinct-UID and crash-injection tests, `SECURITY_MODEL.md` §1.3a as a deployment-enforceable
+contract (C6), C1–C4/C7, and the cargo+frontend regression. §1.7 and §1.10 are declared **partial**
+in `config/spec-conformance.json`, naming which half is missing. FW-3 (`scope.pin`, task/lease/pin
+authority) is intentionally OUT of FW-1 by Architect ruling — `unknown_op`, and it says so.
 
-**Two populations, two mechanisms** (Owner, 2026-08-30). The PRODUCED agent's list is the grant's
-`egress` TABLE, so the flow names a row and never a URL (§2.3 rule 6); it has no spawn and no `Bash`,
-so no namespace is needed. The BUILD agent keeps a broad fixed `build_egress` and is **not** jailed.
-No class holds `USE_NETWORK`, so every valid lease still names **no** destination.
+The transport and the produced agent's egress are **T-058** in [`TASKS.md`](TASKS.md); that text
+lived here as a second copy of the row.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
 named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
@@ -49,8 +53,8 @@ stated. Until he does, a tag arm would be a guess in a required context.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2043 OK, 10 skipped
-cd apps/desktop/src-tauri && cargo test --workspace              # 1110 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2069 OK, 10 skipped
+cd apps/desktop/src-tauri && cargo test --workspace              # 1147 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
@@ -98,14 +102,9 @@ rows a session marked `✅` about its own fix. Read
 
 ## Two things that will save you a day
 
-**The wall loads from the SESSION's project root, not the repository you edit.** Open the
-session at the OS checkout itself, or you get none of the five hooks and *nothing announces
-their absence* — it happened for a whole task (T-019). CLAUDE.md §5 has the full list.
-
-**A green test is not a passing check.** When you add a check, delete it once, **grep the line
-to confirm the mutation applied**, and confirm its test goes red. `T-045` swept its own two gates
-and found **three of seven checks tested by nothing**, plus a fourth with no test at all. Of
-roughly ninety checks swept in an earlier wave, four came back green.
+**Open the session at THIS checkout** or you get none of the six hooks, and nothing announces
+their absence (it happened for all of T-019). **A green test is not a passing check** — mutate it
+once and watch a NAMED test go red. Both in full: CLAUDE.md §5 and §7 rule 4.
 
 ## Where the state lives
 
@@ -120,4 +119,4 @@ Open tasks are [`TASKS.md`](TASKS.md); what is blocked on whom is
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: egress-authorizer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: floor-writer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

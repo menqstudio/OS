@@ -139,18 +139,22 @@ def check() -> list[str]:
         state = entry.get("status")
 
         if state == "implemented":
-            tests = entry.get("tests") or []
-            if not tests:
+            if not entry.get("tests"):
                 problems.append(
                     f"{section} is declared implemented but names no test. An implementation "
                     "nothing exercises is the shape every closed-then-reopened finding had."
                 )
-            for test in tests:
-                if not any(test in f.read_text(encoding="utf-8", errors="ignore")
-                           for f in source_files()):
-                    problems.append(
-                        f"{section} names test {test!r}, which does not exist in the source"
-                    )
+
+        # A named test is checked whatever the status naming it. This used to run only under
+        # `implemented`, and the hole was live: a `partial` entry was accepted here naming two
+        # tests that had not been written yet. A declaration pointing at a test that does not
+        # exist is worse than one pointing at nothing, because it reads as evidence.
+        for test in entry.get("tests") or []:
+            if not any(test in f.read_text(encoding="utf-8", errors="ignore")
+                       for f in source_files()):
+                problems.append(
+                    f"{section} names test {test!r}, which does not exist in the source"
+                )
 
         if state == "not_implemented":
             for path, line, window in cited[section]:

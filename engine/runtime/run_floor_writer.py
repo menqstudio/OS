@@ -1,24 +1,24 @@
-"""Run the Floor Writer as its own principal.
+"""Run the Floor Writer as its own principal — FW-1, Linux.
 
-This is the process an installer starts as the Floor Writer account. It exists as a separate
-entry point for the same reason ``run_supervisor.py`` does: the principal boundary is a PROCESS
-boundary, and a service importable into the policed process is one an operator will eventually
-run there.
+The process a service manager starts as the ``brops-floor`` account (§1.1). It exists as a
+separate entry point because the principal boundary is a PROCESS boundary: a service importable
+into the policed process is one an operator will eventually run there.
 
-Configuration is explicit and every value is REQUIRED. There is no default socket path, no
-default store and no default allowlist, because each of those defaults would be a way for a
-misconfigured deployment to come up looking provisioned:
+**One input, and it is the service's own.** Everything — the install scope, the marks root, the
+endpoint and the per-op peer allowlist — comes from the TCB-owned config named by
+``BROPS_FLOOR_WRITER_CONFIG`` (§4.4), which mirrors ``BROPS_BROKER_CONFIG``'s shape. The policed
+process contributes nothing. There is no default socket path, no default store and no default
+allowlist, because each of those would be a way for a misconfigured deployment to come up looking
+provisioned.
 
-    BRO_FLOOR_WRITER_SOCKET   the AF_UNIX path to serve on
-    BRO_FLOOR_WRITER_STORE    the authoritative per-task floor store, owned by THIS account
-    BRO_INSTALL_ID            the one install this writer serves
-    BRO_FLOOR_WRITER_CALLERS  comma-separated uids permitted to request an advancement
+**Custody is proved before the endpoint exists.** The marks directory and the socket's directory
+are both checked (§1.2, §1.7) before ``bind``. A socket that exists is a promise, and a service
+that cannot show its state is protected must not make one.
 
-It refuses to start on any platform where ``SO_PEERCRED`` is not available. That is a stop, not
-a degradation: see ``floor_writer``'s module docstring on why a weaker mechanism under the same
-name would be worse than an unsupported platform.
+**Refusing to start is the healthy failure.** Every early return here is an error: a healthy Floor
+Writer serves until it is stopped.
 
-Exit codes: 0 never (it serves until killed), 2 configuration, 3 platform, 4 custody.
+Exit codes: 2 configuration, 3 platform, 4 custody. There is no exit 0 path.
 """
 
 from __future__ import annotations
@@ -36,78 +36,59 @@ EXIT_PLATFORM = 3
 EXIT_CUSTODY = 4
 
 
-def _required(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        print(f"{name} is required and unset; refusing to start a Floor Writer that would "
-              "guess part of its own configuration", file=sys.stderr)
-        raise SystemExit(EXIT_CONFIG)
-    return value
-
-
-def _callers(raw: str) -> frozenset:
-    uids = set()
-    for piece in raw.split(","):
-        piece = piece.strip()
-        if not piece:
-            continue
-        try:
-            uids.add(int(piece))
-        except ValueError:
-            print(f"BRO_FLOOR_WRITER_CALLERS contains {piece!r}, which is not a uid",
-                  file=sys.stderr)
-            raise SystemExit(EXIT_CONFIG)
-    if not uids:
-        print("BRO_FLOOR_WRITER_CALLERS names no uid; a writer with an empty allowlist would "
-              "refuse every caller, which is a misconfiguration rather than a posture",
-              file=sys.stderr)
-        raise SystemExit(EXIT_CONFIG)
-    return frozenset(uids)
-
-
-def main(argv: list) -> int:  # pragma: no cover - exercised as a process, not imported
-    socket_path = pathlib.Path(_required("BRO_FLOOR_WRITER_SOCKET"))
-    store = pathlib.Path(_required("BRO_FLOOR_WRITER_STORE"))
-    install_id = _required("BRO_INSTALL_ID")
-    callers = _callers(_required("BRO_FLOOR_WRITER_CALLERS"))
-
+def start(argv=None) -> int:
+    """Load, prove custody, bind, serve. Returns only on failure."""
     try:
         floor_writer.require_linux("cannot start the Floor Writer")
     except floor_writer.FloorWriterError as exc:
-        print(str(exc), file=sys.stderr)
+        print(exc.detail, file=sys.stderr)
         return EXIT_PLATFORM
 
-    # Prove custody BEFORE binding. A socket that exists is a promise, and a writer that cannot
-    # protect its own state must not make one. The check is run against each permitted caller,
-    # because "the store is not the caller's" is a statement about a specific caller.
     try:
-        for uid in sorted(callers):
-            floor_writer.require_writer_custody(store, uid)
+        config = floor_writer.load_service_config()
     except floor_writer.FloorWriterError as exc:
-        print(str(exc), file=sys.stderr)
-        return EXIT_CUSTODY
-
-    try:
-        server = floor_writer.bind(socket_path)
-    except floor_writer.FloorWriterError as exc:
-        print(str(exc), file=sys.stderr)
+        print(exc.detail, file=sys.stderr)
         return EXIT_CONFIG
 
-    print(f"floor writer: serving {install_id} on {socket_path} from {store} "
-          f"as uid {os.geteuid()} for callers {sorted(callers)}", file=sys.stderr)
+    # §1.2 and §1.7, in that order and both before the socket exists.
     try:
-        floor_writer.serve_forever(server, store=store, served_install_id=install_id,
-                                   allowed_caller_uids=callers)
+        floor_writer.require_private_directory(config.marks_dir, "the Floor Writer marks store")
+        floor_writer.require_private_directory(
+            config.socket_path.parent, "the Floor Writer socket directory")
+    except floor_writer.FloorWriterError as exc:
+        print(exc.detail, file=sys.stderr)
+        return EXIT_CUSTODY
+
+    # The authoritative document must already exist: §4.2 says a floor is not
+    # client-bootstrappable, and it is not service-bootstrappable at start either. Provisioning
+    # writes the first one, deliberately, so that "no state" is never confused with "empty state".
+    try:
+        floor_writer.load_state(config)
+    except floor_writer.FloorWriterError as exc:
+        print(exc.detail, file=sys.stderr)
+        return EXIT_CONFIG
+
+    try:
+        server = floor_writer.bind(config.socket_path)
+    except floor_writer.FloorWriterError as exc:
+        print(exc.detail, file=sys.stderr)
+        return EXIT_CUSTODY
+
+    print(f"floor writer: install {config.install_id} generation {config.generation} on "
+          f"{config.socket_path} from {config.marks_dir} as uid {os.geteuid()}", file=sys.stderr,
+          flush=True)
+    try:
+        floor_writer.serve_forever(server, config)
     finally:
         try:
             server.close()
         finally:
             try:
-                socket_path.unlink()
+                config.socket_path.unlink()
             except OSError:
                 pass
-    return 0
+    return EXIT_CONFIG
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(start(sys.argv[1:]))

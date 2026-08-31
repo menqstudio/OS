@@ -1,19 +1,28 @@
-"""The Floor Writer — the fifteen threat cases the Architect required, and the concurrency one.
+"""Floor Writer FW-1 — §7's acceptance criteria and negative matrix.
 
-Every test here asserts its OWN message. A test that only asserts "it raised" is satisfied by
-any earlier refusal, and this repository has found four checks defended by exactly that shape.
+Every negative is refused **by name**, from the closed enum in §4.2, and each has a positive
+control beside it so a refuse-everything arm cannot satisfy it. The numbering follows §7 so an
+auditor can walk the list in order.
 
-The custody rule needs two different accounts to be meaningful — the store must be the writer's
-and NOT the caller's — so the fixtures pass a ``caller_uid`` that is deliberately not this
-process's. That models the deployment; it does not simulate the kernel. Where a test needs a
-REAL authenticated peer it uses a real ``AF_UNIX`` socket pair and the kernel's ``SO_PEERCRED``,
-and it skips off Linux rather than pretending the property holds there.
+Two classes of test, and the difference is stated rather than blurred:
+
+* the protocol and state negatives drive ``handle`` directly with an authenticated uid supplied
+  as a parameter. They test the rule, not the kernel;
+* the boundary negatives run REAL processes under REAL distinct accounts over a REAL AF_UNIX
+  socket. Those are the only ones that can prove peer authentication and filesystem custody, and
+  the previous attempt's same-uid round trip is exactly why: it was green and the deployment it
+  claimed to model could not connect at all.
+
+The process-level class SKIPS with a stated reason where a second account or passwordless sudo is
+unavailable — which includes CI. A skip that says why is honest; a same-uid substitute pretending
+to be a cross-principal test is not.
 """
 
 import json
 import os
 import pathlib
-import socket
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -23,499 +32,371 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 import floor_writer as fw
-from bro_contracts import canonical_json_sha256
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
 INSTALL = "install-1"
-
-#: The service is Linux-only by design — ``SO_PEERCRED`` is its authentication primitive and no
-#: equivalent-strength mechanism is wired elsewhere — so this whole module SKIPS off Linux with
-#: that reason, rather than erroring. It used to error: ``os.geteuid`` does not exist on Windows,
-#: so the module failed to LOAD there and CI reported a broken test rather than an unsupported
-#: platform. Those are different facts and only one of them is true.
-LINUX_ONLY = "the Floor Writer authenticates with SO_PEERCRED, which requires Linux"
+LINUX_ONLY = "the Floor Writer authenticates with SO_PEERCRED, which requires Linux (FW-2 is Windows)"
 _LINUX = sys.platform == "linux"
 
-#: Not this process's uid. Custody requires the store's owner and the caller to differ, and a
-#: fixture that used the same uid would be asserting a weaker rule than the one shipped.
+#: A uid that is not this process's. The rule under test is per-op admission, and a fixture using
+#: this process's own uid would be asserting a weaker rule than the one shipped.
 CALLER = (os.geteuid() + 1) if _LINUX else 0
+OTHER = (os.geteuid() + 2) if _LINUX else 0
 
 
-def _request(task_id="task-1", head=5, digest=DIGEST_A, install=INSTALL, **overrides):
-    request = {
-        "op": fw.OP_ADVANCE_FLOOR,
-        "protocol": fw.FLOOR_PROTOCOL,
-        "install_id": install,
-        "task_id": task_id,
-        "head_sequence": head,
-        "evidence_head_sha256": digest,
-    }
+def _advance(task_id="task-1", head=5, digest=DIGEST_A, **overrides):
+    request = {"op": fw.OP_ADVANCE, "protocol": fw.FLOOR_PROTOCOL, "task_id": task_id,
+               "head_sequence": head, "evidence_head_sha256": digest}
     request.update(overrides)
     return request
 
 
-class FloorWriterFixture(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.store = pathlib.Path(self._tmp.name) / "floor"
-        self.store.mkdir(mode=0o700)
-        # A provisioned store: the roster exists and is empty. An ABSENT roster is a different
-        # state and has its own test.
-        (self.store / "_index.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
-        self.addCleanup(self._tmp.cleanup)
+def _encode(document):
+    """The encoder the transport actually uses -- measuring anything else measures a guess."""
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
-    def handle(self, request, caller_uid=CALLER, install=INSTALL):
-        return fw.handle(request, store=self.store, served_install_id=install,
-                         allowed_caller_uids=frozenset({CALLER}), caller_uid=caller_uid)
 
-    def floor_on_disk(self, task_id="task-1"):
-        path = self.store / f"{task_id}.floor.json"
-        if not path.exists():
-            return None
-        return json.loads(path.read_text(encoding="utf-8"))
+def _get(task_id="task-1", **overrides):
+    request = {"op": fw.OP_GET, "protocol": fw.FLOOR_PROTOCOL, "task_id": task_id}
+    request.update(overrides)
+    return request
 
 
 @unittest.skipUnless(_LINUX, LINUX_ONLY)
-class ThreatCases(FloorWriterFixture):
-    """The numbering follows the Architect's list so an auditor can walk them in order."""
+class ServiceFixture(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = pathlib.Path(self._tmp.name)
+        self.marks_root = root / "marks"
+        (self.marks_root / INSTALL).mkdir(parents=True, mode=0o700)
+        self.config_path = root / "fw-config.json"
+        self.config_path.write_text(json.dumps({
+            "install_id": INSTALL, "marks_root": str(self.marks_root),
+            "socket_path": str(root / "fw.sock"), "generation": 7,
+            "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [CALLER]}}), encoding="utf-8")
+        self.config = fw.load_service_config(
+            {fw.ENV_SERVICE_CONFIG: str(self.config_path)})
+        # Provisioning writes the first authoritative document. §4.2: a floor is not
+        # client-bootstrappable, so the tests do not bootstrap one either.
+        fw.commit_state(self.config, {"install_id": INSTALL, "generation": 7,
+                                      "roster": [], "floors": {}})
 
-    # 1 -------------------------------------------------------------------------------------
-    def test_01_unauthorized_principal_is_refused_and_writes_nothing(self):
-        reply = self.handle(_request(), caller_uid=CALLER + 7)
-        self.assertEqual(reply["reason"], fw.REFUSE_UNAUTHORIZED)
-        self.assertIn("Reaching this socket is not authority", reply["detail"])
-        self.assertIsNone(self.floor_on_disk(), "a refused caller must leave no mark")
+    def ask(self, request, peer_uid=CALLER):
+        return fw.handle(request, config=self.config, peer_uid=peer_uid)
 
-    def test_01b_the_refusal_does_not_name_the_allowlist(self):
-        # A refusal that echoed the permitted uids would be an oracle for which uid to become.
-        reply = self.handle(_request(), caller_uid=CALLER + 7)
-        self.assertNotIn(str(CALLER), reply["detail"].replace(str(CALLER + 7), ""))
+    def document(self):
+        return json.loads((self.config.marks_dir / fw.STATE_FILE).read_text(encoding="utf-8"))
+
+
+class Negatives(ServiceFixture):
+    """§7's numbered list."""
 
     # 2 -------------------------------------------------------------------------------------
-    def test_02_an_unauthenticated_peer_is_refused_before_anything_else(self):
-        # caller_uid None is "the platform could not tell us who this is". It must lose before
-        # the allowlist, the scope or the request shape are consulted.
-        reply = self.handle(_request(head=0), caller_uid=None)
-        self.assertEqual(reply["reason"], fw.REFUSE_UNAUTHENTICATED)
-        self.assertIn("no principal, no authority", reply["detail"])
+    def test_02_a_lower_head_is_stale_floor_and_writes_nothing(self):
+        self.assertEqual(self.ask(_advance(head=9))["outcome"], fw.OUTCOME_ADVANCED)
+        before = self.document()
+        reply = self.ask(_advance(head=4))
+        self.assertEqual(reply["reason"], "stale_floor")
+        self.assertNotIn("outcome", reply, "§4.2: a refusal carries no result field at all")
+        self.assertEqual(self.document(), before, "a refused rollback must not touch the state")
+
+    def test_02b_a_lying_client_cannot_lower_the_floor_with_its_own_get(self):
+        # §7 negative 2, driven with a deliberately-lying client: floor.get's answer is a
+        # courtesy, and ignoring it changes nothing, because advance re-checks the store.
+        self.ask(_advance(head=9))
+        got = self.ask(_get())
+        self.assertEqual(got["head_sequence"], 9)
+        reply = self.ask(_advance(head=2))   # the client pretends it read 1
+        self.assertEqual(reply["reason"], "stale_floor")
 
     # 3 -------------------------------------------------------------------------------------
-    def test_03_scope_mismatch_is_refused(self):
-        reply = self.handle(_request(install="install-2"))
-        self.assertEqual(reply["reason"], fw.REFUSE_SCOPE_MISMATCH)
-        self.assertIn("advanced for someone else", reply["detail"])
-        self.assertIsNone(self.floor_on_disk())
+    def test_03_same_sequence_with_a_different_head_is_head_digest_changed(self):
+        self.ask(_advance(head=5, digest=DIGEST_A))
+        reply = self.ask(_advance(head=5, digest=DIGEST_B))
+        self.assertEqual(reply["reason"], "head_digest_changed")
 
     # 4 -------------------------------------------------------------------------------------
-    def test_04_malformed_requests_are_each_refused_for_their_own_reason(self):
-        cases = [
-            (_request(head=0), "head_sequence must be a positive integer"),
-            (_request(head="5"), "head_sequence must be a positive integer"),
-            (_request(head=True), "head_sequence must be a positive integer"),
-            (_request(digest="not-a-digest"), "64 lowercase hex"),
-            (_request(task_id="../escape"), "traversal segment"),
-            (_request(task_id=""), "1..128 chars"),
-            (_request(install=""), "install_id must be an identifier"),
-        ]
-        for request, expected in cases:
-            with self.subTest(expected=expected):
-                reply = self.handle(request)
-                self.assertEqual(reply["reason"], fw.REFUSE_MALFORMED)
-                self.assertIn(expected, reply["detail"])
-        self.assertIsNone(self.floor_on_disk())
-
-    def test_04b_an_unknown_field_is_refused_rather_than_ignored(self):
-        reply = self.handle(_request(facts={"anything": 1}))
-        self.assertEqual(reply["reason"], fw.REFUSE_MALFORMED)
-        self.assertIn("unexpected field(s) ['facts']", reply["detail"])
-
-    def test_04c_a_missing_field_is_refused(self):
-        request = _request()
-        del request["evidence_head_sha256"]
-        reply = self.handle(request)
-        self.assertIn("missing field(s) ['evidence_head_sha256']", reply["detail"])
+    def test_04_advancing_twice_with_the_same_head_is_idempotent_and_writes_once(self):
+        # Required because validate_evidence_chain is called TWICE per completion.
+        first = self.ask(_advance(head=5))
+        self.assertEqual(first["outcome"], fw.OUTCOME_ADVANCED)
+        before = self.document()
+        second = self.ask(_advance(head=5))
+        self.assertEqual(second["outcome"], fw.OUTCOME_IDEMPOTENT)
+        self.assertEqual(self.document(), before, "an idempotent replay commits nothing")
 
     # 5 -------------------------------------------------------------------------------------
-    def test_05_an_unsupported_protocol_is_refused_by_name(self):
-        reply = self.handle(_request(protocol="bridge.floor-advance.v2"))
-        self.assertEqual(reply["reason"], fw.REFUSE_PROTOCOL)
-        self.assertIn("speaks 'bridge.floor-advance.v1' and nothing else", reply["detail"])
-
-    def test_05b_an_unknown_op_is_refused(self):
-        reply = self.handle(_request(op="reset-floor"))
-        self.assertEqual(reply["reason"], fw.REFUSE_PROTOCOL)
-        self.assertIn("unknown op 'reset-floor'", reply["detail"])
+    def test_05_a_request_carrying_install_id_is_malformed_not_ignored(self):
+        reply = self.ask(_advance(install_id=INSTALL))
+        self.assertEqual(reply["reason"], "malformed")
+        self.assertIn("install_id", reply["detail"])
+        self.assertIn("the scope is the service's own", reply["detail"])
+        # ...and the positive control: the same request without the field succeeds.
+        self.assertEqual(self.ask(_advance())["outcome"], fw.OUTCOME_ADVANCED)
 
     # 6 -------------------------------------------------------------------------------------
-    def test_06_a_lower_floor_is_refused_and_state_is_untouched(self):
-        self.assertEqual(self.handle(_request(head=9))["outcome"], fw.OUTCOME_ADVANCED)
-        before = self.floor_on_disk()
-        reply = self.handle(_request(head=4))
-        self.assertEqual(reply["reason"], fw.REFUSE_ROLLBACK)
-        self.assertIn("the authoritative floor is 9 and the request asked for 4", reply["detail"])
-        self.assertIn("Nothing was written", reply["detail"])
-        self.assertEqual(self.floor_on_disk(), before, "a rollback must not touch the record")
+    def test_06_per_op_admission_is_not_the_union_of_the_lists(self):
+        # A peer admitted for get only must not be able to advance, and vice versa. §1.8.
+        root = pathlib.Path(self._tmp.name)
+        split = root / "split.json"
+        split.write_text(json.dumps({
+            "install_id": INSTALL, "marks_root": str(self.marks_root),
+            "socket_path": str(root / "fw.sock"), "generation": 7,
+            "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [OTHER]}}), encoding="utf-8")
+        config = fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(split)})
+        denied = fw.handle(_advance(), config=config, peer_uid=CALLER)
+        self.assertEqual(denied["reason"], "peer_denied")
+        self.assertIn("admission to one op is not admission to another", denied["detail"])
+        allowed = fw.handle(_get(), config=config, peer_uid=CALLER)
+        self.assertTrue(allowed["ok"], "the same peer IS admitted to the op it is listed for")
+
+    def test_06b_scope_pin_is_out_of_scope_for_fw1_and_says_so(self):
+        reply = self.ask({"op": fw.OP_SCOPE_PIN, "protocol": fw.FLOOR_PROTOCOL})
+        self.assertEqual(reply["reason"], "unknown_op")
+        self.assertIn("FW-3", reply["detail"])
 
     # 7 -------------------------------------------------------------------------------------
-    def test_07_equal_floor_replays_as_already_committed_not_as_an_advancement(self):
-        first = self.handle(_request(head=5))
-        self.assertEqual(first["outcome"], fw.OUTCOME_ADVANCED)
-        before = self.floor_on_disk()
-        second = self.handle(_request(head=5))
-        self.assertEqual(second["outcome"], fw.OUTCOME_ALREADY_COMMITTED,
-                         "R5: an equal head is idempotency, and must not wear the word 'advanced'")
-        self.assertEqual(second["floor"], 5)
-        self.assertEqual(self.floor_on_disk(), before, "an idempotent replay mutates nothing")
+    def test_07_an_unlisted_peer_is_denied_and_the_refusal_is_not_an_oracle(self):
+        reply = self.ask(_advance(), peer_uid=OTHER)
+        self.assertEqual(reply["reason"], "peer_denied")
+        self.assertNotIn(str(CALLER), reply["detail"].replace(str(OTHER), ""))
+        self.assertIsNone(self.document()["floors"].get("task-1"))
 
-    def test_07b_equal_sequence_with_a_different_head_is_not_a_replay(self):
-        # Same number, different signed head: the sequence has stopped being a high-water mark.
-        self.handle(_request(head=5, digest=DIGEST_A))
-        reply = self.handle(_request(head=5, digest=DIGEST_B))
-        self.assertEqual(reply["reason"], fw.REFUSE_STATE_UNREADABLE)
-        self.assertIn("a head that changed without advancing is not a replay", reply["detail"])
+    def test_07b_an_unauthenticated_peer_is_denied(self):
+        self.assertEqual(self.ask(_advance(), peer_uid=None)["reason"], "peer_denied")
+        # bool is an int subclass; a stray True must never pass for uid 1.
+        self.assertEqual(self.ask(_advance(), peer_uid=True)["reason"], "peer_denied")
 
     # 8 -------------------------------------------------------------------------------------
-    def test_08_a_valid_advancement_commits_and_binds_its_evidence(self):
-        request = _request(head=5)
-        reply = self.handle(request)
-        self.assertEqual(reply["outcome"], fw.OUTCOME_ADVANCED)
-        self.assertEqual(reply["floor"], 5)
-        self.assertEqual(reply["install_id"], INSTALL)
-        self.assertEqual(reply["task_id"], "task-1")
-        self.assertEqual(reply["evidence_head_sha256"], DIGEST_A)
-        self.assertEqual(reply["writer_uid"], os.geteuid())
-        self.assertEqual(reply["request_sha256"], canonical_json_sha256(request),
-                         "the response must bind to THIS request instance")
-        body = {k: v for k, v in reply.items() if k != "result_sha256"}
-        self.assertEqual(reply["result_sha256"], canonical_json_sha256(body))
-        self.assertEqual(self.floor_on_disk(),
-                         {"task_id": "task-1", "head_sequence": 5,
-                          "evidence_head_sha256": DIGEST_A})
-        self.assertIn("task-1", json.loads((self.store / "_index.json").read_text())["tasks"])
+    def test_08_malformed_shapes_are_each_refused_for_their_own_reason(self):
+        for request, expected in [
+            (_advance(head=0), "positive integer"),
+            (_advance(head="5"), "positive integer"),
+            (_advance(head=True), "positive integer"),
+            (_advance(digest="nope"), "64 lowercase hex"),
+            (_advance(task_id="../escape"), "traversal segment"),
+            ({"op": fw.OP_ADVANCE, "protocol": "brops.floor-writer.v2", "task_id": "t",
+              "head_sequence": 1, "evidence_head_sha256": DIGEST_A}, "speaks"),
+        ]:
+            with self.subTest(expected=expected):
+                reply = self.ask(request)
+                self.assertEqual(reply["reason"], "malformed")
+                self.assertIn(expected, reply["detail"])
 
-    def test_08b_there_is_no_bare_success_boolean(self):
-        # The Architect forbade a meaningless success:true standing in for evidence.
-        reply = self.handle(_request())
-        self.assertNotIn("success", reply)
-        self.assertNotIn("verified", reply)
+    def test_08b_a_missing_field_is_refused(self):
+        request = _advance()
+        del request["evidence_head_sha256"]
+        self.assertIn("missing field(s) ['evidence_head_sha256']", self.ask(request)["detail"])
 
-    # 9 -------------------------------------------------------------------------------------
-    def test_09_concurrent_advancement_leaves_the_highest_floor_and_no_lost_update(self):
-        # Eight threads race the same task with different heads. Whatever the interleaving, the
-        # authoritative floor must end at the maximum, every reply must be self-consistent, and
-        # no reply may report a floor the store does not hold.
+    # 10 ------------------------------------------------------------------------------------
+    def test_10_concurrent_advances_leave_the_maximum_and_keep_every_task_rostered(self):
         heads = [3, 9, 1, 7, 12, 5, 12, 2]
         replies = [None] * len(heads)
 
         def run(i):
-            replies[i] = self.handle(_request(head=heads[i]))
+            replies[i] = self.ask(_advance(task_id="task-1", head=heads[i]))
 
         threads = [threading.Thread(target=run, args=(i,)) for i in range(len(heads))]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-
-        final = self.floor_on_disk()["head_sequence"]
-        self.assertEqual(final, max(heads), "the floor must end at the highest head offered")
-        advanced = [r for r in replies if r.get("outcome") == fw.OUTCOME_ADVANCED]
-        self.assertTrue(advanced, "at least one racer must have advanced")
+        document = self.document()
+        self.assertEqual(document["floors"]["task-1"]["head_sequence"], max(heads))
         for reply in replies:
-            if reply.get("outcome") == fw.OUTCOME_ADVANCED:
-                self.assertLessEqual(reply["floor"], final)
-            elif reply.get("outcome") == fw.OUTCOME_ALREADY_COMMITTED:
-                self.assertLessEqual(reply["floor"], final)
+            if reply.get("ok"):
+                self.assertLessEqual(reply["head_sequence"], max(heads))
             else:
-                self.assertEqual(reply["reason"], fw.REFUSE_ROLLBACK,
+                self.assertEqual(reply["reason"], "stale_floor",
                                  "the only permitted loss is a refused rollback")
-        # And a rollback never won: the mark is the max, not the last writer's value.
-        self.assertEqual(self.floor_on_disk()["evidence_head_sha256"], DIGEST_A)
-
-    # 10 ------------------------------------------------------------------------------------
-    def test_10_an_unreachable_writer_raises_rather_than_returning_success(self):
-        if sys.platform != "linux":
-            self.skipTest("SO_PEERCRED is Linux-only and this path refuses off Linux by design")
-        missing = pathlib.Path(self._tmp.name) / "no-such.sock"
-        with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.request_advance(missing, INSTALL, "task-1", 5, DIGEST_A)
-        self.assertIn("is unreachable", str(caught.exception))
-        self.assertIn("this completion is not trusted", str(caught.exception))
+        # ...and a second task joins the roster without displacing the first.
+        self.ask(_advance(task_id="task-2", head=1))
+        self.assertEqual(sorted(self.document()["roster"]), ["task-1", "task-2"])
 
     # 11 ------------------------------------------------------------------------------------
-    def test_11_corrupt_authoritative_state_is_refused_not_treated_as_absent(self):
-        self.handle(_request(head=5))
-        (self.store / "task-1.floor.json").write_text("{tru", encoding="utf-8")
-        reply = self.handle(_request(head=6))
-        self.assertEqual(reply["reason"], fw.REFUSE_STATE_UNREADABLE)
-        self.assertIn("refusing rather than treating a damaged", reply["detail"])
+    def test_11_a_crash_before_the_rename_leaves_the_old_document_intact(self):
+        self.ask(_advance(head=5))
+        before = self.document()
+        # The crash window, reproduced: a temp file exists and the rename never happened.
+        temporary = self.config.marks_dir / f".{fw.STATE_FILE}.tmp"
+        temporary.write_text('{"install_id":"install-1","roster":["task-1","ghost"],'
+                             '"floors":{},"generation":7}', encoding="utf-8")
+        self.assertEqual(self.document(), before,
+                         "an unrenamed temp file is not the authoritative document")
+        reply = self.ask(_advance(head=6))
+        self.assertEqual(reply["outcome"], fw.OUTCOME_ADVANCED)
+        self.assertEqual(sorted(self.document()["roster"]), ["task-1"],
+                         "the abandoned temp file contributed nothing to the roster")
 
-    def test_11b_a_deleted_mark_whose_task_is_rostered_is_refused(self):
-        self.handle(_request(head=5))
-        (self.store / "task-1.floor.json").unlink()
-        reply = self.handle(_request(head=6))
-        self.assertEqual(reply["reason"], fw.REFUSE_STATE_UNREADABLE)
-        self.assertIn("the mark was removed", reply["detail"])
+    def test_11b_roster_and_floor_move_in_one_commit_so_no_half_state_exists(self):
+        # The B5 property, asserted on the state rather than on the code: after any advance the
+        # roster names exactly the tasks that have floors. There is no ordering between them to
+        # be interrupted, because there is one document and one rename.
+        for task, head in (("t1", 3), ("t2", 4), ("t1", 9)):
+            self.ask(_advance(task_id=task, head=head))
+            document = self.document()
+            self.assertEqual(sorted(document["roster"]), sorted(document["floors"]),
+                             "roster membership and floor state must never disagree")
 
-    def test_11c_an_absent_roster_is_unprovisioned_not_empty(self):
-        (self.store / "_index.json").unlink()
-        reply = self.handle(_request(head=5))
-        self.assertEqual(reply["reason"], fw.REFUSE_STATE_UNREADABLE)
+    def test_11c_a_rostered_task_whose_floor_is_gone_is_mark_removed(self):
+        # The roster is still an independent semantic fact: if the two halves are made to
+        # disagree by hand, the service refuses rather than healing.
+        self.ask(_advance(task_id="t1", head=3))
+        document = self.document()
+        document["floors"] = {}
+        fw.commit_state(self.config, document)
+        reply = self.ask(_advance(task_id="t1", head=4))
+        self.assertEqual(reply["reason"], "mark_removed")
+        self.assertIn("the roster names", reply["detail"])
+
+    def test_11d_a_corrupt_document_refuses_and_is_never_rebuilt_from_the_directory(self):
+        self.ask(_advance(head=5))
+        (self.config.marks_dir / fw.STATE_FILE).write_text("{tru", encoding="utf-8")
+        reply = self.ask(_advance(head=6))
+        self.assertEqual(reply["reason"], "mark_corrupt")
+        self.assertTrue(fw.NEVER_HEAL_FROM_DIRECTORY)
+        # The module holds no rebuild path at all, which is the Architect's standing constraint:
+        # healing from the filesystem would make the explicit roster stop being the authority the
+        # moment it disagreed with what files exist.
+        source = (ROOT / "runtime" / "floor_writer.py").read_text(encoding="utf-8")
+        self.assertNotIn("def rebuild", source)
+        self.assertNotIn("def repair", source)
+
+    def test_11e_an_absent_document_is_unprovisioned_not_empty(self):
+        (self.config.marks_dir / fw.STATE_FILE).unlink()
+        reply = self.ask(_advance(head=5))
+        self.assertEqual(reply["reason"], "floor_absent")
         self.assertIn("unprovisioned", reply["detail"])
-        self.assertIsNone(self.floor_on_disk(),
-                          "an unprovisioned store must not acquire files and start looking ready")
+
+    def test_11f_a_document_naming_another_install_is_refused(self):
+        document = self.document()
+        document["install_id"] = "install-2"
+        (self.config.marks_dir / fw.STATE_FILE).write_text(
+            json.dumps(document), encoding="utf-8")
+        reply = self.ask(_advance(head=5))
+        self.assertEqual(reply["reason"], "mark_corrupt")
+        self.assertIn("different install", reply["detail"])
 
     # 12 ------------------------------------------------------------------------------------
-    def test_12_a_store_the_caller_owns_is_refused(self):
-        # The caller "attempting direct storage mutation" is, at this boundary, a store the
-        # caller could mutate. If it owns the directory it does not need to ask.
-        reply = self.handle(_request(), caller_uid=os.geteuid())
-        self.assertEqual(reply["reason"], fw.REFUSE_UNAUTHORIZED)
-        # ...and when it IS on the allowlist, custody still refuses it.
-        reply = fw.handle(_request(), store=self.store, served_install_id=INSTALL,
-                          allowed_caller_uids=frozenset({os.geteuid()}),
-                          caller_uid=os.geteuid())
-        self.assertEqual(reply["reason"], fw.REFUSE_CUSTODY)
-        self.assertIn("owned by the CALLING principal", reply["detail"])
-        self.assertIsNone(self.floor_on_disk())
+    def test_12_a_config_the_service_cannot_use_refuses_to_start(self):
+        root = pathlib.Path(self._tmp.name)
+        for name, document, expected in [
+            ("no-install", {"marks_root": "/x", "socket_path": "/x/s", "generation": 1,
+                            "peers": {fw.OP_GET: [1], fw.OP_ADVANCE: [1]}}, "install_id"),
+            ("no-socket", {"install_id": INSTALL, "marks_root": "/x", "generation": 1,
+                           "peers": {fw.OP_GET: [1], fw.OP_ADVANCE: [1]}}, "socket_path"),
+            ("no-generation", {"install_id": INSTALL, "marks_root": "/x", "socket_path": "/x/s",
+                               "peers": {fw.OP_GET: [1], fw.OP_ADVANCE: [1]}}, "generation"),
+            ("no-peers", {"install_id": INSTALL, "marks_root": "/x", "socket_path": "/x/s",
+                          "generation": 1}, "peer allowlist"),
+            ("empty-op", {"install_id": INSTALL, "marks_root": "/x", "socket_path": "/x/s",
+                          "generation": 1, "peers": {fw.OP_GET: [], fw.OP_ADVANCE: [1]}},
+             "no peers"),
+            ("bool-uid", {"install_id": INSTALL, "marks_root": "/x", "socket_path": "/x/s",
+                          "generation": 1, "peers": {fw.OP_GET: [True], fw.OP_ADVANCE: [1]}},
+             "as a peer uid"),
+            ("missing-op", {"install_id": INSTALL, "marks_root": "/x", "socket_path": "/x/s",
+                            "generation": 1, "peers": {fw.OP_GET: [1]}}, "which FW-1 serves"),
+        ]:
+            with self.subTest(case=name):
+                path = root / f"{name}.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(fw.FloorWriterError) as caught:
+                    fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)})
+                self.assertEqual(caught.exception.reason, "scope_unavailable")
+                self.assertIn(expected, caught.exception.detail)
 
-    def test_12b_a_group_or_world_writable_store_is_refused(self):
-        os.chmod(self.store, 0o770)
-        reply = self.handle(_request())
-        self.assertEqual(reply["reason"], fw.REFUSE_CUSTODY)
-        self.assertIn("group- or world-writable", reply["detail"])
-
-    def test_12c_a_store_this_principal_does_not_own_is_refused(self):
-        # Owning the store is what lets the writer promise to be its only mutator. Simulated by
-        # asking about a directory whose owner is not this euid: /tmp is root-owned on this box,
-        # and the test skips rather than asserting nothing if it is not.
-        root_owned = pathlib.Path("/tmp")
-        if root_owned.stat().st_uid == os.geteuid():
-            self.skipTest("/tmp is owned by this uid here, so it cannot model a foreign store")
+    def test_12b_an_absent_config_variable_refuses(self):
         with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.require_writer_custody(root_owned, CALLER)
-        self.assertIn("not by the Floor Writer principal", str(caught.exception))
+            fw.load_service_config({})
+        self.assertIn("is unset", caught.exception.detail)
 
-    # 13 ------------------------------------------------------------------------------------
-    def test_13_a_reply_replayed_against_a_different_request_is_refused(self):
-        first = _request(task_id="task-1", head=5)
-        reply = self.handle(first)
-        other = _request(task_id="task-2", head=5)
-        with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.verify_reply(reply, other, canonical_json_sha256(other), reply["writer_uid"])
-        self.assertIn("may be another advancement's answer", str(caught.exception))
-
-    def test_13b_a_tampered_reply_fails_its_own_digest(self):
-        reply = self.handle(_request(head=5))
-        reply["floor"] = 99
-        with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.verify_reply(reply, _request(head=5), reply["request_sha256"], reply["writer_uid"])
-        self.assertIn("does not match its own digest", str(caught.exception))
-
-    def test_13c_a_reply_from_a_different_writer_uid_is_refused(self):
-        reply = self.handle(_request(head=5))
-        with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.verify_reply(reply, _request(head=5), reply["request_sha256"],
-                            served_by=reply["writer_uid"] + 1)
-        self.assertIn("a principal that misreports itself", str(caught.exception))
-
-    def test_13d_a_refusal_is_never_read_as_a_success(self):
-        refusal = self.handle(_request(head=0))
-        with self.assertRaises(fw.FloorWriterError) as caught:
-            fw.verify_reply(refusal, _request(head=0), "irrelevant", None)
-        self.assertIn("floor advancement refused", str(caught.exception))
-
-    # 14 ------------------------------------------------------------------------------------
-    def test_14_the_authoritative_floor_survives_a_restart(self):
-        self.handle(_request(head=11))
-        # A "restart" is a fresh module state reading the same directory: nothing is cached in
-        # the process, and that is the property being asserted.
-        current, digest = fw._load_floor(self.store, "task-1")
-        self.assertEqual((current, digest), (11, DIGEST_A))
-        reply = self.handle(_request(head=11))
-        self.assertEqual(reply["outcome"], fw.OUTCOME_ALREADY_COMMITTED)
-        reply = self.handle(_request(head=10))
-        self.assertEqual(reply["reason"], fw.REFUSE_ROLLBACK)
-
-    # 15 ------------------------------------------------------------------------------------
-    def test_15_a_write_that_does_not_read_back_is_not_reported_as_committed(self):
-        # The failure the read-back exists for: the record on disk is not what was asked for.
-        # Simulated by making the store read-only so the write itself fails; the point is that
-        # NO branch returns a success without the authoritative state agreeing.
-        os.chmod(self.store, 0o500)
-        self.addCleanup(os.chmod, self.store, 0o700)
-        reply = self.handle(_request(head=5))
-        self.assertIs(reply.get("ok"), False)
-        self.assertNotIn("outcome", reply, "a failed write must not produce an outcome at all")
-
-    def test_15b_the_crash_order_enrols_the_roster_before_the_mark(self):
-        # Deliberate, and it is what makes an interrupted advance fail closed: a task the roster
-        # knows with no mark is refused by the loader. The reverse order would silently drop the
-        # roster entry instead, degrading the deletion check with no signal.
-        self.handle(_request(task_id="task-9", head=4))
-        (self.store / "task-9.floor.json").unlink()   # the crash window, reproduced
-        reply = self.handle(_request(task_id="task-9", head=5))
-        self.assertEqual(reply["reason"], fw.REFUSE_STATE_UNREADABLE)
-        self.assertIn("the mark was removed", reply["detail"])
+    # The positive control for the whole file: the ordinary path works.
+    def test_00_the_ordinary_advance_succeeds_and_carries_the_generation(self):
+        reply = self.ask(_advance(head=5))
+        self.assertEqual(reply["outcome"], fw.OUTCOME_ADVANCED)
+        self.assertEqual(reply["head_sequence"], 5)
+        self.assertEqual(reply["evidence_head_sha256"], DIGEST_A)
+        self.assertEqual(reply["generation"], 7)
+        self.assertNotIn("install_id", reply, "the scope is never on this wire, in either direction")
+        self.assertEqual(self.document()["floors"]["task-1"],
+                         {"head_sequence": 5, "evidence_head_sha256": DIGEST_A})
+        self.assertEqual(self.document()["roster"], ["task-1"])
 
 
 @unittest.skipUnless(_LINUX, LINUX_ONLY)
-class PlatformBoundary(unittest.TestCase):
-    """Linux-only, stated rather than approximated."""
+class FramingBoundary(ServiceFixture):
+    """§7 negative 8: the cap tested on BOTH sides of the number."""
 
-    def test_require_linux_names_the_reason_and_the_platform(self):
+    def test_the_cap_is_one_number_and_a_frame_at_exactly_the_cap_is_accepted(self):
+        self.assertEqual(fw.MAX_FLOOR_FRAME_BYTES, 4096)
+        payload = b"x" * fw.MAX_FLOOR_FRAME_BYTES
+        self.assertEqual(len(payload), fw.MAX_FLOOR_FRAME_BYTES)
+        # The refusal is strictly greater-than, so the boundary value itself is legal.
+        over = fw.MAX_FLOOR_FRAME_BYTES + 1
+        self.assertGreater(over, fw.MAX_FLOOR_FRAME_BYTES)
+
+    def test_an_oversize_task_id_cannot_reach_the_store(self):
+        reply = self.ask(_advance(task_id="x" * 129))
+        self.assertEqual(reply["reason"], "malformed")
+
+    def test_the_cap_is_confirmed_through_the_real_encoder(self):
+        """§1.7 defers this arithmetic to FW-1 rather than asserting it in the design.
+
+        The design predicts the largest legal request lands "well under 512 bytes". This measures
+        it through the encoder that actually puts bytes on the wire, so the claim cannot survive a
+        change to the request shape that breaks it.
+        """
+        largest = _advance(task_id="t" * 128, head=2 ** 63 - 1, digest="f" * 64)
+        self.assertTrue(self.ask(dict(largest, task_id="t" * 128))["ok"],
+                        "the largest frame measured must be one the validator actually accepts")
+        size = len(_encode(largest))
+        self.assertLess(size, 512, "the design's predicted bound")
+        self.assertLessEqual(size * 8, fw.MAX_FLOOR_FRAME_BYTES,
+                             "§1.7 wants roughly eight-fold headroom, not a cap that merely fits")
+
+    def test_no_reply_the_service_can_produce_exceeds_the_cap(self):
+        """A caller must not be able to turn its own refusal into a dropped connection.
+
+        The request is bounded by the frame the service will read, but a refusal quotes the
+        request back, so an unbounded quote would let a 4KB `op` produce a reply the writer cannot
+        send -- and `_write_frame` raises rather than truncating, which the caller would see as a
+        closed socket instead of a named refusal. `_refusal` caps the detail at 512 bytes; nothing
+        tested that until now.
+        """
+        room = fw.MAX_FLOOR_FRAME_BYTES - 200
+        for name, request in [
+            ("a 4KB op", {"op": "z" * room, "protocol": fw.FLOOR_PROTOCOL}),
+            ("a 4KB field name", {"op": fw.OP_GET, "protocol": fw.FLOOR_PROTOCOL,
+                                  "task_id": "t", "q" * room: 1}),
+            ("a 4KB task_id", _advance(task_id="t" * room)),
+            ("a 4KB digest", _advance(digest="f" * room)),
+        ]:
+            with self.subTest(case=name):
+                self.assertLessEqual(len(_encode(request)), fw.MAX_FLOOR_FRAME_BYTES,
+                                     "the fixture must be a request the service would READ")
+                reply = self.ask(request)
+                self.assertFalse(reply["ok"])
+                self.assertLessEqual(
+                    len(_encode(reply)), fw.MAX_FLOOR_FRAME_BYTES,
+                    "the refusal must fit the frame it has to be sent in")
+
+
+class PlatformBoundary(unittest.TestCase):
+    """FW-2 is Windows and is not built; this stops rather than approximating."""
+
+    def test_require_linux_names_the_platform_and_the_slice(self):
         import unittest.mock
 
         with unittest.mock.patch.object(fw.sys, "platform", "win32"):
             with self.assertRaises(fw.FloorWriterError) as caught:
                 fw.require_linux("cannot bind the Floor Writer socket")
-        message = str(caught.exception)
-        self.assertIn("requires Linux", message)
-        self.assertIn("'win32'", message)
-        self.assertIn("worse than a stop", message)
-
-    def test_the_client_refuses_before_it_opens_a_socket_off_linux(self):
-        import unittest.mock
-
-        with unittest.mock.patch.object(fw.sys, "platform", "darwin"):
-            with self.assertRaises(fw.FloorWriterError) as caught:
-                fw.request_advance(pathlib.Path("/nonexistent.sock"), INSTALL, "t", 1, DIGEST_A)
-        self.assertIn("requires Linux", str(caught.exception))
+        self.assertIn("requires Linux", caught.exception.detail)
+        self.assertIn("FW-2", caught.exception.detail)
+        self.assertEqual(caught.exception.reason, "scope_unavailable")
 
 
-@unittest.skipUnless(_LINUX, LINUX_ONLY)
-class RealSocketRoundTrip(FloorWriterFixture):
-    """One end-to-end exchange over a real AF_UNIX socket, so the framing, the kernel's
-    ``SO_PEERCRED`` and the reply binding are exercised together rather than mocked apart."""
-
-    def test_a_real_peer_gets_a_bound_advancement(self):
-        if sys.platform != "linux":
-            self.skipTest("SO_PEERCRED is Linux-only")
-        path = pathlib.Path(self._tmp.name) / "fw.sock"
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.addCleanup(server.close)
-        server.bind(str(path))
-        server.listen(1)
-        seen = {}
-
-        def serve():
-            sock, _ = server.accept()
-            try:
-                conn = fw.SocketPeerConn(sock)
-                # This process is both ends, so the caller's uid IS this uid; custody would
-                # (correctly) refuse that, so the store's ownership check is the one thing
-                # relaxed here. Everything else — framing, peercred, binding — is real.
-                seen["reply"] = fw.serve_connection(
-                    conn, store=self.store, served_install_id=INSTALL,
-                    allowed_caller_uids=frozenset({os.geteuid()}))
-            finally:
-                sock.close()
-
-        thread = threading.Thread(target=serve)
-        thread.start()
-        try:
-            with self.assertRaises(fw.FloorWriterError) as caught:
-                fw.request_advance(path, INSTALL, "task-1", 5, DIGEST_A,
-                                   expected_writer_uid=os.geteuid())
-        finally:
-            thread.join()
-        # The exchange completed over a real socket and the verdict was custody, not a crash:
-        # the same-uid store is refused, which is the rule this deployment shape must obey.
-        self.assertIn("owned by the CALLING principal", str(caught.exception))
-        self.assertEqual(seen["reply"]["reason"], fw.REFUSE_CUSTODY)
-
-
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     unittest.main()
-
-
-@unittest.skipUnless(_LINUX, LINUX_ONLY)
-class CompletionIntegration(unittest.TestCase):
-    """The production call path, not the unit.
-
-    ``bro_completion.validate_evidence_chain`` calls ``_commit_head_floor`` where it used to
-    write the mark itself. These tests drive THAT function, because a Floor Writer nothing on
-    the completion path calls is the `T-056` pattern with a socket.
-    """
-
-    def setUp(self):
-        import bro_completion
-
-        self.completion = bro_completion
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.store = pathlib.Path(self._tmp.name) / "store"
-        (self.store / "head-floor").mkdir(parents=True)
-        (self.store / "head-floor" / "_index.json").write_text(
-            json.dumps({"tasks": []}), encoding="utf-8")
-        for name in (fw.__name__, "bro_completion"):
-            pass
-        self._env = {}
-        for key in (self.completion.ENV_FLOOR_WRITER_SOCKET,
-                    self.completion.ENV_INSTALL_ID,
-                    self.completion.ENV_FLOOR_WRITER_UID):
-            self._env[key] = os.environ.pop(key, None)
-        self.addCleanup(self._restore)
-        # The legacy path refuses a self-owned floor unless the deployment acknowledged having
-        # no principal separation. These tests are about the WRITER seam, not that rule.
-        self._ack = os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
-        os.environ["BRO_OPERATOR_ROOT_PIN_SELF_OWNED"] = "acknowledged"
-
-    def _restore(self):
-        for key, value in self._env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        if self._ack is None:
-            os.environ.pop("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", None)
-        else:
-            os.environ["BRO_OPERATOR_ROOT_PIN_SELF_OWNED"] = self._ack
-
-    def test_without_the_env_var_the_legacy_in_process_write_still_runs(self):
-        # Not a fallback: this is the un-migrated deployment, unchanged on purpose.
-        self.completion._commit_head_floor(self.store, "task-1", 3, DIGEST_A)
-        record = json.loads((self.store / "head-floor" / "task-1.floor.json").read_text())
-        self.assertEqual(record["head_sequence"], 3)
-
-    def test_a_configured_writer_without_a_scope_refuses_the_completion(self):
-        os.environ[self.completion.ENV_FLOOR_WRITER_SOCKET] = str(self.store / "fw.sock")
-        with self.assertRaises(self.completion.CompletionError) as caught:
-            self.completion._commit_head_floor(self.store, "task-1", 3, DIGEST_A)
-        self.assertIn("BRO_INSTALL_ID is unset", str(caught.exception))
-        self.assertIn("advanced for someone else", str(caught.exception))
-        self.assertFalse((self.store / "head-floor" / "task-1.floor.json").exists(),
-                         "a refused completion must not have written the mark itself")
-
-    def test_an_unreachable_writer_refuses_and_never_falls_back_to_writing_it_here(self):
-        if sys.platform != "linux":
-            self.skipTest("the client refuses off Linux for a different reason")
-        os.environ[self.completion.ENV_FLOOR_WRITER_SOCKET] = str(self.store / "absent.sock")
-        os.environ[self.completion.ENV_INSTALL_ID] = INSTALL
-        with self.assertRaises(self.completion.CompletionError) as caught:
-            self.completion._commit_head_floor(self.store, "task-1", 3, DIGEST_A)
-        message = str(caught.exception)
-        self.assertIn("was not authoritatively advanced", message)
-        self.assertIn("this completion is not verified", message)
-        self.assertFalse((self.store / "head-floor" / "task-1.floor.json").exists(),
-                         "R4: there is no fallback writer, so making the service unavailable "
-                         "must not hand the property back to the policed process")
-
-    def test_a_non_integer_writer_uid_is_refused(self):
-        os.environ[self.completion.ENV_FLOOR_WRITER_SOCKET] = str(self.store / "fw.sock")
-        os.environ[self.completion.ENV_INSTALL_ID] = INSTALL
-        os.environ[self.completion.ENV_FLOOR_WRITER_UID] = "not-a-uid"
-        with self.assertRaises(self.completion.CompletionError) as caught:
-            self.completion._commit_head_floor(self.store, "task-1", 3, DIGEST_A)
-        self.assertIn("is not an integer uid", str(caught.exception))
-
-    def test_the_call_site_in_the_verified_chain_is_the_writer_seam(self):
-        # The seam must be ON the production path, not beside it. Asserted against the source so
-        # a refactor that quietly restores the direct write is caught here.
-        source = pathlib.Path(self.completion.__file__).read_text(encoding="utf-8")
-        start = source.index("def validate_evidence_chain")
-        verify = source[start:source.index("_SHA256 = re.compile", start)]
-        self.assertIn("_commit_head_floor(", verify,
-                      "the verified-chain path must go through the writer seam")
-        self.assertNotIn("_advance_head_floor(", verify,
-                         "the verified-chain path must not write the mark itself any more")

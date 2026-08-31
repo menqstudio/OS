@@ -1,635 +1,813 @@
-"""**Floor Writer** — the only principal permitted to mutate the per-task anti-rollback floor.
+"""**Floor Writer**, FW-1 — the service that owns the per-task anti-rollback floor.
 
-# The defect this closes
+This is the reviewed design, ``docs/design/FLOOR_WRITER_SERVICE_DESIGN.md``, implemented. The
+first attempt at this file did not implement it: it invented a protocol name, a refusal
+vocabulary, an authorization model and a socket permission model of its own while the reviewed
+specification sat in the repository. The Architect's audit of that attempt found seven blocking
+defects, and five of them were answers the design already contained. What follows is the design,
+not a patch set over the earlier attempt.
 
-``bro_completion``'s evidence-head floor asked two things of the directory holding its marks
-and the two had **no intersection**: ``_refuse_self_owned_floor`` demands a directory the
-policed account cannot write, and ``_advance_head_floor`` wrote the mark *in that same
-account's process*. The only satisfiable posture was
-``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged``, which short-circuits **every** custody rule
-in the runtime rather than only this one. That is Owner decision **1b** and roadmap §I, and the
-design is ``docs/design/FLOOR_WRITER_SERVICE_DESIGN.md`` (PR #112, merged; Architect design
-audit completed; five rulings issued; **this implementation is not Architect-approved**).
+# Scope: FW-1 only
 
-# What the Architect ruled, and what each ruling forced here
+Per §6, FW-1 is *"the service, the protocol, the Linux transport, and the client seam"*, and its
+stop condition is that **the floor rule does not change** — the same comparisons, the same
+refusal meanings, the same two stored fields — because moving the write and changing the rule in
+one slice makes a regression indistinguishable from the move.
 
-**R1 — the floor stays PER-TASK.** The authoritative state keeps ``{task_id}.floor.json`` and
-the ``_index.json`` roster, byte-shape unchanged, in protected custody belonging to the
-Supervisor security domain. It is **NOT** merged into the supervisor's per-install
-``evidence-head-sequence.json`` ceiling: those two counters live in different sequence domains,
-and unifying them refuses every second task in a deployment with ``EvidenceFork`` — the reason
-``bro_completion._head_floor_dir`` documents at length, established by running it.
-*"Supervisor custody domain"* says who OWNS and PROTECTS the state; *"Floor Writer principal"*
-says who may MUTATE it. Those are different sentences and both are true.
+``scope.pin`` (§4.1) and the start-time scope resolution in the challenge authority and the
+supervisor are **FW-3**, which §6 gates on the Architect ratifying the §2.5/§2.6 amendment. This
+module refuses ``scope.pin`` as ``unknown_op`` and says so, rather than half-building it. Windows
+is **FW-2**; until it lands this service's claim is *"Linux only"*, in those words.
 
-**R2 — authority is not reachability.** A caller is authorized by an authenticated peer
-principal (``SO_PEERCRED`` uid, the same primitive ``governed_supervisor_server`` uses),
-a served scope binding (``install_id``), and a bound protocol version — never by being able to
-open the socket. Every request is validated exhaustively: an unknown field is a refusal, not
-something dropped.
+# What the design fixes that the first attempt got wrong
 
-**R3 — a distinct runtime principal.** Not a helper of the completion process and not a helper
-of the supervisor. It has independent authority to mutate protected anti-rollback state, so it
-is named as its own principal in the architecture documents.
+**No ``install_id`` on the wire, and none may be** (§4.1). The scope is the service's own, read
+from its TCB-owned config. Accepting it from the caller *"would reproduce A-01 inside the fix"*,
+and §7's fifth negative makes a request carrying the field a ``malformed`` refusal rather than
+something quietly ignored.
 
-**R4 — independent custody, fail closed.** The store is refused unless the writer owns it and
-the CALLER cannot write it. Unavailable, unreachable, unauthenticated, unparseable, corrupt,
-out-of-scope, wrong protocol — every one of them is a refusal, and the caller may not report a
-governed completion trusted or committed on any of them.
+**The server is authenticated by its socket's DIRECTORY** (§1.7), which no other runtime
+principal may write, checked through ``bro_custody`` — the same rule §2.5 applies to every TCB
+path and its ancestors. The earlier attempt used ``chmod(socket, 0700)`` instead, which is not in
+the design and which a two-account measurement showed makes the service unreachable by its own
+intended caller: the whole point is two principals, and 0700 admits one.
 
-**R5 — monotonic, atomic, and idempotency that says so.**
-``new > current`` advances and returns ``advanced``; ``new == current`` mutates nothing and
-returns ``already_committed``, which is a different word on the wire on purpose; ``new <
-current`` is refused and mutates nothing. Before this, an equal head was a silent ``return``
-that a caller could not distinguish from a fresh advancement.
+**The posture is a closed two-state resolver** (§1.4): ``ServiceFloor(endpoint)`` or
+``AcknowledgedLocalFloor``, *"no third state and no fallback from the first to the second"*, and
+the local posture exists only under the pre-existing
+``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`` disclosure. That resolver lives in
+``bro_completion``; this module's part of it is that every failure here is a refusal, never a
+silence a caller could read as "no floor required" (§7 negative 1).
 
-# Linux only, and it says so rather than pretending
+**One writer process, so the cross-process lock disappears** (§1.9). The earlier attempt carried
+an ``fcntl`` lock inherited from the policed-process design and then added a thread lock beside it
+after a concurrency test found the first one does not exclude threads. Under this topology the
+service is the only writer of its own store, so the serialization that remains is in-process and
+is the only kind the topology can need.
 
-Peer authentication is ``SO_PEERCRED``. There is no equivalent-strength mechanism wired for
-Windows or macOS here, so on those platforms this service **refuses to start and refuses to
-serve**. A fake-equivalent — trusting a path, a token file, or a parent process — would be a
-weaker security property wearing the same name, which is worse than an unsupported platform
-that stops. When a Windows transport with the same property exists, it gets its own module and
-its own audit; it does not get this one's docstring.
+# One storage-layout amendment, ruled on rather than slipped in
 
-# The critical section is compare + write + EVIDENCE
+§4.3 lists the store as ``marks/<install_id>/<task_id>.floor.json`` *"plus the roster"* — two
+durable objects. Two objects need two renames per advance, and a crash between them leaves a
+roster naming a task whose mark is absent: a state that refuses forever and that only a
+privileged repair could clear. That is the audit's B5.
 
-The advisory lock is held across the comparison, the authoritative write **and the construction
-of the response**. Building the evidence after releasing the lock would let the response
-describe a floor another writer had already moved: the number would be true when read and false
-when sent, which is precisely the TOCTOU the lock exists to remove.
+The first attempt at fixing it derived the roster from the directory listing. **The Architect
+refused that**, correctly: it redefines "roster" to mean "whatever mark files happen to exist",
+which is a change to the security semantics rather than to the storage. Roster membership and
+floor state are different facts and must stay different facts.
 
-# Crash and restart, chosen rather than inherited
+So the **semantics are kept and the physical layout is amended**, which the ruling permits: one
+authoritative document per install, ``marks/<install_id>/floor-state.json``, carrying an explicit
+``roster`` list AND the per-task floors, committed by ONE atomic rename. A task in the roster
+whose floor is missing is still ``mark_removed`` — the detection survives — but no crash can
+create that state, because the two facts are written together or not at all. A crash exposes the
+complete previous document or the complete new one, and nothing between them.
 
-The roster is enrolled BEFORE the mark is renamed into place. A crash between them therefore
-leaves a task the roster knows and no mark, which ``bro_completion._load_head_floor`` already
-treats as a removed mark and refuses. That direction is deliberate and it has a cost, stated
-here rather than discovered later: an interrupted advance leaves that task refusing until an
-operator restores it. The other order — mark first — would let the same crash silently drop a
-roster entry, which is a security property degrading quietly. Fail closed is the repository's
-rule and this is what it costs.
+What this costs, stated rather than discovered later: the whole install's state is one file, so a
+corruption that used to lose one task now refuses every task on that install. That is the
+fail-closed direction, and under §1.2 the only principal that can corrupt it is the service
+itself.
 """
 
 from __future__ import annotations
 
-import errno
 import json
 import os
 import pathlib
 import re
+import errno
 import socket
 import stat
+import struct
 import sys
 import threading
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from bro_contracts import canonical_json_sha256
-from governed_supervisor_server import (
-    CONNECTION_BUDGET_S,
-    MAX_FRAME_BYTES,
-    ServerError,
-    SocketPeerConn,
-    read_frame,
-    read_peercred_uid,
-    write_frame,
-)
+from bro_custody import posix_rewrite_verdict
 
-#: The wire contract. A request that does not carry this exact string is refused before any
-#: state is read: R2 makes protocol/version binding part of authority, not a courtesy.
-FLOOR_PROTOCOL = "bridge.floor-advance.v1"
+#: §4.1. The reviewed wire contract; the version is part of authority, not a courtesy.
+FLOOR_PROTOCOL = "brops.floor-writer.v1"
 
-#: The one operation. A closed set, like the supervisor's: a sixth op there is a schema change
-#: and a review, and the same rule applies to a second op here.
-OP_ADVANCE_FLOOR = "advance-floor"
+#: §4.1 / §6. FW-1's two operations. ``scope.pin`` is named by the design and belongs to FW-3.
+OP_GET = "floor.get"
+OP_ADVANCE = "floor.advance"
+OP_SCOPE_PIN = "scope.pin"
+FW1_OPS = (OP_GET, OP_ADVANCE)
 
-#: The exhaustive request shape. Unknown fields are refused rather than ignored — a caller
-#: still speaking an older dialect must not believe its extra field was honoured.
-_REQUEST_FIELDS = ("protocol", "install_id", "task_id", "head_sequence", "evidence_head_sha256")
+#: §4.1. Exhaustive per op. ``install_id`` is deliberately absent from both, and §7's fifth
+#: negative requires a request carrying it to be refused as an unknown key rather than ignored.
+_FIELDS = {
+    OP_GET: ("protocol", "task_id"),
+    OP_ADVANCE: ("protocol", "task_id", "head_sequence", "evidence_head_sha256"),
+}
 
-#: Outcomes. Two successes that a reader must never confuse (R5).
+#: §4.2. Outcomes. Two successes a reader must never confuse.
 OUTCOME_ADVANCED = "advanced"
-OUTCOME_ALREADY_COMMITTED = "already_committed"
+OUTCOME_IDEMPOTENT = "idempotent"
 
-REFUSE_UNAUTHENTICATED = "unauthenticated_peer"
-REFUSE_UNAUTHORIZED = "unauthorized_principal"
-REFUSE_SCOPE_MISMATCH = "scope_mismatch"
-REFUSE_PROTOCOL = "unsupported_protocol"
-REFUSE_MALFORMED = "malformed_request"
-REFUSE_ROLLBACK = "floor_rollback_refused"
-REFUSE_CUSTODY = "custody_unsatisfied"
-REFUSE_STATE_UNREADABLE = "authoritative_state_unreadable"
-REFUSE_PLATFORM = "platform_unsupported"
-#: Client-side: the writer could not be reached at all. Distinct from a refusal it issued,
-#: because "it said no" and "it never answered" are different facts about a deployment.
-REFUSE_UNREACHABLE = "floor_writer_unreachable"
-#: Client-side: an answer arrived and did not bind to the request that produced it.
-REFUSE_UNVERIFIED_REPLY = "reply_binding_unverified"
+#: §4.2, the closed refusal enum, verbatim. A reason outside this set is a bug, and both
+#: ``FloorWriterError`` and ``_refusal`` assert membership so one cannot be invented at a call site.
+REFUSALS = frozenset({
+    "peer_denied", "unknown_op", "malformed", "oversize", "floor_absent", "mark_removed",
+    "mark_corrupt", "no_head_digest", "stale_floor", "head_digest_changed", "scope_unavailable",
+    "internal",
+})
+
+#: §1.7. ONE cap, one number, both directions, defined once. The design fixes it at 4096 after
+#: this repository found three framing codecs disagreeing (8192 / 8192 / 512 KiB) with the
+#: deployed client capping at 8192 in both directions, making one gate unreachable.
+#:
+#: §1.7 asks FW-1 to CONFIRM the cap's arithmetic through the real encoder rather than assert it,
+#: and it is confirmed: the largest legal advance — a 128-byte task_id, a 64-hex digest and a
+#: 64-bit sequence — encodes to 324 bytes, against the design's predicted "well under 512", for
+#: 12.6x of headroom. `test_the_cap_is_confirmed_through_the_real_encoder` re-measures it, so the
+#: number in this comment cannot drift away from the encoder that produces it.
+#:
+#: PARTIAL: §1.7 specifies BOTH platforms and this module is the Linux half only. The named-pipe
+#: column — `authenticate_pipe_client_sid`, the `pipe_dacl_plan` DACL, the create-successor-before-
+#: close rule — is FW-2 and is NOT IMPLEMENTED here. The cap is also defined once per LANGUAGE in
+#: the design and pinned by a cross-language drift test; only the Python constant exists, and no
+#: such drift test does.
+MAX_FLOOR_FRAME_BYTES = 4096
+LENGTH_PREFIX_BYTES = 4
+
+#: §1.7. A TOTAL wall-clock budget for one exchange, armed at the first read and never re-armed.
+#: A per-recv timeout is not a bound: it restarts on every byte, so a peer dripping one byte per
+#: timeout holds a serial loop forever while never once timing out.
+CONNECTION_BUDGET_S = 30.0
 
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
-#: A task id is an identifier, not a path. The floor's file name is derived from it, so a value
-#: carrying a separator or a traversal segment could address a file outside the store — the one
-#: input that turns a bounded write into an arbitrary one.
+#: A task id is an identifier, not a path: the mark's file name is derived from it, so a value
+#: carrying a separator or a traversal segment would address a file outside the store.
 _TASK_ID = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
 _INSTALL_ID = re.compile(r"\A[A-Za-z0-9._:-]{1,128}\Z")
 
-#: Same file name the policed process already locks, so a deployment migrating to this service
-#: does not end up with two lock regimes over one directory during the transition.
-_FLOOR_LOCK = "_index.json.lock"
-_FLOOR_INDEX = "_index.json"
+#: §4.4. The service's own TCB-owned config. Mirrors ``BROPS_BROKER_CONFIG``'s shape: the variable
+#: names a file, and a config that does not parse or whose custody cannot be verified is a refusal
+#: to start rather than a degraded start.
+ENV_SERVICE_CONFIG = "BROPS_FLOOR_WRITER_CONFIG"
 
 
 class FloorWriterError(Exception):
-    """A refusal, carrying the TYPED reason it will go on the wire as.
+    """A refusal carrying the reviewed enum value it goes on the wire as.
 
-    The first version of this class carried only prose, and ``handle`` recovered the reason by
-    matching substrings of the message. Two tests caught it immediately — a rollback and a
-    changed-head-at-the-same-sequence both came out as ``malformed_request`` — and the defect is
-    worse than the two cases it produced: the wire contract would drift every time somebody
-    improved a sentence. The reason is data now, decided where the refusal is decided.
+    The reason is data, decided where the refusal is decided. An earlier version recovered it by
+    matching substrings of the message, and two tests caught that immediately — a rollback and a
+    changed-head-at-equal-sequence both came out as the malformed reason.
     """
 
     def __init__(self, reason: str, detail: str) -> None:
+        if reason not in REFUSALS:
+            raise AssertionError(
+                f"{reason!r} is not in the reviewed refusal enum; §4.2 closes that set and a "
+                "thirteenth value is a design change, not a call-site decision")
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
 
 
 # ---------------------------------------------------------------------------
-# Custody (R4)
+# §4.4 — the TCB-owned service configuration
+# ---------------------------------------------------------------------------
+
+
+class ServiceConfig:
+    """``install_id``, the marks root, the per-op peer allowlist and the provisioning generation.
+
+    Every value the service needs comes from here and none of it from a caller. The policed
+    process contributes nothing to this object: that is what makes the scope binding service-side
+    (§1.5) rather than a request field the subject chooses (A-01).
+    """
+
+    def __init__(self, install_id: str, marks_root: pathlib.Path, socket_path: pathlib.Path,
+                 peers: Mapping[str, frozenset], generation: int, source: pathlib.Path) -> None:
+        self.install_id = install_id
+        self.marks_root = marks_root
+        self.socket_path = socket_path
+        self.peers = dict(peers)
+        self.generation = generation
+        self.source = source
+
+    def peers_for(self, op: str) -> frozenset:
+        """§1.8. An op is refused if the authenticated peer is not on THAT op's list — not merely
+        on the union of them. A ``scope.pin`` peer must not be able to advance a floor, and the
+        completion principal must not be able to ask what the pin is."""
+        return self.peers.get(op, frozenset())
+
+    @property
+    def marks_dir(self) -> pathlib.Path:
+        """§4.3. ``marks/<install_id>/`` — the install scoping is INTERNAL, from this config, and
+        is what makes "no install_id on the wire" implementable."""
+        return self.marks_root / self.install_id
+
+
+def load_service_config(env: Optional[Mapping[str, str]] = None) -> ServiceConfig:
+    """Read and validate the config named by ``BROPS_FLOOR_WRITER_CONFIG``.
+
+    Absent, unreadable, unparseable, incomplete or custody-unverifiable means raise. There is no
+    partial start: a service that came up having guessed half its own configuration would be
+    advertising a socket whose promises it cannot keep.
+    """
+    environ = os.environ if env is None else env
+    raw = environ.get(ENV_SERVICE_CONFIG)
+    if not raw:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"{ENV_SERVICE_CONFIG} is unset. The Floor Writer's install scope, marks root and "
+            "peer allowlist come from its own TCB-owned config and from nowhere else")
+    path = pathlib.Path(raw)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FloorWriterError(
+            "scope_unavailable", f"cannot read the Floor Writer config {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise FloorWriterError("scope_unavailable",
+                               f"the Floor Writer config {path} is not a JSON object")
+
+    install_id = document.get("install_id")
+    if not isinstance(install_id, str) or not _INSTALL_ID.fullmatch(install_id):
+        raise FloorWriterError(
+            "scope_unavailable", f"the Floor Writer config {path} carries no usable install_id")
+    marks_root = document.get("marks_root")
+    if not isinstance(marks_root, str) or not marks_root:
+        raise FloorWriterError(
+            "scope_unavailable", f"the Floor Writer config {path} names no marks_root")
+    socket_path = document.get("socket_path")
+    if not isinstance(socket_path, str) or not socket_path:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"the Floor Writer config {path} names no socket_path. The endpoint is part of the "
+            "service's own configuration: there is no default, because a default would be a way "
+            "for a misconfigured deployment to come up looking provisioned")
+    generation = document.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"the Floor Writer config {path} carries no provisioning generation >= 1. §1.10: the "
+            "generation is minted once at provisioning and served with every reply, so a "
+            "re-provisioned floor is visibly new rather than silently empty. PARTIAL: nothing in "
+            "this tree MINTS one — there is no provisioning path yet, so the generation is a "
+            "number an operator writes into this config by hand. Validated and served is the half "
+            "that exists; minted-once-at-provisioning is the half that does not")
+
+    peers_doc = document.get("peers")
+    if not isinstance(peers_doc, dict) or not peers_doc:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"the Floor Writer config {path} carries no per-op peer allowlist. §1.8 requires one "
+            "list PER OP, not a union: a scope.pin peer must not be able to advance a floor")
+    peers: Dict[str, frozenset] = {}
+    for op, uids in peers_doc.items():
+        if op not in (OP_GET, OP_ADVANCE, OP_SCOPE_PIN):
+            raise FloorWriterError(
+                "scope_unavailable",
+                f"the Floor Writer config {path} lists peers for unknown op {op!r}")
+        if not isinstance(uids, list) or not uids:
+            raise FloorWriterError(
+                "scope_unavailable",
+                f"the Floor Writer config {path} gives op {op!r} no peers; an empty list refuses "
+                "every caller, which is a misconfiguration rather than a posture")
+        checked = set()
+        for uid in uids:
+            # bool is an int subclass, and a stray True must never masquerade as uid 1 — the
+            # isolated_signer_server.peer_is_broker rule, adopted here.
+            if isinstance(uid, bool) or not isinstance(uid, int) or uid < 0:
+                raise FloorWriterError(
+                    "scope_unavailable",
+                    f"the Floor Writer config {path} lists {uid!r} as a peer uid for {op!r}")
+            checked.add(uid)
+        peers[op] = frozenset(checked)
+    for op in FW1_OPS:
+        if op not in peers:
+            raise FloorWriterError(
+                "scope_unavailable",
+                f"the Floor Writer config {path} gives no peer list for {op!r}, which FW-1 serves")
+
+    return ServiceConfig(install_id, pathlib.Path(marks_root), pathlib.Path(socket_path),
+                         peers, generation, path)
+
+
+# ---------------------------------------------------------------------------
+# §1.2 / §1.7 — custody of the state directory and of the socket's directory
 # ---------------------------------------------------------------------------
 
 
 def require_linux(what: str) -> None:
-    """Refuse anywhere ``SO_PEERCRED`` is not the authentication primitive.
-
-    Called at bind time AND before serving a connection, because a service that starts on an
-    unsupported platform and refuses later has still advertised a socket it cannot police.
-    """
+    """§6 FW-2. Peer authentication is ``SO_PEERCRED``; there is no equivalent-strength mechanism
+    wired for Windows or macOS here, so this stops rather than approximating. A weaker mechanism
+    under the same name would be a security property that reads as equivalent and is not."""
     if sys.platform != "linux":
         raise FloorWriterError(
-            REFUSE_PLATFORM,
+            "scope_unavailable",
             f"{what}: the Floor Writer authenticates peers with SO_PEERCRED, which requires "
-            f"Linux; this platform is {sys.platform!r}. No equivalent-strength mechanism is "
-            "wired here, and a weaker one under the same name would be worse than a stop")
+            f"Linux; this platform is {sys.platform!r}. Windows is FW-2 and is not built")
 
 
-def _stat_or_refuse(path: pathlib.Path) -> os.stat_result:
-    try:
-        return path.lstat()
-    except OSError as exc:
-        raise FloorWriterError(
-            REFUSE_CUSTODY,
-            f"cannot stat the authoritative floor store {path}: {exc}") from exc
+def require_private_directory(directory: pathlib.Path, what: str) -> None:
+    """The directory must be this principal's, and writable by nothing else.
 
+    Used for BOTH the marks store (§1.2 — *"the policed account gets no access at all"*) and the
+    socket's parent (§1.7 — this IS the server authentication: a directory no other runtime
+    principal may write is one in which no other principal can replace the endpoint).
 
-def require_writer_custody(store: pathlib.Path, caller_uid: int) -> None:
-    """The store must be the WRITER's, and the CALLER must not be able to write it.
-
-    Both halves are load-bearing and they are different questions. A store the writer does not
-    own is one it cannot promise to be the only mutator of. A store the caller can write makes
-    the whole service theatre: the caller would not need to ask.
-
-    Group and other write bits are refused too. "The caller's uid is not the owner" is not the
-    property being checked — the property is that nothing but this principal can write, and a
-    group-writable directory in a deployment where the caller shares the group satisfies the
-    first and violates the second.
+    ``posix_rewrite_verdict`` is the same custody primitive the operator-root pin and the evidence
+    floor already use, so this is one contract with one implementation rather than a second
+    opinion about what "protected" means.
     """
-    info = _stat_or_refuse(store)
+    try:
+        info = directory.lstat()
+    except OSError as exc:
+        raise FloorWriterError("scope_unavailable",
+                               f"cannot stat {what} {directory}: {exc}") from exc
     if not stat.S_ISDIR(info.st_mode):
-        raise FloorWriterError(REFUSE_CUSTODY,
-                               f"the authoritative floor store {store} is not a directory")
+        raise FloorWriterError("scope_unavailable", f"{what} {directory} is not a directory")
     if info.st_uid != os.geteuid():
         raise FloorWriterError(
-            REFUSE_CUSTODY,
-            f"the authoritative floor store {store} is owned by uid {info.st_uid}, not by the "
-            f"Floor Writer principal (uid {os.geteuid()}): a store this principal does not own "
-            "is one it cannot be the only mutator of")
-    if info.st_uid == caller_uid:
-        raise FloorWriterError(
-            REFUSE_CUSTODY,
-            f"the authoritative floor store {store} is owned by the CALLING principal "
-            f"(uid {caller_uid}); a floor its own subject owns is not a floor")
+            "scope_unavailable",
+            f"{what} {directory} is owned by uid {info.st_uid}, not by the Floor Writer principal "
+            f"(uid {os.geteuid()}); a directory this principal does not own is one it cannot "
+            "promise to be the only writer of")
     if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         raise FloorWriterError(
-            REFUSE_CUSTODY,
-            f"the authoritative floor store {store} is group- or world-writable "
-            f"(mode {stat.S_IMODE(info.st_mode):04o}); least privilege means this principal "
-            "and no other")
+            "scope_unavailable",
+            f"{what} {directory} is group- or world-writable (mode "
+            f"{stat.S_IMODE(info.st_mode):04o}); least privilege means this principal and no other")
+    # `posix_rewrite_verdict` answers "can the process running me rewrite this path?", and it was
+    # written for the POLICED account, where owning the path is disqualifying. Here the question
+    # is the opposite one: this directory is the Floor Writer's own, so its `owner` and
+    # `permission` verdicts describe the INTENDED state, not a defect. Using the primitive
+    # wholesale refused the service's own correctly-provisioned directory — found by a real
+    # two-account run, not by reading.
+    #
+    # What is still needed from it is the third vector, and only that one: a parent another
+    # principal can write lets them rename this directory aside and put their own in its place,
+    # which makes this directory's own mode irrelevant. That is the vector
+    # `_refuse_self_owned_floor` names third, and it is what §1.7 means by the endpoint being
+    # unreplaceable.
+    verdict = posix_rewrite_verdict(directory, info, what, RuntimeError)
+    if verdict is not None and verdict.kind == "parent":
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"{what} {directory} fails custody: its parent {verdict.parent} (uid "
+            f"{verdict.parent_uid}, mode {verdict.parent_mode:04o}) is writable by another "
+            "principal, which can rename the whole directory aside and put its own in its place "
+            "regardless of this directory's mode")
 
 
 # ---------------------------------------------------------------------------
-# Authoritative state
+# §4.3 — the marks store. One atomic publish per advance; the directory IS the roster.
 # ---------------------------------------------------------------------------
 
 
-def _index_path(store: pathlib.Path) -> pathlib.Path:
-    return store / _FLOOR_INDEX
+#: §4.3, amended. ONE authoritative document per install: an explicit roster and the per-task
+#: floors, committed together. The name is not ``<task_id>.floor.json`` any more because the
+#: coupled state has one commit point now — see the module docstring for the ruling that required
+#: it and for what the change costs.
+STATE_FILE = "floor-state.json"
 
 
-def _load_index(store: pathlib.Path) -> set:
-    """The roster of tasks that have ever been measured.
+def _state_path(config: ServiceConfig) -> pathlib.Path:
+    return config.marks_dir / STATE_FILE
 
-    An absent roster is an UNPROVISIONED store, not an empty one. Treating the two the same
-    would let deleting one file restart every task's floor at zero, which is the attack the
-    roster exists to catch.
+
+def load_state(config: ServiceConfig) -> Dict[str, Any]:
+    """The whole authoritative document, validated.
+
+    An absent document is an UNPROVISIONED store, not an empty one: treating them alike would let
+    deleting one file restart every task's floor at zero, which is the attack the roster exists to
+    catch. §4.2 records that under service custody this reads as self-damage rather than as an
+    attack — it still refuses.
     """
-    path = _index_path(store)
+    marks = config.marks_dir
+    if not marks.is_dir():
+        raise FloorWriterError(
+            "floor_absent",
+            f"the marks directory {marks} does not exist. It is created by the service's own "
+            "provisioning, so a floor cannot be bootstrapped by a client")
+    path = _state_path(config)
     if not path.exists():
         raise FloorWriterError(
-            REFUSE_STATE_UNREADABLE,
-            f"the authoritative floor store {store} has no {_FLOOR_INDEX}: it is unprovisioned, "
-            "and an unprovisioned floor is refused rather than started at zero")
+            "floor_absent",
+            f"the authoritative floor state {path} does not exist; the store is unprovisioned and "
+            "an unprovisioned floor is refused rather than started at zero")
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        tasks = document["tasks"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError) as exc:
         raise FloorWriterError(
-            REFUSE_STATE_UNREADABLE,
-            f"the floor roster {path} is unreadable; refusing rather than treating a damaged "
-            f"anti-rollback record as absent: {exc}") from exc
-    if not isinstance(tasks, list) or any(not isinstance(t, str) for t in tasks):
-        raise FloorWriterError(REFUSE_STATE_UNREADABLE,
-                               f"the floor roster {path} is not a list of task ids")
-    return set(tasks)
+            "mark_corrupt",
+            f"the authoritative floor state is unreadable; refusing rather than treating a "
+            f"damaged anti-rollback record as absent: {exc}") from exc
+    if not isinstance(document, dict):
+        raise FloorWriterError("mark_corrupt", "the authoritative floor state is not an object")
+    roster = document.get("roster")
+    floors = document.get("floors")
+    if not isinstance(roster, list) or any(not isinstance(x, str) for x in roster):
+        raise FloorWriterError("mark_corrupt", "the roster is not a list of task ids")
+    if not isinstance(floors, dict):
+        raise FloorWriterError("mark_corrupt", "the floors block is not an object")
+    if document.get("install_id") != config.install_id:
+        # The document says which install it belongs to, so a store swapped underneath the service
+        # is caught rather than served. A-01 in miniature: the scope must not be assumable.
+        raise FloorWriterError(
+            "mark_corrupt",
+            "the authoritative floor state names a different install than this service serves")
+    return document
 
 
-def _load_floor(store: pathlib.Path, task_id: str) -> Tuple[int, Optional[str]]:
-    """``(head_sequence, evidence_head_sha256)`` for one task, or ``(0, None)`` if genuinely new.
+def read_floor(config: ServiceConfig, task_id: str) -> Tuple[int, Optional[str]]:
+    """``(head_sequence, evidence_head_sha256)`` for one task, or ``(0, None)`` if never measured.
 
-    The refusals mirror ``bro_completion._load_head_floor`` deliberately: the authoritative copy
-    and the reader that still consults it must agree about what a damaged record means, or the
-    two would disagree about whether a rollback happened.
+    Roster membership is checked SEPARATELY from the floor, because they are different facts: a
+    task the roster names whose floor is gone is ``mark_removed``, exactly as it was when they
+    were two files. What changed is that no crash can produce that state.
     """
-    known = _load_index(store)
-    path = store / f"{task_id}.floor.json"
-    if not path.exists():
-        if task_id in known:
+    document = load_state(config)
+    roster = set(document["roster"])
+    floors = document["floors"]
+    record = floors.get(task_id)
+    if record is None:
+        if task_id in roster:
             raise FloorWriterError(
-                REFUSE_STATE_UNREADABLE,
-                f"the floor for {task_id} is missing but the roster still names the task: the "
-                "mark was removed. Refusing rather than restarting the floor at zero")
+                "mark_removed",
+                f"the roster names {task_id} but its floor is absent: the mark was removed. "
+                "Refusing rather than restarting the anti-rollback floor at zero")
         return 0, None
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-        recorded = record["head_sequence"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise FloorWriterError(
-            REFUSE_STATE_UNREADABLE,
-            f"the floor for {task_id} is unreadable; refusing rather than treating a damaged "
-            f"anti-rollback record as absent: {exc}") from exc
+    if not isinstance(record, dict):
+        raise FloorWriterError("mark_corrupt", f"the floor for {task_id} is not an object")
+    recorded = record.get("head_sequence")
     if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0:
         raise FloorWriterError(
-            REFUSE_STATE_UNREADABLE,
-            f"the floor for {task_id} is not a non-negative integer: {recorded!r}")
-    digest = record.get("evidence_head_sha256") if isinstance(record, dict) else None
+            "mark_corrupt", f"the floor for {task_id} is not a non-negative integer")
+    digest = record.get("evidence_head_sha256")
     if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
         raise FloorWriterError(
-            REFUSE_STATE_UNREADABLE,
-            f"the floor for {task_id} records no signed head digest; a mark that cannot say "
-            "which signed head it was taken against is not evidence of anything")
+            "no_head_digest",
+            f"the floor for {task_id} records no signed head digest; a mark that cannot say which "
+            "signed head it was taken against is not evidence of anything")
+    if task_id not in roster:
+        # A floor without roster membership is the other half of the same corruption. It cannot
+        # be produced by this service, which writes both together.
+        raise FloorWriterError(
+            "mark_corrupt",
+            f"the floor for {task_id} exists but the roster does not name it; the two halves of "
+            "the authoritative state disagree")
     return recorded, digest
 
 
-#: In-process exclusion, per store, held UNDER the file lock.
-#:
-#: This exists because ``fcntl.lockf`` locks are owned by the PROCESS, not the thread: two
-#: threads of one process both "acquire" the same lock and neither blocks. A concurrency test
-#: found it immediately — eight threads racing one task left the floor at the LAST writer's
-#: value, 2, instead of the highest, 12. A lost update, in the one place the whole service
-#: exists to prevent.
-#:
-#: The two locks answer different questions and neither substitutes for the other. The file
-#: lock excludes other PROCESSES (a legacy completion still writing, a second writer instance);
-#: this one excludes other THREADS of this one. A service whose accept loop is serial does not
-#: create the second case today, but "the current loop happens to be serial" is not a property
-#: the correctness of an anti-rollback floor should rest on.
-_THREAD_LOCKS: Dict[str, "threading.Lock"] = {}
-_THREAD_LOCKS_GUARD = threading.Lock()
+def commit_state(config: ServiceConfig, document: Mapping[str, Any]) -> None:
+    """§4.3's atomic publish, over the WHOLE coupled state, in ONE rename.
 
-
-def _thread_lock_for(store: pathlib.Path) -> "threading.Lock":
-    key = str(store.resolve())
-    with _THREAD_LOCKS_GUARD:
-        lock = _THREAD_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _THREAD_LOCKS[key] = lock
-        return lock
-
-
-class _FloorLock:
-    """The whole compare → write → evidence critical section, over BOTH locks.
-
-    An advisory lock on byte 0 of the roster, not a lock FILE: the kernel drops it when the
-    holder dies, so a crash mid-advance cannot leave the floor permanently unwritable. An
-    ``O_CREAT|O_EXCL`` lock file would, and that is a self-inflicted denial of every future
-    completion on the install.
-
-    The thread lock is taken FIRST and released LAST, so the ordering is the same on every
-    path and cannot deadlock against itself.
+    Private temp in the same directory, write, ``fsync``, rename over the document, ``fsync`` the
+    directory. A crash exposes the complete previous document or the complete new one. There is no
+    second object to fall out of step with this one, so there is no half-state and therefore no
+    repair path to design.
     """
-
-    def __init__(self, store: pathlib.Path) -> None:
-        self._path = store / _FLOOR_LOCK
-        self._fd: Optional[int] = None
-        self._thread_lock = _thread_lock_for(store)
-
-    def __enter__(self) -> "_FloorLock":
-        import fcntl
-
-        self._thread_lock.acquire()
-        try:
-            self._fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
-            fcntl.lockf(self._fd, fcntl.LOCK_EX)
-        except OSError as exc:
-            if self._fd is not None:
-                os.close(self._fd)
-                self._fd = None
-            self._thread_lock.release()
-            raise FloorWriterError(
-                REFUSE_STATE_UNREADABLE,
-                f"cannot take the floor write lock {self._path}: {exc}") from exc
-        return self
-
-    def __exit__(self, *exc_info: Any) -> None:
-        try:
-            if self._fd is not None:
-                import fcntl
-
-                try:
-                    fcntl.lockf(self._fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(self._fd)
-                    self._fd = None
-        finally:
-            self._thread_lock.release()
-
-
-def advance(store: pathlib.Path, install_id: str, task_id: str, head_sequence: int,
-            evidence_head_sha256: str, request_sha256: str,
-            caller_uid: int) -> Dict[str, Any]:
-    """Compare and advance atomically, and build the bound result inside the same lock (R5).
-
-    Returns the response body. Raises :class:`FloorWriterError` for every case that is not an
-    authoritatively committed floor — including a rollback attempt, which mutates nothing.
-    """
-    require_writer_custody(store, caller_uid)
-    # Refuse an unprovisioned store BEFORE creating anything in it: the lock file must not
-    # become the way an absent floor acquires a file and starts looking provisioned.
-    _load_index(store)
-    with _FloorLock(store):
-        # Read INSIDE the lock. Reading outside it is the defect: the value compared would be
-        # one another writer is free to have replaced before this one's rename lands.
-        current, current_digest = _load_floor(store, task_id)
-        if head_sequence < current:
-            raise FloorWriterError(
-                REFUSE_ROLLBACK,
-                f"floor rollback refused for {task_id}: the authoritative floor is {current} "
-                f"and the request asked for {head_sequence}. Nothing was written")
-        if head_sequence == current:
-            # R5: NOT a fresh advancement, and the wire says so. Bound to the authoritative
-            # current state rather than to the request's claim about it.
-            if current_digest != evidence_head_sha256:
-                raise FloorWriterError(
-                    REFUSE_STATE_UNREADABLE,
-                    f"the floor for {task_id} stands at {current} against signed head "
-                    f"{current_digest}, and this request presents {evidence_head_sha256} for the "
-                    "same sequence: a head that changed without advancing is not a replay")
-            return _result(OUTCOME_ALREADY_COMMITTED, install_id, task_id, current,
-                           current_digest, request_sha256)
-        # Enrol in the roster FIRST — see the module docstring on crash order.
-        known = _load_index(store)
-        if task_id not in known:
-            _atomic_write(store, _FLOOR_INDEX, {"tasks": sorted(known | {task_id})})
-        _atomic_write(store, f"{task_id}.floor.json",
-                      {"task_id": task_id, "head_sequence": head_sequence,
-                       "evidence_head_sha256": evidence_head_sha256})
-        # Read the committed state back before saying it was committed. The response must
-        # describe the file, not the intention: a write that landed differently — a full disk
-        # truncating the rename's target, a store swapped underneath — must not be reported as
-        # the requested advancement.
-        committed, committed_digest = _load_floor(store, task_id)
-        if committed != head_sequence or committed_digest != evidence_head_sha256:
-            raise FloorWriterError(
-                REFUSE_STATE_UNREADABLE,
-                f"the floor for {task_id} reads back as {committed}/{committed_digest} after a "
-                f"write of {head_sequence}/{evidence_head_sha256}: refusing to report an "
-                "advancement that is not what the authoritative state holds")
-        return _result(OUTCOME_ADVANCED, install_id, task_id, committed, committed_digest,
-                       request_sha256)
-
-
-def _atomic_write(store: pathlib.Path, name: str, document: Mapping[str, Any]) -> None:
-    """Write via a temp file and ``rename``, so a crash cannot leave a truncated record that
-    the loader would (correctly) refuse forever. ``fsync`` on the file and the directory: a
-    rename that is visible but not durable is exactly the ambiguous committed state this
-    service must not produce."""
-    final = store / name
-    temporary = store / (name + ".tmp")
-    payload = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    marks = config.marks_dir
+    final = _state_path(config)
+    temporary = marks / f".{STATE_FILE}.tmp"
+    payload = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.write(fd, payload.encode("utf-8"))
+            os.write(fd, payload)
             os.fsync(fd)
         finally:
             os.close(fd)
         os.replace(temporary, final)
-        dir_fd = os.open(store, os.O_RDONLY)
+        dir_fd = os.open(marks, os.O_RDONLY)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
     except OSError as exc:
-        raise FloorWriterError(REFUSE_STATE_UNREADABLE,
-                               f"cannot record {final}: {exc}") from exc
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise FloorWriterError(
+            "internal", f"cannot commit the authoritative floor state: {exc}") from exc
 
 
-def _result(outcome: str, install_id: str, task_id: str, floor: int, digest: str,
-            request_sha256: str) -> Dict[str, Any]:
-    """The bound success evidence (R2, and the Architect's four success criteria).
+def known_tasks(config: ServiceConfig) -> set:
+    """The roster, read from the document that declares it — never inferred from what files exist."""
+    return set(load_state(config)["roster"])
 
-    * *handled by the authoritative principal* — ``writer_uid`` is this process's effective uid,
-      and the caller reads the server's uid independently through ``SO_PEERCRED`` on its own
-      side of the same socket. Neither party takes the other's word for who it is.
-    * *the intended scope* — ``install_id`` is echoed from a request that was already checked
-      against the writer's served scope, so echoing it cannot widen anything.
-    * *what was committed* — ``floor`` and ``evidence_head_sha256`` are read back from the
-      authoritative state, not copied from the request.
-    * *this request instance* — ``request_sha256`` binds the response to the exact canonical
-      request bytes, so a response cannot be replayed against a different advancement.
 
-    There is deliberately no ``success: true``. The outcome is a word with two values a reader
-    must tell apart, and every field above is a fact rather than an assertion that facts were
-    checked.
-    """
-    body = {
-        "protocol": FLOOR_PROTOCOL,
-        "op": OP_ADVANCE_FLOOR,
-        "outcome": outcome,
-        "install_id": install_id,
-        "task_id": task_id,
-        "floor": floor,
-        "evidence_head_sha256": digest,
-        "request_sha256": request_sha256,
-        "writer_uid": os.geteuid(),
-    }
-    body["result_sha256"] = canonical_json_sha256(body)
+#: §1.9. ONE writer process, so the cross-process lock disappears. What remains is in-process
+#: serialization of load -> compare -> publish -> evidence, which is the only kind this topology
+#: can need. A file lock would add no exclusion here and would add a failure mode: ``fcntl.lockf``
+#: is owned by the process, not the thread, so it excludes nothing inside one service anyway — a
+#: concurrency test proved that on the earlier attempt, where eight threads left the floor at the
+#: last writer's value instead of the highest.
+_ADVANCE_LOCK = threading.Lock()
+
+
+def _reply(op: str, config: ServiceConfig, **fields: Any) -> Dict[str, Any]:
+    """§4.2. A result carries ``ok: true``, the op, its fields and the provisioning generation."""
+    body = {"ok": True, "protocol": FLOOR_PROTOCOL, "op": op, "generation": config.generation}
+    body.update(fields)
     return body
 
 
-# ---------------------------------------------------------------------------
-# The door (R2)
-# ---------------------------------------------------------------------------
-
-
 def _refusal(reason: str, detail: str) -> Dict[str, Any]:
-    return {"protocol": FLOOR_PROTOCOL, "op": OP_ADVANCE_FLOOR, "ok": False,
-            "reason": reason, "detail": detail}
+    """§4.2. A refusal carries ``ok: false`` and NO result field at all, so it cannot be mistaken
+    for a result — the ``audit-signer/src/lib.rs:91`` rule, adopted verbatim. The detail is capped
+    and carries no path or traceback."""
+    if reason not in REFUSALS:
+        raise AssertionError(f"{reason!r} is not in the reviewed refusal enum")
+    return {"ok": False, "protocol": FLOOR_PROTOCOL, "reason": reason, "detail": detail[:512]}
 
 
-def validate_request(request: Any) -> Dict[str, Any]:
-    """Exhaustive shape and value validation, before any state is touched.
+def do_get(config: ServiceConfig, task_id: str) -> Dict[str, Any]:
+    """§1.3. ``floor.get`` exists because ``validate_evidence_chain`` needs a number BEFORE it
+    validates the chain. Its answer is never authoritative: a client that ignores it, or lies to
+    itself about it, still cannot advance below the floor, because ``floor.advance`` re-checks
+    against the store this service owns."""
+    current, digest = read_floor(config, task_id)
+    return _reply(OP_GET, config, head_sequence=current, evidence_head_sha256=digest,
+                  known=task_id in known_tasks(config))
 
-    Every branch here is reached before the store is opened. A malformed request must not be
-    able to cause a read of the authoritative state, let alone a write.
+
+def do_advance(config: ServiceConfig, task_id: str, head_sequence: int,
+               digest: str) -> Dict[str, Any]:
+    """§1.3's whole load -> compare -> write, and the result built inside the same lock.
+
+    The comparisons are ``bro_completion``'s, unchanged (§6's stop condition): a lower head is
+    stale, an equal head with a different signed digest is a head that changed without advancing,
+    and an equal head with the same digest is idempotent and writes nothing.
+
+    Roster membership and the floor move in ONE commit. The roster is updated explicitly here —
+    it is a fact this service records, not one a reader infers from the filesystem.
+    """
+    with _ADVANCE_LOCK:
+        document = load_state(config)
+        roster = list(document["roster"])
+        floors = dict(document["floors"])
+        current, current_digest = read_floor(config, task_id)
+        if head_sequence < current:
+            raise FloorWriterError(
+                "stale_floor",
+                f"the floor for {task_id} stands at {current} and the request asked for "
+                f"{head_sequence}. Nothing was written")
+        if head_sequence == current:
+            if current_digest != digest:
+                raise FloorWriterError(
+                    "head_digest_changed",
+                    f"the floor for {task_id} stands at {current} against one signed head and "
+                    "this request presents another for the same sequence: a head that changed "
+                    "without advancing has stopped being a high-water mark")
+            # §7 negative 4: validate_evidence_chain runs TWICE per completion, so the second call
+            # must be idempotent by contract rather than by luck. Exactly once written: this
+            # branch commits nothing at all.
+            return _reply(OP_ADVANCE, config, outcome=OUTCOME_IDEMPOTENT,
+                          head_sequence=current, evidence_head_sha256=current_digest)
+        floors[task_id] = {"head_sequence": head_sequence, "evidence_head_sha256": digest}
+        if task_id not in roster:
+            roster.append(task_id)
+        commit_state(config, {"install_id": config.install_id, "generation": config.generation,
+                              "roster": sorted(roster), "floors": floors})
+        # Read the committed state back before calling it committed: the reply must describe the
+        # document on disk, not the intention that produced it.
+        committed, committed_digest = read_floor(config, task_id)
+        if committed != head_sequence or committed_digest != digest:
+            raise FloorWriterError(
+                "internal",
+                f"the floor for {task_id} does not read back as what was written; refusing to "
+                "report an advancement the authoritative state does not hold")
+        return _reply(OP_ADVANCE, config, outcome=OUTCOME_ADVANCED,
+                      head_sequence=committed, evidence_head_sha256=committed_digest)
+
+
+# ---------------------------------------------------------------------------
+# §4.1 — request validation
+# ---------------------------------------------------------------------------
+
+
+def validate(request: Any) -> Tuple[str, Dict[str, Any]]:
+    """Exhaustive shape and value validation before any state is touched.
+
+    §7 negative 5 is the one to read twice: a request carrying ``install_id`` is refused as an
+    unknown key. The scope is the service's own, and accepting it on the wire would reproduce
+    A-01 inside the fix.
     """
     if not isinstance(request, dict):
-        raise FloorWriterError(REFUSE_MALFORMED, "request is not a JSON object")
-    allowed = {"op"} | set(_REQUEST_FIELDS)
-    extra = set(request.keys()) - allowed
+        raise FloorWriterError("malformed", "request is not a JSON object")
+    op = request.get("op")
+    if op == OP_SCOPE_PIN:
+        raise FloorWriterError(
+            "unknown_op",
+            "scope.pin is FW-3 and is not built: §6 gates it on the Architect ratifying the "
+            "§2.5/§2.6 amendment. This service serves floor.get and floor.advance")
+    if op not in FW1_OPS:
+        raise FloorWriterError("unknown_op", f"unknown op {op!r}")
+    allowed = {"op"} | set(_FIELDS[op])
+    extra = sorted(set(request.keys()) - allowed)
     if extra:
-        raise FloorWriterError(REFUSE_MALFORMED,
-                               f"request has unexpected field(s) {sorted(extra)}")
-    missing = allowed - set(request.keys())
+        raise FloorWriterError(
+            "malformed",
+            f"request has unexpected field(s) {extra}"
+            + (". install_id is never on this wire: the scope is the service's own"
+               if "install_id" in extra else ""))
+    missing = sorted(allowed - set(request.keys()))
     if missing:
-        raise FloorWriterError(REFUSE_MALFORMED,
-                               f"request is missing field(s) {sorted(missing)}")
-    if request["op"] != OP_ADVANCE_FLOOR:
-        raise FloorWriterError(REFUSE_PROTOCOL, f"unknown op {request['op']!r}")
+        raise FloorWriterError("malformed", f"request is missing field(s) {missing}")
     if request["protocol"] != FLOOR_PROTOCOL:
         raise FloorWriterError(
-            REFUSE_PROTOCOL,
-            f"unsupported protocol {request['protocol']!r}; this writer speaks "
-            f"{FLOOR_PROTOCOL!r} and nothing else")
+            "malformed",
+            f"unsupported protocol; this service speaks {FLOOR_PROTOCOL!r} and nothing else")
     task_id = request["task_id"]
     if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
         raise FloorWriterError(
-            REFUSE_MALFORMED,
-            "task_id must be an identifier of 1..128 chars from [A-Za-z0-9._-]; the floor's "
-            "file name is derived from it, so a separator or a traversal segment would address "
-            "a file outside the store")
-    install_id = request["install_id"]
-    if not isinstance(install_id, str) or not _INSTALL_ID.fullmatch(install_id):
-        raise FloorWriterError(REFUSE_MALFORMED,
-                               "install_id must be an identifier of 1..128 chars")
-    head = request["head_sequence"]
-    if isinstance(head, bool) or not isinstance(head, int) or head < 1:
-        raise FloorWriterError(
-            REFUSE_MALFORMED,
-            f"head_sequence must be a positive integer, not {head!r}; sequence 0 is the absence "
-            "of a measured head and cannot be advanced to")
-    digest = request["evidence_head_sha256"]
-    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
-        raise FloorWriterError(REFUSE_MALFORMED,
-                               "evidence_head_sha256 must be 64 lowercase hex characters")
-    return request
+            "malformed",
+            "task_id must be 1..128 chars of [A-Za-z0-9._-]; the mark's file name is derived "
+            "from it, so a separator or a traversal segment would address a file outside the store")
+    if op == OP_ADVANCE:
+        head = request["head_sequence"]
+        if isinstance(head, bool) or not isinstance(head, int) or head < 1:
+            raise FloorWriterError(
+                "malformed",
+                "head_sequence must be a positive integer; sequence 0 is the absence of a "
+                "measured head and cannot be advanced to")
+        digest = request["evidence_head_sha256"]
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise FloorWriterError(
+                "malformed", "evidence_head_sha256 must be 64 lowercase hex characters")
+    return op, request
 
 
-def request_digest(request: Mapping[str, Any]) -> str:
-    """The canonical digest of the request, computed by BOTH ends from the same primitive so
-    the binding in the response is checkable rather than asserted."""
-    return canonical_json_sha256(dict(request))
+def handle(request: Any, *, config: ServiceConfig, peer_uid: Optional[int]) -> Dict[str, Any]:
+    """One request, one verdict. Never raises for a caller's fault.
 
-
-def handle(request: Any, *, store: pathlib.Path, served_install_id: str,
-           allowed_caller_uids: frozenset, caller_uid: Optional[int]) -> Dict[str, Any]:
-    """One request, one verdict. Never raises for a caller's fault: it returns a refusal body.
-
-    ``caller_uid`` is ``None`` when peer authentication could not be performed at all — an
-    unsupported platform, or a socket that yielded no credentials. That is refused first,
-    because everything below it would otherwise be deciding on an unknown principal.
+    The peer is authorized against the list for the op it actually asked for (§1.8), so being
+    admitted for one operation is not admission to another.
     """
     try:
-        if caller_uid is None:
-            return _refusal(REFUSE_UNAUTHENTICATED,
-                            "the peer could not be authenticated; no principal, no authority")
-        if caller_uid not in allowed_caller_uids:
-            # Deliberately does not echo the allowlist: a refusal must not be an oracle for
-            # which uid to become.
-            return _refusal(REFUSE_UNAUTHORIZED,
-                            f"uid {caller_uid} is not permitted to request floor advancement. "
-                            "Reaching this socket is not authority")
-        validated = validate_request(request)
-        if validated["install_id"] != served_install_id:
-            return _refusal(REFUSE_SCOPE_MISMATCH,
-                            f"this writer serves one install and the request names another; "
-                            "a floor advanced under the wrong scope is a floor advanced for "
-                            "someone else")
-        digest = request_digest(validated)
-        return advance(store, validated["install_id"], validated["task_id"],
-                       validated["head_sequence"], validated["evidence_head_sha256"],
-                       digest, caller_uid)
+        op, validated = validate(request)
+        if peer_uid is None or isinstance(peer_uid, bool) or not isinstance(peer_uid, int):
+            return _refusal("peer_denied", "the peer could not be authenticated")
+        if peer_uid not in config.peers_for(op):
+            # Does not echo the allowlist: a refusal must not be an oracle for which uid to become.
+            return _refusal("peer_denied",
+                            f"uid {peer_uid} is not permitted to call {op}. Reaching this socket "
+                            "is not authority, and admission to one op is not admission to another")
+        if op == OP_GET:
+            return do_get(config, validated["task_id"])
+        return do_advance(config, validated["task_id"], validated["head_sequence"],
+                          validated["evidence_head_sha256"])
     except FloorWriterError as exc:
-        # The reason travels WITH the refusal. It is never recovered from the prose.
         return _refusal(exc.reason, exc.detail)
 
 
-def serve_connection(conn: Any, *, store: pathlib.Path, served_install_id: str,
-                     allowed_caller_uids: frozenset) -> Dict[str, Any]:
-    """Read one framed request, answer it, and return what was sent — for the caller's log and
-    for tests, which assert on the same object the peer received."""
-    try:
-        caller_uid = conn.peer_uid
-    except Exception:  # pragma: no cover - a connection that cannot say who it is
-        caller_uid = None
-    try:
-        payload = read_frame(conn, max_bytes=MAX_FRAME_BYTES)
-    except (ServerError, OSError) as exc:
-        reply = _refusal(REFUSE_MALFORMED, f"unreadable frame: {exc}")
-        _try_write(conn, reply)
-        return reply
-    try:
-        request = json.loads(payload.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        reply = _refusal(REFUSE_MALFORMED, f"request is not UTF-8 JSON: {exc}")
-        _try_write(conn, reply)
-        return reply
-    reply = handle(request, store=store, served_install_id=served_install_id,
-                   allowed_caller_uids=allowed_caller_uids, caller_uid=caller_uid)
-    _try_write(conn, reply)
-    return reply
+# ---------------------------------------------------------------------------
+# §1.7 — the Linux transport. The socket's DIRECTORY is the server authentication.
+# ---------------------------------------------------------------------------
 
+#: The Architect's standing constraint on the amended layout, kept as code rather than as a
+#: remembered intention: a corrupt authoritative document is a REFUSAL, and it is never repaired
+#: by rebuilding a roster from whatever files happen to exist. Healing from the directory would
+#: reintroduce, through the back door, exactly the directory-derived roster the ruling refused —
+#: the explicit roster would stop being the authority the moment it disagreed with the filesystem.
+#: There is deliberately no rebuild path in this module. Restoring a damaged store is a
+#: provisioning act by the machine administrator, outside this service.
+NEVER_HEAL_FROM_DIRECTORY = True
 
-def _try_write(conn: Any, reply: Mapping[str, Any]) -> None:
-    try:
-        write_frame(conn, json.dumps(reply, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-                    max_bytes=MAX_FRAME_BYTES)
-    except (ServerError, OSError):
-        # The verdict already happened; a peer that hung up does not un-commit a floor, and it
-        # does not get a second decision either.
-        pass
+#: §1.7 / B4. The socket's parent is owned by the Floor Writer and **not writable** by anyone
+#: else — that is what stops another principal replacing the endpoint, and it is the server
+#: authentication the design specifies. The caller needs only to TRAVERSE it, so group execute is
+#: granted and group write is not.
+SOCKET_DIR_MODE = 0o750
+#: The socket itself is group-accessible, because connecting requires write permission on the
+#: socket and the caller is a DIFFERENT principal by construction. The first attempt used 0700
+#: here; a two-account measurement showed that refuses the service's own intended caller with
+#: EACCES, so the service failed closed permanently instead of working. The boundary is the
+#: directory, not this mode.
+SOCKET_MODE = 0o770
 
 
 def bind(socket_path: pathlib.Path) -> "socket.socket":
-    """Bind the AF_UNIX socket, 0700, refusing anywhere peer authentication is unavailable."""
+    """Bind the AF_UNIX endpoint, having first proved the directory that holds it is protected.
+
+    Order matters: custody is proved BEFORE the socket exists. A socket that exists is a promise,
+    and a service that cannot show its endpoint is unreplaceable must not make one.
+    """
     require_linux("cannot bind the Floor Writer socket")
+    directory = socket_path.parent
+    require_private_directory(directory, "the Floor Writer socket directory")
     try:
-        socket_path.parent.mkdir(parents=True, exist_ok=True)
         if socket_path.exists():
             socket_path.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(socket_path))
-        os.chmod(socket_path, 0o700)
+        os.chmod(socket_path, SOCKET_MODE)
         server.listen(16)
     except OSError as exc:
-        raise FloorWriterError(REFUSE_PLATFORM,
-                               f"cannot bind {socket_path}: {exc}") from exc
+        raise FloorWriterError(
+            "scope_unavailable", f"cannot bind the Floor Writer endpoint: {exc}") from exc
     return server
 
 
-def serve_forever(server: "socket.socket", *, store: pathlib.Path, served_install_id: str,
-                  allowed_caller_uids: frozenset) -> None:  # pragma: no cover - daemon loop
+def read_peer_uid(sock: "socket.socket") -> int:
+    """The connecting peer's uid, from the kernel, captured at accept time.
+
+    ``SO_PEERCRED`` yields ``struct ucred {pid, uid, gid}``, unpacked as ``=III``. Not
+    caller-supplied and not spoofable over the wire — the ``isolated_signer_server.py`` shape the
+    design names. Off Linux this fails closed so the caller DENIES rather than trusting an
+    unauthenticated peer.
+    """
+    require_linux("cannot authenticate the peer")
+    ucred = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("=III"))
+    _pid, uid, _gid = struct.unpack("=III", ucred)
+    return uid
+
+
+def _read_frame(sock: "socket.socket") -> bytes:
+    """One length-prefixed frame, bounded at :data:`MAX_FLOOR_FRAME_BYTES` (§1.7).
+
+    Fail-closed on a short header, a zero or oversize declared length, and a truncated body. A
+    frame at exactly the cap is accepted: §7's eighth negative tests the boundary on both sides of
+    the number, so the comparison is strictly greater-than.
+    """
+    header = _recv_exactly(sock, LENGTH_PREFIX_BYTES)
+    if len(header) != LENGTH_PREFIX_BYTES:
+        raise FloorWriterError("malformed", "short length prefix")
+    length = int.from_bytes(header, "big")
+    if length == 0:
+        raise FloorWriterError("malformed", "empty frame rejected")
+    if length > MAX_FLOOR_FRAME_BYTES:
+        raise FloorWriterError(
+            "oversize", f"frame length {length} exceeds the bound {MAX_FLOOR_FRAME_BYTES}")
+    body = _recv_exactly(sock, length)
+    if len(body) != length:
+        raise FloorWriterError("malformed", "truncated frame body")
+    return body
+
+
+def _recv_exactly(sock: "socket.socket", n: int) -> bytes:
+    chunks = []
+    got = 0
+    while got < n:
+        chunk = sock.recv(n - got)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        got += len(chunk)
+    return b"".join(chunks)
+
+
+def _write_frame(sock: "socket.socket", payload: bytes) -> None:
+    if len(payload) > MAX_FLOOR_FRAME_BYTES:
+        raise FloorWriterError("internal", "reply exceeds the frame bound")
+    sock.sendall(len(payload).to_bytes(LENGTH_PREFIX_BYTES, "big") + payload)
+
+
+def serve_connection(sock: "socket.socket", config: ServiceConfig) -> Dict[str, Any]:
+    """Authenticate the peer, read one framed request, answer it, and return what was sent.
+
+    §7's seventh negative: an unauthenticated peer is refused **before a frame is read**. The uid
+    is taken from the kernel first, and a socket that cannot say who is on the other end never
+    gets to send bytes into the parser.
+    """
+    try:
+        peer_uid = read_peer_uid(sock)
+    except (FloorWriterError, OSError):
+        reply = _refusal("peer_denied", "the peer could not be authenticated")
+        _try_send(sock, reply)
+        return reply
+    try:
+        payload = _read_frame(sock)
+    except FloorWriterError as exc:
+        reply = _refusal(exc.reason, exc.detail)
+        _try_send(sock, reply)
+        return reply
+    except OSError as exc:
+        reply = _refusal("malformed", f"unreadable frame: {exc}")
+        _try_send(sock, reply)
+        return reply
+    try:
+        request = json.loads(payload.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        reply = _refusal("malformed", f"request is not UTF-8 JSON: {exc}")
+        _try_send(sock, reply)
+        return reply
+    reply = handle(request, config=config, peer_uid=peer_uid)
+    _try_send(sock, reply)
+    return reply
+
+
+def _try_send(sock: "socket.socket", reply: Mapping[str, Any]) -> None:
+    try:
+        _write_frame(sock, json.dumps(reply, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    except (FloorWriterError, OSError):
+        # The verdict already happened. A peer that hung up does not un-commit a floor, and it
+        # does not get a second decision either — its retry is answered `idempotent`, which is
+        # what §7's fourth negative is for.
+        pass
+
+
+def serve_forever(server: "socket.socket", config: ServiceConfig) -> None:  # pragma: no cover
+    """The serial accept loop. §1.9: one writer process, so this loop IS the serialization."""
     require_linux("cannot serve floor advancement")
     while True:
         try:
@@ -640,9 +818,7 @@ def serve_forever(server: "socket.socket", *, store: pathlib.Path, served_instal
             raise
         try:
             sock.settimeout(CONNECTION_BUDGET_S)
-            conn = SocketPeerConn(sock)
-            serve_connection(conn, store=store, served_install_id=served_install_id,
-                             allowed_caller_uids=allowed_caller_uids)
+            serve_connection(sock, config)
         finally:
             try:
                 sock.close()
@@ -651,110 +827,100 @@ def serve_forever(server: "socket.socket", *, store: pathlib.Path, served_instal
 
 
 # ---------------------------------------------------------------------------
-# The client the completion path uses
+# The client seam the completion process uses (§1.3, §1.4)
 # ---------------------------------------------------------------------------
 
 
-def request_advance(socket_path: pathlib.Path, install_id: str, task_id: str,
-                    head_sequence: int, evidence_head_sha256: str,
-                    expected_writer_uid: Optional[int] = None) -> Dict[str, Any]:
-    """Ask the Floor Writer to advance, and refuse anything that is not bound proof it did.
+def _exchange(endpoint: pathlib.Path, request: Mapping[str, Any]) -> Dict[str, Any]:
+    """One request, one reply, over a fresh connection. Every failure raises.
 
-    The completion process calls this INSTEAD of writing the mark. Every failure mode —
-    no socket, no answer, a refusal, an answer that does not bind to this request — raises,
-    and the caller must not report a governed completion trusted on any of them.
+    §1.4 / §7 negative 1: an unreachable service, a timeout, a malformed reply and a refusal are
+    all refusals to the caller, and **none of them may read as "no floor required"**. That
+    coercion is the R-06 defect, and it is the constraint the Owner attached to the decision.
     """
-    require_linux("cannot request floor advancement")
-    request = {
-        "op": OP_ADVANCE_FLOOR,
-        "protocol": FLOOR_PROTOCOL,
-        "install_id": install_id,
-        "task_id": task_id,
-        "head_sequence": head_sequence,
-        "evidence_head_sha256": evidence_head_sha256,
-    }
-    expected_digest = request_digest(request)
+    require_linux("cannot reach the Floor Writer")
+    payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(payload) > MAX_FLOOR_FRAME_BYTES:
+        raise FloorWriterError("oversize", "the request exceeds the frame bound")
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(CONNECTION_BUDGET_S)
-        sock.connect(str(socket_path))
+        sock.connect(str(endpoint))
     except OSError as exc:
-        raise FloorWriterError(REFUSE_UNREACHABLE,
-            f"the Floor Writer at {socket_path} is unreachable: {exc}. The floor cannot be "
-            "advanced, so this completion is not trusted") from exc
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"the Floor Writer is unreachable ({exc.strerror}). The floor cannot be advanced, so "
+            "this completion is not verified — this is NOT 'no floor required'") from exc
     try:
-        # The caller authenticates the SERVER, not only the reverse: the peer on the other end
-        # of this socket must be the principal the deployment says owns the floor.
-        served_by = read_peercred_uid(sock)
-        if expected_writer_uid is not None and served_by != expected_writer_uid:
-            raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"the socket at {socket_path} is served by uid {served_by}, not by the "
-                f"expected Floor Writer principal {expected_writer_uid}")
-        conn = SocketPeerConn(sock)
-        write_frame(conn, json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-                    max_bytes=MAX_FRAME_BYTES)
-        payload = read_frame(conn, max_bytes=MAX_FRAME_BYTES)
-    except ServerError as exc:
-        raise FloorWriterError(REFUSE_UNREACHABLE,
-            f"floor advancement exchange failed: {exc}") from exc
-    except OSError as exc:
-        raise FloorWriterError(REFUSE_UNREACHABLE,
-            f"floor advancement exchange failed: {exc}") from exc
+        _write_frame(sock, payload)
+        body = _read_frame(sock)
+    except (FloorWriterError, OSError) as exc:
+        detail = exc.detail if isinstance(exc, FloorWriterError) else str(exc)
+        raise FloorWriterError("scope_unavailable",
+                               f"the Floor Writer exchange failed: {detail}") from exc
     finally:
         try:
             sock.close()
         except OSError:
             pass
     try:
-        reply = json.loads(payload.decode("utf-8"))
+        reply = json.loads(body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"the Floor Writer's reply is not UTF-8 JSON: {exc}") from exc
-    return verify_reply(reply, request, expected_digest, served_by,
-                        expected_writer_uid=expected_writer_uid)
-
-
-def verify_reply(reply: Any, request: Mapping[str, Any], expected_digest: str,
-                 served_by: Optional[int],
-                 expected_writer_uid: Optional[int] = None) -> Dict[str, Any]:
-    """Check the reply against the request that produced it. Separate from the socket so the
-    binding is testable without one, and so every field a caller relies on is checked in one
-    named place rather than at the call sites."""
+        raise FloorWriterError(
+            "malformed", f"the Floor Writer's reply is not UTF-8 JSON: {exc}") from exc
     if not isinstance(reply, dict):
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the Floor Writer's reply is not a JSON object")
-    if reply.get("ok") is False:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"floor advancement refused: {reply.get('reason')}: {reply.get('detail')}")
-    body = {k: v for k, v in reply.items() if k != "result_sha256"}
-    if reply.get("result_sha256") != canonical_json_sha256(body):
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the Floor Writer's reply does not match its own digest")
-    if reply.get("protocol") != FLOOR_PROTOCOL or reply.get("op") != OP_ADVANCE_FLOOR:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the reply is for a different protocol or operation")
-    if reply.get("request_sha256") != expected_digest:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the reply does not bind to this request: it may be another advancement's answer")
-    if reply.get("outcome") not in (OUTCOME_ADVANCED, OUTCOME_ALREADY_COMMITTED):
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"unknown outcome {reply.get('outcome')!r}")
-    for field in ("install_id", "task_id"):
-        if reply.get(field) != request[field]:
-            raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"the reply's {field} is not the one requested")
-    if reply.get("floor") != request["head_sequence"]:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"the reply reports floor {reply.get('floor')} for a request of "
-            f"{request['head_sequence']}: the floor that was committed is not the floor asked for")
-    if reply.get("evidence_head_sha256") != request["evidence_head_sha256"]:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the reply binds a different signed head than the request")
-    if expected_writer_uid is not None and reply.get("writer_uid") != expected_writer_uid:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            "the reply names a different writer principal than expected")
-    if served_by is not None and reply.get("writer_uid") != served_by:
-        raise FloorWriterError(REFUSE_UNVERIFIED_REPLY,
-            f"the reply claims writer uid {reply.get('writer_uid')} but the socket is served by "
-            f"{served_by}: a principal that misreports itself is not one to trust a floor to")
+        raise FloorWriterError("malformed", "the Floor Writer's reply is not a JSON object")
+    if reply.get("ok") is not True:
+        reason = reply.get("reason")
+        raise FloorWriterError(
+            reason if reason in REFUSALS else "internal",
+            f"the Floor Writer refused: {reason}: {reply.get('detail')}")
+    if reply.get("protocol") != FLOOR_PROTOCOL or reply.get("op") != request["op"]:
+        raise FloorWriterError(
+            "malformed", "the reply is for a different protocol or operation than was asked")
+    generation = reply.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise FloorWriterError(
+            "malformed",
+            "the reply carries no provisioning generation; §1.10 serves one with every reply so a "
+            "re-provisioned floor is visibly new rather than silently empty")
+    return reply
+
+
+def client_get(endpoint: pathlib.Path, task_id: str) -> Tuple[int, Optional[str], bool, int]:
+    """``(head_sequence, evidence_head_sha256, known, generation)``.
+
+    §1.3: this number is a courtesy. A client that ignores it still cannot advance below the
+    floor, because ``floor.advance`` re-checks against the store the service owns.
+    """
+    reply = _exchange(endpoint, {"op": OP_GET, "protocol": FLOOR_PROTOCOL, "task_id": task_id})
+    head = reply.get("head_sequence")
+    if isinstance(head, bool) or not isinstance(head, int) or head < 0:
+        raise FloorWriterError("malformed", "floor.get returned no usable head_sequence")
+    digest = reply.get("evidence_head_sha256")
+    if digest is not None and (not isinstance(digest, str) or not _SHA256.fullmatch(digest)):
+        raise FloorWriterError("malformed", "floor.get returned a malformed head digest")
+    return head, digest, bool(reply.get("known")), reply["generation"]
+
+
+def client_advance(endpoint: pathlib.Path, task_id: str, head_sequence: int,
+                   digest: str) -> Dict[str, Any]:
+    """Ask the service to advance, and accept nothing that is not the committed answer.
+
+    The reply must name the floor that was asked for and the head it was taken against; a service
+    that answered about something else is not evidence that this advancement happened.
+    """
+    reply = _exchange(endpoint, {"op": OP_ADVANCE, "protocol": FLOOR_PROTOCOL, "task_id": task_id,
+                                 "head_sequence": head_sequence,
+                                 "evidence_head_sha256": digest})
+    if reply.get("outcome") not in (OUTCOME_ADVANCED, OUTCOME_IDEMPOTENT):
+        raise FloorWriterError("malformed", f"unknown outcome {reply.get('outcome')!r}")
+    if reply.get("head_sequence") != head_sequence:
+        raise FloorWriterError(
+            "malformed",
+            f"the reply reports floor {reply.get('head_sequence')} for a request of "
+            f"{head_sequence}: the committed floor is not the floor asked for")
+    if reply.get("evidence_head_sha256") != digest:
+        raise FloorWriterError("malformed",
+                               "the reply binds a different signed head than the request")
     return reply
