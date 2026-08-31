@@ -130,7 +130,7 @@
       "head": "52c263abc9f3325edade8626346c089a7e711263",
       "conclusion": "failure",
       "run_id": 33378370461,
-      "note": "Repo-state RED at this head, and honestly so: #217's snapshot recorded PR #112 at its OLD head 3d0f053, #112 then moved to 08b9d6e, and merging #217 carried the stale record onto main. T-059 at N=2 -- the defect is in the mirror, not the code. Fixed by this PR, which is the only open one left."
+      "note": "Repo-state RED at this head, and honestly so, for a reason about this file and not about any code: #217's snapshot recorded PR #112 at the head it had when #217 was written, #112 was then pushed forward, and merging #217 carried the stale record onto main. T-059 at N=2. The two branch heads involved are deliberately NOT named here: a squash merge erases them, so naming one would put a dead object in the canon -- which is the defect check_doc_claims caught in this very field. Fixed by this PR, the only open one left."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
