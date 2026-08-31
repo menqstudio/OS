@@ -39,7 +39,7 @@ disagree, the roadmap wins.
 | 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked rather than pretending |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
-## Suites, measured on Debian 2026-08-29
+## Suites, measured on Debian 2026-08-31
 
 | | |
 |---|---|
@@ -47,6 +47,7 @@ disagree, the roadmap wins.
 | Rust workspace, 10 crates | 1147 passed, 0 failed |
 | frontend | typecheck clean, 761 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulnerabilities |
+| FW-1 boundary proof | 23/23 PASS, 4 real accounts |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
 `tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.
@@ -55,7 +56,7 @@ Toolchain: `config/toolchain.json`, checked against every canonical document by
 
 **RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **56 pull
 requests, 192 files and 39,396 inserted lines** have merged since, none independently
-confirmed. *(Said 20/107/19688 until 2026-08-31.)*
+confirmed.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

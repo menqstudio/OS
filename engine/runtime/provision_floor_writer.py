@@ -393,13 +393,8 @@ def apply(plan: ProvisionPlan) -> Dict[str, Any]:
     require_root_owned_parent(plan.socket_dir.parent, "the socket directory's parent")
     require_root_owned_parent(plan.config_path.parent, "the Floor Writer config directory")
 
-    plan.marks_root.mkdir(parents=False, exist_ok=True)
-    os.chown(plan.marks_root, 0, 0)
-    os.chmod(plan.marks_root, 0o755)
-
-    _mkdir_owned(plan.marks_dir, plan.service_uid, plan.service_gid, MARKS_DIR_MODE)
-    _mkdir_owned(plan.socket_dir, plan.service_uid, plan.caller_gid, SOCKET_DIR_MODE)
-
+    # The refusal comes BEFORE any directory is created. A provisioner that refuses halfway has
+    # already changed the machine, and the next operator cannot tell which half ran.
     discarded: List[str] = []
     if plan.state_path.exists():
         if not plan.reprovision:
@@ -413,6 +408,18 @@ def apply(plan: ProvisionPlan) -> Dict[str, Any]:
             discarded = sorted(existing.get("roster", [])) if isinstance(existing, dict) else []
         except (OSError, ValueError):
             discarded = ["<unreadable>"]
+
+    if plan.marks_root.exists():
+        # An EXISTING marks root is checked, never silently re-owned: `--marks-root` pointed at a
+        # populated directory would otherwise have this tool chown someone else's tree to root.
+        require_root_owned_parent(plan.marks_root, "the marks root")
+    else:
+        plan.marks_root.mkdir(parents=False)
+        os.chown(plan.marks_root, 0, 0)
+        os.chmod(plan.marks_root, 0o755)
+
+    _mkdir_owned(plan.marks_dir, plan.service_uid, plan.service_gid, MARKS_DIR_MODE)
+    _mkdir_owned(plan.socket_dir, plan.service_uid, plan.caller_gid, SOCKET_DIR_MODE)
 
     document = {"install_id": plan.install_id, "generation": plan.generation,
                 "roster": [], "floors": {}}
