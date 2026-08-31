@@ -124,7 +124,8 @@ is wrong" and "the latency is wrong" is a decision, not a measurement.
 
 ## Defects found and not opened, per R8
 
-1. **§4 versus migration 0022** — above. Needs the Owner. Flagged on PR #207.
+1. **§4 versus migration 0022** — above. **DECIDED by the Owner on 2026-08-31:** rewrite §4 as an
+   `auth_ref` reference store. Done on PR #207; `Secret` and `resolve_secret` are gone from `core`.
 2. **`tools/check_ai_surfaces.py` calls itself fail-closed and blocks no merge** —
    its context is not among the 33 required. Declared in
    `config/control-invocation.json` with a written reason; making a context

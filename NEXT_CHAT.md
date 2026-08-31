@@ -6,17 +6,17 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `feat/audit-rows-name-their-source` · **head** `15c7082` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `feat/credential-store` · **head** `6c39dbe` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #207 · branch `feat/credential-store`** (base `main`, tip `6c39dbe`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #214 on `feat/version-parity-gate`.
 >
-> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
+> §4 is a REFERENCE store, not a value store: `credential_bindings.auth_ref`, refused through the same normalize_auth_ref the Integrations page uses. No `Secret` type, because no value arrives.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next:** §4's credential store, then the TRANSPORT. Without a credential a call reaches no real
-customer API, so transport-first would be more unreachable code.
+**Next:** the TRANSPORT. §4 landed as a REFERENCE store — the desktop names where a secret lives
+and never holds one (migration 0022), so the transport is what carries a reference across the wall.
 
 The produced agent now **RUNS**: the 60s tick enqueues AND dispatches, up to
 `MAX_DISPATCH_PER_TICK`. It was measured first — `claim_and_run` had ONE non-test caller, a CI demo

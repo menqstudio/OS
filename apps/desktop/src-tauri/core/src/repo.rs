@@ -26,7 +26,11 @@ fn page(limit: Option<u32>, offset: Option<u32>) -> (i64, i64) {
 /// transaction (`seed`, `runs::advance` calling `set_status`), the work joins
 /// it instead of nesting a second BEGIN, and the outer transaction owns
 /// commit/rollback.
-fn atomic<T, F>(conn: &Connection, f: F) -> CoreResult<T>
+/// `pub(crate)` since T-058's §4 slice: `credentials` writes a binding and its
+/// audit row in one transaction, and lives outside this module because a
+/// credential store is not a repository of domain rows. Still crate-internal —
+/// nothing outside this crate opens a transaction.
+pub(crate) fn atomic<T, F>(conn: &Connection, f: F) -> CoreResult<T>
 where
     F: FnOnce(&Connection) -> CoreResult<T>,
 {
@@ -537,6 +541,8 @@ pub mod approvals {
     pub const AUTOMATION_ENABLED_ACTION_TYPE: &str = "Arm automation";
     pub const AGENT_BUNDLE_ENTITY_TYPE: &str = "agent_bundle";
     pub const AGENT_BUNDLE_ARM_ACTION_TYPE: &str = "Arm agent bundle";
+    pub const CREDENTIAL_BINDING_ENTITY_TYPE: &str = "credential_binding";
+    pub const CREDENTIAL_BIND_ACTION_TYPE: &str = "Bind agent credential";
 
     /// Verify and spend the grant for a gated write, in the write's own
     /// transaction. Factored out of `runs::claim_step_execution`'s inline pair so
@@ -3119,24 +3125,65 @@ pub mod agent_runs {
         // rule 6). Resolution and verdict happen together inside the authorizer
         // — split apart, the verdict could only ever agree with the lookup.
         let decision = allowlist.authorize_ref(call_ref);
+
+        // §4: the step names SLOTS, never a value. Checked only when the
+        // destination was allowed — a denied egress makes the credential
+        // irrelevant, and asking about one anyway would put a slot name in the
+        // record of a call that was never going to happen.
+        //
+        // `is_bound` and NOT `reference_of`: the only question here is whether
+        // the operator has named a reference for the slot. The reference itself
+        // is not read, because there is nothing to hand it to yet -- and no
+        // VALUE exists on this side of the boundary to read at all.
+        let slots = &step.requires.credential_slots;
+        let mut missing: Option<&str> = None;
+        if decision.allowed() {
+            for slot in slots {
+                if !crate::credentials::is_bound(conn, &bundle.digest, slot)? {
+                    missing = Some(slot.as_str());
+                    break;
+                }
+            }
+        }
+        // THREE outcomes a reviewer must be able to tell apart, in one record
+        // beside the egress verdict: nothing was needed, the operator provided
+        // it, or a declared slot has no value bound for THIS digest. The
+        // refusal reason distinguishes the two that refuse; the payload
+        // distinguishes all three. The slot NAME appears; a value never does,
+        // and nothing on this path has read one.
+        let credential_state = if !decision.allowed() {
+            "not_reached"
+        } else if slots.is_empty() {
+            "none_required"
+        } else if missing.is_some() {
+            "absent"
+        } else {
+            "present"
+        };
+
         record_egress_decision(
             conn, run_id, decision.event_type(),
             &format!(
-                "{{\"outcome\":{},\"call_ref\":{},\"destination\":{},\"population\":{},\"grant\":{},\"reason\":{}}}",
+                "{{\"outcome\":{},\"call_ref\":{},\"destination\":{},\"population\":{},\"grant\":{},\"credential\":{},\"slots\":{},\"missing_slot\":{},\"reason\":{}}}",
                 json_string(if decision.allowed() { "allowed" } else { "denied" }),
                 json_string(call_ref),
                 json_string(&decision.matched.as_ref().map(|d| d.render()).unwrap_or_default()),
                 json_string(decision.population.as_str()),
                 json_string(decision.grant_id.as_str()),
+                json_string(credential_state),
+                json_string(&slots.join(",")),
+                json_string(missing.unwrap_or("")),
                 json_string(&decision.reason),
             ),
         )?;
 
-        Ok(if decision.allowed() {
-            Refusal::CallTransportUnimplemented
-        } else {
-            Refusal::EgressNotGranted
-        })
+        if !decision.allowed() {
+            return Ok(Refusal::EgressNotGranted);
+        }
+        if missing.is_some() {
+            return Ok(Refusal::CredentialBindingMissing);
+        }
+        Ok(Refusal::CallTransportUnimplemented)
     }
 
     /// One record per decision, allow and deny alike. `run_executor` because no
@@ -3212,6 +3259,7 @@ pub mod agent_runs {
                 display_name: "T".into(), built_for: "c".into(),
                 built_at_epoch: now_s, grant_expires_at_epoch: now_s + 3600,
                 egress: vec![],
+                credential_slots: vec![],
                 steps: vec![
                     Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
                            argument: Some("one".into()), call_ref: None,
@@ -3227,6 +3275,32 @@ pub mod agent_runs {
 
         /// A spec whose second step is a `call` naming `call_ref`, with the
         /// grant's egress table set to `granted`.
+        fn call_spec_creds(
+            now_s: i64, call_ref: Option<&str>, granted: &[(&str, &str)], slots: &[&str],
+        ) -> BuildSpec {
+            let mut s = call_spec(now_s, call_ref, granted);
+            s.credential_slots = slots.iter().map(|x| x.to_string()).collect();
+            s.steps[1].requires.credential_slots = slots.iter().map(|x| x.to_string()).collect();
+            s
+        }
+
+        fn bind_slot(conn: &Connection, digest: &str, slot: &str, auth_ref: &str) {
+            let entity = crate::credentials::approval_entity_id(digest, slot);
+            let ap = super::super::approvals::create(
+                conn, super::super::approvals::CREDENTIAL_BIND_ACTION_TYPE,
+                "T", "A2", "medium",
+                Some(super::super::approvals::CREDENTIAL_BINDING_ENTITY_TYPE), Some(&entity),
+                "webview:test", "sess-test", &crate::id(),
+                audit::Actor::local_operator(),
+            ).unwrap();
+            super::super::approvals::approve_confirmed(
+                conn, &ap.id, super::super::approvals::NATIVE_CONFIRMER_PRINCIPAL, None,
+                ap.nonce.as_deref().unwrap(), ap.request_digest.as_deref().unwrap(),
+                audit::Actor::native_confirmer("native:test"),
+            ).unwrap();
+            crate::credentials::bind(conn, digest, slot, auth_ref, audit::Actor::local_operator()).unwrap();
+        }
+
         fn call_spec(now_s: i64, call_ref: Option<&str>, granted: &[(&str, &str)]) -> BuildSpec {
             let mut s = spec(now_s);
             s.egress = granted
@@ -3598,6 +3672,123 @@ pub mod agent_runs {
             assert_eq!(queued as usize, n - MAX_DISPATCH_PER_TICK, "the rest waits for the next tick");
         }
 
+        // ---- SS4: which slot, never the value -----------------------------
+
+        /// A declared slot with NO value bound for this digest is refused, by a
+        /// name of its own -- not `call_transport_unimplemented`, which is what
+        /// it would say if the credential were not being checked at all.
+        #[test]
+        fn a_declared_slot_with_no_binding_is_refused_by_its_own_name() {
+            let sp = call_spec_creds(1_000_000, Some("slack-post"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id),
+                       ("refused".into(), Some("credential_binding_missing".into())));
+            let rows = egress_rows(&conn, &id);
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].1.contains("\"credential\":\"absent\""), "{}", rows[0].1);
+            assert!(rows[0].1.contains("slack_bot"), "the record must name the SLOT: {}", rows[0].1);
+        }
+
+        /// Bound: the grant said yes, the operator named a REFERENCE for the
+        /// slot, and the call still does not happen -- for want of a transport,
+        /// by that name. The record says `present` and carries neither a value
+        /// (none exists on this side) nor the reference.
+        #[test]
+        fn a_bound_slot_reaches_the_transport_refusal_and_leaks_no_reference() {
+            let sp = call_spec_creds(1_000_000, Some("slack-post"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+            register_and_arm(&conn, &digest);
+            bind_slot(&conn, &digest, "slack_bot", "engine:slack/bot-token");
+            tick(&conn, dir.path(), 1_000_000_000);
+
+            let (state, reason): (String, Option<String>) = conn
+                .query_row("SELECT state, refusal_reason FROM flow_runs", [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((state.as_str(), reason.as_deref()),
+                       ("refused", Some("call_transport_unimplemented")));
+
+            let payload: String = conn
+                .query_row("SELECT COALESCE(payload_json,'') FROM audit_events WHERE event_type='egress.allowed'",
+                           [], |r| r.get(0)).unwrap();
+            assert!(payload.contains("\"credential\":\"present\""), "{payload}");
+            assert!(payload.contains("slack_bot"), "the SLOT is named: {payload}");
+            assert!(!payload.contains("bot-token"),
+                    "the REFERENCE must never reach a record: {payload}");
+
+            // and nowhere else either
+            let leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE COALESCE(payload_json,'') LIKE '%bot-token%'",
+                [], |r| r.get(0)).unwrap();
+            assert_eq!(leaks, 0);
+            let receipt_leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM flow_receipts WHERE touched LIKE '%bot-token%'", [], |r| r.get(0)).unwrap();
+            assert_eq!(receipt_leaks, 0);
+            let run_leaks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM flow_runs WHERE COALESCE(refusal_reason,'') LIKE '%bot-token%'",
+                [], |r| r.get(0)).unwrap();
+            assert_eq!(run_leaks, 0);
+        }
+
+        /// The third outcome: nothing was needed. Distinct in the record from
+        /// "the operator named a reference", even though both refuse for the same
+        /// reason -- the reason distinguishes the refusal, the payload
+        /// distinguishes the credential state.
+        #[test]
+        fn a_call_needing_no_credential_says_none_required() {
+            let sp = call_spec(1_000_000, Some("slack-post"),
+                               &[("slack-post", "https://slack.example.com")]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id),
+                       ("refused".into(), Some("call_transport_unimplemented".into())));
+            let rows = egress_rows(&conn, &id);
+            assert!(rows[0].1.contains("\"credential\":\"none_required\""), "{}", rows[0].1);
+        }
+
+        /// A denied destination must not put a slot name in the record of a
+        /// call that was never going to happen.
+        #[test]
+        fn a_denied_destination_does_not_reach_the_credential_check() {
+            let sp = call_spec_creds(1_000_000, Some("evil"),
+                                     &[("slack-post", "https://slack.example.com")], &["slack_bot"]);
+            let (conn, id) = run_call(&sp);
+            assert_eq!(state_of(&conn, &id), ("refused".into(), Some("egress_not_granted".into())));
+            let rows = egress_rows(&conn, &id);
+            assert!(rows[0].1.contains("\"credential\":\"not_reached\""), "{}", rows[0].1);
+            // and the slot NAME must not appear at all. A mutation sweep found
+            // this: dropping the `decision.allowed()` guard left every other
+            // assertion green, because `credential_state` is computed from the
+            // egress verdict first -- but the loop still ran and would have put
+            // the slot into `missing_slot`, in the record of a call that was
+            // never going to happen.
+            assert!(rows[0].1.contains("\"missing_slot\":\"\""),
+                    "a denied call must assert nothing about a credential: {}", rows[0].1);
+        }
+
+        /// A slot the GRANT does not declare is a different fact, refused
+        /// earlier and by a different name -- at LOAD time, so the bundle never
+        /// runs at all. "Never allowed one" and "not provided one" must stay
+        /// distinguishable.
+        #[test]
+        fn a_slot_the_grant_does_not_declare_refuses_the_bundle_at_load() {
+            let conn = crate::db::open(":memory:").unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let mut sp = call_spec(1_000_000, Some("slack-post"),
+                                   &[("slack-post", "https://slack.example.com")]);
+            // the STEP requires it; the grant declares nothing
+            sp.steps[1].requires.credential_slots = vec!["slack_bot".into()];
+            let digest = agent_bundle::build(dir.path(), &sp).unwrap();
+            register_and_arm(&conn, &digest);
+            let (_found, enqueued, refused) = enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            assert_eq!((enqueued, refused), (0, 1), "the bundle must be refused before it runs");
+            let reason: Option<String> = conn
+                .query_row("SELECT refusal_reason FROM flow_runs", [], |r| r.get(0)).unwrap();
+            assert_eq!(reason.as_deref(), Some("credential_slot_unbound"));
+        }
+
         // ---- the produced agent's egress enforcement (design SS3.3) --------
 
         /// THE RED DIRECTION. A `call` step naming a destination the grant does
@@ -3736,7 +3927,10 @@ pub mod integrations {
     /// is checkable here. What actually protects the boundary is this function refusing
     /// anything not positively recognisable as a reference, plus the standing rule that a
     /// credential must never arrive at this process at all.
-    fn normalize_auth_ref(raw: Option<&str>) -> CoreResult<Option<String>> {
+    /// `pub(crate)` since §4: `credentials::bind` refuses anything this does not
+    /// recognise as a reference, calling the SAME function rather than a second
+    /// copy of the rule. Two copies of one rule is two things to drift.
+    pub(crate) fn normalize_auth_ref(raw: Option<&str>) -> CoreResult<Option<String>> {
         let value = match raw.map(str::trim) {
             None | Some("") => return Ok(None),
             Some(v) => v,

@@ -1,8 +1,8 @@
 //! End-to-end schema/migration test for `brops-core`.
 //!
-//! Applies every migration (0001..0025) in order to a fresh SQLite database and
-//! asserts the resulting shape: `SCHEMA_VERSION == 25`, the ledger is contiguous
-//! 1..=25, the key tables/columns exist, and the constraints introduced across
+//! Applies every migration (0001..0026) in order to a fresh SQLite database and
+//! asserts the resulting shape: `SCHEMA_VERSION == 26`, the ledger is contiguous
+//! 1..=26, the key tables/columns exist, and the constraints introduced across
 //! (This header said 0023 / `== 23` / 1..=23 while the assertion 71 lines below
 //! required 24 — the file contradicted itself inside one scroll. That is the
 //! defect START_HERE.md names first: a comment that was true when written.)
@@ -75,10 +75,10 @@ fn migrate_applies_all_versions_in_order_to_a_fresh_db() {
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     db::migrate(&c).unwrap();
 
-    assert_eq!(db::SCHEMA_VERSION, 25, "crate SCHEMA_VERSION must be 25");
-    assert_eq!(db::current_version(&c).unwrap(), 25);
-    // The ledger is contiguous 1..=25 — nothing skipped, nothing double-counted.
-    assert_eq!(applied_versions(&c), (1..=25).collect::<Vec<i64>>());
+    assert_eq!(db::SCHEMA_VERSION, 26, "crate SCHEMA_VERSION must be 26");
+    assert_eq!(db::current_version(&c).unwrap(), 26);
+    // The ledger is contiguous 1..=26 — nothing skipped, nothing double-counted.
+    assert_eq!(applied_versions(&c), (1..=26).collect::<Vec<i64>>());
     // 0017 created the group-chat participants roster table.
     let has_participants: i64 = c
         .query_row(
@@ -503,7 +503,7 @@ fn migrate_is_idempotent_in_process() {
     db::migrate(&c).unwrap();
     assert_eq!(db::current_version(&c).unwrap(), db::SCHEMA_VERSION);
     assert_eq!(applied_versions(&c), before, "re-running migrate must not add ledger rows");
-    assert_eq!(before.len(), 25);
+    assert_eq!(before.len(), 26);
 }
 
 #[test]
@@ -518,12 +518,12 @@ fn migrate_is_idempotent_across_a_real_file_reopen() {
 
     {
         let c1 = db::open(path).unwrap();
-        assert_eq!(db::current_version(&c1).unwrap(), 25);
+        assert_eq!(db::current_version(&c1).unwrap(), 26);
     } // c1 dropped
 
     let c2 = db::open(path).unwrap(); // reopen re-runs migrate() (idempotent)
-    assert_eq!(db::current_version(&c2).unwrap(), 25);
-    assert_eq!(applied_versions(&c2), (1..=25).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c2).unwrap(), 26);
+    assert_eq!(applied_versions(&c2), (1..=26).collect::<Vec<i64>>());
 }
 
 // --- 0022: the integrations credential REFERENCE column ---------------------
@@ -608,8 +608,8 @@ fn an_existing_database_upgrades_to_0022_without_losing_data() {
 
     // 2. The upgrade path production actually uses.
     let c = db::open(path).unwrap();
-    assert_eq!(db::current_version(&c).unwrap(), 25, "reopening must apply 0022 through 0025");
-    assert_eq!(applied_versions(&c), (1..=25).collect::<Vec<i64>>());
+    assert_eq!(db::current_version(&c).unwrap(), 26, "reopening must apply 0022 through 0026");
+    assert_eq!(applied_versions(&c), (1..=26).collect::<Vec<i64>>());
     assert!(has_column(&c, "integrations", "auth_ref"));
 
     // 3. Nothing was lost, and nothing was rewritten: the pre-existing rows are byte-for
@@ -712,4 +712,96 @@ fn auth_ref_check_admits_references_and_refuses_secret_shaped_values() {
 
     // NULL is always allowed: "no reference" is a state, not a violation.
     c.execute("UPDATE integrations SET auth_ref = NULL WHERE id = 'i-1'", []).unwrap();
+}
+
+/// 0026 — the §4 credential binding store, keyed on the DIGEST and cascading
+/// from the bundle. Asserted here rather than only counted: a migration that
+/// bumps the version and creates nothing would pass the contiguity check above.
+#[test]
+fn migration_0026_creates_the_credential_binding_store_keyed_on_the_digest() {
+    let c = Connection::open_in_memory().unwrap();
+    c.pragma_update(None, "foreign_keys", "ON").unwrap();
+    db::migrate(&c).unwrap();
+
+    // the table exists, with the composite primary key the design requires
+    let cols: Vec<String> = {
+        let mut st = c.prepare("PRAGMA table_info(credential_bindings)").unwrap();
+        let rows = st.query_map([], |r| r.get::<_, String>(1)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    };
+    assert_eq!(cols, vec!["bundle_digest", "slot_id", "auth_ref", "bound_at"]);
+    let pk: Vec<String> = {
+        let mut st = c.prepare("PRAGMA table_info(credential_bindings)").unwrap();
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)))
+            .unwrap();
+        rows.map(|r| r.unwrap()).filter(|(_, pk)| *pk > 0).map(|(n, _)| n).collect()
+    };
+    assert_eq!(pk, vec!["bundle_digest", "slot_id"], "the key IS the (digest, slot) pair");
+
+    // a binding cannot exist for a bundle that does not
+    let orphan = c.execute(
+        "INSERT INTO credential_bindings(bundle_digest, slot_id, auth_ref, bound_at) \
+         VALUES ('f'/**/||'0', 'slot', 'engine:slack/bot-token', '2026-01-01')",
+        [],
+    );
+    assert!(orphan.is_err(), "the foreign key must refuse a binding with no bundle");
+
+    // and retiring the bundle takes its bindings with it
+    c.execute(
+        "INSERT INTO agent_bundles(bundle_digest, bundle_id, bundle_version, display_name, \
+         built_at, state, created_at) VALUES ('abc','agt',1,'T','t','built','t')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO credential_bindings(bundle_digest, slot_id, auth_ref, bound_at) \
+         VALUES ('abc','slot','engine:slack/bot-token','t')",
+        [],
+    )
+    .unwrap();
+    c.execute("DELETE FROM agent_bundles WHERE bundle_digest='abc'", []).unwrap();
+    let left: i64 = c
+        .query_row("SELECT COUNT(*) FROM credential_bindings", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0, "ON DELETE CASCADE: no binding outlives its bundle");
+
+    // THE COLUMN IS A REFERENCE COLUMN, and the CHECK is what makes that
+    // structural rather than a naming convention. Asserted here because a
+    // migration that created the table WITHOUT the constraint would satisfy
+    // every assertion above -- the column list, the primary key and the
+    // cascade are all indifferent to what the column may hold.
+    c.execute(
+        "INSERT INTO agent_bundles(bundle_digest, bundle_id, bundle_version, display_name, \
+         built_at, state, created_at) VALUES ('def','agt',1,'T','t','built','t')",
+        [],
+    )
+    .unwrap();
+    // `concat!`, not a literal — see the note in credentials.rs: a token-shaped
+    // literal is refused by push protection, and none of these is real.
+    for (bad, why) in [
+        (concat!("xoxb", "-1234567890-abcdefghij"), "a bare Slack token: no scheme"),
+        (concat!("engine:xoxb", "-1234567890-abc"), "key material after a valid scheme"),
+        (concat!("engine:sk", "-abcdefghijklmnop"), "an OpenAI-style key after a valid scheme"),
+        ("hunter2", "no scheme at all"),
+        ("nosuchscheme:thing", "a scheme this build does not know"),
+        ("engine:", "an empty locator"),
+        ("engine:a b", "whitespace, which no reference alphabet admits"),
+        (concat!("-----BEGIN", " RSA PRIVATE KEY-----"), "PEM armor"),
+    ] {
+        let refused = c.execute(
+            "INSERT OR REPLACE INTO credential_bindings(bundle_digest, slot_id, auth_ref, bound_at) \
+             VALUES ('def','slot',?1,'t')",
+            [bad],
+        );
+        assert!(refused.is_err(), "the CHECK must refuse {bad:?} ({why})");
+    }
+    // ...and a real reference goes in, so the refusals above are not a
+    // constraint that refuses everything.
+    c.execute(
+        "INSERT INTO credential_bindings(bundle_digest, slot_id, auth_ref, bound_at) \
+         VALUES ('def','slot','engine:slack/bot-token','t')",
+        [],
+    )
+    .unwrap();
 }

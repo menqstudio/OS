@@ -5,9 +5,9 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #207 · branch `feat/credential-store`** (base `main`, tip `6c39dbe`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #214 on `feat/version-parity-gate`.
 >
-> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
+> §4 is a REFERENCE store, not a value store: `credential_bindings.auth_ref`, refused through the same normalize_auth_ref the Integrations page uses. No `Secret` type, because no value arrives.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -20,9 +20,9 @@ claim; ✅ means an independent audit confirmed it. Never promote your own work.
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main`: the gate passes inside the run that merges it and fails on the next read. Fix: accept a reading of any recent `main` and name which head | — | Todo | — |
-| **T-058** | **§4, then the transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 is being rewritten on `#207` as an `auth_ref` REFERENCE store — migration 0022 forbids this process holding a secret at all. Then the transport, then the netns jail for the population holding `Bash`. ◑ Builder-claimed | Bro | In-Progress | `#207` |
+| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed on `#207` as an `auth_ref` REFERENCE store — this process holds no secret, per migration 0022. Next the transport, then the netns jail for the population holding `Bash`. ◑ Builder-claimed | Bro | In-Progress | `#207` |
 | **T-060** | **A PR that outlives its own `Last updated` line reddens `main` on merge.** The gate compares `PROJECT_STATE.md`'s claimed date with the newest commit touching it, and a squash makes that the merge date. `T-059`'s family: a verdict that depends on WHEN it runs | — | Todo | — |
-| **T-061** | **Five Queue-1 checks are correct by reading and defended by no test** — `docs/VERIFICATION_QUEUE_1.md`, from a second sweep off a fresh clone. **V-3 and V-5 closed on `#210`**, mutation-proven both ways. V-1, V-2, V-4, V-6 open | — | Todo | `#210` |
+| **T-061** | **Five Queue-1 checks are correct by reading and defended by no test** — `docs/VERIFICATION_QUEUE_1.md`, from a second sweep off a fresh clone. **V-3/V-5 closed on `#210`, V-1 on `#207`**, each mutation-proven. V-2, V-4, V-6 open | — | Todo | `#210` |
 | **T-062** | **189 negative-matrix rows are still `unreviewed`** — nobody has looked, the silent state. 12 moved 2026-08-31: 3 to `implemented` (mutation-proven), 9 ACL rows to `blocked` on a measured cause. The domain counts are in `config/negative-matrix.json` | — | Todo | — |
 | **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` derives 56 controls from the filesystem, each held to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers: a runbook mention is a suggestion. `check_ai_surfaces.py` runs under a context NOT in the required 33, and making one required is the Owner's act | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so now, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`; a query alone separates them, and `activity::list` + `security::summary` both carry it to the Home sparkline. ◑ Builder-claimed — a test asserts the closure, not this row | Bro | Review | `#210` |

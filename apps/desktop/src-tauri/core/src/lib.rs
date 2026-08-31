@@ -37,6 +37,7 @@ pub mod supervisor_ledger;
 // Phase 5: the append-only LOCAL write record behind every memory/knowledge write.
 // Local and unsigned — never a governed receipt (see the module docs).
 pub mod local_write_record;
+pub mod credentials;
 pub mod egress_proxy;
 pub mod agent_bundle;
 pub mod repo;

@@ -123,8 +123,8 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§4": {
-      "status": "unreviewed",
-      "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
+      "status": "partial",
+      "missing": "Everything a credential VALUE would need, because this process holds none. Migration 0022 already settled it -- \"nothing in this table, this process, or this repository may ever hold the secret\" -- so credential_bindings stores an `auth_ref`, a REFERENCE the engine or the operator resolves on the other side of the trust boundary. NOT IMPLEMENTED, and not implementable here: resolution of a reference into a secret; any proof that a stored reference is true, valid, reachable or the right one (it records an INTENDED handoff target, in the same register as `repo::integrations::set_status`); rotation, since rebuilding an agent breaks its bindings by design and nothing re-binds automatically, which is the gated act on purpose; and the TRANSPORT that would carry a reference across the boundary, so `credentials::reference_of` is declared caller-less in config/reachability-declarations.json. IMPLEMENTED: the (bundle_digest, slot_id) binding store keyed on the DIGEST, so a rebuild breaks every binding; BORN UNBOUND, with binding behind a natively confirmed grant whose entity id carries both the digest and the slot, and unbinding deliberately ungated; one rule with one implementation -- `bind` refuses through the same `normalize_auth_ref` the Integrations page uses, and the schema CHECK states it again -- with a refusal that never echoes what it refused; and three distinguishable outcomes on a call (none_required, present, absent) recorded beside the egress verdict with the SLOT name and never the reference."
     },
     "§4.0": {
       "status": "unreviewed",
