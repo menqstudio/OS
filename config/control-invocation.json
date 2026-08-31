@@ -289,6 +289,11 @@
       "kind": "check",
       "blocks": "merge",
       "invoked_by": "Coordination · docs consistency gate"
+    },
+    "tools/check_version_parity.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Coordination · docs consistency gate"
     }
   }
 }

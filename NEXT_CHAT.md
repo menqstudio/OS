@@ -1,16 +1,15 @@
 # NEXT_CHAT — definitive handoff · վերջնական handoff
 
-> **This file is the live handoff and nothing else.** It was 4034 lines on 2026-08-29,
-> because every session appended its write-up and none removed one. That log is
+> **This file is the live handoff and nothing else** — 4034 lines of appended write-ups moved to
 > [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
-> `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
-> the wall accepts is one that makes it smaller.
+> `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
+> shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** `feat/credential-store` · **head** `6c39dbe` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `feat/version-parity-gate` · **head** `4bdd803` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #207 · branch `feat/credential-store`** (base `main`, tip `6c39dbe`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #214 · branch `feat/version-parity-gate`** (base `main`, tip `4bdd803`, task T-060). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> §4 is a REFERENCE store, not a value store: `credential_bindings.auth_ref`, refused through the same normalize_auth_ref the Integrations page uses. No `Secret` type, because no value arrives.
+> The app version is declared five times across four files and nothing compared them; check_version_parity.py refuses drift and names the file. No v* tag arm -- that needs a release policy the Owner has not stated.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -37,10 +36,17 @@ commit that no longer exists.
 
 Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies here.
 
+**The app version is declared five times in four files and nothing reconciled them** until
+`tools/check_version_parity.py` (`apps/desktop/package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, and `package-lock.json` twice; all `0.1.0`). `npm ci` exits 0 on a lock
+that disagrees — measured. **No `v*` tag is compared**: `git tag -l` prints one tag,
+`brops-desktop-v0.1.0`, which does not match `v*`, so `release.yml` has never run, and whether
+these files hold the LAST released version or the NEXT one is a release policy the Owner has not
+stated. Until he does, a tag arm would be a guess in a required context.
+
 ## Verify before you believe any of this
 
-Run these. Do not take the numbers below on trust — that is this repository's first rule,
-and the numbers in these documents have been wrong in every audit round so far.
+Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2002 OK, 10 skipped
@@ -51,11 +57,11 @@ python3 tools/check_state_fields.py       # no field of the mirror answers to no
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real
 python3 tools/check_no_assumptions.py     # no unmarked guess in the canon
 python3 tools/check_handoff_ready.py      # a new session could take over
+python3 tools/check_version_parity.py     # one product, one version, in all four files
 ```
 
-Measured on **Debian**, `cargo` from an ordinary shell. The three toolchain numbers have one
-source of record — `config/toolchain.json` — and the documents that called this a Windows box
-were corrected by `T-045`.
+Measured on **Debian**, `cargo` from an ordinary shell; the toolchain numbers come from
+`config/toolchain.json` and nowhere else.
 
 ## The position, in four sentences
 
@@ -78,18 +84,15 @@ none of it is independently confirmed. Every mark added since is ◑.
 are all OPEN and none needs an Owner-minted artifact; what blocks them is deployment wiring and
 a second principal.
 
-**There is no path in this repository to a production trust root.**
-[`docs/DEBIAN_DEPLOYMENT.md`](docs/DEBIAN_DEPLOYMENT.md) states it: `broctl build-registry`
-hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses
-a development registry whenever the operator pin comes from the production path. Everything
-runnable produces a **development** trust root — enough to exercise every path end to end, and not
-enough to close O-2, O-3 or O-5.
+**There is no path in this repository to a production trust root** — everything runnable
+produces a *development* one, enough to exercise every path end to end and not enough to close
+O-2, O-3 or O-5. The three refusals that make it so are in
+[`docs/DEBIAN_DEPLOYMENT.md`](docs/DEBIAN_DEPLOYMENT.md) and CLAUDE.md §6.
 
 ## How to read the marks
 
-`✅` an independent audit confirmed it. `◑` the Builder believes it and **nobody else has
-looked**. Both RED verdicts here came from rows marked `✅` by the session that wrote the
-fix, so never promote your own work. Read
+`✅` independently confirmed · `◑` the Builder's own claim. Both RED verdicts here came from
+rows a session marked `✅` about its own fix. Read
 [`AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing any tick in prose.
 
 ## Two things that will save you a day
@@ -105,15 +108,12 @@ roughly ninety checks swept in an earlier wave, four came back green.
 
 ## Where the state lives
 
-| | |
-|---|---|
-| Machine mirror, checked against live GitHub | [`config/current_state.json`](config/current_state.json) · `tools/check_repo_state.py` |
-| Open tasks | [`TASKS.md`](TASKS.md) |
-| Durable product plan | [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) |
-| Audit position | [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md) |
-| Blocked on whom | [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) |
-| Trust model, read before reasoning about trust | [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) |
-| History | [`docs/archive/`](docs/archive/) |
+CLAUDE.md §3 is the one table; this was a third copy of it. The two to open first:
+[`config/current_state.json`](config/current_state.json) — the machine mirror, verified against
+live GitHub by `tools/check_repo_state.py` — and
+[`apps/desktop/AUDIT/AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md), the audit position.
+Open tasks are [`TASKS.md`](TASKS.md); what is blocked on whom is
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
 ## Status tokens
 
