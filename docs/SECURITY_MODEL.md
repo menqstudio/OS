@@ -117,6 +117,57 @@ made on the strength of it.
   (all 23 registry-root call sites AST-enumerated and frozen), `engine/tests/test_audit_head_anchor.py`,
   `engine/tests/test_bytecode_shadow.py`.
 
+### 1.3a The Floor Writer principal — and why it is NOT an eighth governed-turn service
+
+**Architect ruling R3, 2026-08-31:** the Floor Writer is a **distinct runtime security
+principal**. It is not a helper of the completion process and not a helper of the supervisor. It
+holds independent authority to mutate protected anti-rollback state — the per-task evidence-head
+floor — and a principal with that authority is named, not folded into whichever process happens
+to host it.
+
+**What it owns.** The per-task floor (`{task_id}.floor.json` and the `_index.json` roster) in a
+store the Floor Writer account owns and the policed completion account cannot write. Before this,
+`bro_completion._advance_head_floor` wrote that mark *in the very process the mark polices*,
+while `_refuse_self_owned_floor` demanded a directory that process could not write — two
+requirements with no intersection, satisfiable only by
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, which short-circuits **every** custody rule in
+the runtime rather than only this one.
+
+**Custody domain versus mutation authority.** The authoritative state belongs to the
+**Supervisor security/custody domain**; the **Floor Writer principal** is the narrowly scoped
+identity permitted to mutate it. Those are two different sentences and both are true. A future
+session must not read "Supervisor custody domain" as "the supervisor's ledger table".
+
+**It is NOT one of the seven runtime service UIDs, and this is measured rather than assumed.**
+`RUNTIME_PRINCIPALS` (`apps/desktop/src-tauri/core/src/windows_broker.rs`) is a fixed array of
+**seven** — Broker, Authority, Sidecar, Supervisor, Recorder, Executor, Signer — and
+`verify_distinct_principals()` requires those seven pairwise-distinct and none equal to the
+interactive login SID. Every one of them is a hop in the **governed turn**. The Floor Writer
+serves the **completion** path, which is a different process family and not a hop in that ladder.
+
+That distinction decides a normative question. `WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md` §2.6
+states *"The SEVEN runtime service UIDs (NORMATIVE)"*, and
+`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md` §6 warned that an eighth **resident** principal
+would be an amendment to that clause, ratifiable only by the Architect. **This slice does not
+create that amendment**: it adds no member to `RUNTIME_PRINCIPALS`, changes no arm of
+`verify_distinct_principals()`, and leaves §2.6 true as written. Adding the Floor Writer to that
+array would silently widen a clause a rev-30 audit passed, which is why it was not done.
+
+**The two floors are separate objects and must stay separate.** The supervisor's per-**install**
+`evidence-head-sequence.json` ceiling and this per-**task** floor live in different sequence
+domains. Unifying them makes every deployment's second task permanently un-completable: two
+genuine heads at sequence 1 present as a fork, and the ledger refuses the second with
+`EvidenceFork`. `bro_completion._head_floor_dir` documents that at length, established by running
+it rather than by reading.
+
+**Linux only, and it stops rather than approximating.** Peer authentication is `SO_PEERCRED`.
+No equivalent-strength mechanism is wired for Windows or macOS, so the service refuses to bind
+and refuses to serve there. A weaker mechanism under the same name — trusting a path, a token
+file, a parent process — would be a security property that reads as equivalent and is not.
+
+**Status.** Implementation exists and is **not Architect-approved**; the design merged as PR #112
+and this is the build under R1–R5. No production trust claim follows from either.
+
 ### 1.3 What is NOT true, stated as prominently as what is
 
 - **This is Windows-only today.** `anchor::seal` returns `ProvisionError::Unsupported` on POSIX by

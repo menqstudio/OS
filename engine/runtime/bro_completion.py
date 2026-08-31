@@ -285,7 +285,7 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         # Advance the mark only after the chain verified, and only upward. A later run
         # presenting a genuinely signed but OLDER head — the retained anchor of a
         # self-consistent truncated chain — is then refused against this record.
-        _advance_head_floor(resolved_store, task_id, head.head_sequence, head_digest)
+        _commit_head_floor(resolved_store, task_id, head.head_sequence, head_digest)
         return digest
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
@@ -856,6 +856,68 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
     except OSError as exc:
         raise CompletionError(
             f"cannot record the evidence head floor for {task_id}: {exc}") from exc
+
+
+#: The Floor Writer's socket. Set on a migrated deployment; absent on one that has not moved yet.
+ENV_FLOOR_WRITER_SOCKET = "BRO_FLOOR_WRITER_SOCKET"
+#: The install this deployment is. The governed chain carries an ``install_id`` in its turn
+#: payload; the completion path has no such payload, so the Floor Writer's scope binding comes
+#: from deployment configuration — and it is REQUIRED, not defaulted, because a floor advanced
+#: under a guessed scope is a floor advanced for somebody else.
+ENV_INSTALL_ID = "BRO_INSTALL_ID"
+#: The uid the Floor Writer runs as. Optional, and when it is set the client refuses a socket
+#: served by anyone else — so a writer replaced by another principal is caught rather than used.
+ENV_FLOOR_WRITER_UID = "BRO_FLOOR_WRITER_UID"
+
+
+def _commit_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
+                       head_digest: str) -> None:
+    """Establish the floor authoritatively, and refuse the completion if it cannot be.
+
+    **Two deployments, and the difference is not a fallback.**
+
+    When ``BRO_FLOOR_WRITER_SOCKET`` names a Floor Writer, that service is the ONLY writer.
+    Unreachable, refusing, answering with something that does not bind to this request — every
+    one of them raises, and ``validate_evidence_chain`` therefore never returns the digest a
+    caller would treat as a verified chain. There is deliberately no path from a configured-but-
+    failing writer back to the in-process write: that would be the fallback writer R4 forbids,
+    and it would hand an attacker the whole property by making the service unavailable.
+
+    When the variable is ABSENT the deployment has not migrated, and the legacy in-process write
+    runs exactly as before — with the contradiction ``_head_floor_dir`` documents still standing.
+    That is not a fallback for an unavailable writer; it is the state this repository was already
+    in, left untouched so that migrating is a deployment act rather than a silent behaviour
+    change under every existing install. A deployment that wants the property configures the
+    writer, and from that moment there is one writer and no way around it.
+    """
+    socket_path = os.getenv(ENV_FLOOR_WRITER_SOCKET)
+    if not socket_path:
+        _advance_head_floor(store, task_id, head_sequence, head_digest)
+        return
+    install_id = os.getenv(ENV_INSTALL_ID)
+    if not install_id:
+        raise CompletionError(
+            f"{ENV_FLOOR_WRITER_SOCKET} names a Floor Writer but {ENV_INSTALL_ID} is unset: the "
+            "advancement has no scope to be bound to, and a floor advanced under a guessed "
+            "scope is a floor advanced for someone else")
+    expected_uid = os.getenv(ENV_FLOOR_WRITER_UID)
+    try:
+        expected = int(expected_uid) if expected_uid else None
+    except ValueError as exc:
+        raise CompletionError(
+            f"{ENV_FLOOR_WRITER_UID} is not an integer uid: {expected_uid!r}") from exc
+    try:
+        import floor_writer
+    except ImportError as exc:  # pragma: no cover - the module ships beside this one
+        raise CompletionError(f"the Floor Writer client is unavailable: {exc}") from exc
+    try:
+        floor_writer.request_advance(
+            pathlib.Path(socket_path), install_id, task_id, head_sequence, head_digest,
+            expected_writer_uid=expected)
+    except floor_writer.FloorWriterError as exc:
+        raise CompletionError(
+            f"the evidence head floor for {task_id} was not authoritatively advanced, so this "
+            f"completion is not verified: {exc}") from exc
 
 
 def _no_pending_execution() -> None:
