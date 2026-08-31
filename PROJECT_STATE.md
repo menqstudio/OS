@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #207 · branch `feat/credential-store`** (base `main`, tip `6c39dbe`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #214 on `feat/version-parity-gate`.
 >
-> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
+> §4 is a REFERENCE store, not a value store: `credential_bindings.auth_ref`, refused through the same normalize_auth_ref the Integrations page uses. No `Secret` type, because no value arrives.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

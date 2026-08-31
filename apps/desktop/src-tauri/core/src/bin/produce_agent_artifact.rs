@@ -36,6 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         grant_expires_at_epoch: now_ms / 1000 + 7 * 24 * 3600,
         // This agent may not leave the box. Stated, not omitted.
         egress: vec![],
+        // and needs no credential, which is also stated rather than omitted.
+        credential_slots: vec![],
         steps: vec![
             Step {
                 id: "summarise".into(),

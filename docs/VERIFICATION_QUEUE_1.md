@@ -141,8 +141,8 @@ or they will measure the previous checkout.
 
 | # | where | what |
 |---|---|---|
-| V-1 | `credentials::is_bound` (#207) | the slot predicate is untested |
-| V-2 | `Grant::for_egress` (#207) | the credential-slot refusal is untested |
+| V-1 | `credentials::is_bound` (#207) | **CLOSED on #207.** Every other test varied the digest, so `AND slot_id = ?2` could have been dropped and stayed green. `is_bound_answers_about_the_slot_it_was_asked_about` now reddens on exactly that mutation |
+| V-2 | `Grant::for_egress` (#207) | the credential-slot refusal is untested. STILL OPEN: it lives in `agent_bundle.rs`, which §4's rewrite did not touch |
 | V-3 | `security::map_event` (#210) | **CLOSED on #210.** It could drop the `source` mark with nothing noticing; V-5's repaired assertion now reddens on exactly that mutation |
 | V-4 | `Home.tsx` (#210) | the seeded count can become `0`; nothing notices |
 | V-5 | `repo.rs::both_read_surfaces_carry_the_mark` (#210) | **CLOSED on #210.** It asserted one surface, was named for two, and closed on a restatement of an earlier assertion. It now asserts `security::summary`'s own rows |

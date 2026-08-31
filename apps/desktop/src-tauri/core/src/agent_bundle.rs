@@ -38,7 +38,11 @@ pub const NOT_IMPLEMENTED: &[&str] = &[
     "call steps: the destination IS now enforced against the grant — an unnamed `call_ref` is \
      refused and the decision is recorded. What is NOT IMPLEMENTED is the TRANSPORT: an \
      authorized call is still refused, because nothing here opens a connection",
-    "credential bindings: §4's (bundle_digest, slot_id) binding store",
+    "credential VALUES: there are none on this side. A step names a slot and the \
+     grant declares it; what is bound to (bundle_digest, slot_id) in \
+     `credentials` is an `auth_ref` — a REFERENCE the engine or the operator \
+     resolves on the other side of the boundary, per migration 0022. What is NOT \
+     here is anything to hand a reference TO — see the transport, below",
     "approval: the native confirmation writes no approvals.confirmation_digest for a bundle",
     "eval/cases.jsonl: the cases a build was accepted against",
 ];
@@ -202,14 +206,25 @@ impl Grant {
     pub fn for_egress(
         expires_at_epoch: i64,
         egress: &[EgressEntry],
+        credential_slots: &[String],
     ) -> Result<Self, Refusal> {
         // The table must parse as an allowlist. Built here and thrown away:
         // this call is the validation, and `egress_allowlist` rebuilds it at the
         // point of use, so a grant read from disk is judged again rather than
         // trusted because it was valid when it was written.
         named_rows(egress).map_err(refusal_for)?;
+        // A slot NAME, never a value. What the name resolves to lives in
+        // `credentials`, keyed on this bundle's digest, and never enters the
+        // grant, the flow or the bundle — see §4.
+        let mut slots = credential_slots.to_vec();
+        slots.sort();
+        slots.dedup();
+        if slots.len() != credential_slots.len() || slots.iter().any(|x| x.is_empty()) {
+            return Err(Refusal::CredentialSlotUnbound);
+        }
         let mut grant = Grant::for_local_only(expires_at_epoch);
         grant.egress = egress.to_vec();
+        grant.credential_slots = slots;
         Ok(grant)
     }
 
@@ -321,6 +336,12 @@ pub enum Refusal {
     /// Two rows sharing a name, or a row with none. Resolution would depend on
     /// iteration order, and an authority that does is not one.
     EgressTableUnusable,
+    /// A step requires a slot the grant declares, and NO value is bound to it
+    /// for this bundle digest. Distinct from `CredentialSlotUnbound`, which is
+    /// the grant not declaring the slot at all: "the operator has not provided
+    /// this credential" and "this agent was never allowed one" are different
+    /// facts and a reader must be able to tell them apart.
+    CredentialBindingMissing,
     /// The destination was AUTHORIZED and the call still did not happen,
     /// because nothing in this tree opens a connection. Distinct from every
     /// refusal above: it is the only one that means the grant said yes.
@@ -347,6 +368,7 @@ impl Refusal {
             Refusal::EgressNotGranted => "egress_not_granted",
             Refusal::EgressNotExpressible => "egress_not_expressible",
             Refusal::EgressTableUnusable => "egress_table_unusable",
+            Refusal::CredentialBindingMissing => "credential_binding_missing",
             Refusal::CallTransportUnimplemented => "call_transport_unimplemented",
             Refusal::Unreadable => "unreadable",
         }
@@ -473,6 +495,10 @@ pub struct BuildSpec {
     /// default and means "this agent may not leave the box"; it is a field
     /// rather than an absence so a builder has to state the answer.
     pub egress: Vec<EgressEntry>,
+    /// The credential SLOT NAMES this agent's steps may require. Names only:
+    /// a value is bound to `(bundle_digest, slot_id)` in `credentials`, after
+    /// the build, behind its own gate.
+    pub credential_slots: Vec<String>,
     pub steps: Vec<Step>,
 }
 
@@ -489,7 +515,7 @@ pub fn build(store_root: &Path, spec: &BuildSpec) -> Result<String, Refusal> {
         max_wall_ms: 120_000,
         steps: spec.steps.clone(),
     };
-    let grant = Grant::for_egress(spec.grant_expires_at_epoch, &spec.egress)?;
+    let grant = Grant::for_egress(spec.grant_expires_at_epoch, &spec.egress, &spec.credential_slots)?;
 
     let flow_bytes = serde_json::to_vec_pretty(&flow).map_err(|_| Refusal::FlowUnparseable)?;
     let grant_bytes = serde_json::to_vec_pretty(&grant).map_err(|_| Refusal::GrantUnparseable)?;
@@ -538,6 +564,7 @@ mod tests {
             built_at_epoch: now,
             grant_expires_at_epoch: now + 3600,
             egress: vec![],
+            credential_slots: vec![],
             steps: vec![
                 Step { id: "a".into(), kind: StepKind::Store, verb: Some("knowledge_note".into()),
                        argument: Some("one".into()), call_ref: None,
@@ -730,7 +757,7 @@ mod tests {
     /// writes them.
     #[test]
     fn a_grant_can_name_destinations_and_resolve_a_call_ref_to_one() {
-        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com")]).unwrap();
+        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com")], &[]).unwrap();
         assert_eq!(g.written_by, GRANT_WRITER);
         let allow = g.egress_allowlist("bundle-1").unwrap();
         let d = allow.authorize_ref("slack-post");
@@ -756,7 +783,7 @@ mod tests {
             "https://SLACK.example.com",
         ] {
             assert_eq!(
-                Grant::for_egress(0, &[entry("x", bad)]),
+                Grant::for_egress(0, &[entry("x", bad)], &[]),
                 Err(Refusal::EgressNotExpressible),
                 "{bad}"
             );
@@ -767,16 +794,16 @@ mod tests {
     #[test]
     fn a_grant_refuses_an_egress_table_it_cannot_resolve() {
         assert_eq!(
-            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("a", "https://two.example")]),
+            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("a", "https://two.example")], &[]),
             Err(Refusal::EgressTableUnusable)
         );
         assert_eq!(
-            Grant::for_egress(0, &[entry("", "https://one.example")]),
+            Grant::for_egress(0, &[entry("", "https://one.example")], &[]),
             Err(Refusal::EgressTableUnusable)
         );
         // and two names for ONE destination is refused by the allowlist itself
         assert_eq!(
-            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("b", "https://one.example")]),
+            Grant::for_egress(0, &[entry("a", "https://one.example"), entry("b", "https://one.example")], &[]),
             Err(Refusal::EgressNotExpressible)
         );
     }
@@ -785,7 +812,7 @@ mod tests {
     /// when written is re-judged every time it is used.
     #[test]
     fn the_allowlist_is_rebuilt_from_the_grant_and_carries_the_population() {
-        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com:8443")]).unwrap();
+        let g = Grant::for_egress(0, &[entry("slack-post", "https://slack.example.com:8443")], &[]).unwrap();
         let allow = g.egress_allowlist("bundle-digest-1").unwrap();
         assert_eq!(allow.population(), Population::Produced);
         assert_eq!(allow.grant_id(), "bundle-digest-1");

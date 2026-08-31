@@ -10,7 +10,7 @@ The two lists that matter are **[Proven](#proven-by-my-own-mutation)** and
 
 | | task | outcome |
 |---|---|---|
-| **A** | §4, the credential store | **DONE — #207**, and it carries a flag: see [the conflict](#the-one-thing-to-decide-before-merging-anything) |
+| **A** | §4, the credential store | **DONE — #207**, then REWRITTEN as a reference store on the Owner's decision: see [the conflict](#the-one-thing-to-decide-before-merging-anything) |
 | **B** | the transport seam | **BLOCKED — on a decision, not on work** |
 | **C** | T-056, controls name what they prevent | **DONE — #208** |
 | **D** | `check_prior_art` re-declaration | **DONE — #209**; the reported defect is not real |
@@ -22,7 +22,7 @@ The two lists that matter are **[Proven](#proven-by-my-own-mutation)** and
 | **J** | the evidence index | **DONE — #213** |
 | **K** | this report | on #213's branch |
 
-## The one thing to decide before merging anything
+## The one thing to decide before merging anything — DECIDED 2026-08-31
 
 **PR #207 introduces the only secret-valued column in the schema, and migration 0022
 already forbids exactly that.** `grep -rniE "secret|password|token" core/schema/`
@@ -32,14 +32,23 @@ returns `credential_bindings.secret` — mine — and nothing else holding a val
 > desktop is deliberately on the untrusted side of the boundary; a credential that got
 > here would be a credential leaked.
 
-Every constraint of Task A is met **as written**, including "state where the bytes
+Every constraint of Task A was met **as written**, including "state where the bytes
 rest". Stating it was the wrong remedy for a repository that had already decided the
 desktop holds none. **Recommended:** store an `auth_ref`-shaped reference, reuse
 `normalize_auth_ref`, and delete `Secret` / `resolve_secret` from `core`. Cost: most of
 #207's storage half is rewritten. **I did not make that change** — the task specified a
-value store, and this is the Owner's call. It is also why **Task B is blocked**: "the
-transport receives a slot id, never bytes" is coherent *because* the value lives on the
-other side of that boundary.
+value store, and it was the Owner's call.
+
+**The Owner made it on 2026-08-31, and withdrew his own constraint:** *"Ես ենթադրեցի,
+որ պահեստ պիտի լինի, ու հարցը միայն թե որտեղ։ Phase 9-ը արդեն որոշել ա, որ desktop-ը
+գաղտնիք չի պահում ընդհանրապես։"* The rewrite is on #207: `credential_bindings.auth_ref`
+carrying 0022's CHECK, `bind` refusing through the same `normalize_auth_ref`, and no
+`Secret` type at all. Every other constraint — digest keying, born unbound, the gate,
+the ungated unbind, three call outcomes — is unchanged. Four mutations prove the new
+checks; the sweep is in that PR's commit message.
+
+That also unblocks **Task B**: "the transport receives a slot id, never bytes" is now
+coherent, because there are no bytes on this side to receive.
 
 ## Proven by my own mutation
 
