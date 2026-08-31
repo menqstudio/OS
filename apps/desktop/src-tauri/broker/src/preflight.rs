@@ -1497,8 +1497,8 @@ mod tests {
                 "manifest_path": "/kit/manifest.json",
                 "manifest_sig_path": "/kit/manifest.sig",
                 "floor_path": "/kit/floor.json",
-                "signer_key_id": "brops-live-signer-1",
-                "supervisor_attestation_key_id": "brops-live-sup-attest-1"
+                "signer_key_id": "brops-live-signer-1", // gitleaks:allow (fake public key-id)
+                "supervisor_attestation_key_id": "brops-live-sup-attest-1" // gitleaks:allow (fake public key-id)
             },
             "sockets": {"authority": "/kit/authority.sock"},
             "content": {"messages_db": "/kit/messages.db", "system": "you are Bro", "window": 8},
