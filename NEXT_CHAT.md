@@ -6,11 +6,11 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `verify/queue-1-reverification` · **head** `cd954f1` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `feat/negative-matrix-declared` · **head** `6782787` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #211 · branch `verify/queue-1-reverification`** (base `main`, tip `cd954f1`, task T-061). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #212 on `feat/negative-matrix-declared`.
+> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `6782787`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #214 on `feat/version-parity-gate`.
 >
-> A second measurement of Queue 1 from a fresh clone: 22 checks proven by my own mutations, 4 defended by nothing, and one assertion in PR #210 that cannot fail.
+> 12 negative-matrix rows out of unreviewed: 3 implemented (mutation-proven), 9 blocked on a measured cause.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
