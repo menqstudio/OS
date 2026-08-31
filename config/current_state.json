@@ -138,10 +138,10 @@
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "6c39dbe6f1229fee78627de1ba5d301e1e2d5200",
+      "head": "4bdd803ef7b728e6de132e24d5bce5599c9856a0",
       "conclusion": "success",
-      "run_id": 33358637975,
-      "note": "Read from `gh run list --branch main --workflow ci` while this branch was open. It goes stale at the next merge and that is T-059, not a defect in the code at this head."
+      "run_id": 33360197471,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #207 merged. Stale by construction while T-059 is open."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
