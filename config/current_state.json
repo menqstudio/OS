@@ -1,30 +1,19 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
+  "settled_at_main_head": "52c263abc9f3325edade8626346c089a7e711263",
   "sync": {
-    "baseline_main_head_at_sync": "363c51c6242ed43b11a9bcd273394c27c78e7251",
-    "snapshot_branch": "feat/provisioning-preflight",
+    "baseline_main_head_at_sync": "52c263abc9f3325edade8626346c089a7e711263",
+    "snapshot_branch": "design/floor-writer-service",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "feat/provisioning-preflight"
+    "branch": "design/floor-writer-service"
   },
-  "prs": [
-    {
-      "number": 112,
-      "branch": "design/floor-writer-service",
-      "base": "main",
-      "draft": false,
-      "merge_state": "open",
-      "role": "design",
-      "head": "3d0f053a79e1e3de118c6ce6ebab8e17e039c1f2",
-      "why_listed": "Open and NOT the carrier: The floor-writer service has a design now (T-020) — a proposal, not an implementation. Listed so the settled snapshot names it; its exact head is anchored."
-    }
-  ],
+  "prs": [],
   "status_tokens": {
     "_note": "Every human state doc's CURRENT region must contain each KEY: value token verbatim. No carrier-transition is modeled (PR #48 is a self-carrier that does not merge to repair main), so there are no CARRIER_IF_* tokens.",
     "CURRENT_ACTIVE_TASK": "egress-authorizer",
@@ -124,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 217,
-    "branch": "feat/provisioning-preflight",
+    "number": 112,
+    "branch": "design/floor-writer-service",
     "state": "open",
-    "what": "Lifted from the stale branch at-main-2, which is emptied rather than rebased. build_governed_executor is 15 return-fail_closed branches that all produce one observable, a blocked reply; this reports the SAME requirement set by name -- 27 of them, met / not met / not measurable, and who would have to provision each. It provisions nothing and weakens nothing.",
-    "note": "The shut governed gate now says WHICH requirement each machine fails: 27 of them, met / not met / not measurable, and who must provision each.",
+    "what": "The floor-writer service design (T-020, roadmap SSI step 1). The anti-rollback floor's writer is the party the floor exists to constrain: _refuse_self_owned_floor demands a directory the process cannot write, _advance_head_floor writes it in that same process, and the two have no intersection. A PROPOSAL: nothing is implemented and merging it is not approving it.",
+    "note": "The floor-writer design, re-verified against this head and NOT superseded. Still a PROPOSAL: what it waits on is the Architect audit, not a merge.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #217 (feat/provisioning-preflight): the OWNER merges this one -- he said so for this task. Then delete origin/at-main-2, which this empties, and never before. Still to do from the same instruction: lift docs/design/FLOOR_WRITER_SERVICE_DESIGN.md off design/floor-writer-service onto main and settle PR #112. origin/docs/evidence-bash-gap is already deleted: zero unique files and zero unique lines.",
+    "current": "PR #112 (design/floor-writer-service): the last open pull request. Merge on an all-green exact head, then DELETE origin/at-main-2 -- after the merge, never before -- and settle by reading `gh run list --branch main`. The design waits on the ARCHITECT audit, SSI step 2, not on a merge. origin/docs/evidence-bash-gap is already gone: zero unique files and zero unique lines.",
     "_note": "The carrier is current_workflow_pr (#214 on feat/version-parity-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
-      "conclusion": "success",
-      "run_id": 33363971782,
-      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #216 merged. Stale by construction while T-059 is open."
+      "head": "52c263abc9f3325edade8626346c089a7e711263",
+      "conclusion": "failure",
+      "run_id": 33378370461,
+      "note": "Repo-state RED at this head, and honestly so, for a reason about this file and not about any code: #217's snapshot recorded PR #112 at the head it had when #217 was written, #112 was then pushed forward, and merging #217 carried the stale record onto main. T-059 at N=2. The two branch heads involved are deliberately NOT named here: a squash merge erases them, so naming one would put a dead object in the canon -- which is the defect check_doc_claims caught in this very field. Fixed by this PR, the only open one left."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
