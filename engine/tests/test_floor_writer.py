@@ -28,9 +28,18 @@ from bro_contracts import canonical_json_sha256
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
 INSTALL = "install-1"
+
+#: The service is Linux-only by design — ``SO_PEERCRED`` is its authentication primitive and no
+#: equivalent-strength mechanism is wired elsewhere — so this whole module SKIPS off Linux with
+#: that reason, rather than erroring. It used to error: ``os.geteuid`` does not exist on Windows,
+#: so the module failed to LOAD there and CI reported a broken test rather than an unsupported
+#: platform. Those are different facts and only one of them is true.
+LINUX_ONLY = "the Floor Writer authenticates with SO_PEERCRED, which requires Linux"
+_LINUX = sys.platform == "linux"
+
 #: Not this process's uid. Custody requires the store's owner and the caller to differ, and a
 #: fixture that used the same uid would be asserting a weaker rule than the one shipped.
-CALLER = os.geteuid() + 1
+CALLER = (os.geteuid() + 1) if _LINUX else 0
 
 
 def _request(task_id="task-1", head=5, digest=DIGEST_A, install=INSTALL, **overrides):
@@ -67,6 +76,7 @@ class FloorWriterFixture(unittest.TestCase):
         return json.loads(path.read_text(encoding="utf-8"))
 
 
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
 class ThreatCases(FloorWriterFixture):
     """The numbering follows the Architect's list so an auditor can walk them in order."""
 
@@ -349,6 +359,7 @@ class ThreatCases(FloorWriterFixture):
         self.assertIn("the mark was removed", reply["detail"])
 
 
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
 class PlatformBoundary(unittest.TestCase):
     """Linux-only, stated rather than approximated."""
 
@@ -372,6 +383,7 @@ class PlatformBoundary(unittest.TestCase):
         self.assertIn("requires Linux", str(caught.exception))
 
 
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
 class RealSocketRoundTrip(FloorWriterFixture):
     """One end-to-end exchange over a real AF_UNIX socket, so the framing, the kernel's
     ``SO_PEERCRED`` and the reply binding are exercised together rather than mocked apart."""
@@ -417,6 +429,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
 class CompletionIntegration(unittest.TestCase):
     """The production call path, not the unit.
 
