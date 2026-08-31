@@ -98,6 +98,47 @@ class Preconditions(unittest.TestCase):
         self.assertIn("FW-2", caught.exception.detail)
 
 
+class ImportsWhereItDoesNotRun(unittest.TestCase):
+    """A Linux-only module must still IMPORT on Windows, or its tests fail instead of skipping.
+
+    `provision_floor_writer` needs `pwd` and `grp`, which do not exist off POSIX. A bare
+    `import pwd` at the top would make this whole test module fail to LOAD on the Windows engine
+    job — and a suite that cannot load reads as broken rather than as an unbuilt platform. That
+    exact confusion has already cost this repository one red job.
+
+    Measured by importing the module in a child interpreter with both databases blocked, rather
+    than by patching an attribute: the failure being guarded against happens at import time, and
+    an attribute patch happens after it.
+    """
+
+    def test_the_module_imports_with_no_posix_principal_database(self):
+        program = (
+            "import sys, importlib\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "class Blocker:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name in ('grp', 'pwd'):\n"
+            "            raise ImportError(name)\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, Blocker())\n"
+            "for n in ('grp', 'pwd'):\n"
+            "    sys.modules.pop(n, None)\n"
+            "m = importlib.import_module('provision_floor_writer')\n"
+            "assert m.grp is None and m.pwd is None\n"
+            "try:\n"
+            "    m.resolve_user('root')\n"
+            "    raise SystemExit('resolve_user did not refuse')\n"
+            "except m.ProvisionError as exc:\n"
+            "    assert exc.code == m.EXIT_PLATFORM, exc.code\n"
+            "print('ok')\n"
+        )
+        import subprocess
+        result = subprocess.run([sys.executable, "-c", program, str(ROOT / "runtime")],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr[-600:])
+        self.assertIn("ok", result.stdout)
+
+
 class Generation(unittest.TestCase):
     """§1.10, the half that did not exist: the number is MINTED, not written by hand."""
 

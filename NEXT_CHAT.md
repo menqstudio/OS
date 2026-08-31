@@ -22,19 +22,19 @@ document under ONE rename, a resolver that REFUSES an unconfigured floor, root-o
 that MINTS the §1.10 generation (B6), and `SECURITY_MODEL.md` §1.3a as a ten-row deployment
 contract naming what enforces each row (C6).
 
-**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` -- four real accounts, one
-real socket: authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied
-`floor.advance`, provisioning negatives, meta-controls, cleanup proved. 23/23 (closes C4).
+**Measured:** `engine/ci/floor_writer_boundary_proof.sh`, four accounts on one real socket: authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied
+`floor.advance`, provisioning negatives, meta-controls, cleanup. 23/23, closes C4.
 `engine/tests/test_floor_writer_durability.py` -- the commit's syscalls out of the kernel (temp,
 `fsync`, rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s
 mid-write, each leaving a complete document.
 
-**NOT done:** C1 TOCTOU, C2 one custody contract, C3 test structure, C7 principal-model, a
-second Architect pass. B1's one local-write call site is an AST gate now, not a source review.
-§1.7 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT by
-ruling; the B/C list lives only in `#219`'s body.
+**NOT done:** C1 TOCTOU, C2 custody contract, C3 test structure, C7 principal-model, a second
+Architect pass. B1's one call site is an AST gate, not a review; a Linux-only module
+must still IMPORT off Linux — CI found that.
+§1.7 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT; the
+B/C list lives only in `#219`'s body.
 
-The transport and the produced agent's egress are **T-058** in [`TASKS.md`](TASKS.md).
+The transport and the produced agent's egress are **T-058**.
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
 named in the canon must be an **ancestor of `main`**; `check_doc_claims` refuses a branch head (#204).
@@ -56,7 +56,7 @@ in a required context. The row is **T-063**.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2105 OK, 10 skipped
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2106 OK, 10 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1147 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context

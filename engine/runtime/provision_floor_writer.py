@@ -50,13 +50,21 @@ from the filesystem is how a deployment comes up looking provisioned.
 from __future__ import annotations
 
 import argparse
-import grp
 import json
 import os
 import pathlib
-import pwd
 import stat
 import sys
+
+try:                                    # POSIX principal databases.
+    import grp
+    import pwd
+except ImportError:                     # pragma: no cover - Windows, where FW-1 does not run.
+    # This module is Linux-only and `require_linux` refuses before anything here is reached. It
+    # must still IMPORT everywhere, because a test module that cannot load does not skip — it
+    # fails, and it fails in a way that reads as a broken suite rather than as an unbuilt
+    # platform. That distinction cost this repository a red Windows job once already.
+    grp = pwd = None
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -124,6 +132,8 @@ def require_root(euid: Optional[int] = None) -> None:
 
 def resolve_user(name: str) -> Tuple[int, int]:
     """``(uid, gid)`` for a name or a numeric id. An unknown principal is a refusal, not a create."""
+    if pwd is None:
+        raise ProvisionError(EXIT_PLATFORM, "there is no POSIX user database on this platform")
     try:
         entry = pwd.getpwuid(int(name)) if name.isdigit() else pwd.getpwnam(name)
     except (KeyError, ValueError) as exc:
@@ -137,6 +147,8 @@ def resolve_user(name: str) -> Tuple[int, int]:
 def resolve_group(name: str) -> Tuple[int, List[str]]:
     """``(gid, members)``. The members are recorded in the receipt: everyone who can TRAVERSE to
     the endpoint, which is a different and wider set than everyone the allowlist admits."""
+    if grp is None:
+        raise ProvisionError(EXIT_PLATFORM, "there is no POSIX group database on this platform")
     try:
         entry = grp.getgrgid(int(name)) if name.isdigit() else grp.getgrnam(name)
     except (KeyError, ValueError) as exc:
