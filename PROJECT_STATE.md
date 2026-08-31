@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `6782787`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #214 on `feat/version-parity-gate`.
+> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
 >
-> 12 negative-matrix rows out of unreviewed: 3 implemented (mutation-proven), 9 blocked on a measured cause.
+> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

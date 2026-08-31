@@ -178,7 +178,12 @@ export function Home() {
       .map((e) => parseTime(e.createdAt))
       .filter((n): n is number => n != null)
       .sort((a, b) => a - b);
-    if (times.length === 0) return { points: [] as { label: string; value: number }[], total: 0, peak: 0 };
+    // T-057: how many of the plotted events are FABRICATED. Counted here rather
+    // than filtered out — hiding them would change the picture without saying so,
+    // and the honest fix is to draw the same line and tell the reader what is in it.
+    const seeded = rows.filter((e) => e.source === 'seed').length;
+    if (times.length === 0)
+      return { points: [] as { label: string; value: number }[], total: 0, peak: 0, seeded: 0 };
     const min = times[0];
     const max = times[times.length - 1];
     const span = max - min || 1;
@@ -192,7 +197,7 @@ export function Home() {
       label: fmt.format(new Date(min + ((i + 0.5) / FLOW_BUCKETS) * span)),
       value,
     }));
-    return { points, total: times.length, peak: Math.max(...counts) };
+    return { points, total: times.length, peak: Math.max(...counts), seeded };
   }, [activity.data, lang]);
 
   const showAnswerBlock = asking || answer || askError || blocked;
@@ -383,7 +388,7 @@ export function Home() {
                 data={flow.points}
                 loading={activityR.kind === 'loading'}
                 caption={L('recentActivityCaption')}
-                summary={activitySummary(lang, flow.total, FLOW_BUCKETS, flow.peak)}
+                summary={activitySummary(lang, flow.total, FLOW_BUCKETS, flow.peak, flow.seeded)}
                 unit={L('eventsUnit')}
                 valueHeader={L('eventsHeader')}
                 labelHeader={L('timeHeader')}

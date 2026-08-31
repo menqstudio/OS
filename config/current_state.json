@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "678278712a5f9c5b315ee0124cdc1212de2c9c0b",
+  "settled_at_main_head": "15c7082e759dfe5148b78c536bbd483b8b7e0ca0",
   "sync": {
-    "baseline_main_head_at_sync": "678278712a5f9c5b315ee0124cdc1212de2c9c0b",
-    "snapshot_branch": "feat/negative-matrix-declared",
+    "baseline_main_head_at_sync": "15c7082e759dfe5148b78c536bbd483b8b7e0ca0",
+    "snapshot_branch": "feat/audit-rows-name-their-source",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "feat/negative-matrix-declared"
+    "branch": "feat/audit-rows-name-their-source"
   },
   "prs": [
     {
@@ -34,22 +34,13 @@
       "head": "fe4492387149832b94d11f09dff77d81ab7e4bf0"
     },
     {
-      "number": 210,
-      "branch": "feat/audit-rows-name-their-source",
-      "base": "main",
-      "draft": false,
-      "merge_state": "open",
-      "role": "implementation",
-      "head": "712014ef4dfea767e120c5e5ab6125889a625005"
-    },
-    {
       "number": 214,
       "branch": "feat/version-parity-gate",
       "base": "main",
       "draft": false,
       "merge_state": "open",
       "role": "implementation",
-      "head": "507121a651c0b3aa9bdf818ab831d270c42f2752"
+      "head": "4e9eed74c785580862b1f4004f0e39d75d485516"
     }
   ],
   "status_tokens": {
@@ -151,24 +142,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 212,
-    "branch": "feat/negative-matrix-declared",
+    "number": 210,
+    "branch": "feat/audit-rows-name-their-source",
     "state": "open",
-    "what": "The negative matrix said `unreviewed` for 201 of its 242 rows, which reads like a queue and is really an absence of anyone having looked. This converts what was measured and says why the rest are blocked.",
-    "note": "12 negative-matrix rows out of unreviewed: 3 implemented (mutation-proven), 9 blocked on a measured cause.",
+    "what": "T-057: the 56 fabricated audit rows say so in payload_json, a query alone separates them, and both read mappers carry the mark to the surface those rows exist to animate.",
+    "note": "T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #212 (feat/negative-matrix-declared): merge on an all-green exact head, then read `gh run list --branch main`. The Owner's order after it is #210 (fix its cannot-fail assertion first), then #207 (rewrite SS4 as an auth_ref REFERENCE store -- migration 0022 forbids this process holding a secret at all). #214 is the version-parity gate and is not in that order.",
+    "current": "PR #210 (feat/audit-rows-name-their-source): merge on an all-green exact head, then read `gh run list --branch main`. After it, #207 -- rewritten so the binding holds an auth_ref REFERENCE, never a value, because migration 0022 forbids this process holding a secret at all. #214, the version-parity gate, is outside that order.",
     "_note": "What the CARRIER does next. One entry per carrier; the history of previous carriers is in git, not here."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "678278712a5f9c5b315ee0124cdc1212de2c9c0b",
-      "conclusion": "failure",
-      "run_id": 33356728917,
-      "note": "Repo-state RED after #211 merged: current_workflow_pr named a MERGED pull request and PR #214, opened while the queue was running, was unnamed. The gate is right -- a parked PR has to be visible from this file. Carried here."
+      "head": "15c7082e759dfe5148b78c536bbd483b8b7e0ca0",
+      "conclusion": "success",
+      "run_id": 33357478959,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #212 merged. Stale by construction while T-059 is open."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

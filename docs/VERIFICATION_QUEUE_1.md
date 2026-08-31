@@ -143,14 +143,24 @@ or they will measure the previous checkout.
 |---|---|---|
 | V-1 | `credentials::is_bound` (#207) | the slot predicate is untested |
 | V-2 | `Grant::for_egress` (#207) | the credential-slot refusal is untested |
-| V-3 | `security::map_event` (#210) | can drop the `source` mark; nothing notices |
+| V-3 | `security::map_event` (#210) | **CLOSED on #210.** It could drop the `source` mark with nothing noticing; V-5's repaired assertion now reddens on exactly that mutation |
 | V-4 | `Home.tsx` (#210) | the seeded count can become `0`; nothing notices |
-| V-5 | `repo.rs::both_read_surfaces_carry_the_mark` (#210) | asserts one surface, is named for two, and its final assertion cannot fail |
+| V-5 | `repo.rs::both_read_surfaces_carry_the_mark` (#210) | **CLOSED on #210.** It asserted one surface, was named for two, and closed on a restatement of an earlier assertion. It now asserts `security::summary`'s own rows |
 | V-6 | `produce_agent_artifact.rs` module doc, lines 4-5 | still says the binary *"claims that run, executes it"*; since the dispatch change `run_due` does, and the binary does not call `claim_and_run` |
 
-V-1 through V-5 mean **PR #210's headline claim — "the mark reaches the reader" — is
-half proven.** It reaches `activity::list`. Whether it reaches `security::summary` or
-the Home sparkline is asserted by nothing.
+V-1 through V-5 meant **PR #210's headline claim — "the mark reaches the reader" — was
+half proven**: it reached `activity::list`, and whether it reached `security::summary` or
+the Home sparkline was asserted by nothing.
+
+**Half of that is closed, and the closure was proven both ways.** With
+`security::map_event` mutated to `source: None` — grep-confirmed at `repo.rs:3951`, and it
+compiled, so the mutation is a real one — the OLD assertion printed `ok` and the NEW one
+printed `FAILED ... security::summary must carry the mark too`. The same mutation, two
+verdicts: that is the difference between a test and a restatement. `cargo test --workspace`
+on this branch afterwards: 1092 passed, 0 failed.
+
+**V-4 stays open**: the Home sparkline's seeded count is still asserted by nothing, so
+"the mark reaches the reader" is proven as far as `security::summary` and no further.
 
 ## What this pass did not do
 

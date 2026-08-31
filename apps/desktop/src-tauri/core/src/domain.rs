@@ -146,6 +146,16 @@ camel! {
         /// Fixing the 34 hardcoded call sites without this would have corrected the
         /// stored evidence and left the reader unable to see it.
         pub actor_type: Option<String>,
+        /// `Some("seed")` when this row was FABRICATED by `repo::seed` for the
+        /// demo, `None` when a real audited write produced it.
+        ///
+        /// T-057: 56 rows were written straight into `audit_events` by raw SQL to
+        /// give the activity sparkline "a real heartbeat", and nothing
+        /// distinguished them — a reviewer reading the evidence table saw 56
+        /// fabricated events shaped exactly like real ones. The same defect
+        /// `actor_type` above records, one level up: it is not enough to mark the
+        /// row, the mark has to reach a surface, or the reader still cannot tell.
+        pub source: Option<String>,
         pub actor_id: Option<String>,
         pub entity_type: Option<String>,
         pub entity_id: Option<String>,
