@@ -1,12 +1,12 @@
 {
   "schema": 2,
-  "purpose": "Machine-readable current-state snapshot for menqstudio/OS. STATE: active. DO NOT read a commit id out of this sentence -- read settled_at_main_head and active.*, the fields tools/check_repo_state.py compares against live GitHub. This field held 74,311 characters of prose until 2026-08-29 (T-045); the narrative is in docs/archive/ and the ceiling is in config/canon-budget.json.",
-  "settled_at_main_head": "d42cb65d1b970e40ca0388f7b94a6ca501ee8a36",
+  "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
+  "settled_at_main_head": "95c52c5be74a946a5803201d606777d0aacc1c83",
   "sync": {
-    "baseline_main_head_at_sync": "d42cb65d1b970e40ca0388f7b94a6ca501ee8a36",
+    "baseline_main_head_at_sync": "95c52c5be74a946a5803201d606777d0aacc1c83",
     "snapshot_branch": "fix/prior-art-latest-declaration",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
-    "verification": "check_repo_state is EXACT-HEAD fail-closed. PR #112 is the one durable child PR in prs[] and its exact head is anchored there; the self-carrier is current_workflow_pr, whose exact head is anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push (event head == live headRefOid == marker). Nothing is exempt."
+    "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
@@ -23,6 +23,51 @@
       "role": "design",
       "head": "3d0f053a79e1e3de118c6ce6ebab8e17e039c1f2",
       "why_listed": "Open and NOT the carrier: The floor-writer service has a design now (T-020) — a proposal, not an implementation. Listed so the settled snapshot names it; its exact head is anchored."
+    },
+    {
+      "number": 207,
+      "branch": "feat/credential-store",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "implementation",
+      "head": "fe4492387149832b94d11f09dff77d81ab7e4bf0"
+    },
+    {
+      "number": 210,
+      "branch": "feat/audit-rows-name-their-source",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "implementation",
+      "head": "712014ef4dfea767e120c5e5ab6125889a625005"
+    },
+    {
+      "number": 211,
+      "branch": "verify/queue-1-reverification",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "repository-truth",
+      "head": "d893c20bdf5029922d815a67dedb82278f923e7a"
+    },
+    {
+      "number": 212,
+      "branch": "feat/negative-matrix-declared",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "implementation",
+      "head": "8fe30664902341a1ddb47a31782f696a53d30a4b"
+    },
+    {
+      "number": 213,
+      "branch": "docs/evidence-index",
+      "base": "main",
+      "draft": false,
+      "merge_state": "open",
+      "role": "repository-truth",
+      "head": "45212ad860f53c2e3e3e184f46c33181b4a02a6d"
     }
   ],
   "status_tokens": {
@@ -102,7 +147,7 @@
     "production-half": {
       "status": "first_slice_built",
       "code_exists": true,
-      "note": "Design docs/design/PRODUCTION_HALF_DESIGN.md (T-051); first slice T-055. tools/check_produced_artifact.py prints GREEN on all five, produced from the real code path. Model and call steps are refused at this head, so nothing this slice runs can leave the box. SS3.3 slices 1+2 in PR #200: the lease's allowed_egress axis and the core/src/egress_proxy.rs authorizer. No process is confined; a call step is still refused."
+      "note": "Design docs/design/PRODUCTION_HALF_DESIGN.md (T-051); first slice T-055. check_produced_artifact prints GREEN on all five from the real code path. SS3.3 slices 1+2 and the dispatch have merged; a call step is decided against the grant and then refused for want of a transport, so nothing this wave runs can leave the box."
     }
   },
   "product_roadmap": {
@@ -112,36 +157,37 @@
     "phases_2_to_10": "not_done",
     "cockpit": "22-page cockpit built and wired to real backends; the app is functional. The Phase-4 shared component library (DataTable, Drawer, Rail, StatTile/TileGroup, Mark/LiveMark, InlineAlert and an accessible Beatline chart) is catalogued in docs/DESIGN_SYSTEM.md, with a tokens drift gate. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "ai_entry_points_governed": "Phase 2 COMPLETE on main (#50/#51/#52): all four AI surfaces -- stream_reply, reply_in_conversation, stream_ask and stream_run_step -- route through ai::governed_turn. The generic provider entries are a dev-only fallthrough behind BROPS_ALLOW_UNGOVERNED and fail closed by default. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
-    "windows_production_isolation": "Machine-PROVEN in the live kit; the SHIPPED gate is still false and remains a release blocker. The pure §0.W core (apps/desktop/src-tauri/core/src/windows_broker.rs) covers all five primitives cross-platform and is unit-tested, and two real syscall primitives run on a windows-latest runner. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
+    "windows_production_isolation": "Machine-PROVEN in the live kit; the SHIPPED gate is still false and remains a release blocker.",
     "windows_live_proof": "PROVEN in the brops-win-live kit (PR #53): in-process crypto chain, real named-pipe same-account, peer-SID gate both directions, and cross-account with three dedicated service accounts. An independent adversarial audit returned Linux/core-chain GREEN. Detail: docs/archive/SESSION_LOG_2026-07_2026-08.md."
   },
   "next_action": "NO independent audit has passed. This field opened \"The independent CODE-audit is GREEN\" until 2026-08-09, contradicting code_audit.gate (ARCHITECT_PENDING) in this same file, and it was about a WAIVER rather than a pass. The history is in docs/archive/SESSION_LOG_2026-07_2026-08.md.",
   "stop_gates": [
     "Shipped-desktop production trusted_verified stays fail-closed (build_governed_executor falls back to UpstreamBlockedExecutor because nothing sets $BROPS_BROKER_CONFIG, governed_verification_unconfigured() returns Some(...) unconditionally, and connect_broker() refuses off Linux) until the live-proven chain is wired into the desktop runtime AND an INDEPENDENT audit passes AND the Owner approves.",
-    "The standing independent-audit verdict is RED. apps/desktop/AUDIT/2026-08-06-remediation-audit.md (main @ 219c763) confirmed 4 of 18 blockers closed and left 45 surviving findings, 1 P0. No independent audit has been run since, on that head or any later one. Closures claimed after it are the Builder's; the ledger marks them and they are not a pass.",
-    "Design rev-30 is Architect DESIGN GREEN, but design-GREEN is NOT code-GREEN. The external Architect CODE-audit on PR #48 was never run: the Owner waived it (CURRENT_CODE_AUDIT: ARCHITECT_PENDING records that it did not run). A waiver is not a pass, and this file said \"the independent CODE-audit is GREEN\" in next_action until 2026-08-09.",
-    "PR #48 is MERGED into main (with Phase-2 slices #49/#50/#51/#52), as is everything through PR #81. The remaining shipped-app gate is wiring the live-proven chain into the desktop runtime before production trusted_verified can render; do NOT expose 'Verified' before that + an independent audit + Owner approval.",
-    "CI-green is NOT design/audit-green. The Windows LIVE kit (brops-win-live) machine-proves the Windows governed turn to trusted_verified over named pipes, but the SHIPPED app stays fail-closed. Do not cite platform_governed_execution_supported() as the flag holding that line: NO FUNCTION OF THAT NAME EXISTS in the tree, and config/spec-conformance.json records section 0.1 as partial for exactly that reason. The three real refusals are in CLAUDE.md §6."
+    "The standing independent-audit verdict is RED -- the NINTH round, apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md, no P0. The round-by-round history is in apps/desktop/AUDIT/AUDIT_LEDGER.md; do not restate it here. Everything merged since that head is unconfirmed and carries the Builder's mark.",
+    "Design rev-30 is Architect DESIGN GREEN, and design-GREEN is NOT code-GREEN. The external Architect CODE-audit on PR #48 was never run; the Owner waived it, recorded as CURRENT_CODE_AUDIT: ARCHITECT_PENDING.",
+    "The remaining shipped-app gate is wiring the live-proven chain into the desktop runtime before production is claimed. The pull-request history that got here is in git and in AUDIT_LEDGER.md.",
+    "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
     "number": 209,
     "branch": "fix/prior-art-latest-declaration",
     "state": "open",
     "what": "The handoff may name the MERGE BASE with main, which survives a squash merge. A branch head does not, so a handoff naming one names a dead object on main -- five consecutive merges failed that way.",
-    "note": "declaration_for reads the LATEST declaration. Measured first: the reported defect is not real -- declare() dedups per target.",
+    "note": "declaration_for reads the LATEST declaration; the reported defect is not real -- declare() dedups per target.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #199 (fix/dead-hashes-and-merge-base): merge on an all-green exact head, then read `gh run list --branch main` -- this is the PR that is supposed to stop that being red. After it: §3.3's egress.",
-    "_note": "The carrier is current_workflow_pr (#209 on fix/prior-art-latest-declaration). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #209 (fix/prior-art-latest-declaration): merge on an all-green exact head, then read `gh run list --branch main`. After it, the Owner's stated order is #213, #211, #212, then #210 (fix its cannot-fail assertion first), then #207 (rewrite SS4 as an auth_ref REFERENCE store -- migration 0022 forbids this process holding a secret at all).",
+    "_note": "What the CARRIER does next. One entry per carrier; the history of previous carriers is in git, not here."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "d42cb65d1b970e40ca0388f7b94a6ca501ee8a36",
-      "conclusion": "success",
-      "run_id": 33330409095,
-      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main`. Stale by construction while T-059 is open."
+      "head": "95c52c5be74a946a5803201d606777d0aacc1c83",
+      "conclusion": "failure",
+      "run_id": 33354009742,
+      "note": "Repo-state RED: after #208 merged, current_workflow_pr named a MERGED pull request and the six still-open ones were unnamed. The gate is right -- a parked PR has to be visible from this file. This PR names the carrier and lists the parked five with their exact live heads."
     }
-  }
+  },
+  "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
 }
