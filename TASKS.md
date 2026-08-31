@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #215 · branch `fix/one-id-one-row`** (base `main`, tip `bce6fc1`, task T-063). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #216 · branch `fix/budget-for-structural-entries`** (base `main`, tip `b8fa975`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The board carried two different T-060s and every gate was green; check_coordination now refuses a duplicate task ID by name.
+> The canon budget bounds PROSE, not the prs[] records check_repo_state demands: 13000 -> 16000 for that one file, once, with what stays forbidden written down.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
