@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import pathlib
 import sys
 
@@ -227,7 +228,57 @@ def check(root: pathlib.Path) -> list[str]:
             f"({', '.join(_ALLOWED_SCHEMA_DIRS)}) — a copy nobody is holding to anything"
         )
 
+    problems.extend(_index_paths_resolve(root))
     return problems
+
+
+#: A value that looks like a repository path. Deliberately narrow: it must end in
+#: an extension this tree actually uses, so a schema `$id` URL or a prose sentence
+#: is not mistaken for a file.
+_PATHISH = re.compile(r"^[A-Za-z0-9_.\-/]+\.(rs|py|json|ts|tsx|md|sql|yml|yaml|sh)$")
+
+
+def _index_paths_resolve(root: pathlib.Path) -> list[str]:
+    """Every path-shaped value in `contracts/index.json` names a file that exists.
+
+    Nothing checked this before, and three entries proved it: `rust_mirror` named
+    `apps/desktop/src-tauri/core/src/governance.rs` for execution-lease,
+    verifier-receipt and evidence-event, and that path has never existed. It was
+    invisible because the two gates that read this file read past it — this one
+    compared schema BYTES, and `check_doc_claims` resolves paths only inside the
+    canonical read set, which `contracts/index.json` is not in.
+
+    `null` is allowed and is a different statement from a wrong path: the
+    execution lease has no Rust mirror at all, and saying so is the honest entry.
+    """
+    index = root / "contracts" / "index.json"
+    if not index.exists():
+        return [f"{index} is missing"]
+    try:
+        doc = json.loads(index.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return [f"contracts/index.json does not parse: {exc}"]
+
+    out: list[str] = []
+
+    def walk(node: object, where: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{where}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{where}[{i}]")
+        elif isinstance(node, str) and _PATHISH.match(node):
+            if (root / node).exists() or (root / "contracts" / node).exists():
+                return
+            out.append(
+                f"contracts/index.json{where} names `{node}`, which does not exist. "
+                f"If the answer is that there is no such file, say `null` — a dead path "
+                f"and an absent one are different claims"
+            )
+
+    walk(doc, "")
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
