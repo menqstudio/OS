@@ -5,16 +5,16 @@
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
 permitted call is still refused for want of a transport. The BUILD agent's half is not built. `check_doc_claims` requires a named commit to be an ancestor of
-`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records now
-(`code_audit.last_independent_audit`, `config/toolchain.json`), which a rewrite cannot delete.
+`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records
+(`code_audit.last_independent_audit`, `config/toolchain.json`).
 `T-046`, `T-048`–`T-053` merged.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `d42cb65`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`.
+> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
 >
-> T-057: the 56 fabricated audit rows carry source=seed in payload_json, and both read mappers carry the mark out to Home's sparkline -- the surface those rows exist to animate.
+> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -1209,10 +1209,21 @@ mod t057_seeded_rows_say_so {
         assert!(rows.iter().any(|e| e.source.is_none()),
                 "and must not mark a real audited write");
 
+        // The SECOND surface, asserted on ITS OWN rows. Until this existed the
+        // test computed the summary, threw it away, and closed on a restatement
+        // of the assertion above -- so `security::map_event` could drop `source`
+        // entirely with every test still green.
         let summary = security::summary(&conn).unwrap();
-        let _ = &summary; // the shape below is what a reader sees
-        let marked_anywhere = rows.iter().any(|e| e.source.is_some());
-        assert!(marked_anywhere);
+        assert!(
+            !summary.sensitive_events.is_empty(),
+            "the seed must produce sensitive events, or the assertion below asserts nothing"
+        );
+        let marked = summary
+            .sensitive_events
+            .iter()
+            .filter(|e| e.source.as_deref() == Some("seed"))
+            .count();
+        assert!(marked > 0, "security::summary must carry the mark too");
     }
 
     /// A real audited write is never marked, so `None` keeps meaning "real".

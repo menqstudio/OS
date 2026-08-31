@@ -24,26 +24,15 @@
     "fails the gate until someone either reviews it or adds it to the baseline in a visible diff."
   ],
   "unreviewed_baseline": [
-    "NM-ACL-01",
-    "NM-ACL-02",
-    "NM-ACL-03",
-    "NM-ACL-04",
-    "NM-ACL-05",
-    "NM-ACL-06",
-    "NM-ACL-07",
-    "NM-ACL-08",
     "NM-ACL-09",
     "NM-ACL-10",
     "NM-ACL-11",
     "NM-ACL-12",
     "NM-ACL-13",
     "NM-ACL-14",
-    "NM-ACL-15",
     "NM-CAP-03",
     "NM-CONC-03",
     "NM-CONC-04",
-    "NM-CONC-05",
-    "NM-CONC-06",
     "NM-CONC-07",
     "NM-CONC-08",
     "NM-CONC-09",
@@ -208,7 +197,6 @@
     "NM-TIME-13",
     "NM-TIME-14",
     "NM-TIME-15",
-    "NM-TIME-16",
     "NM-TIME-17",
     "NM-TIME-18",
     "NM-TIME-19",
@@ -378,10 +366,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TIME-16": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`lease_issued_at_ms` equality",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTimeTests::test_nm_time_16_now_equal_to_lease_issued_at_ms_is_inside_the_window"
     },
     "NM-TIME-17": {
       "status": "unreviewed",
@@ -900,16 +888,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CONC-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Nested-tx rejection",
       "section": "§7.1, §6.1(14)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixConcurrencyTests::test_nm_conc_05_a_ledger_operation_inside_a_caller_s_transaction_is_refused"
     },
     "NM-CONC-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Duplicate terminal write",
       "section": "§6(4)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixConcurrencyTests::test_nm_conc_06_a_divergent_duplicate_terminal_write_is_refused"
     },
     "NM-CONC-07": {
       "status": "unreviewed",
@@ -1110,52 +1098,52 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ACL-01": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "signer → `store/sup/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-02": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "signer → `store/rec/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-03": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "recorder → `store/sup/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-04": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "supervisor → `store/rec/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-05": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "recorder → `store/rec/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-06": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "supervisor → `store/sup/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-07": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "sidecar → `sup/` or `rec/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-08": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "executor → `sup/` or `rec/`",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-ACL-09": {
       "status": "unreviewed",
@@ -1194,10 +1182,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ACL-15": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "3-actor × 6-asset denial grid",
       "section": "§9(n)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-IPC-01": {
       "status": "unreviewed",

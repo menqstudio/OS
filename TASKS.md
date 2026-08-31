@@ -5,9 +5,9 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `d42cb65`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`.
+> **⏭️ CURRENT ACTIVE: PR #210 · branch `feat/audit-rows-name-their-source`** (base `main`, tip `15c7082`, task T-057). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #214 on `feat/version-parity-gate`.
 >
-> T-057: the 56 fabricated audit rows carry source=seed in payload_json, and both read mappers carry the mark out to Home's sparkline -- the surface those rows exist to animate.
+> T-057: the 56 fabricated rows carry source=seed, and BOTH read mappers carry it out; V-5's assertion could not fail and now can.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -19,26 +19,30 @@ claim; ✅ means an independent audit confirmed it. Never promote your own work.
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-060** | **A PR that outlives its own `Last updated` line turns `main` RED on merge.** The gate compares `PROJECT_STATE.md`'s claimed date with the newest commit touching it, and a squash makes that the MERGE date — red through no fault of the change. `T-059`'s family: a verdict that depends on WHEN it runs. Fix: compare against the branch's own newest commit | — | Todo | — |
-| **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main` — the gate passes inside the run that merges it and fails on the next read, so its verdict depends on WHEN it runs, not on the code. Fix: accept a reading of any recent `main` and name which head it is of | — | Todo | — |
-| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4's binding store is PR #207 and carries a flag — see `docs/OVERNIGHT_QUEUE_2026-08-31.md`. Then the transport; then the netns jail for the population holding `Bash`, plus a `task_class` carrying `USE_NETWORK` (perimeter surgery). ◑ Builder-claimed | Bro | In-Progress | `#207` |
-| **T-056** | **Every fail-closed check must name what its failure PREVENTS** — merge, session, deploy, release, or nothing — in a registry, not a docstring. A check whose consequence is `nothing` is RED: being named in a runbook is a suggestion. `bro_deploy_preflight` is the worked example. The population is DERIVED from the filesystem, so the gate cannot omit itself. **Deferred behind `T-055` by the Owner; reordering needs a written reason** | — | Todo | — |
-| **T-057** | **56 fabricated audit rows say so now, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}` on each; a query alone separates them, and `activity::list` + `security::summary` both carry it out to the Home sparkline, which is the surface those rows exist to animate. ◑ Builder-claimed — the closure condition is asserted by a test, not by this row | Bro | Review | `#210` | — | Todo | — |
-| **T-046** | **The Windows engine job must run clean across several PRs** before the ledger's concurrency flake is called fixed. Open on the EVIDENCE, not the code | — | Todo | merged `#182` |
-| **T-004** | **Engine deferred security items O-1..O-5** (Phase 10). All five OPEN; none needs an Owner-minted artifact — deployment wiring and a second principal do. O-1 is the only HIGH. Inventory: `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
-| **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a targeted worktree-check fix (`git rev-parse --show-toplevel`, not parsing `git worktree list`). Security-adjacent: own branch, own PR, Owner approval, never inside a coordination merge. Until then 10 monorepo-coupled engine tests skip-guard themselves | — | Todo | — |
-| **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half; the request half exists on neither side. Behind the standing audit — no new input to the trust boundary while the verdict is RED | — | Blocked | — |
-| **T-022** | **The governed automation dispatch.** Firing one writes a desktop row and does not cross the wall, so its `engine_receipt` evidence is permanently unobserved. Sequenced as `T-021` | — | Blocked | — |
-| **T-023** | **CI reliability on a custody assertion.** *Trust provisioning + audit signer (windows-latest)* fails intermittently on an inherited runner ACL. ◑ Builder-claimed closed; open until it runs clean across several PRs | — | Todo | — |
-| **T-030** | **Route 1 past the no-lease / no-secret whitelist** (`A-09`, ninth audit). Routes 2 and 3 closed, mutation-confirmed. Route 1 open **by design** — a credential is what a remote system accepts, not what its text looks like. Register COMPUTED: **19 leaves, not 8** | — | Todo | — |
-| **T-034** | **Two palettes, one contrast gate** (`I-04`, ninth audit): the gate decided on `round(ratio, 2)`, so two of its own pairs sat below AA at 4.4995 and printed `4.50`. ◑ Builder-fixed on the raw ratio. **Awaiting independent confirmation** | — | Todo | — |
+| **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main`: the gate passes inside the run that merges it and fails on the next read. Fix: accept a reading of any recent `main` and name which head | — | Todo | — |
+| **T-058** | **§4, then the transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 is being rewritten on `#207` as an `auth_ref` REFERENCE store — migration 0022 forbids this process holding a secret at all. Then the transport, then the netns jail for the population holding `Bash`. ◑ Builder-claimed | Bro | In-Progress | `#207` |
+| **T-060** | **A PR that outlives its own `Last updated` line reddens `main` on merge.** The gate compares `PROJECT_STATE.md`'s claimed date with the newest commit touching it, and a squash makes that the merge date. `T-059`'s family: a verdict that depends on WHEN it runs | — | Todo | — |
+| **T-061** | **Five Queue-1 checks are correct by reading and defended by no test** — `docs/VERIFICATION_QUEUE_1.md`, from a second sweep off a fresh clone. **V-3 and V-5 closed on `#210`**, mutation-proven both ways. V-1, V-2, V-4, V-6 open | — | Todo | `#210` |
+| **T-062** | **189 negative-matrix rows are still `unreviewed`** — nobody has looked, the silent state. 12 moved 2026-08-31: 3 to `implemented` (mutation-proven), 9 ACL rows to `blocked` on a measured cause. The domain counts are in `config/negative-matrix.json` | — | Todo | — |
+| **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` derives 56 controls from the filesystem, each held to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers: a runbook mention is a suggestion. `check_ai_surfaces.py` runs under a context NOT in the required 33, and making one required is the Owner's act | Bro | Todo | `#208` |
+| **T-057** | **56 fabricated audit rows say so now, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`; a query alone separates them, and `activity::list` + `security::summary` both carry it to the Home sparkline. ◑ Builder-claimed — a test asserts the closure, not this row | Bro | Review | `#210` |
+| **T-046** | **The Windows engine job must run clean across several PRs** before the ledger's concurrency flake is called fixed | — | Todo | merged `#182` |
+| **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN; none needs an Owner-minted artifact — deployment wiring and a second principal block them. O-1 is the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
+| **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a worktree-check fix (`git rev-parse --show-toplevel`). Own branch, own PR, Owner approval. Until then 10 engine tests skip-guard themselves | — | Todo | — |
+| **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half; the request half exists on neither side. Sequenced behind the standing audit: no new input to the trust boundary while the verdict is RED | — | Blocked | — |
+| **T-022** | **The governed automation dispatch.** Firing an automation writes a row to the desktop store; it does not cross the wall, so its `engine_receipt` evidence is unobserved. Sequencing as `T-021` | — | Blocked | — |
+| **T-023** | **CI reliability on a custody assertion.** *Trust provisioning + audit signer (windows-latest)* fails intermittently on an inherited runner ACL. Open until it runs clean | — | Todo | — |
+| **T-030** | **Route 1 past the no-lease / no-secret whitelist** (`A-09`, ninth audit). Routes 2 and 3 closed, mutation-confirmed. Route 1 open **by design**: a credential is what a remote system accepts, not what its text looks like. Register COMPUTED: **19 leaves, not 8** | — | Todo | — |
+| **T-034** | **Two palettes, one contrast gate** (`I-04`, ninth audit): it decided on `round(ratio, 2)`, so two of its own pairs sat below AA at 4.4995 and printed `4.50`. ◑ Builder-fixed on the raw ratio. **Awaiting independent confirmation** | — | Todo | — |
+
+Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md), whose
+first section is what this repository does **not** establish.
 
 ## What is not on this board
 
-Nothing on the security-remediation track is open, and nothing waits on the Owner —
+Nothing on the security-remediation track is open and nothing waits on the Owner —
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
-What would move the position is the next audit round: everything merged since the ninth
-round's head is unconfirmed.
+Everything merged since the ninth round's head is unconfirmed.
 
 ## Status tokens
 
