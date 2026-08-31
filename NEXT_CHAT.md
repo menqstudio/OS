@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** `feat/version-parity-gate` · **head** `4bdd803` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
+**Active branch:** `fix/one-id-one-row` · **head** `bce6fc1` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #214 · branch `feat/version-parity-gate`** (base `main`, tip `4bdd803`, task T-060). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #215 · branch `fix/one-id-one-row`** (base `main`, tip `bce6fc1`, task T-063). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The app version is declared five times across four files and nothing compared them; check_version_parity.py refuses drift and names the file. No v* tag arm -- that needs a release policy the Owner has not stated.
+> The board carried two different T-060s and every gate was green; check_coordination now refuses a duplicate task ID by name.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

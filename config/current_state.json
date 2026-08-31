@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "4bdd803ef7b728e6de132e24d5bce5599c9856a0",
+  "settled_at_main_head": "bce6fc17bb261f2e2fecae518e2fced498befa4e",
   "sync": {
-    "baseline_main_head_at_sync": "4bdd803ef7b728e6de132e24d5bce5599c9856a0",
-    "snapshot_branch": "feat/version-parity-gate",
+    "baseline_main_head_at_sync": "bce6fc17bb261f2e2fecae518e2fced498befa4e",
+    "snapshot_branch": "fix/one-id-one-row",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "feat/version-parity-gate"
+    "branch": "fix/one-id-one-row"
   },
   "prs": [
     {
@@ -124,24 +124,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 214,
-    "branch": "feat/version-parity-gate",
+    "number": 215,
+    "branch": "fix/one-id-one-row",
     "state": "open",
-    "what": "§4 as a REFERENCE store. The Owner withdrew his own constraint that the store hold a value: migration 0022 had already forbidden this process holding a secret at all, so the binding names where the secret lives and the `Secret` type is gone.",
-    "note": "The app version is declared five times across four files and nothing compared them; check_version_parity.py refuses drift and names the file. No v* tag arm -- that needs a release policy the Owner has not stated.",
+    "what": "Two sessions landed a T-060 on the board within four hours -- different tasks, one ID -- and every gate stayed green. check_coordination now refuses a duplicate task ID by name, because a claim on an ID two rows share names two tasks.",
+    "note": "The board carried two different T-060s and every gate was green; check_coordination now refuses a duplicate task ID by name.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #207 (feat/credential-store): merge on an all-green exact head, then read `gh run list --branch main`. After it the Owner's queue is empty and the next slice is the TRANSPORT -- what carries an auth_ref across the wall. #214, the version-parity gate, is a delegated PR outside that order.",
+    "current": "PR #215 (fix/one-id-one-row): merge on an all-green exact head, then read `gh run list --branch main`. The Owner's merge queue is empty after it. Waiting on him: T-063's git-tag arm, which needs a release policy he has not stated, and whether check_repo_state's `parse_audit_candidate` message should say how many markers it found -- it is fail-closed on DUPLICATES and prints 'missing'.",
     "_note": "The carrier is current_workflow_pr (#214 on feat/version-parity-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "4bdd803ef7b728e6de132e24d5bce5599c9856a0",
+      "head": "bce6fc17bb261f2e2fecae518e2fced498befa4e",
       "conclusion": "success",
-      "run_id": 33360197471,
-      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #207 merged. Stale by construction while T-059 is open."
+      "run_id": 33361103278,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #214 merged. Stale by construction while T-059 is open."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
