@@ -43,7 +43,7 @@
     },
     "§1.7": {
       "status": "partial",
-      "missing": "The Windows half. §1.7's table is two-platform and engine/runtime/floor_writer.py is the Linux column only: AF_UNIX + SO_PEERCRED with strict integer equality and bool excluded, server authentication by socket-DIRECTORY custody through bro_custody, a 4-byte big-endian length prefix, MAX_FLOOR_FRAME_BYTES = 4096 enforced in both directions. The named-pipe column (authenticate_pipe_client_sid, pipe_dacl_plan's DACL withholding FILE_CREATE_PIPE_INSTANCE, create-successor-before-close) is FW-2 and does not exist. §1.7 also requires the constant to be defined once PER LANGUAGE and pinned by a cross-language drift test; only the Python constant exists and no drift test does. And the peer authentication is covered by tests that pass the uid as a parameter -- the real cross-process, cross-account IPC test is outstanding, so that half is read from source, not measured.",
+      "missing": "The Windows half. §1.7's table is two-platform and engine/runtime/floor_writer.py is the Linux column only: AF_UNIX + SO_PEERCRED with strict integer equality and bool excluded, server authentication by socket-DIRECTORY custody through bro_custody, a 4-byte big-endian length prefix, MAX_FLOOR_FRAME_BYTES = 4096 enforced in both directions. The named-pipe column (authenticate_pipe_client_sid, pipe_dacl_plan's DACL withholding FILE_CREATE_PIPE_INSTANCE, create-successor-before-close) is FW-2 and does not exist. §1.7 also requires the constant to be defined once PER LANGUAGE and pinned by a cross-language drift test; only the Python constant exists and no drift test does. The peer authentication is no longer read from source: engine/ci/floor_writer_boundary_proof.sh runs four real accounts over a real AF_UNIX socket and measures the three per-op properties (authorized succeeds, unlisted principal peer_denied, floor.get-admitted peer denied floor.advance) plus the four provisioning negatives, with three meta-controls. What remains missing is the Windows column and the cross-language drift test.",
       "confirmed": "The one thing §1.7 explicitly defers to FW-1 -- 'the arithmetic that justifies it, to be confirmed through the real encoder in FW-1 rather than asserted here' -- IS confirmed: the largest legal advance request encodes to 324 bytes against the 4096 cap, 12.6x of headroom, against the design's predicted 'well under 512 bytes'.",
       "tests": [
         "test_the_cap_is_confirmed_through_the_real_encoder",
@@ -60,13 +60,17 @@
       "reason": "Nobody has checked this reference against the spec. `unreviewed` is the honest starting state for a gate retrofitted onto existing code — it freezes the debt where the audits found it and refuses anything NEW."
     },
     "§1.10": {
-      "status": "partial",
-      "missing": "Nothing MINTS the generation. §1.10 says it is 'minted once when the service is provisioned and served with every reply'; the serving half exists and is enforced at both ends (the service refuses a config without a generation >= 1, and the client refuses a reply that carries none), but there is no provisioning path in this tree at all, so the number is one an operator writes into the TCB-owned config by hand. Until provisioning exists, a re-provisioned floor is visibly new only if whoever re-provisioned it remembered to raise the number -- which is a procedure, not a mechanism. O-5 stays OPEN either way, exactly as §1.10 itself states.",
+      "status": "implemented",
+      "reason": "The generation is now MINTED and served. engine/runtime/provision_floor_writer.py mints it as previous + 1 (or 1) and writes it into BOTH the TCB-owned config and the authoritative store; floor_writer.load_state refuses a store whose generation is not the configured one, so a config re-provisioned over a store that was not cannot report 'visibly new' over silently old floors; and every reply carries it, with the client refusing a reply that carries none. Measured end to end by engine/ci/floor_writer_boundary_proof.sh, which provisions twice under four real accounts and reads generation 1 -> 2 out of a live floor.get, with the discarded roster named in the receipt.",
+      "caveat": "§1.10 narrows O-5 and does not close it, exactly as §1.10 itself states: nothing here is signed from outside the machine, so a restore of the whole store, generation included, is still indistinguishable from a first sighting. Nothing in the SHIPPED desktop app invokes this provisioner either -- that is deployment wiring, the same gap O-1..O-5 name, and it is not a claim about this section.",
       "tests": [
+        "test_a_reprovisioning_mints_strictly_above_the_previous",
+        "test_an_unreadable_existing_config_refuses_rather_than_minting_one_over_a_live_store",
+        "test_11g_a_store_from_another_provisioning_is_refused",
         "test_12_a_config_the_service_cannot_use_refuses_to_start",
         "test_00_the_ordinary_advance_succeeds_and_carries_the_generation"
       ],
-      "source": "FW-1 implementation; provisioning is the outstanding B6 item"
+      "source": "engine/runtime/provision_floor_writer.py; B6 is closed"
     },
     "§2": {
       "status": "unreviewed",

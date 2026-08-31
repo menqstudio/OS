@@ -1184,3 +1184,12 @@ jobs:
       # store, or make the supervisor sign caller-supplied evidence. No skip / placeholder.
       - name: Prove signer/supervisor isolation with dedicated users
         run: bash engine/ci/isolation_proof.sh
+      # T-020 / FW-1: the Floor Writer's principal boundary, with FOUR real accounts over a real
+      # AF_UNIX socket — the authorized caller advances, an unlisted principal on the same socket
+      # is denied, and a caller admitted to floor.get is denied floor.advance. Plus the four
+      # provisioning negatives (the completion principal cannot replace the endpoint, read or
+      # write the floor state, or rewrite the TCB-owned config) and three meta-controls. The
+      # script SKIPS with a stated reason off Linux or without passwordless sudo; on this runner
+      # it has neither excuse.
+      - name: Prove the Floor Writer principal boundary with dedicated users
+        run: bash engine/ci/floor_writer_boundary_proof.sh

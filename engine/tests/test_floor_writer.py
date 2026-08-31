@@ -4,18 +4,22 @@ Every negative is refused **by name**, from the closed enum in §4.2, and each h
 control beside it so a refuse-everything arm cannot satisfy it. The numbering follows §7 so an
 auditor can walk the list in order.
 
-Two classes of test, and the difference is stated rather than blurred:
+Three classes of test, and the difference is stated rather than blurred, because conflating them
+is what made the first attempt's peer tests green and meaningless:
 
 * the protocol and state negatives drive ``handle`` directly with an authenticated uid supplied
-  as a parameter. They test the rule, not the kernel;
-* the boundary negatives run REAL processes under REAL distinct accounts over a REAL AF_UNIX
-  socket. Those are the only ones that can prove peer authentication and filesystem custody, and
-  the previous attempt's same-uid round trip is exactly why: it was green and the deployment it
-  claimed to model could not connect at all.
+  as a PARAMETER. They test the rule, not the kernel, and they are not evidence about either;
+* ``RunnerStartup`` runs the real entry point as a PROCESS and asks a service manager's question:
+  what exit code, what message, and — the one that matters — was a socket left behind;
+* the cross-principal boundary is **not in this file and cannot be**. A uid passed as an argument
+  is not ``SO_PEERCRED``, and a mode is not an ``EACCES``. Those live in
+  ``engine/ci/floor_writer_boundary_proof.sh``, which provisions as root under FOUR real accounts
+  and measures the three per-op properties over a real AF_UNIX socket, and in
+  ``engine/tests/test_floor_writer_durability.py``, which reads the commit's syscall order out of
+  the kernel and kills a writing process twelve times.
 
-The process-level class SKIPS with a stated reason where a second account or passwordless sudo is
-unavailable — which includes CI. A skip that says why is honest; a same-uid substitute pretending
-to be a cross-principal test is not.
+The previous attempt's same-uid round trip is exactly why the split is written down: it was green
+and the deployment it claimed to model could not connect at all.
 """
 
 import json
@@ -280,6 +284,23 @@ class Negatives(ServiceFixture):
         self.assertIn("different install", reply["detail"])
 
     # 12 ------------------------------------------------------------------------------------
+    def test_11g_a_store_from_another_provisioning_is_refused(self):
+        # §1.10. The generation is minted into BOTH the config and the store. A config
+        # re-provisioned over a store that was not would serve `generation: 8` while answering
+        # from generation 7's floors — "visibly new" reporting over silently old state, which is
+        # the confusion the number exists to remove.
+        self.ask(_advance(head=5))
+        document = self.document()
+        document["generation"] = 6
+        (self.config.marks_dir / fw.STATE_FILE).write_text(json.dumps(document), encoding="utf-8")
+        reply = self.ask(_get())
+        self.assertEqual(reply["reason"], "mark_corrupt")
+        self.assertIn("different provisionings", reply["detail"])
+        # The positive control: the same document at the configured generation is served.
+        document["generation"] = 7
+        (self.config.marks_dir / fw.STATE_FILE).write_text(json.dumps(document), encoding="utf-8")
+        self.assertEqual(self.ask(_get())["head_sequence"], 5)
+
     def test_12_a_config_the_service_cannot_use_refuses_to_start(self):
         root = pathlib.Path(self._tmp.name)
         for name, document, expected in [
@@ -382,6 +403,106 @@ class FramingBoundary(ServiceFixture):
                 self.assertLessEqual(
                     len(_encode(reply)), fw.MAX_FLOOR_FRAME_BYTES,
                     "the refusal must fit the frame it has to be sent in")
+
+
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
+class RunnerStartup(unittest.TestCase):
+    """``run_floor_writer.py`` as a PROCESS: every bad start is a refusal, and none of them binds.
+
+    These drive the real entry point through ``subprocess`` rather than calling ``start()`` in
+    this interpreter, because the property under test is what a service manager observes: an exit
+    code, a message on stderr, and — the one that matters — **no socket**. A service that refused
+    its configuration and left an endpoint behind would be advertising a promise it cannot keep,
+    and only a process can be asked whether it did that.
+
+    There is deliberately no positive control that reaches ``serve_forever`` here: that path never
+    returns, and it is proved instead by ``engine/ci/floor_writer_boundary_proof.sh``, which
+    starts this same runner under a real service account and gets answers out of it.
+    """
+
+    RUNNER = str(ROOT / "runtime" / "run_floor_writer.py")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        self.marks_root = self.root / "marks"
+        (self.marks_root / INSTALL).mkdir(parents=True, mode=0o700)
+        self.socket_dir = self.root / "run"
+        self.socket_dir.mkdir(mode=0o750)
+        self.socket_path = self.socket_dir / "fw.sock"
+
+    def config(self, **overrides):
+        document = {"install_id": INSTALL, "marks_root": str(self.marks_root),
+                    "socket_path": str(self.socket_path), "generation": 4,
+                    "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [CALLER]}}
+        document.update(overrides)
+        for key in [k for k, v in document.items() if v is None]:
+            del document[key]
+        path = self.root / "fw-config.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def start(self, config_path=None):
+        """Run the entry point to completion. It must always complete: there is no exit 0 path."""
+        environment = {k: v for k, v in os.environ.items() if k != fw.ENV_SERVICE_CONFIG}
+        if config_path is not None:
+            environment[fw.ENV_SERVICE_CONFIG] = str(config_path)
+        result = subprocess.run([sys.executable, self.RUNNER], env=environment,
+                                capture_output=True, text=True, timeout=60)
+        self.assertFalse(self.socket_path.exists(),
+                         "a refusing service left an endpoint behind; a socket that exists is a "
+                         "promise, and this start made none it could keep")
+        return result
+
+    def test_a_bare_start_with_no_config_variable_refuses(self):
+        result = self.start()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(fw.ENV_SERVICE_CONFIG, result.stderr)
+
+    def test_a_config_variable_naming_nothing_refuses(self):
+        result = self.start(self.root / "absent.json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read", result.stderr)
+
+    def test_a_malformed_config_refuses(self):
+        path = self.root / "bad.json"
+        path.write_text("{not json", encoding="utf-8")
+        result = self.start(path)
+        self.assertEqual(result.returncode, 2)
+
+    def test_a_config_without_a_per_op_allowlist_refuses(self):
+        result = self.start(self.config(peers=None))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("per-op peer allowlist", result.stderr)
+
+    def test_a_config_without_a_generation_refuses(self):
+        result = self.start(self.config(generation=None))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("generation", result.stderr)
+
+    def test_a_marks_store_that_does_not_exist_is_a_custody_refusal(self):
+        result = self.start(self.config(marks_root=str(self.root / "absent")))
+        self.assertEqual(result.returncode, 4)
+
+    def test_a_group_writable_marks_store_is_a_custody_refusal(self):
+        (self.marks_root / INSTALL).chmod(0o770)
+        result = self.start(self.config())
+        self.assertEqual(result.returncode, 4)
+        self.assertIn("group- or world-writable", result.stderr)
+
+    def test_a_group_writable_socket_directory_is_a_custody_refusal(self):
+        self.socket_dir.chmod(0o770)
+        result = self.start(self.config())
+        self.assertEqual(result.returncode, 4)
+        self.assertIn("socket directory", result.stderr)
+
+    def test_a_store_with_no_authoritative_document_refuses_rather_than_starting_empty(self):
+        # Custody is fine and the config is fine; the store was never provisioned. §4.2: a floor
+        # is not client-bootstrappable, and it is not service-bootstrappable at start either.
+        result = self.start(self.config())
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unprovisioned", result.stderr)
 
 
 class PlatformBoundary(unittest.TestCase):

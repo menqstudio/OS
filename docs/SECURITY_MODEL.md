@@ -117,7 +117,7 @@ made on the strength of it.
   (all 23 registry-root call sites AST-enumerated and frozen), `engine/tests/test_audit_head_anchor.py`,
   `engine/tests/test_bytecode_shadow.py`.
 
-### 1.3a The Floor Writer principal — and why it is NOT an eighth governed-turn service
+### 1.3a The Floor Writer principal — the deployment contract, and why it is NOT an eighth governed-turn service
 
 **Architect ruling R3, 2026-08-31:** the Floor Writer is a **distinct runtime security
 principal**. It is not a helper of the completion process and not a helper of the supervisor. It
@@ -125,13 +125,56 @@ holds independent authority to mutate protected anti-rollback state — the per-
 floor — and a principal with that authority is named, not folded into whichever process happens
 to host it.
 
-**What it owns.** The per-task floor (`{task_id}.floor.json` and the `_index.json` roster) in a
-store the Floor Writer account owns and the policed completion account cannot write. Before this,
-`bro_completion._advance_head_floor` wrote that mark *in the very process the mark polices*,
-while `_refuse_self_owned_floor` demanded a directory that process could not write — two
-requirements with no intersection, satisfiable only by
+**What it owns.** One authoritative document per install,
+`<marks_root>/<install_id>/floor-state.json`, carrying an explicit `roster` list AND the per-task
+floors, in a store the Floor Writer account owns and the policed completion account cannot read or
+write. *(The design's §4.3 listed two objects, a per-task mark plus the roster; the Architect
+ratified collapsing them into one so a crash cannot leave a roster naming a task whose mark is
+absent. The roster stays an explicit field and is never inferred from the directory listing —
+that substitution was refused, because it would redefine a security fact as a side effect of
+which files happen to exist.)* Before this, `bro_completion._advance_head_floor` wrote that mark
+*in the very process the mark polices*, while `_refuse_self_owned_floor` demanded a directory that
+process could not write — two requirements with no intersection, satisfiable only by
 `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, which short-circuits **every** custody rule in
 the runtime rather than only this one.
+
+#### The deployment contract
+
+A machine either meets all of this or it does not run the service posture. Each row names what
+enforces it, because a contract nothing checks is a wish:
+
+| The deployment must | Enforced by |
+|---|---|
+| run the Floor Writer as an account that is **not** the completion account and **not** root | `provision_floor_writer.py` refuses `--service-user root` and refuses any `--peer` equal to the service uid or to root |
+| own `<marks_root>/<install_id>/` as that account, mode `0700` | `floor_writer.require_private_directory` at start, before the socket exists; provisioning sets it and reads it back |
+| hold the socket in a directory owned by that account, mode `2750`, group the caller group | the same check on the socket's parent; §1.7 makes the **directory** the server authentication — a directory no other principal may write is one in which no other principal can replace the endpoint. The setgid bit is load-bearing: without it the endpoint carries the service's own group and the caller cannot connect |
+| authenticate every caller from the **kernel** | `SO_PEERCRED` at accept time, before a frame is read. Linux only, and it refuses rather than approximating elsewhere |
+| authorize per **operation**, not by a union | `ServiceConfig.peers_for(op)`; `floor.get` admission is not `floor.advance` admission |
+| put **no** `install_id` on the wire | the scope comes from the TCB-owned config; a request carrying the field is refused `malformed`, not ignored |
+| keep the config `root:root`, mode `0644`, in a root-owned directory | provisioning refuses a non-root parent and reads owner and mode back after writing |
+| mint the provisioning generation once, into the config **and** the store | `provision_floor_writer.mint_generation` (previous + 1, never lower); `load_state` refuses a store whose generation is not the configured one |
+| have a floor **provisioned** before the service starts | the service refuses to start on an absent document: a floor is neither client- nor service-bootstrappable, so "no state" is never read as "empty state" |
+| configure a posture explicitly | `bro_completion._floor_posture` is a closed two-state resolver — `ServiceFloor(endpoint)` or `AcknowledgedLocalFloor` — with **no third state and no fallback**. Neither configured is a refusal, not "no floor required" |
+
+Two variables, and nothing else, select the posture:
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `BRO_EVIDENCE_FLOOR_WRITER` | the completion process | the endpoint. Set ⇒ `ServiceFloor`, and the in-process write path becomes structurally unreachable |
+| `BROPS_FLOOR_WRITER_CONFIG` | the service | its own TCB-owned config: `install_id`, `marks_root`, `socket_path`, `generation`, and the per-op `peers` allowlist |
+
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` selects `AcknowledgedLocalFloor` — today's
+single-principal behaviour, on a box that has **disclosed** it has no second principal. It is not
+a fallback and it cannot be reached from the service posture.
+
+**What is measured, and by what.** `engine/ci/floor_writer_boundary_proof.sh` provisions this
+contract as root under four real accounts and then attacks it: the authorized caller advances, an
+unlisted principal on the same socket is `peer_denied`, a caller admitted to `floor.get` is
+`peer_denied` on `floor.advance`, and the completion principal cannot replace the endpoint, read
+or write the floor state, or rewrite the config. Three meta-controls prove each probe can report
+the opposite answer. `engine/tests/test_floor_writer_durability.py` reads the commit's syscall
+order out of the kernel and kills a writing process twelve times. **What is not measured is
+Windows** — FW-2 — and the `scope.pin` authority, which is FW-3 and is refused by name.
 
 **Custody domain versus mutation authority.** The authoritative state belongs to the
 **Supervisor security/custody domain**; the **Floor Writer principal** is the narrowly scoped
@@ -165,8 +208,14 @@ No equivalent-strength mechanism is wired for Windows or macOS, so the service r
 and refuses to serve there. A weaker mechanism under the same name — trusting a path, a token
 file, a parent process — would be a security property that reads as equivalent and is not.
 
+**What this does not close.** **O-5** stays OPEN. The generation makes a re-provisioned floor
+*visibly* new instead of silently empty, and it is not a signed statement from outside the
+machine: a restore of the whole store, generation included, still reads as a first sighting.
+§1.10 of the design says so itself, and nothing here changes it.
+
 **Status.** Implementation exists and is **not Architect-approved**; the design merged as PR #112
-and this is the build under R1–R5. No production trust claim follows from either.
+and this is the build under R1–R5. No production trust claim follows from either, and FW-1 passing
+is not the production gate opening.
 
 ### 1.3 What is NOT true, stated as prominently as what is
 

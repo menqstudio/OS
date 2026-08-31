@@ -3,7 +3,7 @@
 > **This file is the live handoff and nothing else** — 4034 lines of appended write-ups moved to
 > [`docs/archive/SESSION_LOG_2026-07_2026-08.md`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
-> shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
+> shrinks it.
 
 **Active branch:** `feat/floor-writer-service` — `main` @ `87bfe73`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `egress-authorizer`
 <!-- BANNER -->
@@ -14,22 +14,25 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next: FINISH T-020's FW-1 correction — it is mid-flight, not merge-ready.** The Architect
-BLOCKED `#219` at its frozen head (B1–B7 · C1–C7). The boundary rewrite is done and measured on this
-box: kernel `SO_PEERCRED` peer identity checked against a **per-op** allowlist, all scope from the
-TCB-owned `BROPS_FLOOR_WRITER_CONFIG`, **no `install_id` on the wire in either direction** (a request
-carrying one is `malformed`), roster and floor in ONE document committed by ONE rename, and a closed
-two-posture resolver in `bro_completion.py` — an unconfigured floor now REFUSES instead of silently
-meaning "local". 26 negatives in `engine/tests/test_floor_writer.py`.
+**Next: T-020's FW-1 correction — B1-B6 and C6 in and measured; NOT approved.** The Architect
+BLOCKED `#219` (B1-B7, C1-C7) and lifted the head freeze for one coherent correction. Done here:
+`SO_PEERCRED` identity against a **per-op** allowlist, all scope from the TCB-owned
+`BROPS_FLOOR_WRITER_CONFIG`, no `install_id` on the wire either way, roster and floor in ONE
+document under ONE rename, a resolver that REFUSES an unconfigured floor, root-only provisioning
+that MINTS the §1.10 generation (B6), and `SECURITY_MODEL.md` §1.3a as a ten-row deployment
+contract naming what enforces each row (C6).
 
-**What is NOT done, and the head is deliberately NOT frozen:** provisioning (B6), the real
-distinct-UID and crash-injection tests, `SECURITY_MODEL.md` §1.3a as a deployment-enforceable
-contract (C6), C1–C4/C7, and the cargo+frontend regression. §1.7 and §1.10 are declared **partial**
-in `config/spec-conformance.json`, naming which half is missing. FW-3 (`scope.pin`, task/lease/pin
-authority) is intentionally OUT of FW-1 by Architect ruling — `unknown_op`, and it says so.
+**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` -- four real accounts on a
+real AF_UNIX socket: authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied
+`floor.advance`, four provisioning negatives, three meta-controls, cleanup proved.
+`engine/tests/test_floor_writer_durability.py` -- the commit's syscalls out of the kernel (temp,
+`fsync`, rename, dir `fsync`; each barrier deleted once, each went red) and twelve `SIGKILL`s
+mid-write, each leaving a complete document.
 
-The transport and the produced agent's egress are **T-058** in [`TASKS.md`](TASKS.md); that text
-lived here as a second copy of the row.
+**NOT done:** B7, C1-C5, C7, a second Architect pass. §1.7 stays **partial**; §1.10 is
+**implemented** and still does not close **O-5**. FW-3 (`scope.pin`) is OUT by ruling.
+
+The transport and the produced agent's egress are **T-058** in [`TASKS.md`](TASKS.md).
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
 named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
@@ -53,7 +56,7 @@ stated. Until he does, a tag arm would be a guess in a required context.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2069 OK, 10 skipped
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2102 OK, 10 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1147 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context

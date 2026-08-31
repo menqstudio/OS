@@ -247,10 +247,12 @@ def load_service_config(env: Optional[Mapping[str, str]] = None) -> ServiceConfi
             "scope_unavailable",
             f"the Floor Writer config {path} carries no provisioning generation >= 1. §1.10: the "
             "generation is minted once at provisioning and served with every reply, so a "
-            "re-provisioned floor is visibly new rather than silently empty. PARTIAL: nothing in "
-            "this tree MINTS one — there is no provisioning path yet, so the generation is a "
-            "number an operator writes into this config by hand. Validated and served is the half "
-            "that exists; minted-once-at-provisioning is the half that does not")
+            "re-provisioned floor is visibly new rather than silently empty. It is minted by "
+            "provision_floor_writer.py — previous + 1, or 1 — into BOTH this config and the "
+            "authoritative store, and load_state refuses a store whose generation is not this "
+            "one. O-5 stays OPEN either way: nothing here is signed from outside the machine, so "
+            "a restore of the whole store, generation included, is still indistinguishable from a "
+            "first sighting, exactly as §1.10 itself states")
 
     peers_doc = document.get("peers")
     if not isinstance(peers_doc, dict) or not peers_doc:
@@ -357,7 +359,10 @@ def require_private_directory(directory: pathlib.Path, what: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# §4.3 — the marks store. One atomic publish per advance; the directory IS the roster.
+# §4.3, amended — the marks store. ONE document, ONE atomic publish per advance, and the
+# roster is a field IN that document. It is never the directory listing: the Architect
+# refused a directory-derived roster because it redefines a security fact as a side effect
+# of which files happen to exist.
 # ---------------------------------------------------------------------------
 
 
@@ -413,6 +418,17 @@ def load_state(config: ServiceConfig) -> Dict[str, Any]:
         raise FloorWriterError(
             "mark_corrupt",
             "the authoritative floor state names a different install than this service serves")
+    if document.get("generation") != config.generation:
+        # §1.10. The generation is minted by provisioning into BOTH the config and the store, so a
+        # config re-provisioned over a store that was not is a service reporting `generation: N+1`
+        # while serving generation N's floors -- exactly the "visibly new versus silently old"
+        # confusion the number exists to remove. The store and the config must name one
+        # provisioning or neither is authoritative about which floor a client is looking at.
+        raise FloorWriterError(
+            "mark_corrupt",
+            f"the authoritative floor state carries generation {document.get('generation')!r} and "
+            f"this service is configured for generation {config.generation}; a store and a config "
+            "from different provisionings cannot both describe the floor a client is told about")
     return document
 
 
@@ -677,7 +693,15 @@ NEVER_HEAL_FROM_DIRECTORY = True
 #: else — that is what stops another principal replacing the endpoint, and it is the server
 #: authentication the design specifies. The caller needs only to TRAVERSE it, so group execute is
 #: granted and group write is not.
-SOCKET_DIR_MODE = 0o750
+#:
+#: The **setgid** bit is not decoration. A socket this service binds inherits the service's own
+#: primary group, and a process cannot ``chgrp`` a file to a group it is not a member of — so
+#: without setgid the endpoint comes up owned ``service:service`` at :data:`SOCKET_MODE` 0770 and
+#: the caller, whose only claim is the CALLER group, gets ``other`` = 0 and cannot connect. That
+#: is not a theory: a four-account run produced exactly that ``scope_unavailable`` on every probe.
+#: setgid makes the directory's group the group of what is created in it, which is the same
+#: mechanism `engine/ci/isolation_proof.sh` uses on the protected store (2770).
+SOCKET_DIR_MODE = 0o2750
 #: The socket itself is group-accessible, because connecting requires write permission on the
 #: socket and the caller is a DIFFERENT principal by construction. The first attempt used 0700
 #: here; a two-account measurement showed that refuses the service's own intended caller with
