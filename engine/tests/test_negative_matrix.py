@@ -426,6 +426,26 @@ class NegativeMatrixTimeTests(_MatrixCase):
 # ---------------------------------------------------------------------------
 
 
+    def test_nm_time_16_now_equal_to_lease_issued_at_ms_is_inside_the_window(self):
+        """NM-TIME-16 -- the LOWER equality of the §5 step-8a gate.
+
+        §1 fixes every window as `lo <= t <= hi`, so an instant exactly equal to
+        `lease_issued_at_ms` is INSIDE the lease and must not read as
+        `lease_not_yet_valid`. The gate's refusal is `now_ms < lease_issued_at_ms`,
+        strict on purpose; one character makes the boundary exclusive and a lease
+        unusable at the instant it becomes valid.
+
+        Both sides are asserted, because a test that only pins the refusal passes
+        just as well when the gate refuses everything.
+        """
+        case = "NM-TIME-16"
+        issued, expires = 1_000_000, 1_000_000 + gsl.MIN_LAUNCH_REMAINING_MS
+        # one millisecond BEFORE issuance: refused, and by that exact name
+        self.assertEqual(
+            gsl.lease_launch_gate(issued - 1, issued, expires), "lease_not_yet_valid", case)
+        # exactly AT issuance: inside the window, so the lower limb must not fire
+        self.assertIsNone(gsl.lease_launch_gate(issued, issued, expires), case)
+
 class NegativeMatrixReplayTests(_MatrixCase):
     def test_nm_replay_05_same_nonce_bound_to_a_different_challenge_is_refused(self):
         """NM-REPLAY-05 -- a new signed challenge reusing an ALREADY-ACCEPTED nonce. The
@@ -604,3 +624,76 @@ class NegativeMatrixEvidenceFloorTests(_MatrixCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Plan section 7.1 / 6.1(14) -- concurrency (NM-CONC-*)
+# ---------------------------------------------------------------------------
+
+
+class NegativeMatrixConcurrencyTests(_MatrixCase):
+    def test_nm_conc_05_a_ledger_operation_inside_a_caller_s_transaction_is_refused(self):
+        """NM-CONC-05 -- nested-transaction rejection.
+
+        Every ledger write owns its `BEGIN IMMEDIATE`, so the write lock is held
+        across the read-then-write of a CAS. A caller that has already opened a
+        transaction would have that CAS execute inside a lock it does not own and
+        cannot reason about -- the interleaving the lock exists to prevent. `_Tx`
+        refuses rather than joining the caller's transaction.
+
+        The refusal is asserted, and so is the state afterwards: nothing was
+        written, and no attempt reaches terminal attestation.
+        """
+        case = "NM-CONC-05"
+        conn = _conn()
+        conn.execute("BEGIN IMMEDIATE")          # the caller opens its own
+        try:
+            with self.assertRaises(gsl.LedgerError, msg=case) as caught:
+                gsl.accept_prepare(conn, _acceptance(), 10)
+            self.assertIn("own its BEGIN IMMEDIATE", str(caught.exception), case)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0],
+                0, "%s -- a refused nested operation must write nothing" % case)
+        finally:
+            conn.execute("ROLLBACK")
+        self.assert_nothing_renders_trusted_verified(conn)
+
+    def test_nm_conc_06_a_divergent_duplicate_terminal_write_is_refused(self):
+        """NM-CONC-06 -- the terminal write happens EXACTLY ONCE.
+
+        §6(4): the completion row's PRIMARY KEY is the write-once gate. A retry
+        carrying byte-identical facts is IDEMPOTENT and buys nothing; a retry whose
+        facts DIVERGE is `Conflict("completion_facts_differ")`. Both limbs are
+        asserted here, and the row count after each, because a gate that refused
+        every second write would satisfy the divergent limb alone while breaking
+        the legitimate retry the protocol depends on.
+        """
+        case = "NM-CONC-06"
+        conn = _executing(_conn())
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(), 40, derived=_derived()),
+            gsl.CREATED, case)
+        # identical retry: idempotent, still one row
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(), 41, derived=_derived()),
+            gsl.IDEMPOTENT, case)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0],
+            1, "%s -- an idempotent retry must not add a row" % case)
+        # divergent retry: refused by name, and still one row
+        divergent = _produced(completed_at_ms=ACCEPTED_AT + 60_000)
+        with self.assertRaises(gsl.Conflict, msg=case) as caught:
+            gsl.record_completion(conn, "att-1", divergent, 42, derived=_derived())
+        self.assertIn("completion_facts_differ", str(caught.exception), case)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0],
+            1, "%s -- a divergent retry must not add a row" % case)
+
+    def test_nm_conc_05_the_same_operation_succeeds_when_it_owns_the_transaction(self):
+        """NM-CONC-05, the positive control. Without it the test above passes just
+        as well against a ledger that refuses everything."""
+        case = "NM-CONC-05"
+        conn = _conn()
+        gsl.accept_prepare(conn, _acceptance(), 10)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1, case)
