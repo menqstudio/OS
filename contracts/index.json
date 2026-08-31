@@ -34,8 +34,9 @@
       "version": 2,
       "version_pointer": "/properties/schema/const",
       "crosses": "engine -> desktop",
-      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
-      "why_shared": "the lease is what the wall issues and the cockpit displays; both halves read the same object"
+      "rust_mirror": null,
+      "why_shared": "the lease is what the wall issues and the cockpit displays; both halves read the same object",
+      "rust_mirror_note": "NONE, and that is the fact rather than a gap to fill. No Rust file in this tree mirrors the execution lease: `grep -rln 'execution-lease.schema|struct ExecutionLease' --include=*.rs apps/desktop/src-tauri/` returns nothing, and check_schema_mirrors.py's MIRRORS table carries only VerifierReceipt and EvidenceEvent. This field named core/src/governance.rs, a path that has never existed; pointing it at the real governance.rs would have replaced a dead path with a false claim."
     },
     {
       "id": "mode-grant",
@@ -61,7 +62,7 @@
       "version": 1,
       "version_pointer": "/properties/schema/const",
       "crosses": "engine -> desktop",
-      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
+      "rust_mirror": "apps/desktop/src-tauri/src/governance.rs",
       "why_shared": "the only artifact that can make the desktop say Verified; it is parsed on the desktop side"
     },
     {
@@ -70,7 +71,7 @@
       "version": 1,
       "version_pointer": "/properties/schema/const",
       "crosses": "engine -> desktop",
-      "rust_mirror": "apps/desktop/src-tauri/core/src/governance.rs",
+      "rust_mirror": "apps/desktop/src-tauri/src/governance.rs",
       "why_shared": "the append-only chain the security page mirrors; the desktop reads it and appends nothing"
     }
   ],

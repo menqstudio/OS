@@ -5,13 +5,14 @@
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
 permitted call is still refused for want of a transport. The BUILD agent's half is not built. `check_doc_claims` requires a named commit to be an ancestor of
-`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records.
+`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records
+(`code_audit.last_independent_audit`, `config/toolchain.json`).
 `T-046`, `T-048`–`T-053` merged.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `d42cb65`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`.
+> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `6782787`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #214 on `feat/version-parity-gate`.
 >
 > 12 negative-matrix rows out of unreviewed: 3 implemented (mutation-proven), 9 blocked on a measured cause.
 >

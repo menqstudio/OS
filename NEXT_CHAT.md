@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `feat/negative-matrix-declared` · **head** `6782787` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `d42cb65`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`.
+> **⏭️ CURRENT ACTIVE: PR #212 · branch `feat/negative-matrix-declared`** (base `main`, tip `6782787`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #214 on `feat/version-parity-gate`.
 >
 > 12 negative-matrix rows out of unreviewed: 3 implemented (mutation-proven), 9 blocked on a measured cause.
 >
