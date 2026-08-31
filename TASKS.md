@@ -4,7 +4,7 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
 >
 > Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** The per-task floor moves to protected Supervisor-domain custody, mutable only through a distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. It and the per-install ledger ceiling stay separate — unifying them refuses every second task with `EvidenceFork` Design `#112` merged, five rulings issued, NOT approved | Bro | In-Progress | — |
+| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** The per-task floor moves to protected Supervisor-domain custody, mutable only through a distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. It and the per-install ledger ceiling stay separate — unifying them refuses every second task with `EvidenceFork` Design `#112` merged, five rulings issued; built on `#219`, NOT approved | Bro | Review | `#219` |
 | **T-064** | **The shut governed gate now names WHICH requirement a machine fails.** `broker/src/preflight.rs` reports **27** requirements met / not met / not measurable, with who provisions each; here **1 / 25 / 1** | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm**, which needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main`: it passes inside the run that merges it and fails on the next read. Fix: accept any recent `main`, named | — | Todo | — |

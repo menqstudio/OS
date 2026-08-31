@@ -5,9 +5,9 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** none — `main` @ `83357de`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `egress-authorizer`
+**Active branch:** `feat/floor-writer-service` — `main` @ `87bfe73`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
 >
 > Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
