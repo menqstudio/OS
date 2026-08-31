@@ -138,10 +138,10 @@
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "9b2b917db0896ed24ae7ec0e53f95b6c8b3b4c09",
+      "head": "d42cb65d1b970e40ca0388f7b94a6ca501ee8a36",
       "conclusion": "success",
-      "run_id": 33328656207,
-      "note": "All seven workflows green on main at this head, read from `gh run list --branch main`. Stale by construction while T-059 is open."
+      "run_id": 33330409095,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main`. Stale by construction while T-059 is open."
     }
   }
 }
