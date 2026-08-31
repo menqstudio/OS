@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `verify/queue-1-reverification` · **head** `cd954f1` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #211 · branch `verify/queue-1-reverification`** (base `main`, tip `d42cb65`, task T-061). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`, PR #210 on `feat/audit-rows-name-their-source`.
+> **⏭️ CURRENT ACTIVE: PR #211 · branch `verify/queue-1-reverification`** (base `main`, tip `cd954f1`, task T-061). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #212 on `feat/negative-matrix-declared`.
 >
 > A second measurement of Queue 1 from a fresh clone: 22 checks proven by my own mutations, 4 defended by nothing, and one assertion in PR #210 that cannot fail.
 >

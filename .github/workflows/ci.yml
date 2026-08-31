@@ -851,6 +851,13 @@ jobs:
       # may work, and thirty gates passed over them.
       - name: No roadmap Definition-of-Done row ends mid-sentence
         run: python tools/check_truncated_lines.py
+      # T-056. A check nothing invokes is a suggestion, and this gate is in its own
+      # derived population: leaving it out of a REQUIRED job would make it declare
+      # `blocks: nothing` about itself, which is the exact defect it exists to catch.
+      # It sits in this job rather than a new one because a new job is a new context
+      # and branch protection is the Owner's to change.
+      - name: Controls name what their failure prevents (T-056)
+        run: python tools/check_control_invocation.py
       - name: Gate self-tests
         working-directory: tools
         run: |
@@ -861,6 +868,7 @@ jobs:
           python -m unittest test_check_recommendation
           python -m unittest test_check_truncated_lines
           python -m unittest test_roadmap_split
+          python -m unittest test_check_control_invocation
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law

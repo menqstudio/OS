@@ -95,6 +95,34 @@ class ContractsSingleSourceTests(unittest.TestCase):
     def test_a_consistent_tree_is_green(self):
         self.assertEqual(cs.check(self._tree()), [])
 
+    # --- every path-shaped value in the index resolves (T-056, part 3) -------
+    def test_a_path_in_the_index_that_does_not_exist_is_red(self):
+        """Three `rust_mirror` values named `core/src/governance.rs`, a path that
+        has never existed, and nothing caught it: this gate compared schema
+        BYTES, and `check_doc_claims` resolves paths only inside the canonical
+        read set, which `contracts/index.json` is not in."""
+        root = self._tree()
+        index = root / "contracts" / "index.json"
+        doc = json.loads(index.read_text(encoding="utf-8"))
+        doc["contracts"][0]["rust_mirror"] = "apps/desktop/src-tauri/core/src/nope.rs"
+        index.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        problems = cs.check(root)
+        self.assertTrue(any("nope.rs" in p for p in problems), problems)
+        self.assertTrue(any("does not exist" in p for p in problems), problems)
+
+    def test_a_path_that_resolves_is_green_and_null_is_allowed(self):
+        """`null` is a different statement from a wrong path: the execution
+        lease has no Rust mirror at all, and saying so is the honest entry."""
+        root = self._tree()
+        (root / "apps" / "desktop" / "src-tauri" / "src").mkdir(parents=True, exist_ok=True)
+        (root / "apps" / "desktop" / "src-tauri" / "src" / "governance.rs").write_text("x", encoding="utf-8")
+        index = root / "contracts" / "index.json"
+        doc = json.loads(index.read_text(encoding="utf-8"))
+        doc["contracts"][0]["rust_mirror"] = "apps/desktop/src-tauri/src/governance.rs"
+        doc["contracts"][1]["rust_mirror"] = None
+        index.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        self.assertEqual(cs.check(root), [])
+
     # --- the desktop half, held to the same rule (T-055) ---------------------
     def test_an_unclassified_desktop_schema_is_red(self):
         """A schema beside the desktop's code that the index does not name.
