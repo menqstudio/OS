@@ -5,9 +5,9 @@
 > in `config/canon-budget.json`; over it the wall takes only a shrinking edit.
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #206 · branch `feat/dispatch-the-produced-agent`** (base `main`, tip `9b2b917`, task T-058). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #211 · branch `verify/queue-1-reverification`** (base `main`, tip `d42cb65`, task T-061). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`, PR #210 on `feat/audit-rows-name-their-source`.
 >
-> The 60s tick enqueues AND dispatches armed bundles, bounded. Bundles are born disarmed and arming needs a natively confirmed grant. claim_and_run had one non-test caller before this -- a CI demo binary -- so the produced agent never ran in the product.
+> A second measurement of Queue 1 from a fresh clone: 22 checks proven by my own mutations, 4 defended by nothing, and one assertion in PR #210 that cannot fail.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
