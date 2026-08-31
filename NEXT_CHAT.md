@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** `design/floor-writer-service` · **head** `363c51c` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
+**Active branch:** `design/floor-writer-service` · **head** `52c263a` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #112 · branch `design/floor-writer-service`** (base `main`, tip `363c51c`, task T-020). Also open, and not this PR's work: PR #217 on `feat/provisioning-preflight`.
+> **⏭️ CURRENT ACTIVE: PR #112 · branch `design/floor-writer-service`** (base `main`, tip `52c263a`, task T-020). No other pull request is open.
 >
-> The floor-writer design is re-verified against this head and NOT superseded: PRODUCTION_HALF_DESIGN is the output half, this is the containment half. Still a PROPOSAL awaiting the Architect.
+> The floor-writer design, re-verified against this head and NOT superseded. Still a PROPOSAL: what it waits on is the Architect audit, not a merge.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

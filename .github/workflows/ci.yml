@@ -101,6 +101,30 @@ jobs:
       - name: Test the launcher, executor, broker and live driver
         run: |
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml             -p brops-launcher -p brops-executor -p brops-broker -p brops-governed-live             -p brops-win-live -p brops-win-broker
+      # The provisioning preflight is a REPORT, and a report nothing runs is the
+      # T-056 pattern -- a control whose failure prevents nothing. This is what
+      # runs it. It also asserts something worth asserting: on an unprovisioned
+      # machine the governed gate must still be SHUT. A runner that ever came
+      # back ready would mean the fail-closed ladder had been provisioned by
+      # accident, and that must redden CI rather than pass quietly.
+      - name: Provisioning preflight reports the governed gate SHUT on a bare runner
+        run: |
+          set +e
+          out=$(cargo run --quiet --manifest-path apps/desktop/src-tauri/Cargo.toml \
+                  -p brops-broker --bin brops-preflight 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then
+            echo "RED: the preflight reports this runner READY for a governed turn."
+            echo "Either the ladder was provisioned here, or the preflight stopped measuring."
+            exit 1
+          fi
+          echo "$out" | grep -q "env.brops_broker_config" || {
+            echo "RED: the report no longer names env.brops_broker_config, the refusal that holds on every shipped install."
+            exit 1
+          }
+          echo "GREEN: preflight exit $code, the gate is shut and it says which requirements are unmet."
 
   live-governed-turn:
     name: Linux · LIVE 7-service governed turn (real uids, setuid launcher)
