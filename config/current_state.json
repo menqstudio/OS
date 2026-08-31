@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "b8fa975a218d54764da87cca30321718d9b32658",
+  "settled_at_main_head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
   "sync": {
-    "baseline_main_head_at_sync": "b8fa975a218d54764da87cca30321718d9b32658",
-    "snapshot_branch": "fix/budget-for-structural-entries",
+    "baseline_main_head_at_sync": "363c51c6242ed43b11a9bcd273394c27c78e7251",
+    "snapshot_branch": "feat/provisioning-preflight",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "fix/budget-for-structural-entries"
+    "branch": "feat/provisioning-preflight"
   },
   "prs": [
     {
@@ -124,24 +124,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 216,
-    "branch": "fix/budget-for-structural-entries",
+    "number": 217,
+    "branch": "feat/provisioning-preflight",
     "state": "open",
-    "what": "The canon budget bounds PROSE, which whoever holds a file writes; it does not bound the prs[] records check_repo_state demands, whose count the repository does not control. Raising THIS file's ceiling once, declared, is not the failure that file exists to prevent -- and the difference is written into config/canon-budget.json so the next session cannot mistake one for the other.",
-    "note": "The canon budget bounds PROSE, not the prs[] records check_repo_state demands: 13000 -> 16000 for that one file, once, with what stays forbidden written down.",
+    "what": "Lifted from the stale branch at-main-2, which is emptied rather than rebased. build_governed_executor is 15 return-fail_closed branches that all produce one observable, a blocked reply; this reports the SAME requirement set by name -- 27 of them, met / not met / not measurable, and who would have to provision each. It provisions nothing and weakens nothing.",
+    "note": "The shut governed gate now says WHICH requirement each machine fails: 27 of them, met / not met / not measurable, and who must provision each.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #216 (fix/budget-for-structural-entries): merge on an all-green exact head, then read `gh run list --branch main`. Nothing is queued behind it. Waiting on the Owner: T-059's fix (main_ci is stale the instant a merge lands, and loosening it is a fail-closed gate's strictness, his call), T-063's git-tag arm (a release policy he has not stated), and whether check_repo_state's parse_audit_candidate should say how many markers it found -- it is fail-closed on DUPLICATES and prints 'missing'.",
+    "current": "PR #217 (feat/provisioning-preflight): the OWNER merges this one -- he said so for this task. Then delete origin/at-main-2, which this empties, and never before. Still to do from the same instruction: lift docs/design/FLOOR_WRITER_SERVICE_DESIGN.md off design/floor-writer-service onto main and settle PR #112. origin/docs/evidence-bash-gap is already deleted: zero unique files and zero unique lines.",
     "_note": "The carrier is current_workflow_pr (#214 on feat/version-parity-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "b8fa975a218d54764da87cca30321718d9b32658",
+      "head": "363c51c6242ed43b11a9bcd273394c27c78e7251",
       "conclusion": "success",
-      "run_id": 33362115604,
-      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #215 merged. Stale by construction while T-059 is open."
+      "run_id": 33363971782,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #216 merged. Stale by construction while T-059 is open."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

@@ -16,6 +16,13 @@ path = "src/lib.rs"
 name = "brops-broker"
 path = "src/main.rs"
 
+# The provisioning preflight (`src/preflight.rs`). Declared explicitly rather than left to `src/bin`
+# auto-discovery so the crate states both of its binaries in one place. It READS: it opens no socket,
+# spawns nothing, writes nothing, and flips no gate.
+[[bin]]
+name = "brops-preflight"
+path = "src/bin/preflight.rs"
+
 [dependencies]
 # The broker reuses the already-landed governed-turn control flow, framing, peer
 # auth, and the four SQLite schemas. It NEVER re-implements those rules — it wires

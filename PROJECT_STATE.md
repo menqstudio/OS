@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #216 · branch `fix/budget-for-structural-entries`** (base `main`, tip `b8fa975`, task T-059). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #217 · branch `feat/provisioning-preflight`** (base `main`, tip `363c51c`, task T-064). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The canon budget bounds PROSE, not the prs[] records check_repo_state demands: 13000 -> 16000 for that one file, once, with what stays forbidden written down.
+> The shut governed gate now says WHICH requirement each machine fails: 27 of them, met / not met / not measurable, and who must provision each.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
