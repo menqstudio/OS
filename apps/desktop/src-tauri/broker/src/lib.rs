@@ -31,3 +31,11 @@ pub mod manifest_resolver;
 /// derived from the actual conversation rather than read out of deployment config. It is the caller
 /// `brops_core::governed_submit::governed_turn_submit_prepared` never had.
 pub mod ladder_executor;
+
+/// **Provisioning preflight**: which of the governed turn's prerequisites does THIS machine meet?
+///
+/// `build_governed_executor` is a ladder of `return fail_closed()` branches that all produce the same
+/// observable — a `blocked` reply. This module walks the same requirement set and reports each one by
+/// name, with who would have to provision it. It reads; it never writes, provisions or flips anything.
+/// Served to an operator by the `brops-preflight` binary.
+pub mod preflight;
