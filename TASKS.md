@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-060** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm** — it needs a release policy the Owner has not stated | Bro | Review | `#214` |
+| **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file; it landed as a SECOND `T-060` and was renumbered. **Open: the git-tag arm** — it needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main`: the gate passes inside the run that merges it and fails on the next read. Fix: accept a reading of any recent `main` and name which head | — | Todo | — |
 | **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed on `#207` as an `auth_ref` REFERENCE store — this process holds no secret, per migration 0022. Next the transport, then the netns jail for the population holding `Bash`. ◑ Builder-claimed | Bro | In-Progress | `#207` |
 | **T-060** | **A PR that outlives its own `Last updated` line reddens `main` on merge.** The gate compares `PROJECT_STATE.md`'s claimed date with the newest commit touching it, and a squash makes that the merge date. `T-059`'s family: a verdict that depends on WHEN it runs | — | Todo | — |

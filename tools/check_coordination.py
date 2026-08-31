@@ -711,9 +711,17 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
                     f"{ROADMAP}: Phase {n} is missing section(s): {', '.join(missing)}"
                 )
 
-    # 5. TASKS rows each carry a known status.
+    # 5. TASKS rows each carry a known status, and each ID appears ONCE.
+    #
+    # The uniqueness half exists because two sessions landed a T-060 on the same
+    # board within four hours -- different tasks, one ID -- and every gate stayed
+    # green. TASKS.md's own first rule is "claim a row before you touch anything
+    # -- never two agents on one row", and two rows sharing an ID is precisely
+    # the collision that rule is for: a claim on T-060 no longer names one task,
+    # and a document citing T-060 no longer names one either.
     tasks = _read(root, "TASKS.md")
     if tasks is not None:
+        seen: dict[str, int] = {}
         for line in tasks.splitlines():
             if re.match(r"\s*\|\s*\*\*T-\d+\*\*", line):
                 if not any(s in line for s in TASK_STATUSES):
@@ -722,6 +730,15 @@ def check(root: pathlib.Path, *, changed: list[str] | None = None) -> list[str]:
                         f"TASKS.md: row {tid.group() if tid else '?'} has no valid "
                         f"status ({'/'.join(TASK_STATUSES)})"
                     )
+                row_id = re.match(r"\s*\|\s*\*\*(T-\d+)\*\*", line).group(1)
+                seen[row_id] = seen.get(row_id, 0) + 1
+        for row_id, n in sorted(seen.items()):
+            if n > 1:
+                problems.append(
+                    f"TASKS.md: {row_id} is the ID of {n} different rows. One ID, one "
+                    f"row -- give the newer task the next free ID and update anything "
+                    f"citing it, because a claim on {row_id} otherwise names two tasks"
+                )
 
     # 6. PROJECT_STATE's 'Last updated' date is compared against the file's newest commit.
     problems += _check_project_state_freshness(root)
