@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #214 · branch `feat/version-parity-gate`** (base `main`, tip `4bdd803`, task T-060). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
+> **⏭️ CURRENT ACTIVE: PR #215 · branch `fix/one-id-one-row`** (base `main`, tip `bce6fc1`, task T-063). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`.
 >
-> The app version is declared five times across four files and nothing compared them; check_version_parity.py refuses drift and names the file. No v* tag arm -- that needs a release policy the Owner has not stated.
+> The board carried two different T-060s and every gate was green; check_coordination now refuses a duplicate task ID by name.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-060** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm** — it needs a release policy the Owner has not stated | Bro | Review | `#214` |
+| **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file; it landed as a SECOND `T-060` and was renumbered. **Open: the git-tag arm** — it needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` is stale by construction.** Recording a reading of `main` needs a merge, and the merge moves `main`: the gate passes inside the run that merges it and fails on the next read. Fix: accept a reading of any recent `main` and name which head | — | Todo | — |
 | **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed on `#207` as an `auth_ref` REFERENCE store — this process holds no secret, per migration 0022. Next the transport, then the netns jail for the population holding `Bash`. ◑ Builder-claimed | Bro | In-Progress | `#207` |
 | **T-060** | **A PR that outlives its own `Last updated` line reddens `main` on merge.** The gate compares `PROJECT_STATE.md`'s claimed date with the newest commit touching it, and a squash makes that the merge date. `T-059`'s family: a verdict that depends on WHEN it runs | — | Todo | — |

@@ -197,6 +197,30 @@ class SemanticGateTests(unittest.TestCase):
         probs = cc.check(root, changed=["config/current_state.json", "NEXT_CHAT.md"])  # missing 2 mirrors
         self.assertTrue(any("checkpoint desync" in p for p in probs))
 
+    def test_rejects_two_rows_sharing_one_task_id(self):
+        # Two sessions landed a T-060 on the same board within four hours --
+        # different tasks, one ID -- and every gate stayed green. A claim on
+        # T-060 then names two tasks, which is the collision TASKS.md's own
+        # first rule exists to prevent.
+        root = self._tmp()
+        rows = ("| ID |\n"
+                "| **T-060** | the first task | me | Todo | " + BRANCH_31 + " PR #31 PR #32 |\n"
+                "| **T-060** | a DIFFERENT task | me | Todo | " + BRANCH_32 + " |\n")
+        _state_repo(root, tasks=rows)
+        probs = cc.check(root)
+        self.assertTrue(any("T-060 is the ID of 2 different rows" in p for p in probs), probs)
+
+    def test_accepts_distinct_task_ids(self):
+        # ...and the refusal above is not a check that cannot pass: the same two
+        # rows with distinct IDs are accepted, so what it objects to is the
+        # DUPLICATE and not the presence of two rows.
+        root = self._tmp()
+        rows = ("| ID |\n"
+                "| **T-060** | the first task | me | Todo | " + BRANCH_31 + " PR #31 PR #32 |\n"
+                "| **T-063** | a DIFFERENT task | me | Todo | " + BRANCH_32 + " |\n")
+        _state_repo(root, tasks=rows)
+        self.assertFalse([p for p in cc.check(root) if "is the ID of" in p])
+
     def test_rejects_missing_status_token(self):
         # NEXT_CHAT omits the tokens -> every token is flagged missing.
         root = self._tmp()
