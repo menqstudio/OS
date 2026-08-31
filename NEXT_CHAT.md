@@ -6,9 +6,9 @@
 > `tools/check_canon_budget.py` holds this file to 12 KB: over that ceiling, the only edit
 > the wall accepts is one that makes it smaller.
 
-**Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
+**Active branch:** `docs/evidence-index` · **head** `fac0bcc` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #213 · branch `docs/evidence-index`** (base `main`, tip `d42cb65`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #208 on `feat/control-invocation`, PR #209 on `fix/prior-art-latest-declaration`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`, PR #212 on `feat/negative-matrix-declared`.
+> **⏭️ CURRENT ACTIVE: PR #213 · branch `docs/evidence-index`** (base `main`, tip `fac0bcc`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`, PR #212 on `feat/negative-matrix-declared`.
 >
 > docs/EVIDENCE_INDEX.md: what an outside reviewer reads, in order, and what each artefact does not establish.
 >
@@ -30,9 +30,10 @@ No class holds `USE_NETWORK`, so every valid lease still names **no** destinatio
 
 *A green PR is not a green `main`, and `gh pr checks` is not `gh run list --branch main`.* A commit
 named in the canon must be an **ancestor of `main`** — `check_doc_claims` refuses a branch head (#204).
-Three things must be true at every push: the PR body carries exactly one
-`AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the
-live `main`, and the head above moves **in its own commit**.
+Three more things must be true at every push: the PR body carries exactly one
+`AUDIT_CANDIDATE_HEAD: <40-hex>` equal to the pushed head, `config/current_state.json` names the live
+`main`, and the head named above moves **in its own commit** — an amend leaves the handoff naming a
+commit that no longer exists.
 
 Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies here.
 
