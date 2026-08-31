@@ -22,15 +22,16 @@ document under ONE rename, a resolver that REFUSES an unconfigured floor, root-o
 that MINTS the §1.10 generation (B6), and `SECURITY_MODEL.md` §1.3a as a ten-row deployment
 contract naming what enforces each row (C6).
 
-**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` -- four real accounts on a
+**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` -- four real accounts, one
 real AF_UNIX socket: authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied
-`floor.advance`, four provisioning negatives, three meta-controls, cleanup proved.
+`floor.advance`, four provisioning negatives, three meta-controls, cleanup proved (closes C4).
 `engine/tests/test_floor_writer_durability.py` -- the commit's syscalls out of the kernel (temp,
-`fsync`, rename, dir `fsync`; each barrier deleted once, each went red) and twelve `SIGKILL`s
+`fsync`, rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s
 mid-write, each leaving a complete document.
 
-**NOT done:** B7, C1-C5, C7, a second Architect pass. §1.7 stays **partial**; §1.10 is
-**implemented** and still does not close **O-5**. FW-3 (`scope.pin`) is OUT by ruling.
+**NOT done:** C1 custody TOCTOU, C2 one custody contract, C3 test structure, C7
+principal-model, a second Architect pass. §1.7 stays **partial**; §1.10 is **implemented** and
+does not close **O-5**. FW-3 is OUT by ruling. The B/C list lives only in `#219`'s body.
 
 The transport and the produced agent's egress are **T-058** in [`TASKS.md`](TASKS.md).
 
@@ -43,13 +44,12 @@ commit that no longer exists.
 
 Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies here.
 
-**The app version is declared five times in four files and nothing reconciled them** until
-`tools/check_version_parity.py` (`apps/desktop/package.json`, `src-tauri/tauri.conf.json`,
-`src-tauri/Cargo.toml`, and `package-lock.json` twice; all `0.1.0`). `npm ci` exits 0 on a lock
-that disagrees — measured. **No `v*` tag is compared**: `git tag -l` prints one tag,
-`brops-desktop-v0.1.0`, which does not match `v*`, so `release.yml` has never run, and whether
-these files hold the LAST released version or the NEXT one is a release policy the Owner has not
-stated. Until he does, a tag arm would be a guess in a required context.
+**The app version is declared five times in four files** and nothing reconciled them until
+`tools/check_version_parity.py`; all say `0.1.0`, and `npm ci` exits 0 on a lock that disagrees —
+measured. **No `v*` tag is compared**: the one tag, `brops-desktop-v0.1.0`, does not match `v*`,
+so `release.yml` has never run, and whether these files hold the LAST released version or the
+NEXT one is a release policy the Owner has not stated. Until he does, a tag arm would be a guess
+in a required context. The row is **T-063**.
 
 ## Verify before you believe any of this
 
