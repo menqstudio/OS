@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #112 · branch `design/floor-writer-service`** (base `main`, tip `52c263a`, task T-020). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
 >
-> The floor-writer design, re-verified against this head and NOT superseded. Still a PROPOSAL: what it waits on is the Architect audit, not a merge.
+> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -53,8 +53,9 @@ Toolchain: `config/toolchain.json`, checked against every canonical document by
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. 20 pull
-requests, 107 files and 19688 inserted lines have merged since that head, all of it circle-half.
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **56 pull
+requests, 192 files and 39,396 inserted lines** have merged since, none independently
+confirmed. *(Said 20/107/19688 until 2026-08-31.)*
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

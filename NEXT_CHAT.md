@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it. *(This note said 12 KB — a number nothing checked, beside the gate that checks.)*
 
-**Active branch:** `design/floor-writer-service` · **head** `52c263a` (the MERGE BASE — a squash erases branch commits, so a handoff naming a branch commit names a dead object on `main`) · **task** `egress-authorizer`
+**Active branch:** none — `main` @ `83357de`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #112 · branch `design/floor-writer-service`** (base `main`, tip `52c263a`, task T-020). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
 >
-> The floor-writer design, re-verified against this head and NOT superseded. Still a PROPOSAL: what it waits on is the Architect audit, not a merge.
+> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -76,8 +76,9 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**20 pull requests, 107 files and 19688 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑.
+**56 pull requests, 192 files and 39,396 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(Said 20/107/19688 until 2026-08-31 —
+nearly a third of the real surface.)*
 
 **Nothing is waiting on the Owner.**
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. O-1…O-5
