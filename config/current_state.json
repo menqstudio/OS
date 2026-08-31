@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "fac0bccaa122dd39b016515368eaba4031a7599b",
+  "settled_at_main_head": "cd954f1736b2f56e6585c3214cf2bb66cd2e936e",
   "sync": {
-    "baseline_main_head_at_sync": "fac0bccaa122dd39b016515368eaba4031a7599b",
-    "snapshot_branch": "docs/evidence-index",
+    "baseline_main_head_at_sync": "cd954f1736b2f56e6585c3214cf2bb66cd2e936e",
+    "snapshot_branch": "verify/queue-1-reverification",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "egress-authorizer",
-    "branch": "docs/evidence-index"
+    "branch": "verify/queue-1-reverification"
   },
   "prs": [
     {
@@ -41,15 +41,6 @@
       "merge_state": "open",
       "role": "implementation",
       "head": "712014ef4dfea767e120c5e5ab6125889a625005"
-    },
-    {
-      "number": 211,
-      "branch": "verify/queue-1-reverification",
-      "base": "main",
-      "draft": false,
-      "merge_state": "open",
-      "role": "repository-truth",
-      "head": "d893c20bdf5029922d815a67dedb82278f923e7a"
     },
     {
       "number": 212,
@@ -160,24 +151,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 213,
-    "branch": "docs/evidence-index",
+    "number": 211,
+    "branch": "verify/queue-1-reverification",
     "state": "open",
-    "what": "An index an outside reviewer can start from, which indexes the artefacts rather than asserting their verdicts, and whose first section is what this repository does NOT establish.",
-    "note": "docs/EVIDENCE_INDEX.md: what an outside reviewer reads, in order, and what each artefact does not establish.",
+    "what": "A second, independent measurement of the Queue-1 work from a fresh clone, with its own mutation sweeps -- looking for a check that cannot fail rather than for a check that passes.",
+    "note": "A second measurement of Queue 1 from a fresh clone: 22 checks proven by my own mutations, 4 defended by nothing, and one assertion in PR #210 that cannot fail.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #213 (docs/evidence-index): merge on an all-green exact head, then read `gh run list --branch main`. The Owner's order after it is #211, #212, then #210 (fix its cannot-fail assertion first), then #207 (rewrite SS4 as an auth_ref REFERENCE store -- migration 0022 forbids this process holding a secret at all).",
+    "current": "PR #211 (verify/queue-1-reverification): merge on an all-green exact head, then read `gh run list --branch main`. The Owner's order after it is #212, then #210 (fix its cannot-fail assertion first), then #207 (rewrite SS4 as an auth_ref REFERENCE store -- migration 0022 forbids this process holding a secret at all).",
     "_note": "What the CARRIER does next. One entry per carrier; the history of previous carriers is in git, not here."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "fac0bccaa122dd39b016515368eaba4031a7599b",
+      "head": "cd954f1736b2f56e6585c3214cf2bb66cd2e936e",
       "conclusion": "success",
-      "run_id": 33355163870,
-      "note": "Four workflows green on main at this head, read from `gh run list --branch main` after #209 merged; zero non-success jobs. Stale by construction while T-059 is open."
+      "run_id": 33355837429,
+      "note": "Seven workflows of seven green on main at this head, read from `gh run list --branch main` after #213 merged. Stale by construction while T-059 is open."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

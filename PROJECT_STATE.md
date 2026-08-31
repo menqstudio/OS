@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #213 · branch `docs/evidence-index`** (base `main`, tip `fac0bcc`, task T-062). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`, PR #212 on `feat/negative-matrix-declared`.
+> **⏭️ CURRENT ACTIVE: PR #211 · branch `verify/queue-1-reverification`** (base `main`, tip `cd954f1`, task T-061). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #212 on `feat/negative-matrix-declared`.
 >
-> docs/EVIDENCE_INDEX.md: what an outside reviewer reads, in order, and what each artefact does not establish.
+> A second measurement of Queue 1 from a fresh clone: 22 checks proven by my own mutations, 4 defended by nothing, and one assertion in PR #210 that cannot fail.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
