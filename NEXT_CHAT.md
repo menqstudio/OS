@@ -8,9 +8,9 @@
 
 **Active branch:** `fix/handoff-names-a-dead-branch-commit` · **head** `629749c` (the MERGE BASE — a squash erases branch commits, so a handoff naming one names a dead object on `main`, and only the merge, after the fact, can see it) · **task** `egress-authorizer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #208 · branch `feat/control-invocation`** (base `main`, tip `d42cb65`, task T-056). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`.
+> **⏭️ CURRENT ACTIVE: PR #209 · branch `fix/prior-art-latest-declaration`** (base `main`, tip `95c52c5`, task T-056). Also open, and not this PR's work: PR #112 on `design/floor-writer-service`, PR #207 on `feat/credential-store`, PR #210 on `feat/audit-rows-name-their-source`, PR #211 on `verify/queue-1-reverification`, PR #212 on `feat/negative-matrix-declared`, PR #213 on `docs/evidence-index`.
 >
-> T-056: config/control-invocation.json holds 56 controls derived from the filesystem to what their failure PREVENTS. Two fail-closed checks prevent nothing and now say so. Also fixes three dead rust_mirror paths in contracts/index.json and adds a check that every path there resolves.
+> declaration_for reads the LATEST declaration; the reported defect is not real -- declare() dedups per target.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
