@@ -55,7 +55,7 @@ second copy of that row.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2117 OK, 10 skipped
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2124 OK, 10 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 764 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context

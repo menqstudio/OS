@@ -27,6 +27,7 @@ Everything runs offline: in-memory SQLite, injected clocks, an injected signatur
 socket, no key material, no OS trust chain.
 """
 
+import hashlib
 import pathlib
 import sqlite3
 import sys
@@ -35,8 +36,39 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import brops_protocol as protocol  # noqa: E402
 import challenge_key_registry as registry  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
+import isolated_signer as signer  # noqa: E402
+
+
+def _sign_request():
+    """A `brops.sign-request.v1` that `validate_sign_request` accepts, built FROM the field-set
+    constants rather than from a hand-written literal.
+
+    Derived on purpose: a hand-listed fixture goes stale the day a field is added, and then the
+    NM-FRAME rows below would be refusing for the wrong reason — a missing key rather than the
+    fault each one injects. Built this way, adding a field to the signer either keeps these
+    tests honest or breaks them loudly.
+    """
+    evidence = {}
+    for field in signer.EVIDENCE_STRING_FIELDS:
+        evidence[field] = f"value-for-{field}"
+    for field in signer.EVIDENCE_HANDLE_FIELDS + signer.EVIDENCE_DIGEST_FIELDS:
+        evidence[field] = hashlib.sha256(field.encode("utf-8")).hexdigest()
+    for field in signer.EVIDENCE_TS_FIELDS:
+        evidence[field] = 1_700_000_000_000
+    for field in signer.EVIDENCE_COUNT_FIELDS:
+        evidence[field] = 1
+    return {
+        "protocol": signer.SIGN_REQUEST_PROTOCOL,
+        "attestation": {
+            "attestation_protocol": signer.ATTESTATION_PROTOCOL,
+            "supervisor_key_id": "sup-key-1",
+            "sig": "GOOD-SIG",
+        },
+        "evidence": evidence,
+    }
 
 H_A = "a" * 64
 H_B = "b" * 64
@@ -697,3 +729,153 @@ class NegativeMatrixConcurrencyTests(_MatrixCase):
         gsl.accept_prepare(conn, _acceptance(), 10)
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1, case)
+
+# ---------------------------------------------------------------------------
+# Plan section 5 -- Malformed / oversized frames (NM-FRAME-*), brops_protocol.py
+# and isolated_signer.py's strict decode
+# ---------------------------------------------------------------------------
+
+
+class NegativeMatrixFrameTests(_MatrixCase):
+    """T-062. Seven of the twenty `NM-FRAME-*` rows, established against the tree.
+
+    Reviewing them found a live defect and it is fixed in the same change: `strict_loads`'s
+    own docstring said "strict JSON" and §1.9/§4 say *no NaN/Inf*, but Python's `json.loads`
+    accepts `NaN`, `Infinity` and `-Infinity` by default and nothing overrode that.
+    `strict_loads(b'{"a": NaN}')` returned `{'a': nan}` — measured on 2026-09-01, before
+    `_reject_json_constant` existed. That is what an `unreviewed` row is worth looking at for.
+
+    The other thirteen rows stay `unreviewed`, which is their honest state: nobody has
+    established them. Two are worth naming because they were looked at and NOT closed.
+    **NM-FRAME-14** (86-char b64url signature) does refuse today, but as
+    `attestation_invalid` rather than the matrix's `malformed`: `_validate_attestation`
+    accepts any capped string as `sig` and defers the shape to the injected
+    `verify_attestation`. Enforcing the shape at the decoder changes an audited perimeter's
+    contract and re-fixtures the whole signer suite, which is an Architect-facing change and
+    not part of a sweep. **NM-FRAME-15** describes a base `brops.sign-request.v1` presented
+    "on the governed path", and the tree has one tag, not two — the row's premise needs
+    settling against the design before a test can mean anything.
+    """
+
+    # -- 01 / 03: the exact-key-set rule, both directions --------------------
+
+    def test_nm_frame_01_an_unknown_field_is_refused_rather_than_ignored(self):
+        """NM-FRAME-01 -- an extra key is `malformed`, never dropped. Dropping it silently is
+        how a smuggled field becomes a field the next reader trusts."""
+        case = "NM-FRAME-01"
+        request = _sign_request()
+        request["extra"] = "smuggled"
+        with self.assertRaises(signer._Refuse) as caught:
+            signer.validate_sign_request(request)
+        self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED, case)
+        # ... and inside the evidence body, where §4.9 says inline artifact bytes never enter.
+        nested = _sign_request()
+        nested["evidence"]["output_bytes"] = "aGk="
+        with self.assertRaises(signer._Refuse) as caught:
+            signer.validate_sign_request(nested)
+        self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED, case)
+        # The positive control: the same request WITHOUT the extra key parses.
+        self.assertIsNotNone(signer.validate_sign_request(_sign_request()), case)
+
+    def test_nm_frame_03_a_missing_required_key_is_refused(self):
+        """NM-FRAME-03 -- the key set is exact in BOTH directions. A decoder that only refuses
+        extras accepts a frame with a required field missing and reads it as absent."""
+        case = "NM-FRAME-03"
+        for drop_from, key in (("top", "evidence"),
+                               ("attestation", "sig"),
+                               ("evidence", signer.EVIDENCE_HANDLE_FIELDS[0])):
+            request = _sign_request()
+            target = request if drop_from == "top" else request[drop_from]
+            del target[key]
+            with self.assertRaises(signer._Refuse) as caught:
+                signer.validate_sign_request(request)
+            self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED,
+                             f"{case}: dropping {key} was not refused")
+
+    # -- 02 / 04: what the strict decoder must refuse before anything sees it -
+
+    def test_nm_frame_02_a_duplicate_json_key_is_refused(self):
+        """NM-FRAME-02 -- last-one-wins is the default in every JSON parser, and it means the
+        bytes that were signed and the object that was read can disagree."""
+        case = "NM-FRAME-02"
+        with self.assertRaises(protocol.ProtocolError) as caught:
+            protocol.strict_loads(b'{"protocol":"a","protocol":"b"}')
+        self.assertIn("duplicate key", str(caught.exception), case)
+        self.assertEqual(protocol.strict_loads(b'{"protocol":"a"}'), {"protocol": "a"}, case)
+
+    def test_nm_frame_04_wrong_types_and_the_non_json_constants_are_refused(self):
+        """NM-FRAME-04 -- `_ms` as a string, and NaN / Infinity / -Infinity.
+
+        The constants are the half that was NOT true until this row was reviewed. A NaN in a
+        declared number field compares FALSE against itself, so an equality check written to
+        be fail-closed becomes fail-open; and re-encoding it emits the token `NaN`, which no
+        other JSON parser will read back, so a digest over the round trip is a digest of
+        nothing shared.
+        """
+        case = "NM-FRAME-04"
+        for token in (b'{"a": NaN}', b'{"a": Infinity}', b'{"a": -Infinity}'):
+            with self.assertRaises(protocol.ProtocolError) as caught:
+                protocol.strict_loads(token)
+            self.assertIn("non-JSON constant", str(caught.exception), f"{case}: {token!r}")
+        self.assertEqual(protocol.strict_loads(b'{"a": 1}'), {"a": 1},
+                         f"{case}: an ordinary number must still decode")
+
+        # A timestamp sent as a string is the same class of fault one layer up.
+        request = _sign_request()
+        field = signer.EVIDENCE_TS_FIELDS[0]
+        request["evidence"][field] = str(request["evidence"][field])
+        with self.assertRaises(signer._Refuse) as caught:
+            signer.validate_sign_request(request)
+        self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED, case)
+
+    # -- 07: the cap, at the number the design names -------------------------
+
+    def test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap(self):
+        """NM-FRAME-07 -- 256 KiB, asserted on BOTH sides of the number so the bound is the
+        bound and not merely "large is refused"."""
+        case = "NM-FRAME-07"
+        self.assertEqual(protocol.MAX_FRAME_BYTES, 256 * 1024, case)
+        self.assertEqual(signer.MAX_REQUEST_BYTES, 256 * 1024, case)
+        # `{"a":"<pad>"}` — eight bytes of syntax around the padding.
+        at_cap = b'{"a":"' + b"x" * (protocol.MAX_FRAME_BYTES - 8) + b'"}'
+        self.assertEqual(len(at_cap), protocol.MAX_FRAME_BYTES, "the fixture must sit ON the cap")
+        self.assertEqual(len(protocol.strict_loads(at_cap)["a"]), protocol.MAX_FRAME_BYTES - 8,
+                         f"{case}: a frame AT the cap must be accepted")
+        with self.assertRaises(protocol.ProtocolError) as caught:
+            protocol.strict_loads(at_cap[:-1] + b'x"}')
+        self.assertIn("over the", str(caught.exception), case)
+
+    # -- 13: handles are lowercase 64-hex, and nothing else ------------------
+
+    def test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused(self):
+        """NM-FRAME-13 -- `^[0-9a-f]{64}$`. Uppercase is the arm that a case-insensitive
+        comparison would let through, and it addresses a different store entry."""
+        case = "NM-FRAME-13"
+        field = signer.EVIDENCE_HANDLE_FIELDS[0]
+        good = _sign_request()["evidence"][field]
+        self.assertTrue(signer._is_sha256_hex(good), f"{case}: the fixture must be a real handle")
+        for bad in (good.upper(), good[:-1], good + "0", good[:-1] + "g", "", 64 * 1, None):
+            request = _sign_request()
+            request["evidence"][field] = bad
+            with self.assertRaises(signer._Refuse) as caught:
+                signer.validate_sign_request(request)
+            self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED,
+                             f"{case}: {bad!r} was not refused")
+
+    # -- 18: nothing large travels inline; the signer reads by handle --------
+
+    def test_nm_frame_18_an_inline_payload_cannot_be_sent_instead_of_a_handle(self):
+        """NM-FRAME-18 -- the handle model is the size bound. `_validate_evidence` admits no
+        inline artifact bytes AND no caller-supplied `*_sha256` for a handle it derives, so a
+        large artifact has no field to travel in and a small lie has no field to travel in
+        either."""
+        case = "NM-FRAME-18"
+        for handle_field, derived in signer.HANDLE_TO_DERIVED_HASH.items():
+            request = _sign_request()
+            self.assertIn(handle_field, request["evidence"],
+                          f"{case}: the fixture must carry {handle_field}")
+            request["evidence"][derived] = "0" * 64
+            with self.assertRaises(signer._Refuse) as caught:
+                signer.validate_sign_request(request)
+            self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED,
+                             f"{case}: a caller-supplied {derived} was accepted")

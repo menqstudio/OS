@@ -43,7 +43,7 @@ disagree, the roadmap wins.
 
 | | |
 |---|---|
-| engine (Python) | 2117 OK, 10 skipped |
+| engine (Python) | 2124 OK, 10 skipped |
 | Rust workspace, 10 crates | 1149 passed |
 | frontend | typecheck clean, 764 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulns |

@@ -55,24 +55,17 @@
     "NM-EVID-05",
     "NM-EVID-12",
     "NM-EVID-13",
-    "NM-FRAME-01",
-    "NM-FRAME-02",
-    "NM-FRAME-03",
-    "NM-FRAME-04",
     "NM-FRAME-05",
     "NM-FRAME-06",
-    "NM-FRAME-07",
     "NM-FRAME-08",
     "NM-FRAME-09",
     "NM-FRAME-10",
     "NM-FRAME-11",
     "NM-FRAME-12",
-    "NM-FRAME-13",
     "NM-FRAME-14",
     "NM-FRAME-15",
     "NM-FRAME-16",
     "NM-FRAME-17",
-    "NM-FRAME-18",
     "NM-FRAME-19",
     "NM-FRAME-20",
     "NM-FS-01",
@@ -624,28 +617,32 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Unknown field",
       "section": "§4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_01_an_unknown_field_is_refused_rather_than_ignored",
+      "mutation": "removing the `keys - allowed` half of the exact-key rule in `_validate_evidence`"
     },
     "NM-FRAME-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Duplicate JSON key",
       "section": "§4, §1.9",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_02_a_duplicate_json_key_is_refused",
+      "mutation": "replacing `_reject_duplicate_keys`'s raise with `pass`"
     },
     "NM-FRAME-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Missing required key",
       "section": "§4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_03_a_missing_required_key_is_refused",
+      "mutation": "removing the `allowed - set(request.keys())` half in `validate_sign_request`"
     },
     "NM-FRAME-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Wrong type / NaN / Inf",
       "section": "§1.9, §4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_04_wrong_types_and_the_non_json_constants_are_refused",
+      "mutation": "removing `parse_constant=_reject_json_constant` from `strict_loads` -- the arm this row's review ADDED, after measuring that `strict_loads(b'{\"a\": NaN}')` returned `{'a': nan}`"
     },
     "NM-FRAME-05": {
       "status": "unreviewed",
@@ -660,10 +657,11 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Oversize sign-request",
       "section": "§4.4, §1.9",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap",
+      "mutation": "disabling the `len(raw) > MAX_FRAME_BYTES` arm"
     },
     "NM-FRAME-08": {
       "status": "unreviewed",
@@ -696,10 +694,11 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Bad hex handle",
       "section": "§4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused",
+      "mutation": "widening `_is_sha256_hex` to accept uppercase"
     },
     "NM-FRAME-14": {
       "status": "unreviewed",
@@ -726,10 +725,11 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-18": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Inline large payload",
       "section": "§1.9, §4.4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_18_an_inline_payload_cannot_be_sent_instead_of_a_handle",
+      "mutation": "removing the `keys - allowed` half in `_validate_evidence`"
     },
     "NM-FRAME-19": {
       "status": "unreviewed",
