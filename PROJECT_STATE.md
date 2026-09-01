@@ -47,7 +47,7 @@ disagree, the roadmap wins.
 | Rust workspace, 10 crates | 1147 passed, 0 failed |
 | frontend | typecheck clean, 761 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulnerabilities |
-| FW-1 boundary proof | 23/23 PASS, 4 accounts, cleanup proved |
+| FW-1 boundary proof | 23/23 x3, 4 accounts, cleanup |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
 `tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.

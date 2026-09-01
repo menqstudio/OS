@@ -848,8 +848,17 @@ def bind(socket_path: pathlib.Path) -> "socket.socket":
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             server.bind(f"/proc/self/fd/{fd}/{name}")
-            os.chmod(name, SOCKET_MODE, dir_fd=fd)
+            # `listen` BEFORE `chmod`, and the order is a contract rather than a preference.
+            # `bind` creates the node under the process umask, which does not admit the caller
+            # group; the `chmod` is therefore the single act that PUBLISHES the endpoint. Doing it
+            # last means the endpoint is never reachable-but-not-listening: a caller that can
+            # connect at all is connecting to a socket with a backlog. The other order leaves a
+            # window in which the node is group-connectable and `accept` is not running yet, and
+            # a connect landing there gets ECONNREFUSED — a refusal with no verdict behind it,
+            # which the FW-1 client correctly turns into `scope_unavailable`. CI found exactly
+            # that: one probe failed and the identical next probe succeeded.
             server.listen(16)
+            os.chmod(name, SOCKET_MODE, dir_fd=fd)
         except BaseException:
             server.close()
             raise

@@ -165,10 +165,25 @@ start_service() {  # start_service <config> <socket>; sets SERVICE_PID
     "$PYBIN" "$ENGINE/runtime/run_floor_writer.py" >"$OUT/$(basename "$1").log" 2>&1 &
   SERVICE_PID=$!
   SERVICE_PIDS+=("$SERVICE_PID")
-  # Waited for AS ROOT: this shell's own uid is not in the caller group, and the socket
-  # directory is 0750, so `test -S` from here fails with EACCES even after a good bind.
-  # That EACCES is itself the §1.7 property, and it is asserted below rather than assumed.
-  for _ in $(seq 1 60); do sudo test -S "$2" && return 0; sleep 0.2; done
+  # Readiness is "the authorized caller can complete an exchange", not "the node exists".
+  #
+  # Two reasons. The node is checked AS ROOT because this shell's own uid is not in the caller
+  # group and the socket directory is 0750, so `test -S` from here fails with EACCES even after a
+  # good bind — that EACCES is itself the §1.7 property and is asserted below. And the node
+  # appearing is not the service being usable: it exists from `bind`, while `listen` and the mode
+  # that admits the caller come after. Waiting on the node alone made this script flaky in CI —
+  # one probe returned `scope_unavailable` and the identical next one succeeded. The service now
+  # publishes the mode last (see `floor_writer.bind`), and the wait asks the question the test
+  # actually depends on rather than a proxy for it.
+  for _ in $(seq 1 60); do
+    sudo test -S "$2" || { sleep 0.2; continue; }
+    # ANY well-formed answer means the service is listening — including a refusal. A `peer_denied`
+    # proves the exchange completed, and META-A deliberately starts a service this caller is NOT
+    # admitted to. `scope_unavailable` is the only answer that means "could not be reached".
+    ready="$(probe "$OKU" "$2" get readiness-probe)"
+    [ "$ready" != "REFUSED scope_unavailable" ] && return 0
+    sleep 0.2
+  done
   echo "the service never bound $2:"; cat "$OUT/$(basename "$1").log"; exit 1
 }
 

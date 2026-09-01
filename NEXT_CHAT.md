@@ -24,7 +24,7 @@ contract naming what enforces each row (C6).
 
 **Measured (C4):** `engine/ci/floor_writer_boundary_proof.sh`, four accounts on one real socket
 — authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied `floor.advance`, four
-provisioning negatives, three meta-controls, cleanup. 23/23.
+provisioning negatives, three meta-controls, cleanup. 23/23, three times.
 `test_floor_writer_durability.py` — the commit's syscalls out of the kernel (temp, `fsync`,
 rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s mid-write, each
 leaving a complete document.
