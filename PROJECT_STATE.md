@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-31 — the produced agent's egress is ENFORCED. `repo.rs`'s
+**Last updated · Վերջին թարմացում:** 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
@@ -39,7 +39,7 @@ disagree, the roadmap wins.
 | 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked rather than pretending |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
-## Suites, measured on Debian 2026-08-31
+## Suites, measured on Debian 2026-09-01
 
 | | |
 |---|---|
