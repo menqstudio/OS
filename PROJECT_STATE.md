@@ -44,10 +44,11 @@ disagree, the roadmap wins.
 | | |
 |---|---|
 | engine (Python) | 2117 OK, 10 skipped |
-| Rust workspace, 10 crates | 1147 passed, 0 failed |
+| Rust workspace, 10 crates | 1147 passed |
 | frontend | typecheck clean, 761 tests / 80 files |
-| `npm audit --audit-level=high` | 0 vulnerabilities |
-| FW-1 boundary proof | 23/23 x3, 4 accounts, cleanup |
+| `npm audit --audit-level=high` | 0 vulns |
+| FW-1 boundary proof | 23/23 x3, 4 accounts |
+| `tools/` self-tests | 230 passed |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
 `tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.

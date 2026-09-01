@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import datetime
+import os
 import json
 import pathlib
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -448,6 +450,21 @@ class ProjectStateFreshnessTests(unittest.TestCase):
         self.root = pathlib.Path(self._dir.name)
         self._real = cc._last_commit_date
         self.addCleanup(lambda: setattr(cc, "_last_commit_date", self._real))
+        # The date arm now asks a second question — did the newest commit MOVE the line? — and
+        # these fixtures have no git, so it must be stubbed or every one of them would pass on the
+        # "could not compare" message instead of on the comparison it names. The default is the
+        # case each test below is about: the line did NOT move.
+        self._real_before = cc._claim_before_last_change
+        self.addCleanup(lambda: setattr(cc, "_claim_before_last_change", self._real_before))
+        self._line_did_not_move()
+
+    def _line_did_not_move(self):
+        cc._claim_before_last_change = lambda root, rel: (
+            "date", cc._claimed_last_updated(cc._read(root, rel) or "")[0])
+
+    def _line_moved_from(self, iso):
+        cc._claim_before_last_change = lambda root, rel: (
+            "date", datetime.date(*(int(x) for x in iso.split("-"))))
 
     def _dated(self, value: str) -> None:
         (self.root / "PROJECT_STATE.md").write_text(
@@ -504,6 +521,93 @@ class ProjectStateFreshnessTests(unittest.TestCase):
         self._commit_date("2026-08-09")
         probs = cc._check_project_state_freshness(self.root)
         self.assertTrue(any("missing/empty" in p for p in probs), probs)
+
+    # T-060 --------------------------------------------------------------------------------
+
+    def test_a_date_behind_the_commit_passes_when_that_commit_MOVED_the_line(self):
+        """The squash case. The pull request was written on the 6th and merged on the 9th, so the
+        commit is dated the 9th and the line says the 6th — and the line was moved in that very
+        commit, which is the law the date was standing in for. Reddening this would redden `main`
+        AFTER the merge, where nobody can fix it without another merge."""
+        self._dated("2026-08-06")
+        self._commit_date("2026-08-09")
+        self._line_moved_from("2026-08-02")
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+    def test_a_line_that_moved_BACKWARDS_is_still_red(self):
+        """Moving the line is not the property; moving it forward is. Without this arm the fix
+        above would accept any edit at all, including one that re-dates the file into the past."""
+        self._dated("2026-08-01")
+        self._commit_date("2026-08-09")
+        self._line_moved_from("2026-08-06")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("EARLIER than what the line said" in p for p in probs), probs)
+
+    def test_a_git_that_cannot_answer_says_so_instead_of_passing(self):
+        self._dated("2026-08-06")
+        self._commit_date("2026-08-09")
+        cc._claim_before_last_change = lambda root, rel: None
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("could not be compared" in p for p in probs), probs)
+
+    def test_a_file_created_by_that_commit_has_no_earlier_claim_to_move(self):
+        self._dated("2026-08-06")
+        self._commit_date("2026-08-09")
+        cc._claim_before_last_change = lambda root, rel: ("absent", None)
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+
+class SquashReDatingOverRealGitTests(unittest.TestCase):
+    """T-060 over a REAL repository, because the arm above is only as true as its stub.
+
+    A squash merge re-dates the commit to the merge moment — BOTH dates: over all 796 commits on
+    `main` there is not one where `%as` differs from `%cs`, measured, so reading the author date
+    instead would have fixed nothing. These build the two commits that matter and let the real
+    `_claim_before_last_change` read them out of git.
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._git("init", "-q", "-b", "main")
+        self._git("config", "user.email", "t@example.invalid")
+        self._git("config", "user.name", "T")
+
+    def _git(self, *args):
+        return subprocess.run(["git", "-C", str(self.root), *args],
+                              capture_output=True, text=True, timeout=60, check=True)
+
+    def _commit(self, dated: str, body: str, when: str):
+        (self.root / "PROJECT_STATE.md").write_text(
+            "# state\n\n**Last updated:** " + dated + "\n\n" + body + "\n",
+            encoding="utf-8")
+        self._git("add", "PROJECT_STATE.md")
+        env_date = f"{when}T12:00:00+00:00"
+        subprocess.run(["git", "-C", str(self.root), "commit", "-q", "-m", body],
+                       capture_output=True, text=True, timeout=60, check=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": env_date,
+                            "GIT_COMMITTER_DATE": env_date})
+
+    def test_the_merge_lag_case_passes_and_the_stale_case_does_not(self):
+        self._commit("2026-08-02", "first", "2026-08-02")
+        # The pull request: it moves the line AND the prose, and lands three days later.
+        self._commit("2026-08-06", "second", "2026-08-09")
+        self.assertEqual(cc._last_commit_date(self.root, "PROJECT_STATE.md"),
+                         datetime.date(2026, 8, 9), "the fixture must reproduce the re-dating")
+        self.assertEqual([], cc._check_project_state_freshness(self.root),
+                         "a line moved in the same commit is the law obeyed, not staleness")
+
+        # Now the real defect: the prose changes and the line does not.
+        self._commit("2026-08-06", "third", "2026-08-11")
+        probs = cc._check_project_state_freshness(self.root)
+        self.assertTrue(any("did NOT move the line" in p for p in probs), probs)
+
+    def test_the_first_commit_has_no_parent_to_compare_against(self):
+        self._commit("2026-08-02", "first", "2026-08-09")
+        self.assertEqual(cc._claim_before_last_change(self.root, "PROJECT_STATE.md"),
+                         ("absent", None))
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
 
 
 if __name__ == "__main__":

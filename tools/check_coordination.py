@@ -207,6 +207,45 @@ def _last_commit_date(root: pathlib.Path, rel: str) -> datetime.date | None:
         return None
 
 
+def _claim_before_last_change(root: pathlib.Path, rel: str) -> tuple[str, datetime.date | None] | None:
+    """What the `Last updated` line said BEFORE the newest commit that touched `rel`.
+
+    ``("absent", None)`` when the file did not exist yet; ``("unreadable", None)`` when the line
+    could not be parsed out of the parent; otherwise ``("date", <date>)``. ``None`` means git could
+    not answer at all, and the caller must say so rather than assume.
+
+    This is T-060's whole mechanism. A squash merge re-dates the commit to the merge moment — and
+    both dates: over all 796 commits on ``main`` there is not one where ``%as`` differs from
+    ``%cs``, measured, so reading the author date instead would have fixed nothing. A pull request
+    written yesterday and merged today therefore produces a commit dated today touching a file
+    whose line says yesterday, and the old comparison reddened ``main`` AFTER the merge, where
+    nobody can fix it without another merge.
+
+    The date comparison was a proxy for the actual law: *update the line in the SAME commit as the
+    change*. So the law is what is checked. If the newest commit that touched the file also moved
+    this line, the law was obeyed and the calendar gap is merge lag. If the file changed and the
+    line did not, that is the real defect and it is refused exactly as before.
+    """
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(root), "log", "-1", "--format=%H", "--", rel],
+            capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return None
+    previous = subprocess.run(
+        ["git", "-C", str(root), "show", f"{sha}^:{rel}"],
+        capture_output=True, text=True, timeout=30)
+    if previous.returncode != 0:
+        # No parent, or the file was created by that commit: there was no earlier claim to move.
+        return ("absent", None)
+    claimed, problem = _claimed_last_updated(previous.stdout)
+    if problem or claimed is None:
+        return ("unreadable", None)
+    return ("date", claimed)
+
+
 def _claimed_last_updated(text: str) -> tuple[datetime.date | None, str | None]:
     """(date, problem) for PROJECT_STATE.md's `**Last updated ...:**` line."""
     m = _LAST_UPDATED_RE.search(text)
@@ -248,13 +287,34 @@ def _check_project_state_freshness(root: pathlib.Path) -> list[str]:
         problems.append(f"{PROJECT_STATE}: '**Last updated:** {claimed}' is in the future "
                         f"(today is {today} UTC) — a date nothing has reached yet dates nothing")
     committed = _last_commit_date(root, PROJECT_STATE)
-    if committed is not None and claimed < committed:
+    if committed is None or claimed >= committed:
+        return problems
+
+    # The date is behind the newest commit. That is the QUESTION, not yet the verdict — a squash
+    # merge re-dates the commit to the merge moment, so a correct pull request written yesterday
+    # and merged today lands here. What separates the two cases is whether the line MOVED in that
+    # same commit, which is the law the date was standing in for.
+    before = _claim_before_last_change(root, PROJECT_STATE)
+    if before is None:
         problems.append(
             f"{PROJECT_STATE}: '**Last updated:** {claimed}' is older than the newest commit that "
-            f"touched the file ({committed}) — the file changed after the date it claims, so every "
-            f"reader is told the state is {(committed - claimed).days} day(s) fresher than it is. "
-            f"Update the line in the SAME commit as the change (the Startup Law), or move the prose "
-            f"it dates into a HISTORY block")
+            f"touched the file ({committed}), and git could not say what the line claimed before "
+            f"that commit — so this could not be compared. Not a pass: read it by hand")
+        return problems
+    kind, previous = before
+    if kind == "date" and previous == claimed:
+        problems.append(
+            f"{PROJECT_STATE}: '**Last updated:** {claimed}' is older than the newest commit that "
+            f"touched the file ({committed}) and that commit did NOT move the line — the file "
+            f"changed after the date it claims, so every reader is told the state is "
+            f"{(committed - claimed).days} day(s) fresher than it is. Update the line in the SAME "
+            f"commit as the change (the Startup Law), or move the prose it dates into a HISTORY "
+            f"block")
+    elif kind == "date" and previous is not None and claimed < previous:
+        # The line moved BACKWARDS. Moving it at all is not the property; moving it forward is.
+        problems.append(
+            f"{PROJECT_STATE}: '**Last updated:** {claimed}' is EARLIER than what the line said "
+            f"before the newest commit ({previous}). A date that goes backwards dates nothing")
     return problems
 
 
@@ -795,8 +855,14 @@ def main(argv: list[str] | None = None) -> int:
     elif committed is None:
         fresh = (f"PROJECT_STATE dated {claimed} (NOT compared: git could not date the file here — "
                  f"CI has full history and does compare it)")
-    else:
+    elif claimed >= committed:
         fresh = f"PROJECT_STATE dated {claimed} >= its newest commit {committed}"
+    else:
+        # The date is behind, and the gate passed anyway — which is only legitimate when that
+        # commit MOVED the line. Saying ">= its newest commit" here would be the green line
+        # asserting the opposite of the truth, which is the defect this whole check replaced.
+        fresh = (f"PROJECT_STATE dated {claimed}, behind its newest commit {committed} but moved "
+                 f"in it (merge lag, not staleness)")
     print(f"GREEN: coordination docs consistent "
           f"(canonical files present; roadmap {len(EXPECTED_PHASES)} phases x "
           f"{len(REQUIRED_SECTIONS)} sections; TASKS statuses valid; {fresh}{extra}{diff_note}).")

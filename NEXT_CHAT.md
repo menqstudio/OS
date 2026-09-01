@@ -14,30 +14,28 @@
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next: T-020's FW-1 correction — B1-B6 and C6 in and measured; NOT approved.** The Architect
-BLOCKED `#219` (B1-B7, C1-C7) and lifted the head freeze for one coherent correction. Done here:
-`SO_PEERCRED` identity against a **per-op** allowlist, all scope from the TCB-owned
-`BROPS_FLOOR_WRITER_CONFIG`, no `install_id` on the wire either way, roster and floor in ONE
-document under ONE rename, a resolver that REFUSES an unconfigured floor, root-only provisioning
-that MINTS the §1.10 generation (B6), and `SECURITY_MODEL.md` §1.3a as a ten-row deployment
-contract naming what enforces each row (C6).
+**Next: T-020's FW-1 correction is measured and NOT approved.** The Architect BLOCKED `#219`
+(B1-B7, C1-C7) and lifted the head freeze for one coherent correction. **B1-B7 and C1, C2, C4,
+C6, C7 are done and measured**; the full account is `#219`'s body and `SECURITY_MODEL.md` §1.3a's
+deployment contract, which names what enforces each row. In short: `SO_PEERCRED` against a
+**per-op** allowlist, all scope from the TCB-owned `BROPS_FLOOR_WRITER_CONFIG`, no `install_id` on
+the wire, roster and floor in ONE document under ONE rename, root-only provisioning that MINTS the
+§1.10 generation, and ONE fd-based custody contract — whose ancestor arm was previously
+**unreachable**, so a `0700` store under a group-writable parent was ACCEPTED.
 
-**Measured (C4):** `engine/ci/floor_writer_boundary_proof.sh`, four accounts on one real socket
-— authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied `floor.advance`, four
-provisioning negatives, three meta-controls, cleanup. 23/23, three times.
-`test_floor_writer_durability.py` — the commit's syscalls out of the kernel (temp, `fsync`,
-rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s mid-write, each
-leaving a complete document.
-
-**C1/C2/C7 closed.** §1.7's ancestor vector was CLAIMED and never enforced: the check delegated to
-`posix_rewrite_verdict`, whose `owner` arm fires first for a path you own, so the `parent` arm was
-dead and a `0700` store under a group-writable parent was ACCEPTED — measured. ONE custody
-contract now, deciding on an OPEN descriptor with every use `dir_fd`-relative;
-`tools/check_principal_model.py` holds the seven principals to §2.6.
+**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` — four real accounts on one
+real socket, 23/23 three times here and again in CI, cleanup proved.
+`test_floor_writer_durability.py` — the commit's syscalls out of the kernel and twelve `SIGKILL`s
+mid-write. Every new check was mutation-proven.
 
 **NOT done:** C3 test structure — its text is not in this repo and guessing is worse — and a
 second Architect pass. §1.7 stays **partial**; §1.10 is **implemented** and does not close
 **O-5**. FW-3 is OUT; the B/C list lives only in `#219`'s body.
+
+**T-059 and T-060 are corrected here too.** `main_ci` demanded a reading of the NEWEST run on
+`main`, which taking a reading can never be; an older one now passes while everything since it was
+green. And a squash re-dates a commit to the merge moment — both dates, 0 of 796 differ — so the
+`Last updated` gate checks the law that date stood for: did that commit MOVE the line.
 
 The transport and the produced agent's egress are **T-058**.
 
