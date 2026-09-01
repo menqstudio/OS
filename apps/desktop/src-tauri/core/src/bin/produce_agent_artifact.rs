@@ -1,10 +1,23 @@
 //! Produce the evidence `tools/check_produced_artifact.py` measures, from the
 //! real code path — not from a fixture.
 //!
-//! This binary builds one agent bundle, registers it, lets `repo::automations::
-//! run_due` detect it and enqueue a run, claims that run, executes it, and writes
-//! the run row and the receipt out as JSONL. Everything it emits is a byproduct
-//! of the same functions the desktop calls; nothing here fabricates a row.
+//! This binary builds one agent bundle, registers it, arms it, and then calls
+//! `repo::automations::run_due` — the scheduler's own entry point, the thing the
+//! 60s tick calls — which detects it, enqueues the run AND dispatches it. The
+//! binary then reads the run row and the receipt out as JSONL. Everything it
+//! emits is a byproduct of the same functions the desktop calls; nothing here
+//! fabricates a row.
+//!
+//! **V-6, `docs/VERIFICATION_QUEUE_1.md`.** These two lines used to say the
+//! binary *"claims that run, executes it"*. That stopped being true when T-058
+//! moved the dispatch into `run_due`: this file's own comment beside the call
+//! has said so for weeks — *"the ONLY thing that runs the flow ... that hand
+//! call is gone"* — while the module doc a hundred lines above still described
+//! the old shape. It matters more here than in most comments, because condition
+//! 4 of the five that `tools/check_produced_artifact.py` measures is *"run_due()
+//! has invoked it"*, and a reader who believed the old doc would have read the
+//! producer as satisfying that condition on the scheduler's behalf. It does not,
+//! and it must not.
 //!
 //! It writes under a target directory that is NOT tracked in git, because a
 //! committed store is a fixture and the gate refuses one.

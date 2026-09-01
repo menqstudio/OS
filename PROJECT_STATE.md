@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-08-31 — the produced agent's egress is ENFORCED. `repo.rs`'s
+**Last updated · Վերջին թարմացում:** 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
@@ -12,7 +12,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #218 · branch `fix/audit-surface-and-112-state`** (base `main`, tip `83357de`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
 >
 > Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
 >
@@ -39,14 +39,16 @@ disagree, the roadmap wins.
 | 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked rather than pretending |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
-## Suites, measured on Debian 2026-08-29
+## Suites, measured on Debian 2026-09-01
 
 | | |
 |---|---|
-| engine (Python) | 2043 OK, 10 skipped |
-| Rust workspace, 10 crates | 1110 passed, 0 failed |
-| frontend | typecheck clean, 761 tests / 80 files |
-| `npm audit --audit-level=high` | 0 vulnerabilities |
+| engine (Python) | 2124 OK, 10 skipped |
+| Rust workspace, 10 crates | 1149 passed |
+| frontend | typecheck clean, 764 tests / 80 files |
+| `npm audit --audit-level=high` | 0 vulns |
+| FW-1 boundary proof | 23/23 x3, 4 accounts |
+| `tools/` self-tests | 253 passed |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
 `tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.
@@ -55,7 +57,7 @@ Toolchain: `config/toolchain.json`, checked against every canonical document by
 
 **RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **56 pull
 requests, 192 files and 39,396 inserted lines** have merged since, none independently
-confirmed. *(Said 20/107/19688 until 2026-08-31.)*
+confirmed.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
@@ -82,4 +84,4 @@ commit messages. `A-06` in the ledger.
 
 Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
 
-`CURRENT_ACTIVE_TASK: egress-authorizer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
+`CURRENT_ACTIVE_TASK: floor-writer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

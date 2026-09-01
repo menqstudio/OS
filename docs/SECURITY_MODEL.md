@@ -117,6 +117,123 @@ made on the strength of it.
   (all 23 registry-root call sites AST-enumerated and frozen), `engine/tests/test_audit_head_anchor.py`,
   `engine/tests/test_bytecode_shadow.py`.
 
+### 1.3a The Floor Writer principal — the deployment contract, and why it is NOT an eighth governed-turn service
+
+**Architect ruling R3, 2026-08-31:** the Floor Writer is a **distinct runtime security
+principal**. It is not a helper of the completion process and not a helper of the supervisor. It
+holds independent authority to mutate protected anti-rollback state — the per-task evidence-head
+floor — and a principal with that authority is named, not folded into whichever process happens
+to host it.
+
+**What it owns.** One authoritative document per install,
+`<marks_root>/<install_id>/floor-state.json`, carrying an explicit `roster` list AND the per-task
+floors, in a store the Floor Writer account owns and the policed completion account cannot read or
+write. *(The design's §4.3 listed two objects, a per-task mark plus the roster; the Architect
+ratified collapsing them into one so a crash cannot leave a roster naming a task whose mark is
+absent. The roster stays an explicit field and is never inferred from the directory listing —
+that substitution was refused, because it would redefine a security fact as a side effect of
+which files happen to exist.)* Before this, `bro_completion._advance_head_floor` wrote that mark
+*in the very process the mark polices*, while `_refuse_self_owned_floor` demanded a directory that
+process could not write — two requirements with no intersection, satisfiable only by
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, which short-circuits **every** custody rule in
+the runtime rather than only this one.
+
+#### The deployment contract
+
+A machine either meets all of this or it does not run the service posture. Each row names what
+enforces it, because a contract nothing checks is a wish:
+
+| The deployment must | Enforced by |
+|---|---|
+| run the Floor Writer as an account that is **not** the completion account and **not** root | `provision_floor_writer.py` refuses `--service-user root` and refuses any `--peer` equal to the service uid or to root |
+| own `<marks_root>/<install_id>/` as that account, mode `0700` | `floor_writer.open_checked_directory` at start, before the socket exists; provisioning sets it and reads it back |
+| hold the socket in a directory owned by that account, mode `2750`, group the caller group | the same check on the socket's parent; §1.7 makes the **directory** the server authentication — a directory no other principal may write is one in which no other principal can replace the endpoint. The setgid bit is load-bearing: without it the endpoint carries the service's own group and the caller cannot connect |
+| keep **every ancestor** of both, to `/`, owned by root or by that account and not group- or world-writable without the sticky bit | `floor_writer.require_unswappable_ancestry`. A grandparent another principal can write lets them rename the parent aside, and the child's own `0700` has then stopped meaning anything. This was claimed and **not enforced** until 2026-09-01: the check delegated to `bro_custody.posix_rewrite_verdict`, whose first arm returns `owner` for a path the asking uid owns — which the line above it had just required — so the ancestor arm could not be reached. A directory at `0700` under a group-writable parent was accepted, measured |
+| use the directory it checked, not the name it checked | `open_checked_directory` returns an open descriptor; the custody decision is an `fstat` of that descriptor and every use is `dir_fd`-relative, with `bind` addressing `/proc/self/fd/<fd>/<name>`. The old shape — `lstat(path)` then `bind(path)` — was two lookups of one name, and the gap between them was the window |
+| authenticate every caller from the **kernel** | `SO_PEERCRED` at accept time, before a frame is read. Linux only, and it refuses rather than approximating elsewhere |
+| authorize per **operation**, not by a union | `ServiceConfig.peers_for(op)`; `floor.get` admission is not `floor.advance` admission |
+| put **no** `install_id` on the wire | the scope comes from the TCB-owned config; a request carrying the field is refused `malformed`, not ignored |
+| keep the config `root:root`, mode `0644`, in a root-owned directory | provisioning refuses a non-root parent and reads owner and mode back after writing |
+| mint the provisioning generation once, into the config **and** the store | `provision_floor_writer.mint_generation` (previous + 1, never lower); `load_state` refuses a store whose generation is not the configured one |
+| have a floor **provisioned** before the service starts | the service refuses to start on an absent document: a floor is neither client- nor service-bootstrappable, so "no state" is never read as "empty state" |
+| configure a posture explicitly | `bro_completion._floor_posture` is a closed two-state resolver — `ServiceFloor(endpoint)` or `AcknowledgedLocalFloor` — with **no third state and no fallback**. Neither configured is a refusal, not "no floor required" |
+
+Two variables, and nothing else, select the posture:
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `BRO_EVIDENCE_FLOOR_WRITER` | the completion process | the endpoint. Set ⇒ `ServiceFloor`, and the in-process write path becomes structurally unreachable |
+| `BROPS_FLOOR_WRITER_CONFIG` | the service | its own TCB-owned config: `install_id`, `marks_root`, `socket_path`, `generation`, and the per-op `peers` allowlist |
+
+`BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` selects `AcknowledgedLocalFloor` — today's
+single-principal behaviour, on a box that has **disclosed** it has no second principal. It is not
+a fallback and it cannot be reached from the service posture.
+
+**One custody contract, not two.** Provisioning used to carry a second, shorter check of its own
+— owner and mode, no ancestry — beside the service's different one. Two functions answering *"is
+this directory protected?"* with two rules is how a path passes provisioning and is refused at
+start, or worse passes both while meaning different things. `provision_floor_writer` now calls the
+service's function, with the only thing that legitimately differs: **who** must own it — root
+there, the service's own uid here.
+
+**The Floor Writer is still not an eighth principal, and that is now a gate.**
+`tools/check_principal_model.py` reads `windows_broker.rs` and requires the `enum Principal`
+variants, the `RUNTIME_PRINCIPALS` members and the declared array length to be the same normative
+seven, and the documents that state the count to state seven. `[Principal; 7]` pins the count and
+nothing else: a variant added to the enum and omitted from the array compiles, and
+`verify_distinct_principals()` — which iterates the array — then never asks about it. An eighth
+principal is not forbidden; it is an amendment to §2.6, and the refusal says so by name.
+
+**What is measured, and by what.** `engine/ci/floor_writer_boundary_proof.sh` provisions this
+contract as root under four real accounts and then attacks it: the authorized caller advances, an
+unlisted principal on the same socket is `peer_denied`, a caller admitted to `floor.get` is
+`peer_denied` on `floor.advance`, and the completion principal cannot replace the endpoint, read
+or write the floor state, or rewrite the config. Three meta-controls prove each probe can report
+the opposite answer. `engine/tests/test_floor_writer_durability.py` reads the commit's syscall
+order out of the kernel and kills a writing process twelve times. **What is not measured is
+Windows** — FW-2 — and the `scope.pin` authority, which is FW-3 and is refused by name.
+
+**Custody domain versus mutation authority.** The authoritative state belongs to the
+**Supervisor security/custody domain**; the **Floor Writer principal** is the narrowly scoped
+identity permitted to mutate it. Those are two different sentences and both are true. A future
+session must not read "Supervisor custody domain" as "the supervisor's ledger table".
+
+**It is NOT one of the seven runtime service UIDs, and this is measured rather than assumed.**
+`RUNTIME_PRINCIPALS` (`apps/desktop/src-tauri/core/src/windows_broker.rs`) is a fixed array of
+**seven** — Broker, Authority, Sidecar, Supervisor, Recorder, Executor, Signer — and
+`verify_distinct_principals()` requires those seven pairwise-distinct and none equal to the
+interactive login SID. Every one of them is a hop in the **governed turn**. The Floor Writer
+serves the **completion** path, which is a different process family and not a hop in that ladder.
+
+That distinction decides a normative question. `WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md` §2.6
+states *"The SEVEN runtime service UIDs (NORMATIVE)"*, and
+`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md` §6 warned that an eighth **resident** principal
+would be an amendment to that clause, ratifiable only by the Architect. **This slice does not
+create that amendment**: it adds no member to `RUNTIME_PRINCIPALS`, changes no arm of
+`verify_distinct_principals()`, and leaves §2.6 true as written. Adding the Floor Writer to that
+array would silently widen a clause a rev-30 audit passed, which is why it was not done.
+
+**The two floors are separate objects and must stay separate.** The supervisor's per-**install**
+`evidence-head-sequence.json` ceiling and this per-**task** floor live in different sequence
+domains. Unifying them makes every deployment's second task permanently un-completable: two
+genuine heads at sequence 1 present as a fork, and the ledger refuses the second with
+`EvidenceFork`. `bro_completion._head_floor_dir` documents that at length, established by running
+it rather than by reading.
+
+**Linux only, and it stops rather than approximating.** Peer authentication is `SO_PEERCRED`.
+No equivalent-strength mechanism is wired for Windows or macOS, so the service refuses to bind
+and refuses to serve there. A weaker mechanism under the same name — trusting a path, a token
+file, a parent process — would be a security property that reads as equivalent and is not.
+
+**What this does not close.** **O-5** stays OPEN. The generation makes a re-provisioned floor
+*visibly* new instead of silently empty, and it is not a signed statement from outside the
+machine: a restore of the whole store, generation included, still reads as a first sighting.
+§1.10 of the design says so itself, and nothing here changes it.
+
+**Status.** Implementation exists and is **not Architect-approved**; the design merged as PR #112
+and this is the build under R1–R5. No production trust claim follows from either, and FW-1 passing
+is not the production gate opening.
+
 ### 1.3 What is NOT true, stated as prominently as what is
 
 - **This is Windows-only today.** `anchor::seal` returns `ProvisionError::Unsupported` on POSIX by

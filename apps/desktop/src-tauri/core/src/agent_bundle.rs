@@ -808,6 +808,59 @@ mod tests {
         );
     }
 
+    /// V-2, `docs/VERIFICATION_QUEUE_1.md`. The egress table above was swept; the credential-slot
+    /// list beside it never was. Deleting `for_egress`'s slot refusal left `cargo test
+    /// --workspace` at 1147 passed / 0 failed — measured on 2026-09-01 before this test existed,
+    /// which is what "correct by reading and defended by no test" means.
+    ///
+    /// The property is not "the function has an if". A grant's `credential_slots` is a set of
+    /// NAMES that `covers()` looks each step's requirement up in, so a duplicate makes the list
+    /// disagree with itself about how many slots there are, and an empty name is a slot that
+    /// names nothing and would match a step requiring "". Both are malformed grants, and a
+    /// malformed grant must not be constructible.
+    #[test]
+    fn a_grant_refuses_a_credential_slot_list_it_cannot_resolve() {
+        let table = [entry("a", "https://one.example")];
+
+        // Duplicates: the same name twice.
+        assert_eq!(
+            Grant::for_egress(0, &table, &["s".to_string(), "s".to_string()]),
+            Err(Refusal::CredentialSlotUnbound)
+        );
+        // An empty name, alone and beside a real one — the second is the arm a `slots.is_empty()`
+        // shortcut would let through.
+        assert_eq!(
+            Grant::for_egress(0, &table, &["".to_string()]),
+            Err(Refusal::CredentialSlotUnbound)
+        );
+        assert_eq!(
+            Grant::for_egress(0, &table, &["s".to_string(), "".to_string()]),
+            Err(Refusal::CredentialSlotUnbound)
+        );
+
+        // The positive controls, without which the three above are satisfied by a function that
+        // refuses everything: distinct names are accepted, and so is no slot at all.
+        let ok = Grant::for_egress(0, &table, &["a".to_string(), "b".to_string()])
+            .expect("distinct slot names are a usable grant");
+        assert_eq!(ok.credential_slots, vec!["a".to_string(), "b".to_string()]);
+        assert!(Grant::for_egress(0, &table, &[])
+            .expect("no credential slots is a grant too")
+            .credential_slots
+            .is_empty());
+    }
+
+    /// The list is stored SORTED, and that is load-bearing rather than cosmetic: `covers()` and
+    /// the digest over the grant both read it, so two grants naming the same slots must be one
+    /// grant. Nothing asserted it either.
+    #[test]
+    fn a_grants_credential_slots_are_stored_in_one_order() {
+        let table = [entry("a", "https://one.example")];
+        let forward = Grant::for_egress(0, &table, &["a".to_string(), "b".to_string()]).unwrap();
+        let reversed = Grant::for_egress(0, &table, &["b".to_string(), "a".to_string()]).unwrap();
+        assert_eq!(forward.credential_slots, reversed.credential_slots);
+        assert_eq!(forward.credential_slots, vec!["a".to_string(), "b".to_string()]);
+    }
+
     /// The allowlist is rebuilt from what is on disk, so a grant that was valid
     /// when written is re-judged every time it is used.
     #[test]

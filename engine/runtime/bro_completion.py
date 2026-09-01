@@ -242,7 +242,7 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         # any call path in the repository. The high-water mark now comes from a DURABLE
         # record that survives between calls, which is the only way a rollback that
         # happened BEFORE this call can be seen at all.
-        durable_floor, recorded_digest = _load_head_floor(resolved_store, task_id)
+        durable_floor, recorded_digest = _floor_read(resolved_store, task_id)
         # O-5: a mark this deployment cannot ESTABLISH is a refusal, not a default of zero.
         # A floor that was deleted and re-provisioned reads identically to a first sighting,
         # and the only thing that can tell them apart is a signed statement from outside the
@@ -285,7 +285,7 @@ def validate_evidence_chain(task_id: str, event_ids: list[str],
         # Advance the mark only after the chain verified, and only upward. A later run
         # presenting a genuinely signed but OLDER head — the retained anchor of a
         # self-consistent truncated chain — is then refused against this record.
-        _advance_head_floor(resolved_store, task_id, head.head_sequence, head_digest)
+        _commit_head_floor(resolved_store, task_id, head.head_sequence, head_digest)
         return digest
     except (EvidenceError, SignatureError) as exc:
         raise CompletionError(str(exc)) from exc
@@ -856,6 +856,112 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
     except OSError as exc:
         raise CompletionError(
             f"cannot record the evidence head floor for {task_id}: {exc}") from exc
+
+
+#: §4.4. The endpoint. Set means ``ServiceFloor``, and the local write path becomes UNREACHABLE.
+#: The name is the design's, not one of this module's invention.
+ENV_FLOOR_WRITER = "BRO_EVIDENCE_FLOOR_WRITER"
+
+
+class ServiceFloor:
+    """The floor is the Floor Writer's. This process asks; it never writes.
+
+    Resolved from :data:`ENV_FLOOR_WRITER` alone. Once this posture holds, there is no branch in
+    this module that reaches ``_advance_head_floor``: §1.4's *"no fallback from the first to the
+    second"*, and the acknowledgement **cannot** re-enable the local path.
+    """
+
+    __slots__ = ("endpoint",)
+
+    def __init__(self, endpoint: pathlib.Path) -> None:
+        self.endpoint = endpoint
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics
+        return f"ServiceFloor({self.endpoint})"
+
+
+class AcknowledgedLocalFloor:
+    """Today's behaviour, and only where the deployment has DISCLOSED it has no second principal.
+
+    Available solely under the pre-existing ``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged``, so
+    a single-principal developer box and the current CI suites keep working while saying so. It is
+    not a fallback and nothing selects it by omission: with neither the endpoint nor the
+    acknowledgement, the posture does not resolve and the completion refuses.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics
+        return "AcknowledgedLocalFloor()"
+
+
+def _floor_posture():
+    """§1.4. ONE resolver, a closed two-state result, and no path between the states.
+
+    The first implementation of this seam read the endpoint variable and, when it was unset, fell
+    through to the in-process writer. That made the POLICED process the party that chooses whether
+    it is policed, which is the defect the whole service exists to remove — the Architect blocked
+    it as B1. The difference here is the third case: unset endpoint AND no acknowledgement is not
+    "local", it is **no posture**, and a completion without a posture does not happen.
+    """
+    endpoint = os.getenv(ENV_FLOOR_WRITER)
+    if endpoint:
+        return ServiceFloor(pathlib.Path(endpoint))
+    if self_owned_acknowledged(error=CompletionError):
+        return AcknowledgedLocalFloor()
+    raise CompletionError(
+        f"no evidence-floor posture is configured: {ENV_FLOOR_WRITER} names no Floor Writer and "
+        f"this deployment has not set {ENV_PIN_SELF_OWNED_ACK}={PIN_SELF_OWNED_ACK_VALUE} to "
+        "disclose that it has no principal separation. An unconfigured floor is not 'no floor "
+        "required'")
+
+
+def _floor_read(store: pathlib.Path, task_id: str) -> tuple[int, str | None]:
+    """The high-water mark, from whichever principal owns it under the resolved posture.
+
+    Under ``ServiceFloor`` this is §1.3's ``floor.get``, whose answer is explicitly NOT
+    authoritative: a client that lies to itself about it still cannot advance below the floor,
+    because the service re-checks against the store it owns.
+    """
+    posture = _floor_posture()
+    if isinstance(posture, AcknowledgedLocalFloor):
+        return _load_head_floor(store, task_id)
+    import floor_writer
+
+    try:
+        head, digest, _known, _generation = floor_writer.client_get(posture.endpoint, task_id)
+    except floor_writer.FloorWriterError as exc:
+        raise CompletionError(
+            f"the evidence head floor for {task_id} could not be read from the Floor Writer, so "
+            f"this completion is not verified: {exc.detail}") from exc
+    return head, digest
+
+
+def _commit_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
+                       head_digest: str) -> None:
+    """Establish the floor authoritatively, and refuse the completion if it cannot be.
+
+    Under ``ServiceFloor`` the service is the only writer and every failure — unreachable,
+    refusing, or answering about something else — raises, so ``validate_evidence_chain`` never
+    returns the digest a caller would treat as a verified chain. There is no path from here back
+    to the in-process write.
+
+    Under ``AcknowledgedLocalFloor`` the legacy write runs exactly as before, with the
+    contradiction ``_head_floor_dir`` documents still standing — which is what the deployment
+    disclosed when it set the acknowledgement.
+    """
+    posture = _floor_posture()
+    if isinstance(posture, AcknowledgedLocalFloor):
+        _advance_head_floor(store, task_id, head_sequence, head_digest)
+        return
+    import floor_writer
+
+    try:
+        floor_writer.client_advance(posture.endpoint, task_id, head_sequence, head_digest)
+    except floor_writer.FloorWriterError as exc:
+        raise CompletionError(
+            f"the evidence head floor for {task_id} was not authoritatively advanced, so this "
+            f"completion is not verified: {exc.detail}") from exc
 
 
 def _no_pending_execution() -> None:

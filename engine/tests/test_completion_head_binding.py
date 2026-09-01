@@ -882,5 +882,88 @@ class HeadFloorAdvanceIsSerialisedTests(unittest.TestCase):
         self.assertFalse(self.floor.exists())
 
 
+class TheLocalWriteIsReachableOnlyFromTheAcknowledgedPosture(unittest.TestCase):
+    """B1, as a gate instead of a source review.
+
+    The Architect accepted ONE remaining ``_advance_head_floor`` call site *"only if a source
+    review confirms it is structurally reachable exclusively from the acknowledged-local
+    posture"*. A source review is a sentence somebody wrote once; this asks the same question of
+    the AST on every run, so the answer cannot quietly stop being true.
+
+    It parses ``bro_completion.py`` and requires: exactly one call to each floor primitive outside
+    its own definition, both inside ``_commit_head_floor`` / ``_floor_read``, and each of those
+    guarded by an ``isinstance(posture, AcknowledgedLocalFloor)`` test in the same function. A
+    second call site anywhere — or the same call moved out from behind the guard — fails here by
+    name.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import ast
+        import bro_completion
+
+        cls.ast = ast
+        source = pathlib.Path(bro_completion.__file__).read_text(encoding="utf-8")
+        cls.tree = ast.parse(source)
+        cls.functions = {node.name: node for node in ast.walk(cls.tree)
+                         if isinstance(node, ast.FunctionDef)}
+
+    def call_sites(self, name):
+        """Every call to ``name`` that is not inside the definition of ``name`` itself."""
+        ast = self.ast
+        sites = []
+        for holder, node in ((f, n) for f in self.functions.values()
+                             for n in ast.walk(f)):
+            if holder.name == name:
+                continue
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == name:
+                sites.append(holder.name)
+        return sites
+
+    def guards_the_local_branch(self, function_name):
+        """True when the function tests ``isinstance(posture, AcknowledgedLocalFloor)``."""
+        ast = self.ast
+        for node in ast.walk(self.functions[function_name]):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "isinstance" or len(node.args) != 2:
+                continue
+            target = node.args[1]
+            if isinstance(target, ast.Name) and target.id == "AcknowledgedLocalFloor":
+                return True
+        return False
+
+    def test_the_in_process_write_has_exactly_one_caller_and_it_is_the_guarded_one(self):
+        sites = self.call_sites("_advance_head_floor")
+        self.assertEqual(sites, ["_commit_head_floor"],
+                         "the in-process floor write must be reachable from ONE place, and that "
+                         "place is the acknowledged-local branch of _commit_head_floor")
+        self.assertTrue(self.guards_the_local_branch("_commit_head_floor"),
+                        "_commit_head_floor no longer tests the posture before writing locally")
+
+    def test_the_in_process_read_is_reachable_only_along_the_local_path(self):
+        # TWO sites, and both are on the acknowledged-local path: the guarded branch of
+        # `_floor_read`, and `_advance_head_floor`'s own compare-before-write — which is itself
+        # reachable only from the guarded branch, as the test above asserts. Writing "one site"
+        # here would have been a rule I wanted rather than the one the module has.
+        sites = sorted(self.call_sites("_load_head_floor"))
+        self.assertEqual(sites, ["_advance_head_floor", "_floor_read"],
+                         "the in-process floor read reached somewhere new; every caller must be "
+                         "on the acknowledged-local path")
+        self.assertTrue(self.guards_the_local_branch("_floor_read"))
+
+    def test_validate_evidence_chain_goes_through_the_resolver_and_not_around_it(self):
+        # The positive control for the two above: if validate_evidence_chain ever called the
+        # primitives directly again, the counts above would still be 1 and this would catch it.
+        body = self.functions["validate_evidence_chain"]
+        called = {node.func.id for node in self.ast.walk(body)
+                  if isinstance(node, self.ast.Call) and isinstance(node.func, self.ast.Name)}
+        self.assertIn("_floor_read", called)
+        self.assertIn("_commit_head_floor", called)
+        self.assertNotIn("_advance_head_floor", called)
+        self.assertNotIn("_load_head_floor", called)
+
+
 if __name__ == "__main__":
     unittest.main()
