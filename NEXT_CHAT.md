@@ -32,6 +32,9 @@ mid-write. Every new check was mutation-proven.
 second Architect pass. §1.7 stays **partial**; §1.10 is **implemented** and does not close
 **O-5**. FW-3 is OUT; the B/C list lives only in `#219`'s body.
 
+**T-061, and a slice of T-062.** The gate set is what CI runs, not `tools/check_*.py`:
+`generate_negative_matrix.py --check` refuses a hand-edited mirror.
+
 **T-059 and T-060 are corrected here too.** `main_ci` demanded a reading of the NEWEST run on
 `main`, which taking a reading can never be; an older one now passes while everything since it was
 green. And a squash re-dates a commit to the merge moment — both dates, 0 of 796 differ — so the

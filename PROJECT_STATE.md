@@ -48,7 +48,7 @@ disagree, the roadmap wins.
 | frontend | typecheck clean, 764 tests / 80 files |
 | `npm audit --audit-level=high` | 0 vulns |
 | FW-1 boundary proof | 23/23 x3, 4 accounts |
-| `tools/` self-tests | 230 passed |
+| `tools/` self-tests | 253 passed |
 
 Toolchain: `config/toolchain.json`, checked against every canonical document by
 `tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.

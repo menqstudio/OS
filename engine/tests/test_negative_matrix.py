@@ -761,7 +761,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
 
     def test_nm_frame_01_an_unknown_field_is_refused_rather_than_ignored(self):
         """NM-FRAME-01 -- an extra key is `malformed`, never dropped. Dropping it silently is
-        how a smuggled field becomes a field the next reader trusts."""
+        how a smuggled field becomes a field the next reader trusts.
+
+        Proven by removing the `keys - allowed` half of `_validate_evidence`'s exact-key rule.
+        """
         case = "NM-FRAME-01"
         request = _sign_request()
         request["extra"] = "smuggled"
@@ -779,7 +782,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
 
     def test_nm_frame_03_a_missing_required_key_is_refused(self):
         """NM-FRAME-03 -- the key set is exact in BOTH directions. A decoder that only refuses
-        extras accepts a frame with a required field missing and reads it as absent."""
+        extras accepts a frame with a required field missing and reads it as absent.
+
+        Proven by removing the `allowed - set(request.keys())` half in `validate_sign_request`.
+        """
         case = "NM-FRAME-03"
         for drop_from, key in (("top", "evidence"),
                                ("attestation", "sig"),
@@ -796,7 +802,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
 
     def test_nm_frame_02_a_duplicate_json_key_is_refused(self):
         """NM-FRAME-02 -- last-one-wins is the default in every JSON parser, and it means the
-        bytes that were signed and the object that was read can disagree."""
+        bytes that were signed and the object that was read can disagree.
+
+        Proven by replacing `_reject_duplicate_keys`'s raise with `pass`.
+        """
         case = "NM-FRAME-02"
         with self.assertRaises(protocol.ProtocolError) as caught:
             protocol.strict_loads(b'{"protocol":"a","protocol":"b"}')
@@ -811,6 +820,9 @@ class NegativeMatrixFrameTests(_MatrixCase):
         be fail-closed becomes fail-open; and re-encoding it emits the token `NaN`, which no
         other JSON parser will read back, so a digest over the round trip is a digest of
         nothing shared.
+
+        Proven by removing `parse_constant=_reject_json_constant` from `strict_loads` — the arm
+        this row's review ADDED.
         """
         case = "NM-FRAME-04"
         for token in (b'{"a": NaN}', b'{"a": Infinity}', b'{"a": -Infinity}'):
@@ -832,7 +844,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
 
     def test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap(self):
         """NM-FRAME-07 -- 256 KiB, asserted on BOTH sides of the number so the bound is the
-        bound and not merely "large is refused"."""
+        bound and not merely "large is refused".
+
+        Proven by disabling the `len(raw) > MAX_FRAME_BYTES` arm.
+        """
         case = "NM-FRAME-07"
         self.assertEqual(protocol.MAX_FRAME_BYTES, 256 * 1024, case)
         self.assertEqual(signer.MAX_REQUEST_BYTES, 256 * 1024, case)
@@ -849,7 +864,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
 
     def test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused(self):
         """NM-FRAME-13 -- `^[0-9a-f]{64}$`. Uppercase is the arm that a case-insensitive
-        comparison would let through, and it addresses a different store entry."""
+        comparison would let through, and it addresses a different store entry.
+
+        Proven by widening `_is_sha256_hex` to accept uppercase.
+        """
         case = "NM-FRAME-13"
         field = signer.EVIDENCE_HANDLE_FIELDS[0]
         good = _sign_request()["evidence"][field]
@@ -868,7 +886,10 @@ class NegativeMatrixFrameTests(_MatrixCase):
         """NM-FRAME-18 -- the handle model is the size bound. `_validate_evidence` admits no
         inline artifact bytes AND no caller-supplied `*_sha256` for a handle it derives, so a
         large artifact has no field to travel in and a small lie has no field to travel in
-        either."""
+        either.
+
+        Proven by removing the `keys - allowed` half in `_validate_evidence`.
+        """
         case = "NM-FRAME-18"
         for handle_field, derived in signer.HANDLE_TO_DERIVED_HASH.items():
             request = _sign_request()

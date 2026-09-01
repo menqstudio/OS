@@ -620,29 +620,25 @@
       "status": "implemented",
       "under_test": "Unknown field",
       "section": "§4",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_01_an_unknown_field_is_refused_rather_than_ignored",
-      "mutation": "removing the `keys - allowed` half of the exact-key rule in `_validate_evidence`"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_01_an_unknown_field_is_refused_rather_than_ignored"
     },
     "NM-FRAME-02": {
       "status": "implemented",
       "under_test": "Duplicate JSON key",
       "section": "§4, §1.9",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_02_a_duplicate_json_key_is_refused",
-      "mutation": "replacing `_reject_duplicate_keys`'s raise with `pass`"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_02_a_duplicate_json_key_is_refused"
     },
     "NM-FRAME-03": {
       "status": "implemented",
       "under_test": "Missing required key",
       "section": "§4",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_03_a_missing_required_key_is_refused",
-      "mutation": "removing the `allowed - set(request.keys())` half in `validate_sign_request`"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_03_a_missing_required_key_is_refused"
     },
     "NM-FRAME-04": {
       "status": "implemented",
       "under_test": "Wrong type / NaN / Inf",
       "section": "§1.9, §4",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_04_wrong_types_and_the_non_json_constants_are_refused",
-      "mutation": "removing `parse_constant=_reject_json_constant` from `strict_loads` -- the arm this row's review ADDED, after measuring that `strict_loads(b'{\"a\": NaN}')` returned `{'a': nan}`"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_04_wrong_types_and_the_non_json_constants_are_refused"
     },
     "NM-FRAME-05": {
       "status": "unreviewed",
@@ -660,8 +656,7 @@
       "status": "implemented",
       "under_test": "Oversize sign-request",
       "section": "§4.4, §1.9",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap",
-      "mutation": "disabling the `len(raw) > MAX_FRAME_BYTES` arm"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap"
     },
     "NM-FRAME-08": {
       "status": "unreviewed",
@@ -697,8 +692,7 @@
       "status": "implemented",
       "under_test": "Bad hex handle",
       "section": "§4",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused",
-      "mutation": "widening `_is_sha256_hex` to accept uppercase"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused"
     },
     "NM-FRAME-14": {
       "status": "unreviewed",
@@ -728,8 +722,7 @@
       "status": "implemented",
       "under_test": "Inline large payload",
       "section": "§1.9, §4.4",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_18_an_inline_payload_cannot_be_sent_instead_of_a_handle",
-      "mutation": "removing the `keys - allowed` half in `_validate_evidence`"
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_18_an_inline_payload_cannot_be_sent_instead_of_a_handle"
     },
     "NM-FRAME-19": {
       "status": "unreviewed",
