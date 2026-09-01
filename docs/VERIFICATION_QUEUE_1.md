@@ -142,11 +142,11 @@ or they will measure the previous checkout.
 | # | where | what |
 |---|---|---|
 | V-1 | `credentials::is_bound` (#207) | **CLOSED on #207.** Every other test varied the digest, so `AND slot_id = ?2` could have been dropped and stayed green. `is_bound_answers_about_the_slot_it_was_asked_about` now reddens on exactly that mutation |
-| V-2 | `Grant::for_egress` (#207) | the credential-slot refusal is untested. STILL OPEN: it lives in `agent_bundle.rs`, which §4's rewrite did not touch |
+| V-2 | `Grant::for_egress` (#207) | **CLOSED 2026-09-01.** The credential-slot refusal was defended by nothing — deleting it left `cargo test --workspace` at 1147 passed / 0 failed, measured. `a_grant_refuses_a_credential_slot_list_it_cannot_resolve` reddens on that mutation and on dropping the empty-name arm alone; `a_grants_credential_slots_are_stored_in_one_order` reddens on dropping the sort |
 | V-3 | `security::map_event` (#210) | **CLOSED on #210.** It could drop the `source` mark with nothing noticing; V-5's repaired assertion now reddens on exactly that mutation |
-| V-4 | `Home.tsx` (#210) | the seeded count can become `0`; nothing notices |
+| V-4 | `Home.tsx` (#210) | **CLOSED 2026-09-01.** `activitySummary` was tested and its CALLER was not: `seeded = 0` type-checked and left the suite green, measured. Three tests now render the real `<Home />` over a mocked `list_activity` and read the sentence off the screen; they redden on the constant-fold, on counting every row instead of the seeded ones, and on dropping the argument |
 | V-5 | `repo.rs::both_read_surfaces_carry_the_mark` (#210) | **CLOSED on #210.** It asserted one surface, was named for two, and closed on a restatement of an earlier assertion. It now asserts `security::summary`'s own rows |
-| V-6 | `produce_agent_artifact.rs` module doc, lines 4-5 | still says the binary *"claims that run, executes it"*; since the dispatch change `run_due` does, and the binary does not call `claim_and_run` |
+| V-6 | `produce_agent_artifact.rs` module doc, lines 4-5 | **CLOSED 2026-09-01.** The doc said the binary *"claims that run, executes it"* while its own comment beside the call said the hand call was gone. It now says what T-058 made true — `run_due` enqueues AND dispatches — and says why it matters: condition 4 of the five `check_produced_artifact.py` measures is *"run_due() has invoked it"* |
 
 V-1 through V-5 meant **PR #210's headline claim — "the mark reaches the reader" — was
 half proven**: it reached `activity::list`, and whether it reached `security::summary` or
@@ -159,8 +159,11 @@ printed `FAILED ... security::summary must carry the mark too`. The same mutatio
 verdicts: that is the difference between a test and a restatement. `cargo test --workspace`
 on this branch afterwards: 1092 passed, 0 failed.
 
-**V-4 stays open**: the Home sparkline's seeded count is still asserted by nothing, so
-"the mark reaches the reader" is proven as far as `security::summary` and no further.
+**All six are closed now** (2026-09-01, T-061). "The mark reaches the reader" is proven the
+whole way: to `activity::list`, to `security::summary`, and to the Home sparkline's own sentence,
+each by a test that reddens on the mutation that would break it. Every closure above was measured
+in both directions — the defect reproduced first, the test written second, the mutation re-run
+third — because a test written against code that was already correct proves only that it compiles.
 
 ## What this pass did not do
 
