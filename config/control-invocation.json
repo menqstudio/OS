@@ -215,6 +215,11 @@
       "blocks": "merge",
       "invoked_by": "Canonical law · read receipt · roadmap order · update law"
     },
+    "tools/check_principal_model.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Spec · every § reference declares whether it is implemented"
+    },
     "tools/check_prior_art.py": {
       "kind": "check",
       "blocks": "session",

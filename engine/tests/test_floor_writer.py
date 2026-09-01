@@ -74,7 +74,12 @@ class ServiceFixture(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         root = pathlib.Path(self._tmp.name)
         self.marks_root = root / "marks"
-        (self.marks_root / INSTALL).mkdir(parents=True, mode=0o700)
+        # `mkdir(parents=True, mode=...)` applies the mode to the LAST component only; the
+        # intermediates take the process umask, which is 0o002 on this box and produces a
+        # group-writable `marks/`. The ancestry rule refuses that — correctly — so the fixture
+        # builds the chain the way a provisioned deployment has it.
+        self.marks_root.mkdir(mode=0o755)
+        (self.marks_root / INSTALL).mkdir(mode=0o700)
         self.config_path = root / "fw-config.json"
         self.config_path.write_text(json.dumps({
             "install_id": INSTALL, "marks_root": str(self.marks_root),
@@ -406,6 +411,169 @@ class FramingBoundary(ServiceFixture):
 
 
 @unittest.skipUnless(_LINUX, LINUX_ONLY)
+class CustodyContract(unittest.TestCase):
+    """C1 and C2: ONE custody contract, decided on an open descriptor.
+
+    Two defects sit behind this class and both were measured, not reasoned about.
+
+    **The ancestry vector was never checked.** The previous version asked
+    ``bro_custody.posix_rewrite_verdict`` for it and acted only on a ``parent`` verdict — but that
+    function's FIRST arm returns ``owner`` whenever the path belongs to the asking uid, which the
+    line above it had just required. The branch could not be taken. A directory at mode 0700 under
+    a group-writable parent was accepted, and the comment beside it said the vector was covered.
+
+    **The check and the use were two lookups of one name.** ``lstat(dir)`` then ``bind(dir/name)``,
+    or ``lstat(dir)`` then ``open(dir/file)``: whatever the name resolved to the second time is
+    what got used. Now the check is an ``fstat`` of an already-open descriptor and every use is
+    relative to that descriptor, so the object approved is the object used.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        self.chain = self.root / "chain"
+        self.chain.mkdir(mode=0o755)
+        self.target = self.chain / "store"
+        self.target.mkdir(mode=0o700)
+
+    def check(self, directory=None, owner_uid=None):
+        fd = fw.open_checked_directory(
+            directory or self.target,
+            owner_uid=os.geteuid() if owner_uid is None else owner_uid,
+            what="a directory under test")
+        os.close(fd)
+
+    def test_the_ordinary_private_directory_is_accepted(self):
+        self.check()    # the positive control; without it every arm below is unearned
+
+    def test_a_group_writable_directory_is_refused(self):
+        self.target.chmod(0o770)
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            self.check()
+        self.assertIn("group- or world-writable", caught.exception.detail)
+
+    def test_a_directory_owned_by_another_principal_is_refused(self):
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            self.check(owner_uid=os.geteuid() + 1)
+        self.assertIn("not uid", caught.exception.detail)
+
+    def test_a_group_writable_ANCESTOR_is_refused_and_this_is_the_arm_that_was_dead(self):
+        # The directory itself stays perfect at 0700. Its PARENT is what an attacker uses: they
+        # rename `store` aside and put their own there, and 0700 has stopped meaning anything.
+        self.chain.chmod(0o775)
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            self.check()
+        self.assertIn("ancestor", caught.exception.detail)
+        self.assertIn("rename this directory aside", caught.exception.detail)
+        self.chain.chmod(0o755)
+        self.check()    # and it passes again once the chain is tightened: the arm is not a wall
+
+    def test_an_ancestor_owned_by_a_third_principal_is_refused(self):
+        # Simulated by demanding an owner this process is not: the same walk, the other predicate.
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            fw.require_unswappable_ancestry(self.target, os.geteuid() + 1, "a directory under test")
+        self.assertIn("neither root nor", caught.exception.detail)
+
+    def test_a_sticky_world_writable_ancestor_is_allowed_and_says_why(self):
+        # /tmp and /var/tmp are 1777. Sticky is exactly the rule that stops a non-owner renaming
+        # an entry they do not own, which is the vector being closed — so refusing it would refuse
+        # every deployment that keeps anything under a system temp directory.
+        sticky = self.root / "sticky"
+        sticky.mkdir(mode=0o1777)
+        inner = sticky / "store"
+        inner.mkdir(mode=0o700)
+        self.check(inner)
+        sticky.chmod(0o777)     # the same mode WITHOUT the sticky bit is the refusable one
+        with self.assertRaises(fw.FloorWriterError):
+            self.check(inner)
+
+    def test_a_symlink_is_refused_rather_than_followed(self):
+        link = self.chain / "link"
+        link.symlink_to(self.target)
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            self.check(link)
+        self.assertIn("cannot open", caught.exception.detail)
+
+    def test_a_file_where_a_directory_belongs_is_refused_by_the_open_itself(self):
+        plain = self.chain / "plain"
+        plain.write_text("x", encoding="utf-8")
+        with self.assertRaises(fw.FloorWriterError):
+            self.check(plain)
+
+    def test_a_refused_directory_leaks_no_descriptor(self):
+        # Every refusal closes the descriptor it opened. A leak here would be invisible until a
+        # long-running service ran out of them, which is the worst way to find it.
+        self.target.chmod(0o770)
+        before = len(os.listdir("/proc/self/fd"))
+        for _ in range(50):
+            with self.assertRaises(fw.FloorWriterError):
+                self.check()
+        self.assertLessEqual(len(os.listdir("/proc/self/fd")), before + 2)
+
+
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
+class TheCheckedDirectoryIsTheUsedDirectory(ServiceFixture):
+    """C1, as the attack rather than as the rule: swap the store between the check and the write.
+
+    The service takes ONE descriptor for a whole advance. These tests take that descriptor, then
+    rename the checked directory aside and put a hostile directory at the same path — the classic
+    TOCTOU move — and require every subsequent operation to land in the inode that passed.
+    """
+
+    def swap_in_an_impostor(self):
+        """Move the real store aside and put a fresh directory at its name. Returns the real one."""
+        real = self.config.marks_dir
+        moved = real.parent / "moved-aside"
+        os.rename(real, moved)
+        real.mkdir(mode=0o700)
+        return moved
+
+    def test_a_commit_lands_in_the_checked_inode_and_not_in_the_impostor(self):
+        with fw.store_dir(self.config) as fd:
+            moved = self.swap_in_an_impostor()
+            fw.commit_state(self.config, {"install_id": INSTALL, "generation": 7,
+                                          "roster": ["task-1"],
+                                          "floors": {"task-1": {"head_sequence": 5,
+                                                                "evidence_head_sha256": DIGEST_A}}},
+                            fd)
+        landed = json.loads((moved / fw.STATE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(landed["roster"], ["task-1"],
+                         "the commit did not land in the directory whose custody was approved")
+        self.assertEqual(sorted(os.listdir(self.config.marks_dir)), [],
+                         "the impostor directory received the authoritative write")
+
+    def test_a_read_comes_from_the_checked_inode(self):
+        self.ask(_advance(head=5))
+        with fw.store_dir(self.config) as fd:
+            moved = self.swap_in_an_impostor()
+            # The impostor is given a floor of its own; reading through the descriptor must not
+            # see it, and must not see "unprovisioned" either.
+            (self.config.marks_dir / fw.STATE_FILE).write_text(json.dumps({
+                "install_id": INSTALL, "generation": 7, "roster": ["task-1"],
+                "floors": {"task-1": {"head_sequence": 99,
+                                      "evidence_head_sha256": DIGEST_B}}}), encoding="utf-8")
+            head, digest = fw.read_floor(self.config, "task-1", fd)
+        self.assertEqual((head, digest), (5, DIGEST_A))
+        self.assertTrue((moved / fw.STATE_FILE).exists())
+
+    def test_without_the_descriptor_the_same_swap_reaches_the_impostor(self):
+        # The meta-control. If a plain path-based read saw the same thing as the fd-based read,
+        # the two tests above would be measuring nothing at all. This is the behaviour the old
+        # code had, reproduced deliberately so the fix has something to be a fix OF.
+        self.ask(_advance(head=5))
+        self.swap_in_an_impostor()
+        (self.config.marks_dir / fw.STATE_FILE).write_text(json.dumps({
+            "install_id": INSTALL, "generation": 7, "roster": ["task-1"],
+            "floors": {"task-1": {"head_sequence": 99,
+                                  "evidence_head_sha256": DIGEST_B}}}), encoding="utf-8")
+        by_path = json.loads((self.config.marks_dir / fw.STATE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(by_path["floors"]["task-1"]["head_sequence"], 99,
+                         "the impostor is not actually reachable by path, so the fd tests prove "
+                         "nothing")
+
+
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
 class RunnerStartup(unittest.TestCase):
     """``run_floor_writer.py`` as a PROCESS: every bad start is a refusal, and none of them binds.
 
@@ -427,7 +595,12 @@ class RunnerStartup(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = pathlib.Path(self._tmp.name)
         self.marks_root = self.root / "marks"
-        (self.marks_root / INSTALL).mkdir(parents=True, mode=0o700)
+        # `mkdir(parents=True, mode=...)` applies the mode to the LAST component only; the
+        # intermediates take the process umask, which is 0o002 on this box and produces a
+        # group-writable `marks/`. The ancestry rule refuses that — correctly — so the fixture
+        # builds the chain the way a provisioned deployment has it.
+        self.marks_root.mkdir(mode=0o755)
+        (self.marks_root / INSTALL).mkdir(mode=0o700)
         self.socket_dir = self.root / "run"
         self.socket_dir.mkdir(mode=0o750)
         self.socket_path = self.socket_dir / "fw.sock"

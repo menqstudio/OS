@@ -146,8 +146,10 @@ enforces it, because a contract nothing checks is a wish:
 | The deployment must | Enforced by |
 |---|---|
 | run the Floor Writer as an account that is **not** the completion account and **not** root | `provision_floor_writer.py` refuses `--service-user root` and refuses any `--peer` equal to the service uid or to root |
-| own `<marks_root>/<install_id>/` as that account, mode `0700` | `floor_writer.require_private_directory` at start, before the socket exists; provisioning sets it and reads it back |
+| own `<marks_root>/<install_id>/` as that account, mode `0700` | `floor_writer.open_checked_directory` at start, before the socket exists; provisioning sets it and reads it back |
 | hold the socket in a directory owned by that account, mode `2750`, group the caller group | the same check on the socket's parent; §1.7 makes the **directory** the server authentication — a directory no other principal may write is one in which no other principal can replace the endpoint. The setgid bit is load-bearing: without it the endpoint carries the service's own group and the caller cannot connect |
+| keep **every ancestor** of both, to `/`, owned by root or by that account and not group- or world-writable without the sticky bit | `floor_writer.require_unswappable_ancestry`. A grandparent another principal can write lets them rename the parent aside, and the child's own `0700` has then stopped meaning anything. This was claimed and **not enforced** until 2026-09-01: the check delegated to `bro_custody.posix_rewrite_verdict`, whose first arm returns `owner` for a path the asking uid owns — which the line above it had just required — so the ancestor arm could not be reached. A directory at `0700` under a group-writable parent was accepted, measured |
+| use the directory it checked, not the name it checked | `open_checked_directory` returns an open descriptor; the custody decision is an `fstat` of that descriptor and every use is `dir_fd`-relative, with `bind` addressing `/proc/self/fd/<fd>/<name>`. The old shape — `lstat(path)` then `bind(path)` — was two lookups of one name, and the gap between them was the window |
 | authenticate every caller from the **kernel** | `SO_PEERCRED` at accept time, before a frame is read. Linux only, and it refuses rather than approximating elsewhere |
 | authorize per **operation**, not by a union | `ServiceConfig.peers_for(op)`; `floor.get` admission is not `floor.advance` admission |
 | put **no** `install_id` on the wire | the scope comes from the TCB-owned config; a request carrying the field is refused `malformed`, not ignored |
@@ -166,6 +168,21 @@ Two variables, and nothing else, select the posture:
 `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged` selects `AcknowledgedLocalFloor` — today's
 single-principal behaviour, on a box that has **disclosed** it has no second principal. It is not
 a fallback and it cannot be reached from the service posture.
+
+**One custody contract, not two.** Provisioning used to carry a second, shorter check of its own
+— owner and mode, no ancestry — beside the service's different one. Two functions answering *"is
+this directory protected?"* with two rules is how a path passes provisioning and is refused at
+start, or worse passes both while meaning different things. `provision_floor_writer` now calls the
+service's function, with the only thing that legitimately differs: **who** must own it — root
+there, the service's own uid here.
+
+**The Floor Writer is still not an eighth principal, and that is now a gate.**
+`tools/check_principal_model.py` reads `windows_broker.rs` and requires the `enum Principal`
+variants, the `RUNTIME_PRINCIPALS` members and the declared array length to be the same normative
+seven, and the documents that state the count to state seven. `[Principal; 7]` pins the count and
+nothing else: a variant added to the enum and omitted from the array compiles, and
+`verify_distinct_principals()` — which iterates the array — then never asks about it. An eighth
+principal is not forbidden; it is an amendment to §2.6, and the refusal says so by name.
 
 **What is measured, and by what.** `engine/ci/floor_writer_boundary_proof.sh` provisions this
 contract as root under four real accounts and then attacks it: the authorized caller advances, an

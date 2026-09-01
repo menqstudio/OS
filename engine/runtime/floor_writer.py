@@ -27,10 +27,12 @@ and §7's fifth negative makes a request carrying the field a ``malformed`` refu
 something quietly ignored.
 
 **The server is authenticated by its socket's DIRECTORY** (§1.7), which no other runtime
-principal may write, checked through ``bro_custody`` — the same rule §2.5 applies to every TCB
-path and its ancestors. The earlier attempt used ``chmod(socket, 0700)`` instead, which is not in
-the design and which a two-account measurement showed makes the service unreachable by its own
-intended caller: the whole point is two principals, and 0700 admits one.
+principal may write — the same rule §2.5 applies to every TCB path **and its ancestors**. The
+earlier attempt used ``chmod(socket, 0700)`` instead, which is not in the design and which a
+two-account measurement showed makes the service unreachable by its own intended caller: the whole
+point is two principals, and 0700 admits one. The attempt after that borrowed
+``bro_custody.posix_rewrite_verdict`` for the ancestor half and got a branch that could not be
+reached — see :func:`require_unswappable_ancestry`.
 
 **The posture is a closed two-state resolver** (§1.4): ``ServiceFloor(endpoint)`` or
 ``AcknowledgedLocalFloor``, *"no third state and no fallback from the first to the second"*, and
@@ -72,6 +74,7 @@ itself.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
@@ -84,7 +87,6 @@ import sys
 import threading
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from bro_custody import posix_rewrite_verdict
 
 #: §4.1. The reviewed wire contract; the version is part of authority, not a courtesy.
 FLOOR_PROTOCOL = "brops.floor-writer.v1"
@@ -307,55 +309,117 @@ def require_linux(what: str) -> None:
             f"Linux; this platform is {sys.platform!r}. Windows is FW-2 and is not built")
 
 
+#: The custody question this module asks, in one place, so there is one answer to it (C2).
+#: ``bro_custody.posix_rewrite_verdict`` is NOT that answer and the first version of this file was
+#: wrong to reach for it. It asks *"can the process running me rewrite this path?"*, and its first
+#: arm returns ``owner`` whenever the path belongs to the asking uid — which the check above has
+#: just REQUIRED. So its ``parent`` arm was unreachable here, every time, and the comment that said
+#: the third vector was covered was describing a branch that could not be taken. Measured, not
+#: reasoned: a directory at mode 0700 under a group-writable parent was ACCEPTED.
+#:
+#: The question this module actually has is the opposite one — *"can any OTHER principal rewrite
+#: this path, or anything on the way to it?"* — and it is answered here.
+
+
+def _refuse_custody(what: str, directory: pathlib.Path, why: str) -> "FloorWriterError":
+    return FloorWriterError("scope_unavailable", f"{what} {directory} fails custody: {why}")
+
+
+def require_unswappable_ancestry(directory: pathlib.Path, owner_uid: int, what: str) -> None:
+    """Every ancestor to ``/``, not just the parent. §1.7's property is a CHAIN.
+
+    A grandparent another principal can write lets them rename the parent aside; the parent then
+    holds whatever they put there, and this directory's own mode has stopped meaning anything. So
+    the rule is applied to the whole resolved chain, which is the same shape the Windows half
+    enforces (``win-live/src/provision_custody.rs::check_root_custody`` — TCB owner, no untrusted
+    write grantee, on every ancestor of a pinned artifact).
+
+    Two things are allowed and both are deliberate. **Root may own any ancestor**: root is the TCB
+    on this platform, and a deployment whose ancestors are root-owned is the intended one. **A
+    sticky world-writable ancestor passes** — ``/tmp`` and ``/var/tmp`` are 1777, and the sticky
+    bit is precisely the rule that stops a non-owner renaming or unlinking an entry they do not
+    own, which is the vector being closed. A world-writable ancestor WITHOUT the sticky bit is
+    refused, because there anyone can swap the chain.
+
+    The honest limit: this is a decision about a moment. A chain that is safe now cannot be made
+    unsafe without a privileged actor, but the check is not a lock. The leaf is held by an open
+    descriptor for exactly that reason (see :func:`open_checked_directory`); the ancestors are not.
+    """
+    for ancestor in directory.resolve().parents:
+        try:
+            info = ancestor.stat()
+        except OSError as exc:
+            raise _refuse_custody(what, directory,
+                                  f"its ancestor {ancestor} cannot be stat-ed: {exc}") from exc
+        if info.st_uid not in (0, owner_uid):
+            raise _refuse_custody(
+                what, directory,
+                f"its ancestor {ancestor} is owned by uid {info.st_uid}, which is neither root nor "
+                f"uid {owner_uid}. That owner can rename the chain aside and put its own in place, "
+                "which makes every mode below it advisory")
+        if (info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)) and not (info.st_mode & stat.S_ISVTX):
+            raise _refuse_custody(
+                what, directory,
+                f"its ancestor {ancestor} is group- or world-writable at mode "
+                f"{stat.S_IMODE(info.st_mode):04o} without the sticky bit, so another principal can "
+                "rename this directory aside and serve its own in its place")
+
+
+def open_checked_directory(directory: pathlib.Path, *, owner_uid: int, what: str) -> int:
+    """Open the directory, decide custody **on the open descriptor**, and return the descriptor.
+
+    This is C1. The old shape was ``lstat(path)`` … later ``bind(path)`` / ``open(path/...)``, and
+    between those two the path can be replaced: the directory that was checked and the directory
+    that is used were two different lookups of the same name. Here the check is
+    :func:`os.fstat` of an **already-open** descriptor, and every subsequent operation is
+    ``dir_fd``-relative (or, for ``bind``, through ``/proc/self/fd/<fd>/``), so the object that was
+    approved is the object that is used. A rename of the directory after this call is harmless:
+    the descriptor keeps naming the inode that passed.
+
+    ``O_NOFOLLOW`` refuses a symlink in the final component, and ``O_DIRECTORY`` refuses anything
+    that is not a directory — both as part of the open rather than as a separate look.
+
+    The caller owns the returned descriptor and must close it. Every refusal closes it first.
+    """
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"cannot open {what} {directory}: {exc}. A symlink or a non-directory here is a "
+            "refusal, not something to follow") from exc
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != owner_uid:
+            raise _refuse_custody(
+                what, directory,
+                f"it is owned by uid {info.st_uid}, not uid {owner_uid}; a directory this "
+                "principal does not own is one it cannot promise to be the only writer of")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise _refuse_custody(
+                what, directory,
+                f"it is group- or world-writable (mode {stat.S_IMODE(info.st_mode):04o}); least "
+                "privilege means this principal and no other")
+        require_unswappable_ancestry(directory, owner_uid, what)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def require_private_directory(directory: pathlib.Path, what: str) -> None:
-    """The directory must be this principal's, and writable by nothing else.
+    """The directory must be this principal's, and writable by nothing else — a start-time answer.
 
     Used for BOTH the marks store (§1.2 — *"the policed account gets no access at all"*) and the
     socket's parent (§1.7 — this IS the server authentication: a directory no other runtime
     principal may write is one in which no other principal can replace the endpoint).
 
-    ``posix_rewrite_verdict`` is the same custody primitive the operator-root pin and the evidence
-    floor already use, so this is one contract with one implementation rather than a second
-    opinion about what "protected" means.
+    This form answers the question and drops the descriptor, because the runner asks it once,
+    before the socket exists, to decide whether to start at all. The paths that then USE the
+    directory keep the descriptor instead — that is :func:`open_checked_directory`, and it is what
+    makes the answer still true at the moment of use.
     """
-    try:
-        info = directory.lstat()
-    except OSError as exc:
-        raise FloorWriterError("scope_unavailable",
-                               f"cannot stat {what} {directory}: {exc}") from exc
-    if not stat.S_ISDIR(info.st_mode):
-        raise FloorWriterError("scope_unavailable", f"{what} {directory} is not a directory")
-    if info.st_uid != os.geteuid():
-        raise FloorWriterError(
-            "scope_unavailable",
-            f"{what} {directory} is owned by uid {info.st_uid}, not by the Floor Writer principal "
-            f"(uid {os.geteuid()}); a directory this principal does not own is one it cannot "
-            "promise to be the only writer of")
-    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise FloorWriterError(
-            "scope_unavailable",
-            f"{what} {directory} is group- or world-writable (mode "
-            f"{stat.S_IMODE(info.st_mode):04o}); least privilege means this principal and no other")
-    # `posix_rewrite_verdict` answers "can the process running me rewrite this path?", and it was
-    # written for the POLICED account, where owning the path is disqualifying. Here the question
-    # is the opposite one: this directory is the Floor Writer's own, so its `owner` and
-    # `permission` verdicts describe the INTENDED state, not a defect. Using the primitive
-    # wholesale refused the service's own correctly-provisioned directory — found by a real
-    # two-account run, not by reading.
-    #
-    # What is still needed from it is the third vector, and only that one: a parent another
-    # principal can write lets them rename this directory aside and put their own in its place,
-    # which makes this directory's own mode irrelevant. That is the vector
-    # `_refuse_self_owned_floor` names third, and it is what §1.7 means by the endpoint being
-    # unreplaceable.
-    verdict = posix_rewrite_verdict(directory, info, what, RuntimeError)
-    if verdict is not None and verdict.kind == "parent":
-        raise FloorWriterError(
-            "scope_unavailable",
-            f"{what} {directory} fails custody: its parent {verdict.parent} (uid "
-            f"{verdict.parent_uid}, mode {verdict.parent_mode:04o}) is writable by another "
-            "principal, which can rename the whole directory aside and put its own in its place "
-            "regardless of this directory's mode")
+    os.close(open_checked_directory(directory, owner_uid=os.geteuid(), what=what))
 
 
 # ---------------------------------------------------------------------------
@@ -374,32 +438,67 @@ STATE_FILE = "floor-state.json"
 
 
 def _state_path(config: ServiceConfig) -> pathlib.Path:
+    """Only for messages. Nothing OPENS this path — the store is addressed through a descriptor."""
     return config.marks_dir / STATE_FILE
 
 
-def load_state(config: ServiceConfig) -> Dict[str, Any]:
+@contextlib.contextmanager
+def store_dir(config: ServiceConfig):
+    """A checked descriptor on the marks directory, for the length of one operation.
+
+    Everything the service does to the store goes through this: the custody decision and the read
+    or the write are then about the same inode, with no window between them for the directory to be
+    replaced. Opening it per operation rather than once at start is deliberate — it means custody
+    is re-decided on every touch, and a store that stopped being private is caught at the next
+    request rather than at the next restart.
+    """
+    fd = open_checked_directory(config.marks_dir, owner_uid=os.geteuid(),
+                                what="the Floor Writer marks store")
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def load_state(config: ServiceConfig, dir_fd: Optional[int] = None) -> Dict[str, Any]:
     """The whole authoritative document, validated.
 
     An absent document is an UNPROVISIONED store, not an empty one: treating them alike would let
     deleting one file restart every task's floor at zero, which is the attack the roster exists to
     catch. §4.2 records that under service custody this reads as self-damage rather than as an
     attack — it still refuses.
+
+    ``dir_fd`` is a descriptor from :func:`store_dir`. Passing one lets a caller hold ONE checked
+    directory across load → compare → publish → read-back; omitting it opens and checks one for
+    this call alone.
     """
-    marks = config.marks_dir
-    if not marks.is_dir():
-        raise FloorWriterError(
-            "floor_absent",
-            f"the marks directory {marks} does not exist. It is created by the service's own "
-            "provisioning, so a floor cannot be bootstrapped by a client")
+    if dir_fd is None:
+        with store_dir(config) as fd:
+            return load_state(config, fd)
     path = _state_path(config)
-    if not path.exists():
+    try:
+        # O_NOFOLLOW on the document too: a symlink where the state should be is a refusal, not a
+        # redirection to whatever it points at.
+        handle = os.open(STATE_FILE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except FileNotFoundError:
         raise FloorWriterError(
             "floor_absent",
             f"the authoritative floor state {path} does not exist; the store is unprovisioned and "
-            "an unprovisioned floor is refused rather than started at zero")
+            "an unprovisioned floor is refused rather than started at zero") from None
+    except OSError as exc:
+        raise FloorWriterError(
+            "mark_corrupt",
+            f"the authoritative floor state cannot be opened; refusing rather than treating a "
+            f"damaged anti-rollback record as absent: {exc}") from exc
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        with os.fdopen(handle, "rb") as stream:
+            raw = stream.read()
+    except OSError as exc:
+        raise FloorWriterError(
+            "mark_corrupt", f"the authoritative floor state is unreadable: {exc}") from exc
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
         raise FloorWriterError(
             "mark_corrupt",
             f"the authoritative floor state is unreadable; refusing rather than treating a "
@@ -432,14 +531,15 @@ def load_state(config: ServiceConfig) -> Dict[str, Any]:
     return document
 
 
-def read_floor(config: ServiceConfig, task_id: str) -> Tuple[int, Optional[str]]:
+def read_floor(config: ServiceConfig, task_id: str,
+               dir_fd: Optional[int] = None) -> Tuple[int, Optional[str]]:
     """``(head_sequence, evidence_head_sha256)`` for one task, or ``(0, None)`` if never measured.
 
     Roster membership is checked SEPARATELY from the floor, because they are different facts: a
     task the roster names whose floor is gone is ``mark_removed``, exactly as it was when they
     were two files. What changed is that no crash can produce that state.
     """
-    document = load_state(config)
+    document = load_state(config, dir_fd)
     roster = set(document["roster"])
     floors = document["floors"]
     record = floors.get(task_id)
@@ -472,43 +572,47 @@ def read_floor(config: ServiceConfig, task_id: str) -> Tuple[int, Optional[str]]
     return recorded, digest
 
 
-def commit_state(config: ServiceConfig, document: Mapping[str, Any]) -> None:
+def commit_state(config: ServiceConfig, document: Mapping[str, Any],
+                 dir_fd: Optional[int] = None) -> None:
     """§4.3's atomic publish, over the WHOLE coupled state, in ONE rename.
 
     Private temp in the same directory, write, ``fsync``, rename over the document, ``fsync`` the
     directory. A crash exposes the complete previous document or the complete new one. There is no
     second object to fall out of step with this one, so there is no half-state and therefore no
     repair path to design.
+
+    Every one of those steps is ``dir_fd``-relative, including the ``fsync`` of the directory,
+    which is the very descriptor custody was decided on. The publish therefore lands in the inode
+    that passed the check, and not in whatever the directory's NAME resolves to by the time the
+    rename runs.
     """
-    marks = config.marks_dir
-    final = _state_path(config)
-    temporary = marks / f".{STATE_FILE}.tmp"
+    if dir_fd is None:
+        with store_dir(config) as fd:
+            commit_state(config, document, fd)
+            return
+    temporary = f".{STATE_FILE}.tmp"
     payload = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
     try:
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600, dir_fd=dir_fd)
         try:
-            os.write(fd, payload)
-            os.fsync(fd)
+            os.write(handle, payload)
+            os.fsync(handle)
         finally:
-            os.close(fd)
-        os.replace(temporary, final)
-        dir_fd = os.open(marks, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+            os.close(handle)
+        os.replace(temporary, STATE_FILE, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        os.fsync(dir_fd)
     except OSError as exc:
         try:
-            temporary.unlink()
+            os.unlink(temporary, dir_fd=dir_fd)
         except OSError:
             pass
         raise FloorWriterError(
             "internal", f"cannot commit the authoritative floor state: {exc}") from exc
 
 
-def known_tasks(config: ServiceConfig) -> set:
+def known_tasks(config: ServiceConfig, dir_fd: Optional[int] = None) -> set:
     """The roster, read from the document that declares it — never inferred from what files exist."""
-    return set(load_state(config)["roster"])
+    return set(load_state(config, dir_fd)["roster"])
 
 
 #: §1.9. ONE writer process, so the cross-process lock disappears. What remains is in-process
@@ -541,9 +645,12 @@ def do_get(config: ServiceConfig, task_id: str) -> Dict[str, Any]:
     validates the chain. Its answer is never authoritative: a client that ignores it, or lies to
     itself about it, still cannot advance below the floor, because ``floor.advance`` re-checks
     against the store this service owns."""
-    current, digest = read_floor(config, task_id)
-    return _reply(OP_GET, config, head_sequence=current, evidence_head_sha256=digest,
-                  known=task_id in known_tasks(config))
+    # ONE checked descriptor for both halves of the answer: reading the floor and the roster
+    # through two separate custody decisions could answer about two different directories.
+    with store_dir(config) as fd:
+        current, digest = read_floor(config, task_id, fd)
+        return _reply(OP_GET, config, head_sequence=current, evidence_head_sha256=digest,
+                      known=task_id in known_tasks(config, fd))
 
 
 def do_advance(config: ServiceConfig, task_id: str, head_sequence: int,
@@ -557,11 +664,14 @@ def do_advance(config: ServiceConfig, task_id: str, head_sequence: int,
     Roster membership and the floor move in ONE commit. The roster is updated explicitly here —
     it is a fact this service records, not one a reader infers from the filesystem.
     """
-    with _ADVANCE_LOCK:
-        document = load_state(config)
+    # The descriptor is taken ONCE and held across load -> compare -> publish -> read-back, so the
+    # whole decision is about one inode that passed custody. Re-resolving the directory's name at
+    # each step is the window C1 names.
+    with _ADVANCE_LOCK, store_dir(config) as fd:
+        document = load_state(config, fd)
         roster = list(document["roster"])
         floors = dict(document["floors"])
-        current, current_digest = read_floor(config, task_id)
+        current, current_digest = read_floor(config, task_id, fd)
         if head_sequence < current:
             raise FloorWriterError(
                 "stale_floor",
@@ -583,10 +693,10 @@ def do_advance(config: ServiceConfig, task_id: str, head_sequence: int,
         if task_id not in roster:
             roster.append(task_id)
         commit_state(config, {"install_id": config.install_id, "generation": config.generation,
-                              "roster": sorted(roster), "floors": floors})
+                              "roster": sorted(roster), "floors": floors}, fd)
         # Read the committed state back before calling it committed: the reply must describe the
         # document on disk, not the intention that produced it.
-        committed, committed_digest = read_floor(config, task_id)
+        committed, committed_digest = read_floor(config, task_id, fd)
         if committed != head_sequence or committed_digest != digest:
             raise FloorWriterError(
                 "internal",
@@ -711,24 +821,43 @@ SOCKET_MODE = 0o770
 
 
 def bind(socket_path: pathlib.Path) -> "socket.socket":
-    """Bind the AF_UNIX endpoint, having first proved the directory that holds it is protected.
+    """Bind the AF_UNIX endpoint **inside the directory that was checked**, not beside it.
 
-    Order matters: custody is proved BEFORE the socket exists. A socket that exists is a promise,
-    and a service that cannot show its endpoint is unreplaceable must not make one.
+    Order matters and so does identity. Custody is proved BEFORE the socket exists, because a
+    socket that exists is a promise and a service that cannot show its endpoint is unreplaceable
+    must not make one. C1 is the second half of that: the endpoint is created through the
+    descriptor custody was decided on, addressed as ``/proc/self/fd/<fd>/<name>``, which the kernel
+    resolves against the open directory rather than against the path. A directory renamed aside
+    between the check and the bind therefore cannot receive this socket — the old shape,
+    ``lstat(dir)`` then ``bind(dir/name)``, was two lookups of one name and the gap between them
+    was the vector.
+
+    ``sun_path`` is 108 bytes; the ``/proc`` form is about twenty, so this also removes a length
+    limit that the literal path could hit.
     """
     require_linux("cannot bind the Floor Writer socket")
     directory = socket_path.parent
-    require_private_directory(directory, "the Floor Writer socket directory")
+    name = socket_path.name
+    fd = open_checked_directory(directory, owner_uid=os.geteuid(),
+                                what="the Floor Writer socket directory")
     try:
-        if socket_path.exists():
-            socket_path.unlink()
+        try:
+            os.unlink(name, dir_fd=fd)
+        except FileNotFoundError:
+            pass
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(socket_path))
-        os.chmod(socket_path, SOCKET_MODE)
-        server.listen(16)
+        try:
+            server.bind(f"/proc/self/fd/{fd}/{name}")
+            os.chmod(name, SOCKET_MODE, dir_fd=fd)
+            server.listen(16)
+        except BaseException:
+            server.close()
+            raise
     except OSError as exc:
         raise FloorWriterError(
             "scope_unavailable", f"cannot bind the Floor Writer endpoint: {exc}") from exc
+    finally:
+        os.close(fd)
     return server
 
 

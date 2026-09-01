@@ -22,17 +22,22 @@ document under ONE rename, a resolver that REFUSES an unconfigured floor, root-o
 that MINTS the §1.10 generation (B6), and `SECURITY_MODEL.md` §1.3a as a ten-row deployment
 contract naming what enforces each row (C6).
 
-**Measured:** `engine/ci/floor_writer_boundary_proof.sh`, four accounts on one real socket: authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied
-`floor.advance`, provisioning negatives, meta-controls, cleanup. 23/23, closes C4.
-`engine/tests/test_floor_writer_durability.py` -- the commit's syscalls out of the kernel (temp,
-`fsync`, rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s
-mid-write, each leaving a complete document.
+**Measured (C4):** `engine/ci/floor_writer_boundary_proof.sh`, four accounts on one real socket
+— authorized advances, unlisted `peer_denied`, `floor.get`-admitted denied `floor.advance`, four
+provisioning negatives, three meta-controls, cleanup. 23/23.
+`test_floor_writer_durability.py` — the commit's syscalls out of the kernel (temp, `fsync`,
+rename, dir `fsync`; each barrier deleted once, each red) and twelve `SIGKILL`s mid-write, each
+leaving a complete document.
 
-**NOT done:** C1 TOCTOU, C2 custody contract, C3 test structure, C7 principal-model, a second
-Architect pass. B1's one call site is an AST gate, not a review; a Linux-only module
-must still IMPORT off Linux — CI found that.
-§1.7 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT; the
-B/C list lives only in `#219`'s body.
+**C1/C2/C7 closed.** §1.7's ancestor vector was CLAIMED and never enforced: the check delegated to
+`posix_rewrite_verdict`, whose `owner` arm fires first for a path you own, so the `parent` arm was
+dead and a `0700` store under a group-writable parent was ACCEPTED — measured. ONE custody
+contract now, deciding on an OPEN descriptor with every use `dir_fd`-relative;
+`tools/check_principal_model.py` holds the seven principals to §2.6.
+
+**NOT done:** C3 test structure — its text is not in this repo and guessing is worse — and a
+second Architect pass. §1.7 stays **partial**; §1.10 is **implemented** and does not close
+**O-5**. FW-3 is OUT; the B/C list lives only in `#219`'s body.
 
 The transport and the produced agent's egress are **T-058**.
 
@@ -44,19 +49,15 @@ above moves **in its own commit** — an amend leaves the handoff naming a dead 
 
 Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 
-**The app version is declared five times in four files** and nothing reconciled them until
-`tools/check_version_parity.py`; all say `0.1.0`, and `npm ci` exits 0 on a lock that disagrees —
-measured. **No `v*` tag is compared**: the one tag, `brops-desktop-v0.1.0`, does not match `v*`,
-so `release.yml` has never run, and whether these files hold the LAST released version or the
-NEXT one is a release policy the Owner has not stated. Until he does, a tag arm would be a guess
-in a required context. The row is **T-063**.
+The app version's five declarations, and why no `v*` tag is compared, are **T-063** — this was a
+second copy of that row.
 
 ## Verify before you believe any of this
 
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2106 OK, 10 skipped
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2117 OK, 10 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1147 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 761 tests / 80 files
 python3 tools/check_canon_budget.py       # the read set fits one context

@@ -222,39 +222,37 @@ class PeerAllowlist(PlanFixture):
 
 @unittest.skipUnless(_LINUX, LINUX_ONLY)
 class ParentCustody(unittest.TestCase):
-    """A parent another principal can write makes every mode under it advisory."""
+    """Provisioning asks the SERVICE's custody question, with root as the required owner (C2).
+
+    The rule itself — ownership, mode, and the unswappable ancestry — is one function in
+    `floor_writer` and is tested there, from both sides, in `CustodyContract`. What is tested here
+    is the only thing this module contributes: **who** must own the directory, and that a refusal
+    arrives as `EXIT_CUSTODY` rather than as a `FloorWriterError` nobody here would catch.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = pathlib.Path(self._tmp.name)
 
-    def test_a_parent_this_uid_owns_is_refused_when_the_provisioner_is_not_root(self):
-        # Under the real provisioner this uid IS root, so "owned by uid != 0" is the check. The
-        # temp directory is owned by the invoking user, which is what makes it a fixture here.
+    def test_a_parent_this_uid_owns_is_refused_because_provisioning_requires_root(self):
         if os.geteuid() == 0:
             self.skipTest("running as root: the temp directory would satisfy the check")
         with self.assertRaises(pfw.ProvisionError) as caught:
             pfw.require_root_owned_parent(self.root, "the marks root's parent")
         self.assertEqual(caught.exception.code, pfw.EXIT_CUSTODY)
-        self.assertIn("not root", caught.exception.detail)
+        self.assertIn("not uid 0", caught.exception.detail)
 
     def test_a_root_owned_unwritable_parent_is_accepted(self):
-        # The positive control, on a directory the box really has: / is root-owned and 0755.
+        # The positive control, on a directory the box really has: /usr is root-owned and 0755,
+        # and its ancestry is / at 0755. Without this arm the test above would pass on a function
+        # that refused everything.
         pfw.require_root_owned_parent(pathlib.Path("/usr"), "a control")
 
-    def test_a_group_writable_root_owned_parent_is_refused(self):
-        info = pathlib.Path("/usr").lstat()
-        self.assertEqual(info.st_uid, 0, "the control assumes /usr is root's")
-        fake = os.stat_result((stat.S_IFDIR | 0o775, 0, 0, 2, 0, 0, 0, 0, 0, 0))
-        with unittest.mock.patch.object(pathlib.Path, "lstat", lambda self: fake):
-            with self.assertRaises(pfw.ProvisionError) as caught:
-                pfw.require_root_owned_parent(pathlib.Path("/usr"), "a control")
-        self.assertIn("group- or world-writable", caught.exception.detail)
-
     def test_a_missing_parent_is_a_refusal_not_a_create(self):
-        with self.assertRaises(pfw.ProvisionError):
+        with self.assertRaises(pfw.ProvisionError) as caught:
             pfw.require_root_owned_parent(self.root / "absent", "the marks root's parent")
+        self.assertEqual(caught.exception.code, pfw.EXIT_CUSTODY)
 
 
 if __name__ == "__main__":  # pragma: no cover

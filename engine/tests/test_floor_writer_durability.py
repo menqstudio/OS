@@ -120,7 +120,12 @@ class DurabilityFixture(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = pathlib.Path(self._tmp.name)
         self.marks_root = self.root / "marks"
-        (self.marks_root / INSTALL).mkdir(parents=True, mode=0o700)
+        # `mkdir(parents=True, mode=...)` applies the mode to the LAST component only; the
+        # intermediates take the process umask, which is 0o002 on this box and produces a
+        # group-writable `marks/`. The ancestry rule refuses that — correctly — so the fixture
+        # builds the chain the way a provisioned deployment has it.
+        self.marks_root.mkdir(mode=0o755)
+        (self.marks_root / INSTALL).mkdir(mode=0o700)
         self.config_path = self.root / "fw-config.json"
         self.config_path.write_text(json.dumps({
             "install_id": INSTALL, "marks_root": str(self.marks_root),

@@ -87,9 +87,6 @@ SOCKET_DIR_MODE = floor_writer.SOCKET_DIR_MODE
 #: The config is the TCB's statement to the service. World-readable is deliberate — there is
 #: nothing secret in it — and not writable by anyone but root is the entire point.
 CONFIG_MODE = 0o644
-#: A parent that another principal can write lets them rename the whole directory aside, which
-#: makes the child's own mode irrelevant. Checked for every parent this module writes into.
-_OTHER_WRITE = stat.S_IWGRP | stat.S_IWOTH
 
 
 class ProvisionError(Exception):
@@ -340,28 +337,21 @@ def build_plan(args: argparse.Namespace) -> ProvisionPlan:
 
 
 def require_root_owned_parent(directory: pathlib.Path, what: str) -> None:
-    """The directory this provisioner writes INTO must be root's and not writable by others.
+    """The directory this provisioner writes INTO must be root's, and unswappable.
 
-    ``require_private_directory`` asks the same question of the service's own paths at start; this
-    asks it of their parents, at provisioning time, where it can still be fixed. A parent another
-    principal can write makes every mode below it advisory: they rename the directory aside and
-    put their own in its place.
+    **One contract, one implementation (C2).** This used to be a second, shorter custody check
+    living here — owner and mode, no ancestry — beside `floor_writer.require_private_directory`'s
+    different one. Two functions answering "is this directory protected?" with two different rules
+    is how a path passes provisioning and is then refused at start, or worse, passes both while
+    meaning different things. So this now calls the SAME function the service calls, with the only
+    thing that legitimately differs between them: **who** must own it. For the service that is its
+    own uid; here it is root, because a non-root parent can be renamed aside by its owner and every
+    mode this provisioner then sets underneath it is advisory.
     """
     try:
-        info = directory.lstat()
-    except OSError as exc:
-        raise ProvisionError(EXIT_CUSTODY, f"cannot stat {what} {directory}: {exc}") from exc
-    if not stat.S_ISDIR(info.st_mode):
-        raise ProvisionError(EXIT_CUSTODY, f"{what} {directory} is not a directory")
-    if info.st_uid != 0:
-        raise ProvisionError(
-            EXIT_CUSTODY,
-            f"{what} {directory} is owned by uid {info.st_uid}, not root. A non-root parent can "
-            "be renamed aside by its owner, which makes the mode of everything under it advisory")
-    if info.st_mode & _OTHER_WRITE:
-        raise ProvisionError(
-            EXIT_CUSTODY,
-            f"{what} {directory} is group- or world-writable (mode {stat.S_IMODE(info.st_mode):04o})")
+        os.close(floor_writer.open_checked_directory(directory, owner_uid=0, what=what))
+    except floor_writer.FloorWriterError as exc:
+        raise ProvisionError(EXIT_CUSTODY, exc.detail) from exc
 
 
 # ---------------------------------------------------------------------------
