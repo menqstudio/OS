@@ -5,32 +5,24 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `feat/floor-writer-service` — `main` @ `87bfe73`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `egress-authorizer`
+**Active branch:** `fix/supply-chain-browserslist` — `main` @ `2a50081`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
 >
-> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
+> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**Next: T-020's FW-1 correction is measured and NOT approved.** The Architect BLOCKED `#219`
-(B1-B7, C1-C7) and lifted the head freeze for one coherent correction. **B1-B7 and C1, C2, C4,
-C6, C7 are done and measured**; the full account is `#219`'s body and `SECURITY_MODEL.md` §1.3a's
-deployment contract, which names what enforces each row. In short: `SO_PEERCRED` against a
-**per-op** allowlist, all scope from the TCB-owned `BROPS_FLOOR_WRITER_CONFIG`, no `install_id` on
-the wire, roster and floor in ONE document under ONE rename, root-only provisioning that MINTS the
-§1.10 generation, and ONE fd-based custody contract — whose ancestor arm was previously
-**unreachable**, so a `0700` store under a group-writable parent was ACCEPTED.
+**Next: T-020's FW-1 correction MERGED as `#219` (`2a50081`) and is NOT approved.** B1-B7 and C1, C2,
+C4, C6, C7 are done and measured — the full account and the B/C list live in `#219`'s body and
+`SECURITY_MODEL.md` §1.3a. Proofs: `engine/ci/floor_writer_boundary_proof.sh` 23/23 ×3 here and in CI;
+`test_floor_writer_durability.py`. **NOT done:** C3 test structure and a second Architect pass. §1.7
+stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT.
 
-**Measured, not read:** `engine/ci/floor_writer_boundary_proof.sh` — four real accounts on one
-real socket, 23/23 three times here and again in CI, cleanup proved.
-`test_floor_writer_durability.py` — the commit's syscalls out of the kernel and twelve `SIGKILL`s
-mid-write. Every new check was mutation-proven.
-
-**NOT done:** C3 test structure — its text is not in this repo and guessing is worse — and a
-second Architect pass. §1.7 stays **partial**; §1.10 is **implemented** and does not close
-**O-5**. FW-3 is OUT; the B/C list lives only in `#219`'s body.
+**`main` is RED at `2a50081` on one job,** `Repo-state`: the `T-055` deferral expired 2026-09-06
+unsigned — the Owner's act, see `docs/OWNER_ACTION_REQUIRED.md`. `#220` (`T-065`) lifts two lockfiles
+for the scheduled supply-chain gate, red since 2026-09-07.
 
 **T-061, and a slice of T-062.** The gate set is what CI runs, not `tools/check_*.py`:
 `generate_negative_matrix.py --check` refuses a hand-edited mirror.
@@ -49,9 +41,6 @@ equal to the pushed head, `config/current_state.json` names the live `main`, and
 above moves **in its own commit** — an amend leaves the handoff naming a dead commit.
 
 Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
-
-The app version's five declarations, and why no `v*` tag is compared, are **T-063** — this was a
-second copy of that row.
 
 ## Verify before you believe any of this
 
@@ -89,10 +78,10 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 none of it is independently confirmed. Every mark added since is ◑. *(Said 20/107/19688 until 2026-08-31 —
 nearly a third of the real surface.)*
 
-**Nothing is waiting on the Owner.**
-[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. O-1…O-5
-are all OPEN and none needs an Owner-minted artifact; what blocks them is deployment wiring and
-a second principal.
+**One thing waits on the Owner:** the `T-055` deferral in `config/deferred-enforcement.json`
+expired 2026-09-06 unsigned and is why `main`'s `ci` is RED — add the context or re-defer with a
+`sign_off`. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
+O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close

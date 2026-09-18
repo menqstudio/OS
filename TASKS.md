@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
 >
-> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
+> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,14 +18,15 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** The per-task floor moves to protected custody, mutable only through a distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates, and stays separate from the per-install ceiling. `#112` merged; Architect **BLOCKED** `#219` (B1–B7/C1–C7). B6/C1/C2/C4/C6/C7 corrected and measured (provisioning, 4 UIDs / 23 checks, crash, fd custody, principal, race); C3 and a second Architect pass NOT | Bro | Review | `#219` |
+| **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist` ≤4.28.6 and `rustls` 0.23.42 (RUSTSEC-2026-0285); lockfiles lifted, no source change. The §D `g` keydown race in `Approvals.test.tsx` is in `#220`, not patched | Bro | In-Progress | `#220` |
+| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** A distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. `#112` merged; `#219` merged with B6/C1/C2/C4/C6/C7 corrected and measured; C3 and a second Architect pass NOT done — NOT approved | Bro | Review | merged `#219` |
 | **T-064** | **The shut governed gate names WHICH requirement a machine fails.** `broker/src/preflight.rs` reports **27** requirements met / not met / not measurable, with who provisions each; here **1 / 25 / 1** | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm**, which needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
-| **T-059** | **`main_ci` was stale by construction** — recording a reading takes a merge, and the merge moves `main`. An OLDER reading now passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | `#219` |
+| **T-059** | **`main_ci` was stale by construction** — recording a reading takes a merge, and the merge moves `main`. An OLDER reading now passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed as an `auth_ref` REFERENCE store — this process holds no secret (0022). **Nothing engine-side resolves an `auth_ref` yet**, so transport-first would be unreachable code. ◑ | Bro | Todo | merged `#207` |
-| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit, both dates (0 of 796 differ). The gate checks the LAW the date stood for: did that commit MOVE the line | Bro | Review | `#219` |
-| **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, each reproduced first, mutation-proven after | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state,** now 182. Seven `NM-FRAME-*` rows established, mutation-proven; the review found `strict_loads` took `NaN` | Bro | Todo | `#219` |
+| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit, both dates (0 of 796 differ). The gate checks the LAW the date stood for: did that commit MOVE the line | Bro | Review | merged `#219` |
+| **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, each reproduced first, mutation-proven after | Bro | Review | merged `#219` |
+| **T-062** | **The negative matrix's silent state,** now 182. Seven `NM-FRAME-*` rows established, mutation-proven; the review found `strict_loads` took `NaN` | Bro | Todo | merged `#219` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` holds each control to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers: a runbook mention is a suggestion. `check_ai_surfaces.py` runs under a context NOT in the required set, and making one required is the Owner's act | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`; a query separates them and both read mappers carry it out. ◑ — a test asserts the closure | Bro | Review | merged `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN; deployment wiring and a second principal block them, not an Owner artifact. O-1 is the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
@@ -36,14 +37,12 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`, ninth audit. Routes 2 and 3 closed, mutation-confirmed; Route 1 open **by design**, and the register is COMPUTED at **19 leaves, not 8** | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`, ninth audit: it decided on `round(ratio, 2)`, so 4.4995 printed `4.50`. ◑ Builder-fixed on the raw ratio, **awaiting independent confirmation** | — | Todo | — |
 
-Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md); its first
-section is what this repository does **not** establish.
+Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Three things wait on the Owner and are not rows: `T-059`'s fix, `T-063`'s tag arm, and
-whether `parse_audit_candidate` should say how many markers it found.
-[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
+Waiting on the Owner, not rows: the expired `T-055` deferral (why `main` is RED), `T-063`'s tag arm,
+`parse_audit_candidate`'s marker count — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
 ## Status tokens
 

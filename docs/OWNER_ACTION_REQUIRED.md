@@ -6,6 +6,15 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
+> **2026-09-19 — ONE thing needs you, and it is why `main` is RED.** `config/deferred-enforcement.json`
+> defers `Production half · the five conditions (T-055)` until **2026-09-06** with an empty `sign_off`;
+> the date passed, and `Repo-state · live GitHub truth verifier` — a required context — turned RED on
+> `main` @ `2a50081` the first time `ci` ran there. The job it defers is **success** on that same run,
+> so the precondition its own reason named (observed green on `main`) now holds. Two honest answers,
+> both yours: **(a)** add the context to `config/required-checks.json` **and** to live branch protection,
+> then delete the deferral; or **(b)** re-defer with a new `deferred_until` and a non-empty `sign_off`.
+> A Builder may do neither — `T-065` / `#220` records the reading and stops there.
+
 > **2026-08-29 — the ninth round's thirteen findings are answered, and NOTHING here needs you.**
 > `I-01`..`I-13` had no owner in `TASKS.md` five days after they were written, twelve were still
 > marked OPEN in the ledger, and `I-04` was marked OPEN two days after its fix merged. All of that is
