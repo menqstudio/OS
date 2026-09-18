@@ -370,6 +370,49 @@ class CarrierProseTests(_StateFile):
         self.assertNotIn("current", self.read()["next_action_by_carrier"])
 
 
+class ActiveLineTests(unittest.TestCase):
+    """NEXT_CHAT.md's `**Active branch:**` line moves with the carrier, or is left alone by name.
+
+    It sits outside the banner markers and was maintained by hand; on 2026-09-19 it named #220's
+    branch and a `main` two merges old under a banner that named #221.
+    """
+
+    LINE = ("**Active branch:** `fix/supply-chain-browserslist` — `main` @ `2a50081`. A handoff "
+            "names the merge base or `main`; a branch commit is a dead object after a squash. "
+            "· **task** `floor-writer`\n")
+
+    def setUp(self):
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._real_root = sap.ROOT
+        sap.ROOT = self.root
+        self.addCleanup(lambda: setattr(sap, "ROOT", self._real_root))
+
+    def doc(self, with_line=True):
+        p = self.root / "NEXT_CHAT.md"
+        p.write_text("# NEXT_CHAT\n\n" + (self.LINE if with_line else "") + sap.BANNER_OPEN
+                     + "\nbanner\n" + sap.BANNER_CLOSE + "\n\n## Body\n", encoding="utf-8")
+        return p
+
+    def test_branch_and_head_move_and_the_tail_is_kept(self):
+        """Mutant: skip the substitution ⇒ the old branch is still on the line."""
+        p = self.doc()
+        self.assertTrue(sap.rewrite_active_line("tools/utf8-decode-and-carrier-prose", "157e292e" + "f" * 32))
+        text = p.read_text(encoding="utf-8")
+        self.assertIn("**Active branch:** `tools/utf8-decode-and-carrier-prose` — `main` @ `157e292`.", text)
+        self.assertNotIn("fix/supply-chain-browserslist", text)
+        self.assertIn("a branch commit is a dead object after a squash. · **task** `floor-writer`", text)
+        self.assertEqual(text.count("**Active branch:**"), 1)
+
+    def test_a_file_without_the_line_is_left_byte_identical(self):
+        p = self.doc(with_line=False)
+        before = p.read_text(encoding="utf-8")
+        self.assertFalse(sap.rewrite_active_line("b", "c" * 40))
+        self.assertEqual(before, p.read_text(encoding="utf-8"))
+
+
 class MainCiReadingTests(_StateFile):
     """`main_ci` is written from a reading, never typed.
 

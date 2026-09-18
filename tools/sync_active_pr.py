@@ -535,6 +535,32 @@ def rewrite_carrier_block(pr: int, branch: str, current: str | None = None) -> b
     return True
 
 
+#: NEXT_CHAT.md's first line of state: `**Active branch:** `<branch>` — `main` @ `<head7>`.` and then
+#: prose. Only the branch and the head are rewritten; whatever follows the full stop is kept.
+ACTIVE_LINE_RE = re.compile(r"^\*\*Active branch:\*\* `[^`\n]*` [—–-]+ `main` @ `[0-9a-f]{4,40}`\.", re.M)
+
+
+def rewrite_active_line(branch: str, head: str) -> bool:
+    """NEXT_CHAT.md's `**Active branch:**` line sits OUTSIDE the banner markers and was kept by hand.
+
+    On 2026-09-19 it named #220's branch and a `main` two merges old while the banner three lines
+    below it named #221 — the same shape as `what` and `current`: a hand-maintained line beside a
+    tool-maintained block, and no gate reading it. Rewritten by pattern, branch and head only; the
+    sentence after the full stop and the `· **task**` tail are kept. A file without the line is
+    reported and left alone, never given one.
+    """
+    p = ROOT / "NEXT_CHAT.md"
+    text = p.read_text(encoding="utf-8")
+    new = "**Active branch:** `" + branch + "` — `main` @ `" + head[:7] + "`."
+    text2, n = ACTIVE_LINE_RE.subn(lambda m: new, text, count=1)
+    if n == 0:
+        print("  (NEXT_CHAT.md carries no `**Active branch:**` line; none added)", file=sys.stderr)
+        return False
+    if text2 != text:
+        p.write_text(text2, encoding="utf-8")
+    return True
+
+
 def _failing_jobs(slug: str, run_id: int) -> list[str]:
     """The names of the jobs that were not green in one run, or [] when they cannot be listed."""
     try:
@@ -771,6 +797,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
         _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
                  + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
                  + tail + "\n>\n> " + audit_position_sentence())))
+    rewrite_active_line("main", head)
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -838,6 +865,7 @@ def main() -> int:
     # reports work it did not do is worse than silence: the banner stayed stale while the tool
     # said it had been rewritten, and the only thing that caught it was reading the file.
     rewrite_banners(_bounded(banner))
+    rewrite_active_line(args.branch, head)
 
     # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
     # files had already been rewritten, so the tool reported failure for work it had done.
