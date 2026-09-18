@@ -116,12 +116,12 @@
     "number": 221,
     "branch": "tools/utf8-decode-and-carrier-prose",
     "state": "open",
-    "what": "T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Eight mutants RED.",
+    "what": "T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current and the Active-branch line with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Nine mutants RED.",
     "note": "Three tool fixes so the canon cannot lie the way it did on 2026-09-19: UTF-8 git reads, carrier prose that moves with the carrier, a measured main_ci.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #221 (tools/utf8-decode-and-carrier-prose), task T-066: T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Eight mutants RED. Next: merge on an exact green head; then the Approvals keydown race or T-062's negative-matrix rows.",
+    "current": "PR #221 (tools/utf8-decode-and-carrier-prose), task T-066: T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current and the Active-branch line with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Nine mutants RED. Next: merge on an exact green head; then the Approvals keydown race or T-062's negative-matrix rows.",
     "_note": "The carrier is current_workflow_pr (#221 on tools/utf8-decode-and-carrier-prose). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

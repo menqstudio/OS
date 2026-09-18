@@ -5,7 +5,7 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `fix/supply-chain-browserslist` — `main` @ `2a50081`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `tools/utf8-decode-and-carrier-prose` — `main` @ `157e292`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #221 · branch `tools/utf8-decode-and-carrier-prose`** (base `main`, tip `157e292`, task T-066).
 >
