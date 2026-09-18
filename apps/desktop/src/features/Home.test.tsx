@@ -30,10 +30,33 @@ const TASK = {
   completedAt: null,
 };
 
-function setup() {
+const EVENT = {
+  id: 'a-1',
+  eventType: 'task.created',
+  actorType: 'system',
+  source: null as string | null,
+  actorId: null,
+  entityType: 'task',
+  entityId: 't-1',
+  createdAt: '1700000000000',
+};
+
+/** `activity` rows for the sparkline. `seeded` of them carry `source: 'seed'`, the mark
+ *  `repo::seed` writes; the rest carry `null`, which is what a real audited write produces. */
+function events(total: number, seeded: number) {
+  return Array.from({ length: total }, (_, i) => ({
+    ...EVENT,
+    id: `a-${i}`,
+    source: i < seeded ? 'seed' : null,
+    createdAt: String(1700000000000 + i * 60000),
+  }));
+}
+
+function setup(activity: ReturnType<typeof events> = []) {
   invokeMock.mockImplementation((cmd: string) => {
     if (cmd === 'list_tasks_by_status') return Promise.resolve([TASK]);
     if (cmd === 'list_approvals') return Promise.resolve([]);
+    if (cmd === 'list_activity') return Promise.resolve(activity);
     return Promise.resolve(null);
   });
   return render(<AppProvider><ToastProvider><Home /></ToastProvider></AppProvider>);
@@ -57,6 +80,39 @@ describe('Home — mirrors the real dashboard reads', () => {
 // animate is therefore the surface being lied to, and marking the row in the
 // database is only half a fix — the mark has to arrive here, which is the same
 // defect `ActivityEvent.actorType` already carries a paragraph about.
+// V-4, `docs/VERIFICATION_QUEUE_1.md`. `activitySummary` was tested; the WIRING that feeds it
+// was not. Replacing `rows.filter((e) => e.source === 'seed').length` with `0` type-checked and
+// left the suite green — measured on 2026-09-01 before these tests existed. A pure function with
+// a tested body and an untested caller is a function whose result nobody has seen arrive.
+//
+// So these render the real `<Home />` over a mocked `list_activity` and read the sentence off the
+// screen. They fail on the constant-fold, on the wrong predicate, and on the mark being dropped
+// between the IPC boundary and the summary — which is the whole path T-057 was about.
+describe('Home — the seeded mark survives the wiring, not just the formatter', () => {
+  it('counts the seeded rows it was actually given and says so on screen', async () => {
+    setup(events(5, 2));
+    await waitFor(() =>
+      expect(screen.getByText(/2 of them are seeded demo data/)).toBeTruthy());
+  });
+
+  it('says nothing about seeding when every row is real', async () => {
+    setup(events(5, 0));
+    await waitFor(() => expect(screen.getByText(/5 recent events/)).toBeTruthy());
+    expect(screen.queryByText(/seeded demo data/)).toBeNull();
+  });
+
+  it('counts the seeded rows rather than all of them', async () => {
+    // The arm that separates "wired up" from "wired up correctly": a caller that dropped the
+    // predicate and passed `rows.length` would pass the first test and fail this one.
+    setup(events(5, 5));
+    await waitFor(() =>
+      expect(screen.getByText(/5 of them are seeded demo data/)).toBeTruthy());
+    setup(events(9, 3));
+    await waitFor(() =>
+      expect(screen.getByText(/3 of them are seeded demo data/)).toBeTruthy());
+  });
+});
+
 describe('activitySummary — seeded events are named, not hidden', () => {
   it('says how many of the plotted events are fabricated', () => {
     const en = activitySummary('en', 200, 24, 19, 56);

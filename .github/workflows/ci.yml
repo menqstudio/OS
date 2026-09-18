@@ -1081,9 +1081,15 @@ jobs:
       # A § reference is now a claim this job checks.
       - name: Spec-reference conformance gate
         run: python tools/check_spec_references.py
+      # T-020 / C7. §2.6 is NORMATIVE and says SEVEN runtime service UIDs; SECURITY_MODEL.md §1.3a
+      # claims the Floor Writer adds none. The type `[Principal; 7]` pins the count and nothing
+      # else: a variant added to the enum and omitted from the array compiles, and
+      # verify_distinct_principals() — which iterates the ARRAY — then never asks about it.
+      - name: Principal-model consistency gate
+        run: python tools/check_principal_model.py
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_spec_references
+        run: python -m unittest test_check_spec_references test_check_principal_model
 
   produced-artifact:
     name: Production half · the five conditions (T-055)
@@ -1184,3 +1190,12 @@ jobs:
       # store, or make the supervisor sign caller-supplied evidence. No skip / placeholder.
       - name: Prove signer/supervisor isolation with dedicated users
         run: bash engine/ci/isolation_proof.sh
+      # T-020 / FW-1: the Floor Writer's principal boundary, with FOUR real accounts over a real
+      # AF_UNIX socket — the authorized caller advances, an unlisted principal on the same socket
+      # is denied, and a caller admitted to floor.get is denied floor.advance. Plus the four
+      # provisioning negatives (the completion principal cannot replace the endpoint, read or
+      # write the floor state, or rewrite the TCB-owned config) and three meta-controls. The
+      # script SKIPS with a stated reason off Linux or without passwordless sudo; on this runner
+      # it has neither excuse.
+      - name: Prove the Floor Writer principal boundary with dedicated users
+        run: bash engine/ci/floor_writer_boundary_proof.sh

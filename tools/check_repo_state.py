@@ -444,24 +444,40 @@ def verify_main_push(pushed_sha: str, baseline: str, is_ancestor) -> list[str]:
 MAIN_CI_WORKFLOWS = ("ci",)
 
 
+#: How many completed runs back a reading may sit. A reading older than this is not refused for
+#: being wrong — it is refused for being unread: nobody looked at `main` in that many merges.
+MAIN_CI_WINDOW = 20
+
+
 def main_ci_failures(declared: object, live: dict) -> list[str]:
-    """Pure half of the main-CI rule. `live` is `{workflow: (head, conclusion, run_id)}`.
+    """Pure half of the main-CI rule. ``live`` is ``{workflow: [(head, conclusion, run_id), ...]}``,
+    newest completed run FIRST.
 
-    **What this refuses, and what it does not.** It does NOT require `main` to be green.
-    A red `main` is a fact, and a session must be able to keep working while one is being
-    fixed. What it refuses is a snapshot that has not READ it: `config/current_state.json`
-    must carry `main_ci` naming the same head and the same conclusion GitHub reports, and
-    when a conclusion is anything but `success` it must also carry a non-empty `note`.
+    **What this refuses, and what it does not.** It does NOT require ``main`` to be green. A red
+    ``main`` is a fact, and a session must be able to keep working while one is being fixed. What
+    it refuses is a ``main`` nobody has READ: ``config/current_state.json`` must carry ``main_ci``
+    naming a run that really happened, with the conclusion GitHub reports for it, and a non-empty
+    ``note`` whenever that conclusion is not ``success``.
 
-    **Why it exists.** On 2026-08-30 `main`'s own `ci` was red for four consecutive merges
-    while every pull request was green, and the misses were mine: the rule
-    *"a green PR is not a green main"* is written in `NEXT_CHAT.md`'s second paragraph and
-    had already cost two false "green" reports once before. Every other mistake that night
-    was caught by an artifact. This one had no gate, so it survived exactly as long as
-    attention did — which is the argument for gates in one sentence.
+    **Why it exists.** On 2026-08-30 ``main``'s own ``ci`` was red for four consecutive merges
+    while every pull request was green, and the misses were mine: the rule *"a green PR is not a
+    green main"* is written in ``NEXT_CHAT.md``'s second paragraph and had already cost two false
+    "green" reports once before. Every other mistake that night was caught by an artifact. This
+    one had no gate, so it survived exactly as long as attention did.
 
-    So the deliverable is not a fix, it is a READING. A red `main` passes here the moment
-    somebody writes down that it is red and why; an unread `main` never passes.
+    **T-059: why the reading is no longer required to be the NEWEST one.** It used to be, and that
+    made the rule self-defeating. Recording a reading of ``main`` takes a merge, and the merge
+    moves ``main``: the snapshot passed inside the run that merged it and was stale on the next
+    read, so the gate demanded a reading that could not exist. The row's own words were *"stale by
+    construction"*, and the note in ``current_state.json`` said so out loud for weeks.
+
+    What replaces it keeps the whole property and drops only the impossibility: an OLDER reading
+    is accepted **provided every completed run since it has concluded ``success``**. A ``main``
+    that went red after the reading still fails — by name, naming the run — because that is the
+    one thing this gate exists to catch. A reading further back than :data:`MAIN_CI_WINDOW`
+    completed runs fails too: at that distance "stale" and "never looked" stop being different.
+
+    The deliverable is still a READING, not a green build.
     """
     problems: list[str] = []
     if not isinstance(declared, dict):
@@ -469,17 +485,27 @@ def main_ci_failures(declared: object, live: dict) -> list[str]:
                 f"record what it said — a green pull request is not a green main, and that rule "
                 f"has cost this repository two false 'green' reports and four unread red merges."]
     for wf in sorted(live):
-        head, conclusion, run_id = live[wf]
+        runs = live[wf]
+        if not runs:
+            problems.append(f"config/current_state.json: no completed `{wf}` run on main to read.")
+            continue
         entry = declared.get(wf)
         if not isinstance(entry, dict):
+            head, conclusion, _rid = runs[0]
             problems.append(f"config/current_state.json: `main_ci` does not mention the `{wf}` workflow, "
                             f"whose newest completed run on main is {conclusion} at {head[:7]}.")
             continue
-        if entry.get("head") != head:
+        recorded_head = entry.get("head")
+        position = next((i for i, (head, _c, _r) in enumerate(runs) if head == recorded_head), None)
+        if position is None:
+            newest_head, newest_conclusion, _rid = runs[0]
             problems.append(
-                f"config/current_state.json: `main_ci.{wf}.head` is {str(entry.get('head'))[:7]!r} and the "
-                f"newest completed `{wf}` run on main is at {head[:7]} — the reading is stale, so it "
-                f"is not a reading of THIS main.")
+                f"config/current_state.json: `main_ci.{wf}.head` is {str(recorded_head)[:7]!r}, which is "
+                f"not among the last {len(runs)} completed `{wf}` runs on main. The newest is "
+                f"{newest_conclusion} at {newest_head[:7]} — this reading is not of a main anyone can "
+                f"still see, so take a fresh one.")
+            continue
+        _head, conclusion, run_id = runs[position]
         if entry.get("conclusion") != conclusion:
             problems.append(
                 f"config/current_state.json: `main_ci.{wf}.conclusion` says {entry.get('conclusion')!r} and "
@@ -489,6 +515,17 @@ def main_ci_failures(declared: object, live: dict) -> list[str]:
                 f"config/current_state.json: `main_ci.{wf}` records {conclusion!r} with no `note`. A red "
                 f"main may stand — an UNSAID red main may not. Say what failed and what is being "
                 f"done, in one line.")
+        # Everything NEWER than the reading must be green. This is the arm that keeps an older
+        # reading honest: it may be behind, it may not be behind a RED.
+        for newer_head, newer_conclusion, newer_id in runs[:position]:
+            if newer_conclusion != "success":
+                problems.append(
+                    f"config/current_state.json: `main_ci.{wf}` reads {recorded_head[:7]}, and a LATER "
+                    f"run on main — {newer_conclusion} at {newer_head[:7]} (run {newer_id}) — is not "
+                    f"success. An older reading is allowed; an older reading that steps over a red "
+                    f"main is the exact miss this gate was built for. Read main again and say what "
+                    f"failed.")
+                break
     return problems
 
 
@@ -509,19 +546,25 @@ _REPO_SLUG_CACHE: str | bool | None = None
 
 
 def _live_main_ci(slug: str) -> dict | None:
-    """`{workflow: (head_sha, conclusion, run_id)}` for the newest COMPLETED run on main.
+    """`{workflow: [(head_sha, conclusion, run_id), ...]}` — the last :data:`MAIN_CI_WINDOW`
+    COMPLETED runs on main, newest first.
+
+    A WINDOW rather than a single run, because T-059's fix needs to know not only what the newest
+    run said but whether anything between the recorded reading and now went red. Asking for one
+    run could only ever support "is this the newest", which is the requirement that made the rule
+    impossible to satisfy.
 
     `None` means the reading could not be taken, and every caller REFUSES on it rather than
     skipping: "I could not check" and "it is fine" are different answers, and conflating them
     is the exact failure this whole file exists to stop.
     """
-    live: dict[str, tuple[str, str, int]] = {}
+    live: dict[str, list[tuple[str, str, int]]] = {}
     for wf in MAIN_CI_WORKFLOWS:
         try:
             out = subprocess.run(
                 ["gh", "api",
                  f"repos/{slug}/actions/workflows/{wf}.yml/runs"
-                 f"?branch=main&status=completed&per_page=1"],
+                 f"?branch=main&status=completed&per_page={MAIN_CI_WINDOW}"],
                 capture_output=True, text=True, encoding="utf-8", timeout=60)
         except (subprocess.SubprocessError, OSError):
             return None
@@ -533,11 +576,13 @@ def _live_main_ci(slug: str) -> dict | None:
             return None
         if not runs:
             return None
-        run = runs[0]
-        head, conclusion, rid = run.get("head_sha"), run.get("conclusion"), run.get("id")
-        if not isinstance(head, str) or not isinstance(conclusion, str):
-            return None
-        live[wf] = (head, conclusion, rid)
+        window: list[tuple[str, str, int]] = []
+        for run in runs:
+            head, conclusion, rid = run.get("head_sha"), run.get("conclusion"), run.get("id")
+            if not isinstance(head, str) or not isinstance(conclusion, str):
+                return None
+            window.append((head, conclusion, rid))
+        live[wf] = window
     return live
 
 
