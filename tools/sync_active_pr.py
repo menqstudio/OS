@@ -364,10 +364,27 @@ def _json_string_end(text: str, start: int) -> int:
     raise SystemExit("RED: unterminated string in the snapshot. Nothing has been written.")
 
 
-def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
+def rewrite_state(pr: int, branch: str, summary: str, head: str,
+                  what: str | None = None) -> list[str]:
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)              # parse first: refuse to touch a file we cannot read back
     changed = []
+
+    # `what` is the one prose field of current_workflow_pr this tool did not rewrite. On 2026-09-19
+    # (#220) it moved number, branch and note from #219 to #220 and left `what` saying "T-020 built
+    # under the Architect's five rulings ... NOT Architect-approved" — so the machine mirror every
+    # session reads called a two-lockfile lift the Floor Writer delivery, and no gate reads `what`,
+    # so nothing went red. Every earlier carrier move had rewritten it by hand; the one that forgot
+    # is the one that shows a hand-maintained field is a field that will be wrong. So: when the
+    # number moves, `what` moves with it or the tool refuses — never guessed, and refused BEFORE
+    # anything is written.
+    current = data["current_workflow_pr"]
+    if what is None and "what" in current and int(current.get("number", -1)) != int(pr):
+        raise SystemExit(
+            f"RED: the carrier moves from #{current.get('number')} to #{pr}, and "
+            f"`current_workflow_pr.what` still describes #{current.get('number')}. Pass --what with one "
+            f"sentence on what #{pr} IS; it is written to `what` and to next_action_by_carrier.current. "
+            f"Nothing has been written.")
 
     def swap(old: str, new: str, label: str) -> None:
         nonlocal text
@@ -390,7 +407,6 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     swap(f'    "branch": "{data["active"]["branch"]}"\n  }},',
          f'    "branch": "{branch}"\n  }},', "active branch")
 
-    current = data["current_workflow_pr"]
     swap(f'    "number": {current["number"]},\n    "branch": "{current["branch"]}",',
          f'    "number": {pr},\n    "branch": "{branch}",', "workflow pr")
     swap(f"marker in the PR #{current['number']} body.",
@@ -411,6 +427,14 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     end = _json_string_end(text, start + len('"note": '))
     text = text[:start] + '"note": ' + json.dumps(summary) + text[end:]
     changed.append("note")
+
+    # `what`: the same wholesale replacement, the same scan, for the same reason as `note`. Only
+    # when the block carries the key — this function changes values, never the shape.
+    if what is not None and "what" in current:
+        start = text.index('"what": "', text.index('"current_workflow_pr"'))
+        end = _json_string_end(text, start + len('"what": '))
+        text = text[:start] + '"what": ' + json.dumps(what) + text[end:]
+        changed.append("what")
 
     after = json.loads(text)             # and parse again: never leave it unreadable
     # A parse guard that cannot see the damage it was placed to catch is not a guard, so compare
@@ -465,13 +489,20 @@ def rewrite_banners(banner: str) -> None:
     for p, text, i, j in found:
         p.write_text(text[:i] + chr(10) + banner + chr(10) + text[j:], encoding="utf-8")
 
-def rewrite_carrier_block(pr: int, branch: str) -> bool:
+def rewrite_carrier_block(pr: int, branch: str, current: str | None = None) -> bool:
     """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
 
     `check_coordination` refuses a block naming a PR other than `current_workflow_pr`, because this
     one modelled a merged PR as the open carrier for three days. The tool that moves the carrier has
     to move this too — otherwise the rule fires on every pull request and gets satisfied by hand,
     which is the drift it exists to prevent.
+
+    `current` is the block's free-text "what happens now" sentence. Until 2026-09-19 this function
+    rewrote `_note`, `open` and `merged` and never `current`, and the coordination rule is satisfied
+    by "#N" appearing ANYWHERE in the block — which `_note` supplies — so `current` went on saying
+    "PR #219 ... the next step is the ARCHITECT's audit, not a merge" a day after #219 had merged,
+    under a `_note` that named #220. The block's own `_note` says it exists to prevent exactly that.
+    When the caller passes `current`, it is written; when the block has no such key, none is added.
     """
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
@@ -489,6 +520,8 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
         "merged": "re-run tools/sync_active_pr.py --settled --pr <next> --branch <next> so the "
                   "snapshot stops naming a carrier that has merged",
     }
+    if current is not None and "current" in block:
+        replaced["current"] = current
     for key, value in replaced.items():
         old = json.dumps(block.get(key, ""), ensure_ascii=False)
         new = json.dumps(value, ensure_ascii=False)
@@ -579,8 +612,14 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     if pr and branch:
         rewrite_state(pr, branch,
                       "Settling the state anchor at main " + head[:7] + ". " + parked_phrase
-                      + "; this pull request is the commit that records it.", head)
-        rewrite_carrier_block(pr, branch)
+                      + "; this pull request is the commit that records it.", head,
+                      what="The settle commit: records that main is at " + head[:7]
+                           + " and carries no product change.")
+        rewrite_carrier_block(pr, branch,
+                              current="PR #" + str(pr) + " (" + branch + ") settles the state at main "
+                                      + head[:7] + ". Next: "
+                                      + (next_up or "merge it; the next carrier names itself with "
+                                                    "tools/sync_active_pr.py --pr <N> --what ..."))
     added = record_parked_prs(parked, roles)
     if added:
         print("  recorded in prs[]: " + ", ".join("#" + str(n) for n in added))
@@ -626,13 +665,19 @@ def main() -> int:
     ap.add_argument("--task", default=None,
                     help="the TASKS.md id this PR carries; the banner says `unstated` without it")
     ap.add_argument("--summary", help="required unless --settled")
+    ap.add_argument("--what", default=None,
+                    help="one sentence on what this pull request IS, written to "
+                         "current_workflow_pr.what and next_action_by_carrier.current. Required "
+                         "whenever --pr differs from the carrier the snapshot names: on 2026-09-19 "
+                         "the number moved and `what` stayed, so the mirror described the wrong PR.")
     ap.add_argument("--settled", action="store_true",
                     help="nothing is open: record the main everything merged into, and say so in "
                          "the banner. Without this the docs keep naming a PR that no longer "
                          "exists, and a reader goes looking for a branch that was deleted.")
     ap.add_argument("--next", dest="next_up",
-                    help="with --settled: one line on what happens next, for whoever reads this "
-                         "repository cold")
+                    help="one line on what happens next, for whoever reads this repository cold "
+                         "(with --settled it goes in the banner; with --pr it closes "
+                         "next_action_by_carrier.current)")
     ap.add_argument("--banner", help="the human banner; defaults to a line built from --summary")
     ap.add_argument("--parked-role", action="append", metavar="NUMBER=ROLE",
                     help="with --settled: the role of an open pull request that is NOT the "
@@ -644,8 +689,13 @@ def main() -> int:
         return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
-    changed = rewrite_state(args.pr, args.branch, args.summary, head)
-    rewrite_carrier_block(args.pr, args.branch)
+    changed = rewrite_state(args.pr, args.branch, args.summary, head, what=args.what)
+    rewrite_carrier_block(
+        args.pr, args.branch,
+        current=(f"PR #{args.pr} ({args.branch}), task {args.task or 'unstated'}: "
+                 f"{args.what or args.summary} Next: "
+                 + (args.next_up or "merge on an exact green head, then read "
+                                    "`gh run list --branch main` again.")))
     # A pull request parked open while another one carries the snapshot has to be named in the
     # banner too, not only in --settled's. `check_coordination` requires every OPEN prs[] entry's
     # branch to appear in all three banner documents, and it is right to: a reader who is told

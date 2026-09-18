@@ -609,6 +609,56 @@ class SquashReDatingOverRealGitTests(unittest.TestCase):
                          ("absent", None))
         self.assertEqual([], cc._check_project_state_freshness(self.root))
 
+    ARMENIAN_LINE = "**Last updated · Վերջին թարմացում:** "
+
+    def _commit_armenian(self, dated: str, body: str, when: str):
+        # The real canon's line, not the ASCII stand-in the fixtures above use: this is the byte
+        # sequence the locale decoder choked on.
+        (self.root / "PROJECT_STATE.md").write_text(
+            "# PROJECT_STATE — live status · կենդանի վիճակ\n\n" + self.ARMENIAN_LINE + dated
+            + " — " + body + "\n\nՄնացածը այստեղ է։\n", encoding="utf-8")
+        self._git("add", "PROJECT_STATE.md")
+        env_date = f"{when}T12:00:00+00:00"
+        subprocess.run(["git", "-C", str(self.root), "commit", "-q", "-m", body],
+                       capture_output=True, text=True, timeout=60, check=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": env_date,
+                            "GIT_COMMITTER_DATE": env_date})
+
+    def test_the_real_canon_line_is_read_back_out_of_git(self):
+        """2026-09-19: on a Windows box this raised TypeError inside the gate — `git show` was
+        decoded with cp1252, the reader thread died on the first Armenian byte, `stdout` was None.
+        On a UTF-8 locale this passed before the fix too; the locale-independent guard is the
+        test below. This one keeps the real bytes in the loop."""
+        self._commit_armenian("2026-09-01", "first", "2026-09-01")
+        self._commit_armenian("2026-09-19", "second", "2026-09-19")
+        self.assertEqual(cc._claim_before_last_change(self.root, "PROJECT_STATE.md"),
+                         ("date", datetime.date(2026, 9, 1)))
+        self.assertEqual([], cc._check_project_state_freshness(self.root))
+
+    def test_git_output_is_decoded_as_utf8_and_not_as_whatever_the_locale_is(self):
+        """Mutant: put `text=True` back on the `git show` call ⇒ this fake hands the gate bytes, the
+        regex is applied to bytes, TypeError. The fix decodes bytes itself, so the locale — and the
+        machine — stop being an input to the verdict."""
+        sha = "d" * 40
+        previous = ("# state\n\n" + self.ARMENIAN_LINE + "2026-09-01 — կատարված է։\n").encode("utf-8")
+
+        def fake_run(args, **kwargs):
+            self.assertNotIn("text", kwargs, "decode ourselves; never let the locale choose")
+            self.assertNotIn("encoding", kwargs)
+            if "log" in args:
+                return subprocess.CompletedProcess(args, 0, (sha + "\n").encode("ascii"), b"")
+            if "show" in args:
+                return subprocess.CompletedProcess(args, 0, previous, b"")
+            raise AssertionError(args)
+
+        real = cc.subprocess.run
+        cc.subprocess.run = fake_run
+        try:
+            self.assertEqual(cc._claim_before_last_change(self.root, "PROJECT_STATE.md"),
+                             ("date", datetime.date(2026, 9, 1)))
+        finally:
+            cc.subprocess.run = real
+
 
 if __name__ == "__main__":
     unittest.main()

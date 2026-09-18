@@ -297,6 +297,79 @@ class NoteSurgeryTests(_StateFile):
         self.assertEqual(after["base"], "main")
 
 
+class CarrierProseTests(_StateFile):
+    """`what` and `next_action_by_carrier.current` move with the carrier, or the tool refuses.
+
+    On 2026-09-19 (#220) rewrite_state moved number, branch and note from #219 to #220 and left
+    `what` reading "T-020 built under the Architect's five rulings ... NOT Architect-approved";
+    rewrite_carrier_block rewrote `_note` and left `current` saying "PR #219 ... the next step is the
+    ARCHITECT's audit, not a merge" a day after #219 merged. No gate reads either field, so both
+    stayed wrong until a reader noticed. These pin the two behaviours that make that impossible.
+    """
+
+    def state(self, number=219, with_what=True, with_current=True):
+        block = {"number": number, "branch": "feat/floor-writer-service", "state": "open"}
+        if with_what:
+            block["what"] = "T-020 built under the Architect's five rulings."
+        block["note"] = "old note"
+        block["base"] = "main"
+        obj = {"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                "snapshot_branch": "feat/floor-writer-service"},
+               "active": {"branch": "feat/floor-writer-service"}, "settled_at_main_head": "a" * 40,
+               "current_workflow_pr": block,
+               "next_action_by_carrier": ({"current": "PR #219: not a merge on the Builder's word.",
+                                           "_note": "old"} if with_current else {"_note": "old"})}
+        self.write(obj)
+
+    def test_moving_the_number_without_what_refuses_and_writes_nothing(self):
+        """Mutant: drop the refusal ⇒ number becomes 220 while `what` still says T-020."""
+        self.state()
+        before = self.path.read_text(encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            sap.rewrite_state(220, "fix/supply-chain-browserslist", "new note", "c" * 40)
+        self.assertIn("--what", str(cm.exception))
+        self.assertIn("#219", str(cm.exception))
+        self.assertEqual(before, self.path.read_text(encoding="utf-8"), "a refusal writes nothing")
+
+    def test_what_moves_with_the_number(self):
+        """Mutant: skip the `what` surgery ⇒ the assertion on `what` fails."""
+        self.state()
+        changed = sap.rewrite_state(220, "fix/supply-chain-browserslist", "new note", "c" * 40,
+                                    what="T-065: two lockfiles lifted, no source change.")
+        after = self.read()["current_workflow_pr"]
+        self.assertEqual(after["number"], 220)
+        self.assertEqual(after["what"], "T-065: two lockfiles lifted, no source change.")
+        self.assertEqual(after["note"], "new note")
+        self.assertEqual(after["base"], "main", "the shape is untouched")
+        self.assertIn("what", changed)
+
+    def test_the_same_number_needs_no_what(self):
+        self.state()
+        sap.rewrite_state(219, "feat/floor-writer-service", "new note", "c" * 40)
+        self.assertEqual(self.read()["current_workflow_pr"]["what"],
+                         "T-020 built under the Architect's five rulings.")
+
+    def test_a_block_without_what_is_not_given_one(self):
+        self.state(with_what=False)
+        sap.rewrite_state(220, "b", "new note", "c" * 40, what="ignored: no such key")
+        self.assertNotIn("what", self.read()["current_workflow_pr"])
+
+    def test_current_moves_with_the_carrier(self):
+        """Mutant: drop `replaced["current"]` ⇒ `current` still names #219."""
+        self.state()
+        sap.rewrite_carrier_block(220, "fix/supply-chain-browserslist",
+                                  current="PR #220 (fix/supply-chain-browserslist): T-065. Next: merge.")
+        block = self.read()["next_action_by_carrier"]
+        self.assertEqual(block["current"],
+                         "PR #220 (fix/supply-chain-browserslist): T-065. Next: merge.")
+        self.assertIn("#220", block["_note"])
+
+    def test_a_block_without_current_is_not_given_one(self):
+        self.state(with_current=False)
+        sap.rewrite_carrier_block(220, "b", current="would be a new key")
+        self.assertNotIn("current", self.read()["next_action_by_carrier"])
+
+
 class SettledHeadTests(unittest.TestCase):
     """The generator must compute `settled_at_main_head` the way its VERIFIER does.
 
