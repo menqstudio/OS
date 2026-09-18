@@ -370,6 +370,89 @@ class CarrierProseTests(_StateFile):
         self.assertNotIn("current", self.read()["next_action_by_carrier"])
 
 
+class MainCiReadingTests(_StateFile):
+    """`main_ci` is written from a reading, never typed.
+
+    Until 2026-09-19 it was the last hand-maintained field in config/current_state.json, and on
+    that day it still said `success` at 87bfe73 while `main` had been red at 2a50081 for a day —
+    nobody had taken the reading. The generator now takes it the way the gate reads it
+    (`check_repo_state._live_main_ci`) and refuses to write anything when it cannot.
+    """
+
+    def state(self, with_block=True):
+        obj = {"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                "snapshot_branch": "b"},
+               "active": {"branch": "b"}, "settled_at_main_head": "a" * 40,
+               "current_workflow_pr": {"number": 1, "branch": "b", "state": "open",
+                                       "note": "n", "base": "main"}}
+        if with_block:
+            obj["main_ci"] = {"_note": "what main's own runs said",
+                              "ci": {"head": "a" * 40, "conclusion": "success", "run_id": 1,
+                                     "note": "typed by hand"}}
+        self.write(obj)
+
+    READING_RED = {"ci": {"head": "b" * 40, "conclusion": "failure", "run_id": 77,
+                          "failing": ["Repo-state · live GitHub truth verifier"]}}
+
+    def test_the_reading_is_written_and_the_shape_is_kept(self):
+        """Mutant: skip the `head` value ⇒ the head assertion fails."""
+        self.state()
+        written = sap.rewrite_main_ci(self.READING_RED, today=__import__("datetime").date(2026, 9, 19))
+        self.assertEqual(written, ["ci"])
+        block = self.read()["main_ci"]
+        self.assertEqual(block["_note"], "what main's own runs said", "siblings untouched")
+        ci = block["ci"]
+        self.assertEqual(ci["head"], "b" * 40)
+        self.assertEqual(ci["conclusion"], "failure")
+        self.assertEqual(ci["run_id"], 77)
+        self.assertIn("2026-09-19", ci["note"])
+        self.assertIn("failure at bbbbbbb, run 77", ci["note"])
+        self.assertIn("Repo-state · live GitHub truth verifier", ci["note"])
+        self.assertEqual(set(ci), {"head", "conclusion", "run_id", "note"})
+
+    def test_a_success_note_names_no_failing_job(self):
+        note = sap.main_ci_note("success", "c" * 40, 5, [], __import__("datetime").date(2026, 9, 19))
+        self.assertIn("success at ccccccc, run 5", note)
+        self.assertNotIn("Not green", note)
+
+    def test_a_red_reading_with_unlisted_jobs_says_so(self):
+        note = sap.main_ci_note("failure", "c" * 40, 5, [], __import__("datetime").date(2026, 9, 19))
+        self.assertIn("could not be listed", note)
+
+    def test_a_file_without_main_ci_is_left_byte_identical(self):
+        self.state(with_block=False)
+        before = self.path.read_text(encoding="utf-8")
+        self.assertEqual(sap.rewrite_main_ci(self.READING_RED), [])
+        self.assertEqual(before, self.path.read_text(encoding="utf-8"))
+
+    def test_a_workflow_the_file_does_not_model_is_not_added(self):
+        self.state()
+        sap.rewrite_main_ci({"extra": {"head": "b" * 40, "conclusion": "success", "run_id": 2,
+                                       "failing": []}})
+        self.assertEqual(set(self.read()["main_ci"]), {"_note", "ci"})
+
+    def test_the_reading_comes_from_the_gate_reader_and_lists_jobs_only_when_red(self):
+        """Mutant: read a different endpoint than the gate ⇒ the fake reader is never called."""
+        calls = []
+        real = (sap._repo_slug, sap._live_main_ci, sap._failing_jobs)
+        sap._repo_slug = lambda: "o/r"
+        sap._live_main_ci = lambda slug: calls.append(slug) or {"ci": [("c" * 40, "failure", 9),
+                                                                       ("d" * 40, "success", 8)]}
+        sap._failing_jobs = lambda slug, run_id: ["Coordination · docs consistency gate"]
+        try:
+            reading = sap.take_main_ci_reading()
+        finally:
+            sap._repo_slug, sap._live_main_ci, sap._failing_jobs = real
+        self.assertEqual(calls, ["o/r"])
+        self.assertEqual(reading, {"ci": {"head": "c" * 40, "conclusion": "failure", "run_id": 9,
+                                          "failing": ["Coordination · docs consistency gate"]}})
+
+    def test_an_unreadable_main_refuses_rather_than_asserting(self):
+        with self.assertRaises(SystemExit) as cm:
+            sap._refuse_without_main_ci(None)
+        self.assertIn("nothing has been written", str(cm.exception))
+
+
 class SettledHeadTests(unittest.TestCase):
     """The generator must compute `settled_at_main_head` the way its VERIFIER does.
 

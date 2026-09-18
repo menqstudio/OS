@@ -18,6 +18,7 @@ same commit as the work, and a tool that pushed for you would be one more thing 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import pathlib
 import re
@@ -26,6 +27,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
+# The gate's own readers, so the generator writes exactly what the gate will read back.
+from check_repo_state import MAIN_CI_WORKFLOWS, _live_main_ci, _repo_slug  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
@@ -531,6 +534,122 @@ def rewrite_carrier_block(pr: int, branch: str, current: str | None = None) -> b
     STATE.write_text(text, encoding="utf-8")
     return True
 
+
+def _failing_jobs(slug: str, run_id: int) -> list[str]:
+    """The names of the jobs that were not green in one run, or [] when they cannot be listed."""
+    try:
+        out = subprocess.run(["gh", "api", f"repos/{slug}/actions/runs/{run_id}/jobs?per_page=100"],
+                             capture_output=True, text=True, encoding="utf-8", timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return []
+    if out.returncode != 0:
+        return []
+    try:
+        jobs = json.loads(out.stdout).get("jobs") or []
+    except ValueError:
+        return []
+    return [j["name"] for j in jobs
+            if isinstance(j.get("name"), str) and j.get("conclusion") not in (None, "success", "skipped")]
+
+
+def take_main_ci_reading() -> dict | None:
+    """The newest COMPLETED run of each MAIN_CI_WORKFLOWS on main, read the way the gate reads it.
+
+    `main_ci` was the last field of config/current_state.json written by hand. On 2026-09-19 it
+    still said `success` at 87bfe73 while `main` had been red at 2a50081 for a day — nobody had
+    taken the reading, because taking it meant running `gh run list` and typing four values into
+    a JSON file. A generator that asserts a fact it never measured writes that assertion into the
+    canon; this one measures. `None` means the reading could not be taken, and the caller REFUSES:
+    "I could not read main" and "main is fine" are different answers.
+    """
+    slug = _repo_slug()
+    if not slug:
+        return None
+    live = _live_main_ci(slug)
+    if not live:
+        return None
+    reading: dict[str, dict] = {}
+    for wf, runs in live.items():
+        head, conclusion, run_id = runs[0]
+        failing = _failing_jobs(slug, run_id) if conclusion != "success" else []
+        reading[wf] = {"head": head, "conclusion": conclusion, "run_id": run_id, "failing": failing}
+    return reading
+
+
+def main_ci_note(conclusion: str, head: str, run_id: int, failing: list[str], today: dt.date) -> str:
+    """The `note` the gate requires whenever the conclusion is not success — and writes it always,
+    so a reader can tell a measured line from a typed one."""
+    base = (f"Read by tools/sync_active_pr.py on {today.isoformat()}: {conclusion} at {head[:7]}, "
+            f"run {run_id}.")
+    if conclusion == "success":
+        return base
+    if failing:
+        return base + " Not green: " + "; ".join(failing) + "."
+    return base + (" Not green, and the failing jobs could not be listed -- read the run before "
+                   "trusting this line.")
+
+
+def rewrite_main_ci(reading: dict, today: dt.date | None = None) -> list[str]:
+    """Write the reading into `main_ci.<workflow>` — values only, never the shape.
+
+    A workflow the file does not model is not added; a file with no `main_ci` block is left alone
+    and the caller says so. Each value is replaced by scanning the block's own JSON (the `note`
+    idiom from rewrite_state), so the surgery does not depend on which key is last.
+    """
+    text = STATE.read_text(encoding="utf-8")
+    data = json.loads(text)
+    block = data.get("main_ci")
+    if not isinstance(block, dict):
+        return []
+    today = today or dt.date.today()
+    written: list[str] = []
+    for wf, r in reading.items():
+        entry = block.get(wf)
+        if not isinstance(entry, dict):
+            continue
+        start = text.index('"' + wf + '": {', text.index('"main_ci"'))
+        note = main_ci_note(r["conclusion"], r["head"], r["run_id"], r.get("failing") or [], today)
+        for key, value in (("head", r["head"]), ("conclusion", r["conclusion"]),
+                           ("run_id", r["run_id"]), ("note", note)):
+            if key not in entry:
+                continue
+            k = text.index('"' + key + '": ', start)
+            vstart = k + len('"' + key + '": ')
+            if text[vstart] == '"':
+                vend = _json_string_end(text, vstart)
+            else:
+                m = re.compile(r"-?\d+").match(text, vstart)
+                if not m:
+                    raise SystemExit(f"RED: main_ci.{wf}.{key} is not a number where one was expected. "
+                                     "Nothing has been written.")
+                vend = m.end()
+            text = text[:vstart] + json.dumps(value, ensure_ascii=False) + text[vend:]
+        written.append(wf)
+    after = json.loads(text)             # never leave it unreadable
+    if (set(after["main_ci"].keys()) != set(block.keys())
+            or any(set(after["main_ci"][wf].keys()) != set(block[wf].keys()) for wf in written)):
+        raise SystemExit("RED: rewriting main_ci changed its SHAPE. Nothing has been written.")
+    STATE.write_text(text, encoding="utf-8")
+    return written
+
+
+def _refuse_without_main_ci(reading: dict | None) -> dict:
+    if reading is None:
+        raise SystemExit(
+            "RED: could not read main's own ci runs (gh, the repository slug, or the Actions API). "
+            "main_ci is the reading this file exists to carry, so nothing has been written -- "
+            "a generator that cannot measure must not assert.")
+    return reading
+
+
+def _print_main_ci(reading: dict, written: list[str]) -> None:
+    for wf in written:
+        r = reading[wf]
+        print(f"  main_ci.{wf}: {r['conclusion']} at {r['head'][:7]}, run {r['run_id']}"
+              + ("" if r["conclusion"] == "success" else
+                 " -- not green: " + ("; ".join(r["failing"]) if r["failing"] else "jobs unlisted")))
+
+
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
            banner: str | None = None, role_pairs: list[str] | None = None) -> int:
     """Record that nothing is open, and point the reader at main rather than at a dead branch.
@@ -544,6 +663,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # settled_at_main_head, no prs[] entry) is precisely the RED state this whole change is about.
     parked = [p for p in live_open_prs() if p["number"] != pr]
     roles = parked_roles(parked, role_pairs)
+    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
 
@@ -620,6 +740,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
                                       + head[:7] + ". Next: "
                                       + (next_up or "merge it; the next carrier names itself with "
                                                     "tools/sync_active_pr.py --pr <N> --what ..."))
+    _print_main_ci(reading, rewrite_main_ci(reading))
     added = record_parked_prs(parked, roles)
     if added:
         print("  recorded in prs[]: " + ", ".join("#" + str(n) for n in added))
@@ -689,6 +810,7 @@ def main() -> int:
         return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
+    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
     changed = rewrite_state(args.pr, args.branch, args.summary, head, what=args.what)
     rewrite_carrier_block(
         args.pr, args.branch,
@@ -696,6 +818,7 @@ def main() -> int:
                  f"{args.what or args.summary} Next: "
                  + (args.next_up or "merge on an exact green head, then read "
                                     "`gh run list --branch main` again.")))
+    _print_main_ci(reading, rewrite_main_ci(reading))
     # A pull request parked open while another one carries the snapshot has to be named in the
     # banner too, not only in --settled's. `check_coordination` requires every OPEN prs[] entry's
     # branch to appear in all three banner documents, and it is right to: a reader who is told
