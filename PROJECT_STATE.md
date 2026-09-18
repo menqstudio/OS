@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — `#219` merged as `2a50081`; `main`'s `ci` there is RED on
-one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned — the Owner executed it in `#220`.
-Supply-chain red since 2026-09-07: `T-065`, `#220`. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
+**Last updated · Վերջին թարմացում:** 2026-09-19 — `#220` merged as `157e292`: the supply-chain gate green again,
+the `T-055` promise executed by the Owner, the canon level with `main`. `#221` (`T-066`) fixes the three tools that
+let it drift. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
@@ -14,9 +14,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
+> **⏭️ CURRENT ACTIVE: PR #221 · branch `tools/utf8-decode-and-carrier-prose`** (base `main`, tip `157e292`, task T-066).
 >
-> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
+> Three tool fixes so the canon cannot lie the way it did on 2026-09-19: UTF-8 git reads, carrier prose that moves with the carrier, a measured main_ci.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -52,8 +52,7 @@ disagree, the roadmap wins.
 | FW-1 boundary proof | 23/23 x3, 4 accounts |
 | `tools/` self-tests | 253 passed |
 
-Toolchain: `config/toolchain.json`, checked against every canonical document by
-`tools/check_doc_claims.py`. This is Debian; `cargo` runs from an ordinary shell.
+Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debian, `cargo` from an ordinary shell.
 
 ## Standing risks
 
