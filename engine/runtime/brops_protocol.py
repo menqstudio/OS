@@ -40,9 +40,26 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return seen
 
 
+def _reject_json_constant(token: str) -> Any:
+    """`NaN`, `Infinity`, `-Infinity` are not JSON and are refused here (NM-FRAME-04).
+
+    Python's `json.loads` accepts all three by default, so "strict decode" was not strict about
+    the one thing §1.9 and §4 name explicitly — *no NaN/Inf*. Measured on 2026-09-01, before this
+    existed: `strict_loads(b'{"a": NaN}')` returned `{'a': nan}`.
+
+    It matters beyond tidiness. A NaN reaching a declared `number` field compares FALSE against
+    itself, so an equality check written to be fail-closed silently becomes fail-open; and
+    re-encoding it emits the token `NaN`, which is not JSON, so a digest taken over the
+    round-trip is a digest of something no other parser will read back.
+    """
+    raise ProtocolError(f"frame carries the non-JSON constant {token!r}; §1.9 and §4 are strict "
+                        "about exactly this: no NaN and no Infinity")
+
+
 def strict_loads(raw: bytes) -> dict[str, Any]:
     """Decode one frame body as strict JSON: UTF-8, ≤ cap, object top level, no duplicate
-    keys. (Per-message unknown-field rejection is done by `validate` against a schema.)"""
+    keys, no NaN/Infinity. (Per-message unknown-field rejection is done by `validate` against
+    a schema.)"""
     if len(raw) > MAX_FRAME_BYTES:
         raise ProtocolError(f"frame body is {len(raw)} bytes, over the {MAX_FRAME_BYTES} cap")
     try:
@@ -50,7 +67,8 @@ def strict_loads(raw: bytes) -> dict[str, Any]:
     except UnicodeDecodeError as exc:
         raise ProtocolError(f"frame is not valid UTF-8: {exc}")
     try:
-        obj = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+        obj = json.loads(text, object_pairs_hook=_reject_duplicate_keys,
+                         parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         raise ProtocolError(f"frame is not valid JSON: {exc}")
     if not isinstance(obj, dict):
