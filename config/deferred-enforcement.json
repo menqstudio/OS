@@ -26,15 +26,5 @@
     "measured in nights."
   ],
   "max_days_without_sign_off": 7,
-  "deferrals": {
-    "Production half · the five conditions (T-055)": {
-      "gate": "tools/check_produced_artifact.py",
-      "workflow": ".github/workflows/ci.yml",
-      "status": "OPEN",
-      "first_declared": "2026-08-30",
-      "deferred_until": "2026-09-06",
-      "reason": "The gate was RED BY DESIGN from the commit that introduced it (#193) until T-055 implemented the five conditions; it is GREEN now, produced from the real code path by the producer command in config/produced-artifact-contract.json. It stays deferred for a different reason than it was deferred originally: a context must be OBSERVED green in CI before it is required. `Windows · §0.W broker syscall proof` was made required on 2026-08-18 and failed the same day, and its note in config/required-checks.json is that record; requiring this one on the strength of a local run would be the same mistake in a new place. Adding the name to `contexts` -- and to live branch protection, which check_repo_state compares -- is a separate, deliberate step once the job has passed on main.",
-      "sign_off": ""
-    }
-  }
+  "deferrals": {}
 }

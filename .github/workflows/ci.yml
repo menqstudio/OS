@@ -960,6 +960,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # `actions: read` is what lets _live_main_ci read main's own workflow runs through
+      # `gh api repos/<slug>/actions/workflows/ci.yml/runs`. On a PUBLIC repository that endpoint
+      # answers any token, so this job never needed the scope and never declared it. The repository
+      # went private on 2026-09-18, and on the first run whose self-tests passed (2026-09-19, #220)
+      # the live step failed with "could not read the newest completed run on main for ci" - the
+      # token had no right to ask. Declared now; a scope an explicit `permissions:` block does not
+      # name is `none`, so "it worked before" was the public repository answering, not the token.
+      actions: read
       # NOTE: this job CANNOT read branch protection. `administration` is not a valid
       # GITHUB_TOKEN permission scope - adding it made GitHub reject the whole workflow file,
       # which produced the failure mode `unparseable_workflows` now catches: zero jobs, the run

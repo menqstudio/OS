@@ -1,6 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
+**Last updated · Վերջին թարմացում:** 2026-09-19 — `#219` merged as `2a50081`; `main`'s `ci` there is RED on
+one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned — the Owner executed it in `#220`.
+Supply-chain red since 2026-09-07: `T-065`, `#220`. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
@@ -12,9 +14,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #219 · branch `feat/floor-writer-service`** (base `main`, tip `87bfe73`, task **T-020**). No other pull request is open.
+> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
 >
-> Five states kept apart: #112's DESIGN **merged** · Architect design audit **done** · five rulings **issued** · implementation **in progress, NOT approved** · production trust claim **NOT granted**.
+> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -55,8 +57,8 @@ Toolchain: `config/toolchain.json`, checked against every canonical document by
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **56 pull
-requests, 192 files and 39,396 inserted lines** have merged since, none independently
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **58 pull
+requests, 206 files and 44,055 inserted lines** have merged since, none independently
 confirmed.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
@@ -65,23 +67,23 @@ and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product 
 therefore rewrites a plaintext `.head` and produces no `.head.sig`. This is O-2 and it has
 never run outside a test.
 
-**The app version was unheld across four files.** `package.json`, `tauri.conf.json`,
-`Cargo.toml` and `package-lock.json` (twice) each state it; all say `0.1.0` and nothing compared
-them — `npm ci` exits 0 on a disagreeing lock, measured. `tools/check_version_parity.py` now
-refuses drift and names the file. It does **not** compare a `v*` git tag: `git tag -l` prints only
-`brops-desktop-v0.1.0`, which does not match `v*`, so `release.yml` has never run, and what these
-files mean between tags is a release policy the Owner has not stated.
+**The app version is stated five times in four files;** `tools/check_version_parity.py` refuses drift.
+No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
+release policy the Owner has not stated (`T-063`).
+
+**Branch protection on `main` is OFF.** GitHub does not enforce it on a private Free-plan repository
+(private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 34 contexts in `config/required-checks.json` is live. Pro or
+public — the Owner's call.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
 startup, so the first-launch trust path is unreachable on the Debian box this project now
 develops on.
 
-**Two audit reports went missing and one is unrecoverable.** The fifth round's report was
-never filed and its 15 promotions are not carried; the seventh's was reconstructed from two
-commit messages. `A-06` in the ledger.
+**Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
+carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.
 
 ## Status tokens
 
-Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
+Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document.
 
 `CURRENT_ACTIVE_TASK: floor-writer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`

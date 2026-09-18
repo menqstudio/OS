@@ -227,8 +227,8 @@
     },
     "tools/check_produced_artifact.py": {
       "kind": "check",
-      "blocks": "nothing",
-      "why": "Runs in `Production half · the five conditions (T-055)`, which is NOT among the 33 required contexts in config/required-checks.json. Its failure therefore stops nothing: a red T-055 job does not block a merge. Measured 2026-08-31, not assumed - the job name is absent from that file."
+      "blocks": "merge",
+      "why": "Runs in `Production half · the five conditions (T-055)`, which IS among the 34 required contexts in config/required-checks.json since 2026-09-19 (#220, the Owner's edit that executed the expired T-055 deferral): a red T-055 job blocks a merge. Until then it said `blocks: nothing`, measured 2026-08-31 when the job name was absent from that file - and tools/check_control_invocation.py refused the understatement the moment the context was added, which is what it is for."
     },
     "tools/check_reachability.py": {
       "kind": "check",
