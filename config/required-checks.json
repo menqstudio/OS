@@ -26,6 +26,7 @@
     "Linux · §4.10(g) LADDER round trip (adapter → real supervisor → real contained execution)",
     "Negative matrix · every declared test ID says what establishes it",
     "Node - npm audit (fail-closed high+ filter)",
+    "Production half · the five conditions (T-055)",
     "Python - pip-audit (PyPI advisories)",
     "Reachability - nothing implemented-and-uncalled",
     "Release signing + updater - fail-closed coupling gate",
