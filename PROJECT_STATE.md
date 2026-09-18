@@ -1,8 +1,8 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
 **Last updated · Վերջին թարմացում:** 2026-09-19 — `#219` merged as `2a50081`; `main`'s `ci` there is RED on
-one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned (Owner). Supply-chain
-red since 2026-09-07 on unnamed advisories: `T-065`, `#220`. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
+one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned (the Owner's act).
+Supply-chain red since 2026-09-07: `T-065`, `#220`. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
 bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
@@ -71,6 +71,10 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
+**Branch protection on `main` is OFF.** GitHub does not enforce it on a private Free-plan repository
+(HTTP 403 since 2026-09-18); none of the 33 contexts in `config/required-checks.json` is live. Pro or
+public — the Owner's call.
+
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
 startup, so the first-launch trust path is unreachable on the Debian box this project now
 develops on.
@@ -81,6 +85,6 @@ commit messages. `A-06` in the ledger.
 
 ## Status tokens
 
-Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document. *(That requirement is why one document came to live in three files: three places obliged to carry the same text, and nothing obliging any of them to stay short.)*
+Restated verbatim from `config/current_state.json.status_tokens`, which `tools/check_coordination.py` requires of each coordination document.
 
 `CURRENT_ACTIVE_TASK: floor-writer` · `CURRENT_ACTIVE_WAVE: production-half` · `CURRENT_PHASE0: done` · `CURRENT_DESIGN_GATE: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_CANDIDATE: rev-30` · `CURRENT_LAST_REVIEWED: rev-30` · `CURRENT_LAST_VERDICT: OWNER_APPROVED_NOT_ARCHITECT_AUDITED` · `CURRENT_DESIGN_PR: 48` · `CURRENT_IMPL_PR: 48` · `CURRENT_IMPL_STATE: consolidated` · `CURRENT_CODE_AUDIT: ARCHITECT_PENDING` · `CURRENT_LINUX_E2E: proven` · `CURRENT_WINDOWS_LIVE_PROOF: proven` · `CURRENT_PRODUCTION_VERIFIED: false` · `CURRENT_VERIFY_SEAM: complete` · `CURRENT_RECEIPT_PLUMBING: complete` · `CURRENT_GOVERNED_ROUNDTRIP: complete`
