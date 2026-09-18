@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `test/vitest-max-workers` — `main` @ `f916a53`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `79154ba`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #223 · branch `test/vitest-max-workers`** (base `main`, tip `f916a53`, task T-068).
+> **✅ SETTLED — `main` is at `79154ba`.** The only thing open is PR #224 on `state/settle-after-223`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The frontend suite ran CPUs-1 jsdom workers and spent half its time in environment; capped at four, measured; the T-040 flake is not claimed fixed.
+> **Next:** open the next pull request only after main's post-merge Repo-state job has completed; then T-062's triage lands as blocked rows with measured blocked_on.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,9 +75,9 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**58 pull requests, 206 files and 44,055 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(Said 56/192/39,396 until 2026-09-19;
-20/107/19688 until 2026-08-31.)*
+**62 pull requests, 207 files and 44,630 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on
+2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
 **One thing waits on the Owner.** Branch protection on `main` is OFF — GitHub does not enforce it
 on a private Free-plan repository (private since 2026-09-18; HTTP 403 observed 2026-09-19), so no
