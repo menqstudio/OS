@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-068** | **The frontend suite oversubscribed the machine** — vitest's default (CPUs−1) spent half its time in `environment`; `maxWorkers: 4` halves it for +15% wall, 9 runs. T-040's flake not reproduced, not claimed fixed ◑ | Bro | In-Progress | `#223` |
+| **T-068** | **The frontend suite oversubscribed the machine** — vitest's default (CPUs−1) spent half its time in `environment`; `maxWorkers: 4` halves it for +15% wall, 9 runs. T-040's flake not reproduced, not claimed fixed ◑ | Bro | Review | merged `#223` |
 | **T-067** | **`_rest_open_prs` asked about `menqstudio/OS` by name** (H-05, one file over); built from `_repo_slug()` now, no slug ⇒ no read. Mutant RED ◑ | Bro | Review | merged `#222` |
 | **T-066** | **Two tools lied on 2026-09-19, untested** — UTF-8 git reads, `--what`/`current`/Active line move with the carrier, a measured `main_ci`. 9 mutants RED ◑ | Bro | Review | merged `#221` |
 | **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist`, `rustls`; lockfiles lifted; the `T-055` promise executed by the Owner; `actions: read` on the Repo-state job ◑ | Bro | Review | merged `#220` |
