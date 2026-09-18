@@ -22,8 +22,8 @@ stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is
 
 **`#220` merged as `157e292`:** the supply-chain gate is green again, the `T-055` promise is executed
 (context required, entry deleted), and `main_ci` is no longer typed — `#221` makes the generator take
-the reading. The last COMPLETED reading of `main` is `failure` at `2a50081` (that deferral); `157e292`'s
-own run was still in progress when this was written, so trust `config/current_state.json.main_ci`.
+the reading. `main`'s own `ci` at `157e292` is `success` (run 35403529178), read by the generator into
+`config/current_state.json.main_ci` -- the first green reading of `main` since 2026-08-31.
 
 **T-061, and a slice of T-062.** The gate set is what CI runs, not `tools/check_*.py`:
 `generate_negative_matrix.py --check` refuses a hand-edited mirror.

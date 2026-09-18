@@ -127,10 +127,10 @@
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "2a5008133eee4f3ed85127457717a02bf4ca5462",
-      "conclusion": "failure",
-      "run_id": 35390005029,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: failure at 2a50081, run 35390005029. Not green: Repo-state · live GitHub truth verifier."
+      "head": "157e292e547629e4dacf3c2f7f4358897783929a",
+      "conclusion": "success",
+      "run_id": 35403529178,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 157e292, run 35403529178."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
