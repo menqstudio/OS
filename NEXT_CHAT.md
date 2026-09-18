@@ -21,8 +21,9 @@ C4, C6, C7 are done and measured — the full account and the B/C list live only
 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT.
 
 **`main` is RED at `2a50081` on one job,** `Repo-state`: the `T-055` deferral expired 2026-09-06
-unsigned — the Owner's act; its precondition (the job green on `main`) held on run 35390005029.
-`#220` (`T-065`) lifts two lockfiles for the scheduled supply-chain gate, red since 2026-09-07.
+unsigned; its precondition (the job green on `main`) held on run 35390005029, and the Owner executed
+the promise in `#220`: the context is required in `config/required-checks.json`, the entry deleted.
+`#220` (`T-065`) also lifts two lockfiles for the scheduled supply-chain gate, red since 2026-09-07.
 
 **T-061, and a slice of T-062.** The gate set is what CI runs, not `tools/check_*.py`:
 `generate_negative_matrix.py --check` refuses a hand-edited mirror.
@@ -78,11 +79,10 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 none of it is independently confirmed. Every mark added since is ◑. *(Said 56/192/39,396 until 2026-09-19;
 20/107/19688 until 2026-08-31.)*
 
-**Two things wait on the Owner.** Branch protection on `main` is OFF — GitHub does not enforce it
+**One thing waits on the Owner.** Branch protection on `main` is OFF — GitHub does not enforce it
 on a private Free-plan repository (private since 2026-09-18; HTTP 403 observed 2026-09-19), so no
-required context is live: Pro, or public again. And the `T-055` deferral: add the context to `config/required-checks.json` and delete
-the entry, or re-defer with a `sign_off`. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md)
-is the page of record. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+required context is live — the 34 in `config/required-checks.json` included: Pro, or public again.
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close

@@ -121,7 +121,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #220 (fix/supply-chain-browserslist), T-065. #219 merged as 2a50081 on 2026-09-18 NOT Architect-approved: C3 and a second Architect pass are still owed, and its open gaps stay in its body (no production runner wired, legacy in-process write on un-migrated deployments, no Windows or macOS transport). Next: the Owner acts on the T-055 deferral and on branch protection (Pro or public); then #220 merges on an exact green head and `gh run list --branch main` is read again.",
+    "current": "PR #220 (fix/supply-chain-browserslist), T-065. #219 merged as 2a50081 on 2026-09-18 NOT Architect-approved: C3 and a second Architect pass are still owed, and its open gaps stay in its body (no production runner wired, legacy in-process write on un-migrated deployments, no Windows or macOS transport). The T-055 promise is executed in #220 by the Owner. Next: the Owner decides branch protection (Pro or public); #220 merges on an exact green head and `gh run list --branch main` is read again.",
     "_note": "The carrier is current_workflow_pr (#220 on fix/supply-chain-browserslist). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist` ≤4.28.6 and `rustls` 0.23.42 (RUSTSEC-2026-0285); lockfiles lifted, no source change. The §D `g` keydown race in `Approvals.test.tsx` is in `#220`, not patched | Bro | In-Progress | `#220` |
+| **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist` ≤4.28.6 and `rustls` 0.23.42 (RUSTSEC-2026-0285); lockfiles lifted, no source change; the `T-055` promise executed by the Owner. The §D `g` keydown race in `Approvals.test.tsx` is in `#220`, not patched | Bro | In-Progress | `#220` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** A distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. `#112` merged; `#219` merged with B6/C1/C2/C4/C6/C7 corrected and measured; C3 and a second Architect pass NOT done — NOT approved | Bro | Review | merged `#219` |
 | **T-064** | **The shut governed gate names WHICH requirement a machine fails.** `broker/src/preflight.rs` reports **27** requirements met / not met / not measurable, with who provisions each; here **1 / 25 / 1** | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm**, which needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
@@ -42,8 +42,8 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 ## What is not on this board
 
 Waiting on the Owner, not rows: branch protection on `main` (OFF on a private Free-plan repo — Pro or
-public), the expired `T-055` deferral (why `main` is RED), `T-063`'s tag arm, `parse_audit_candidate`'s
-marker count — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) carries the first two.
+public), `T-063`'s tag arm, `parse_audit_candidate`'s marker count —
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) carries the first.
 
 ## Status tokens
 

@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
 **Last updated · Վերջին թարմացում:** 2026-09-19 — `#219` merged as `2a50081`; `main`'s `ci` there is RED on
-one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned (the Owner's act).
+one job, `Repo-state`, from the `T-055` deferral that expired 2026-09-06 unsigned — the Owner executed it in `#220`.
 Supply-chain red since 2026-09-07: `T-065`, `#220`. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
 `Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
 table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
@@ -72,16 +72,15 @@ No `v*` tag is compared — `release.yml` has never run — and what the files m
 release policy the Owner has not stated (`T-063`).
 
 **Branch protection on `main` is OFF.** GitHub does not enforce it on a private Free-plan repository
-(private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 33 contexts in `config/required-checks.json` is live. Pro or
+(private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 34 contexts in `config/required-checks.json` is live. Pro or
 public — the Owner's call.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
 startup, so the first-launch trust path is unreachable on the Debian box this project now
 develops on.
 
-**Two audit reports went missing and one is unrecoverable.** The fifth round's report was
-never filed and its 15 promotions are not carried; the seventh's was reconstructed from two
-commit messages. `A-06` in the ledger.
+**Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
+carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.
 
 ## Status tokens
 
