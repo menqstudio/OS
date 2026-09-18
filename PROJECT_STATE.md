@@ -14,18 +14,17 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #223 · branch `test/vitest-max-workers`** (base `main`, tip `f916a53`, task T-068).
+> **✅ SETTLED — `main` is at `79154ba`.** The only thing open is PR #224 on `state/settle-after-223`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The frontend suite ran CPUs-1 jsdom workers and spent half its time in environment; capped at four, measured; the T-040 flake is not claimed fixed.
+> **Next:** open the next pull request only after main's post-merge Repo-state job has completed; then T-062's triage lands as blocked rows with measured blocked_on.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
 ## Phases
 
-Status is *what exists*, never *what is guaranteed to work*. The production gate is shut on
-every row. Where this table and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md)
-disagree, the roadmap wins.
+Status is *what exists*, never *what is guaranteed to work*. The production gate is shut on every row;
+where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disagree, the roadmap wins.
 
 | Phase | Status |
 |---|---|
@@ -56,8 +55,8 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **58 pull
-requests, 206 files and 44,055 inserted lines** have merged since, none independently
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **62 pull
+requests, 207 files and 44,630 inserted lines** have merged since, none independently
 confirmed.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
@@ -74,9 +73,8 @@ release policy the Owner has not stated (`T-063`).
 (private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 34 contexts in `config/required-checks.json` is live. Pro or
 public — the Owner's call.
 
-**Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
-startup, so the first-launch trust path is unreachable on the Debian box this project now
-develops on.
+**Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts startup,
+so the first-launch trust path is unreachable on the Debian dev box.
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.
