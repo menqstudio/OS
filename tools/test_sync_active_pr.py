@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -368,6 +369,44 @@ class CarrierProseTests(_StateFile):
         self.state(with_current=False)
         sap.rewrite_carrier_block(220, "b", current="would be a new key")
         self.assertNotIn("current", self.read()["next_action_by_carrier"])
+
+
+class RestRoadSlugTests(unittest.TestCase):
+    """`_rest_open_prs` asks about THIS repository, established by `_repo_slug()`, never a literal.
+
+    Eighth audit `H-05`, one file over: check_repo_state.py's REST fallback said `menqstudio/OS`
+    while its GraphQL road inferred the slug from the remote, so a fork's two roads answered about
+    different repositories. That was fixed there on 2026-08-18; this file kept the literal.
+    """
+
+    def setUp(self):
+        self._real = (sap._repo_slug, sap.subprocess.run)
+        self.addCleanup(lambda: setattr(sap, "_repo_slug", self._real[0]))
+        self.addCleanup(lambda: setattr(sap.subprocess, "run", self._real[1]))
+
+    def test_the_road_is_built_from_the_resolved_slug(self):
+        """Mutant: the literal back ⇒ the URL names menqstudio/OS, not the fork."""
+        seen = []
+
+        page = json.dumps([{"number": 7, "head": {"ref": "b", "sha": "c" * 40},
+                            "base": {"ref": "main"}, "draft": False, "title": "t"}])
+
+        def fake_run(args, **kwargs):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, page + "\n", "")
+        sap._repo_slug = lambda: "someone/fork"
+        sap.subprocess.run = fake_run
+        rows = sap._rest_open_prs()
+        self.assertEqual([r["number"] for r in rows], [7])
+        self.assertIn("repos/someone/fork/pulls?state=open&per_page=100", seen[0])
+        self.assertFalse(any("menqstudio/OS" in a for a in seen[0]))
+
+    def test_no_slug_means_no_read_and_no_gh_call(self):
+        calls = []
+        sap._repo_slug = lambda: None
+        sap.subprocess.run = lambda *a, **k: calls.append(a) or None
+        self.assertIsNone(sap._rest_open_prs())
+        self.assertEqual(calls, [], "a road that cannot name its repository must not ask")
 
 
 class ActiveLineTests(unittest.TestCase):

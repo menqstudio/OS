@@ -204,9 +204,18 @@ def _rest_open_prs() -> list[dict] | None:
     caller here treats the set as complete - `parked_roles()` refuses on an undeclared one, and a
     missing entry would let a parked PR go unnamed, which is the state `verify_settled_snapshot`
     turns main red for.
+
+    The slug comes from `_repo_slug()` — the eighth audit's `H-05` fix in check_repo_state.py — and
+    not from a literal. Until 2026-09-19 this road said `repos/menqstudio/OS/pulls` while the gate
+    that reads this tool's output inferred the slug from the remote, so in a fork the two would have
+    answered about different repositories and nothing could tell. No slug, no read: a road that
+    cannot establish which repository it is asking about has not asked.
     """
+    slug = _repo_slug()
+    if not slug:
+        return None
     out = subprocess.run(
-        ["gh", "api", "--paginate", "repos/menqstudio/OS/pulls?state=open&per_page=100"],
+        ["gh", "api", "--paginate", f"repos/{slug}/pulls?state=open&per_page=100"],
         capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
     if out.returncode != 0 or not (out.stdout or "").strip():
         return None
