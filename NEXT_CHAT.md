@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `tools/rest-open-prs-slug` — `main` @ `0f5c65b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `test/vitest-max-workers` — `main` @ `f916a53`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #222 · branch `tools/rest-open-prs-slug`** (base `main`, tip `0f5c65b`, task T-067).
+> **⏭️ CURRENT ACTIVE: PR #223 · branch `test/vitest-max-workers`** (base `main`, tip `f916a53`, task T-068).
 >
-> The REST road in sync_active_pr.py asks _repo_slug(), not a literal; no slug, no read.
+> The frontend suite ran CPUs-1 jsdom workers and spent half its time in environment; capped at four, measured; the T-040 flake is not claimed fixed.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
