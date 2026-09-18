@@ -15,8 +15,8 @@
 <!-- /BANNER -->
 
 **Next: T-020's FW-1 correction MERGED as `#219` (`2a50081`) and is NOT approved.** B1-B7 and C1, C2,
-C4, C6, C7 are done and measured — the full account and the B/C list live in `#219`'s body and
-`SECURITY_MODEL.md` §1.3a. Proofs: `engine/ci/floor_writer_boundary_proof.sh` 23/23 ×3 here and in CI;
+C4, C6, C7 are done and measured — the full account and the B/C list live only in `#219`'s body;
+`SECURITY_MODEL.md` §1.3a names what enforces each row. Proofs: `engine/ci/floor_writer_boundary_proof.sh` 23/23 ×3 here and in CI;
 `test_floor_writer_durability.py`. **NOT done:** C3 test structure and a second Architect pass. §1.7
 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT.
 
@@ -74,13 +74,13 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**56 pull requests, 192 files and 39,396 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(Said 20/107/19688 until 2026-08-31 —
-nearly a third of the real surface.)*
+**58 pull requests, 206 files and 44,055 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(Said 56/192/39,396 until 2026-09-19;
+20/107/19688 until 2026-08-31.)*
 
 **Two things wait on the Owner.** Branch protection on `main` is OFF — GitHub does not enforce it
-on a private Free-plan repository (HTTP 403 since 2026-09-18), so no required context is live: Pro,
-or public again. And the `T-055` deferral: add the context to `config/required-checks.json` and delete
+on a private Free-plan repository (private since 2026-09-18; HTTP 403 observed 2026-09-19), so no
+required context is live: Pro, or public again. And the `T-055` deferral: add the context to `config/required-checks.json` and delete
 the entry, or re-defer with a `sign_off`. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md)
 is the page of record. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 

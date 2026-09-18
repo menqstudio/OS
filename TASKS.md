@@ -23,11 +23,11 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-064** | **The shut governed gate names WHICH requirement a machine fails.** `broker/src/preflight.rs` reports **27** requirements met / not met / not measurable, with who provisions each; here **1 / 25 / 1** | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm**, which needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` was stale by construction** — recording a reading takes a merge, and the merge moves `main`. An OLDER reading now passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
-| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed as an `auth_ref` REFERENCE store — this process holds no secret (0022). **Nothing engine-side resolves an `auth_ref` yet**, so transport-first would be unreachable code. ◑ | Bro | Todo | merged `#207` |
+| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed as an `auth_ref` REFERENCE store — this process holds no secret (0022). **Nothing engine-side resolves an `auth_ref` yet.** ◑ | Bro | Todo | merged `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit, both dates (0 of 796 differ). The gate checks the LAW the date stood for: did that commit MOVE the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, each reproduced first, mutation-proven after | Bro | Review | merged `#219` |
 | **T-062** | **The negative matrix's silent state,** now 182. Seven `NM-FRAME-*` rows established, mutation-proven; the review found `strict_loads` took `NaN` | Bro | Todo | merged `#219` |
-| **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` holds each control to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers: a runbook mention is a suggestion. `check_ai_surfaces.py` runs under a context NOT in the required set, and making one required is the Owner's act | Bro | Todo | merged `#208` |
+| **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` holds each control to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers. `check_ai_surfaces.py` runs under a context NOT in the required set, and making one required is the Owner's act | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`; a query separates them and both read mappers carry it out. ◑ — a test asserts the closure | Bro | Review | merged `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN; deployment wiring and a second principal block them, not an Owner artifact. O-1 is the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a worktree-check fix (`git rev-parse --show-toplevel`). Own branch, own PR, Owner approval. 10 engine tests skip-guard themselves | — | Todo | — |
@@ -41,8 +41,9 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: the expired `T-055` deferral (why `main` is RED), `T-063`'s tag arm,
-`parse_audit_candidate`'s marker count — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
+Waiting on the Owner, not rows: branch protection on `main` (OFF on a private Free-plan repo — Pro or
+public), the expired `T-055` deferral (why `main` is RED), `T-063`'s tag arm, `parse_audit_candidate`'s
+marker count — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) carries the first two.
 
 ## Status tokens
 

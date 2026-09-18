@@ -6,22 +6,22 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **2026-09-19 — ONE thing needs you: branch protection on `main` is OFF.** The repository went
-> private on 2026-09-18, and GitHub does not enforce protection on a private repository under the Free
-> plan — `GET /branches/main/protection` answers HTTP 403, *"Upgrade to GitHub Pro or make this
-> repository public"*. None of the 33 contexts in `config/required-checks.json` is live, and a push to
+> **2026-09-19 — TWO things need you. First: branch protection on `main` is OFF.** The repository went
+> private on 2026-09-18 (the Owner's word, that session), and GitHub does not enforce protection on a
+> private repository under the Free plan — `GET /branches/main/protection` answered HTTP 403 on
+> 2026-09-19, *"Upgrade to GitHub Pro or make this repository public"*. None of the 33 contexts in `config/required-checks.json` is live, and a push to
 > `main` is not refused. Two honest answers, both yours: **GitHub Pro**, or **public again**.
 > `config/required-checks.json` is the state to restore either way.
 >
-> **And the `T-055` deferral, which is why `main` is RED.** `config/deferred-enforcement.json` defers
+> **Second: the `T-055` deferral, which is why `main` is RED.** `config/deferred-enforcement.json` defers
 > `Production half · the five conditions (T-055)` until **2026-09-06** with an empty `sign_off`; the date
 > passed, and `Repo-state · live GitHub truth verifier` turned RED on `main` @ `2a50081` the first time
 > `ci` ran there. The deferral's own precondition — *the job observed green on `main`* — held on run
 > 35390005029, so the promise is ready to execute: **(a)** add that name to `contexts` in
 > `config/required-checks.json` and delete the deferral entry (live protection follows once it exists
 > again); or **(b)** re-defer with a new `deferred_until` and a non-empty `sign_off`. `#220` records the
-> reading and stops there: the harness refuses a Builder that edits the required-checks registry, which
-> is the right refusal.
+> reading and stops there: adding a required context is the Owner's act, and the Builder did not edit
+> the registry.
 
 > **2026-08-29 — the ninth round's thirteen findings are answered, and NOTHING here needs you.**
 > `I-01`..`I-13` had no owner in `TASKS.md` five days after they were written, twelve were still

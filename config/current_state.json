@@ -116,12 +116,12 @@
     "number": 220,
     "branch": "fix/supply-chain-browserslist",
     "state": "open",
-    "what": "T-020 built under the Architect's five rulings: the per-task anti-rollback floor moves to protected Supervisor-domain custody, mutable only through a distinct Floor Writer principal over an SO_PEERCRED-authenticated AF_UNIX door. Linux-only and it stops rather than approximating. NOT Architect-approved.",
+    "what": "T-065: the scheduled supply-chain gate was red since 2026-09-07 on three advisories nothing on main named. Two lockfiles lifted -- browserslist 4.28.6 -> 4.29.0 (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g), rustls 0.23.42 -> 0.23.45 (RUSTSEC-2026-0285) -- no source change; the canon re-anchored; main_ci recorded as the failure it is. The Approvals.test.tsx keydown race is recorded in the PR body, not patched.",
     "note": "Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6\u21924.29.0, rustls 0.23.42\u21920.23.45; lockfiles only, no source change.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #219 (feat/floor-writer-service): the Builder's delivery for T-020. It is NOT Architect-approved and carries no production trust claim -- the next step is the ARCHITECT's implementation audit against rulings R1-R5, not a merge on the Builder's word. Open gaps are in the PR body: no production runner is wired, un-migrated deployments keep the legacy in-process write, and there is no Windows or macOS transport.",
+    "current": "PR #220 (fix/supply-chain-browserslist), T-065. #219 merged as 2a50081 on 2026-09-18 NOT Architect-approved: C3 and a second Architect pass are still owed, and its open gaps stay in its body (no production runner wired, legacy in-process write on un-migrated deployments, no Windows or macOS transport). Next: the Owner acts on the T-055 deferral and on branch protection (Pro or public); then #220 merges on an exact green head and `gh run list --branch main` is read again.",
     "_note": "The carrier is current_workflow_pr (#220 on fix/supply-chain-browserslist). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
@@ -130,7 +130,7 @@
       "head": "2a5008133eee4f3ed85127457717a02bf4ca5462",
       "conclusion": "failure",
       "run_id": 35390005029,
-      "note": "RED on exactly one job, `Repo-state · live GitHub truth verifier`, read from the run's job list after #219 merged: the `T-055` deferral in config/deferred-enforcement.json expired 2026-09-06 with no sign_off. Every other ci job on this head is success, including `Production half · the five conditions (T-055)` itself. Adding that context (and to live branch protection) or re-deferring with a sign_off is the Owner's act; a Builder may not assert either."
+      "note": "RED on exactly one job, `Repo-state · live GitHub truth verifier`, read from the run's job list after #219 merged: the `T-055` deferral in config/deferred-enforcement.json expired 2026-09-06 with no sign_off. Every other ci job on this head is success, including `Production half · the five conditions (T-055)` itself. Adding that context or re-deferring with a sign_off is the Owner's act; a Builder may not assert either. Live branch protection follows once it exists again -- it is unreadable on this private Free-plan repository (HTTP 403)."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

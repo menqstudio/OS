@@ -57,8 +57,8 @@ Toolchain: `config/toolchain.json`, checked against every canonical document by
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **56 pull
-requests, 192 files and 39,396 inserted lines** have merged since, none independently
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **58 pull
+requests, 206 files and 44,055 inserted lines** have merged since, none independently
 confirmed.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
@@ -72,7 +72,7 @@ No `v*` tag is compared — `release.yml` has never run — and what the files m
 release policy the Owner has not stated (`T-063`).
 
 **Branch protection on `main` is OFF.** GitHub does not enforce it on a private Free-plan repository
-(HTTP 403 since 2026-09-18); none of the 33 contexts in `config/required-checks.json` is live. Pro or
+(private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 33 contexts in `config/required-checks.json` is live. Pro or
 public — the Owner's call.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts
