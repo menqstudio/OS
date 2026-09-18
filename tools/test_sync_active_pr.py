@@ -297,6 +297,205 @@ class NoteSurgeryTests(_StateFile):
         self.assertEqual(after["base"], "main")
 
 
+class CarrierProseTests(_StateFile):
+    """`what` and `next_action_by_carrier.current` move with the carrier, or the tool refuses.
+
+    On 2026-09-19 (#220) rewrite_state moved number, branch and note from #219 to #220 and left
+    `what` reading "T-020 built under the Architect's five rulings ... NOT Architect-approved";
+    rewrite_carrier_block rewrote `_note` and left `current` saying "PR #219 ... the next step is the
+    ARCHITECT's audit, not a merge" a day after #219 merged. No gate reads either field, so both
+    stayed wrong until a reader noticed. These pin the two behaviours that make that impossible.
+    """
+
+    def state(self, number=219, with_what=True, with_current=True):
+        block = {"number": number, "branch": "feat/floor-writer-service", "state": "open"}
+        if with_what:
+            block["what"] = "T-020 built under the Architect's five rulings."
+        block["note"] = "old note"
+        block["base"] = "main"
+        obj = {"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                "snapshot_branch": "feat/floor-writer-service"},
+               "active": {"branch": "feat/floor-writer-service"}, "settled_at_main_head": "a" * 40,
+               "current_workflow_pr": block,
+               "next_action_by_carrier": ({"current": "PR #219: not a merge on the Builder's word.",
+                                           "_note": "old"} if with_current else {"_note": "old"})}
+        self.write(obj)
+
+    def test_moving_the_number_without_what_refuses_and_writes_nothing(self):
+        """Mutant: drop the refusal ⇒ number becomes 220 while `what` still says T-020."""
+        self.state()
+        before = self.path.read_text(encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            sap.rewrite_state(220, "fix/supply-chain-browserslist", "new note", "c" * 40)
+        self.assertIn("--what", str(cm.exception))
+        self.assertIn("#219", str(cm.exception))
+        self.assertEqual(before, self.path.read_text(encoding="utf-8"), "a refusal writes nothing")
+
+    def test_what_moves_with_the_number(self):
+        """Mutant: skip the `what` surgery ⇒ the assertion on `what` fails."""
+        self.state()
+        changed = sap.rewrite_state(220, "fix/supply-chain-browserslist", "new note", "c" * 40,
+                                    what="T-065: two lockfiles lifted, no source change.")
+        after = self.read()["current_workflow_pr"]
+        self.assertEqual(after["number"], 220)
+        self.assertEqual(after["what"], "T-065: two lockfiles lifted, no source change.")
+        self.assertEqual(after["note"], "new note")
+        self.assertEqual(after["base"], "main", "the shape is untouched")
+        self.assertIn("what", changed)
+
+    def test_the_same_number_needs_no_what(self):
+        self.state()
+        sap.rewrite_state(219, "feat/floor-writer-service", "new note", "c" * 40)
+        self.assertEqual(self.read()["current_workflow_pr"]["what"],
+                         "T-020 built under the Architect's five rulings.")
+
+    def test_a_block_without_what_is_not_given_one(self):
+        self.state(with_what=False)
+        sap.rewrite_state(220, "b", "new note", "c" * 40, what="ignored: no such key")
+        self.assertNotIn("what", self.read()["current_workflow_pr"])
+
+    def test_current_moves_with_the_carrier(self):
+        """Mutant: drop `replaced["current"]` ⇒ `current` still names #219."""
+        self.state()
+        sap.rewrite_carrier_block(220, "fix/supply-chain-browserslist",
+                                  current="PR #220 (fix/supply-chain-browserslist): T-065. Next: merge.")
+        block = self.read()["next_action_by_carrier"]
+        self.assertEqual(block["current"],
+                         "PR #220 (fix/supply-chain-browserslist): T-065. Next: merge.")
+        self.assertIn("#220", block["_note"])
+
+    def test_a_block_without_current_is_not_given_one(self):
+        self.state(with_current=False)
+        sap.rewrite_carrier_block(220, "b", current="would be a new key")
+        self.assertNotIn("current", self.read()["next_action_by_carrier"])
+
+
+class ActiveLineTests(unittest.TestCase):
+    """NEXT_CHAT.md's `**Active branch:**` line moves with the carrier, or is left alone by name.
+
+    It sits outside the banner markers and was maintained by hand; on 2026-09-19 it named #220's
+    branch and a `main` two merges old under a banner that named #221.
+    """
+
+    LINE = ("**Active branch:** `fix/supply-chain-browserslist` — `main` @ `2a50081`. A handoff "
+            "names the merge base or `main`; a branch commit is a dead object after a squash. "
+            "· **task** `floor-writer`\n")
+
+    def setUp(self):
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._real_root = sap.ROOT
+        sap.ROOT = self.root
+        self.addCleanup(lambda: setattr(sap, "ROOT", self._real_root))
+
+    def doc(self, with_line=True):
+        p = self.root / "NEXT_CHAT.md"
+        p.write_text("# NEXT_CHAT\n\n" + (self.LINE if with_line else "") + sap.BANNER_OPEN
+                     + "\nbanner\n" + sap.BANNER_CLOSE + "\n\n## Body\n", encoding="utf-8")
+        return p
+
+    def test_branch_and_head_move_and_the_tail_is_kept(self):
+        """Mutant: skip the substitution ⇒ the old branch is still on the line."""
+        p = self.doc()
+        self.assertTrue(sap.rewrite_active_line("tools/utf8-decode-and-carrier-prose", "157e292e" + "f" * 32))
+        text = p.read_text(encoding="utf-8")
+        self.assertIn("**Active branch:** `tools/utf8-decode-and-carrier-prose` — `main` @ `157e292`.", text)
+        self.assertNotIn("fix/supply-chain-browserslist", text)
+        self.assertIn("a branch commit is a dead object after a squash. · **task** `floor-writer`", text)
+        self.assertEqual(text.count("**Active branch:**"), 1)
+
+    def test_a_file_without_the_line_is_left_byte_identical(self):
+        p = self.doc(with_line=False)
+        before = p.read_text(encoding="utf-8")
+        self.assertFalse(sap.rewrite_active_line("b", "c" * 40))
+        self.assertEqual(before, p.read_text(encoding="utf-8"))
+
+
+class MainCiReadingTests(_StateFile):
+    """`main_ci` is written from a reading, never typed.
+
+    Until 2026-09-19 it was the last hand-maintained field in config/current_state.json, and on
+    that day it still said `success` at 87bfe73 while `main` had been red at 2a50081 for a day —
+    nobody had taken the reading. The generator now takes it the way the gate reads it
+    (`check_repo_state._live_main_ci`) and refuses to write anything when it cannot.
+    """
+
+    def state(self, with_block=True):
+        obj = {"schema": 2, "prs": [], "sync": {"baseline_main_head_at_sync": "a" * 40,
+                                                "snapshot_branch": "b"},
+               "active": {"branch": "b"}, "settled_at_main_head": "a" * 40,
+               "current_workflow_pr": {"number": 1, "branch": "b", "state": "open",
+                                       "note": "n", "base": "main"}}
+        if with_block:
+            obj["main_ci"] = {"_note": "what main's own runs said",
+                              "ci": {"head": "a" * 40, "conclusion": "success", "run_id": 1,
+                                     "note": "typed by hand"}}
+        self.write(obj)
+
+    READING_RED = {"ci": {"head": "b" * 40, "conclusion": "failure", "run_id": 77,
+                          "failing": ["Repo-state · live GitHub truth verifier"]}}
+
+    def test_the_reading_is_written_and_the_shape_is_kept(self):
+        """Mutant: skip the `head` value ⇒ the head assertion fails."""
+        self.state()
+        written = sap.rewrite_main_ci(self.READING_RED, today=__import__("datetime").date(2026, 9, 19))
+        self.assertEqual(written, ["ci"])
+        block = self.read()["main_ci"]
+        self.assertEqual(block["_note"], "what main's own runs said", "siblings untouched")
+        ci = block["ci"]
+        self.assertEqual(ci["head"], "b" * 40)
+        self.assertEqual(ci["conclusion"], "failure")
+        self.assertEqual(ci["run_id"], 77)
+        self.assertIn("2026-09-19", ci["note"])
+        self.assertIn("failure at bbbbbbb, run 77", ci["note"])
+        self.assertIn("Repo-state · live GitHub truth verifier", ci["note"])
+        self.assertEqual(set(ci), {"head", "conclusion", "run_id", "note"})
+
+    def test_a_success_note_names_no_failing_job(self):
+        note = sap.main_ci_note("success", "c" * 40, 5, [], __import__("datetime").date(2026, 9, 19))
+        self.assertIn("success at ccccccc, run 5", note)
+        self.assertNotIn("Not green", note)
+
+    def test_a_red_reading_with_unlisted_jobs_says_so(self):
+        note = sap.main_ci_note("failure", "c" * 40, 5, [], __import__("datetime").date(2026, 9, 19))
+        self.assertIn("could not be listed", note)
+
+    def test_a_file_without_main_ci_is_left_byte_identical(self):
+        self.state(with_block=False)
+        before = self.path.read_text(encoding="utf-8")
+        self.assertEqual(sap.rewrite_main_ci(self.READING_RED), [])
+        self.assertEqual(before, self.path.read_text(encoding="utf-8"))
+
+    def test_a_workflow_the_file_does_not_model_is_not_added(self):
+        self.state()
+        sap.rewrite_main_ci({"extra": {"head": "b" * 40, "conclusion": "success", "run_id": 2,
+                                       "failing": []}})
+        self.assertEqual(set(self.read()["main_ci"]), {"_note", "ci"})
+
+    def test_the_reading_comes_from_the_gate_reader_and_lists_jobs_only_when_red(self):
+        """Mutant: read a different endpoint than the gate ⇒ the fake reader is never called."""
+        calls = []
+        real = (sap._repo_slug, sap._live_main_ci, sap._failing_jobs)
+        sap._repo_slug = lambda: "o/r"
+        sap._live_main_ci = lambda slug: calls.append(slug) or {"ci": [("c" * 40, "failure", 9),
+                                                                       ("d" * 40, "success", 8)]}
+        sap._failing_jobs = lambda slug, run_id: ["Coordination · docs consistency gate"]
+        try:
+            reading = sap.take_main_ci_reading()
+        finally:
+            sap._repo_slug, sap._live_main_ci, sap._failing_jobs = real
+        self.assertEqual(calls, ["o/r"])
+        self.assertEqual(reading, {"ci": {"head": "c" * 40, "conclusion": "failure", "run_id": 9,
+                                          "failing": ["Coordination · docs consistency gate"]}})
+
+    def test_an_unreadable_main_refuses_rather_than_asserting(self):
+        with self.assertRaises(SystemExit) as cm:
+            sap._refuse_without_main_ci(None)
+        self.assertIn("nothing has been written", str(cm.exception))
+
+
 class SettledHeadTests(unittest.TestCase):
     """The generator must compute `settled_at_main_head` the way its VERIFIER does.
 

@@ -184,6 +184,27 @@ _LAST_UPDATED_RE = re.compile(r"(?m)^\*\*Last updated[^:]*:\*\*\s*(.+?)\s*$")
 _ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
 
+def _git_utf8(root: pathlib.Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+    """Run git and decode what it prints as UTF-8 — whatever the locale says.
+
+    `text=True` decodes with the process locale, which is cp1252 on a Windows box, and the canon
+    is UTF-8 with Armenian in it. Under that decoder the reader thread raised UnicodeDecodeError,
+    `stdout` came back as None, and `_claimed_last_updated` raised TypeError instead of returning a
+    verdict — so on 2026-09-19 this gate DIED on the T-060 path (`git show` of the previous
+    PROJECT_STATE.md) whenever the `Last updated` date sat behind its newest commit, and only
+    passed at tips where the two dates happened to be equal. A gate that crashes is a gate that
+    verified nothing. Bytes in, UTF-8 out; `errors="replace"` so one stray byte costs one character
+    and not the comparison.
+    """
+    done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=30)
+    if check and done.returncode != 0:
+        raise subprocess.CalledProcessError(done.returncode, done.args, done.stdout, done.stderr)
+    return subprocess.CompletedProcess(
+        done.args, done.returncode,
+        (done.stdout or b"").decode("utf-8", errors="replace"),
+        (done.stderr or b"").decode("utf-8", errors="replace"))
+
+
 def _last_commit_date(root: pathlib.Path, rel: str) -> datetime.date | None:
     """The committer date of the newest commit that touched `rel`, or None when git cannot answer.
 
@@ -192,10 +213,7 @@ def _last_commit_date(root: pathlib.Path, rel: str) -> datetime.date | None:
     file fresh — reporting a comparison that did not happen is the defect this whole check replaces.
     """
     try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "log", "-1", "--format=%cs", "--", rel],
-            capture_output=True, text=True, timeout=30, check=True,
-        ).stdout.strip()
+        out = _git_utf8(root, "log", "-1", "--format=%cs", "--", rel, check=True).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return None
     m = _ISO_DATE_RE.fullmatch(out)
@@ -227,16 +245,13 @@ def _claim_before_last_change(root: pathlib.Path, rel: str) -> tuple[str, dateti
     line did not, that is the real defect and it is refused exactly as before.
     """
     try:
-        sha = subprocess.run(
-            ["git", "-C", str(root), "log", "-1", "--format=%H", "--", rel],
-            capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+        sha = _git_utf8(root, "log", "-1", "--format=%H", "--", rel, check=True).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return None
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         return None
-    previous = subprocess.run(
-        ["git", "-C", str(root), "show", f"{sha}^:{rel}"],
-        capture_output=True, text=True, timeout=30)
+    # The previous PROJECT_STATE.md is UTF-8 with Armenian; see _git_utf8 for what `text=True` did.
+    previous = _git_utf8(root, "show", f"{sha}^:{rel}")
     if previous.returncode != 0:
         # No parent, or the file was created by that commit: there was no earlier claim to move.
         return ("absent", None)

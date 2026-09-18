@@ -18,6 +18,7 @@ same commit as the work, and a tool that pushed for you would be one more thing 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import pathlib
 import re
@@ -26,6 +27,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
+# The gate's own readers, so the generator writes exactly what the gate will read back.
+from check_repo_state import MAIN_CI_WORKFLOWS, _live_main_ci, _repo_slug  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BANNER_FILES = ("NEXT_CHAT.md", "PROJECT_STATE.md", "TASKS.md")
@@ -364,10 +367,27 @@ def _json_string_end(text: str, start: int) -> int:
     raise SystemExit("RED: unterminated string in the snapshot. Nothing has been written.")
 
 
-def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
+def rewrite_state(pr: int, branch: str, summary: str, head: str,
+                  what: str | None = None) -> list[str]:
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)              # parse first: refuse to touch a file we cannot read back
     changed = []
+
+    # `what` is the one prose field of current_workflow_pr this tool did not rewrite. On 2026-09-19
+    # (#220) it moved number, branch and note from #219 to #220 and left `what` saying "T-020 built
+    # under the Architect's five rulings ... NOT Architect-approved" — so the machine mirror every
+    # session reads called a two-lockfile lift the Floor Writer delivery, and no gate reads `what`,
+    # so nothing went red. Every earlier carrier move had rewritten it by hand; the one that forgot
+    # is the one that shows a hand-maintained field is a field that will be wrong. So: when the
+    # number moves, `what` moves with it or the tool refuses — never guessed, and refused BEFORE
+    # anything is written.
+    current = data["current_workflow_pr"]
+    if what is None and "what" in current and int(current.get("number", -1)) != int(pr):
+        raise SystemExit(
+            f"RED: the carrier moves from #{current.get('number')} to #{pr}, and "
+            f"`current_workflow_pr.what` still describes #{current.get('number')}. Pass --what with one "
+            f"sentence on what #{pr} IS; it is written to `what` and to next_action_by_carrier.current. "
+            f"Nothing has been written.")
 
     def swap(old: str, new: str, label: str) -> None:
         nonlocal text
@@ -390,7 +410,6 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     swap(f'    "branch": "{data["active"]["branch"]}"\n  }},',
          f'    "branch": "{branch}"\n  }},', "active branch")
 
-    current = data["current_workflow_pr"]
     swap(f'    "number": {current["number"]},\n    "branch": "{current["branch"]}",',
          f'    "number": {pr},\n    "branch": "{branch}",', "workflow pr")
     swap(f"marker in the PR #{current['number']} body.",
@@ -411,6 +430,14 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str) -> list[str]:
     end = _json_string_end(text, start + len('"note": '))
     text = text[:start] + '"note": ' + json.dumps(summary) + text[end:]
     changed.append("note")
+
+    # `what`: the same wholesale replacement, the same scan, for the same reason as `note`. Only
+    # when the block carries the key — this function changes values, never the shape.
+    if what is not None and "what" in current:
+        start = text.index('"what": "', text.index('"current_workflow_pr"'))
+        end = _json_string_end(text, start + len('"what": '))
+        text = text[:start] + '"what": ' + json.dumps(what) + text[end:]
+        changed.append("what")
 
     after = json.loads(text)             # and parse again: never leave it unreadable
     # A parse guard that cannot see the damage it was placed to catch is not a guard, so compare
@@ -465,13 +492,20 @@ def rewrite_banners(banner: str) -> None:
     for p, text, i, j in found:
         p.write_text(text[:i] + chr(10) + banner + chr(10) + text[j:], encoding="utf-8")
 
-def rewrite_carrier_block(pr: int, branch: str) -> bool:
+def rewrite_carrier_block(pr: int, branch: str, current: str | None = None) -> bool:
     """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
 
     `check_coordination` refuses a block naming a PR other than `current_workflow_pr`, because this
     one modelled a merged PR as the open carrier for three days. The tool that moves the carrier has
     to move this too — otherwise the rule fires on every pull request and gets satisfied by hand,
     which is the drift it exists to prevent.
+
+    `current` is the block's free-text "what happens now" sentence. Until 2026-09-19 this function
+    rewrote `_note`, `open` and `merged` and never `current`, and the coordination rule is satisfied
+    by "#N" appearing ANYWHERE in the block — which `_note` supplies — so `current` went on saying
+    "PR #219 ... the next step is the ARCHITECT's audit, not a merge" a day after #219 had merged,
+    under a `_note` that named #220. The block's own `_note` says it exists to prevent exactly that.
+    When the caller passes `current`, it is written; when the block has no such key, none is added.
     """
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
@@ -489,6 +523,8 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
         "merged": "re-run tools/sync_active_pr.py --settled --pr <next> --branch <next> so the "
                   "snapshot stops naming a carrier that has merged",
     }
+    if current is not None and "current" in block:
+        replaced["current"] = current
     for key, value in replaced.items():
         old = json.dumps(block.get(key, ""), ensure_ascii=False)
         new = json.dumps(value, ensure_ascii=False)
@@ -497,6 +533,148 @@ def rewrite_carrier_block(pr: int, branch: str) -> bool:
     json.loads(text)                     # never leave it unreadable
     STATE.write_text(text, encoding="utf-8")
     return True
+
+
+#: NEXT_CHAT.md's first line of state: `**Active branch:** `<branch>` — `main` @ `<head7>`.` and then
+#: prose. Only the branch and the head are rewritten; whatever follows the full stop is kept.
+ACTIVE_LINE_RE = re.compile(r"^\*\*Active branch:\*\* `[^`\n]*` [—–-]+ `main` @ `[0-9a-f]{4,40}`\.", re.M)
+
+
+def rewrite_active_line(branch: str, head: str) -> bool:
+    """NEXT_CHAT.md's `**Active branch:**` line sits OUTSIDE the banner markers and was kept by hand.
+
+    On 2026-09-19 it named #220's branch and a `main` two merges old while the banner three lines
+    below it named #221 — the same shape as `what` and `current`: a hand-maintained line beside a
+    tool-maintained block, and no gate reading it. Rewritten by pattern, branch and head only; the
+    sentence after the full stop and the `· **task**` tail are kept. A file without the line is
+    reported and left alone, never given one.
+    """
+    p = ROOT / "NEXT_CHAT.md"
+    text = p.read_text(encoding="utf-8")
+    new = "**Active branch:** `" + branch + "` — `main` @ `" + head[:7] + "`."
+    text2, n = ACTIVE_LINE_RE.subn(lambda m: new, text, count=1)
+    if n == 0:
+        print("  (NEXT_CHAT.md carries no `**Active branch:**` line; none added)", file=sys.stderr)
+        return False
+    if text2 != text:
+        p.write_text(text2, encoding="utf-8")
+    return True
+
+
+def _failing_jobs(slug: str, run_id: int) -> list[str]:
+    """The names of the jobs that were not green in one run, or [] when they cannot be listed."""
+    try:
+        out = subprocess.run(["gh", "api", f"repos/{slug}/actions/runs/{run_id}/jobs?per_page=100"],
+                             capture_output=True, text=True, encoding="utf-8", timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return []
+    if out.returncode != 0:
+        return []
+    try:
+        jobs = json.loads(out.stdout).get("jobs") or []
+    except ValueError:
+        return []
+    return [j["name"] for j in jobs
+            if isinstance(j.get("name"), str) and j.get("conclusion") not in (None, "success", "skipped")]
+
+
+def take_main_ci_reading() -> dict | None:
+    """The newest COMPLETED run of each MAIN_CI_WORKFLOWS on main, read the way the gate reads it.
+
+    `main_ci` was the last field of config/current_state.json written by hand. On 2026-09-19 it
+    still said `success` at 87bfe73 while `main` had been red at 2a50081 for a day — nobody had
+    taken the reading, because taking it meant running `gh run list` and typing four values into
+    a JSON file. A generator that asserts a fact it never measured writes that assertion into the
+    canon; this one measures. `None` means the reading could not be taken, and the caller REFUSES:
+    "I could not read main" and "main is fine" are different answers.
+    """
+    slug = _repo_slug()
+    if not slug:
+        return None
+    live = _live_main_ci(slug)
+    if not live:
+        return None
+    reading: dict[str, dict] = {}
+    for wf, runs in live.items():
+        head, conclusion, run_id = runs[0]
+        failing = _failing_jobs(slug, run_id) if conclusion != "success" else []
+        reading[wf] = {"head": head, "conclusion": conclusion, "run_id": run_id, "failing": failing}
+    return reading
+
+
+def main_ci_note(conclusion: str, head: str, run_id: int, failing: list[str], today: dt.date) -> str:
+    """The `note` the gate requires whenever the conclusion is not success — and writes it always,
+    so a reader can tell a measured line from a typed one."""
+    base = (f"Read by tools/sync_active_pr.py on {today.isoformat()}: {conclusion} at {head[:7]}, "
+            f"run {run_id}.")
+    if conclusion == "success":
+        return base
+    if failing:
+        return base + " Not green: " + "; ".join(failing) + "."
+    return base + (" Not green, and the failing jobs could not be listed -- read the run before "
+                   "trusting this line.")
+
+
+def rewrite_main_ci(reading: dict, today: dt.date | None = None) -> list[str]:
+    """Write the reading into `main_ci.<workflow>` — values only, never the shape.
+
+    A workflow the file does not model is not added; a file with no `main_ci` block is left alone
+    and the caller says so. Each value is replaced by scanning the block's own JSON (the `note`
+    idiom from rewrite_state), so the surgery does not depend on which key is last.
+    """
+    text = STATE.read_text(encoding="utf-8")
+    data = json.loads(text)
+    block = data.get("main_ci")
+    if not isinstance(block, dict):
+        return []
+    today = today or dt.date.today()
+    written: list[str] = []
+    for wf, r in reading.items():
+        entry = block.get(wf)
+        if not isinstance(entry, dict):
+            continue
+        start = text.index('"' + wf + '": {', text.index('"main_ci"'))
+        note = main_ci_note(r["conclusion"], r["head"], r["run_id"], r.get("failing") or [], today)
+        for key, value in (("head", r["head"]), ("conclusion", r["conclusion"]),
+                           ("run_id", r["run_id"]), ("note", note)):
+            if key not in entry:
+                continue
+            k = text.index('"' + key + '": ', start)
+            vstart = k + len('"' + key + '": ')
+            if text[vstart] == '"':
+                vend = _json_string_end(text, vstart)
+            else:
+                m = re.compile(r"-?\d+").match(text, vstart)
+                if not m:
+                    raise SystemExit(f"RED: main_ci.{wf}.{key} is not a number where one was expected. "
+                                     "Nothing has been written.")
+                vend = m.end()
+            text = text[:vstart] + json.dumps(value, ensure_ascii=False) + text[vend:]
+        written.append(wf)
+    after = json.loads(text)             # never leave it unreadable
+    if (set(after["main_ci"].keys()) != set(block.keys())
+            or any(set(after["main_ci"][wf].keys()) != set(block[wf].keys()) for wf in written)):
+        raise SystemExit("RED: rewriting main_ci changed its SHAPE. Nothing has been written.")
+    STATE.write_text(text, encoding="utf-8")
+    return written
+
+
+def _refuse_without_main_ci(reading: dict | None) -> dict:
+    if reading is None:
+        raise SystemExit(
+            "RED: could not read main's own ci runs (gh, the repository slug, or the Actions API). "
+            "main_ci is the reading this file exists to carry, so nothing has been written -- "
+            "a generator that cannot measure must not assert.")
+    return reading
+
+
+def _print_main_ci(reading: dict, written: list[str]) -> None:
+    for wf in written:
+        r = reading[wf]
+        print(f"  main_ci.{wf}: {r['conclusion']} at {r['head'][:7]}, run {r['run_id']}"
+              + ("" if r["conclusion"] == "success" else
+                 " -- not green: " + ("; ".join(r["failing"]) if r["failing"] else "jobs unlisted")))
+
 
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
            banner: str | None = None, role_pairs: list[str] | None = None) -> int:
@@ -511,6 +689,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # settled_at_main_head, no prs[] entry) is precisely the RED state this whole change is about.
     parked = [p for p in live_open_prs() if p["number"] != pr]
     roles = parked_roles(parked, role_pairs)
+    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
 
@@ -579,8 +758,15 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     if pr and branch:
         rewrite_state(pr, branch,
                       "Settling the state anchor at main " + head[:7] + ". " + parked_phrase
-                      + "; this pull request is the commit that records it.", head)
-        rewrite_carrier_block(pr, branch)
+                      + "; this pull request is the commit that records it.", head,
+                      what="The settle commit: records that main is at " + head[:7]
+                           + " and carries no product change.")
+        rewrite_carrier_block(pr, branch,
+                              current="PR #" + str(pr) + " (" + branch + ") settles the state at main "
+                                      + head[:7] + ". Next: "
+                                      + (next_up or "merge it; the next carrier names itself with "
+                                                    "tools/sync_active_pr.py --pr <N> --what ..."))
+    _print_main_ci(reading, rewrite_main_ci(reading))
     added = record_parked_prs(parked, roles)
     if added:
         print("  recorded in prs[]: " + ", ".join("#" + str(n) for n in added))
@@ -611,6 +797,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
         _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
                  + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
                  + tail + "\n>\n> " + audit_position_sentence())))
+    rewrite_active_line("main", head)
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
@@ -626,13 +813,19 @@ def main() -> int:
     ap.add_argument("--task", default=None,
                     help="the TASKS.md id this PR carries; the banner says `unstated` without it")
     ap.add_argument("--summary", help="required unless --settled")
+    ap.add_argument("--what", default=None,
+                    help="one sentence on what this pull request IS, written to "
+                         "current_workflow_pr.what and next_action_by_carrier.current. Required "
+                         "whenever --pr differs from the carrier the snapshot names: on 2026-09-19 "
+                         "the number moved and `what` stayed, so the mirror described the wrong PR.")
     ap.add_argument("--settled", action="store_true",
                     help="nothing is open: record the main everything merged into, and say so in "
                          "the banner. Without this the docs keep naming a PR that no longer "
                          "exists, and a reader goes looking for a branch that was deleted.")
     ap.add_argument("--next", dest="next_up",
-                    help="with --settled: one line on what happens next, for whoever reads this "
-                         "repository cold")
+                    help="one line on what happens next, for whoever reads this repository cold "
+                         "(with --settled it goes in the banner; with --pr it closes "
+                         "next_action_by_carrier.current)")
     ap.add_argument("--banner", help="the human banner; defaults to a line built from --summary")
     ap.add_argument("--parked-role", action="append", metavar="NUMBER=ROLE",
                     help="with --settled: the role of an open pull request that is NOT the "
@@ -644,8 +837,15 @@ def main() -> int:
         return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
-    changed = rewrite_state(args.pr, args.branch, args.summary, head)
-    rewrite_carrier_block(args.pr, args.branch)
+    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
+    changed = rewrite_state(args.pr, args.branch, args.summary, head, what=args.what)
+    rewrite_carrier_block(
+        args.pr, args.branch,
+        current=(f"PR #{args.pr} ({args.branch}), task {args.task or 'unstated'}: "
+                 f"{args.what or args.summary} Next: "
+                 + (args.next_up or "merge on an exact green head, then read "
+                                    "`gh run list --branch main` again.")))
+    _print_main_ci(reading, rewrite_main_ci(reading))
     # A pull request parked open while another one carries the snapshot has to be named in the
     # banner too, not only in --settled's. `check_coordination` requires every OPEN prs[] entry's
     # branch to appear in all three banner documents, and it is right to: a reader who is told
@@ -665,6 +865,7 @@ def main() -> int:
     # reports work it did not do is worse than silence: the banner stayed stale while the tool
     # said it had been rewritten, and the only thing that caught it was reading the file.
     rewrite_banners(_bounded(banner))
+    rewrite_active_line(args.branch, head)
 
     # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
     # files had already been rewritten, so the tool reported failure for work it had done.

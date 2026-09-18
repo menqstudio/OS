@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `fix/supply-chain-browserslist` — `main` @ `2a50081`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `tools/utf8-decode-and-carrier-prose` — `main` @ `157e292`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
+> **⏭️ CURRENT ACTIVE: PR #221 · branch `tools/utf8-decode-and-carrier-prose`** (base `main`, tip `157e292`, task T-066).
 >
-> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
+> Three tool fixes so the canon cannot lie the way it did on 2026-09-19: UTF-8 git reads, carrier prose that moves with the carrier, a measured main_ci.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -20,10 +20,10 @@ C4, C6, C7 are done and measured — the full account and the B/C list live only
 `test_floor_writer_durability.py`. **NOT done:** C3 test structure and a second Architect pass. §1.7
 stays **partial**; §1.10 is **implemented** and does not close **O-5**. FW-3 is OUT.
 
-**`main` is RED at `2a50081` on one job,** `Repo-state`: the `T-055` deferral expired 2026-09-06
-unsigned; its precondition (the job green on `main`) held on run 35390005029, and the Owner executed
-the promise in `#220`: the context is required in `config/required-checks.json`, the entry deleted.
-`#220` (`T-065`) also lifts two lockfiles for the scheduled supply-chain gate, red since 2026-09-07.
+**`#220` merged as `157e292`:** the supply-chain gate is green again, the `T-055` promise is executed
+(context required, entry deleted), and `main_ci` is no longer typed — `#221` makes the generator take
+the reading. `main`'s own `ci` at `157e292` is `success` (run 35403529178), read by the generator into
+`config/current_state.json.main_ci` -- the first green reading of `main` since 2026-08-31.
 
 **T-061, and a slice of T-062.** The gate set is what CI runs, not `tools/check_*.py`:
 `generate_negative_matrix.py --check` refuses a hand-edited mirror.

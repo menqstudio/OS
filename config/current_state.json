@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "2a5008133eee4f3ed85127457717a02bf4ca5462",
+  "settled_at_main_head": "157e292e547629e4dacf3c2f7f4358897783929a",
   "sync": {
-    "baseline_main_head_at_sync": "2a5008133eee4f3ed85127457717a02bf4ca5462",
-    "snapshot_branch": "fix/supply-chain-browserslist",
+    "baseline_main_head_at_sync": "157e292e547629e4dacf3c2f7f4358897783929a",
+    "snapshot_branch": "tools/utf8-decode-and-carrier-prose",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "fix/supply-chain-browserslist"
+    "branch": "tools/utf8-decode-and-carrier-prose"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 220,
-    "branch": "fix/supply-chain-browserslist",
+    "number": 221,
+    "branch": "tools/utf8-decode-and-carrier-prose",
     "state": "open",
-    "what": "T-065: the scheduled supply-chain gate was red since 2026-09-07 on three advisories nothing on main named. Two lockfiles lifted -- browserslist 4.28.6 -> 4.29.0 (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g), rustls 0.23.42 -> 0.23.45 (RUSTSEC-2026-0285) -- no source change; the canon re-anchored; main_ci recorded as the failure it is. The Approvals.test.tsx keydown race is recorded in the PR body, not patched.",
-    "note": "Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6\u21924.29.0, rustls 0.23.42\u21920.23.45; lockfiles only, no source change.",
+    "what": "T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current and the Active-branch line with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Nine mutants RED.",
+    "note": "Three tool fixes so the canon cannot lie the way it did on 2026-09-19: UTF-8 git reads, carrier prose that moves with the carrier, a measured main_ci.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #220 (fix/supply-chain-browserslist), T-065. #219 merged as 2a50081 on 2026-09-18 NOT Architect-approved: C3 and a second Architect pass are still owed, and its open gaps stay in its body (no production runner wired, legacy in-process write on un-migrated deployments, no Windows or macOS transport). The T-055 promise is executed in #220 by the Owner. Next: the Owner decides branch protection (Pro or public); #220 merges on an exact green head and `gh run list --branch main` is read again.",
-    "_note": "The carrier is current_workflow_pr (#220 on fix/supply-chain-browserslist). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #221 (tools/utf8-decode-and-carrier-prose), task T-066: T-066: three fixes to the tools that keep the canon honest -- check_coordination.py decodes git as UTF-8 (it died on Windows), sync_active_pr.py moves what/current and the Active-branch line with the carrier or refuses, and takes the main_ci reading itself instead of trusting a typed one. Nine mutants RED. Next: merge on an exact green head; then the Approvals keydown race or T-062's negative-matrix rows.",
+    "_note": "The carrier is current_workflow_pr (#221 on tools/utf8-decode-and-carrier-prose). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "2a5008133eee4f3ed85127457717a02bf4ca5462",
-      "conclusion": "failure",
-      "run_id": 35390005029,
-      "note": "RED on exactly one job, `Repo-state · live GitHub truth verifier`, read from the run's job list after #219 merged: the `T-055` deferral in config/deferred-enforcement.json expired 2026-09-06 with no sign_off. Every other ci job on this head is success, including `Production half · the five conditions (T-055)` itself. Adding that context or re-deferring with a sign_off is the Owner's act; a Builder may not assert either. Live branch protection follows once it exists again -- it is unreadable on this private Free-plan repository (HTTP 403)."
+      "head": "157e292e547629e4dacf3c2f7f4358897783929a",
+      "conclusion": "success",
+      "run_id": 35403529178,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 157e292, run 35403529178."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #220 · branch `fix/supply-chain-browserslist`** (base `main`, tip `2a50081`, task T-065).
+> **⏭️ CURRENT ACTIVE: PR #221 · branch `tools/utf8-decode-and-carrier-prose`** (base `main`, tip `157e292`, task T-066).
 >
-> Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories: browserslist 4.28.6→4.29.0, rustls 0.23.42→0.23.45; lockfiles only, no source change.
+> Three tool fixes so the canon cannot lie the way it did on 2026-09-19: UTF-8 git reads, carrier prose that moves with the carrier, a measured main_ci.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,24 +18,25 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist` ≤4.28.6 and `rustls` 0.23.42 (RUSTSEC-2026-0285); lockfiles lifted, no source change; the `T-055` promise executed by the Owner. The §D `g` keydown race in `Approvals.test.tsx` is in `#220`, not patched | Bro | In-Progress | `#220` |
-| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** A distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. `#112` merged; `#219` merged with B6/C1/C2/C4/C6/C7 corrected and measured; C3 and a second Architect pass NOT done — NOT approved | Bro | Review | merged `#219` |
+| **T-066** | **Two tools lied on 2026-09-19, untested** — `check_coordination.py` crashed on Windows (cp1252 vs the UTF-8 canon); `sync_active_pr.py` moved the carrier, left `what`/`current` behind, and `main_ci` was typed. Now UTF-8 reads, `--what` (or refuse), a measured `main_ci`. 8 mutants RED ◑ | Bro | In-Progress | `#221` |
+| **T-065** | **Scheduled supply-chain gate red since 2026-09-07 on unnamed advisories** — `browserslist`, `rustls`; lockfiles lifted; the `T-055` promise executed by the Owner; `actions: read` on the Repo-state job. The §D `g` keydown race in `Approvals.test.tsx` is in `#220`, not patched ◑ | Bro | Review | merged `#220` |
+| **T-020** | **The anti-rollback floor's writer is the party the floor exists to constrain.** A distinct **Floor Writer** principal: completion REQUESTS an advance, never mutates. `#112`, `#219` merged (B6/C1/C2/C4/C6/C7 measured); C3 and a second Architect pass NOT done — NOT approved | Bro | Review | merged `#219` |
 | **T-064** | **The shut governed gate names WHICH requirement a machine fails.** `broker/src/preflight.rs` reports **27** requirements met / not met / not measurable, with who provisions each; here **1 / 25 / 1** | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files and nothing compared them.** `check_version_parity.py` refuses drift and names the file. **Open: the git-tag arm**, which needs a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` was stale by construction** — recording a reading takes a merge, and the merge moves `main`. An OLDER reading now passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
-| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse. §4 landed as an `auth_ref` REFERENCE store — this process holds no secret (0022). **Nothing engine-side resolves an `auth_ref` yet.** ◑ | Bro | Todo | merged `#207` |
-| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit, both dates (0 of 796 differ). The gate checks the LAW the date stood for: did that commit MOVE the line | Bro | Review | merged `#219` |
-| **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, each reproduced first, mutation-proven after | Bro | Review | merged `#219` |
+| **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse; §4 is an `auth_ref` REFERENCE store (0022). **Nothing engine-side resolves an `auth_ref` yet.** ◑ | Bro | Todo | merged `#207` |
+| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit (both dates, 0 of 796 differ); the gate checks whether that commit MOVED the line | Bro | Review | merged `#219` |
+| **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, mutation-proven | Bro | Review | merged `#219` |
 | **T-062** | **The negative matrix's silent state,** now 182. Seven `NM-FRAME-*` rows established, mutation-proven; the review found `strict_loads` took `NaN` | Bro | Todo | merged `#219` |
-| **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` holds each control to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers. `check_ai_surfaces.py` runs under a context NOT in the required set, and making one required is the Owner's act | Bro | Todo | merged `#208` |
-| **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`; a query separates them and both read mappers carry it out. ◑ — a test asserts the closure | Bro | Review | merged `#210` |
+| **T-056** | **Two fail-closed checks prevent nothing** — `config/control-invocation.json` holds each control to what its failure stops. `bro_deploy_preflight.py` has zero non-test callers. `check_ai_surfaces.py` runs under a context NOT in the required set — the Owner's act | Bro | Todo | merged `#208` |
+| **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}` and both read mappers carry it out. ◑ — a test asserts the closure | Bro | Review | merged `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN; deployment wiring and a second principal block them, not an Owner artifact. O-1 is the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
-| **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a worktree-check fix (`git rev-parse --show-toplevel`). Own branch, own PR, Owner approval. 10 engine tests skip-guard themselves | — | Todo | — |
+| **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a worktree-check fix. Own branch, own PR, Owner approval | — | Todo | — |
 | **T-021** | **The approval-REQUEST path across the wall.** Phase 2 shipped the read half; the request half exists on neither side. Behind the standing audit: no new trust-boundary input while RED | — | Blocked | — |
 | **T-022** | **The governed automation dispatch.** Firing one writes a desktop row that never crosses the wall, so its `engine_receipt` evidence is unobserved. Sequencing as `T-021` | — | Blocked | — |
-| **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — *Trust provisioning + audit signer (windows-latest)* on an inherited runner ACL, the Windows engine job on the ledger's concurrency. Open on the EVIDENCE: one green run does not prove an intermittent | — | Todo | merged `#182` |
-| **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`, ninth audit. Routes 2 and 3 closed, mutation-confirmed; Route 1 open **by design**, and the register is COMPUTED at **19 leaves, not 8** | — | Todo | — |
-| **T-034** | **Two palettes, one contrast gate** — `I-04`, ninth audit: it decided on `round(ratio, 2)`, so 4.4995 printed `4.50`. ◑ Builder-fixed on the raw ratio, **awaiting independent confirmation** | — | Todo | — |
+| **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — the windows-latest trust-provisioning job (inherited runner ACL), the Windows engine job (ledger concurrency). One green run does not prove an intermittent | — | Todo | merged `#182` |
+| **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`, ninth audit. Routes 2 and 3 closed; Route 1 open **by design**; the register is COMPUTED at **19 leaves, not 8** | — | Todo | — |
+| **T-034** | **Two palettes, one contrast gate** — `I-04`, ninth audit: `round(ratio, 2)` let 4.4995 print `4.50`. ◑ Builder-fixed on the raw ratio, awaiting confirmation | — | Todo | — |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
