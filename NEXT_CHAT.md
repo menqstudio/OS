@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t097/front-page-numbers` — `main` @ `2045830`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t098/pin-manifest-custody` — `main` @ `22c0038`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #268 · branch `t097/front-page-numbers`** (base `main`, tip `2045830`, task T-097).
+> **⏭️ CURRENT ACTIVE: PR #269 · branch `t098/pin-manifest-custody`** (base `main`, tip `22c0038`, task T-098).
 >
-> The front page gave one ls three different answers; every measured figure re-trued
+> The pin manifest read through its own O_NOFOLLOW descriptor, with the custody check the Windows twin already had
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

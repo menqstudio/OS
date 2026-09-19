@@ -95,7 +95,9 @@ pub struct FileFacts {
     /// Writable — by mode bit, POSIX ACL, or group membership — by the interactive login UID or any
     /// runtime service UID. The probe resolves this against the login/runtime principal set.
     pub writable_by_login_or_runtime: bool,
-    /// Lowercase-hex SHA-256 of the on-disk bytes (empty for directory ancestors).
+    /// Lowercase-hex SHA-256 of the bytes read through the SAME descriptor the owner and mode came
+    /// from (empty for directory ancestors, and empty if that descriptor cannot be shown to still be
+    /// the same inode — which the floor then treats as a hash mismatch and refuses).
     pub sha256: String,
 }
 
