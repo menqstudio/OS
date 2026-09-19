@@ -121,16 +121,16 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #259 (t089/roadmap-figure-retrued), task T-089: seven of eleven phases have every Definition-of-Done box ticked and the figure still drew all ten identically under ALL PARTLY BUILT; each cell now carries its own count, the six closed strokes are green, the hatch stays on every one because a solid fill reads as a guarantee, and the alt text was re-written line by line Next: the custody wiring the Owner authorised on 2026-09-19 -- ChainExecutor::with_custody in build_governed_executor, ending at resolve_trust_state",
+    "current": "PR #259 (t089/roadmap-figure-retrued), task T-089: seven of eleven phases have every Definition-of-Done box ticked and the figure still drew all ten identically under ALL PARTLY BUILT; each cell now carries its own count, the six closed strokes are green, the hatch stays on every one because a solid fill reads as a guarantee, and the alt text was re-written line by line Next: main went red on the canon-consistency gate the moment #258 merged while this PR was already open -- merging this one names it and settles main",
     "_note": "The carrier is current_workflow_pr (#259 on t089/roadmap-figure-retrued). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "a94513eb52c1f2d8e2a6d09b9a847fa46b91d531",
-      "conclusion": "success",
-      "run_id": 35456443473,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at a94513e, run 35456443473."
+      "head": "40dc7ab7920c58c534c4ff4f76408553545bb6f2",
+      "conclusion": "failure",
+      "run_id": 35458876648,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: failure at 40dc7ab, run 35458876648. Not green: Repo-state · live GitHub truth verifier."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
