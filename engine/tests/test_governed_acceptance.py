@@ -718,6 +718,151 @@ class IdempotenceTests(_Case):
 # ---------------------------------------------------------------------------
 
 
+class CrashCutTests(_Case):
+    """One cut per test through the §5 continuation (NM-CRASH-02..05).
+
+    A crash is modelled the only way a test honestly can: raise from the seam the supervisor was
+    inside, and then look at what SURVIVED in the ledger and the store. `KeyboardInterrupt` is
+    used deliberately rather than a `RuntimeError` -- the front door catches refusals and turns
+    them into frames, and a row about a CRASH must not be answered by the refusal path. It
+    propagates because `governed_evidence_request` calls `drive_acceptance` bare.
+
+    Every one of these also asserts the RETRY, because the durable state is only half the claim:
+    a supervisor that recorded the right state and then could not finish the turn has still lost
+    it, and §5 step 11 says a retry completes the SAME attempt rather than starting another.
+    """
+
+    def _crash_at_publish(self, *, after):
+        """A `publish_artifact` that crashes either side of the real store write.
+
+        `after=False` is "died before the lease was ever published"; `after=True` is "the blob is
+        in the store and the ledger does not know yet".
+        """
+        calls = []
+
+        def publish(data):
+            calls.append(bytes(data))
+            if after:
+                handle = self.store.publish(data)
+                raise KeyboardInterrupt("crash AFTER the lease publish")
+            raise KeyboardInterrupt("crash BEFORE the lease publish")
+
+        return publish, calls
+
+    def test_nm_crash_02_a_crash_before_the_acceptance_commit_leaves_no_row(self):
+        """NM-CRASH-02 -- the supervisor dies before the acceptance CAS commits.
+
+        The §5 step-2 clock is read before the CAS, so a clock that raises puts the cut ahead of
+        every durable write. What a restart must find is NOTHING: no acceptance row at all, so
+        the turn is re-accepted from scratch rather than resumed from a half-written one.
+        """
+        case = "NM-CRASH-02"
+        document, _handle = self.ready_turn()
+
+        def clock():
+            raise KeyboardInterrupt("crash before the acceptance commit")
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(clock_ms=clock))
+        self.assertIsNone(self.acceptance_row(document), f"{case}: a row survived the cut")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 0,
+            f"{case}: the ledger is not empty")
+        # And the turn is still acceptable afterwards -- the cut cost nothing but the attempt.
+        self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED, case)
+
+    def test_nm_crash_03_a_crash_after_the_commit_leaves_accepted_prepared_and_no_lease(self):
+        """NM-CRASH-03 -- died after the CAS, before any lease was published.
+
+        The durable state is `ACCEPTED_PREPARED` with no lease handle, and the store holds no
+        lease blob. The retry finishes the SAME attempt: `lease_handle` ends up set and exactly
+        one lease blob exists, which is what makes the publish idempotent rather than repeated.
+        """
+        case = "NM-CRASH-03"
+        document, _handle = self.ready_turn()
+        publish, calls = self._crash_at_publish(after=False)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(publish_artifact=publish))
+
+        row = self.acceptance_row(document)
+        self.assertIsNotNone(row, f"{case}: the commit did not survive the cut")
+        self.assertEqual(row["state"], gsl.ACCEPTED_PREPARED, case)
+        self.assertIsNone(row["lease_handle"], f"{case}: a lease handle was recorded")
+        self.assertEqual(len(calls), 1, f"{case}: the cut was not at the publish")
+        self.assertNotIn(row["lease_payload_sha256"], self.store.blobs,
+                         f"{case}: a lease blob reached the store")
+
+        self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED, case)
+        done = self.acceptance_row(document)
+        self.assertEqual(done["lease_handle"], done["lease_payload_sha256"], case)
+        self.assertEqual(len(self.executor.runs), 1, f"{case}: the retry executed twice")
+
+    def test_nm_crash_04_a_crash_between_signature_and_publish_publishes_exactly_once(self):
+        """NM-CRASH-04 -- the lease payload is signed and recorded, the publish never happened.
+
+        `lease_payload_sha256` is on the row from the INSERT, so the ledger already names the
+        blob it expects; the store does not have it. The row this pins is that the retry
+        publishes it ONCE -- the digest is content-addressed, so a second publish of the same
+        bytes must not produce a second artifact.
+        """
+        case = "NM-CRASH-04"
+        document, _handle = self.ready_turn()
+        publish, calls = self._crash_at_publish(after=False)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(publish_artifact=publish))
+
+        row = self.acceptance_row(document)
+        expected = row["lease_payload_sha256"]
+        self.assertIsNotNone(expected, f"{case}: the ledger does not name the lease it expects")
+        self.assertNotIn(expected, self.store.blobs, f"{case}: the blob was published anyway")
+
+        self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED, case)
+        self.assertIn(expected, self.store.blobs, f"{case}: the retry did not publish the lease")
+        self.assertEqual(
+            sum(1 for handle in self.store.blobs if handle == expected), 1,
+            f"{case}: the lease exists more than once")
+        # A further identical trigger must not publish again either.
+        before = dict(self.store.blobs)
+        self.trigger(document)
+        self.assertEqual(self.store.blobs, before, f"{case}: a second retry wrote to the store")
+
+    def test_nm_crash_05_a_crash_after_the_publish_finds_the_blob_and_no_lease_ready(self):
+        """NM-CRASH-05 -- the blob is in the store and the ledger has not been told.
+
+        This is the asymmetric cut that matters: the artifact exists, so a supervisor that
+        decided "published ⇒ done" would skip the `LEASE_READY` CAS forever. The durable state
+        must still be `ACCEPTED_PREPARED` with no lease handle, and the retry must complete from
+        there and adopt the blob that is already present rather than mint a second one.
+        """
+        case = "NM-CRASH-05"
+        document, _handle = self.ready_turn()
+        publish, calls = self._crash_at_publish(after=True)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(publish_artifact=publish))
+
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.ACCEPTED_PREPARED, case)
+        self.assertIsNone(row["lease_handle"], f"{case}: LEASE_READY committed after all")
+        self.assertIn(row["lease_payload_sha256"], self.store.blobs,
+                      f"{case}: the publish did not survive the cut")
+
+        lease_bytes = self.store.blobs[row["lease_payload_sha256"]]
+        self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED, case)
+        done = self.acceptance_row(document)
+        self.assertEqual(done["lease_handle"], done["lease_payload_sha256"], case)
+        # The store GROWS across the retry, and that is correct -- the retry finishes the turn,
+        # which publishes the receipt and terminal artefacts. Asserting the whole store was
+        # unchanged was measured WRONG on the first run, and the honest claim is narrower: the
+        # lease the first attempt published is ADOPTED, byte for byte, not minted again.
+        self.assertEqual(self.store.blobs[done["lease_handle"]], lease_bytes,
+                         f"{case}: the adopted lease is not the bytes already in the store")
+        # And a trigger against the COMPLETED turn writes nothing at all.
+        settled = dict(self.store.blobs)
+        self.trigger(document)
+        self.assertEqual(self.store.blobs, settled,
+                         f"{case}: a retry of a completed turn wrote to the store")
+
+
 class RefusalsAreReachableTests(_Case):
 
     # ---- pre-record ---------------------------------------------------------
