@@ -31,7 +31,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Document class / Փաստաթղթի դաս | Informative · Տեղեկատու — the normative documents are [`CLAUDE.md`](./CLAUDE.md), [`PROJECT_STATE.md`](./PROJECT_STATE.md), [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) |
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
-| Measured at / Չափված ա | 2026-09-19, `main` @ `45ea71e`, on a Windows box · Windows-ի վրա |
+| Measured at / Չափված ա | 2026-09-19, `main` @ `235acc1`, on a Windows box · Windows-ի վրա |
 | Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
@@ -255,11 +255,11 @@ enforced from the app.
 </div>
 
 **HY:** Այստեղ տոկոս չկա։ Ամեն տող այն ա, ինչ ստուգումը տպում ա, ու ամեն մեկի կողքը իրեն
-տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `45ea71e`; `main`-ը արագ ա շարժվում,
+տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `235acc1`; `main`-ը արագ ա շարժվում,
 ուրեմն վազեցրու հրամանը, ոչ թե վստահիր թվին։
 
 **EN:** Nothing here is a percentage. Each row is what a check prints, and each carries the
-command that printed it. The whole table is measured at **one head**, `45ea71e`; `main` moves
+command that printed it. The whole table is measured at **one head**, `235acc1`; `main` moves
 fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
@@ -306,19 +306,19 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **78 pull request**, **248 ֆայլ** ու **47 550 ավելացված տող** են merge
+Այդ ծայրից ի վեր **79 pull request**, **248 ֆայլ** ու **47 663 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **78 pull requests**, **248 files** and **47,550 inserted lines**
+no P0. Since that head, **79 pull requests**, **248 files** and **47,663 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 78
-    git diff --shortstat 5cf9b8c..HEAD    # 248 files changed, 47550 insertions(+), 13464 deletions(-)
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 79
+    git diff --shortstat 5cf9b8c..HEAD    # 248 files changed, 47663 insertions(+), 13464 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա

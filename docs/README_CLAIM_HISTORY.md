@@ -323,6 +323,9 @@ The fix is to put the page's countable claims under `check_doc_claims` the way
 `config/toolchain.json` already is, which is a gate change with its own tests and its own
 mutation proof, not a rider on a redesign. Naming it here is not the same as doing it.
 
+> **Closed.** Everything above stayed as written, because it is the reason the next
+> section exists. What changed, and what is still not covered, is §6.
+
 ## 5. Re-measured at each landing head
 
 §4f set the rule and §4g named why it is needed: no gate reads `README.md`, so a pull request that
@@ -336,9 +339,25 @@ section above is a figure that was false when written. §4g's control split was 
 
 | Landed at | What moved | Measured |
 | :--- | :--- | :--- |
-| `45ea71e` | matrix `implemented` 130 → **132**, `unreviewed` 58 → **56** — `NM-CRASH-06` and `NM-TIME-12` bound | `python -c "import collections,json; print(collections.Counter(c['status'] for c in json.load(open('config/negative-matrix.json',encoding='utf-8'))['cases'].values()))"` |
-| `45ea71e` | engine suite 2141 → **2143** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
-| `45ea71e` | 77 → **78** pull requests, 240 → **248** files, 46,766 → **47,550** inserted lines since `5cf9b8c` | `git log --format=%s 5cf9b8c..HEAD \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` and `git diff --shortstat 5cf9b8c..HEAD` |
+| `235acc1` | matrix `implemented` 130 → **132**, `unreviewed` 58 → **56** — `NM-CRASH-06` and `NM-TIME-12` bound | `python -c "import collections,json; print(collections.Counter(c['status'] for c in json.load(open('config/negative-matrix.json',encoding='utf-8'))['cases'].values()))"` |
+| `235acc1` | engine suite 2141 → **2143** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `235acc1` | 77 → **79** pull requests, 240 → **248** files, 46,766 → **47,663** inserted lines since `5cf9b8c` | `git log --format=%s 5cf9b8c..HEAD \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` and `git diff --shortstat 5cf9b8c..HEAD` |
+
+**When to write the row, and it is not the same pull request.** These three rows first went in
+naming `45ea71e`, the base their branch was written on, and they landed at `235acc1`. The same
+mistake put *Measured at `main` @ `45ea71e`* at the top of a page printing 132 / 54 / 56 and 2143 —
+the values at `235acc1`. At `45ea71e` they were 130 / 54 / 58 and 2141, so the page named a head at
+which two of its own rows were false, and they were the two a reader would most likely check.
+
+That is a rule, not a slip. **A change that moves a counted number cannot name a head where its own
+numbers hold, because that head does not exist until it merges.** Naming the base is wrong for
+exactly the rows the change touched. So the page is re-trued in the pull request AFTER the one that
+moved the number, against the head that actually landed — which is what this column has always
+said, and what it was not filled with. `Landed at` means landed.
+
+| Landed at | What moved | Measured |
+| :--- | :--- | :--- |
+| `235acc1` | the three rows above were re-headed from `45ea71e`, and the page's own *Measured at* with them; PRs since `5cf9b8c` 78 → **79**, inserted lines 47,550 → **47,663** | `git rev-parse --short HEAD` on `main`, and `git diff --shortstat 5cf9b8c..HEAD` |
 
 Unchanged at this head, and checked rather than assumed: `blocked` 54, total 242, bridge 210,
 Rust crates 10, gate scripts 39, declared controls 59 (39 check · 20 tool), workflow files 8,
@@ -350,3 +369,56 @@ same 1120px track is 611 / 250 / 259 px, against 602 / 250 / 268 at the previous
 segment boundaries, the three captions, the plate under the hatched label, four explanation
 columns and the `unreviewed is not a pass` box were placed from that arithmetic rather than by
 eye. The hatch kept nine diagonals: its band narrowed by 9px, not enough to drop one.
+
+## 6. The gate §4g asked for
+
+`check_doc_claims` now reads `README.md` and this file. It did not have to learn a new kind of
+claim to do it — the three it already settles are the three the front page makes, so this is a
+question of SCOPE, and the scope was the defect.
+
+**How.** Being *checked* and being *canonical* were one property, and the front page fell between
+them. `config/canonical-read-manifest.json` answers "what must every session read before it can
+start" and carries a byte ceiling per path, because that text is pasted into a session. Nobody
+needs the README to start, and it is 33 KB. So it was in no list, and therefore in no gate. The
+two properties are now separate: `ALSO_CHECKED` in `tools/check_doc_claims.py` names documents
+whose checkable claims are checked and which no session reads. Adding one costs a session nothing.
+
+**Measured, at `235acc1`.** The gate's own verdict line, before and after:
+
+```
+before   GREEN: canonical claims check out; 145 paths, 42 shas, 107 tickets, 8 versions
+after    GREEN: canonical claims check out; 204 paths, 49 shas, 118 tickets, 8 versions;
+                2 of 2 also-checked document(s) read
+```
+
++59 paths, +7 commit hashes, +11 ticket ids: 77 referents that resolved on trust yesterday and are
+resolved by a check today. Versions stayed at 8 — neither document claims a toolchain version.
+
+**Proved by breaking it, not by the green.** A gate that is green the moment it is wired proves
+nothing, so one claim of each kind was broken in the real `README.md` and the real gate was run:
+
+| Mutation in `README.md` | Verdict |
+| :--- | :--- |
+| `./docs/brand/` → `./docs/no-such-directory/` | RED — "README.md: references `./docs/no-such-directory/`, which does not exist" |
+| `5cf9b8c` → a 40-hex string that resolves to nothing | RED — "README.md: names … which is not an object in this repository" |
+| `T-048` → a ticket id on no board | RED — "README.md: names …, which is in no task board, ledger or archive" |
+
+And the control, which matters more than the three: with `ALSO_CHECKED` emptied and the same
+`README.md` still broken, the gate goes back to naming nothing in it. The red was arriving from
+this change and not from somewhere else.
+
+**One asymmetry, deliberate.** An absent `ALSO_CHECKED` document is not RED, while a path the read
+manifest names and the disk lacks is. The manifest is a contract about the session read set; this
+tuple is not a contract, it is a scope. `main(root)` also runs over synthetic roots in this gate's
+own tests, where a missing README is a defect of nothing — requiring it there reported
+"README.md: not on disk" in thirteen tests whose subject was something else. Absence is not
+*silent*, though: the verdict prints `2 of 2 also-checked document(s) read`, and
+`test_the_real_repository_has_every_also_checked_document` fails by name if either file leaves the
+tree. A silent skip would hand back the guarantee this section is about.
+
+**What this still does not check.** The countable claims — 2143 engine tests, 39 gate scripts, 262
+specialist definitions, 132 / 54 / 56 — remain unchecked by any gate. Those need a declaration
+mapping each claim to the command that prints it, and a runner willing to execute suites inside a
+gate; that is a larger design than this, and §5 is still the place routine drift gets recorded by
+hand. So: the class that produced §4g's *false* row — a path, a hash, a ticket — is closed. The
+class that produced its five *stale* rows is not.

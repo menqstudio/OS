@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #240 · branch `t062/bind-clock`** (base `main`, tip `45ea71e`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #241 · branch `t074/readme-under-doc-claims`** (base `main`, tip `235acc1`, task T-074).
 >
-> two rows that turn on WHICH clock read a value came from, and the front page re-measured with them
+> the front page under check_doc_claims, and a control byte
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,17 +18,18 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-073** | **Six front-page numbers were never measured** — five stale under 21 merged PRs; the control split `45 / 14` summed to a right 59 while wrong at every head ◑ | Bro | Review | `#239` |
-| **T-072** | **The gates had never run on Windows** — every `tools/` self-test step in CI is ubuntu, so five printed `a` and two of `check_audit_actor`'s tests were red here while the wall stayed green ◑ | Bro | Review | `#232` |
-| **T-071** | **Every stamp burned a full `ci` run** — `restamp()` moved a correct marker past the attribution line, so `edited` restarted 21 jobs. 19 of 26 runs cancelled ◑ | Bro | Review | merged `#231` |
-| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still. Pin → 46.0.7, waivers 7 → 4; a gate refuses both now ◑ | Bro | Review | merged `#230` |
-| **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently. Render-assigned refs ◑ | Bro | Review | merged `#227` |
+| **T-074** | **No gate read the front page** — in no manifest meant in no check; `ALSO_CHECKED`, 145 → 204 paths, and a C0 byte found ◑ | Bro | Review | `#241` |
+| **T-073** | **Six front-page numbers were never measured** — five stale, and the control split `45 / 14` summed to a right 59 while wrong at every head ◑ | Bro | Review | merged `#239` |
+| **T-072** | **The gates had never run on Windows** — every `tools/` self-test step ran on ubuntu, five printed `a\b` and two `check_audit_actor` tests were red here ◑ | Bro | Review | `#232` |
+| **T-071** | **Every stamp burned a full `ci` run** — `restamp()` moved a correct marker past the attribution line, so `edited` restarted 21 jobs ◑ | Bro | Review | merged `#231` |
+| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still; a gate refuses both shapes now ◑ | Bro | Review | merged `#230` |
+| **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently ◑ | Bro | Review | merged `#227` |
 | **T-068** | **The frontend suite oversubscribed the machine** — vitest's default spent half its time in `environment`; `maxWorkers: 4` halves it | Bro | Review | merged `#223` |
-| **T-067** | **`_rest_open_prs` asked about `menqstudio/OS` by name** (H-05); built from `_repo_slug()` now, no slug ⇒ no read ◑ | Bro | Review | merged `#222` |
-| **T-066** | **Two tools lied on 2026-09-19, untested** — UTF-8 git reads, the carrier moves `what`/`current`, `main_ci` measured ◑ | Bro | Review | merged `#221` |
-| **T-065** | **Supply-chain gate red since 2026-09-07** — `browserslist` and `rustls` lifted, `T-055` executed by the Owner ◑ | Bro | Review | merged `#220` |
+| **T-067** | **`_rest_open_prs` named `menqstudio/OS`** (H-05); built from `_repo_slug()` now, no slug ⇒ no read ◑ | Bro | Review | merged `#222` |
+| **T-066** | **Two tools lied, untested** — UTF-8 git reads, the carrier moves `what`/`current`, `main_ci` measured ◑ | Bro | Review | merged `#221` |
+| **T-065** | **Supply-chain gate was red for weeks** — `browserslist` and `rustls` lifted, `T-055` done by the Owner ◑ | Bro | Review | merged `#220` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
-| **T-064** | **The shut gate names WHICH requirement a machine fails** — `preflight.rs`: 27, and who provisions each | Bro | Review | merged `#217` |
+| **T-064** | **The shut gate names WHICH requirement a machine fails** — `preflight.rs`, and who provisions each | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files** — the gate refuses drift. **Open: the git-tag arm**, a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` was stale by construction** — an OLDER reading passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
