@@ -365,6 +365,20 @@ _GOVERNANCE_STATE_DIR_ENV = "BROPS_GOVERNANCE_STATE_DIR"
 _GOVERNANCE_EVIDENCE_STORE_ENV = "BROPS_GOVERNANCE_EVIDENCE_STORE"
 _GOVERNANCE_REGISTRY_ROOT_ENV = "BROPS_GOVERNANCE_REGISTRY_ROOT"
 
+#: The approval-REQUEST wire contract -- the one WRITE this dispatch serves. Held as literals for the
+#: same reason the read's are: the refusal below has to be emitable when `bro_approval_requests` will
+#: not import, which is exactly when its constants are out of reach. `ProtocolDriftTests` pins all
+#: three to the engine module's, so they cannot drift apart in silence.
+APPROVAL_REQUEST_PROTOCOL = "brops.approval-request.v1"
+APPROVAL_REQUEST_OP = "approval.request"
+APPROVAL_REPLY_PROTOCOL = "brops.approval-request-reply.v1"
+
+#: Operator-provisioned state for the WRITE, deliberately disjoint from the read mirror's three
+#: variables and from the execution path's: provisioning the mirror grants no write, provisioning the
+#: write grants no read, and neither grants a step toward running anything. Unset means REFUSED -- not
+#: "recorded somewhere sensible", which is the failure a default path would ship.
+_APPROVAL_LOG_DIR_ENV = "BROPS_APPROVAL_REQUEST_LOG_DIR"
+
 
 def _op_refusal(request: Any, error: Any) -> dict:
     """A refusal for a request with no reply protocol of its own.
@@ -801,11 +815,96 @@ def _bridge_governed_turn_submit(request: dict) -> dict:
     return drive_governed_turn(request, request_supervisor=request_supervisor)
 
 
+def _approval_refusal(request: Any, error: Any) -> dict:
+    """An approval-request refusal, in the ENGINE module's own refusal shape.
+
+    Field-for-field what `bro_approval_requests._refusal` emits, and for exactly its reason: a
+    refusal carries no `recorded`, `sequence` or `entry_sha256` key at all, so "I did not record
+    this" cannot be read as "recorded, and it changed nothing". A consumer cannot tell "the engine
+    refused" from "the sidecar refused" by field set, which is deliberate -- one of them being
+    softer than the other is how a caller learns to retry past a real refusal.
+    """
+    return {
+        "protocol": APPROVAL_REPLY_PROTOCOL,
+        "schema": 1,
+        "ok": False,
+        "op": APPROVAL_REQUEST_OP,
+        "request_id": request.get("request_id") if isinstance(request, dict) else None,
+        "reason": str(error),
+    }
+
+
+def _approval_log() -> Any:
+    """Open the operator-provisioned approval-request log, or raise.
+
+    Every failure here is a refusal reason. The one thing this will not do is create a directory and
+    then report a record written into it: a store this process invented is not a store an operator
+    provisioned, and the whole value of the log is that somebody chose where it lives.
+    """
+    directory = os.environ.get(_APPROVAL_LOG_DIR_ENV, "").strip()
+    if not directory:
+        raise RuntimeError(
+            f"the approval-request log is not provisioned: {_APPROVAL_LOG_DIR_ENV} must name the "
+            "directory the engine appends asks to. This is a refusal, not a record written "
+            "somewhere sensible")
+    path = pathlib.Path(directory)
+    if not path.is_dir():
+        raise RuntimeError(
+            f"{_APPROVAL_LOG_DIR_ENV}={directory!r} is not an existing directory; refusing to "
+            "create one, because a store this process invented is not one an operator chose")
+    from bro_approval_requests import ApprovalRequestLog  # engine/runtime is on sys.path (header)
+
+    return ApprovalRequestLog(path, _ENGINE)
+
+
+def _op_approval_request(request: dict) -> dict:
+    """Serve one `brops.approval-request.v1`: validate against the contract, record, reply.
+
+    THE ONLY WRITE IN THIS TABLE, and it writes one line to one append-only log. It cannot move a
+    task: the approval queue the cockpit reads is derived from the runtime's own transitions, and the
+    artifact that produces one carries `key_id` and a signature this side cannot mint.
+
+    The two engine facts a request is judged against are read through the engine's PUBLIC surfaces --
+    `queue_state` for the state a task is actually in (`O-2`) and the governance read's
+    `evidenceChain` for the refs it holds (`O-4`) -- so this hop asserts nothing about the engine
+    that the engine does not already publish to the cockpit.
+    """
+    try:
+        log = _approval_log()
+        runtime = _governance_runtime()
+        api = _governance_api(runtime)
+    except Exception as exc:  # noqa: BLE001 - provisioning/import failure is a refusal
+        return _approval_refusal(request, exc)
+
+    now = int(time.time())
+    try:
+        states = {t["task_id"]: t["state"] for t in api.queue_state(now_epoch=now)["tasks"]}
+    except Exception as exc:  # noqa: BLE001
+        return _approval_refusal(
+            request, f"the engine could not read its own task states, so an ask cannot be checked "
+                     f"against them: {exc}")
+
+    evidence_has = None
+    if isinstance(request, dict) and request.get("evidence_refs"):
+        read = api.governance_read({
+            "protocol": GOVERNANCE_PROTOCOL,
+            "op": GOVERNANCE_READ_OP,
+            "surface": "evidenceChain",
+            "task_id": request.get("task_id") if isinstance(request.get("task_id"), str) else None,
+            "read_only": True,
+        })
+        if read.get("ok") is True:
+            held = {r.get("event_id") for r in read.get("records", [])}
+            evidence_has = held.__contains__
+
+    return log.record(request, now_epoch=now, task_states=states, evidence_has=evidence_has)
+
 #: op -> (handler, refusal factory). Registering an op is adding a row; the dispatch
 #: needs no edit, and an op absent from this table is refused by name. The refusal
 #: factory is per-op so a refusal stays inside the protocol the caller was speaking.
 _OPS: dict[str, tuple[Callable[[dict], dict], Callable[[Any, Any], dict]]] = {
     GOVERNANCE_READ_OP: (_op_governance_read, _governance_refusal),
+    APPROVAL_REQUEST_OP: (_op_approval_request, _approval_refusal),
 }
 
 
