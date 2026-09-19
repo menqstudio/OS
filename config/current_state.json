@@ -121,7 +121,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #233 (t062/bind-nm-ipc-06), task T-062: T-062 continues: NM-IPC-06 bound by rename and mutation, NM-TIME-02 and NM-TIME-19 written as new tests; the registry reads 116 implemented / 54 blocked / 72 unreviewed Next: section 3 has 56 implementable rows left; NM-TIME-01 needs the signer fixture that lives in test_isolated_signer.py, and NM-TCB-20 / NM-ACL-09 / NM-ACL-12 are shell proofs needing Linux and root",
+    "current": "PR #233 (t062/bind-nm-ipc-06), task T-062: T-062 continues: NM-IPC-06 bound by rename and mutation, NM-TIME-02 and NM-TIME-19 written as new tests; the registry reads 116 implemented / 54 blocked / 72 unreviewed Next: section 3 has 57 implementable rows left (NM-IPC-06 was a section-2 row, so only the two TIME rows came off section 3); NM-TIME-01 needs the signer fixture in test_isolated_signer.py, and NM-TCB-20 / NM-ACL-09 / NM-ACL-12 are shell proofs needing Linux and root",
     "_note": "The carrier is current_workflow_pr (#233 on t062/bind-nm-ipc-06). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

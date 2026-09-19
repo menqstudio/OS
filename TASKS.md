@@ -33,7 +33,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — 182 rows read, 77 bound and mutation-verified: **116 / 54 / 72** from 39 / 21 / 182. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 56 left ◑ | Bro | In-Progress | `#233` |
+| **T-062** | **The negative matrix's silent state** — 182 rows read, 77 bound and mutation-verified: **116 / 54 / 72** from 39 / 21 / 182. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 57 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |
