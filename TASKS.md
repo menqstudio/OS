@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #245 · branch `t078/tcb-floor-over-the-whole-set`** (base `main`, tip `7356c80`, task T-078).
+> **⏭️ CURRENT ACTIVE: PR #246 · branch `t079/four-predicates-over-their-surface`** (base `main`, tip `13b3e00`, task T-079).
 >
-> the TCB floor asserted over the whole set, not one sample
+> four predicates, four independent kills
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-079** | **Four predicates, four independent kills** — a spent nonce, a divergent challenge context, an accessor nobody may add, and a trust class nobody may infer ◑ | Bro | Review | `#246` |
 | **T-078** | **Every TCB violation test poked one file** — the floor is now asserted over the WHOLE pinned set and all seven principals; plus a trigger a neighbour claimed and never checked ◑ | Bro | Review | `#245` |
 | **T-077** | **The crash family is closed in §3** — NM-CRASH-12/13/14; the floor turns out to be defended twice, so one mutant each survives and both together kill ◑ | Bro | Review | `#244` |
 | **T-076** | **A required gate failed 1 run in 40** — `pages.browser.spec.tsx` sampled the DOM once after `mount`; polling instead, 18-red proof ◑ | Bro | Review | `#243` |
@@ -27,7 +28,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — **140 / 54 / 48** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 33 left ◑ | Bro | In-Progress | `#233` |
+| **T-062** | **The negative matrix's silent state** — **144 / 54 / 44** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 29 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |

@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "7356c8011ff3843aff83fc92c1e19de6b4187c9c",
+  "settled_at_main_head": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
   "sync": {
-    "baseline_main_head_at_sync": "7356c8011ff3843aff83fc92c1e19de6b4187c9c",
-    "snapshot_branch": "t078/tcb-floor-over-the-whole-set",
+    "baseline_main_head_at_sync": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
+    "snapshot_branch": "t079/four-predicates-over-their-surface",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t078/tcb-floor-over-the-whole-set"
+    "branch": "t079/four-predicates-over-their-surface"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 245,
-    "branch": "t078/tcb-floor-over-the-whole-set",
+    "number": 246,
+    "branch": "t079/four-predicates-over-their-surface",
     "state": "open",
-    "what": "NM-TCB-01, -03, -08 and -21 bound; the first three loop over every pinned artifact and all seven runtime principals rather than the one file every pre-existing violation test happened to poke, and NM-TCB-21 finally checks an immutability trigger a neighbouring test's docstring asserted and never tested",
-    "note": "the TCB floor asserted over the whole set, not one sample",
+    "what": "NM-TERM-02, NM-SCOPE-08, NM-SCOPE-06 and NM-MAN-12 bound: a nonce spent by a terminal refusal is a replay on re-ask, a challenge pre-stored under another workspace or install blocks every turn, a parsed-but-unverified envelope exposes only its key id (asserted by reading the source, because the accessor that would break it does not exist yet), and a key can neither omit nor invent its trust class",
+    "note": "four predicates, four independent kills",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #245 (t078/tcb-floor-over-the-whole-set), task T-078: NM-TCB-01, -03, -08 and -21 bound; the first three loop over every pinned artifact and all seven runtime principals rather than the one file every pre-existing violation test happened to poke, and NM-TCB-21 finally checks an immutability trigger a neighbouring test's docstring asserted and never tested Next: triage section 3 has 33 rows left; and the artwork for three bare README sections plus the page re-trued for #244 and #245 is the next pull request",
-    "_note": "The carrier is current_workflow_pr (#245 on t078/tcb-floor-over-the-whole-set). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #246 (t079/four-predicates-over-their-surface), task T-079: NM-TERM-02, NM-SCOPE-08, NM-SCOPE-06 and NM-MAN-12 bound: a nonce spent by a terminal refusal is a replay on re-ask, a challenge pre-stored under another workspace or install blocks every turn, a parsed-but-unverified envelope exposes only its key id (asserted by reading the source, because the accessor that would break it does not exist yet), and a key can neither omit nor invent its trust class Next: triage section 3 has 29 rows left, clusters FS (4) and TCB (4); and the three README figures plus the page re-trued for three deferred landings",
+    "_note": "The carrier is current_workflow_pr (#246 on t079/four-predicates-over-their-surface). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "7356c8011ff3843aff83fc92c1e19de6b4187c9c",
+      "head": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
       "conclusion": "success",
-      "run_id": 35440733093,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 7356c80, run 35440733093."
+      "run_id": 35442034293,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 13b3e00, run 35442034293."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

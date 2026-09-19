@@ -45,7 +45,6 @@
     "NM-FS-06",
     "NM-IPC-01",
     "NM-MAN-06",
-    "NM-MAN-12",
     "NM-NORELAUNCH-04",
     "NM-ORACLE-07",
     "NM-ORACLE-10",
@@ -55,8 +54,6 @@
     "NM-PARITY-06",
     "NM-PARITY-07",
     "NM-SCOPE-04",
-    "NM-SCOPE-06",
-    "NM-SCOPE-08",
     "NM-TCB-02",
     "NM-TCB-12",
     "NM-TCB-13",
@@ -64,7 +61,6 @@
     "NM-TCB-20",
     "NM-TCB-24",
     "NM-TCB-25",
-    "NM-TERM-02",
     "NM-TERM-04",
     "NM-TERM-08",
     "NM-TIME-15",
@@ -417,10 +413,10 @@
       "blocked_on": "A manifest semantic-validation pass (a `KeyManifest::validate`-style function) that rejects duplicate/conflicting `key_id`. MEASURED: `fn validate`, `duplicate`, `HashSet`, `dedup` each have 0 occurrences in apps/desktop/src-tauri/core/src/key_manifest.rs, and `duplicate|dedup|HashSet` over manifest_authority.rs, production_trust.rs, broker manifest_resolver.rs, win-live resolver.rs/config.rs and preflight.rs yields only two unrelated comments (preflight.rs:1081, :1271). `resolve_production_key` selects by first match (`.iter().find(|k| k.key_id == key_id)`, key_manifest.rs:247), so a second conflicting entry is never examined, and the plain serde derive (key_manifest.rs:25-26) accepts repeated ids. (`key_usage`, the third conflict axis the row names, also does not exist — see NM-MAN-04.)"
     },
     "NM-MAN-12": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Trust-class inference attempt",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/key_manifest.rs::nm_man_12_a_key_cannot_infer_or_invent_its_trust_class"
     },
     "NM-MAN-13": {
       "status": "blocked",
@@ -465,10 +461,10 @@
       "blocked_on": "The signed `allowed_audiences` / install scope does not exist as code. MEASURED 2026-09-19: `grep -rn allowed_audiences` over apps/desktop/src-tauri, apps/desktop/src, engine, bridge, config, contracts (*.rs, *.py, *.ts, *.json) returns no source hit; the only two design-doc occurrences are prose (WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md:195, WAVE_3B_ISOLATED_SIGNER_DESIGN.md:189/537). `ManifestKey` (core/src/key_manifest.rs:26-37) carries `allowed_protocols` and no install/audience field; `resolve_production_key` (key_manifest.rs:241-261) has no install parameter; `ManifestReceiptKeyAuthority::resolve` (core/src/manifest_authority.rs:88-101) is keyed on `key_id` alone; the Python `challenge_key_registry.py` has no audience/workspace/install field either. What must exist first: a signed `allowed_audiences: Vec<String>` on `ManifestKey` (covered by the root signature via `canonical_bytes`), an install-scope parameter on `resolve_production_key` / `ReceiptKeyAuthority::resolve` sourced from the trusted `Expected` (`IssuedRequest.install_id`, receipt.rs:291) — never the unsigned receipt — and the `KeyResolution::Unavailable` arm when the trusted install is not listed."
     },
     "NM-SCOPE-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Unsigned-field trust attempt",
       "section": "§1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt.rs::nm_scope_06_parsed_exposes_only_the_key_id_before_verification"
     },
     "NM-SCOPE-07": {
       "status": "implemented",
@@ -477,10 +473,10 @@
       "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_07_claimed_key_id_must_equal_resolved_key_id"
     },
     "NM-SCOPE-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Create-pending context divergence",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::nm_scope_08_a_challenge_pre_stored_under_another_context_blocks_every_turn"
     },
     "NM-FRAME-01": {
       "status": "implemented",
@@ -1353,10 +1349,10 @@
       "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_term_01_pre_verification_block_records_the_real_reason_and_consumes_the_nonce"
     },
     "NM-TERM-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Nonce not retryable",
       "section": "§6.1 out-of-band",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::nm_term_02_a_nonce_spent_by_a_terminal_block_is_a_replay_on_re_ask"
     },
     "NM-TERM-03": {
       "status": "implemented",

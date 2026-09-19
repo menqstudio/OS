@@ -1395,4 +1395,41 @@ mod tests {
         assert!(!dbg.contains(&"55".repeat(32)), "system_sha256 leaked into Debug: {dbg}");
         assert!(!dbg.contains("nonce-xyz"), "request_nonce leaked into Debug: {dbg}");
     }
+    #[test]
+    fn nm_scope_06_parsed_exposes_only_the_key_id_before_verification() {
+        // NM-SCOPE-06 -- unsigned-field trust attempt. A parsed-but-unverified envelope must offer no
+        // field except the key id, because every other field is still just bytes a caller sent. The
+        // type enforces it structurally: `Parsed.fields` is private, `Debug` is redacted to key_id plus
+        // a length, and `impl Parsed` exposes exactly `key_id` and `verify`.
+        //
+        // This reads its own source, and that is deliberate rather than clever. No runtime assertion
+        // can express "nobody has added a third accessor", because the accessor that would break the
+        // property does not exist yet. A source-reading test fails the moment one is added, which is
+        // the only moment that matters.
+        let src = include_str!("receipt.rs");
+        let start = src
+            .find("\nimpl Parsed {\n")
+            .expect("NM-SCOPE-06: the `impl Parsed` block moved or was renamed")
+            + 1;
+        let body = &src[start..];
+        let end = body
+            .find("\n}\n")
+            .expect("NM-SCOPE-06: could not find the end of the `impl Parsed` block");
+        let block = &body[..end];
+
+        let exposed: Vec<&str> = block
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("pub fn "))
+            .map(|l| l.split(['(', '<', ' ']).next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            exposed,
+            vec!["key_id", "verify"],
+            "NM-SCOPE-06: `impl Parsed` must expose ONLY key_id and verify before verification; \
+             found {exposed:?}. An accessor here hands a caller an unsigned field as if it were a fact."
+        );
+        // The block really was sliced -- otherwise an empty slice would satisfy an empty expectation.
+        assert!(block.contains("fn verify("), "NM-SCOPE-06: the sliced block is not the impl");
+    }
+
 }

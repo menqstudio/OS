@@ -1103,6 +1103,106 @@ mod tests {
     }
 
     #[test]
+    fn nm_term_02_a_nonce_spent_by_a_terminal_block_is_a_replay_on_re_ask() {
+        // NM-TERM-02 -- a terminal refusal spends the nonce, so the same request cannot be re-asked.
+        //
+        // `record_pre_verification_block` is the path taken when the governed engine never produced a
+        // receipt at all -- a sidecar timeout, a transport failure. Its own comment says the challenge
+        // is spent "one shot, even on failure", and this is why: if a terminal block left the nonce
+        // unconsumed, a caller could retry the same challenge until one attempt happened to succeed,
+        // which is a retry oracle over a one-time authorisation.
+        //
+        // So the SECOND ask -- with a perfectly valid, correctly signed receipt -- must still Block,
+        // and Block for REPLAY rather than for anything about the receipt. Asserting the exact reason
+        // matters: a build that blocked for some other cause would pass a looser assertion while
+        // having lost this property.
+        let conn = db();
+        let now = 1_000_000u64;
+        let fx = Fx::new(now, "nonce-T2");
+        seed_turn(&conn, &fx, now);
+
+        let first = record_pre_verification_block(
+            &conn, "nonce-T2", "governed engine sidecar timed out", now).unwrap();
+        assert!(
+            matches!(first, ReceiptOutcome::Blocked { .. }),
+            "NM-TERM-02: the terminal refusal itself must Block, got {first:?}"
+        );
+        let consumed: Option<String> = conn
+            .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-T2'", [], |r| r.get(0))
+            .unwrap();
+        assert!(consumed.is_some(), "NM-TERM-02: the terminal block did not spend the nonce");
+
+        // The re-ask carries a fully valid, correctly signed receipt for the same turn.
+        let (env, sig) = fx.wire_of(&fx.fields("receipt-T2"));
+        let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
+        match out {
+            ReceiptOutcome::Blocked { ref error, .. } => assert_eq!(
+                error, "request_nonce already consumed (replay)",
+                "NM-TERM-02: blocked for the wrong reason"
+            ),
+            other => panic!("NM-TERM-02: a spent nonce must Block, got {other:?}"),
+        }
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0,
+                   "NM-TERM-02: a replayed turn posted a message");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0,
+                   "NM-TERM-02: a replayed turn entered the receipt-id ledger");
+    }
+
+    #[test]
+    fn nm_scope_08_a_challenge_pre_stored_under_another_context_blocks_every_turn() {
+        // NM-SCOPE-08 -- create-pending context divergence.
+        //
+        // `request_sha256` is computed over the workspace, the install, the nonce, the three input
+        // digests and the requested-at stamp. The desktop pre-stores that envelope when it issues the
+        // challenge, and the supervisor compares what it recomputes against what was pre-stored. So a
+        // challenge issued under a DIFFERENT workspace or install can never be satisfied -- and the
+        // attacker does not have to forge a field for this to be the interesting case: the receipt is
+        // honest and correctly signed, and the divergence is entirely in what the challenge committed
+        // to.
+        //
+        // Both axes are asserted. One limb would leave the other resting on nothing, and the row is
+        // named for the context rather than for either field.
+        //
+        // What this adds over `challenge_bound_to_a_different_request_envelope_is_blocked` below,
+        // which the same mutation also kills: that test diverges an INPUT DIGEST (the system hash).
+        // This one diverges the CONTEXT — the workspace and the install — which is what
+        // "create-pending context divergence" names, and it pins the exact block reason and the
+        // nonce spend rather than only that something blocked.
+        for (label, issued) in [
+            ("workspace", IssuedRequest { workspace_id: "ws-2", ..Fx::new(1_000_000, "x").issued() }),
+            ("install", IssuedRequest { install_id: "install-2", ..Fx::new(1_000_000, "x").issued() }),
+        ] {
+            let conn = db();
+            let now = 1_000_000u64;
+            let fx = Fx::new(now, "nonce-S8");
+            let conv = crate::repo::chat::create_conversation(
+                &conn, "direct", "governed", crate::repo::audit::Actor::local_operator()).unwrap();
+            // The challenge is issued for this fixture's nonce but under a divergent context.
+            let divergent = IssuedRequest { request_nonce: &fx.nonce, ..issued };
+            issue_challenge(&conn, &conv.id, &divergent, now).unwrap();
+
+            let (env, sig) = fx.wire_of(&fx.fields("receipt-S8"));
+            let out = vrec(&conn, &fx, &env, &sig, now, TrustClass::Development).unwrap();
+            match out {
+                ReceiptOutcome::Blocked { ref error, .. } => assert!(
+                    error.contains("challenge request_sha256 does not match"),
+                    "NM-SCOPE-08 ({label}): blocked for the wrong reason: {error}"
+                ),
+                other => panic!("NM-SCOPE-08 ({label}): a divergent challenge must Block, got {other:?}"),
+            }
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM messages"), 0,
+                       "NM-SCOPE-08 ({label}): a blocked turn posted a message");
+            assert_eq!(count(&conn, "SELECT COUNT(*) FROM receipt_ids_seen"), 0,
+                       "NM-SCOPE-08 ({label}): a blocked turn entered the receipt-id ledger");
+            let consumed: Option<String> = conn
+                .query_row("SELECT consumed_at FROM receipt_challenges WHERE nonce = 'nonce-S8'", [], |r| r.get(0))
+                .unwrap();
+            assert!(consumed.is_some(),
+                    "NM-SCOPE-08 ({label}): the nonce must be spent even on a blocked turn");
+        }
+    }
+
+    #[test]
     fn held_answer_is_fail_closed_under_no_trusted_manifest() {
         // The held path MUST be as fail-closed as the conversation path: with no trusted manifest,
         // Ask Bro Blocks (no held body leaks), records blocked evidence, and consumes the nonce.

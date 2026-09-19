@@ -606,4 +606,51 @@ mod tests {
         let f = AntiRollbackFloor { highest_epoch: 7, highest_hash: "abc".into() };
         assert_eq!(parse_floor_json(&floor_json_bytes(&f)), Some(f));
     }
+    #[test]
+    fn nm_man_12_a_key_cannot_infer_or_invent_its_trust_class() {
+        // NM-MAN-12 -- trust-class inference attempt. `trust_class` decides whether a key may render
+        // production `trusted_verified`, so a key that omits it must not be read as anything, and a key
+        // that invents a class must not be read as the nearest one. Both are serde properties of a
+        // closed shape rather than runtime checks: the field is required (no Option, no
+        // #[serde(default)]) and the enum is closed (no #[serde(other)]).
+        //
+        // Both limbs are asserted because "required" and "closed" can be lost independently.
+        let without = r#"{"manifest_epoch":2,"root_key_id":"root-1","keys":[{
+            "key_id":"k","public_key_hex":"00","valid_from_ms":1,"valid_to_ms":9,
+            "key_epoch":1,"revoked":false,
+            "allowed_protocols":["brops.governed-receipt-envelope.v1"]}]}"#;
+        let err = serde_json::from_str::<KeyManifest>(without)
+            .expect_err("NM-MAN-12: a key with no trust_class must not parse")
+            .to_string();
+        assert!(
+            err.contains("missing field `trust_class`"),
+            "NM-MAN-12: expected a missing-field error, got: {err}"
+        );
+
+        let invented = r#"{"manifest_epoch":2,"root_key_id":"root-1","keys":[{
+            "key_id":"k","public_key_hex":"00","trust_class":"staging",
+            "valid_from_ms":1,"valid_to_ms":9,"key_epoch":1,"revoked":false,
+            "allowed_protocols":["brops.governed-receipt-envelope.v1"]}]}"#;
+        let err = serde_json::from_str::<KeyManifest>(invented)
+            .expect_err("NM-MAN-12: an invented trust_class must not parse")
+            .to_string();
+        assert!(
+            err.contains("unknown variant"),
+            "NM-MAN-12: expected an unknown-variant error, got: {err}"
+        );
+
+        // The positive control: the two accepted classes do parse, so the limbs above are not passing
+        // because nothing parses.
+        for class in ["production", "development"] {
+            let ok = format!(
+                r#"{{"manifest_epoch":2,"root_key_id":"root-1","keys":[{{
+                "key_id":"k","public_key_hex":"00","trust_class":"{class}",
+                "valid_from_ms":1,"valid_to_ms":9,"key_epoch":1,"revoked":false,
+                "allowed_protocols":["brops.governed-receipt-envelope.v1"]}}]}}"#
+            );
+            serde_json::from_str::<KeyManifest>(&ok)
+                .unwrap_or_else(|e| panic!("NM-MAN-12: {class} must parse, got {e}"));
+        }
+    }
+
 }
