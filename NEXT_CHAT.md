@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t062/bind-nm-time-01` — `main` @ `3772a65`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t062/bind-nm-parity` — `main` @ `68a2948`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #234 · branch `t062/bind-nm-time-01`** (base `main`, tip `3772a65`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #235 · branch `t062/bind-nm-parity`** (base `main`, tip `68a2948`, task T-062).
 >
-> NM-TIME-01 is bound: a seconds-valued completed_at is refused as timestamp_invalid by an ordering check, and the test says plainly that it pins the check rather than which of its two limbs fired
+> the three cross-language parity rows are bound on BOTH sides: the same system, history and millisecond fixtures pinned to the same digests in Python and in Rust, since two sides drifting together keep either test green alone
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,9 +75,8 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**70 pull requests, 238 files and 45,922 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(62/207/44,630 and
-58/206/44,055 earlier on 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
+**73 pull requests, 240 files and 46,240 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on 2026-09-19; 20/107/19688 until 2026-08-31.)*
 
 **Two one-line edits wait on the Owner**, both in files a Builder does not touch:
 `.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed

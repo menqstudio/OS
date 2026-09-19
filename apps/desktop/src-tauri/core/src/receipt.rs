@@ -1323,6 +1323,61 @@ mod tests {
     }
 
     #[test]
+    fn nm_parity_the_same_fixtures_hash_the_same() {
+        // NM-PARITY-01, NM-PARITY-02, NM-PARITY-09 — the Rust half. The Python half is
+        // `engine/tests/test_negative_matrix.py::NegativeMatrixParityTests`, which pins the SAME
+        // literals to the SAME hex. Both sides write the fixture and the digest out in full
+        // rather than one deriving it and the other importing: two sides drifting TOGETHER would
+        // keep either test green on its own, and that is the failure a parity row is about.
+
+        // NM-PARITY-01 — `system` is the raw UTF-8 bytes. The fixture carries a leading NUL, an
+        // interior NUL, a trailing space, a DECOMPOSED `e` + U+0301, Armenian, a 3-byte glyph and
+        // a 4-byte emoji, so NFC, NFKC, a trim and a NUL filter each change these bytes.
+        let system = "\0Bro\0e\u{301} \u{535}\u{57d} \u{2708} \u{1f6e0} ok ";
+        assert_eq!(system.as_bytes().len(), 26, "NM-PARITY-01: 26 UTF-8 bytes");
+        assert!(system.as_bytes().contains(&0u8), "NM-PARITY-01: the NUL must survive");
+        assert_eq!(
+            sha256_hex(system.as_bytes()),
+            "f853ac54b4c6c3c832a7801cd165adcaadbc1ccba2239b894d7551cc10aef8bd"
+        );
+
+        // NM-PARITY-02 — an EMPTY history is `[]`, never `null` and never omitted. The non-empty
+        // Unicode vector is pinned by `brops_all_formula_parity_matches_python` above; this is the
+        // arm that was unpinned, and it is the one a `null` special-case would silently change.
+        let empty: Vec<BTreeMap<&str, &str>> = Vec::new();
+        let empty_bytes = serde_json::to_vec(&empty).unwrap();
+        assert_eq!(empty_bytes, b"[]", "NM-PARITY-02: empty history serialises as []");
+        assert_eq!(
+            sha256_hex(&empty_bytes),
+            "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        );
+
+        // NM-PARITY-09 — every `_ms` value is a BARE INTEGER: no exponent, no fractional part, no
+        // quotes, at the boundary 2^53 - 1. A float round-trip is the failure this pins —
+        // 9007199254740991 becoming 9.007199254740991e15 hashes differently on the two sides while
+        // both still "serialise the same number".
+        let mut ms: BTreeMap<&str, i64> = BTreeMap::new();
+        ms.insert("challenge_accepted_at_ms", 1_700_000_000_000);
+        ms.insert("completed_at", (1i64 << 53) - 1);
+        ms.insert("requested_at", 0);
+        let ms_bytes = serde_json::to_vec(&ms).unwrap();
+        assert_eq!(
+            ms_bytes,
+            br#"{"challenge_accepted_at_ms":1700000000000,"completed_at":9007199254740991,"requested_at":0}"#
+        );
+        for forbidden in ["e+", "E+", ".0", "\"9007199254740991\""] {
+            assert!(
+                !String::from_utf8_lossy(&ms_bytes).contains(forbidden),
+                "NM-PARITY-09: {forbidden} appeared in the canonical form"
+            );
+        }
+        assert_eq!(
+            sha256_hex(&ms_bytes),
+            "b839b7c13fcc32d5483cfbf90409973870e1308160ed83b164f3ca04cfb06c52"
+        );
+    }
+
+    #[test]
     fn jcs_is_sorted_compact_and_minimally_escaped() {
         let mut m = BTreeMap::new();
         m.insert("b".to_string(), "x".to_string());

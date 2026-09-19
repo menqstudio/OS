@@ -64,12 +64,9 @@
     "NM-ORACLE-10",
     "NM-ORACLE-12",
     "NM-OUTPUT-05",
-    "NM-PARITY-01",
-    "NM-PARITY-02",
     "NM-PARITY-05",
     "NM-PARITY-06",
     "NM-PARITY-07",
-    "NM-PARITY-09",
     "NM-REG-13",
     "NM-REG-15",
     "NM-SCOPE-04",
@@ -1496,16 +1493,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-PARITY-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`system` (raw UTF-8)",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_01_system_formula_is_raw_utf8_across_unicode_emoji_and_nul"
     },
     "NM-PARITY-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`history` (JCS `[{content,role}]`)",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_02_history_formula_pins_empty_history_and_unicode"
     },
     "NM-PARITY-03": {
       "status": "implemented",
@@ -1544,10 +1541,10 @@
       "test": "engine/tests/test_brops_parity.py::BropsParityTests::test_nm_parity_08_request_envelope_formula"
     },
     "NM-PARITY-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Time-unit parity",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_09_ms_integers_serialize_identically_on_both_sides"
     }
   }
 }
