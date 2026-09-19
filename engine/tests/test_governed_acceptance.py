@@ -718,6 +718,36 @@ class IdempotenceTests(_Case):
 # ---------------------------------------------------------------------------
 
 
+class _CrashBeforeStart(_Executor):
+    """An executor that dies BEFORE the launcher confirms the child is running.
+
+    `_Executor` reports the start and only then honours `fail`, which models a crash AFTER the
+    `EXECUTING` persist. This one records the request and raises first, so the acceptance row is
+    left at `EXECUTION_STARTING` with no process metadata — the state a restart actually finds
+    when the supervisor died between the gate CAS and the launcher call.
+    """
+
+    def run(self, request, on_started):
+        self.runs.append(request)
+        raise KeyboardInterrupt("crash before the launcher confirmed the child")
+
+
+class _CrashAfterStart(_Executor):
+    """Dies immediately after the launcher confirmed the child AND a marker was persisted.
+
+    The marker is the point of NM-CRASH-16: `execution_started_marker` is the launcher's
+    one-shot nonce, and a row that carries it is a row whose child was really started.
+    """
+
+    MARKER = "launch-nonce-1"
+
+    def run(self, request, on_started):
+        self.runs.append(request)
+        on_started(gac.StartedExecution(process_group_id="7", cgroup_id="cg-1",
+                                        execution_started_marker=self.MARKER))
+        raise KeyboardInterrupt("crash after the launcher confirmed the child")
+
+
 class CrashCutTests(_Case):
     """One cut per test through the §5 continuation (NM-CRASH-02..05).
 
@@ -861,6 +891,134 @@ class CrashCutTests(_Case):
         self.trigger(document)
         self.assertEqual(self.store.blobs, settled,
                          f"{case}: a retry of a completed turn wrote to the store")
+
+
+    def test_nm_crash_08_a_cut_before_the_launcher_call_leaves_execution_starting_unlaunched(self):
+        """NM-CRASH-08 -- died after the gate CAS, before the launcher was ever called.
+
+        The durable row is `EXECUTION_STARTING` with NO process metadata, which is precisely the
+        state §5 says must never be relaunched automatically: the supervisor cannot tell "the
+        child was never started" from "the child was started and we lost the confirmation", so it
+        refuses both. The retry therefore reaches `RECOVERY_REQUIRED` and runs NOTHING, and the
+        launch gate itself refuses to re-open with `IllegalTransition` -- there is no path back.
+
+        SHARES ITS FAULT with `NM-NORELAUNCH-01` below: the same executor cut, asserted from the
+        other end (this row is about the state a restart finds, that one about the relaunch ban).
+        Not two independent controls, and said so rather than counted twice.
+        """
+        case = "NM-CRASH-08"
+        document, _handle = self.ready_turn()
+        crashed = _CrashBeforeStart(self)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(execution=crashed))
+
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXECUTION_STARTING, case)
+        self.assertIsNone(row["process_group_id"],
+                          f"{case}: process metadata was persisted without a confirmed start")
+        self.assertEqual(len(crashed.runs), 1, f"{case}: the cut was not at the launcher")
+
+        fresh = _Executor(self)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=fresh)),
+                           "not_completed")
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.RECOVERY_REQUIRED, case)
+        self.assertEqual(fresh.runs, [], f"{case}: the attempt was relaunched")
+        with self.assertRaises(gsl.IllegalTransition):
+            gsl.gate_and_start(self.conn, row["execution_attempt_id"], self.clock)
+
+    def test_nm_crash_10_a_child_that_exits_before_executing_is_persisted_is_not_relaunched(self):
+        """NM-CRASH-10 -- the child ran and exited before `EXECUTING` was ever persisted.
+
+        `skip_started=True` is exactly that shape: work happened, the confirmation never did.
+        The completion is refused `not_completed`, and the durable state is asserted AS IT
+        ACTUALLY IS rather than as the row's wording suggests.
+
+        WHERE THE TREE AND THE ROW DIFFER, recorded rather than smoothed over: the row reads as
+        though `RECOVERY_REQUIRED` is reached on the spot. It is reached ONE TRIGGER LATER -- the
+        first trigger leaves `EXECUTION_STARTING`, the second moves it. The invariant the row
+        exists for holds at every step regardless: nothing is ever relaunched and no completion
+        row appears.
+        """
+        case = "NM-CRASH-10"
+        document, _handle = self.ready_turn()
+        exited = _Executor(self, skip_started=True)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=exited)),
+                           "not_completed")
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXECUTION_STARTING, case)
+        self.assertIsNone(row["process_group_id"], case)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0,
+            f"{case}: a completion row exists for a turn that never confirmed a start")
+
+        fresh = _Executor(self)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=fresh)),
+                           "not_completed")
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.RECOVERY_REQUIRED, case)
+        self.assertEqual(fresh.runs, [], f"{case}: the attempt was relaunched")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0,
+            f"{case}: the retry produced a completion row")
+
+    def test_nm_crash_16_a_persisted_launch_marker_does_not_authorise_a_relaunch(self):
+        """NM-CRASH-16 -- the launcher's one-shot marker is durable and the turn still cannot
+        be relaunched.
+
+        The marker is the strongest evidence a supervisor has that a child really started, which
+        is exactly why it must not become a licence: `EXECUTING` + a marker is a turn whose
+        outcome is unknown, and §5 sends it to `RECOVERY_REQUIRED` rather than running it again.
+        A design that treated the marker as "we know what happened" would relaunch here.
+        """
+        case = "NM-CRASH-16"
+        document, _handle = self.ready_turn()
+        crashed = _CrashAfterStart(self)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(execution=crashed))
+
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXECUTING, case)
+        self.assertEqual(row["execution_started_marker"], _CrashAfterStart.MARKER,
+                         f"{case}: the launcher's marker was not persisted")
+        self.assertEqual(row["process_group_id"], "7", case)
+
+        fresh = _Executor(self)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=fresh)),
+                           "not_completed")
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.RECOVERY_REQUIRED, case)
+        self.assertEqual(fresh.runs, [], f"{case}: a persisted marker authorised a relaunch")
+
+    def test_nm_norelaunch_01_the_lease_window_being_still_valid_does_not_authorise_a_relaunch(self):
+        """NM-NORELAUNCH-01 -- the post-start relaunch ban, asserted where it is most tempting
+        to break: the lease has NOT expired.
+
+        The same executor cut as `NM-CRASH-08`, read from the other end. That row asks what a
+        restart finds; this one asks whether a still-valid window is permission to try again. It
+        is not: §5's ban is on the STATE, not on the clock, and the row is only meaningful while
+        `lease_expires_at_ms` is still in the future -- which is asserted, or the test would be
+        passing for the wrong reason.
+        """
+        case = "NM-NORELAUNCH-01"
+        document, _handle = self.ready_turn()
+        crashed = _CrashBeforeStart(self)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(execution=crashed))
+
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXECUTION_STARTING, case)
+        self.assertGreater(row["lease_expires_at_ms"], self.clock,
+                           f"{case}: the lease had already expired, so the ban is untested")
+
+        fresh = _Executor(self)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=fresh)),
+                           "not_completed")
+        self.assertEqual(fresh.runs, [], f"{case}: a live lease authorised a relaunch")
+        # The state transition is asserted because the two above are NOT enough, measured: with
+        # the ban lifted (`if False` at the EXECUTION_STARTING/EXECUTING branch) this test still
+        # passed -- the refusal and the empty run list both came from a later branch, so the test
+        # was green while the control it names had been deleted. `RECOVERY_REQUIRED` is produced
+        # by that branch and by nothing else, which is what makes it the assertion that binds.
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.RECOVERY_REQUIRED,
+                         f"{case}: the ban did not move the attempt out of a startable state")
 
 
 class RefusalsAreReachableTests(_Case):

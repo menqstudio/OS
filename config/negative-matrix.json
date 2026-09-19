@@ -35,14 +35,11 @@
     "NM-CRASH-01",
     "NM-CRASH-06",
     "NM-CRASH-07",
-    "NM-CRASH-08",
     "NM-CRASH-09",
-    "NM-CRASH-10",
     "NM-CRASH-11",
     "NM-CRASH-12",
     "NM-CRASH-13",
     "NM-CRASH-14",
-    "NM-CRASH-16",
     "NM-EVID-12",
     "NM-EVID-13",
     "NM-FRAME-12",
@@ -54,7 +51,6 @@
     "NM-IPC-01",
     "NM-MAN-06",
     "NM-MAN-12",
-    "NM-NORELAUNCH-01",
     "NM-NORELAUNCH-04",
     "NM-ORACLE-07",
     "NM-ORACLE-10",
@@ -659,10 +655,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CRASH-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "after `EXECUTION_STARTING` commit, before launcher call",
       "section": "§5(10), §5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_08_a_cut_before_the_launcher_call_leaves_execution_starting_unlaunched"
     },
     "NM-CRASH-09": {
       "status": "unreviewed",
@@ -671,10 +667,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CRASH-10": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "immediately after `exec` / child exits before `EXECUTING` persistence",
       "section": "§5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_10_a_child_that_exits_before_executing_is_persisted_is_not_relaunched"
     },
     "NM-CRASH-11": {
       "status": "unreviewed",
@@ -707,16 +703,16 @@
       "blocked_on": "The §7 supervisor-side registry anti-rollback floor does not exist as code. MEASURED 2026-09-19: engine/runtime/supervisor_ledger.sql defines no registry-floor table (its CREATE TABLEs are governed_turn_acceptance/completion/outbox, governed_evidence_head_floor, governed_turn_staging{,_session,_chunk}, governed_output_streams); the challenge-key registry's epoch floor is the CONSTANT `OpenConfig.registry_epoch_floor: int = 0` (engine/runtime/governed_turn_open.py:220) handed to `challenge_key_registry.resolve_registry(epoch_floor=...)` (:349-394) and never persisted or advanced; `grep -rnE 'highest_registry_epoch|registry_floor|challenge_registry_floor'` over engine/runtime/*.py and *.sql hits only `bro_signature.resolve_registry_floor` (:616), an operator-pinned file floor for the engine trusted-keys registry -- a different artifact with no create-if-absent snapshot publish and no startup re-hash; and no supervisor startup routine verifies any floor snapshot (`grep -nEi 'startup|recover|restart'` over governed_supervisor_server.py, governed_supervisor.py and engine/ci/live/run_supervisor.py finds none). There is no COMMIT to crash before and no floor snapshot for startup to re-hash, so this row cannot be established for or against. What must exist first: a supervisor-owned durable registry-floor row `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` written in a BEGIN IMMEDIATE tx only after the create-if-absent publish (+fsync) of the exact registry document; a function that advances it and refuses same-epoch/different-hash and divergent-handle presentations; and a startup check that loads the floor, reads the snapshot by `challenge_registry_handle`, re-hashes it and fails closed otherwise."
     },
     "NM-CRASH-16": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Launch-start marker misuse",
       "section": "§5(9)-(10)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_16_a_persisted_launch_marker_does_not_authorise_a_relaunch"
     },
     "NM-NORELAUNCH-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Post-start relaunch ban",
       "section": "§5(10)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_norelaunch_01_the_lease_window_being_still_valid_does_not_authorise_a_relaunch"
     },
     "NM-NORELAUNCH-02": {
       "status": "implemented",
