@@ -106,7 +106,8 @@ def _clock():
 
 
 class PeerDenyTests(unittest.TestCase):
-    def test_non_broker_peer_denied_before_any_frame(self):
+    def test_nm_ipc_02_non_broker_peer_denied_before_any_frame(self):
+        """NM-IPC-02: a non-broker uid on the authority channel is refused before any frame."""
         store = PendingStore()
         # A valid create-pending frame is queued, but the renderer peer must be
         # refused BEFORE it is ever read.
@@ -126,7 +127,8 @@ class PeerDenyTests(unittest.TestCase):
 
 
 class FrameBoundTests(unittest.TestCase):
-    def test_oversize_frame_refused(self):
+    def test_nm_frame_09_oversize_frame_refused(self):
+        """NM-FRAME-09: a frame declared over MAX_FRAME_BYTES is refused before its body is read."""
         # Declare a length past the hard bound; the body is never even read.
         header = (MAX_FRAME_BYTES + 1).to_bytes(LENGTH_PREFIX_BYTES, "big")
         conn = FakeConn(BROKER_UID, inbound=header)

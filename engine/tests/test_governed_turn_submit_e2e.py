@@ -259,7 +259,8 @@ class TheGovernedTurnRoundTripTests(_SubmitCase):
 class TheCanonicalBytesAreTheFixturesTests(_SubmitCase):
     """The frame's three fields and the challenge's three digests are ONE fact."""
 
-    def test_the_governed_generation_config_hashes_to_the_digest_the_design_publishes(self):
+    def test_nm_parity_04_the_governed_generation_config_hashes_to_the_digest_the_design_publishes(self):
+        """NM-PARITY-04"""
         # §4.10(g) prints this digest for exactly these five literals. If either side moves,
         # this is the line that says so.
         self.assertEqual(

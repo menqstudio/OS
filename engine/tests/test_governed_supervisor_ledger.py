@@ -453,7 +453,8 @@ class EvidenceFloorTests(unittest.TestCase):
             )
         self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-2"))
 
-    def test_a_strictly_higher_head_advances_the_floor(self):
+    def test_nm_evid_05_a_strictly_higher_head_advances_the_floor(self):
+        """NM-EVID-05"""
         conn = _conn()
         _drive_to_executing(conn, "att-1")
         gsl.record_completion(conn, "att-1", _produced(), 50, derived=_derived(evidence_head_sequence=12))

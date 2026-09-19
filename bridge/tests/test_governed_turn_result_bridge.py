@@ -449,7 +449,8 @@ class DisjointnessTests(unittest.TestCase):
         with self.assertRaises(gtb.BridgeFrameError):
             gtb.validate_bridge_turn_result(frozen)
 
-    def test_the_discrimination_is_not_via_envelope_jcs_b64(self) -> None:
+    def test_nm_frame_17_the_discrimination_is_not_via_envelope_jcs_b64(self) -> None:
+        """NM-FRAME-17"""
         governed = gtb.reframe_turn_result(engine_signed())
         self.assertIn("envelope_jcs_b64", governed["receipt"])
         self.assertIn("envelope_jcs_b64",

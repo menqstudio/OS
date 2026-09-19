@@ -276,7 +276,8 @@ class ValidSignTest(unittest.TestCase):
             payload["execution_receipt_handle"], handles["execution_receipt_handle"]
         )
 
-    def test_inline_sha256_claim_is_rejected(self):
+    def test_nm_oracle_05_inline_sha256_claim_is_rejected(self):
+        """NM-ORACLE-05 -- derived-hash trust: an inline *_sha256 claim is rejected as malformed."""
         # A caller cannot smuggle a chosen output_sha256 — unknown field.
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)
@@ -287,7 +288,8 @@ class ValidSignTest(unittest.TestCase):
 
 
 class NeverSignsCallerBytesTest(unittest.TestCase):
-    def test_signer_signs_only_recomputed_payload_never_output_bytes(self):
+    def test_nm_oracle_03_signer_signs_only_recomputed_payload_never_output_bytes(self):
+        """NM-ORACLE-03 -- signer caller bytes: only the signer's own recomputed payload is signed."""
         signer, store, handles, recorder = _make_signer()
         result = signer.sign_result(_request(_evidence(handles)))
         self.assertEqual(result["status"], "signed")
@@ -333,7 +335,8 @@ class RefusalTest(unittest.TestCase):
             setattr(signer._config, field, value)
         return signer.sign_result(_request(_evidence(handles)))
 
-    def test_a_policy_the_operator_never_authorized_is_refused(self):
+    def test_nm_xbind_11_a_policy_the_operator_never_authorized_is_refused(self):
+        """NM-XBIND-11 -- policy mismatch: a (policy_id, policy_version) not in force => policy_mismatch."""
         # The supervisor names policy_id/policy_version in the evidence. Before this, the signer
         # required only that the bundle EXIST in its store — so a turn could be attested under a
         # policy this signer's operator never approved, and the receipt would say so truthfully
@@ -393,7 +396,8 @@ class RefusalTest(unittest.TestCase):
         signer, _s, _h, _r = _make_signer(prepared=prepared)
         out = signer.sign_result(_request(_evidence(handles)))
         self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
-    def test_bad_attestation_is_refused(self):
+    def test_nm_oracle_04_bad_attestation_is_refused(self):
+        """NM-ORACLE-04 -- attestation forgery: forged supervisor attestation => attestation_invalid, nothing signed."""
         signer, store, handles, recorder = _make_signer()
         result = signer.sign_result(_request(_evidence(handles), sig="FORGED"))
         self.assertEqual(result["reason"], REASON_ATTESTATION_INVALID)
@@ -415,7 +419,8 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(result["reason"], REASON_ATTESTATION_INVALID)
         self.assertEqual(recorder.signed_messages, [])
 
-    def test_non_completed_decision_is_refused(self):
+    def test_nm_xbind_09_non_completed_decision_is_refused(self):
+        """NM-XBIND-09 -- not-completed decision: decision != "completed" => not_completed."""
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)
         ev["decision"] = "blocked"
@@ -440,7 +445,8 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(result["reason"], REASON_MALFORMED)
         self.assertEqual(recorder.signed_messages, [])
 
-    def test_unknown_identity_is_refused(self):
+    def test_nm_xbind_08_unknown_identity_is_refused(self):
+        """NM-XBIND-08 -- identity mismatch: executor_id outside the allow-set => identity_denied."""
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)
         ev["executor_id"] = "rogue-executor"
@@ -456,7 +462,8 @@ class RefusalTest(unittest.TestCase):
             signer.sign_result(_request(ev))["reason"], REASON_TIMESTAMP_INVALID
         )
 
-    def test_missing_handle_is_refused(self):
+    def test_nm_oracle_06_missing_handle_is_refused(self):
+        """NM-ORACLE-06 -- reference-not-artifact: a handle the store does not hold => handle_missing."""
         signer, store, handles, _ = _make_signer()
         ev = _evidence(handles)
         # A well-formed but absent handle (never stored).
@@ -465,7 +472,8 @@ class RefusalTest(unittest.TestCase):
             signer.sign_result(_request(ev))["reason"], REASON_HANDLE_MISSING
         )
 
-    def test_missing_chain_handle_is_refused(self):
+    def test_nm_xbind_04_missing_chain_handle_is_refused(self):
+        """NM-XBIND-04 -- receipt handle mismatch: an execution_receipt_handle the store does not hold => handle_missing."""
         # A protected-chain handle that does not resolve in the store => the
         # signer refuses to mint an envelope naming an unseen record.
         signer, store, handles, _ = _make_signer()

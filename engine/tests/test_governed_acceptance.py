@@ -645,8 +645,10 @@ class WhatThisSeamMintsTests(_Case):
 
 class IdempotenceTests(_Case):
 
-    def test_a_second_trigger_for_a_completed_turn_returns_the_identical_frame(self):
-        """§5 step 11: "A COMPLETED retry returns **only** the same attempt's independently
+    def test_a_second_trigger_for_a_completed_turn_returns_the_identical_frame_nm_replay_03(self):
+        """NM-REPLAY-03 -- the same nonce and the same challenge triggered again after COMPLETED.
+
+        §5 step 11: "A COMPLETED retry returns **only** the same attempt's independently
         re-verified terminal record/result (idempotent)"."""
         document, first = self.run_turn()
         second = self.trigger(document)
@@ -663,8 +665,10 @@ class IdempotenceTests(_Case):
         second = self.trigger(document)
         self.assertEqual(first["output_stream_id"], second["output_stream_id"])
 
-    def test_a_trigger_arriving_at_a_started_attempt_moves_to_recovery_required(self):
-        """§5 step 10, LOCKED: "once EXECUTION_STARTING is durable the attempt is NEVER
+    def test_nm_norelaunch_02_a_trigger_arriving_at_a_started_attempt_moves_to_recovery_required(self):
+        """NM-NORELAUNCH-02 -- the same grant re-triggered after the attempt is RECOVERY_REQUIRED.
+
+        §5 step 10, LOCKED: "once EXECUTION_STARTING is durable the attempt is NEVER
         automatically relaunched … A restart finding EXECUTION_STARTING or EXECUTING without
         complete terminal proof moves to RECOVERY_REQUIRED (fail-closed)"."""
         document, _handle = self.ready_turn()
@@ -680,8 +684,11 @@ class IdempotenceTests(_Case):
                            "not_completed")
         self.assertEqual(fresh.runs, [])
 
-    def test_an_attempt_left_in_executing_by_a_crash_is_never_relaunched(self):
-        """A row genuinely left in `EXECUTING`. The executor confirms the child started (so
+    def test_an_attempt_left_in_executing_by_a_crash_is_never_relaunched_nm_norelaunch_03(self):
+        """NM-NORELAUNCH-03 -- a durable EXECUTING row with no terminal proof moves to
+        RECOVERY_REQUIRED and is never relaunched.
+
+        A row genuinely left in `EXECUTING`. The executor confirms the child started (so
         the ledger commits `EXECUTING`) and the process is then killed - modelled with a
         `BaseException`, which the driver's `except Exception` deliberately does not catch,
         so nothing advances the row and the durable state is exactly what a crash leaves.
@@ -839,8 +846,11 @@ class RefusalsAreReachableTests(_Case):
         self.assertRefused(self.trigger(document), "challenge_invalidated")
         self.assertEqual(self.executor.runs, [])
 
-    def test_the_registry_is_re_resolved_for_every_acceptance(self):
-        """§5 step 3: "a fresh `load_trusted_keys`-style reload + floor — do NOT reuse the
+    def test_nm_reg_06_the_registry_is_re_resolved_for_every_acceptance(self):
+        """NM-REG-06 -- the registry is rotated (key revoked) between a turn's open and its
+        acceptance.
+
+        §5 step 3: "a fresh `load_trusted_keys`-style reload + floor — do NOT reuse the
         open-time snapshot". A driver that resolved once and cached would serve a second turn
         under key material that has since been revoked."""
         first, _ = self.ready_turn()
@@ -884,8 +894,10 @@ class RefusalsAreReachableTests(_Case):
         self.assertRefused(self.trigger(document, driver=self.driver(config=config)),
                            "challenge_invalidated")
 
-    def test_timestamp_invalid_when_the_challenge_expired_before_acceptance(self):
-        """§4.5: "timestamp_invalid additionally covers an **acceptance-time challenge-window
+    def test_nm_time_03_timestamp_invalid_when_the_challenge_expired_before_acceptance(self):
+        """NM-TIME-03 -- acceptance one ms past `challenge_expires_at_ms`.
+
+        §4.5: "timestamp_invalid additionally covers an **acceptance-time challenge-window
         expiry**", distinct from §4.10(a0)'s pre-row `challenge_expired`."""
         document, _handle = self.ready_turn()
         expires = document["payload"]["challenge_expires_at_ms"]
@@ -897,15 +909,19 @@ class RefusalsAreReachableTests(_Case):
         self.clock = document["payload"]["challenge_expires_at_ms"]
         self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED)
 
-    def test_timestamp_invalid_when_the_challenge_was_issued_after_acceptance(self):
-        """The limb `accept_open` does NOT own: challenge_issued_at_ms <= accepted."""
+    def test_nm_time_04_timestamp_invalid_when_the_challenge_was_issued_after_acceptance(self):
+        """NM-TIME-04 -- `challenge_issued_at_ms` one ms after the acceptance instant.
+
+        The limb `accept_open` does NOT own: challenge_issued_at_ms <= accepted."""
         document, _handle = self.ready_turn(issued=NOW + 10_000)
         self.clock = NOW + 9_999
         self.assertRefused(self.trigger(document), "timestamp_invalid")
         self.assertEqual(self.executor.runs, [], "refused at acceptance, before any launch")
 
-    def test_timestamp_invalid_when_the_request_postdates_its_own_acceptance(self):
-        """The other limb `accept_open` does NOT own: requested_at_ms <= accepted.
+    def test_nm_time_05_timestamp_invalid_when_the_request_postdates_its_own_acceptance(self):
+        """NM-TIME-05 -- `requested_at_ms` after the acceptance instant.
+
+        The other limb `accept_open` does NOT own: requested_at_ms <= accepted.
 
         The `runs == []` assertion is the whole point of checking it HERE. The isolated
         signer ALSO refuses this turn `timestamp_invalid` at §6.1 step 12 — its own
@@ -950,8 +966,10 @@ class RefusalsAreReachableTests(_Case):
         self.assertRefused(self.trigger(document), "identity_denied")
 
     # ---- §2 / §4.5: the execution allowlist ---------------------------------
-    def test_model_profile_unknown_blocks_the_row_and_issues_no_lease(self):
-        """§4.5: "a **pre-launch acceptance Block** (BLOCKED; no lease is issued, no launch)"."""
+    def test_nm_tcb_22_model_profile_unknown_blocks_the_row_and_issues_no_lease(self):
+        """NM-TCB-22 -- the staged generation_config digest is outside the execution allowlist.
+
+        §4.5: "a **pre-launch acceptance Block** (BLOCKED; no lease is issued, no launch)"."""
         document, _handle = self.ready_turn()
         driver = self.driver(config=self.acceptance_config(allowlist=frozenset()))
         self.assertRefused(self.trigger(document, driver=driver), "model_profile_unknown")
@@ -982,8 +1000,11 @@ class RefusalsAreReachableTests(_Case):
                          sha(GENCFG_BYTES))
 
     # ---- §5 steps 6-8a: lease and gate --------------------------------------
-    def test_lease_not_ready_when_the_lease_document_cannot_be_published(self):
-        """§4.5 pins this member to this hop: "the execute trigger (§4.10(d)) arrives before
+    def test_nm_conc_08_lease_not_ready_when_the_lease_document_cannot_be_published(self):
+        """NM-CONC-08 -- the execute trigger finds the row at ACCEPTED_PREPARED and the lease
+        publish fails.
+
+        §4.5 pins this member to this hop: "the execute trigger (§4.10(d)) arrives before
         the row reaches LEASE_READY"."""
         document, _handle = self.ready_turn()
         calls = []
@@ -1137,8 +1158,10 @@ class RefusalsAreReachableTests(_Case):
         self.assertRefused(self.trigger(document, driver=self.driver(read_artifact=read_artifact)),
                            "acceptance_conflict")
 
-    def test_challenge_replay_when_the_nonce_already_bought_a_different_challenge(self):
-        """§4.5 pins this member to exactly this gate: "the §5 acceptance CAS finds the
+    def test_nm_replay_04_challenge_replay_when_the_nonce_already_bought_a_different_challenge(self):
+        """NM-REPLAY-04 -- a second challenge opened under an already-accepted request_nonce.
+
+        §4.5 pins this member to exactly this gate: "the §5 acceptance CAS finds the
         request_nonce already ACCEPTED for a different challenge_handle"."""
         first, _ = self.ready_turn()
         self.assertEqual(self.trigger(first)["status"], gtr.STATUS_SIGNED)
