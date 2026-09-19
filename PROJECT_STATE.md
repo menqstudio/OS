@@ -1,18 +1,18 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — nineteen pull requests merged (`#219`–`#236`), `main` at
-`13027bb`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
+**Last updated · Վերջին թարմացում:** 2026-09-19 — twenty pull requests merged (`#219`–`#237`), `main` at
+`3909ede`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
 promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
-closed, and the negative matrix read: **126 implemented · 54 blocked · 62 unreviewed**, from 39 / 21 / 182.
+closed, and the negative matrix read: **130 implemented · 54 blocked · 58 unreviewed**, from 39 / 21 / 182.
 Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
 against the grant's `egress` table, yet a permitted call is still refused for want of a transport.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #237 · branch `t062/bind-nm-crash`** (base `main`, tip `13027bb`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #238 · branch `t062/bind-nm-crash-2`** (base `main`, tip `3909ede`, task T-062).
 >
-> four crash cuts through the section-5 continuation are bound: no row survives a pre-commit cut, and a cut either side of the lease publish leaves ACCEPTED_PREPARED with the retry finishing the same attempt
+> four more crash cuts bound around the one edge section 5 locks: EXECUTION_STARTING becomes EXECUTING only when the launcher confirms the child and its metadata is durable, and a started attempt is never relaunched whatever survived
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -51,8 +51,8 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **75 pull
-requests, 240 files and 46,471 inserted lines** have merged since, none independently
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **76 pull
+requests, 240 files and 46,612 inserted lines** have merged since, none independently
 confirmed — measured `5cf9b8c..main`, all squash-merged PRs.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
