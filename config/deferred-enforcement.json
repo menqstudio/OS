@@ -26,5 +26,15 @@
     "measured in nights."
   ],
   "max_days_without_sign_off": 7,
-  "deferrals": {}
+  "deferrals": {
+    "Trust anchor · no production root private in this tree": {
+      "gate": "tools/check_root_anchor_custody.py",
+      "workflow": ".github/workflows/ci.yml",
+      "status": "OPEN",
+      "first_declared": "2026-09-20",
+      "deferred_until": "2026-09-27",
+      "reason": "The gate proves no literal in this tree is the private half of a pinned production root anchor, and it runs on every pull request. What it cannot do until this context is added to live branch protection is BLOCK a merge, and adding a context is a branch-protection change the Owner applies, not a Builder: check_repo_state compares config/required-checks.json against live GitHub, so a file claiming a protection that is not live would redden main instead of enforcing anything. Deferred seven days from its first green run on main, which is the same condition the promotion already pending for `Tools - gate self-tests on Windows (python)` waits on. Named as the third one-line edit in docs/OWNER_ACTION_REQUIRED.md.",
+      "sign_off": ""
+    }
+  }
 }
