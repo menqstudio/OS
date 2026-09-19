@@ -290,16 +290,19 @@ def _handle(conn, config=None, now=NOW, ledger_conn=None):
     )
 
 
-def _call(request, *, config, ledger_conn, now=NOW):
-    """Direct dispatch (no framing) with the durable ledger wired in."""
+def _call(request, *, config, ledger_conn, now=NOW, publish=None, clock=None):
+    """Direct dispatch (no framing) with the durable ledger wired in.
+
+    `publish` and `clock` are seams a crash test injects. They default to the real ones, so a
+    caller that does not name them cannot tell this signature ever changed."""
     return dispatch(
         request,
         config,
         _verify_sig,
         _recompute,
-        _clock(now),
+        clock if clock is not None else _clock(now),
         conn=ledger_conn,
-        publish_artifact=_publish,
+        publish_artifact=publish if publish is not None else _publish,
         read_run_evidence=lambda attempt: _run_evidence("d" * 64),
         sign_attestation=_sign_attestation,
         supervisor_attestation_key_id=ATTEST_KEY_ID,
@@ -698,6 +701,197 @@ class CompleteRunDispatchTests(_LifecycleBase):
 # ---------------------------------------------------------------------------
 # F-01: attest-run is no longer a sign-arbitrary-facts oracle.
 # ---------------------------------------------------------------------------
+
+
+class CrashCutsInsideCompletionTests(_LifecycleBase):
+    """NM-CRASH-12, -13 and -14 — three cuts inside `complete_governed_run`, three properties.
+
+    The function does every store write first (lease, terminal record, execution receipt, into one
+    dict literal) and only then calls `record_completion`, which holds the completion INSERT, the
+    evidence-head floor CAS and the advance to `COMPLETED` in one transaction. So there are exactly
+    three places a crash can land with different consequences, and each row below is one of them.
+
+    A crash is modelled the only way a test honestly can: raise from the seam the supervisor was
+    inside, then look at what SURVIVED in the store and the ledger, and then RETRY — because durable
+    state is only half the claim. A supervisor that recorded the right state and could not finish the
+    turn has still lost it.
+
+    `KeyboardInterrupt` rather than a `RuntimeError`: the completion path converts typed refusals
+    into wire replies, and a row about a CRASH must not be answered by the refusal path.
+    """
+
+    def _crash_on_publish(self, nth):
+        """A publish seam that writes to the store and THEN crashes, on its nth call.
+
+        After the store write, deliberately: the interesting state is "the bytes are addressable and
+        the ledger has never heard of them", which is the orphan a retry has to tolerate."""
+        calls = []
+
+        def publish(data):
+            calls.append(bytes(data))
+            handle = _publish(data)
+            if len(calls) == nth:
+                raise KeyboardInterrupt("crash AFTER store write %d" % nth)
+            return handle
+
+        return publish, calls
+
+    def _crash_after_all_publishes(self):
+        """A (publish, clock) pair that cuts between the last store write and `record_completion`.
+
+        `record_completion` is called with `clock_ms()` as an argument, so arming a raising clock on
+        the third publish puts the cut exactly there: three artifacts durable, ledger untouched."""
+        armed = {"yes": False}
+        calls = []
+
+        def publish(data):
+            calls.append(bytes(data))
+            handle = _publish(data)
+            if len(calls) == 3:
+                armed["yes"] = True
+            return handle
+
+        def clock():
+            if armed["yes"]:
+                raise KeyboardInterrupt("crash after the last publish, before record_completion")
+            return NOW
+
+        return publish, clock, calls
+
+    def _completion_row(self, attempt):
+        return self.ledger_conn.execute(
+            "SELECT * FROM governed_turn_completion WHERE execution_attempt_id = ?",
+            (attempt,)).fetchone()
+
+    def _floor_rows(self):
+        return [tuple(r) for r in self.ledger_conn.execute(
+            "SELECT * FROM governed_evidence_head_floor ORDER BY install_id, task_id").fetchall()]
+
+    # ---- NM-CRASH-12 ----------------------------------------------------------------
+
+    def test_nm_crash_12_a_cut_among_the_terminal_artifacts_leaves_orphan_bytes_and_no_completion(self):
+        """NM-CRASH-12 — the supervisor dies with some terminal artifacts published.
+
+        The design phrases this cut as "after receipt/evidence, before terminal record". In the
+        implementation all three artifacts are published into one dict literal before any ledger
+        write, so the order among them is not observable to anything; what IS observable, and what
+        this row is about, is a store holding addressable bytes the ledger has never heard of. The
+        cut is taken on the third publish, so two blobs are durable and the ledger is untouched.
+
+        What must be true: orphan store bytes cost nothing. `publish_artifact` is create-if-absent
+        and the artifacts are built from the supervisor's own durable row, so the retry republishes
+        the SAME bytes, derives the SAME content addresses, and the blobs left by the crash turn out
+        to have been the answer rather than waste. If the handles differed, the store would be
+        accumulating near-duplicates and the crash would have cost a real leak.
+        """
+        case = "NM-CRASH-12"
+        attempt = self._accept()
+        self._to_executing(attempt)
+        publish, calls = self._crash_on_publish(3)
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._op_publishing({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                                 "produced": _produced()}, publish)
+        self.assertEqual(len(calls), 3, f"{case}: the cut was not on the third publish")
+        for blob in calls:
+            self.assertIn(hashlib.sha256(blob).hexdigest(), PUBLISHED,
+                          f"{case}: a published blob is not addressable")
+        self.assertIsNone(self._completion_row(attempt),
+                          f"{case}: a completion survived a cut before record_completion")
+        self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.EXECUTING, case)
+        self.assertEqual(self._floor_rows(), [], f"{case}: the floor moved before the completion")
+
+        reply = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                          "produced": _produced()})
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["recorded"], gsl.CREATED, case)
+        self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.COMPLETED, case)
+        row = self._completion_row(attempt)
+        for blob in calls:
+            handle = hashlib.sha256(blob).hexdigest()
+            self.assertIn(handle, (row["lease_handle"], row["record_handle"],
+                                   row["execution_receipt_handle"]),
+                          f"{case}: the retry re-derived a handle the crashed attempt had published, "
+                          f"so those bytes were a leak rather than the answer")
+
+    # ---- NM-CRASH-13 ----------------------------------------------------------------
+
+    def test_nm_crash_13_a_cut_after_the_last_publish_leaves_executing_not_completed(self):
+        """NM-CRASH-13 — the terminal record is in the store and the ledger has not moved.
+
+        `record_completion` receives `clock_ms()` as an argument, so a clock armed by the third
+        publish cuts exactly between "all three artifacts durable" and "the ledger knows". The state
+        must still be `EXECUTING`: `COMPLETED` is reached only through `record_completion`, and a
+        store that holds a terminal record is not a claim that the turn completed. Anything else
+        would mean a reader could take a published record as a completion.
+
+        The retry then completes the SAME attempt rather than starting another, and the floor moves
+        for the first time here — which is what makes NM-CRASH-14 a different row.
+        """
+        case = "NM-CRASH-13"
+        attempt = self._accept()
+        self._to_executing(attempt)
+        publish, clock, calls = self._crash_after_all_publishes()
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._op_publishing({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                                 "produced": _produced()}, publish, clock=clock)
+        self.assertEqual(len(calls), 3, f"{case}: not all three artifacts were published")
+        self.assertIsNone(self._completion_row(attempt), case)
+        self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.EXECUTING,
+                         f"{case}: a published terminal record moved the ledger by itself")
+        self.assertEqual(self._floor_rows(), [], case)
+
+        reply = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                          "produced": _produced()})
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["recorded"], gsl.CREATED, case)
+        self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.COMPLETED, case)
+        self.assertEqual(len(self._floor_rows()), 1,
+                         f"{case}: the completion did not move the evidence-head floor")
+
+    # ---- NM-CRASH-14 ----------------------------------------------------------------
+
+    def test_nm_crash_14_a_lost_reply_after_the_floor_commit_retries_without_touching_the_floor(self):
+        """NM-CRASH-14 — the completion committed, including the floor, and the reply never arrived.
+
+        This is the cut with nothing left to repair, and it is the one most easily got wrong. The
+        floor CAS runs inside `record_completion`'s transaction and only `if inserted`; the source
+        says why in as many words — "an idempotent retry must not re-run the CAS (its head is by
+        definition the one already accepted)". So a byte-identical retry must answer `IDEMPOTENT` and
+        leave the floor row **byte for byte** as it was.
+
+        Re-running the CAS on a retry would not be a harmless duplicate: the floor is the
+        anti-rollback and anti-fork record, and a second pass over it on the same head is a write
+        nobody can distinguish from an advance. Comparing the whole row, not a count, is the point.
+        """
+        case = "NM-CRASH-14"
+        attempt = self._accept()
+        self._to_executing(attempt)
+
+        first = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                          "produced": _produced()})
+        self.assertTrue(first["ok"], first)
+        self.assertEqual(first["recorded"], gsl.CREATED, case)
+        floor_before = self._floor_rows()
+        row_before = tuple(self._completion_row(attempt))
+        self.assertEqual(len(floor_before), 1, f"{case}: the floor did not commit")
+
+        # The reply is lost; the caller re-sends the byte-identical request.
+        again = self._op({"op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
+                          "produced": _produced()})
+        self.assertTrue(again["ok"], again)
+        self.assertEqual(again["recorded"], gsl.IDEMPOTENT,
+                         f"{case}: a re-sent completion was treated as a new one")
+        self.assertEqual(self._floor_rows(), floor_before,
+                         f"{case}: the idempotent retry touched the evidence-head floor")
+        self.assertEqual(tuple(self._completion_row(attempt)), row_before,
+                         f"{case}: the completion row was rewritten by a retry")
+        self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.COMPLETED, case)
+
+    def _op_publishing(self, request, publish, now=NOW, clock=None):
+        return _call(request, config=self.config, ledger_conn=self.ledger_conn, now=now,
+                     publish=publish, clock=clock)
 
 
 class AttestRunIsNotAnOracleTests(_LifecycleBase):
