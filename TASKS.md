@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #225 · branch `t062/triage-2026-09-19`** (base `main`, tip `a261406`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #226 · branch `t062/bind-python-2026-09-19`** (base `main`, tip `42be2cd`, task T-062).
 >
-> T-062: 182 unreviewed negative-matrix rows read against the tree; 33 blocked by name, 79 already covered, 59 implementable, 149 left. docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md.
+> T-062: 38 Python negative-matrix rows bound to their existing tests, each mutation-verified; registry 77 / 54 / 111. 37 Rust rows next.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -29,7 +29,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse; §4 is an `auth_ref` REFERENCE store (0022). **Nothing resolves an `auth_ref` yet.** ◑ | Bro | Todo | merged `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit (both dates, 0 of 796 differ); the gate checks whether that commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, mutation-proven | Bro | Review | merged `#219` |
-| **T-062** | **The negative matrix's silent state** — 182 rows read by 12 readers + 12 skeptics: 33 `blocked` by name, 79 already covered, 59 implementable; 149 left. `docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md` ◑ | Bro | In-Progress | `#225` |
+| **T-062** | **The negative matrix's silent state** — `#225` read 182 rows: 33 `blocked`, 79 covered, 59 implementable. `#226` binds the 38 Python covered rows, each mutation-verified; 37 Rust next. 77 / 54 / 111 ◑ | Bro | In-Progress | `#226` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has zero non-test callers; `check_ai_surfaces.py` runs under a non-required context — the Owner's act | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`, both read mappers carry it. ◑ | Bro | Review | merged `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
