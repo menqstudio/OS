@@ -1,11 +1,14 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — twenty pull requests merged (`#219`–`#237`), `main` at
-`3909ede`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
-promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
-closed, and the negative matrix read: **130 implemented · 54 blocked · 58 unreviewed**, from 39 / 21 / 182.
-Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
-against the grant's `egress` table, yet a permitted call is still refused for want of a transport.
+**Last updated · Վերջին թարմացում:** 2026-09-20 — forty-five pull requests merged (`#219`–`#263`), `main` at
+`c45438c`, its own `ci` green there. Seven of the eleven roadmap phases have every box ticked
+(0, 2, 3, 4, 5, 6, 7); 97 of 115 rows. The custody resolver is wired, so the one prerequisite of a
+governed round trip that no machine provides is met by the BUILD — what stands between phase 1 and a closed row
+is 26 prerequisites a deployment provides and one offline root signature only the Owner can make. The
+negative matrix reads: **153 implemented · 54 blocked · 35 unreviewed**, from 39 / 21 / 182.
+Before: 2026-09-19 — twenty pull requests merged (`#219`–`#237`), `main` at `3909ede`: the supply-chain gate
+green again, the `T-055` promise executed by the Owner, three canon tools fixed so the mirror cannot drift
+unread, and the §D keydown race closed.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
