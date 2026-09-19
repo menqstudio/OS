@@ -7,6 +7,41 @@
 // / denyDialog* keys) and composing them in the component.
 
 export const STR = {
+  // ── the engine REQUEST (T-021) — a different system from the grant/deny above ───────────
+  askSection: {
+    en: 'Ask the engine to record a request',
+    hy: 'Խնդրել շարժիչին գրանցել հարցում',
+    ru: 'Попросить движок записать запрос',
+  },
+  askNote: {
+    en: 'This is not the approval above. That one is this app’s own, over its local ledger. This asks the ENGINE to record a request, which only an owner-signed control-room command can then adjudicate — nothing here decides anything.',
+    hy: 'Սա վերևի հաստատումը չէ։ Այն այս հավելվածի սեփականն է, իր տեղական մատյանի վրա։ Սա խնդրում է ՇԱՐԺԻՉԻՆ գրանցել հարցում, որը հետո վճռում է միայն տիրոջ ստորագրած control-room հրամանը — այստեղ ոչինչ ոչինչ չի որոշում։',
+    ru: 'Это не одобрение выше. То — собственное для этого приложения, в его локальном журнале. Здесь ДВИЖОК просят записать запрос, который затем решает только подписанная владельцем команда control-room — здесь ничто ничего не решает.',
+  },
+  askTaskLabel: { en: 'Engine task', hy: 'Շարժիչի խնդիր', ru: 'Задача движка' },
+  askWhoLabel: { en: 'Your name (recorded as claimed)', hy: 'Քո անունը (գրանցվում է որպես հայտարարված)', ru: 'Ваше имя (записывается как заявленное)' },
+  askReasonLabel: { en: 'Why', hy: 'Ինչու', ru: 'Почему' },
+  askApprove: { en: 'Ask: approve', hy: 'Խնդրել՝ հաստատել', ru: 'Просить: одобрить' },
+  askDeny: { en: 'Ask: deny', hy: 'Խնդրել՝ մերժել', ru: 'Просить: отклонить' },
+  askVerify: { en: 'Ask: verify first', hy: 'Խնդրել՝ նախ ստուգել', ru: 'Просить: сначала проверить' },
+  askNeedsEngine: {
+    en: 'The engine queue is not readable, so there is no task to ask about. Nothing was sent.',
+    hy: 'Շարժիչի հերթը ընթեռնելի չէ, ուստի հարցնելու խնդիր չկա։ Ոչինչ չի ուղարկվել։',
+    ru: 'Очередь движка недоступна, поэтому спрашивать не о чем. Ничего не отправлено.',
+  },
+  askRecorded: {
+    en: 'Recorded, not adjudicated · entry ',
+    hy: 'Գրանցվեց, չի վճռվել · գրառում ',
+    ru: 'Записано, не решено · запись ',
+  },
+  askDuplicate: {
+    en: ' (a repeat of an ask already recorded)',
+    hy: ' (արդեն գրանցված հարցման կրկնություն)',
+    ru: ' (повтор уже записанного запроса)',
+  },
+  askRefused: { en: 'The engine refused: ', hy: 'Շարժիչը մերժեց՝ ', ru: 'Движок отказал: ' },
+  askBlocked: { en: 'Nothing was established: ', hy: 'Ոչինչ չհաստատվեց՝ ', ru: 'Ничего не установлено: ' },
+
   // ── status labels (statusMeta) ────────────────────────────────────────────
   approved:          { en: 'Approved',        hy: 'Հաստատված',        ru: 'Одобрено' },
   denied:            { en: 'Denied',          hy: 'Մերժված',          ru: 'Отклонено' },

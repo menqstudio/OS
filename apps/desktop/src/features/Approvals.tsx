@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { ApprovalRequestOutcome, RequestableCommand }
+  from '../services/approvalRequest';
 import { useApp } from '../app/store';
 import { Card, Button, Skeleton, ErrorState, EmptyState, ConfirmDialog } from '../components/ui';
 import { Mark } from '../components/Ambient';
@@ -83,13 +85,56 @@ export function Approvals() {
   const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
   const { data, error, reload } = state;
-  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide; queue read only —
-  // NO approval-request POST, which is a separate gated engine task). Steady state in
+  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide). Steady state in
   // Phase-2 is blocked/unreachable — surfaced honestly below the gate, never fabricated.
+  //
+  // The approval-REQUEST post is `T-021` and now exists, in its own section below: it asks the
+  // engine to RECORD an ask and cannot adjudicate one. This read stays exactly what it was.
   const engineQueue = useAsync(() => desktop.readEngineApprovalQueue());
 
   /** Trilingual lookup from the co-located catalog, keyed off the shared `lang`. */
   const L = useCallback<L>((k) => STR[k][lang] ?? STR[k].en, [lang]);
+
+  const [askWho, setAskWho] = useState('');
+  const [askWhy, setAskWhy] = useState('');
+  const [askTask, setAskTask] = useState('');
+  const [askOutcome, setAskOutcome] = useState<ApprovalRequestOutcome | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  /** Tasks the ENGINE published, with the state it published them in. Empty unless the mirror read. */
+  const engineTasks = useMemo(() => {
+    const read = engineQueue.data;
+    if (!read || read.state !== 'ok' || !Array.isArray(read.records)) {
+      return [] as Array<{ id: string; state: string }>;
+    }
+    return read.records.flatMap((r) => {
+      const row = r as Record<string, unknown>;
+      const id = typeof row.task_id === 'string' ? row.task_id : typeof row.id === 'string' ? row.id : '';
+      const st = typeof row.state === 'string' ? row.state : '';
+      return id && st ? [{ id, state: st }] : [];
+    });
+  }, [engineQueue.data]);
+
+  /** Send one ask. Every judgement about the reply is the backend's and the parser's, not this page's. */
+  const ask = useCallback(
+    async (requestedCommand: RequestableCommand) => {
+      const task = engineTasks.find((x) => x.id === (askTask || engineTasks[0]?.id));
+      if (!task) { setAskOutcome({ state: 'blocked', reason: L('askNeedsEngine') }); return; }
+      setAsking(true);
+      try {
+        setAskOutcome(await desktop.requestEngineApproval({
+          taskId: task.id,
+          requestedCommand,
+          expectedTaskState: task.state,
+          reason: askWhy,
+          requestedBy: askWho,
+        }));
+      } finally {
+        setAsking(false);
+      }
+    },
+    [askTask, askWho, askWhy, engineTasks, L],
+  );
 
   const [selected, setSelected] = useState(0);
   const [staged, setStaged] = useState<Staged | null>(null);
@@ -578,6 +623,51 @@ export function Approvals() {
         {/* The travelling `live` pulse is earned only while something is genuinely
             waiting on a human. An empty queue is a still divider, not a running feed. */}
         <div className={`wire${pendingCount > 0 ? ' live' : ''}`} aria-hidden="true" />
+      </section>
+
+
+      {/* ── the engine REQUEST (T-021) — a different system from the gate above ──
+          Enabled only when the engine's own queue read succeeded: an ask needs a task id and the
+          state the engine holds it in, and inventing either would be asking about a task nobody
+          has seen. */}
+      <section className="surface soft rise" style={{ '--i': 3 } as CSSProperties}
+               aria-label={L('askSection')}>
+        <h3>{L('askSection')}</h3>
+        <p className="micro">{L('askNote')}</p>
+        {engineTasks.length === 0 ? (
+          <p className="micro" role="status">{L('askNeedsEngine')}</p>
+        ) : (
+          <div className="ask-engine">
+            <label htmlFor="ask-task">{L('askTaskLabel')}</label>
+            <select id="ask-task" value={askTask || engineTasks[0].id}
+                    onChange={(e) => setAskTask(e.target.value)}>
+              {engineTasks.map((x) => (
+                <option key={x.id} value={x.id}>{`${x.id} · ${x.state}`}</option>
+              ))}
+            </select>
+            <label htmlFor="ask-who">{L('askWhoLabel')}</label>
+            <input id="ask-who" className="dock-input" value={askWho} onChange={(e) => setAskWho(e.target.value)} />
+            <label htmlFor="ask-why">{L('askReasonLabel')}</label>
+            <input id="ask-why" className="dock-input" value={askWhy} onChange={(e) => setAskWhy(e.target.value)} />
+            <div className="ask-actions">
+              {([['approve', 'askApprove'], ['deny', 'askDeny'],
+                 ['request-verification', 'askVerify']] as const).map(([cmd, key]) => (
+                <Button key={cmd} variant="ghost"
+                        disabled={asking || !askWho.trim() || !askWhy.trim()}
+                        onClick={() => void ask(cmd)}>{L(key)}</Button>
+              ))}
+            </div>
+          </div>
+        )}
+        {askOutcome && (
+          <p className="micro" role="status">
+            {askOutcome.state === 'recorded'
+              ? `${L('askRecorded')}${askOutcome.sequence} · ${askOutcome.entrySha256.slice(0, 12)}${askOutcome.duplicate ? L('askDuplicate') : ''}`
+              : askOutcome.state === 'refused'
+                ? `${L('askRefused')}${askOutcome.reason}`
+                : `${L('askBlocked')}${askOutcome.reason}`}
+          </p>
+        )}
       </section>
 
       {/* All three actions confirm before committing (§D). `g`/`d`/`e` stage this dialog;
