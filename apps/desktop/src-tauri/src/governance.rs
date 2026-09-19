@@ -607,7 +607,7 @@ where
     classify(surface, reply, validate)
 }
 
-// --- commands (READ-ONLY; no AppState, no key/lease params) -------------------------
+// --- commands (four READ-ONLY, one REQUEST; no AppState, no key/lease params) --------
 
 /// Mirror the engine decision LEDGER (read-only). No decision is authored or altered.
 #[tauri::command]
@@ -874,11 +874,21 @@ mod tests {
     #[test]
     fn no_governance_command_can_take_a_key_a_lease_or_the_database() {
         // Phase-2 DoD: "No desktop-side decision authority; no cached keys/leases." That
-        // holds structurally — none of the four commands takes `State<AppState>`, so there
-        // is nowhere to cache anything, and none takes a key/lease/nonce/verdict, so there
-        // is no parameter through which the desktop could decide. Structural is not the
-        // same as CHECKED, though: the property lives in four signatures a future command
-        // can simply not follow, and the module docs above would go on asserting it.
+        // holds structurally — none of these commands takes `State<AppState>`, so there is
+        // nowhere to cache anything, and none takes a key/lease/nonce/verdict, so there is
+        // no parameter through which the desktop could decide. Structural is not the same
+        // as CHECKED, though: the property lives in signatures a future command can simply
+        // not follow, and the module docs above would go on asserting it.
+        //
+        // RE-REASONED 2026-09-19, which is what the count assertion below asks for rather
+        // than a bumped number. The fifth command is `request_engine_approval` (`T-021c`), and
+        // it is NOT a read: it sends a document to the engine. The DoD sentence still holds of
+        // it, and more narrowly than of the four reads, because the thing it sends is defined
+        // by a contract with `additionalProperties: false` and twelve declared fields — so
+        // there is no parameter for a key AND no field one could ride in. What it can do is
+        // ask; what it cannot do is decide, which `brops_core::approval_request` enforces on
+        // both directions of the wire. The scan below is the reason this test is here at all:
+        // a sixth command that took a key would fail it whatever its docs said.
         //
         // So it is read out of this file's own source. The alternative — a runtime test —
         // cannot exist: the thing being asserted is the ABSENCE of a parameter, which has
@@ -893,7 +903,7 @@ mod tests {
             .skip(1)
             .map(|after| after.split(" {").next().unwrap_or(""))
             .collect();
-        assert_eq!(commands.len(), 4, "the command count moved; re-reason, do not re-run");
+        assert_eq!(commands.len(), 5, "the command count moved; re-reason, do not re-run");
         for sig in commands {
             // The scan is over the PARAMETER LIST, not the whole signature. `verdict` is a
             // forbidden input and also half the name of `read_verifier_verdicts`, and a check
@@ -906,12 +916,28 @@ mod tests {
                     "a governance command took `{forbidden}`: {params}"
                 );
             }
-            // And positively: the only input the mirror is allowed is an optional read filter.
-            // The negatives above enumerate what is banned today; this one holds when someone
-            // invents an authority nobody thought to ban.
+            // And positively, because the negatives above only enumerate what someone thought
+            // to ban: every command here is held to its OWN declared parameter list, so an
+            // authority nobody predicted still fails.
+            //
+            // A MIRROR read may take one optional task filter and nothing else. The REQUEST takes
+            // the caller-supplied fields of `approval-request.schema.json` — pinned here by
+            // enumeration for the same reason the contract test pins the document's key set: a
+            // seventh parameter is then a failing test rather than a wider surface. Neither list
+            // contains a key, a lease or a decision, which is the property both halves exist for.
+            let normalised: String = params.split_whitespace().collect::<Vec<_>>().join(" ");
+            let allowed = [
+                "",
+                "task_id: Option<String>",
+                "task_id: String, requested_command: String, expected_task_state: String,                  reason: String, requested_by: String, evidence_refs: Option<Vec<String>>,",
+            ];
+            let allowed: Vec<String> = allowed
+                .iter()
+                .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect();
             assert!(
-                params.trim().is_empty() || params.trim() == "task_id: Option<String>",
-                "a governance command grew a parameter that is not a read filter: {params}"
+                allowed.contains(&normalised),
+                "a governance command grew a parameter no declared list holds: {params}"
             );
         }
     }
