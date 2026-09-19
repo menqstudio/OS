@@ -30,6 +30,7 @@ from isolated_signer import (  # noqa: E402
     ENVELOPE_ARTIFACT_TYPE,
     ENVELOPE_INTEGER_KEYS,
     ENVELOPE_PAYLOAD_FIELDS,
+    EVIDENCE_CHAIN_HANDLE_FIELDS,
     REQUEST_PROTOCOL,
     REFUSAL_ARTIFACT_TYPE,
     REASON_ATTESTATION_INVALID,
@@ -587,6 +588,45 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(
             signer.sign_result(_request(ev))["reason"], REASON_MALFORMED
         )
+
+
+class NegativeMatrixCrossBindingTest(unittest.TestCase):
+    """NM-XBIND-03 -- a chain handle that names bytes nobody stored is refused."""
+
+    def test_nm_xbind_03_a_lease_handle_that_names_no_stored_lease_is_refused(self):
+        """NM-XBIND-03 -- lease handle mismatch, and why the reachable literal is `handle_missing`.
+
+        `_verify_chain_handles` walks `EVIDENCE_CHAIN_HANDLE_FIELDS` -- record, lease, execution
+        receipt -- and reads each through `read_verified`, which returns None for a handle the store
+        does not hold. So an evidence document naming a lease the store never received is refused
+        before anything is signed.
+
+        The interesting part is which refusal is REACHABLE. A stored-but-mismatched lease cannot be
+        constructed at all: `ArtifactStore.put` re-derives the digest and refuses a lying handle, so
+        the store can never contain bytes filed under a name they do not hash to. That leaves
+        `handle_missing` as the verdict a cross-binding attempt actually produces, and `hash_mismatch`
+        as the store-corruption path reached only by damaging the store behind its own back. Asserting
+        the wrong one of those two would pass against a build that had lost this check entirely.
+
+        The handle used is well-formed 64-hex, so the refusal is about what the store holds and not
+        about the shape of the string -- a malformed handle would be refused earlier, by a different
+        rule, and would leave this one untested.
+        """
+        case = "NM-XBIND-03"
+        store, handles = _build_store()
+        evidence = _evidence(handles)
+        self.assertIn("lease_handle", EVIDENCE_CHAIN_HANDLE_FIELDS,
+                      f"{case}: the field this row is about left the chain set")
+
+        evidence["lease_handle"] = "e" * 64  # well-formed, and nothing was ever stored under it
+        # `_make_signer` owns the (store, handles) pair because the policy allowlist is keyed on a
+        # handle from it, so the prepared store is handed back rather than built twice.
+        signer, _store, _handles, _recorder = _make_signer(prepared=(store, handles))
+        result = signer.sign_result(_request(evidence))
+
+        self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
+                         f"{case}: a chain handle naming nothing was not refused: {result}")
+        self.assertEqual(result["reason"], REASON_HANDLE_MISSING, case)
 
 
 class StoreTest(unittest.TestCase):

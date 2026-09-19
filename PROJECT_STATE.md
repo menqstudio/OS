@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #249 · branch `t082/hardlink-and-the-rehash`** (base `main`, tip `9c6a024`, task T-082).
+> **⏭️ CURRENT ACTIVE: PR #250 · branch `t083/frames`** (base `main`, tip `33ebe84`, task T-083).
 >
-> the triage sent a test where it could not import what it tests
+> a mutation that did not run looks exactly like a survivor
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
