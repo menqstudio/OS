@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "92090603dda4a889768d1723972a0955f4dc89a5",
+  "settled_at_main_head": "c45438c090d3c9f5840a3a2f46da03b669d21340",
   "sync": {
-    "baseline_main_head_at_sync": "92090603dda4a889768d1723972a0955f4dc89a5",
-    "snapshot_branch": "t092/matrix-tcb25",
+    "baseline_main_head_at_sync": "c45438c090d3c9f5840a3a2f46da03b669d21340",
+    "snapshot_branch": "t093/matrix-output05",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t092/matrix-tcb25"
+    "branch": "t093/matrix-output05"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 263,
-    "branch": "t092/matrix-tcb25",
+    "number": 264,
+    "branch": "t093/matrix-output05",
     "state": "open",
-    "what": "a turn signed under an allowlist that holds its profile, then the allowlist emptied -- proved a real mutation by a fresh turn being refused model_profile_unknown -- and the already-signed envelope still verifying over the exact bytes it was signed over. Plus the structural half the behavioural one cannot cover: the allowlist is read on exactly ONE decision path in the runtime and the isolated signer does not know the word",
-    "note": "NM-TCB-25 bound: the execution allowlist is an input to acceptance and to nothing else",
+    "what": "One negative-matrix row that was measured unprotected before it was written: removing the receipt's output-handle agreement rule left all 2,198 engine tests green.",
+    "note": "NM-OUTPUT-05 bound: an execution receipt naming another turn's output is refused, by name",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #263 (t092/matrix-tcb25), task T-092: a turn signed under an allowlist that holds its profile, then the allowlist emptied -- proved a real mutation by a fresh turn being refused model_profile_unknown -- and the already-signed envelope still verifying over the exact bytes it was signed over. Plus the structural half the behavioural one cannot cover: the allowlist is read on exactly ONE decision path in the runtime and the isolated signer does not know the word Next: 21 rows left in triage section 3; NM-TCB-14 needs a shell assertion on the Linux live job as well as its Rust half",
-    "_note": "The carrier is current_workflow_pr (#263 on t092/matrix-tcb25). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #264 (t093/matrix-output05), task T-093: One negative-matrix row that was measured unprotected before it was written: removing the receipt's output-handle agreement rule left all 2,198 engine tests green. Next: Correct three stale claims in the win-live proof docs: brops-win-live DOES run in CI (ci.yml:103 and :787), so 'runs in no CI workflow -- that gap is unfixed' is false.",
+    "_note": "The carrier is current_workflow_pr (#264 on t093/matrix-output05). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "92090603dda4a889768d1723972a0955f4dc89a5",
+      "head": "c45438c090d3c9f5840a3a2f46da03b669d21340",
       "conclusion": "success",
-      "run_id": 35462202231,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 9209060, run 35462202231."
+      "run_id": 35463066088,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at c45438c, run 35463066088."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

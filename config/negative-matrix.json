@@ -46,7 +46,6 @@
     "NM-ORACLE-07",
     "NM-ORACLE-10",
     "NM-ORACLE-12",
-    "NM-OUTPUT-05",
     "NM-PARITY-05",
     "NM-PARITY-06",
     "NM-PARITY-07",
@@ -789,10 +788,10 @@
       "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_output_04_invalid_utf8_output_blocks_even_when_the_digest_matches"
     },
     "NM-OUTPUT-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Recorder output vs receipt",
       "section": "§7, §4.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::NegativeMatrixOutputBindingTest::test_nm_output_05_an_execution_receipt_naming_another_turns_output_is_refused"
     },
     "NM-OUTPUT-06": {
       "status": "implemented",
