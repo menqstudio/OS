@@ -586,7 +586,7 @@ number moved, which is when a layout regression would otherwise pass unseen.
 `tools/check_*.py` reads these sheets, so the next re-true is protected by a script that lives outside
 the repository. A gate under `tools/` that reads them — parse, palette, pair
 parity, right edges, column gaps — is the honest follow-up. It does not exist yet, and until it does the
-front page's artwork is checked by me rather than by the repository. Naming it here as a filename was
+front page's artwork is checked by me rather than by the repository — **§10 is that gate, and it found a defect on its first run.** Naming it here as a filename was
 itself refused by `check_doc_claims`: *"references … which does not exist. A citation to a file nobody
 filed is how `A-06` happened — twice"*. The gate was right, so the sentence changed.
 
@@ -618,3 +618,105 @@ green:
 The third is the one the constant never had: an archive that grows a row nobody carried off is now a
 failure, not a silence. And the catch is recorded here rather than amended away — the first commit on
 this branch is the one that broke it.
+
+## 10. The gate §9 said did not exist
+
+§9 ended by naming the gap rather than a filename: *"A gate under `tools/` that reads them — parse,
+palette, pair parity, right edges, column gaps — is the honest follow-up. It does not exist yet, and
+until it does the front page's artwork is checked by me rather than by the repository."*
+`tools/check_artwork_geometry.py` is that gate, wired into `Cockpit · design tokens (drift + contrast)`
+— a **required** context that already owns the four colour gates — and registered in
+`config/control-invocation.json`, which refused it on arrival: *"exists on disk and has no entry …
+The population is DERIVED, so a new control cannot be added without saying what its failure prevents"*.
+
+**Eleven rules, and the reason each one is a rule** is in the gate's own docstring. The short form: the
+sheet parses; the canvas is 1200 wide with a `height` that agrees with the `viewBox`; every light sheet
+has its dark twin; the twins are identical apart from colour literals and the one `<desc>` line; every
+light→dark colour pair is declared; every literal is on the token table; every `url(#…)` resolves; no
+text run passes x=1160; no two runs sharing a baseline overlap; LF bytes with no BOM and no C0
+controls; and no sheet is an orphan the README never shows.
+
+### 10a. It found a defect on its first run, by counting what nobody had counted
+
+Across the seven pairs there are **13** distinct light→dark colour pairs. Ten are exactly one token's
+light and dark value in `apps/desktop/src/theme/tokens.css`. Two are the sheets' own, declared in the
+gate with their reasons — the MenQ grounds `#ffffff → #0b0d10` (decision `D-025`, 51 uses) and the
+sheets' panel `#f5f6f8 → #14171f` (61 uses).
+
+The thirteenth was `#f5f6f8 → #1b1f2a`, used **once**, on the closing banner of `authority-dark.svg`,
+where every other panel in all seven pairs uses `#14171f`. In light that banner is the same colour as
+every other panel; in dark it was a step lighter. So the dark sheet made a distinction the light sheet
+does not — which is exactly the asymmetry the twin rule exists to catch, one element below the
+resolution the twin rule works at. Counting found it in a second; the sheet had been looked at by two
+designers, a judging pass and nine mechanical checks. It is a one-literal fix in this change, and the
+gate goes red again if it is reverted — measured, both directions.
+
+### 10b. Two rules were wrong before they were right, and the synthetic tests are why
+
+The first version of the colour rule demanded a **bijection**: one light literal, one dark literal. It
+reported two sheets, and both reports were wrong. A light theme may legitimately use white for both the
+page ground and an elevated card, and the dark theme then separates them — that is
+`--menq-color-elevated` working, and `architecture-*.svg` does exactly it. The rule now asks whether
+each pair is **declared**, which catches what the bijection was reaching for and nothing it was wrong
+about.
+
+The second was found by the gate's own self-test rather than by the repository: colour literals inside
+`<desc>` were feeding the positional pairing. The `<desc>` line is the one line the twin rule *allows*
+to differ, and both sheets name their ground in it — so rewording it in one theme would have shifted
+every pair after it and reported drift that was not there. The synthetic test that reworded a dark
+`<desc>` failed, which is the only reason that is not a defect shipping today. §8's lesson, earned a
+second time: a checker that cries wolf is the fastest way to teach someone to ignore it.
+
+### 10c. What this gate still does not do, stated rather than implied
+
+It does not judge whether a figure is *good*, or whether it says what its section says — §8's
+fact-for-fact reading was a person's work and stays a person's work. It does not check the **numbers**
+inside a drawing: the verification sheet draws `40 gate scripts` because this change counted them, and
+nothing would refuse a `39` there tomorrow. And its text metrics are an **estimate** — a deliberately
+pessimistic advance table, not a font engine — so it can only ever be wrong in the safe direction.
+
+Rule 9's floor is **zero**, and that is measured rather than chosen: across the 14 sheets the tightest
+gap between two runs on one baseline is 3.9 px, in the roadmap pair where the mono advance is
+over-estimated most. Any floor above zero would be red on arrival on artwork nobody has complained
+about. Overlap is a defect; breathing room is a judgement, and a gate that argues about judgement gets
+ignored.
+
+**Owed, by §5's own rule.** This change moves two counted claims — gate scripts 39 → **40** and declared
+controls 59 → **60** (`40 check · 20 tool`) — so the page cannot name a head where its own numbers hold.
+The front page carries the new numbers; its *Measured at* line and §5's rows are paid in the pull
+request after this one, against the head this one lands at.
+
+### 10d. The gate's first CI run failed, on the gate
+
+`Tools · gate self-tests on Windows (python)` went red on this branch's first run, in the gate's own
+real-repository test:
+
+```
+FAIL: test_the_sheets_this_repository_ships_pass_every_rule
+AssertionError: Lists differ: ['docs/brand/readme/architecture-dark.svg: …'] != []
+```
+
+Fourteen sheets, all reported for rule 10 — CRLF line endings. Every one of them is LF in this
+repository, and green locally, twice. **The rule was measuring git's configuration rather than the
+commit.** `.gitattributes` pinned `*.sh` and the hooks to LF and nothing else; this box has
+`core.autocrlf=input`, so a checkout leaves LF alone, and `windows-latest` defaults to `true`, so its
+checkout converts every text file on the way to disk. The gate reads the bytes it finds in the working
+tree, so on that runner it found CRLF and said so — correctly, about the wrong thing.
+
+Reproduced locally rather than reasoned about, by cloning the pushed head the way the runner does:
+
+```
+git -c core.autocrlf=true clone -b t085/artwork-geometry-gate …
+  hero-light.svg in that clone: CRLF pairs = 49
+```
+
+**The fix is not to drop the rule.** `.gitattributes` now carries `*.svg text eol=lf`, with the
+measurement above as its reason, so the working tree is LF wherever it is checked out and the property
+the gate checks is true rather than local. The committed bytes were already LF, so nothing's content
+changed. The gate's message names the attribute, so a reader who deletes the line is told where the
+red came from.
+
+The order here is the point: a gate whose first run is also its first green run has not been tested on
+the platform it will fail on. This one failed on arrival, on a job that is **not** a required context —
+which is exactly what that job is for, and the reason `config/required-checks.json` still keeps it out
+of `contexts` with a written reason.
