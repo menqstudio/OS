@@ -26,7 +26,7 @@ request; a thin desktop mirror store for display and dedupe. **No gate logic in 
 
 **Contracts / schemas.** Consume `verifier-receipt` + `execution receipt` + evidence events (§F). Add a
 small `approval-request` shape (desktop→engine) if one does not already exist in the engine schemas —
-if it requires an engine schema change, that is an **audited engine task**, flagged, not done here. **It was opened as `T-021` and its schema has now landed audited**: `contracts/approval-request.schema.json`, vendored byte-identical into `engine/schemas/`, with [`docs/design/T-021_SCHEMA_AUDIT.md`](../design/T-021_SCHEMA_AUDIT.md) checking it against the five contract invariants `docs/OWNER_ACTION_REQUIRED.md` fixed in advance, and five obligations recorded as conditions on the transport step. **Nothing sends it yet** — the engine endpoint and the desktop command are `T-021b` and `T-021c` — so the rows below stay open.
+if it requires an engine schema change, that is an **audited engine task**, flagged, not done here.
 
 **Data models.** Desktop mirror tables: `governance_signal`, `approval_mirror`, `decision_mirror` (all
 display caches keyed by engine ids; the engine ledger stays authoritative; caches are rebuildable).
