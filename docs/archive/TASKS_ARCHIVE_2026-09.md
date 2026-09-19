@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-12 of these and their pull requests. What is here is the account of each defect, which is
+13 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -30,3 +30,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-063** | **The app version is stated 5x in 4 files** — the gate refuses drift. **Open: the git-tag arm**, a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` was stale by construction** — an OLDER reading passed while every run since was `success`; refused now | Bro | Review | merged `#219` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
+| **T-072** | **The gates had never run on Windows** — every `tools/` self-test step ran on ubuntu, five printed `a\b` and two `check_audit_actor` tests were red here ◑ | Bro | Review | merged `#232` |

@@ -21,6 +21,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import sys
 import subprocess
 import tempfile
@@ -573,11 +574,13 @@ class DocumentsCheckedWithoutBeingCanonicalReads(unittest.TestCase):
 class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
     """`docs/archive/TASKS_ARCHIVE_2026-09.md` is a ticket source.
 
-    Twelve merged-and-unconfirmed rows left `TASKS.md` on 2026-09-19 because that file is read at the
-    start of every session and carries a 7,000-byte ceiling, and five consecutive pull requests had
-    met the ceiling by shortening prose — including other people's. The ceiling's own remedy text
-    says to move the history out. So the rows moved, verbatim, and the board kept one line naming all
-    twelve and their pull requests.
+    Merged-and-unconfirmed rows leave `TASKS.md` because that file is read at the start of every
+    session and carries a 7,000-byte ceiling, and five consecutive pull requests had met the ceiling
+    by shortening prose — including other people's. The ceiling's own remedy text says to move the
+    history out. So the rows move, verbatim, and the board keeps one line naming all of them and
+    their pull requests. Twelve went on 2026-09-19 and a thirteenth the same day, which is why these
+    tests read the count off that line instead of repeating it: the hard-coded twelve failed on the
+    thirteenth, and the constant was the defect.
 
     `known_tickets()` reads a hard-coded list against the module's ROOT, so there is nothing
     synthetic to build here: the list only ever describes this repository.
@@ -597,26 +600,51 @@ class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
         end = source.index("def main(", start)
         self.assertIn("docs/archive/TASKS_ARCHIVE_2026-09.md", source[start:end])
 
+    @staticmethod
+    def _carried():
+        """The ids the board's one-line statement names, read off that line.
+
+        This was a hard-coded twelve, and the thirteenth row carried off failed it — the constant was
+        the defect, not the archive. The count and the ids now come from the board itself, so the line
+        that replaced the rows is checked against the rows it replaced, which is the property that
+        makes the replacement honest. A count typed in two places only agrees until one of them moves.
+        """
+        board = (ROOT / "TASKS.md").read_text(encoding="utf-8")
+        line = [l for l in board.split("\n") if re.match(r"\| \*\*\d+ merged rows\*\*", l)]
+        assert len(line) == 1, f"the board names its carried rows in {len(line)} lines, expected one"
+        claimed = int(re.match(r"\| \*\*(\d+) merged rows\*\*", line[0]).group(1))
+        ids = re.findall(r"`(T-\d+)`·`#\d+`", line[0])
+        return claimed, ids
+
+    def test_the_board_line_names_as_many_rows_as_it_claims(self):
+        """The line says a number and then lists ids. Both are written by hand, in one cell."""
+        claimed, ids = self._carried()
+        self.assertEqual(claimed, len(ids),
+                         f"the board claims {claimed} merged rows and names {len(ids)}")
+
     def test_every_carried_row_is_still_a_known_ticket(self):
-        """The twelve by name. If a future edit drops one from both the board and the archive, this
-        fails saying which — rather than the gate reporting it as a claim about nothing, which is the
-        same verdict for a very different cause."""
-        carried = ("T-059", "T-060", "T-063", "T-064", "T-065", "T-066",
-                   "T-067", "T-068", "T-069", "T-070", "T-071", "T-073")
+        """Each id the board carried off, by name. If a future edit drops one from both the board and
+        the archive, this fails saying which — rather than the gate reporting it as a claim about
+        nothing, which is the same verdict for a very different cause."""
         known = m.known_tickets()
+        _claimed, carried = self._carried()
+        self.assertGreaterEqual(len(carried), 12, "the board's carried-row line lost its ids")
         for tid in carried:
             with self.subTest(ticket=tid):
                 self.assertIn(tid, known, f"{tid} was carried off the board and is now in no "
                                           f"board, ledger or archive")
 
     def test_the_archive_holds_the_rows_and_not_a_summary_of_them(self):
-        """"Moved the history out" has to mean moved, not paraphrased. Each carried row's id appears
-        in the archive with its merged pull request beside it, which is what makes the board's
-        one-line replacement honest rather than a deletion."""
+        """"Moved the history out" has to mean moved, not paraphrased. Every id the board names has a
+        row of its own in the archive with its merged pull request beside it, and the archive holds no
+        row the board does not name."""
         archive = (ROOT / "docs" / "archive" / "TASKS_ARCHIVE_2026-09.md").read_text(
             encoding="utf-8")
         rows = [l for l in archive.split("\n") if l.startswith("| **T-")]
-        self.assertEqual(len(rows), 12, "the archive does not hold twelve rows")
+        _claimed, carried = self._carried()
+        self.assertEqual(sorted(re.match(r"\| \*\*(T-\d+)\*\*", r).group(1) for r in rows),
+                         sorted(carried),
+                         "the archive's rows and the board's one-line statement name different sets")
         for row in rows:
             with self.subTest(row=row[:40]):
                 self.assertIn("merged `#", row, "a carried row lost its pull request")

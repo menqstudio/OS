@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #250 · branch `t083/frames`** (base `main`, tip `33ebe84`, task T-083).
+> **⏭️ CURRENT ACTIVE: PR #251 · branch `t084/page-retrued-again`** (base `main`, tip `830fcec`, task T-084).
 >
-> a mutation that did not run looks exactly like a survivor
+> the page re-trued for four landings at once
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-084** | **The page re-trued for four landings at once** — matrix 144→150, engine 2148→2152, the to-scale bar redrawn, and T-072 carried off the board ◑ | Bro | Review | `#251` |
 | **T-083** | **A mutation that did not run looks exactly like a survivor** — five times in one day; the harness now refuses a verdict it cannot prove it applied ◑ | Bro | Review | `#250` |
 | **T-082** | **The triage sent a test where it could not import what it tests** — only 4 of 12 runtime modules import without `cryptography` ◑ | Bro | Review | `#249` |
 | **T-081** | **A key with everything right except audience, and a refusal that must carry no bytes** — NM-SCOPE-04, NM-TERM-04 ◑ | Bro | Review | `#248` |
@@ -28,7 +29,6 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-076** | **A required gate failed 1 run in 40** — `pages.browser.spec.tsx` sampled the DOM once after `mount`; polling instead, 18-red proof ◑ | Bro | Review | `#243` |
 | **T-075** | **A test that does not exist cannot fail** — NM-CRASH-01 bound; its first copy landed past `unittest.main()` ◑ | Bro | Review | `#242` |
 | **T-074** | **No gate read the front page** — in no manifest meant in no check; `ALSO_CHECKED`, 145 → 204 paths, and a C0 byte found ◑ | Bro | Review | `#241` |
-| **T-072** | **The gates had never run on Windows** — every `tools/` self-test step ran on ubuntu, five printed `a\b` and two `check_audit_actor` tests were red here ◑ | Bro | Review | `#232` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
@@ -42,7 +42,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **12 merged rows** | **Shipped, and none independently confirmed** — `T-073`·`#239`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **13 merged rows** | **Shipped, and none independently confirmed** — `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
