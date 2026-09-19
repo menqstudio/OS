@@ -170,6 +170,9 @@ REFUSE_UNKNOWN_ATTEMPT = "unknown_attempt"
 REFUSE_ILLEGAL_STATE = "illegal_state"
 #: A second completion tried to rewrite facts already recorded for this attempt.
 REFUSE_COMPLETION_CONFLICT = "completion_conflict"
+#: A completion whose run outlasted its lease (§7, `NM-TIME-13`/`NM-TIME-18`). The same literal the
+#: launch gate already refuses with, so both ends of one lease speak one word.
+REFUSE_LEASE_EXPIRED = "lease_expired"
 #: The evidence head is older than, or forks, the durable anti-rollback floor.
 REFUSE_STALE_EVIDENCE = "stale_evidence"
 REFUSE_EVIDENCE_FORK = "evidence_fork"
@@ -466,6 +469,9 @@ def _ledger_refusal(op: str, exc: ledger.LedgerError) -> Dict[str, Any]:
         return _refusal(op, REFUSE_STALE_EVIDENCE, str(exc))
     if isinstance(exc, ledger.EvidenceFork):
         return _refusal(op, REFUSE_EVIDENCE_FORK, str(exc))
+    if isinstance(exc, ledger.LeaseExpired):
+        # Before the `Conflict` limb: a borrowed reason is a reason nobody can act on.
+        return _refusal(op, REFUSE_LEASE_EXPIRED, str(exc))
     if isinstance(exc, ledger.Conflict):
         reason = (
             REFUSE_COMPLETION_CONFLICT

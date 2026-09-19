@@ -384,6 +384,124 @@ class CompletionTests(unittest.TestCase):
             conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 1
         )
 
+    # ---- the lease bounds EXECUTION, not only launch (NM-TIME-13, NM-TIME-18) -------------------
+    #
+    # `_acceptance` issues the lease at 1,000,000 for `LEASE_DURATION_MS` (210,000), so it expires at
+    # 1,210,000. Every completion test above records at `now_ms=50` with `completed_at_ms=1,050,000` —
+    # inside the lease by construction, which is exactly why 2,200 tests stayed green while
+    # `record_completion` read the state and never the deadline.
+
+    #: The fixture lease's last valid instant.
+    LEASE_END = 1_000_000 + gsl.LEASE_DURATION_MS
+
+    def test_nm_time_13_a_completion_stamped_past_its_lease_is_refused_as_lease_expired(self):
+        """NM-TIME-13 — §7's invariant `completed_at_ms <= lease_expires_at_ms`, on the run's own stamp.
+
+        The row was `blocked` with the measurement written into it: `record_completion` with
+        `completed_at_ms = lease_expires_at_ms + 1` returned `created`, the attempt reached `COMPLETED`,
+        and `load_attestation_state` handed back terminal state — so a §4.9 attestation was built for a
+        run that outlived its authorisation.
+
+        `LeaseExpired` and not `Conflict`: the row requires the governed reason `lease_expired`, and
+        `Conflict` surfaces as `acceptance_conflict`, which would send an operator looking for a
+        competing acceptance that does not exist.
+        """
+        conn = _conn()
+        _drive_to_executing(conn)
+        with self.assertRaises(gsl.LeaseExpired) as caught:
+            gsl.record_completion(conn, "att-1", _produced(completed_at_ms=self.LEASE_END + 1), 50,
+                                  derived=DERIVED)
+        self.assertIn("past lease_expires_at_ms", str(caught.exception))
+        # It is its own fault type, or the two refusal ladders cannot tell them apart.
+        self.assertNotIsInstance(caught.exception, gsl.Conflict)
+
+        # Nothing was written, and nothing advanced: no completion row, no floor row, still EXECUTING.
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_evidence_head_floor").fetchone()[0], 0)
+        self.assertEqual(
+            conn.execute("SELECT state FROM governed_turn_acceptance"
+                         " WHERE execution_attempt_id='att-1'").fetchone()[0], gsl.EXECUTING)
+        # And `load_attestation_state` — the only read the attestation builder gets — has nothing to
+        # hand it. This is the row's actual complaint, asserted rather than inferred from the refusal.
+        self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-1"))
+
+        # The refusal SPENT nothing: an in-time completion for the same attempt still records.
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED), gsl.CREATED)
+
+    def test_nm_time_18_a_stepped_clock_cannot_buy_a_completion_the_lease_no_longer_covers(self):
+        """NM-TIME-18 — the same invariant against the SUPERVISOR's clock.
+
+        The row differs from NM-TIME-13 only in how the stamp got past expiry, which the tree cannot
+        distinguish. What it CAN distinguish is whose clock is asked, and that is the security half:
+        `completed_at_ms` is a run-produced fact, so a gate keyed only on it asks the late party whether
+        it was late. Here the run claims it finished comfortably inside the lease and the supervisor
+        records it a minute after expiry — refused, on the supervisor's own clock.
+        """
+        conn = _conn()
+        _drive_to_executing(conn)
+        claims_it_was_early = _produced(completed_at_ms=1_050_000)
+        self.assertLess(claims_it_was_early["completed_at_ms"], self.LEASE_END)
+        with self.assertRaises(gsl.LeaseExpired) as caught:
+            gsl.record_completion(conn, "att-1", claims_it_was_early, self.LEASE_END + 60_000,
+                                  derived=DERIVED)
+        self.assertIn("completion recorded at", str(caught.exception))
+        self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-1"))
+
+    def test_the_boundary_is_the_expiry_instant_itself(self):
+        """`lease_launch_gate` documents its own boundary to the millisecond ("remaining exactly 180000
+        proceeds, 179999 refuses"); the other end of the same lease is decided the same way. AT
+        `lease_expires_at_ms` a completion is accepted; one millisecond later it is not."""
+        conn = _conn()
+        _drive_to_executing(conn)
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(completed_at_ms=self.LEASE_END),
+                                  self.LEASE_END, derived=DERIVED),
+            gsl.CREATED)
+
+        other = _conn()
+        _drive_to_executing(other, "att-2", _acceptance("att-2"))
+        with self.assertRaises(gsl.LeaseExpired):
+            gsl.record_completion(other, "att-2", _produced(completed_at_ms=self.LEASE_END + 1),
+                                  self.LEASE_END, derived=DERIVED)
+
+    def test_an_idempotent_retry_after_expiry_is_a_recovery_and_not_a_late_completion(self):
+        """The case the gate must NOT catch, and the reason it runs after the INSERT.
+
+        A completion recorded in time, then replayed by a process that crashed and reconnected after the
+        lease ended, is a RECOVERY of something already attested — not a run outliving its authority.
+        Refusing it would turn a crash into a lost turn, and would burn nothing to gain nothing: the
+        facts are byte-identical to what is already stored. So the gate is gated on `inserted`.
+        """
+        conn = _conn()
+        _drive_to_executing(conn)
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED), gsl.CREATED)
+        # Hours later, well past expiry, the same facts arrive again.
+        self.assertEqual(
+            gsl.record_completion(conn, "att-1", _produced(), self.LEASE_END + 3_600_000,
+                                  derived=DERIVED),
+            gsl.IDEMPOTENT)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 1)
+
+    def test_a_running_attempt_still_cannot_expire_so_the_refusal_is_the_only_bound(self):
+        """Why the gate refuses instead of transitioning, pinned so a later change reckons with it.
+
+        `EXPIRED`'s only legal predecessor is `LEASE_READY`. Once an attempt reaches `EXECUTING` it is
+        UNREPRESENTABLE for it to expire, so no sweeper can bound a running turn and the refusal above
+        is the only thing that does. If someone later adds `EXECUTING` to this tuple, this test fails
+        and the gate's shape becomes a question again rather than a leftover.
+        """
+        self.assertEqual(gsl.LEGAL_PREDECESSORS[gsl.EXPIRED], (gsl.LEASE_READY,))
+        self.assertNotIn(gsl.EXECUTING, gsl.LEGAL_PREDECESSORS[gsl.EXPIRED])
+        # The exits a running attempt does have, so the set above is read against something.
+        for target in (gsl.COMPLETED, gsl.FAILED):
+            self.assertIn(gsl.EXECUTING, gsl.LEGAL_PREDECESSORS[target])
+        self.assertIn(gsl.EXECUTING, gsl.LEGAL_PREDECESSORS[gsl.RECOVERY_REQUIRED])
+
     def test_a_second_completion_with_different_facts_is_refused(self):
         conn = _conn()
         _drive_to_executing(conn)

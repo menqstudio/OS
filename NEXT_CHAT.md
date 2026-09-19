@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t095/source-nul-gate` — `main` @ `6ca13df`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t096/lease-bounds-execution` — `main` @ `dc6f263`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #266 · branch `t095/source-nul-gate`** (base `main`, tip `6ca13df`, task T-095).
+> **⏭️ CURRENT ACTIVE: PR #267 · branch `t096/lease-bounds-execution`** (base `main`, tip `dc6f263`, task T-096).
 >
-> Ten honesty assertions could not fail; the backspace that killed them is refused now
+> The lease bounds execution, not only launch: a completion past its expiry is refused as lease_expired
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

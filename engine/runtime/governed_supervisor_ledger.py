@@ -128,6 +128,16 @@ class Conflict(LedgerError):
         self.which = which
 
 
+class LeaseExpired(LedgerError):
+    """A completion whose run outlasted the lease that authorised it (§7, `NM-TIME-13`/`NM-TIME-18`).
+
+    A type of its own rather than a `Conflict`, because the two surface differently and must: `Conflict`
+    becomes the governed reason `acceptance_conflict`, and the matrix rows require `lease_expired` —
+    already a member of `GOVERNED_REFUSAL_REASONS` and already mapped by `governed_acceptance`. A
+    refusal that arrives under the wrong name is a refusal an operator cannot act on.
+    """
+
+
 class InvalidHead(LedgerError):
     """A malformed evidence head (bad hex, non-positive counts, last_sequence != count)."""
 
@@ -914,8 +924,8 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
 
     with _Tx(conn) as tx:
         acceptance = tx.execute(
-            "SELECT install_id, task_id, state FROM governed_turn_acceptance"
-            " WHERE execution_attempt_id = ?",
+            "SELECT install_id, task_id, state, lease_expires_at_ms"
+            " FROM governed_turn_acceptance WHERE execution_attempt_id = ?",
             (execution_attempt_id,),
         ).fetchone()
         if acceptance is None:
@@ -951,6 +961,36 @@ def record_completion(conn: sqlite3.Connection, execution_attempt_id: str,
             if existing is None or existing["facts_sha256"] != facts_sha256:
                 raise Conflict("completion_facts_differ")
             inserted = False
+
+        # THE LEASE BOUNDS EXECUTION, NOT ONLY LAUNCH (§7; `NM-TIME-13`, `NM-TIME-18`).
+        #
+        # Until this check, `lease_expires_at_ms` was read nowhere in this function, and the state
+        # machine made the gap structural rather than accidental: `LEGAL_PREDECESSORS[EXPIRED]` is
+        # `(LEASE_READY,)`, so once an attempt reaches `EXECUTING` it is UNREPRESENTABLE for it to
+        # expire. With `LEASE_DURATION_MS = 210_000` and `lease_launch_gate` demanding
+        # `MIN_LAUNCH_REMAINING_MS = 180_000` still to run, the lease bounded admission to the first 30
+        # seconds and nothing after it — a turn could outlive its authorisation and still buy a §4.9
+        # attestation.
+        #
+        # TWO CLOCKS, because one of them belongs to the party being judged. `completed_at_ms` is the
+        # invariant the matrix names and it is a RUN-PRODUCED fact, so it is checked and it is not
+        # trusted alone; `now_ms` is the supervisor's own, and a completion still arriving after expiry
+        # is refused whatever the run claims about when it finished.
+        #
+        # ONLY FOR A NEW COMPLETION. An idempotent retry reconnecting after a crash is a legitimate
+        # recovery of a completion that was recorded in time, and refusing it would turn a crash into a
+        # lost turn. Inside the same `_Tx`, so a refusal rolls the INSERT above back: nothing is
+        # written, the write-once primary key is not burned, and the floor below is never reached.
+        lease_expires_at_ms = acceptance["lease_expires_at_ms"]
+        if inserted and _is_pos_i63(lease_expires_at_ms):
+            if facts["completed_at_ms"] > lease_expires_at_ms:
+                raise LeaseExpired(
+                    "completed_at_ms %d is past lease_expires_at_ms %d"
+                    % (facts["completed_at_ms"], lease_expires_at_ms))
+            if now_ms > lease_expires_at_ms:
+                raise LeaseExpired(
+                    "completion recorded at %d, past lease_expires_at_ms %d"
+                    % (now_ms, lease_expires_at_ms))
 
         # Only a genuinely NEW completion touches the floor; an idempotent retry must not
         # re-run the CAS (its head is by definition the one already accepted). Kept OUTSIDE
@@ -1122,7 +1162,7 @@ __all__ = [
     "CREATED", "IDEMPOTENT",
     "COMPLETION_FIELDS", "DERIVED_HANDLE_FIELDS", "load_acceptance",
     "AttestationState", "NewAcceptance",
-    "Conflict", "Corrupt", "EvidenceFork", "IllegalTransition", "InvalidHead",
+    "Conflict", "Corrupt", "EvidenceFork", "IllegalTransition", "InvalidHead", "LeaseExpired",
     "LedgerError", "NotFound", "StaleEvidence",
     "accept_prepare", "advance", "apply_schema", "canonical_bytes", "gate_and_start",
     "load_acceptance_by_challenge",

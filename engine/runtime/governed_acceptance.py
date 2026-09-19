@@ -864,6 +864,10 @@ class AcceptanceDriver:
             raise _Refuse("stale_evidence", str(exc), row["receipt_id"])
         except ledger.EvidenceFork as exc:
             raise _Refuse("evidence_fork", str(exc), row["receipt_id"])
+        except ledger.LeaseExpired as exc:
+            # Above `Conflict` and above `LedgerError`: the lease is its own refusal, and reporting it
+            # as `acceptance_conflict` would send an operator looking for a competing acceptance.
+            raise _Refuse("lease_expired", str(exc), row["receipt_id"])
         except ledger.Conflict as exc:
             raise _Refuse("acceptance_conflict", str(exc), row["receipt_id"])
         except ledger.IllegalTransition as exc:
