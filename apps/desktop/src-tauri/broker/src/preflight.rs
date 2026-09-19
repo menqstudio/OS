@@ -1266,6 +1266,41 @@ mod tests {
     // ---- structure -------------------------------------------------------------------------
 
     #[test]
+    fn a_requirement_no_machine_can_meet_is_named_on_the_owner_page() {
+        // The table's `Provisioner` column is the whole point of the table, and one of its values --
+        // `NotProvisionableOnAMachine` -- says something no installer and no administrator can fix. A
+        // prerequisite like that is not a deployment task; it is either a platform fact or a decision
+        // somebody has to take, and a decision nobody has been ASKED is indistinguishable from one
+        // nobody has to take.
+        //
+        // Measured 2026-09-19: `custody.committed_label_resolver` had sat here since the ladder
+        // replaced the direct wiring, with "it is an owner-gated code decision" in its own `refusal`
+        // field, and appeared nowhere in `docs/OWNER_ACTION_REQUIRED.md` -- the one page whose stated
+        // job is that "the answer to 'what is waiting on me' is never reconstructed from a chat log".
+        // Two Phase-1 Definition-of-Done rows were reading as blocked by deployment because of it.
+        //
+        // So the page is read from disk. A new not-provisionable requirement now has to be put in
+        // front of the Owner before this test passes, which is the only place that obligation can be
+        // enforced rather than remembered.
+        let page = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../docs/OWNER_ACTION_REQUIRED.md");
+        let text = std::fs::read_to_string(&page)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", page.display()));
+        let unprovisionable: Vec<&str> = REQUIREMENTS
+            .iter()
+            .filter(|r| matches!(r.provisioner, Provisioner::NotProvisionableOnAMachine))
+            .map(|r| r.name)
+            .collect();
+        assert!(!unprovisionable.is_empty(), "the filter matched nothing; re-read the table");
+        for name in unprovisionable {
+            assert!(
+                text.contains(name),
+                "`{name}` is a prerequisite no machine can provide and it is not named in                  docs/OWNER_ACTION_REQUIRED.md. Either the Owner has not been asked, or the                  provisioner column is wrong -- both are worth stopping for"
+            );
+        }
+    }
+
+    #[test]
     fn every_requirement_name_is_unique() {
         let names: BTreeSet<&str> = REQUIREMENTS.iter().map(|r| r.name).collect();
         assert_eq!(names.len(), REQUIREMENTS.len(), "duplicate requirement name");
