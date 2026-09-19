@@ -428,5 +428,108 @@ def _apply_dacl(test_case, path, sddl: str, expect: str | None = None) -> None:
                 f"constructed, so it is NOT covered here.\n{landed.strip()[:600]}")
 
 
+class NegativeMatrixHardlinkTests(unittest.TestCase):
+    """NM-FS-05 -- bytes swapped through a hardlink, refused by the read-side re-hash."""
+
+    def test_nm_conc_07_republishing_is_a_no_op_and_a_collision_is_refused(self):
+        """NM-CONC-07 -- duplicate artifact publish: idempotent for identical bytes, refused otherwise.
+
+        Two writers publishing the SAME artifact have not disagreed about anything, so the second
+        publish is a no-op that returns the same handle, leaves one file, and leaks no temp. That is
+        the benign half, and it is what makes concurrent publication safe at all.
+
+        The other half is what keeps the benign half honest. "Already present" must not mean "trust
+        whatever is already there": an object at that handle whose bytes do not address to it is a
+        corrupted store, and `_verify_idempotent` refuses instead of overwriting or accepting. Without
+        that limb, the idempotent path would be a door -- exactly the one NM-FS-05's hardlink swap
+        walks through.
+
+        The temp files are asserted in both paths. `publish` writes through `.tmp-*.part` and the
+        caller unlinks it whichever branch was taken; a leaked temp in a content-addressed store is a
+        file nothing will ever name, read, or collect.
+        """
+        case = "NM-CONC-07"
+        with tempfile.TemporaryDirectory() as tmp:
+            # Not pre-created, for the reason spelled out in the NM-FS-05 test below.
+            root = pathlib.Path(tmp) / "store"
+            self.assertFalse(root.exists(), f"{case}: the store directory must NOT be pre-created -- `_harden_dir` only CHECKS an existing one, and a mkdir under the default umask is 0o755, which posix refuses as world-accessible")
+            store = EvidenceStore(root)
+
+            first = store.publish(b"artifact")
+            again = store.publish(b"artifact")
+            self.assertEqual(again, first, f"{case}: republishing changed the handle")
+            self.assertEqual(sorted(p.name for p in root.iterdir()), [first],
+                             f"{case}: the store holds something other than exactly the one object")
+            self.assertEqual(store.read(first), b"artifact", case)
+
+            # The other collision: the handle is present and its bytes do not address to it.
+            (root / first).write_bytes(b"different bytes")
+            with self.assertRaises(EvidenceStoreError) as caught:
+                store.publish(b"artifact")
+            self.assertIn("content-address collision", str(caught.exception), case)
+            self.assertEqual(
+                [p.name for p in root.iterdir() if p.name.startswith(".tmp-")], [],
+                f"{case}: the refused publish leaked a temp file nothing will ever collect")
+
+    def test_nm_fs_05_bytes_swapped_through_a_hardlink_are_refused_by_the_re_hash(self):
+        """NM-FS-05 -- an attacker with a hardlink to a store object cannot change what it says.
+
+        A hardlink is a second NAME for the same inode, so an attacker who can create one in a
+        directory they control can write through it and change the bytes the store serves -- without
+        ever touching the store directory, its mode, or its owner. Every filesystem guard the store
+        has is about the store's own path; none of them sees this.
+
+        What refuses it is not a guard at all: the handle IS the digest, and `read` re-hashes the
+        bytes before returning them. Content addressing means the attacker must produce a preimage of
+        sha256 to make the swap survive, and short of that the store fails closed on its own record.
+
+        The positive control comes first and is load-bearing: the untouched object must read back
+        exactly, or the refusal below could be a store that cannot read anything. And the hardlink is
+        created with a skip rather than an assert -- a filesystem that refuses `os.link` leaves this
+        row UNTESTED on that host, which is a different statement from passing, and saying so is the
+        point of the row.
+        """
+        case = "NM-FS-05"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root = base / "store"
+            attacker = base / "attacker"
+            attacker.mkdir()
+
+            # NOT pre-created: `_harden_dir` creates AND hardens a missing directory (0o700 on
+            # posix, a private DACL on nt), but only CHECKS an existing one -- and a `mkdir()` under
+            # the default umask is 0o755, which it refuses as world-accessible. Letting the store
+            # make its own directory exercises the production path and is stricter than anything set
+            # here by hand.
+            self.assertFalse(root.exists(), f"{case}: the store directory must NOT be pre-created -- `_harden_dir` only CHECKS an existing one, and a mkdir under the default umask is 0o755, which posix refuses as world-accessible")
+            store = EvidenceStore(root)
+            handle = store.publish(b"original")
+            self.assertEqual(store.read(handle), b"original",
+                             f"{case}: the store cannot read back what it just published")
+
+            published = root / handle
+            self.assertTrue(published.is_file(), f"{case}: the object is not at root/<handle>")
+            link = attacker / "swap"
+            try:
+                os.link(published, link)
+            except (OSError, NotImplementedError, AttributeError) as exc:
+                self.skipTest(f"{case}: hardlinks are unsupported here, so this row is NOT "
+                              f"covered on this host: {exc}")
+
+            # The same inode, under a name the store never sees.
+            self.assertEqual(link.read_bytes(), b"original", f"{case}: the link is not the object")
+            link.write_bytes(b"swapped!")
+            self.assertEqual(published.read_bytes(), b"swapped!",
+                             f"{case}: the write did not reach the store's own name, so nothing "
+                             f"was actually swapped and the refusal below would prove nothing")
+
+            with self.assertRaisesRegex(EvidenceStoreError, "bytes do not hash to it"):
+                store.read(handle)
+
+            # And a fresh, honest object still reads -- the store did not simply break.
+            good = store.publish(b"a different artifact")
+            self.assertEqual(store.read(good), b"a different artifact", case)
+
+
 if __name__ == "__main__":
     unittest.main()

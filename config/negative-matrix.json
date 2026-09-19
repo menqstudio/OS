@@ -31,7 +31,6 @@
     "NM-CAP-03",
     "NM-CONC-03",
     "NM-CONC-04",
-    "NM-CONC-07",
     "NM-CRASH-07",
     "NM-CRASH-09",
     "NM-CRASH-11",
@@ -41,7 +40,6 @@
     "NM-FRAME-19",
     "NM-FS-02",
     "NM-FS-03",
-    "NM-FS-05",
     "NM-FS-06",
     "NM-IPC-01",
     "NM-MAN-06",
@@ -753,10 +751,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixConcurrencyTests::test_nm_conc_06_a_divergent_duplicate_terminal_write_is_refused"
     },
     "NM-CONC-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Duplicate artifact publish",
       "section": "§4.0/§6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_evidence_store_shared_artifacts.py::NegativeMatrixHardlinkTests::test_nm_conc_07_republishing_is_a_no_op_and_a_collision_is_refused"
     },
     "NM-CONC-08": {
       "status": "implemented",
@@ -927,10 +925,10 @@
       "test": "apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs::tests::nm_fs_04_a_store_publication_refuses_a_name_that_is_not_a_content_address"
     },
     "NM-FS-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Hardlink to store",
       "section": "§4.0/§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_evidence_store_shared_artifacts.py::NegativeMatrixHardlinkTests::test_nm_fs_05_bytes_swapped_through_a_hardlink_are_refused_by_the_re_hash"
     },
     "NM-FS-06": {
       "status": "unreviewed",
