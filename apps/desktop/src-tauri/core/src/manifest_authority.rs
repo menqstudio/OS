@@ -134,6 +134,55 @@ mod tests {
     }
 
     #[test]
+    fn nm_scope_04_a_key_out_of_protocol_scope_is_unavailable_with_everything_else_right() {
+        // NM-SCOPE-04 -- protocol out-of-scope. `allowed_protocols` is the audience a key may sign
+        // for, and a resolve for a protocol not listed is refused inside `resolve_production_key`.
+        //
+        // The fixture is built around what the scoped key HAS. It is Production, unrevoked, inside
+        // its validity window, listed in a root-signed manifest whose anti-rollback floor is
+        // satisfied -- every property a key needs, except that this protocol is not one it may sign
+        // for. A key that was also revoked or expired would leave the protocol check untested, since
+        // any of those would refuse on its own.
+        let root = sk([9u8; 32]);
+        let prod = sk([1u8; 32]);
+        let scoped = sk([4u8; 32]);
+
+        let mut scoped_key = key(
+            "scoped-1", hex(scoped.verifying_key().as_bytes()), MTrustClass::Production, false);
+        scoped_key.allowed_protocols = vec!["brops.other.v1".to_string()];
+
+        let manifest = manifest_with(vec![
+            key("prod-1", hex(prod.verifying_key().as_bytes()), MTrustClass::Production, false),
+            scoped_key,
+        ]);
+        let pinned = PinnedRoot {
+            root_key_id: "root-1".into(),
+            public_key_hex: hex(root.verifying_key().as_bytes()),
+        };
+        let root_sig = base64::engine::general_purpose::STANDARD
+            .encode(root.sign(&manifest.canonical_bytes()).to_bytes());
+        let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
+        let auth = ManifestReceiptKeyAuthority::new(
+            &manifest, &root_sig, &pinned, &floor, PROTO, 1000);
+        assert!(auth.is_trusted(), "NM-SCOPE-04: the manifest itself must be trusted here");
+
+        match auth.resolve("scoped-1").unwrap() {
+            KeyResolution::Unavailable(_) => {}
+            KeyResolution::Trusted(_) => panic!(
+                "NM-SCOPE-04: a key whose allowed_protocols exclude {PROTO} resolved Trusted"
+            ),
+        }
+        // The positive control, in the same authority: without it this would pass against a manifest
+        // that had stopped resolving anything at all.
+        match auth.resolve("prod-1").unwrap() {
+            KeyResolution::Trusted(_) => {}
+            KeyResolution::Unavailable(r) => panic!(
+                "NM-SCOPE-04: the in-scope key must stay Trusted, got Unavailable({r})"
+            ),
+        }
+    }
+
+    #[test]
     fn resolves_a_production_key_and_rejects_everything_else() {
         let root = sk([9u8; 32]);
         let prod = sk([1u8; 32]);

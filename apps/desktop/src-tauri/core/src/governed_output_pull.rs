@@ -761,6 +761,57 @@ mod tests {
     // ---- The happy path, across chunk boundaries ------------------------------------------------
 
     #[test]
+    fn nm_term_04_a_refusal_after_a_served_chunk_yields_no_bytes() {
+        // NM-TERM-04 -- no partial output. `pull_output` verifies and returns only after the loop
+        // ends, so a refusal mid-stream propagates as an error and the caller receives NOTHING: not
+        // the prefix already served, not a truncated body. A partial governed output is worse than no
+        // output, because it looks like an answer.
+        //
+        // Half of this is structural and cannot fail: `Result<Vec<u8>, PullError>` has no variant
+        // that carries partial bytes. The half worth testing is behavioural -- that the first chunk
+        // really WAS served and accepted before the refusal arrived, so the loop had a prefix in hand
+        // and still handed back nothing. The fetch count is what says so: exactly two requests means
+        // chunk 0 was served and chunk 1 was refused.
+        //
+        // `StreamExpired` is chosen deliberately: it is checked before the binding compare, so it is
+        // a verdict the supervisor can legitimately reach between two reads of a live stream.
+        let output: Vec<u8> = (0..(OUTPUT_CHUNK_BYTES * 2 + 7)).map(|i| (i % 251) as u8).collect();
+        let sha = sha256_hex(&output);
+        let first: Vec<u8> = output[..OUTPUT_CHUNK_BYTES as usize].to_vec();
+
+        let mut calls = 0usize;
+        let err = {
+            let fetch = |req: &Value| -> Result<Value, PullError> {
+                calls += 1;
+                let seq = req.get("seq").and_then(Value::as_u64).expect("seq");
+                if seq == 0 {
+                    Ok(ok_reply(TOKEN, 0, &first, false))
+                } else {
+                    Ok(refused_reply("stream_expired"))
+                }
+            };
+            pull(&output, &sha, fetch).expect_err(
+                "NM-TERM-04: a refusal mid-stream must not produce a value")
+        };
+
+        assert_eq!(
+            err,
+            PullError::Refused(StreamRefusal::StreamExpired),
+            "NM-TERM-04: the supervisor's verdict must reach the caller unchanged"
+        );
+        assert_eq!(
+            calls, 2,
+            "NM-TERM-04: expected chunk 0 served and chunk 1 refused, so the loop held a prefix; \
+             {calls} fetch(es) means the refusal did not arrive after a served chunk"
+        );
+        // And the positive control on the same fixture: a faithful stream of the same output does
+        // return every byte, so the refusal above is what withheld them.
+        let got = pull(&output, &sha, server(output.clone()))
+            .expect("NM-TERM-04: the faithful control must verify");
+        assert_eq!(got, output, "NM-TERM-04: the control did not reassemble");
+    }
+
+    #[test]
     fn a_multi_chunk_output_reassembles_and_verifies() {
         let output: Vec<u8> = (0..(OUTPUT_CHUNK_BYTES * 2 + 7)).map(|i| (i % 251) as u8).collect();
         let sha = sha256_hex(&output);

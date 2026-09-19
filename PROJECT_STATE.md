@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #247 · branch `t080/three-figures-and-the-page-retrued`** (base `main`, tip `6c59a67`, task T-080).
+> **⏭️ CURRENT ACTIVE: PR #248 · branch `t081/scope-and-termination`** (base `main`, tip `86da183`, task T-081).
 >
-> three figures added, nothing removed, and the page re-trued for three landings
+> a key with everything right except audience, and a refusal that must carry no bytes
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

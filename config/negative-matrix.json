@@ -53,7 +53,6 @@
     "NM-PARITY-05",
     "NM-PARITY-06",
     "NM-PARITY-07",
-    "NM-SCOPE-04",
     "NM-TCB-02",
     "NM-TCB-12",
     "NM-TCB-13",
@@ -61,7 +60,6 @@
     "NM-TCB-20",
     "NM-TCB-24",
     "NM-TCB-25",
-    "NM-TERM-04",
     "NM-TERM-08",
     "NM-TIME-15",
     "NM-XBIND-03",
@@ -449,10 +447,10 @@
       "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_03_supervisor_id_mismatch_blocks"
     },
     "NM-SCOPE-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Protocol out-of-scope",
       "section": "§1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/manifest_authority.rs::nm_scope_04_a_key_out_of_protocol_scope_is_unavailable_with_everything_else_right"
     },
     "NM-SCOPE-05": {
       "status": "blocked",
@@ -1361,10 +1359,10 @@
       "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_term_03_bad_signature_blocks_and_never_writes_a_message"
     },
     "NM-TERM-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "No partial output",
       "section": "§6.1 out-of-band",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::nm_term_04_a_refusal_after_a_served_chunk_yields_no_bytes"
     },
     "NM-TERM-05": {
       "status": "implemented",
