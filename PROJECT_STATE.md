@@ -14,9 +14,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `79154ba`.** The only thing open is PR #224 on `state/settle-after-223`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #225 · branch `t062/triage-2026-09-19`** (base `main`, tip `a261406`, task T-062).
 >
-> **Next:** open the next pull request only after main's post-merge Repo-state job has completed; then T-062's triage lands as blocked rows with measured blocked_on.
+> T-062: 182 unreviewed negative-matrix rows read against the tree; 33 blocked by name, 79 already covered, 59 implementable, 149 left. docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

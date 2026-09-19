@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `79154ba`.** The only thing open is PR #224 on `state/settle-after-223`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #225 · branch `t062/triage-2026-09-19`** (base `main`, tip `a261406`, task T-062).
 >
-> **Next:** open the next pull request only after main's post-merge Repo-state job has completed; then T-062's triage lands as blocked rows with measured blocked_on.
+> T-062: 182 unreviewed negative-matrix rows read against the tree; 33 blocked by name, 79 already covered, 59 implementable, 149 left. docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -29,16 +29,16 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half.** The produced agent runs: the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` still refuse; §4 is an `auth_ref` REFERENCE store (0022). **Nothing resolves an `auth_ref` yet.** ◑ | Bro | Todo | merged `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates the commit (both dates, 0 of 796 differ); the gate checks whether that commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`. All six CLOSED, mutation-proven | Bro | Review | merged `#219` |
-| **T-062** | **The negative matrix's silent state,** 182 unreviewed; seven `NM-FRAME-*` rows established | Bro | Todo | merged `#219` |
+| **T-062** | **The negative matrix's silent state** — 182 rows read by 12 readers + 12 skeptics: 33 `blocked` by name, 79 already covered, 59 implementable; 149 left. `docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md` ◑ | Bro | In-Progress | `#225` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has zero non-test callers; `check_ai_surfaces.py` runs under a non-required context — the Owner's act | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader.** `repo::seed` writes `payload_json = {"source":"seed"}`, both read mappers carry it. ◑ | Bro | Review | merged `#210` |
-| **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN, blocked by deployment wiring and a second principal, not an Owner artifact; O-1 the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
-| **T-005** | **Option-2 feasibility (audited): engine as a submodule**, plus a worktree-check fix. Own branch, own PR, Owner approval | — | Todo | — |
-| **T-021** | **The approval-REQUEST path across the wall.** The read half shipped, the request half exists on neither side; no new trust-boundary input while RED | — | Blocked | — |
+| **T-004** | **Engine deferred items O-1..O-5** (Phase 10). All five OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
+| **T-005** | **Option-2 feasibility (audited): engine as a submodule** + a worktree-check fix. Own branch, own PR, Owner approval | — | Todo | — |
+| **T-021** | **The approval-REQUEST path across the wall.** the read half shipped, the request half exists nowhere; no new trust-boundary input while RED | — | Blocked | — |
 | **T-022** | **The governed automation dispatch.** Firing one writes a desktop row that never crosses the wall; its `engine_receipt` evidence is unobserved. After `T-021` | — | Blocked | — |
-| **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — the windows-latest trust-provisioning job (inherited runner ACL), the Windows engine job (ledger concurrency). One green run does not prove an intermittent | — | Todo | merged `#182` |
+| **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows-latest trust-provisioning (inherited ACL), the Windows engine job (ledger concurrency); one green run proves nothing | — | Todo | merged `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`, ninth audit. Routes 2, 3 closed; Route 1 open **by design**; register COMPUTED at **19 leaves, not 8** | — | Todo | — |
-| **T-034** | **Two palettes, one contrast gate** — `I-04`, ninth audit: `round(ratio, 2)` let 4.4995 print `4.50`. ◑ fixed on the raw ratio, awaiting confirmation | — | Todo | — |
+| **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`. ◑ fixed on the raw ratio, awaiting confirmation | — | Todo | — |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
