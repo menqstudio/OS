@@ -89,7 +89,6 @@
     "NM-TERM-02",
     "NM-TERM-04",
     "NM-TERM-08",
-    "NM-TIME-01",
     "NM-TIME-12",
     "NM-TIME-15",
     "NM-XBIND-03",
@@ -159,10 +158,10 @@
       "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_replay_10_a_replayed_chunk_with_mutated_bytes_fails_the_digest_gate"
     },
     "NM-TIME-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Unit confusion",
       "section": "§1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_time_01_a_seconds_valued_instant_is_refused_by_ORDERING_not_by_range"
     },
     "NM-TIME-02": {
       "status": "implemented",

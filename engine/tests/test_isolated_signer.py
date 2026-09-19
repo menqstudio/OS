@@ -45,6 +45,7 @@ from isolated_signer import (  # noqa: E402
     IsolatedSigner,
     SignerConfig,
     _canonical_bytes,
+    _is_u64_ms,
     _jcs_bytes,
     _sha256_hex,
     validate_sign_request,
@@ -461,6 +462,56 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(
             signer.sign_result(_request(ev))["reason"], REASON_TIMESTAMP_INVALID
         )
+
+    def test_nm_time_01_a_seconds_valued_instant_is_refused_by_ORDERING_not_by_range(self):
+        """NM-TIME-01 -- unit confusion: a 10-digit seconds value where milliseconds belong.
+
+        The refusal is real but it does NOT come from a range check, and the row is only
+        honestly bound by saying which control catches it:
+
+          * `_is_u64_ms(1_700_000_000)` is **True**. The predicate is `0 <= v < 2**64` and
+            cannot tell seconds from milliseconds -- there is no range reject of a seconds
+            value on either side of the wall. Asserted here so no reader mistakes the
+            malformed-shape gate for a units gate.
+          * what refuses is `_check_timestamps`, whose TWO ordering limbs
+            (`requested_at > completed_at` and `challenge_accepted_at_ms > completed_at`) both
+            answer `timestamp_invalid`. A seconds value is ~1.7e9 where the other fields are
+            ~1.7e12, so it lands 53 years in the past and breaks the invariant on both.
+
+        So the protection is ORDERING, and it holds only while the OTHER timestamps are in
+        milliseconds. That is a real limit of the control and it is written down rather than
+        papered over: if every field were seconds together, the ordering would hold and this
+        signer would sign them.
+
+        WHAT THIS TEST DOES AND DOES NOT PIN, measured rather than asserted. Deleting EITHER
+        ordering limb on its own leaves this test green, because the other limb catches the same
+        fixture and returns the same reason. It pins "an ordering check refuses a seconds-valued
+        `completed_at`", not which limb does it. Isolating one limb was tried and abandoned: the
+        only way to silence the `requested_at` limb is to move `requested_at`, and that field is
+        bound into the record document's `request_sha256`, so the fixture then refuses with
+        `chain_document_disagrees_with_attested_evidence` instead -- a fixture testing its own
+        entanglement. Defending each limb separately belongs to the ordering rows, not to this
+        one, and claiming it here would be the overstatement this matrix exists to prevent.
+
+        Nothing is signed -- asserted on the recorder, because a refusal that still handed
+        bytes to the signing key would be the worse bug of the two.
+        """
+        case = "NM-TIME-01"
+        seconds = 1_700_000_000  # the same instant as NOW_MS, in the wrong unit
+        self.assertTrue(_is_u64_ms(seconds),
+                        f"{case}: the range predicate is expected to ACCEPT a seconds value")
+
+        signer, store, handles, recorder = _make_signer()
+        ev = _evidence(handles)
+        ev["completed_at"] = seconds
+        result = signer.sign_result(_request(ev))
+        # `.get`, not `[...]`: with the ordering check gone the signer SUCCEEDS and the envelope
+        # carries no `reason`, so subscripting would raise KeyError and the mutant would read as a
+        # crash instead of as a verdict. Asserting the artifact type first names what came back.
+        self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
+                         f"{case}: expected a refusal, got {result.get('artifact_type')!r}")
+        self.assertEqual(result.get("reason"), REASON_TIMESTAMP_INVALID, case)
+        self.assertEqual(recorder.signed_messages, [], f"{case}: bytes reached the signing key")
 
     def test_nm_oracle_06_missing_handle_is_refused(self):
         """NM-ORACLE-06 -- reference-not-artifact: a handle the store does not hold => handle_missing."""
