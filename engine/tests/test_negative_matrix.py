@@ -261,6 +261,69 @@ class NegativeMatrixRegistryTests(_MatrixCase):
         self.assertEqual(reason, registry.REGISTRY_UNKNOWN)
         self.assert_no_usable_key(snapshot, reason)
 
+    def test_nm_reg_13_a_seconds_valued_revoked_at_ms_is_refused(self):
+        """NM-REG-13 -- revocation stamped in SECONDS where the canonical unit is milliseconds.
+
+        The window is overridden to a realistic epoch-ms one ON PURPOSE. Measured against this
+        module's own fixture scale (`ACCEPTED_AT = 1_000_000`), a seconds-valued
+        `revoked_at_ms` of 1_700_000_000 sits INSIDE the window and the registry ACCEPTS it --
+        the fault would have been invisible and this test would have passed against nothing.
+        With a real ms window the same value lands 53 years early, `revoked_at_ms` precedes
+        `valid_from_ms`, and the entry is rejected.
+
+        So what this pins is the ORDERING invariant, not a units check: nothing on either side
+        inspects the magnitude of a timestamp to decide its unit.
+
+        SAID PLAINLY, because the mutant says it anyway: this row shares its control with
+        `NM-REG-12`. Deleting the `revoked_at_ms precedes valid_from_ms` check takes BOTH tests
+        down, so this is not a second, independent control -- it is the same control reached by a
+        different FAULT (wrong units, rather than a stamp that is openly early). The matrix counts
+        faults, not controls, which is why the row exists; counting it as a second control would
+        overstate what the suite defends.
+        """
+        case = "NM-REG-13"
+        entry = _key(
+            valid_from_ms=1_700_000_000_000,
+            valid_to_ms=1_700_000_200_000,
+            revoked=True,
+            revoked_at_ms=1_700_000_000,   # seconds, not milliseconds
+        )
+        snapshot, reason = _resolve(_document([entry]))
+        self.assertIsNone(snapshot, case)
+        self.assertEqual(reason, registry.REGISTRY_UNKNOWN, case)
+        self.assert_no_usable_key(snapshot, reason)
+
+    def test_nm_reg_15_more_keys_than_the_cap_is_refused(self):
+        """NM-REG-15 -- registry bounds. One key past `MAX_REGISTRY_KEYS` and the whole
+        document is refused, not truncated to the cap: a resolver that silently kept the first
+        256 would hand back a snapshot an attacker chose the contents of.
+
+        The boundary in the other direction is
+        `test_the_registry_cap_itself_resolves`, immediately below. Without it this test
+        passes just as well against a resolver that refuses every registry.
+        """
+        case = "NM-REG-15"
+        keys = [_key(challenge_key_id="ck-%d" % i)
+                for i in range(registry.MAX_REGISTRY_KEYS + 1)]
+        snapshot, reason = _resolve(_document(keys))
+        self.assertIsNone(snapshot, case)
+        self.assertEqual(reason, registry.REGISTRY_UNKNOWN, case)
+        self.assert_no_usable_key(snapshot, reason)
+
+    def test_the_registry_cap_itself_resolves(self):
+        """NM-REG-15's boundary control: EXACTLY `MAX_REGISTRY_KEYS` resolves.
+
+        The plan's §1 windows are inclusive and so is this cap -- the refusal is
+        `len(entries) > MAX_REGISTRY_KEYS`, strict on purpose. Not an NM row of its own; it
+        exists so the row above cannot pass against a resolver that refuses everything, the
+        same reason NM-TIME-06 and NM-TIME-09 sit beside NM-TIME-07/08.
+        """
+        keys = [_key(challenge_key_id="ck-%d" % i)
+                for i in range(registry.MAX_REGISTRY_KEYS)]
+        snapshot, reason = _resolve(_document(keys))
+        self.assertIsNone(reason, "the cap itself must resolve, not refuse")
+        self.assertIsNotNone(snapshot)
+
     def test_nm_reg_04_unknown_root_key_id_is_refused(self):
         """NM-REG-04 -- a `root_key_id` outside the binary-pinned anchor set is refused BEFORE
         its signature is considered, so a forged registry cannot certify itself."""

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t062/bind-nm-parity` — `main` @ `68a2948`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t062/bind-nm-reg` — `main` @ `7703bde`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #235 · branch `t062/bind-nm-parity`** (base `main`, tip `68a2948`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #236 · branch `t062/bind-nm-reg`** (base `main`, tip `7703bde`, task T-062).
 >
-> the three cross-language parity rows are bound on BOTH sides: the same system, history and millisecond fixtures pinned to the same digests in Python and in Rust, since two sides drifting together keep either test green alone
+> NM-REG-13 and NM-REG-15 are bound: a seconds-valued revocation stamp and one key past the registry cap, each refused, with a boundary control beside the cap so the row cannot pass against a resolver that refuses everything
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,7 +75,7 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**73 pull requests, 240 files and 46,240 inserted lines have merged since that head**, and
+**74 pull requests, 240 files and 46,402 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on 2026-09-19; 20/107/19688 until 2026-08-31.)*
 
 **Two one-line edits wait on the Owner**, both in files a Builder does not touch:
