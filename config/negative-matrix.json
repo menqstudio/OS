@@ -25,10 +25,8 @@
   ],
   "unreviewed_baseline": [
     "NM-ACL-09",
-    "NM-ACL-10",
     "NM-ACL-11",
     "NM-ACL-12",
-    "NM-ACL-13",
     "NM-ACL-14",
     "NM-CAP-03",
     "NM-CONC-03",
@@ -50,25 +48,17 @@
     "NM-CRASH-12",
     "NM-CRASH-13",
     "NM-CRASH-14",
-    "NM-CRASH-15",
     "NM-CRASH-16",
     "NM-EVID-05",
     "NM-EVID-12",
     "NM-EVID-13",
     "NM-FRAME-05",
-    "NM-FRAME-06",
-    "NM-FRAME-08",
     "NM-FRAME-09",
-    "NM-FRAME-10",
     "NM-FRAME-11",
     "NM-FRAME-12",
-    "NM-FRAME-14",
-    "NM-FRAME-15",
     "NM-FRAME-16",
     "NM-FRAME-17",
     "NM-FRAME-19",
-    "NM-FRAME-20",
-    "NM-FS-01",
     "NM-FS-02",
     "NM-FS-03",
     "NM-FS-04",
@@ -83,17 +73,9 @@
     "NM-IPC-06",
     "NM-MAN-01",
     "NM-MAN-02",
-    "NM-MAN-03",
-    "NM-MAN-04",
-    "NM-MAN-05",
     "NM-MAN-06",
-    "NM-MAN-07",
     "NM-MAN-08",
-    "NM-MAN-09",
-    "NM-MAN-10",
-    "NM-MAN-11",
     "NM-MAN-12",
-    "NM-MAN-13",
     "NM-MAN-14",
     "NM-NORELAUNCH-01",
     "NM-NORELAUNCH-02",
@@ -109,7 +91,6 @@
     "NM-ORACLE-08",
     "NM-ORACLE-09",
     "NM-ORACLE-10",
-    "NM-ORACLE-11",
     "NM-ORACLE-12",
     "NM-ORACLE-13",
     "NM-OUTPUT-01",
@@ -118,7 +99,6 @@
     "NM-OUTPUT-04",
     "NM-OUTPUT-05",
     "NM-OUTPUT-06",
-    "NM-OUTPUT-07",
     "NM-OUTPUT-08",
     "NM-OUTPUT-09",
     "NM-PARITY-01",
@@ -130,8 +110,6 @@
     "NM-PARITY-07",
     "NM-PARITY-08",
     "NM-PARITY-09",
-    "NM-REG-02",
-    "NM-REG-03",
     "NM-REG-06",
     "NM-REG-13",
     "NM-REG-15",
@@ -146,14 +124,12 @@
     "NM-SCOPE-02",
     "NM-SCOPE-03",
     "NM-SCOPE-04",
-    "NM-SCOPE-05",
     "NM-SCOPE-06",
     "NM-SCOPE-07",
     "NM-SCOPE-08",
     "NM-TCB-01",
     "NM-TCB-02",
     "NM-TCB-03",
-    "NM-TCB-04",
     "NM-TCB-05",
     "NM-TCB-06",
     "NM-TCB-07",
@@ -166,11 +142,9 @@
     "NM-TCB-16",
     "NM-TCB-17",
     "NM-TCB-18",
-    "NM-TCB-19",
     "NM-TCB-20",
     "NM-TCB-21",
     "NM-TCB-22",
-    "NM-TCB-23",
     "NM-TCB-24",
     "NM-TCB-25",
     "NM-TERM-01",
@@ -178,7 +152,6 @@
     "NM-TERM-03",
     "NM-TERM-04",
     "NM-TERM-05",
-    "NM-TERM-06",
     "NM-TERM-07",
     "NM-TERM-08",
     "NM-TIME-01",
@@ -187,18 +160,12 @@
     "NM-TIME-04",
     "NM-TIME-05",
     "NM-TIME-12",
-    "NM-TIME-13",
-    "NM-TIME-14",
     "NM-TIME-15",
     "NM-TIME-17",
-    "NM-TIME-18",
     "NM-TIME-19",
-    "NM-XBIND-01",
-    "NM-XBIND-02",
     "NM-XBIND-03",
     "NM-XBIND-04",
     "NM-XBIND-05",
-    "NM-XBIND-06",
     "NM-XBIND-07",
     "NM-XBIND-08",
     "NM-XBIND-09",
@@ -341,16 +308,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TIME-13": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Complete time-chain in-window (verify)",
       "section": "§7, §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §7 lease-time invariant `completed_at_ms ≤ lease_expires_at_ms` is not implemented anywhere on the verify path. MEASURED 2026-09-19 against the real ledger (in-memory SQLite via engine/tests/test_negative_matrix.py fixtures): after `_executing()`, `record_completion(conn, 'att-1', _produced(completed_at_ms=lease_expires_at_ms + 1), 40, derived=_derived())` returned `created`, the row moved to `COMPLETED`, and `load_attestation_state` returned terminal state with completed_at_ms=1210001 against lease_expires_at_ms=1210000 — the §4.9 attestation input IS built for a completion past lease expiry; the matrix requires `lease_expired` and no envelope. What must exist first: a check that reads the acceptance row's `lease_expires_at_ms` and refuses `completed_at_ms` past it — in `governed_supervisor_ledger.record_completion` / `governed_supervisor_server.complete_governed_run` (the only functions that hold both values), or a `lease_expires_at_ms` evidence field plus a limb in `isolated_signer._check_timestamps` — surfacing as governed `lease_expired`. This is a gap in a shipped control, reported rather than papered over; closing it is a change to audited security code that this work is not authorised to make."
     },
     "NM-TIME-14": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Time-chain ordering",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The row's fault cannot be injected: `finished_at_ms` does not exist anywhere in the tree (zero source occurrences), and `started_at_ms` exists only as win-live's `execution_started_at_ms`, which the Windows twin compares to `completed_at_ms` in `admit_completion` (servers.rs:610-627) — a different inequality on a different field, already tested at servers.rs:2015. `build_execution_receipt` (engine/runtime/governed_supervisor.py:742-761) emits no started/finished fields at all. What must exist first: the §4.7 `started_at_ms`/`finished_at_ms` fields on the execution receipt (recorder-stamped, `started ≤ finished`) and a §7 chain-inequality check over the full four-term chain; until then the only chain checks are the two ends (`accepted ≤ completed` in the signer/broker, `execution_started ≤ completed` in win-live)."
     },
     "NM-TIME-15": {
       "status": "unreviewed",
@@ -371,10 +338,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TIME-18": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Wall-clock NTP step (in-exec)",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §7 lease-time invariant `completed_at_ms ≤ lease_expires_at_ms` is not implemented anywhere on the verify path (identical root to NM-TIME-13 — the row differs only in HOW the stamp got past expiry, which the tree cannot distinguish because nothing reads the lease at completion). MEASURED 2026-09-19: `record_completion(completed_at_ms = lease_expires_at_ms + 1)` returned `created`, state `COMPLETED`, and `load_attestation_state` returned terminal state (completed_at_ms 1210001 vs lease_expires_at_ms 1210000). The signer's only related limb (isolated_signer.py:729-730) is a future-skew bound against its own clock, not the lease. What must exist first: a `completed_at_ms ≤ lease_expires_at_ms` refusal surfacing as governed `lease_expired`, in `governed_supervisor_ledger.record_completion` / `governed_supervisor_server.complete_governed_run` or as a lease `_ms` evidence field checked in `isolated_signer._check_timestamps`. A change to audited security code that this work is not authorised to make."
     },
     "NM-TIME-19": {
       "status": "unreviewed",
@@ -389,16 +356,16 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_01_registry_epoch_below_the_floor_is_refused"
     },
     "NM-REG-02": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Same-epoch / different-hash",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §7 durable registry floor tuple does not exist as code. The only floor is a bare integer, `OpenConfig.registry_epoch_floor: int = 0` (engine/runtime/governed_turn_open.py:220), handed to `challenge_key_registry.resolve_registry` (governed_turn_open.py:459, governed_acceptance.py:717) whose single floor comparison is `payload['registry_epoch'] < epoch_floor` (challenge_key_registry.py:394) — no hash, no handle. MEASURED 2026-09-19 against the real module: a document with `registry_epoch == epoch_floor` (7 == 7) resolves to a snapshot with reason None whatever its content, so a same-epoch/different-hash registry (and any handle) is admitted at the floor. `grep -rn highest_registry_epoch` over engine/ and apps/desktop/src-tauri (non-target) returns zero source hits (the literal exists only in the addendum at :3450); engine/runtime/supervisor_ledger.sql has no registry-floor table (its only floor table is `governed_evidence_head_floor`, :168); `registry_hash`/`registry_handle` outside challenge_key_registry.py appear solely as acceptance-row provenance columns. `bro_signature.resolve_registry_floor` is the tool-signing registry's `registry_version` pin — a different artifact; binding this row to it would test a control the row does not describe. What must exist first: a durable supervisor floor row persisting `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` per addendum §7 (:3448-3453), and a `resolve_registry` floor comparison that refuses a differing `registry_hash` at `registry_epoch == floor`. This is a gap in a shipped control, reported rather than papered over."
     },
     "NM-REG-03": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Divergent handle at floor",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §7 durable registry floor tuple does not exist as code. The only floor is a bare integer, `OpenConfig.registry_epoch_floor: int = 0` (engine/runtime/governed_turn_open.py:220), handed to `challenge_key_registry.resolve_registry` (governed_turn_open.py:459, governed_acceptance.py:717) whose single floor comparison is `payload['registry_epoch'] < epoch_floor` (challenge_key_registry.py:394) — no hash, no handle. `registry_handle` is computed at :408 and compared to nothing. MEASURED 2026-09-19 against the real module: a document with `registry_epoch == epoch_floor` resolves to a snapshot with reason None whatever its content, so a divergent handle at the floor is admitted. `grep -rn highest_registry_epoch` over engine/ and apps/desktop/src-tauri (non-target) returns zero source hits; engine/runtime/supervisor_ledger.sql has no registry-floor table (its only floor table is `governed_evidence_head_floor`, :168); `registry_hash`/`registry_handle` outside challenge_key_registry.py appear solely as acceptance-row provenance columns. What must exist first: a durable supervisor floor row persisting `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` per addendum §7 (:3448-3453), and a `resolve_registry` floor comparison that refuses a `registry_handle` differing from the stored one at `registry_epoch == floor`. This is a gap in a shipped control, reported rather than papered over."
     },
     "NM-REG-04": {
       "status": "implemented",
@@ -497,22 +464,22 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-MAN-03": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Manifest expired",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §1.6 signed `issued_at`/`expires_at` manifest fields and an expiry check in the manifest acceptance path. MEASURED: `KeyManifest` (apps/desktop/src-tauri/core/src/key_manifest.rs:41-47) has exactly `manifest_epoch`, `root_key_id`, `keys`; `grep -c expires_at key_manifest.rs` = 0 (issued_at, manifest_protocol, manifest_version also 0), and every `expires_at` under apps/desktop/src-tauri is a lease/challenge/grant field (chain_executor.rs:204, supervisor_ledger.sql:69, agent_bundle.rs:144). What must exist first: the two signed fields on `KeyManifest` plus a `now_ms > expires_at` refusal in `check_and_advance` (key_manifest.rs:289-301) or in the per-turn resolvers (manifest_resolver.rs:181-226; win-live resolver.rs:219-276), which today check only root signature, epoch floor and per-key validity windows."
     },
     "NM-MAN-04": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Receipt-key wrong usage",
       "section": "§1.7 type separation",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The `key_usage: receipt_signing | supervisor_attestation` discriminator on `ManifestKey` (§1.6) and a receipt-key resolver that rejects `key_usage != receipt_signing` (§1.7). MEASURED: `key_usage` has zero occurrences in any .rs/.py/.ts/.tsx/.json/.sql/.sh under apps/desktop/src-tauri, apps/desktop/src, engine, bridge, contracts, config and tools; `ManifestKey` (key_manifest.rs:26-37) is key_id/public_key_hex/trust_class/valid_from_ms/valid_to_ms/key_epoch/revoked/allowed_protocols. The signer and the supervisor-attestation key are resolved by the identical `resolve_production_key(.., RECEIPT_ENVELOPE_ARTIFACT_TYPE, ..)` predicate (manifest_resolver.rs:208-211; win-live resolver.rs:243-251; config.rs:231-246) and the attestation key is provisioned as a production receipt-protocol key (config.rs:388-394; manifest_resolver.rs:328-330), so no manifest-level control distinguishes the two kinds. The pinned-id check at governed_verification.rs:906 is a config binding, not the type separation this row names."
     },
     "NM-MAN-05": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Attestation-key wrong usage",
       "section": "§1.7, §4.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "`resolve_attestation_key(supervisor_attestation_key_id, supervisor_id, now_ms)` (§1.7) and the `key_usage` field it would reject on — neither exists. MEASURED: `resolve_attestation_key` and `key_usage` each have zero occurrences in any .rs/.py/.ts/.tsx/.json/.sql/.sh under apps/desktop/src-tauri, apps/desktop/src, engine, bridge, contracts, config, tools. The supervisor-attestation key is resolved by `resolve_production_key(&manifest, &sup_attest_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)` (manifest_resolver.rs:210; win-live resolver.rs:245-251; config.rs:238-246), i.e. by exactly the predicate a receipt-signing key satisfies, so a receipt-signing key used for attestation is accepted by design in this tree. What must exist first: the usage discriminator on `ManifestKey` (key_manifest.rs:26-37) and a distinct attestation resolver that refuses `key_usage != supervisor_attestation`."
     },
     "NM-MAN-06": {
       "status": "unreviewed",
@@ -521,10 +488,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-MAN-07": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Wrong-supervisor attestation key",
       "section": "§4.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "A `supervisor_id` binding on the manifest key and a resolver that compares it to the turn's supervisor. MEASURED: `grep -c supervisor_id` = 0 in apps/desktop/src-tauri/core/src/key_manifest.rs, manifest_authority.rs, production_trust.rs, broker/src/manifest_resolver.rs and win-live/src/resolver.rs; `ManifestKey` (key_manifest.rs:26-37) has no such field and `resolve_production_key(manifest, key_id, protocol, now_ms)` (key_manifest.rs:241-246) has no supervisor argument; the §1.7 `resolve_attestation_key(key_id, supervisor_id, now_ms)` has zero occurrences tree-wide. A test bound to this row would have to invent the field."
     },
     "NM-MAN-08": {
       "status": "unreviewed",
@@ -533,22 +500,22 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-MAN-09": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Snapshot/floor mismatch on resolve",
       "section": "§1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §1.7 two-phase durable snapshot: a manifest row + `(highest_epoch, manifest_hash)` floor in the desktop SQLite written in one BEGIN IMMEDIATE, and a per-turn `resolve(q, tx)` that re-reads both inside the verify→consume→persist transaction and returns `Unavailable` on mismatch. MEASURED: no manifest or manifest-floor table exists in apps/desktop/src-tauri/core/schema (`grep -rn manifest schema/*.sql` → a comment in 0021 and the agent-bundle digest in 0025 only); the floor is `floor.json` (main.rs:359-367; win_live_turn.rs:183) advanced under a `Mutex` in `resolve_keys` (manifest_resolver.rs:200-205) / `resolve` (win-live resolver.rs:232-238) BEFORE the chain runs, and the transaction modules contain zero references to it (`floor|KeyManifest|manifest_epoch` over receipt_store.rs, governed_verification.rs, governed_message_store.rs = 0). There is no mid-tx re-read to race."
     },
     "NM-MAN-10": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Wildcard scope",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "`workspace`/`allowed_audiences` scope fields on `ManifestKey` and a semantic-validation pass that rejects `\"*\"`. MEASURED: `ManifestKey` (apps/desktop/src-tauri/core/src/key_manifest.rs:26-37) carries no scope field (`grep -c workspace` = 0, `grep -c '\"*\"'` = 0; the single `audience` hit is the :35 doc comment on `allowed_protocols`); `allowed_audiences` and `KeyResolutionQuery` have zero occurrences tree-wide; there is no `fn validate` in key_manifest.rs. Workspace/install binding happens on the turn (governed_verification.rs:931-934), never on the key, so there is no wildcard for a validator to refuse."
     },
     "NM-MAN-11": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Duplicate/conflicting key_id",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "A manifest semantic-validation pass (a `KeyManifest::validate`-style function) that rejects duplicate/conflicting `key_id`. MEASURED: `fn validate`, `duplicate`, `HashSet`, `dedup` each have 0 occurrences in apps/desktop/src-tauri/core/src/key_manifest.rs, and `duplicate|dedup|HashSet` over manifest_authority.rs, production_trust.rs, broker manifest_resolver.rs, win-live resolver.rs/config.rs and preflight.rs yields only two unrelated comments (preflight.rs:1081, :1271). `resolve_production_key` selects by first match (`.iter().find(|k| k.key_id == key_id)`, key_manifest.rs:247), so a second conflicting entry is never examined, and the plain serde derive (key_manifest.rs:25-26) accepts repeated ids. (`key_usage`, the third conflict axis the row names, also does not exist — see NM-MAN-04.)"
     },
     "NM-MAN-12": {
       "status": "unreviewed",
@@ -557,10 +524,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-MAN-13": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Attestation key carrying render scope",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The `key_usage` discriminator on `ManifestKey` and a semantic-validation pass that refuses render-scope fields on a `supervisor_attestation` key. MEASURED: `key_usage` has zero occurrences tree-wide (apps/desktop/src-tauri, apps/desktop/src, engine, bridge, contracts, config, tools); `ManifestKey` (key_manifest.rs:26-37) makes `trust_class` and `allowed_protocols` REQUIRED on every key, and the supervisor-attestation key is provisioned with both (config.rs:388-394; manifest_resolver.rs:328-330) and REFUSED without them (`a_revoked_or_development_class_key_is_refused_even_if_the_hex_matches`, config.rs:478-501; resolver.rs:240-251). The tree's rule is the inverse of this row; nothing can go red until attestation keys are a distinct type."
     },
     "NM-MAN-14": {
       "status": "unreviewed",
@@ -593,10 +560,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-SCOPE-05": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Audience out-of-scope",
       "section": "§1.6/§1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The signed `allowed_audiences` / install scope does not exist as code. MEASURED 2026-09-19: `grep -rn allowed_audiences` over apps/desktop/src-tauri, apps/desktop/src, engine, bridge, config, contracts (*.rs, *.py, *.ts, *.json) returns no source hit; the only two design-doc occurrences are prose (WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md:195, WAVE_3B_ISOLATED_SIGNER_DESIGN.md:189/537). `ManifestKey` (core/src/key_manifest.rs:26-37) carries `allowed_protocols` and no install/audience field; `resolve_production_key` (key_manifest.rs:241-261) has no install parameter; `ManifestReceiptKeyAuthority::resolve` (core/src/manifest_authority.rs:88-101) is keyed on `key_id` alone; the Python `challenge_key_registry.py` has no audience/workspace/install field either. What must exist first: a signed `allowed_audiences: Vec<String>` on `ManifestKey` (covered by the root signature via `canonical_bytes`), an install-scope parameter on `resolve_production_key` / `ReceiptKeyAuthority::resolve` sourced from the trusted `Expected` (`IssuedRequest.install_id`, receipt.rs:291) — never the unsigned receipt — and the `KeyResolution::Unavailable` arm when the trusted install is not listed."
     },
     "NM-SCOPE-06": {
       "status": "unreviewed",
@@ -647,10 +614,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-06": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Non-canonical JCS (registry)",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "A registry-bytes canonicality gate — the artifact-#2 analogue of `governed_turn_open._canonicality_gate` — does not exist. `challenge_key_registry.resolve_registry` (:355) takes an already-parsed `Mapping` (`validate_registry_document` :305 refuses anything else; raw bytes → `registry_unknown`, measured) and RECOMPUTES `document_bytes = canonical_bytes({payload, root_sig})` at :397, so `registry_handle` is derived from the re-encoding and the transported bytes are never compared to it; the production loader `run_ladder_supervisor.load_tcb_json` :637-639 is `json.load(fh)` with no byte check, and no Rust code parses `brops.challenge-key-registry.v1` at all. MEASURED 2026-09-19: an `indent=2` and a key-reordered registry document both resolve to a full snapshot with `reason=None` and a handle equal to the CANONICAL hash, not the hash of the bytes given. What must exist first: a registry ingress that strict-decodes the file BYTES (`brops_protocol.strict_loads`) and refuses when `bytes != canonical_bytes({payload, root_sig})` — e.g. a `resolve_registry_bytes(document_bytes, ...)` seam wired into `resolve_registry_document` — so the handle the supervisor binds into the acceptance row (governed_acceptance.py:411) is the hash of the bytes it actually read. That is a change to the audited §4.2 resolver, not a test."
     },
     "NM-FRAME-07": {
       "status": "implemented",
@@ -659,10 +626,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_07_an_oversize_sign_request_is_refused_at_the_cap"
     },
     "NM-FRAME-08": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Oversize sign-result",
       "section": "§4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §4.5 `brops.governed-sign-result.v1` frame and its 64 KiB reader bound. governed_turn_result.py:97-99 marks the frame NOT IMPLEMENTED (no producer, consumer or schema) and config/spec-conformance.json §4.5 records the same as `partial`. The reply that exists today is the frozen `brops.sign-result.v1` op reply; its readers are bounded at 262144 (`brops_protocol.MAX_FRAME_BYTES`, reached from `brops_socket.request` :135 — the supervisor's path), 524288 (`isolated_signer_server.MAX_FRAME_BYTES` :64) and 8192 (`ipc_framing::MAX_FRAME_PAYLOAD_BYTES`, broker `recv_all`/`read_one_reply` chain_executor.rs:668, :686) — no 65536 sign-result bound exists (`grep -rn 65536` hits only containment-evidence and generation-config caps). What must exist first: the §4.5 frame's validator carrying `MAX_SIGN_RESULT_BYTES = 65536` on the supervisor's signer-reply path (with the ≈9865-byte worst-case fixture the row names), consumed by `AcceptanceDriver._attest_and_sign` (governed_acceptance.py:877)."
     },
     "NM-FRAME-09": {
       "status": "unreviewed",
@@ -671,10 +638,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-10": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Oversize diagnostic",
       "section": "§4.10(h)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §4.10(h) `bridge.governed-turn-diagnostic.v1` carrier and its `MAX_DIAGNOSTIC_BYTES = 256` bound. Zero occurrences of `MAX_DIAGNOSTIC_BYTES` in engine/, bridge/, apps/desktop/; the carrier is marked NOT IMPLEMENTED at governed_bridge_result.rs:917, governed_submit.rs:181, bridge/governed_turn_submit.py:285 and bridge/engine_sidecar.py:772-775 (no producer in the sidecar, no classifier in the broker). `governed_turn_execute` (src/governed_turn.rs:214) is a thin broker proxy with no diagnostic arm. What must exist first: the diagnostic producer in `engine_sidecar` and the desktop classifier with a `len(bytes) > MAX_DIAGNOSTIC_BYTES ⇒ terminal Block` arm; until then every diagnostic of any size is already `MalformedFrame` (test :916), so a size test cannot distinguish the cap from its absence."
     },
     "NM-FRAME-11": {
       "status": "unreviewed",
@@ -695,16 +662,16 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_13_a_handle_that_is_not_lowercase_64_hex_is_refused"
     },
     "NM-FRAME-14": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Bad b64url sig",
       "section": "§4.4/§4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "An 86-char base64url-no-pad shape check in `isolated_signer._validate_attestation` (:429 accepts any `_capped_str`) returning `REASON_MALFORMED`, and the §4.5 `brops.governed-sign-result.v1` frame (NOT IMPLEMENTED, governed_turn_result.py:97-99). MEASURED 2026-09-19: `validate_sign_request` accepts `sig` of 85 and 87 chars, `=`-padded 86, and `\"not base64!!\"`; the only refusal comes downstream from the injected `verify_attestation` seam as `attestation_invalid` (test_isolated_signer.py:396). This is a gap in a shipped, audited perimeter: closing it changes the signer's contract and every fixture in its suite (`sig: \"GOOD-SIG\"`), an Architect-facing change rather than a sweep test. The 86-char gates that exist (governed_turn_result.py:372/376; governed_bridge_result.rs:187/668) guard §4.10(e)/§4.6, a different artifact than this row's §4.4/§4.5."
     },
     "NM-FRAME-15": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Wrong domain tag",
       "section": "§1.9, §2.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §4.4 `brops.governed-sign-request.v1` protocol literal and a governed decoder distinct from `isolated_signer.validate_sign_request`. The tree defines exactly one tag, `SIGN_REQUEST_PROTOCOL = \"brops.sign-request.v1\"` (isolated_signer.py:58), one protocol check (:484), and the governed path itself builds and sends that base tag (governed_acceptance.py:461; broker chain_executor.rs:989; win-live/servers.rs:26). `grep -rn governed-sign-request` over all .py/.rs/.ts/.json → 0; config/spec-conformance.json §4.4 = unreviewed. Until the governed tag exists there is no 'wrong domain' to present and no decoder to refuse it; a test would have to invent the literal (the NM-IPC-05 precedent)."
     },
     "NM-FRAME-16": {
       "status": "unreviewed",
@@ -731,10 +698,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-20": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Unknown stage/reason",
       "section": "§4.10(h)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §4.10(h) diagnostic decoder on the desktop with its closed `stage` and `upstream_reason` sets. The carrier `bridge.governed-turn-diagnostic.v1` has no producer and no classifier (NOT IMPLEMENTED at governed_bridge_result.rs:917, governed_submit.rs:181, bridge/governed_turn_submit.py:285, bridge/engine_sidecar.py:772-775); `grep -rn upstream_reason apps/desktop/src-tauri/core/src` hits only a test fixture (:923); `DIAGNOSTIC_STAGES` (bridge/governed_turn_submit.py:306) is a published tuple that no code path checks membership against (`UpstreamRefusal.__init__` :297 stores `stage` unchecked). Until the decoder exists, an unknown stage/reason and a known one are indistinguishable on the desktop (both `MalformedFrame`, test :916), so a test cannot bind to an absent control. What must exist first: the diagnostic classifier with `stage ∈ DIAGNOSTIC_STAGES` and `upstream_reason ∈ <per-stage closed set>` arms that fall to the 'anything else' terminal Block. The nearest shipped control, `_reply_arm` :543-546 (test :711), guards the sidecar↔supervisor reply — a different seam."
     },
     "NM-CRASH-01": {
       "status": "unreviewed",
@@ -821,10 +788,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CRASH-15": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "mid-registry-acceptance (before COMMIT)",
       "section": "§7, §1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §7 supervisor-side registry anti-rollback floor does not exist as code. MEASURED 2026-09-19: engine/runtime/supervisor_ledger.sql defines no registry-floor table (its CREATE TABLEs are governed_turn_acceptance/completion/outbox, governed_evidence_head_floor, governed_turn_staging{,_session,_chunk}, governed_output_streams); the challenge-key registry's epoch floor is the CONSTANT `OpenConfig.registry_epoch_floor: int = 0` (engine/runtime/governed_turn_open.py:220) handed to `challenge_key_registry.resolve_registry(epoch_floor=...)` (:349-394) and never persisted or advanced; `grep -rnE 'highest_registry_epoch|registry_floor|challenge_registry_floor'` over engine/runtime/*.py and *.sql hits only `bro_signature.resolve_registry_floor` (:616), an operator-pinned file floor for the engine trusted-keys registry -- a different artifact with no create-if-absent snapshot publish and no startup re-hash; and no supervisor startup routine verifies any floor snapshot (`grep -nEi 'startup|recover|restart'` over governed_supervisor_server.py, governed_supervisor.py and engine/ci/live/run_supervisor.py finds none). There is no COMMIT to crash before and no floor snapshot for startup to re-hash, so this row cannot be established for or against. What must exist first: a supervisor-owned durable registry-floor row `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` written in a BEGIN IMMEDIATE tx only after the create-if-absent publish (+fsync) of the exact registry document; a function that advances it and refuses same-epoch/different-hash and divergent-handle presentations; and a startup check that loads the floor, reads the snapshot by `challenge_registry_handle`, re-hashes it and fails closed otherwise."
     },
     "NM-CRASH-16": {
       "status": "unreviewed",
@@ -947,10 +914,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-OUTPUT-07": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Output timeout",
       "section": "§4.5, §6.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "No producer of `output_timeout` and no pull-loop deadline exist. MEASURED: `output_timeout` occurs only as vocabulary (engine/runtime/governed_turn_result.py:232; apps/desktop/src-tauri/core/src/governed_bridge_result.rs:272) and engine/tests/test_governed_acceptance.py:1641-1644 pins it among the reasons with no producer; `EXECUTION_TIMEOUT_MS` is defined nowhere in .py/.rs (only prose at bridge/governed_turn_submit.py:105,240); the broker waits on the §4.7 recorder with an unbounded `child.wait()` (apps/desktop/src-tauri/broker/src/chain_executor.rs:877) and neither executor/src/main.rs nor launcher/src/main.rs measures elapsed time; the §4.10(f) pull loop `ai::governed_pull_output` (apps/desktop/src-tauri/src/ai.rs:3005) has only the per-chunk `SIDECAR_DEADLINE = 120 s` (core/src/governed_sidecar.rs:128), no loop-level bound, and no production caller (`#[allow(dead_code)]` ai.rs:3004; config/reachability-declarations.json:167), so a pull timeout never reaches `record_pre_verification_block` (core/src/receipt_store.rs:209). What must exist first: a recorder that measures elapsed MONOTONIC time against `EXECUTION_TIMEOUT_MS = 120000` and returns `output_timeout` with no receipt (§4.7), and/or a production caller of the pull loop that bounds the whole pull and records its expiry as a terminal durable Block through `record_pre_verification_block`."
     },
     "NM-OUTPUT-08": {
       "status": "unreviewed",
@@ -1043,10 +1010,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FS-01": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Store symlink swap",
       "section": "§2.3, §6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "An `O_NOFOLLOW` open in the protected content-addressed store does not exist. MEASURED 2026-09-19: `grep -n NOFOLLOW engine/runtime/brops_evidence_store.py` = 0 hits; `EvidenceStore.read` (engine/runtime/brops_evidence_store.py:323-332) is `path.read_bytes()` and `has` (320-321) is `.exists()`, both of which follow a symlink; the only O_NOFOLLOW in engine/runtime is floor_writer.py:385/482 (a different store). What must exist first: `EvidenceStore.read`/`has` opening `root/<handle>` via `os.open(path, os.O_RDONLY | os.O_NOFOLLOW)` + `os.fstat` with an `S_ISREG` check (the §11 preamble's \"O_NOFOLLOW opens, fstat the opened fd (never a path re-lookup)\"), refusing a symlinked handle as an open failure rather than only by re-hash; and, for the `0640 non-owner cannot chmod/symlink-swap` limb, the same §2.3 real-path `store/sup/` + `store/rec/` split and per-principal prover that NM-ACL-01/02 are blocked on. The Rust recorder's `open_ro` (apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:716-722) already opens O_NOFOLLOW but is a closure inside the Linux fork path with no callable seam and no symlink negative control in engine/ci."
     },
     "NM-FS-02": {
       "status": "unreviewed",
@@ -1145,10 +1112,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ACL-10": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Mode-regression guard",
       "section": "§2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The `2750` store mode and the `S_IWGRP` refusal for store dirs do not exist as code. MEASURED 2026-09-19: `_harden_dir(allow_group=True)` (engine/runtime/brops_evidence_store.py:114-165, via `posix_forbidden_mode` :86-93) forbids only `S_IRWXO`; `EvidenceStore.__init__` (:239) uses that default, and engine/tests/test_brops_isolation.py:97-103 (`test_store_allows_a_group_shared_but_not_world_dir`) asserts that a `0o770` store MUST be admitted — the inverse of this row. `grep -rnE '0o2750|\\b2750\\b' engine apps/desktop/src-tauri/*/src` hits only floor_writer.py:814 (`SOCKET_DIR_MODE`, the Floor Writer socket dir) and run_live_turn.sh:247 prose (\"`sup/`+`rec/` namespaces at `2750`, which in turn needs the signer moved into `brops-store`\"); CI provisions the store at `2770` (engine/ci/isolation_proof.sh:50). There is no store dir whose mode is required to be 2750, so the guard cannot be established for or against. What must exist first: a store-dir policy in `_harden_dir` (or a dedicated `harden_store_dir`) that refuses `S_IWGRP` and requires `S_ISGID` (`stat.S_IMODE == 0o2750`) on the store root and the §2.3 `sup/`/`rec/` namespaces, the provisioning in isolation_proof.sh moved from `2770` to `2750` (which §2.3 ties to the signer becoming a read-only `brops-store` member and a `brops-recorder` principal — the same prerequisite NM-ACL-01..08 are blocked on), and the inversion of the `0o770`-admitted test."
     },
     "NM-ACL-11": {
       "status": "unreviewed",
@@ -1163,10 +1130,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ACL-13": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Login/sidecar → evidence-head floor DB",
       "section": "§2.3, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "A `brops-signer`-owned evidence-head floor DB does not exist. MEASURED 2026-09-19: `grep -nE 'evidence_head_floor|open_ledger|sqlite3|LiveRunStateProvider' engine/runtime/isolated_signer.py` -> the only hit is a comment at :130 — the isolated signer opens no floor. The floor this tree has is (a) the SUPERVISOR ledger table `governed_evidence_head_floor` (engine/runtime/supervisor_ledger.sql:168-177), written by `governed_supervisor_ledger._evidence_floor_cas` (:774) inside the supervisor's own `open_ledger` file (dir `0700`/file `0600`, :194-200) and its Rust twin `supervisor_ledger.rs::evidence_floor_cas` (:900); and (b) the Floor Writer service's `floor-state.json` (engine/runtime/floor_writer.py:437) owned by that service's account. Neither is owned by `brops-signer` (isolation_proof.sh gives brops-signer only `signerkeys` and `signer-sock`, :48/:53), so a login/sidecar denial against 'the brops-signer floor' cannot be measured, and measuring it against the supervisor ledger would bind this row to NM-ACL-14's control. What must exist first: the §7 signer-side floor (`LiveRunStateProvider` in `isolated_signer.py` opening a `brops-signer`-owned `0700`/`0600` SQLite with the same DDL) and a fifth prover attack in engine/tools/brops_isolation_prover.py (`attack_read_file`/`_probe_write` against that DB path, provisioned `brops-signer:brops-signer 0700` by engine/ci/isolation_proof.sh)."
     },
     "NM-ACL-14": {
       "status": "unreviewed",
@@ -1277,10 +1244,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ORACLE-11": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Governed-turn-recorder oracle",
       "section": "§8",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The `governed-turn-recorder` authority does not exist as code. Addendum §8 (line 3502-3515) requires it as a `bro_signature.AUTHORITY_TYPES` entry + `ARTIFACT_AUTHORITY['brops.governed-turn-record.v1']` mapping + a `broctl sign --artifact brops.governed-turn-record.v1` key class held under the supervisor principal. MEASURED 2026-09-19: (G1) `grep -rn 'governed-turn-recorder|governed_turn_recorder'` over engine/ apps/ bridge/ contracts/ config/ tools/ code files -> 0 hits; (G2) `grep -n governed engine/runtime/bro_signature.py` -> 0 (AUTHORITY_TYPES :223-224 = operator-root, issuer, evidence-recorder, builder, verifier, release, recovery, audit-anchor, control-room, evidence-floor); (G3) `grep -n governed engine/tools/broctl.py` -> 0; (G5) `'brops.governed-turn-record.v1' in bro_signature.ARTIFACT_AUTHORITY` -> False and `verify_artifact` on that type raises 'unknown artifact type'. The record the supervisor actually emits is UNSIGNED: governed_supervisor.build_terminal_record (:706-739) returns bare canonical bytes and governed_supervisor_server.py:816 publishes them to the store. What must exist first: the recorder authority registered in bro_signature (AUTHORITY_TYPES + ARTIFACT_AUTHORITY), a supervisor-held key of that class, and a `sign_terminal_record` constructor that wraps build_terminal_record's payload in `{payload, signature}` -- only then can a test ask it to sign a non-record and have verify_artifact refuse."
     },
     "NM-ORACLE-12": {
       "status": "unreviewed",
@@ -1313,10 +1280,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-04": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Lease names wrong image",
       "section": "§9(d), §4.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The governed-turn lease validator this row names does not exist. `validate_governed_turn_lease` has ZERO occurrences in any .py/.rs/.ts/.tsx/.json/.sql under engine/, apps/desktop/src-tauri/, bridge/ or contracts/ (the same absence NM-CAP-01..06 record). MEASURED for this row specifically: the supervisor only ever WRITES the two pins into a lease from its own config (engine/runtime/governed_supervisor.py:657-663) and nothing reads a presented lease's pins back against the start-time pins — `launcher_executable_sha256` is compared to nothing in the tree, and `executor_executable_sha256` is consumed only by the launcher's exec-time image re-hash (apps/desktop/src-tauri/launcher/src/main.rs:1128), which is a different control (NM-TCB-02) with a different refusal. What must exist first: a supervisor-side `validate_governed_turn_lease` (§4.3) that takes the start-time TCB pins and refuses a lease whose `launcher_executable_sha256`/`executor_executable_sha256` differ, wired where the lease is re-read (the §5 launch gate in governed_supervisor_ledger.gate_and_start, or the signer's §7 lease fetch)."
     },
     "NM-TCB-05": {
       "status": "unreviewed",
@@ -1403,10 +1370,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-19": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Image/cgroup swap",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The cgroup-mismatch refusal this row requires has no control: the launcher does not validate argv[2] (the cgroup path) against the lease nor place the process into a cgroup — apps/desktop/src-tauri/launcher/src/main.rs:571-576 states \"Currently NOT performed\", and apps/desktop/src-tauri/core/src/privilege_drop.rs:226-233 omits `Step::CgroupSetup` from `MANDATORY_PERFORMED_STEPS` for exactly that reason, so a mismatched cgroup argument is accepted rather than refused. What must exist first: a lease-authorized cgroup path field, a root-phase `CgroupSetup` step performed inside `perform_drop` (recorded to the `DropJournal`) that refuses on mismatch, and its inclusion in `MANDATORY_PERFORMED_STEPS`. The other limbs exist — image owner/mode/hash/path (main.rs:244-249, 1087-1132; owner/mode tested at :1291, recorder-side hash tested at governed_recorder.rs:1393) and fexecve failure (:1143-1145) — so if the matrix owner splits the row, the image limb is implementable (S in Rust for owner/mode; the launcher hash compare needs the NM-TCB-02 live case or a pure `image_hash_ok(bytes, pin)` extraction) and the fexecve-failure limb needs a fault-injectable exec seam."
     },
     "NM-TCB-20": {
       "status": "unreviewed",
@@ -1427,10 +1394,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-23": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Model-identity formula",
       "section": "§7, §2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The lease field and the recompute this row names do not exist. No lease in the tree carries `model_profile_id` — engine/runtime/governed_supervisor.py:766-773 serialises five keys and apps/desktop/src-tauri/launcher/src/main.rs:264-300 parses eight, refusing unknown keys — and `engine/runtime/isolated_signer.py` (the §7 verifier) has ZERO occurrences of `model_profile` or `cfg-sha256`, so there is nothing to recompute against. The formula `\"cfg-sha256:\" + generation_config_sha256` is implemented once, as the derivation `GovernedGenerationConfig::model_profile_id()` at apps/desktop/src-tauri/core/src/governed_prepare.rs:371-373, and is compared to nothing. What must exist first: a supervisor-issued lease field `model_profile_id` (§4.3) alongside a lease `generation_config_sha256`, and a §7 recompute in `isolated_signer.py` (or a `validate_governed_turn_lease`) that refuses when `lease.model_profile_id != \"cfg-sha256:\" + lease.generation_config_sha256` before the envelope is minted."
     },
     "NM-TCB-24": {
       "status": "unreviewed",
@@ -1511,10 +1478,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TERM-06": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Internal-refusal single sink",
       "section": "§4.10(h), §5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The §4.10(h) internal-refusal sink does not exist as code. `governed_internal_refusal` and `bridge.governed-turn-diagnostic.v1` have zero non-prose source occurrences: `grep -rn --include=*.py --include=*.rs --include=*.ts -E 'governed-turn-diagnostic|governed_internal_refusal'` over engine/runtime, engine/tools, apps/desktop/src-tauri (non-target), apps/desktop/src and bridge hits only comments/docstrings — engine/runtime/governed_evidence_request.py:143-145, apps/desktop/src-tauri/core/src/governed_submit.rs:181-183 ('the `bridge.governed-turn-diagnostic.v1` carrier ... which this tree does NOT build'), core/src/governed_bridge_result.rs:249-250, bridge/engine_sidecar.py:771-775 ('That frame is built nowhere in this tree, and its consumer - the classifier inside the broker half of 4.10(g) - does not exist either'), bridge/governed_turn_submit.py:283-285 — and governed_bridge_result.rs's own tests mark §4.10(h) **NOT IMPLEMENTED** at 857/872/917. The desktop collapses every non-success to `TurnReason::UpstreamBlocked` (governed_submit.rs:184-186, governed_output_pull.rs:285-290), so no durable Block named `governed_internal_refusal:{stage}:{reason}` is ever written and the row's 'exactly one' cannot be asserted for or against. What must exist first: a builder for `bridge.governed-turn-diagnostic.v1` in the bridge (bridge/engine_sidecar.py / bridge/governed_turn_submit.py, where `UpstreamRefusal` already carries `stage`+`reason` as far as it honestly can), the protocol-const classifier in the broker half of §4.10(g) (core/src/governed_submit.rs), and a desktop durable-Block writer that records `governed_internal_refusal:{stage}:{upstream_reason}` exactly once."
     },
     "NM-TERM-07": {
       "status": "unreviewed",
@@ -1529,16 +1496,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-XBIND-01": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Forged/edited record",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The signed terminal record and its authority do not exist as code. `governed-turn-recorder` has ZERO occurrences outside docs/ (grep over engine/, apps/desktop/src-tauri/, apps/desktop/src/, bridge/, config/, contracts/); `bro_signature.ARTIFACT_AUTHORITY` (engine/runtime/bro_signature.py:236) carries no `brops.governed-turn-record.v1`; `governed_supervisor.build_terminal_record` (:706) emits unsigned canonical JSON; `isolated_signer.py` never calls `verify_artifact`. The content-address + agreement substitute (`_verify_chain_handles` :771-812) does NOT satisfy \"any field\": MEASURED by driving the real IsolatedSigner (scratchpad/xbind/measure.py) -- a record with `completed_at_ms=999` presented under its own handle -> `signed`; `challenge_accepted_at_ms=1` -> `signed`; only the 15 fields in `_CHAIN_AGREEMENT[\"record_handle\"]` (:753-760) refuse (`run_id` mutated -> `chain_document_disagrees_with_attested_evidence:record_handle.run_id`); the other 6 of the 20 fields `build_terminal_record` writes (:730-735: challenge_handle, challenge_registry_hash, challenge_registry_epoch, requested_at_ms, challenge_accepted_at_ms, completed_at_ms) are accepted when forged. What must exist first: `brops.governed-turn-record.v1` registered in `ARTIFACT_AUTHORITY` under a new `governed-turn-recorder` authority, a signing step in `build_terminal_record`, and a `verify_artifact(record, \"brops.governed-turn-record.v1\")` call in `_verify_chain_handles` before the agreement loop. A gap in a shipped control, reported rather than papered over."
     },
     "NM-XBIND-02": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Wrong record signer",
       "section": "§8",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "Same missing component as NM-XBIND-01, wrong-authority limb: there is no `governed-turn-recorder` authority (`bro_signature.AUTHORITY_TYPES` :223 lists OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY, ...; zero occurrences of the string anywhere under engine/, apps/desktop/src-tauri/, bridge/, config/, contracts/), no `brops.governed-turn-record.v1` entry in `ARTIFACT_AUTHORITY` (:236), and the record is not signed by ANY key (`build_terminal_record` governed_supervisor.py:706-736 returns canonical bytes only), so \"signed by the evidence-recorder instead\" cannot even be constructed. `verify_artifact` :998-1000 already refuses a key whose `allowed_artifact_types` excludes the type, so once the record type + authority are registered and the signer calls `verify_artifact(record, \"brops.governed-turn-record.v1\", keys)`, an evidence-recorder-signed record refuses with \"may not sign brops.governed-turn-record.v1\" -- but that call site and that registration are what must exist first."
     },
     "NM-XBIND-03": {
       "status": "unreviewed",
@@ -1559,10 +1526,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-XBIND-06": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "`challenge_accepted_at_ms` chain",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The byte-equality CHAIN this row names is one link long in this tree. MEASURED (measure.py): a record whose `challenge_accepted_at_ms` (123456) differs from the attested evidence's (NOW-3000), presented under its own handle -> `signed` -- the signer's record agreement set (`_CHAIN_AGREEMENT[\"record_handle\"]`, isolated_signer.py:753-760) omits the field although `build_terminal_record` writes it (governed_supervisor.py:729). The lease document (`_lease_payload`, governed_supervisor.py:764-771) does not carry `challenge_accepted_at_ms`/`lease_issued_at_ms` at all, and the §4.6 bridge frame echoes no `challenge_accepted_at_ms` (governed_bridge_result.rs:380-385), so on those two links there is no value to differ. Only attestation→envelope is enforced (governed_verification.rs:540-548, tested at :1616/:1632). What must exist first: `challenge_accepted_at_ms` added to the record's shared set in `_CHAIN_AGREEMENT` (and to the lease payload + its agreement tuple :765-768) so the signer refuses a record/lease that disagrees -- the same shipped-control gap as NM-XBIND-01, reported rather than closed. Binding the ID to the Rust test alone would mark the chain `implemented` while the record link accepts a divergent value."
     },
     "NM-XBIND-07": {
       "status": "unreviewed",
