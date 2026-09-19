@@ -519,6 +519,59 @@ mod tests {
     }
 
     #[test]
+    fn nm_tcb_01_a_login_writable_pinned_artifact_refuses_start_whichever_one_it_is() {
+        // NM-TCB-01 -- login-writable executor. The row names the contained-executor image, and the
+        // property is not about that one file: the non-writability floor is applied to EVERY pinned
+        // artifact, so this asserts it over the whole TCB_REQUIRED_ARTIFACTS set one at a time. Every
+        // other violation test in this module pokes the broker binary, so "it holds for the artifact
+        // a test happened to choose" was all that had been established.
+        let m = manifest();
+        for art in &m.artifacts {
+            let mut fs = clean_fs();
+            fs.files.get_mut(&art.path).unwrap().writable_by_login_or_runtime = true;
+            let err = verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN).unwrap_err();
+            assert!(
+                matches!(err, TcbViolation::WritableByUntrusted { .. }),
+                "NM-TCB-01: {} writable by login gave {err:?}",
+                art.logical_name
+            );
+            assert_eq!(
+                err.logical_name(),
+                art.logical_name,
+                "NM-TCB-01: the refusal named the wrong artifact"
+            );
+        }
+        // The positive control, so the loop above is not passing because everything refuses.
+        assert_eq!(verify_tcb_integrity(&m, &clean_fs(), &runtime_uids(), LOGIN), Ok(()));
+    }
+
+    #[test]
+    fn nm_tcb_03_a_pinned_artifact_owned_by_login_refuses_start_whichever_one_it_is() {
+        // NM-TCB-03 -- wrong-owner TCB. Same shape as NM-TCB-01 and for the same reason: the owner
+        // check is per-artifact, and the expected uid comes from the manifest's owner_uids rather than
+        // from a constant, so the assertion carries BOTH uids and the logical name.
+        let m = manifest();
+        for art in &m.artifacts {
+            let expected = *m.owner_uids.get(&art.expected_owner).unwrap();
+            let mut fs = clean_fs();
+            fs.files.get_mut(&art.path).unwrap().owner_uid = LOGIN;
+            match verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN).unwrap_err() {
+                TcbViolation::WrongOwner { expected_uid, actual_uid, logical_name, .. } => {
+                    assert_eq!(
+                        (expected_uid, actual_uid),
+                        (expected, LOGIN),
+                        "NM-TCB-03: wrong uids reported for {}",
+                        art.logical_name
+                    );
+                    assert_eq!(logical_name, art.logical_name, "NM-TCB-03: wrong artifact named");
+                }
+                other => panic!("NM-TCB-03: expected WrongOwner for {}, got {other:?}", art.logical_name),
+            }
+        }
+        assert_eq!(verify_tcb_integrity(&m, &clean_fs(), &runtime_uids(), LOGIN), Ok(()));
+    }
+
+    #[test]
     fn nm_fs_07_writable_ancestor_is_violation() {
         // NM-FS-07 — writable ancestor dir: a writable ancestor directory of a TCB path ⇒ AncestorWritable,
         // the start refusal verify_tcb_integrity raises.
