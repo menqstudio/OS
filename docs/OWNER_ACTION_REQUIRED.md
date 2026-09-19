@@ -89,6 +89,27 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > evidence), and `T-040` (a load-only flake, measured and unpatched, with the decisive experiment
 > named in order and `--retry` ruled out).
 
+> **TENTH AUDIT, 2026-09-19 — RED, on `main` @ `75fca65`.** Filed at
+> [`2026-09-19-tenth-audit-75fca65.md`](../apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md).
+> **No P0.** The ninth round's thirteen were re-attacked, each one differently from the way its own fix
+> describes: **twelve earned ✅**, and the one REOPENED (`I-10`) is a documentation count, stale for the
+> third consecutive round. Nothing touching a control, a gate or a trust boundary was found overstated.
+>
+> **Nothing here needs the Owner today.** Three findings were filed and all three are corrected in the
+> change that files the report: `J-01` the architecture CI cell (stale in five places at once), `J-03`
+> **the roadmap was in no gate's read set** — the document that decides which phase a session may work,
+> now read by `check_doc_claims.py` — and `J-04` a closed finding listed as open. One was withdrawn on
+> reading the Builder's answer rather than only the code (`J-02`).
+>
+> **The verdict stays RED for three named reasons**, which is a different statement from the one it was:
+> `A-06` (a report that cannot be recovered), `A-09` route 1 (open **by declaration**, an enumerated
+> surface rather than a heuristic), and the counts above. **No finding now forbids building the
+> approval-request path**, and the tenth round says so in writing — `TASKS.md` sequenced `T-021`
+> behind "the standing audit", the standing audit is this round, and that sequencing note was the
+> Builder's own.
+>
+> The two one-line edits below are still the Owner's, and neither blocks a merge.
+
 > **NINTH AUDIT, 2026-08-19 — RED, on `main` @ `5cf9b8c` (tree `9580b86d`, pin proven).** Filed
 > at [`2026-08-19-ninth-audit-5cf9b8c.md`](../apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md).
 > **No P0** — the three production-gate refusals were read at the source and are closed for the

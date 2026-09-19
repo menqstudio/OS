@@ -31,7 +31,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Document class / Փաստաթղթի դաս | Informative · Տեղեկատու — the normative documents are [`CLAUDE.md`](./CLAUDE.md), [`PROJECT_STATE.md`](./PROJECT_STATE.md), [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) |
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
-| Measured at / Չափված ա | 2026-09-19, `main` @ `830fcec`, on a Windows box · Windows-ի վրա |
+| Measured at / Չափված ա | 2026-09-19, `main` @ `75fca65`, on a Windows box · Windows-ի վրա |
 | Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
@@ -329,19 +329,19 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **89 pull request**, **257 ֆայլ** ու **49 977 ավելացված տող** են merge
+Այդ ծայրից ի վեր **91 pull request**, **261 ֆայլ** ու **50 787 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **89 pull requests**, **257 files** and **49,977 inserted lines**
+no P0. Since that head, **91 pull requests**, **261 files** and **50,787 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 89
-    git diff --shortstat 5cf9b8c..HEAD    # 257 files changed, 49977 insertions(+), 13483 deletions(-)
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 91
+    git diff --shortstat 5cf9b8c..HEAD    # 261 files changed, 50787 insertions(+), 13484 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա

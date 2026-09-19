@@ -5,13 +5,13 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t085/artwork-geometry-gate` — `main` @ `bb8a00a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t086/tenth-audit-round` — `main` @ `75fca65`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #252 · branch `t085/artwork-geometry-gate`** (base `main`, tip `bb8a00a`, task T-085).
+> **⏭️ CURRENT ACTIVE: PR #253 · branch `t086/tenth-audit-round`** (base `main`, tip `75fca65`, task T-086).
 >
-> no gate read the front page's pictures
+> the tenth audit round, and the three documents it found stale
 >
-> **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
+> **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
 **Next: T-020's FW-1 correction MERGED as `#219` (`2a50081`) and is NOT approved.** B1-B7 and C1, C2,

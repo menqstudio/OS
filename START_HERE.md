@@ -126,7 +126,7 @@ builder's own unverified claim*. Never promote your own work to ✅.
 > is the job to watch, along with `python tools/check_contrast.py`.
 
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check`. **23 `check_*.py` files exist; 22 are invoked
+`python tools/generate_agent_definitions.py --check`. **40 `check_*.py` files exist; 39 are invoked
 by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by
 design). *(Measured at this head with `for f in tools/check_*.py; do grep -rqF "tools/$(basename $f)"
 .github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 — the ninth audit
@@ -161,7 +161,7 @@ rather than run.
 *builder-ի սեփական չստուգված պնդում*։ Երբեք սեփական գործդ ✅ մի դարձրու։
 
 **PR բացելուց առաջ վազեցրու gate-երը։** `for g in tools/check_*.py; do python "$g"; done` գումարած
-`python tools/generate_agent_definitions.py --check` — **23 `check_*.py` ֆայլ կա; 22-ը workflow-ներում
+`python tools/generate_agent_definitions.py --check` — **40 `check_*.py` ֆայլ կա; 39-ը workflow-ներում
 կանչված են ուղիով**, չկանչվածը `check_prior_art.py`-ն ա (դիզայնով session-side)։ Դրանցից **երեքը**
 արգումենտ են ուզում ու bare վազելիս verdict-ի փոխարեն usage են տպում՝ `check_canonical_sync.py`,
 `check_prior_art.py`, `check_read_receipt.py`; **երկուսը** RED են չկառուցված մեքենայի վրա՝
