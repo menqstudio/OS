@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t081/scope-and-termination` — `main` @ `86da183`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t082/hardlink-and-the-rehash` — `main` @ `9c6a024`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #248 · branch `t081/scope-and-termination`** (base `main`, tip `86da183`, task T-081).
+> **⏭️ CURRENT ACTIVE: PR #249 · branch `t082/hardlink-and-the-rehash`** (base `main`, tip `9c6a024`, task T-082).
 >
-> a key with everything right except audience, and a refusal that must carry no bytes
+> the triage sent a test where it could not import what it tests
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
