@@ -293,7 +293,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cloexec_on_a_data_fd() {
+    fn nm_tcb_15_rejects_cloexec_on_a_data_fd() {
+        // NM-TCB-15 — data FD CLOEXEC: a data fd (3–6) arriving FD_CLOEXEC would close at fexecve ⇒ refused
+        // as DataFdCloexec.
         let mut s = good();
         s[3].cloexec = true; // fd 3 would close at fexecve
         assert_eq!(verify_launcher_fd_set(&s, ADMIN), Err(FdViolation::DataFdCloexec(3)));

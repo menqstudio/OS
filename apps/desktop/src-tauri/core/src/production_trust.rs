@@ -387,7 +387,8 @@ mod tests {
     }
 
     #[test]
-    fn every_resolution_failure_fails_closed_to_no_trusted_manifest() {
+    fn nm_man_14_every_resolution_failure_fails_closed_to_no_trusted_manifest() {
+        // NM-MAN-14 — a development-class signing key (the `dev` limb below) never renders production Verified, even under a genuine External-anchored token.
         let m = manifest();
         let t = ext_token(&m);
         let vk = verifying_key();

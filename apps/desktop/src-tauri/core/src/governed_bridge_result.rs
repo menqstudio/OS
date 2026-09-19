@@ -852,7 +852,8 @@ mod tests {
     }
 
     #[test]
-    fn a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason() {
+    fn nm_term_07_a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason() {
+        // NM-TERM-07 — Namespace disjointness: an internal producer code is never admitted as a governed verdict.
         // The literals below are real INTERNAL producer codes from §4.10(a0)/(a)/(d) and §2.1 — a
         // disjoint namespace §4.10(h) (**NOT IMPLEMENTED**) carries on its own diagnostic.
         // Admitting one here would let an internal refusal arrive wearing a governed verdict's
@@ -899,7 +900,8 @@ mod tests {
     }
 
     #[test]
-    fn a_document_under_any_other_protocol_const_is_rejected() {
+    fn nm_frame_16_a_document_under_any_other_protocol_const_is_rejected() {
+        // NM-FRAME-16 — Diagnostic masquerade: a signed-shaped document under the diagnostic (or any other) const is never a success.
         for other in [
             "brops.governed-turn-result.v1",
             "bridge.governed-turn-output-read-result.v1",
@@ -1100,7 +1102,8 @@ mod tests {
     }
 
     #[test]
-    fn each_altered_echo_blocks_by_name() {
+    fn nm_xbind_07_each_altered_echo_blocks_by_name() {
+        // NM-XBIND-07 — Transport-echo mismatch: any echo that differs from the verified envelope Blocks.
         // Every echo, one at a time. This is the check §7.1 requires and it catches exactly one thing:
         // a proxy that altered what the supervisor said. It is worth nothing against one that copies
         // faithfully — the envelope was already the authority.
@@ -1124,7 +1127,8 @@ mod tests {
     }
 
     #[test]
-    fn the_echoes_have_no_accessor_so_no_gate_can_be_aimed_at_them() {
+    fn nm_output_06_the_echoes_have_no_accessor_so_no_gate_can_be_aimed_at_them() {
+        // NM-OUTPUT-06 — Stream-id as authority: the signed envelope, never the transport echo, is the output authority.
         // The structural half of "the digest and length come from the SIGNED envelope". There is no
         // `output_bytes()` and no `output_sha256()` on `SignedTurnResult`, so a caller cannot pass the
         // transport's echo of its own digest into a length or digest gate even by mistake; it would

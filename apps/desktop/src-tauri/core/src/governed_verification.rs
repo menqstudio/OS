@@ -1450,7 +1450,9 @@ mod tests {
     }
 
     #[test]
-    fn a_wrong_isolated_signer_key_blocks() {
+    fn nm_xbind_12_a_wrong_isolated_signer_key_blocks() {
+        // NM-XBIND-12 — envelope signature: the envelope's signature does not verify under the pinned
+        // isolated-signer key ⇒ Block.
         let f = fx();
         let env = envelope(&f);
         let a = attest(&f);
@@ -1459,6 +1461,21 @@ mod tests {
         k.isolated_signer_public_key = &other; // not the key that signed the envelope
         let mut ledger = InMemoryLedger::new();
         assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()), Err(TurnReason::UpstreamBlocked)));
+    }
+
+    #[test]
+    fn nm_term_05_a_sidecar_fabricated_signed_result_fails_signature_verification() {
+        // NM-TERM-05 — sidecar fabricates success: a `signed` result whose envelope signature was made with
+        // a key the sidecar invented (it never holds the isolated signer's key) fails the pinned-key
+        // verify ⇒ Block. Same refusal as nm_xbind_12_a_wrong_isolated_signer_key_blocks, from the
+        // fabricating side.
+        let f = fx();
+        let env = envelope(&f);
+        let k = keys(&f);
+        let a = attest(&f);
+        let fabricated_sig = sign_b64(&signing_key(77), &env.payload_jcs().unwrap());
+        let mut ledger = InMemoryLedger::new();
+        assert!(matches!(verify_and_accept(&expected(&f), &env, &fabricated_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()), Err(TurnReason::UpstreamBlocked)));
     }
 
     #[test]
@@ -1512,7 +1529,9 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_output_blocks_even_when_the_digest_matches() {
+    fn nm_output_04_invalid_utf8_output_blocks_even_when_the_digest_matches() {
+        // NM-OUTPUT-04 — invalid UTF-8: the length and digest gates pass, the strict-UTF8 decode of the
+        // committed body fails ⇒ Block.
         // The envelope commits to the digest+length of raw (non-UTF8) bytes; the gates pass but the
         // strict-UTF8 decode for the committed body fails ⇒ Block.
         let raw: &[u8] = &[0xff, 0xfe, 0x00, 0x80];
@@ -1858,7 +1877,9 @@ mod tests {
     /// perfect — but produced a year ago. Before the freshness step this committed a governed reply
     /// today; the acceptance ledger has no opinion about it, because it was never accepted before.
     #[test]
-    fn a_perfectly_signed_receipt_from_a_year_ago_is_refused() {
+    fn nm_time_17_a_perfectly_signed_receipt_from_a_year_ago_is_refused() {
+        // NM-TIME-17 — desktop freshness skew: a signed `_ms` field outside
+        // FreshnessWindow{future_skew_ms:60000, max_age_ms:300000} around the broker's clock ⇒ Block.
         const YEAR_MS: i64 = 365 * 24 * 60 * 60 * 1000;
         let (r, mut ledger) = accept_at(T_ACCEPTED_MS, T_COMPLETED_MS, T_NOW_MS + YEAR_MS);
         assert!(matches!(r, Err(TurnReason::UpstreamBlocked)), "a year-old receipt must Block");

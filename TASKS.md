@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #227 · branch `fix/approvals-keydown-race`** (base `main`, tip `82ace2d`, task T-069).
+> **⏭️ CURRENT ACTIVE: PR #228 · branch `t062/bind-rust-2026-09-19`** (base `main`, tip `03c2d3d`, task T-062).
 >
-> T-069: the §D keydown listener was a commit behind its data; it reads refs assigned during render now. Two mutants RED. This is the race that reddened main at 82ace2dc.
+> T-062: 36 Rust negative-matrix rows bound to their existing tests, each mutation-verified; registry 113 / 54 / 75. NM-XBIND-13 honestly left unreviewed.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-069** | **The §D keydown listener was a commit behind its data** — closing over `data`/`selected`, a keypress in the passive-effect window was read against an empty list and dropped silently (T-040's class; reddened `main` at `82ace2dc`, 5145 ms). Reads render-assigned refs now; 2 mutants RED ◑ | Bro | In-Progress | `#227` |
+| **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was read against an empty list and dropped silently (T-040's class; reddened `main` at `82ace2dc`). Render-assigned refs now; 2 mutants RED, 4× 764/764 ◑ | Bro | Review | merged `#227` |
 | **T-068** | **The frontend suite oversubscribed the machine** — vitest's default (CPUs−1) spent half its time in `environment`; `maxWorkers: 4` halves it ◑ | Bro | Review | merged `#223` |
 | **T-067** | **`_rest_open_prs` asked about `menqstudio/OS` by name** (H-05); built from `_repo_slug()`, no slug ⇒ no read. Mutant RED ◑ | Bro | Review | merged `#222` |
 | **T-066** | **Two tools lied on 2026-09-19, untested** — UTF-8 git reads; `what`/`current`/Active line follow the carrier; measured `main_ci`. 9 mutants RED ◑ | Bro | Review | merged `#221` |
@@ -30,7 +30,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress is decided against the grant's table, `model`/`call` refuse; §4 is an `auth_ref` store (0022). **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | merged `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both dates (0 of 796 differ); the gate checks whether that commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — `docs/VERIFICATION_QUEUE_1.md`; all six CLOSED, mutation-proven | Bro | Review | merged `#219` |
-| **T-062** | **The negative matrix's silent state** — `#225` read 182 rows (33 `blocked`, 79 covered, 59 implementable); `#226` bound 38 Python rows, mutation-verified; 36 Rust next. 77 / 54 / 111 ◑ | Bro | In-Progress | `#226` |
+| **T-062** | **The negative matrix's silent state** — `#225` read 182 rows; `#226` bound 38 Python and `#228` 36 Rust rows, each mutation-verified. **113 / 54 / 75** (was 39 / 21 / 182). `NM-XBIND-13` + 4 shell rows left in §2 ◑ | Bro | In-Progress | `#226` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has zero non-test callers; `check_ai_surfaces.py`'s context is not required — the Owner's act | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json = {"source":"seed"}`, both read mappers carry it ◑ | Bro | Review | merged `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |

@@ -873,7 +873,8 @@ mod tests {
     }
 
     #[test]
-    fn claimed_key_id_must_equal_resolved_key_id() {
+    fn nm_scope_07_claimed_key_id_must_equal_resolved_key_id() {
+        // NM-SCOPE-07 — a resolved manifest key filed under another key_id cannot verify this envelope (bare-key escape refused).
         // The envelope claims `key-dev-1`; a manifest key filed under a DIFFERENT id
         // (even with the correct public key) must be refused before any signature
         // check — a compromised wiring can't verify a prod-id envelope with a dev key.
@@ -1052,7 +1053,8 @@ mod tests {
     // ---- §3 pure bindings + request-hash recompute (blocker 3) ------------
 
     #[test]
-    fn every_expected_value_mismatch_blocks() {
+    fn nm_scope_01_every_expected_value_mismatch_blocks() {
+        // NM-SCOPE-01 — an expected workspace_id that differs from the receipt's (first case below) is refused as Mismatch { workspace_id }; every other expected-value mismatch blocks the same way.
         let key = signing_key(7);
         let (env, sig) = wire(&valid_fields(), &key);
 
@@ -1085,6 +1087,28 @@ mod tests {
                 "mutating expected {name} must block"
             );
         }
+    }
+
+    #[test]
+    fn nm_scope_02_install_id_mismatch_blocks() {
+        // NM-SCOPE-02 — an expected install_id that differs from the receipt's is refused as Mismatch { install_id }.
+        let key = signing_key(7);
+        let (env, sig) = wire(&valid_fields(), &key);
+        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
+        let mut exp = expected();
+        exp.request.install_id = "install-evil";
+        assert_eq!(v.bind(&exp, OUTPUT), Err(ReceiptError::Mismatch { field: "install_id" }));
+    }
+
+    #[test]
+    fn nm_scope_03_supervisor_id_mismatch_blocks() {
+        // NM-SCOPE-03 — an expected supervisor_id that differs from the receipt's is refused as Mismatch { supervisor_id }.
+        let key = signing_key(7);
+        let (env, sig) = wire(&valid_fields(), &key);
+        let v = decode_and_verify(&env, &sig, key.verifying_key().as_bytes()).unwrap();
+        let mut exp = expected();
+        exp.supervisor_id = "sup-evil";
+        assert_eq!(v.bind(&exp, OUTPUT), Err(ReceiptError::Mismatch { field: "supervisor_id" }));
     }
 
     #[test]

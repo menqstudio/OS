@@ -476,7 +476,10 @@ mod tests {
     }
 
     #[test]
-    fn a_revoked_or_development_class_key_is_refused_even_if_the_hex_matches() {
+    fn nm_man_08_a_revoked_or_development_class_key_is_refused_even_if_the_hex_matches() {
+        // NM-MAN-08 — revoked/out-of-window attestation key: the attestation key id resolves through
+        // resolve_production_key, so a revoked entry or a now_ms outside [valid_from_ms, valid_to_ms)
+        // refuses the bind.
         // The bind goes through resolve_production_key, so trust class / revocation / window /
         // audience are all enforced. A plain hex comparison would accept all four of these.
         for mutate in [

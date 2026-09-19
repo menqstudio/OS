@@ -525,7 +525,8 @@ mod tests {
     }
 
     #[test]
-    fn anti_rollback_accepts_higher_refuses_lower_and_same_epoch_fork() {
+    fn nm_man_01_anti_rollback_accepts_higher_refuses_lower_and_same_epoch_fork() {
+        // NM-MAN-01 — a manifest whose epoch is below the anti-rollback floor is refused as EpochBelowFloor (rollback).
         let prod = signing_key(2);
         let floor = AntiRollbackFloor { highest_epoch: 5, highest_hash: manifest(5, &prod).content_hash() };
         // strictly higher epoch => accept + advance
@@ -538,6 +539,15 @@ mod tests {
         let m5 = manifest(5, &prod);
         assert!(check_and_advance(&floor, &m5).is_ok());
         // same epoch, DIFFERENT hash => fork refused
+        let mut m5b = manifest(5, &prod); m5b.keys[0].key_epoch = 8; // changes content hash
+        assert_eq!(check_and_advance(&floor, &m5b), Err(RollbackError::SameEpochDifferentHash));
+    }
+
+    #[test]
+    fn nm_man_02_same_epoch_different_hash_is_refused() {
+        // NM-MAN-02 — a manifest at the floor's epoch whose content hash differs is refused as SameEpochDifferentHash (fork).
+        let prod = signing_key(2);
+        let floor = AntiRollbackFloor { highest_epoch: 5, highest_hash: manifest(5, &prod).content_hash() };
         let mut m5b = manifest(5, &prod); m5b.keys[0].key_epoch = 8; // changes content hash
         assert_eq!(check_and_advance(&floor, &m5b), Err(RollbackError::SameEpochDifferentHash));
     }

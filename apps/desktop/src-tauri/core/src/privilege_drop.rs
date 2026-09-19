@@ -460,7 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_syscall_stops_the_drop_and_leaves_a_partial_journal() {
+    fn nm_tcb_18_a_failed_syscall_stops_the_drop_and_leaves_a_partial_journal() {
+        // NM-TCB-18 — Failed drop primitive: a failing syscall stops the drop and the partial journal cannot verify.
         // The step that failed is named, the journal shows only what completed, and that partial trace
         // must NOT verify — a half-dropped process is not a dropped process.
         let mut sys = FakeSyscalls::failing("setresuid");
@@ -646,11 +647,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_residual_uid_gid_groups_caps_nnp() {
+    fn nm_tcb_16_rejects_residual_uid_gid_groups_caps_nnp() {
+        // NM-TCB-16 — Wrong target UID/GID: a post-drop uid/gid that is not the executor's is refused.
         let mut s = dropped(); s.euid = 0;
         assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::UidNotExecutor));
         let mut s = dropped(); s.sgid = 0;
         assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::GidNotExecutor));
+        let mut s = dropped(); s.supplementary_groups = vec![0];
+        assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::SupplementaryGroupsNonEmpty));
+        let mut s = dropped(); s.caps.bounding = 1;
+        assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::ResidualCapabilities));
+        let mut s = dropped(); s.caps.effective = 1 << 21; // CAP_SYS_ADMIN-ish residue
+        assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::ResidualCapabilities));
+        let mut s = dropped(); s.no_new_privs = false;
+        assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::NoNewPrivsUnset));
+    }
+
+    #[test]
+    fn nm_tcb_17_rejects_residual_groups_caps_nnp() {
+        // NM-TCB-17 — Residual privilege: a non-empty supplementary set, any capability bit in any set, or an
+        // unset no_new_privs is refused. The residual-privilege arms of the test above, bound under their own id.
         let mut s = dropped(); s.supplementary_groups = vec![0];
         assert_eq!(verify_final_state(&s, EXEC_UID, EXEC_GID), Err(PrivViolation::SupplementaryGroupsNonEmpty));
         let mut s = dropped(); s.caps.bounding = 1;

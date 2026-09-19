@@ -1128,7 +1128,8 @@ mod tests {
     // ---- replayed nonce ----------------------------------------------------
 
     #[test]
-    fn replayed_nonce_is_blocked_without_a_second_message_or_consume() {
+    fn nm_replay_01_replayed_nonce_is_blocked_without_a_second_message_or_consume() {
+        // NM-REPLAY-01 — Desktop nonce consume: a consumed challenge Blocks the replay; no second message.
         let conn = db();
         let now = 1_000_000u64;
         let fx = Fx::new(now, "nonce-A");
@@ -1151,7 +1152,8 @@ mod tests {
     // ---- duplicate receipt_id ---------------------------------------------
 
     #[test]
-    fn duplicate_receipt_id_is_blocked_no_message_no_ledger_dup() {
+    fn nm_replay_02_duplicate_receipt_id_is_blocked_no_message_no_ledger_dup() {
+        // NM-REPLAY-02 — `receipt_id` global uniqueness: a reused receipt_id Blocks; no second ledger row.
         let conn = db();
         let now = 1_000_000u64;
         // Turn 1 accepts receipt-1.
@@ -1179,7 +1181,8 @@ mod tests {
     // ---- blocked never persists a message ---------------------------------
 
     #[test]
-    fn bad_signature_blocks_and_never_writes_a_message() {
+    fn nm_term_03_bad_signature_blocks_and_never_writes_a_message() {
+        // NM-TERM-03 — No message on Block: the blocked attempt links no message and no messages row exists.
         let conn = db();
         let now = 1_000_000u64;
         let fx = Fx::new(now, "nonce-A");
@@ -1455,7 +1458,8 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_verifications_of_one_nonce_accept_exactly_once() {
+    fn nm_conc_09_concurrent_verifications_of_one_nonce_accept_exactly_once() {
+        // NM-CONC-09 — Desktop double-consume: two simultaneous consumers of one nonce accept exactly once; the other Blocks.
         use std::sync::Barrier;
 
         // A real file-backed DB and two threads that hit verification SIMULTANEOUSLY
@@ -1738,7 +1742,8 @@ mod tests {
     }
 
     #[test]
-    fn pre_verification_block_records_the_real_reason_and_consumes_the_nonce() {
+    fn nm_term_01_pre_verification_block_records_the_real_reason_and_consumes_the_nonce() {
+        // NM-TERM-01 — Terminal-refusal-once (transport): the durable Block consumes the nonce and carries the real reason.
         // Transport failed after the challenge issued: record the REAL reason (not a
         // fabricated parse/base64 failure), consume the nonce, write no message.
         let conn = db();

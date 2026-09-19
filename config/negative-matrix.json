@@ -32,7 +32,6 @@
     "NM-CONC-03",
     "NM-CONC-04",
     "NM-CONC-07",
-    "NM-CONC-09",
     "NM-CRASH-01",
     "NM-CRASH-02",
     "NM-CRASH-03",
@@ -50,35 +49,22 @@
     "NM-CRASH-16",
     "NM-EVID-12",
     "NM-EVID-13",
-    "NM-FRAME-11",
     "NM-FRAME-12",
-    "NM-FRAME-16",
     "NM-FRAME-19",
     "NM-FS-02",
     "NM-FS-03",
-    "NM-FS-04",
     "NM-FS-05",
     "NM-FS-06",
-    "NM-FS-07",
     "NM-IPC-01",
     "NM-IPC-06",
-    "NM-MAN-01",
-    "NM-MAN-02",
     "NM-MAN-06",
-    "NM-MAN-08",
     "NM-MAN-12",
-    "NM-MAN-14",
     "NM-NORELAUNCH-01",
     "NM-NORELAUNCH-04",
     "NM-ORACLE-07",
     "NM-ORACLE-10",
     "NM-ORACLE-12",
-    "NM-OUTPUT-01",
-    "NM-OUTPUT-02",
-    "NM-OUTPUT-03",
-    "NM-OUTPUT-04",
     "NM-OUTPUT-05",
-    "NM-OUTPUT-06",
     "NM-PARITY-01",
     "NM-PARITY-02",
     "NM-PARITY-05",
@@ -87,67 +73,45 @@
     "NM-PARITY-09",
     "NM-REG-13",
     "NM-REG-15",
-    "NM-REPLAY-01",
-    "NM-REPLAY-02",
-    "NM-REPLAY-10",
-    "NM-SCOPE-01",
-    "NM-SCOPE-02",
-    "NM-SCOPE-03",
     "NM-SCOPE-04",
     "NM-SCOPE-06",
-    "NM-SCOPE-07",
     "NM-SCOPE-08",
     "NM-TCB-01",
     "NM-TCB-02",
     "NM-TCB-03",
-    "NM-TCB-05",
-    "NM-TCB-06",
-    "NM-TCB-07",
     "NM-TCB-08",
-    "NM-TCB-09",
     "NM-TCB-12",
     "NM-TCB-13",
     "NM-TCB-14",
-    "NM-TCB-15",
-    "NM-TCB-16",
-    "NM-TCB-17",
-    "NM-TCB-18",
     "NM-TCB-20",
     "NM-TCB-21",
     "NM-TCB-24",
     "NM-TCB-25",
-    "NM-TERM-01",
     "NM-TERM-02",
-    "NM-TERM-03",
     "NM-TERM-04",
-    "NM-TERM-05",
-    "NM-TERM-07",
     "NM-TERM-08",
     "NM-TIME-01",
     "NM-TIME-02",
     "NM-TIME-12",
     "NM-TIME-15",
-    "NM-TIME-17",
     "NM-TIME-19",
     "NM-XBIND-03",
     "NM-XBIND-05",
-    "NM-XBIND-07",
     "NM-XBIND-10",
-    "NM-XBIND-12",
     "NM-XBIND-13"
   ],
   "cases": {
     "NM-REPLAY-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Desktop nonce consume",
       "section": "§6.1(14), §7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_replay_01_replayed_nonce_is_blocked_without_a_second_message_or_consume"
     },
     "NM-REPLAY-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`receipt_id` global uniqueness",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_replay_02_duplicate_receipt_id_is_blocked_no_message_no_ledger_dup"
     },
     "NM-REPLAY-03": {
       "status": "implemented",
@@ -192,10 +156,10 @@
       "test": "engine/tests/test_challenge_authority.py::IssueTests::test_nm_replay_09_issue_persists_and_replays_byte_for_byte"
     },
     "NM-REPLAY-10": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Replayed output chunk",
       "section": "§7.1, §4.10(f)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_replay_10_a_replayed_chunk_with_mutated_bytes_fails_the_digest_gate"
     },
     "NM-TIME-01": {
       "status": "unreviewed",
@@ -294,10 +258,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTimeTests::test_nm_time_16_now_equal_to_lease_issued_at_ms_is_inside_the_window"
     },
     "NM-TIME-17": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Desktop freshness skew",
       "section": "§7.1, §1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_time_17_a_perfectly_signed_receipt_from_a_year_ago_is_refused"
     },
     "NM-TIME-18": {
       "status": "blocked",
@@ -414,16 +378,16 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_17_a_present_key_id_is_not_by_itself_validity"
     },
     "NM-MAN-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Manifest rollback",
       "section": "§1.6/§1.7 (3b-2 design)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/key_manifest.rs::tests::nm_man_01_anti_rollback_accepts_higher_refuses_lower_and_same_epoch_fork"
     },
     "NM-MAN-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Manifest same-epoch/diff-hash",
       "section": "§1.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/key_manifest.rs::tests::nm_man_02_same_epoch_different_hash_is_refused"
     },
     "NM-MAN-03": {
       "status": "blocked",
@@ -456,10 +420,10 @@
       "blocked_on": "A `supervisor_id` binding on the manifest key and a resolver that compares it to the turn's supervisor. MEASURED: `grep -c supervisor_id` = 0 in apps/desktop/src-tauri/core/src/key_manifest.rs, manifest_authority.rs, production_trust.rs, broker/src/manifest_resolver.rs and win-live/src/resolver.rs; `ManifestKey` (key_manifest.rs:26-37) has no such field and `resolve_production_key(manifest, key_id, protocol, now_ms)` (key_manifest.rs:241-246) has no supervisor argument; the §1.7 `resolve_attestation_key(key_id, supervisor_id, now_ms)` has zero occurrences tree-wide. A test bound to this row would have to invent the field."
     },
     "NM-MAN-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Revoked/out-of-window attestation key",
       "section": "§4.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/win-live/src/config.rs::tests::nm_man_08_a_revoked_or_development_class_key_is_refused_even_if_the_hex_matches"
     },
     "NM-MAN-09": {
       "status": "blocked",
@@ -492,28 +456,28 @@
       "blocked_on": "The `key_usage` discriminator on `ManifestKey` and a semantic-validation pass that refuses render-scope fields on a `supervisor_attestation` key. MEASURED: `key_usage` has zero occurrences tree-wide (apps/desktop/src-tauri, apps/desktop/src, engine, bridge, contracts, config, tools); `ManifestKey` (key_manifest.rs:26-37) makes `trust_class` and `allowed_protocols` REQUIRED on every key, and the supervisor-attestation key is provisioned with both (config.rs:388-394; manifest_resolver.rs:328-330) and REFUSED without them (`a_revoked_or_development_class_key_is_refused_even_if_the_hex_matches`, config.rs:478-501; resolver.rs:240-251). The tree's rule is the inverse of this row; nothing can go red until attestation keys are a distinct type."
     },
     "NM-MAN-14": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Non-production trust_class render",
       "section": "§1.8",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/production_trust.rs::tests::nm_man_14_every_resolution_failure_fails_closed_to_no_trusted_manifest"
     },
     "NM-SCOPE-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Workspace mismatch",
       "section": "§1.7, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_01_every_expected_value_mismatch_blocks"
     },
     "NM-SCOPE-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Install mismatch",
       "section": "§1.7, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_02_install_id_mismatch_blocks"
     },
     "NM-SCOPE-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Supervisor mismatch",
       "section": "§1.7, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_03_supervisor_id_mismatch_blocks"
     },
     "NM-SCOPE-04": {
       "status": "unreviewed",
@@ -534,10 +498,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-SCOPE-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Bare key escape",
       "section": "§1.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt.rs::tests::nm_scope_07_claimed_key_id_must_equal_resolved_key_id"
     },
     "NM-SCOPE-08": {
       "status": "unreviewed",
@@ -606,10 +570,10 @@
       "blocked_on": "The §4.10(h) `bridge.governed-turn-diagnostic.v1` carrier and its `MAX_DIAGNOSTIC_BYTES = 256` bound. Zero occurrences of `MAX_DIAGNOSTIC_BYTES` in engine/, bridge/, apps/desktop/; the carrier is marked NOT IMPLEMENTED at governed_bridge_result.rs:917, governed_submit.rs:181, bridge/governed_turn_submit.py:285 and bridge/engine_sidecar.py:772-775 (no producer in the sidecar, no classifier in the broker). `governed_turn_execute` (src/governed_turn.rs:214) is a thin broker proxy with no diagnostic arm. What must exist first: the diagnostic producer in `engine_sidecar` and the desktop classifier with a `len(bytes) > MAX_DIAGNOSTIC_BYTES ⇒ terminal Block` arm; until then every diagnostic of any size is already `MalformedFrame` (test :916), so a size test cannot distinguish the cap from its absence."
     },
     "NM-FRAME-11": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Oversize output pull",
       "section": "§7.1, §4.10(f)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_frame_11_a_signed_but_absurd_output_length_is_refused_before_any_allocation"
     },
     "NM-FRAME-12": {
       "status": "unreviewed",
@@ -636,10 +600,10 @@
       "blocked_on": "The §4.4 `brops.governed-sign-request.v1` protocol literal and a governed decoder distinct from `isolated_signer.validate_sign_request`. The tree defines exactly one tag, `SIGN_REQUEST_PROTOCOL = \"brops.sign-request.v1\"` (isolated_signer.py:58), one protocol check (:484), and the governed path itself builds and sends that base tag (governed_acceptance.py:461; broker chain_executor.rs:989; win-live/servers.rs:26). `grep -rn governed-sign-request` over all .py/.rs/.ts/.json → 0; config/spec-conformance.json §4.4 = unreviewed. Until the governed tag exists there is no 'wrong domain' to present and no decoder to refuse it; a test would have to invent the literal (the NM-IPC-05 precedent)."
     },
     "NM-FRAME-16": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Diagnostic masquerade",
       "section": "§4.10(h)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_bridge_result.rs::tests::nm_frame_16_a_document_under_any_other_protocol_const_is_rejected"
     },
     "NM-FRAME-17": {
       "status": "implemented",
@@ -834,34 +798,34 @@
       "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_conc_08_lease_not_ready_when_the_lease_document_cannot_be_published"
     },
     "NM-CONC-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Desktop double-consume",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_conc_09_concurrent_verifications_of_one_nonce_accept_exactly_once"
     },
     "NM-OUTPUT-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Single-byte flip",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_output_01_a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate"
     },
     "NM-OUTPUT-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Length mismatch",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_output_02_a_truncated_chunk_fails_the_length_gate"
     },
     "NM-OUTPUT-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Normalization smuggle",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_output_pull.rs::tests::nm_output_03_a_crlf_normalized_stream_blocks"
     },
     "NM-OUTPUT-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Invalid UTF-8",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_output_04_invalid_utf8_output_blocks_even_when_the_digest_matches"
     },
     "NM-OUTPUT-05": {
       "status": "unreviewed",
@@ -870,10 +834,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-OUTPUT-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Stream-id as authority",
       "section": "§7.1, §3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_bridge_result.rs::tests::nm_output_06_the_echoes_have_no_accessor_so_no_gate_can_be_aimed_at_them"
     },
     "NM-OUTPUT-07": {
       "status": "blocked",
@@ -990,10 +954,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FS-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Handle traversal",
       "section": "§4.0",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs::tests::nm_fs_04_a_store_publication_refuses_a_name_that_is_not_a_content_address"
     },
     "NM-FS-05": {
       "status": "unreviewed",
@@ -1008,10 +972,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FS-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Writable ancestor dir",
       "section": "§2.5, §9(c)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/tcb_integrity.rs::tests::nm_fs_07_writable_ancestor_is_violation"
     },
     "NM-FS-08": {
       "status": "implemented",
@@ -1248,22 +1212,22 @@
       "blocked_on": "The governed-turn lease validator this row names does not exist. `validate_governed_turn_lease` has ZERO occurrences in any .py/.rs/.ts/.tsx/.json/.sql under engine/, apps/desktop/src-tauri/, bridge/ or contracts/ (the same absence NM-CAP-01..06 record). MEASURED for this row specifically: the supervisor only ever WRITES the two pins into a lease from its own config (engine/runtime/governed_supervisor.py:657-663) and nothing reads a presented lease's pins back against the start-time pins — `launcher_executable_sha256` is compared to nothing in the tree, and `executor_executable_sha256` is consumed only by the launcher's exec-time image re-hash (apps/desktop/src-tauri/launcher/src/main.rs:1128), which is a different control (NM-TCB-02) with a different refusal. What must exist first: a supervisor-side `validate_governed_turn_lease` (§4.3) that takes the start-time TCB pins and refuses a lease whose `launcher_executable_sha256`/`executor_executable_sha256` differ, wired where the lease is re-read (the §5 launch gate in governed_supervisor_ledger.gate_and_start, or the signer's §7 lease fetch)."
     },
     "NM-TCB-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Shared UID",
       "section": "§9(e), §2.6",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::tests::nm_tcb_05_distinct_principals_blocks_any_two_sharing_a_sid"
     },
     "NM-TCB-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Sidecar == login UID",
       "section": "§9(e)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::tests::nm_tcb_06_distinct_principals_blocks_any_principal_collapsed_onto_login"
     },
     "NM-TCB-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Unset principal UID",
       "section": "§9(e)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::tests::nm_tcb_07_distinct_principals_blocks_an_unset_sid"
     },
     "NM-TCB-08": {
       "status": "unreviewed",
@@ -1272,10 +1236,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Broker == authority",
       "section": "§9(i)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::tests::nm_tcb_09_distinct_principals_blocks_broker_equal_to_authority"
     },
     "NM-TCB-10": {
       "status": "blocked",
@@ -1308,28 +1272,28 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-15": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Data FD CLOEXEC",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/fd_lifecycle.rs::tests::nm_tcb_15_rejects_cloexec_on_a_data_fd"
     },
     "NM-TCB-16": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Wrong target UID/GID",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/privilege_drop.rs::tests::nm_tcb_16_rejects_residual_uid_gid_groups_caps_nnp"
     },
     "NM-TCB-17": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Residual privilege",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/privilege_drop.rs::tests::nm_tcb_17_rejects_residual_groups_caps_nnp"
     },
     "NM-TCB-18": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Failed drop primitive",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/privilege_drop.rs::tests::nm_tcb_18_a_failed_syscall_stops_the_drop_and_leaves_a_partial_journal"
     },
     "NM-TCB-19": {
       "status": "blocked",
@@ -1410,10 +1374,10 @@
       "blocked_on": "The governed-turn lease validator this row names does not exist. `validate_governed_turn_lease` has ZERO occurrences in any .py/.rs/.ts/.tsx/.json/.sql under engine/, apps/desktop/src-tauri/, bridge/ or contracts/, and so does the capability literal `INVOKE_GOVERNED_MODEL` that defines the closed governed-model-turn-v1 profile. There is a base `validate_execution_lease` (engine/runtime/bro_execution_lease.py) but it is a different artifact type; testing it would bind this row to a control it does not describe."
     },
     "NM-TERM-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Terminal-refusal-once (transport)",
       "section": "§6.1 out-of-band, §7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_term_01_pre_verification_block_records_the_real_reason_and_consumes_the_nonce"
     },
     "NM-TERM-02": {
       "status": "unreviewed",
@@ -1422,10 +1386,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TERM-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "No message on Block",
       "section": "§6.1, §7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/receipt_store.rs::tests::nm_term_03_bad_signature_blocks_and_never_writes_a_message"
     },
     "NM-TERM-04": {
       "status": "unreviewed",
@@ -1434,10 +1398,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TERM-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Sidecar fabricates success",
       "section": "§4.5, §6.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_term_05_a_sidecar_fabricated_signed_result_fails_signature_verification"
     },
     "NM-TERM-06": {
       "status": "blocked",
@@ -1446,10 +1410,10 @@
       "blocked_on": "The §4.10(h) internal-refusal sink does not exist as code. `governed_internal_refusal` and `bridge.governed-turn-diagnostic.v1` have zero non-prose source occurrences: `grep -rn --include=*.py --include=*.rs --include=*.ts -E 'governed-turn-diagnostic|governed_internal_refusal'` over engine/runtime, engine/tools, apps/desktop/src-tauri (non-target), apps/desktop/src and bridge hits only comments/docstrings — engine/runtime/governed_evidence_request.py:143-145, apps/desktop/src-tauri/core/src/governed_submit.rs:181-183 ('the `bridge.governed-turn-diagnostic.v1` carrier ... which this tree does NOT build'), core/src/governed_bridge_result.rs:249-250, bridge/engine_sidecar.py:771-775 ('That frame is built nowhere in this tree, and its consumer - the classifier inside the broker half of 4.10(g) - does not exist either'), bridge/governed_turn_submit.py:283-285 — and governed_bridge_result.rs's own tests mark §4.10(h) **NOT IMPLEMENTED** at 857/872/917. The desktop collapses every non-success to `TurnReason::UpstreamBlocked` (governed_submit.rs:184-186, governed_output_pull.rs:285-290), so no durable Block named `governed_internal_refusal:{stage}:{reason}` is ever written and the row's 'exactly one' cannot be asserted for or against. What must exist first: a builder for `bridge.governed-turn-diagnostic.v1` in the bridge (bridge/engine_sidecar.py / bridge/governed_turn_submit.py, where `UpstreamRefusal` already carries `stage`+`reason` as far as it honestly can), the protocol-const classifier in the broker half of §4.10(g) (core/src/governed_submit.rs), and a desktop durable-Block writer that records `governed_internal_refusal:{stage}:{upstream_reason}` exactly once."
     },
     "NM-TERM-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Namespace disjointness",
       "section": "§4.10(h), §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_bridge_result.rs::tests::nm_term_07_a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason"
     },
     "NM-TERM-08": {
       "status": "unreviewed",
@@ -1494,10 +1458,10 @@
       "blocked_on": "The byte-equality CHAIN this row names is one link long in this tree. MEASURED (measure.py): a record whose `challenge_accepted_at_ms` (123456) differs from the attested evidence's (NOW-3000), presented under its own handle -> `signed` -- the signer's record agreement set (`_CHAIN_AGREEMENT[\"record_handle\"]`, isolated_signer.py:753-760) omits the field although `build_terminal_record` writes it (governed_supervisor.py:729). The lease document (`_lease_payload`, governed_supervisor.py:764-771) does not carry `challenge_accepted_at_ms`/`lease_issued_at_ms` at all, and the §4.6 bridge frame echoes no `challenge_accepted_at_ms` (governed_bridge_result.rs:380-385), so on those two links there is no value to differ. Only attestation→envelope is enforced (governed_verification.rs:540-548, tested at :1616/:1632). What must exist first: `challenge_accepted_at_ms` added to the record's shared set in `_CHAIN_AGREEMENT` (and to the lease payload + its agreement tuple :765-768) so the signer refuses a record/lease that disagrees -- the same shipped-control gap as NM-XBIND-01, reported rather than closed. Binding the ID to the Rust test alone would mark the chain `implemented` while the record link accepts a divergent value."
     },
     "NM-XBIND-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Transport-echo mismatch",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_bridge_result.rs::tests::nm_xbind_07_each_altered_echo_blocks_by_name"
     },
     "NM-XBIND-08": {
       "status": "implemented",
@@ -1524,10 +1488,10 @@
       "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_11_a_policy_the_operator_never_authorized_is_refused"
     },
     "NM-XBIND-12": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Envelope signature",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_xbind_12_a_wrong_isolated_signer_key_blocks"
     },
     "NM-XBIND-13": {
       "status": "unreviewed",

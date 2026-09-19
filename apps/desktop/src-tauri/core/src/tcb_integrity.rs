@@ -519,7 +519,9 @@ mod tests {
     }
 
     #[test]
-    fn writable_ancestor_is_violation() {
+    fn nm_fs_07_writable_ancestor_is_violation() {
+        // NM-FS-07 — writable ancestor dir: a writable ancestor directory of a TCB path ⇒ AncestorWritable,
+        // the start refusal verify_tcb_integrity raises.
         let m = manifest();
         let mut fs = clean_fs();
         // A writable parent dir lets an attacker rename/replace the broker binary.
