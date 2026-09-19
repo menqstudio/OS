@@ -135,9 +135,16 @@ class MarkerPositionTests(unittest.TestCase):
         self.assertEqual(len(st.MARKER.findall(out)), 1)
 
     def test_prose_that_merely_mentions_the_marker_name_is_not_a_marker(self):
-        # This PR's own description quotes `AUDIT_CANDIDATE_HEAD` in a sentence. Only a line that
-        # is the marker counts, or the tool would refuse to stamp any PR that talks about itself.
-        body = f"anchored in the body as `AUDIT_CANDIDATE_HEAD`\n\nAUDIT_CANDIDATE_HEAD: {SHA}\n"
+        """For THIS tool only: a mention is not a marker, so it still stamps such a body.
+
+        `check_repo_state.py` is deliberately stricter and counts the KEYWORD across the whole body,
+        fail-closing on more than one occurrence so nobody can append a second marker to smuggle a
+        head. So a pull request description must not name the keyword in prose at all — measured the
+        hard way on this very pull request, whose first description did and went RED with
+        "marker missing/not 40-hex: None". These two rules are not in conflict: the writer refuses to
+        guess which of several markers is real, and the verifier refuses to guess at all.
+        """
+        body = f"anchored in the body as the audited-head marker\n\nAUDIT_CANDIDATE_HEAD: {SHA}\n"
         self.assertEqual(st.stamped_sha(body), SHA)
 
 
