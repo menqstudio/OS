@@ -67,8 +67,6 @@
     "NM-PARITY-05",
     "NM-PARITY-06",
     "NM-PARITY-07",
-    "NM-REG-13",
-    "NM-REG-15",
     "NM-SCOPE-04",
     "NM-SCOPE-06",
     "NM-SCOPE-08",
@@ -341,10 +339,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_12_revoked_at_ms_before_valid_from_ms_is_malformed"
     },
     "NM-REG-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Revocation seconds-not-ms",
       "section": "§4.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_13_a_seconds_valued_revoked_at_ms_is_refused"
     },
     "NM-REG-14": {
       "status": "implemented",
@@ -353,10 +351,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_14_duplicate_challenge_key_ids_are_refused"
     },
     "NM-REG-15": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Registry bounds",
       "section": "§4.2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_15_more_keys_than_the_cap_is_refused"
     },
     "NM-REG-16": {
       "status": "implemented",

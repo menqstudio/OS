@@ -27,7 +27,15 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > of them `tools/` — so the gates guarding this repository had never run on the platform you develop
 > on, and two of `check_audit_actor`'s own tests were failing there while the wall stayed green. It is
 > excluded rather than required only so a first CI run cannot block every merge on a surprise
-> belonging to the runner; the reason is written beside it in that file.
+> belonging to the runner; the reason is written beside it in that file. **That condition is now
+> MET and measured** — the job has been green on `main` three times running:
+>
+>     main 9c76349  ci run 35426169236  ->  success
+>     main 3772a65  ci run 35427124977  ->  success
+>     main 68a2948  ci run 35427831438  ->  success
+>
+> Its first run was green too, on `#232` itself. So the only thing left is moving the key from
+> `deliberately_excluded` into `contexts` and adding the context to live branch protection.
 >
 > Below: the visibility question, settled the same day.
 
