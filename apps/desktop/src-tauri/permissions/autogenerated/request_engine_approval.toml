@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-engine-approval"
+description = "Enables the request_engine_approval command without any pre-configured scope."
+commands.allow = ["request_engine_approval"]
+
+[[permission]]
+identifier = "deny-request-engine-approval"
+description = "Denies the request_engine_approval command without any pre-configured scope."
+commands.deny = ["request_engine_approval"]

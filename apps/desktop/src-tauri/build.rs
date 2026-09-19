@@ -38,6 +38,7 @@ fn main() {
         "decide_approval",
         "reject_approval",
         "escalate_approval",
+        "request_engine_approval",
         "confirm_approval",
         // notifications
         "list_notifications",

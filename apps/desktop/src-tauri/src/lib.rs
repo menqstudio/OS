@@ -392,6 +392,7 @@ pub fn run() {
             governance::read_evidence_chain,
             governance::read_verifier_verdicts,
             governance::read_engine_approval_queue,
+            governance::request_engine_approval,
             commands::list_projects,
             commands::create_project,
             commands::set_project_status,

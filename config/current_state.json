@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "12d6efbfc4ac696ffca77c62f709dd8146ecc3b4",
+  "settled_at_main_head": "c7a0450f7e84cecb501172ed372120d2d69c1f0e",
   "sync": {
-    "baseline_main_head_at_sync": "12d6efbfc4ac696ffca77c62f709dd8146ecc3b4",
-    "snapshot_branch": "t021b/approval-request-engine",
+    "baseline_main_head_at_sync": "c7a0450f7e84cecb501172ed372120d2d69c1f0e",
+    "snapshot_branch": "t021c/approval-request-desktop",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t021b/approval-request-engine"
+    "branch": "t021c/approval-request-desktop"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 255,
-    "branch": "t021b/approval-request-engine",
+    "number": 256,
+    "branch": "t021c/approval-request-desktop",
     "state": "open",
-    "what": "engine/runtime/bro_approval_requests.py -- an append-only hash-chained log of asks that arrived, in its own module because bro_control_room_api.py opens by saying no state is written there. The sidecar serves approval.request as the first WRITE in its op table, provisioned by BROPS_APPROVAL_REQUEST_LOG_DIR alone so the read mirror grants no write and the write grants no read. All five obligations the schema audit fixed in advance are discharged and each is held by a test that dies when it is broken",
-    "note": "the engine records an ask and cannot decide it",
+    "what": "brops_core::approval_request builds the ask and reads the answer -- 19 tests, and the load-bearing one refuses a reply carrying a decision-shaped field whatever else it says. The app crate adds one transport wrapper gated by name on both variables the hop needs and one tauri command that supplies no key, and the renderer parses rather than trusts. The contract test phase 2 listed as unwritable is written: ten specs holding the renderer to six inputs and to what it may believe",
+    "note": "the desktop asks across the wall and cannot be told it decided",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #255 (t021b/approval-request-engine), task T-021b: engine/runtime/bro_approval_requests.py -- an append-only hash-chained log of asks that arrived, in its own module because bro_control_room_api.py opens by saying no state is written there. The sidecar serves approval.request as the first WRITE in its op table, provisioned by BROPS_APPROVAL_REQUEST_LOG_DIR alone so the read mirror grants no write and the write grants no read. All five obligations the schema audit fixed in advance are discharged and each is held by a test that dies when it is broken Next: T-021c, the desktop command and the contract test, which closes phase 2's three open rows -- and needs a second enumeration in test_roadmap_split before a box can be checked at all",
-    "_note": "The carrier is current_workflow_pr (#255 on t021b/approval-request-engine). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #256 (t021c/approval-request-desktop), task T-021c: brops_core::approval_request builds the ask and reads the answer -- 19 tests, and the load-bearing one refuses a reply carrying a decision-shaped field whatever else it says. The app crate adds one transport wrapper gated by name on both variables the hop needs and one tauri command that supplies no key, and the renderer parses rather than trusts. The contract test phase 2 listed as unwritable is written: ten specs holding the renderer to six inputs and to what it may believe Next: T-021d, the approvals page control -- separately named from the desktop's own T-010/T-011 authority -- plus the second enumeration test_roadmap_split needs before a box can be checked, and then phase 2's three rows close",
+    "_note": "The carrier is current_workflow_pr (#256 on t021c/approval-request-desktop). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "12d6efbfc4ac696ffca77c62f709dd8146ecc3b4",
+      "head": "c7a0450f7e84cecb501172ed372120d2d69c1f0e",
       "conclusion": "success",
-      "run_id": 35453080690,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 12d6efb, run 35453080690."
+      "run_id": 35454024109,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at c7a0450, run 35454024109."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

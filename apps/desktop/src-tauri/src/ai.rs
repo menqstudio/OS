@@ -2905,6 +2905,55 @@ pub(crate) async fn governed_sidecar_read(request_json: &str) -> Result<serde_js
     governed_sidecar_call(&python, &sidecar, request_json).await
 }
 
+/// Send one `brops.approval-request.v1` document to the sidecar and return its reply.
+///
+/// THE ONLY WRITE THIS FILE SENDS, and it is gated by name on BOTH variables the hop needs before
+/// anything is spawned:
+///
+/// * `BROPS_APPROVAL_REQUEST_LOG_DIR` — the append-only log the engine records the ask in. The read
+///   mirror's provisioning does not imply it and it does not imply the read mirror's: an operator who
+///   provisioned a mirror has not thereby opened a write, and saying so mechanically is the only way a
+///   half-provisioned deployment cannot turn one into the other by accident.
+/// * `BROPS_GOVERNANCE_STATE_DIR` — because the engine judges the ask against its own published task
+///   states, which it reads through the same runtime the mirror reads.
+///
+/// Refusing here rather than spawning is the same choice `governed_sidecar_read` makes, for the same
+/// reason: the refusal names the thing that is missing instead of reporting the engine unreachable.
+pub(crate) async fn governed_sidecar_approval_request(
+    request_json: &str,
+) -> Result<serde_json::Value, String> {
+    for (var, why) in [
+        (
+            "BROPS_APPROVAL_REQUEST_LOG_DIR",
+            "the append-only log the engine appends an ask to",
+        ),
+        (
+            "BROPS_GOVERNANCE_STATE_DIR",
+            "the runtime whose published task states an ask is judged against",
+        ),
+    ] {
+        let value = env_nonempty(var).ok_or_else(|| {
+            format!(
+                "the approval-request path is not provisioned: {var} is unset, and it names {why}. \
+                 Nothing was sent — an ask this side could not have recorded is not an ask the engine \
+                 refused."
+            )
+        })?;
+        if !std::path::Path::new(&value).is_dir() {
+            return Err(format!(
+                "the approval-request path is not provisioned: {var} points at `{value}`, which is \
+                 not a directory. Nothing was created — a store this side invented is not a store an \
+                 operator chose."
+            ));
+        }
+    }
+    let python = env_nonempty("BROPS_GOVERNED_PYTHON")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_PYTHON.to_string());
+    let sidecar = env_nonempty("BROPS_GOVERNED_SIDECAR")
+        .unwrap_or_else(|| DEFAULT_GOVERNED_SIDECAR.to_string());
+    governed_sidecar_call(&python, &sidecar, request_json).await
+}
+
 // =================================================================================================
 // §4.10(f) DESKTOP HOP — the chunked output pull
 // =================================================================================================

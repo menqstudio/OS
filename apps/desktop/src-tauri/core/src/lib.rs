@@ -41,6 +41,7 @@ pub mod credentials;
 pub mod egress_proxy;
 pub mod agent_bundle;
 pub mod repo;
+pub mod approval_request;
 
 pub use domain::{
     ActivityEvent, Agent, Approval, Automation, AutomationRun, Conversation, CoreError, CoreResult, Decision,

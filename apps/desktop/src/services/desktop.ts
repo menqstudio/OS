@@ -7,6 +7,9 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import {
   parseGovernanceRead, type GovernanceRead, type GovernanceSurface,
 } from './governance';
+import {
+  parseApprovalRequestOutcome, type ApprovalRequestInput, type ApprovalRequestOutcome,
+} from './approvalRequest';
 import type {
   ActivityEvent, Agent, AiStatus, Approval, Automation, AutomationRun, CalendarEvent, Conversation, Decision,
   DirListing, FileContent, Integration, KnowledgeNote, LibraryItem, MemoryEntry, Message, MessageRole, Metric,
@@ -359,6 +362,27 @@ export const desktop = {
   // ledger above: registered in Rust, previously unreachable from the renderer.
   readVerifierVerdicts: (taskId?: string) =>
     governanceRead('verdicts', 'read_verifier_verdicts', { taskId: taskId ?? null }),
+
+  // The one REQUEST across the wall, and the only write in this group. It asks the ENGINE to RECORD an
+  // ask; it decides nothing. Distinct from `grantApproval`/`denyApproval` below, which drive the
+  // desktop's OWN approval system (T-010/T-011, local SQLite, native confirmation) -- two systems, two
+  // names, deliberately not merged. A transport error is `blocked`, never a silent success: an ask this
+  // side could not deliver is not an ask the engine refused.
+  requestEngineApproval: async (input: ApprovalRequestInput): Promise<ApprovalRequestOutcome> => {
+    try {
+      const raw = await invoke<unknown>('request_engine_approval', {
+        taskId: input.taskId,
+        requestedCommand: input.requestedCommand,
+        expectedTaskState: input.expectedTaskState,
+        reason: input.reason,
+        requestedBy: input.requestedBy,
+        evidenceRefs: input.evidenceRefs ?? null,
+      });
+      return parseApprovalRequestOutcome(raw);
+    } catch (e) {
+      return { state: 'blocked', reason: e instanceof Error ? e.message : String(e) };
+    }
+  },
 
   // Governed trust-chain self-test: runs the REAL in-process challenge→sign→verify→
   // trusted_verified chain (Windows) and returns the honest outcome + custody posture.
