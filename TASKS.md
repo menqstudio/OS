@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #238 · branch `t062/bind-nm-crash-2`** (base `main`, tip `3909ede`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #239 · branch `docs/readme-menq-design`** (base `main`, tip `c197b97`, task T-073).
 >
-> four more crash cuts bound around the one edge section 5 locks: EXECUTION_STARTING becomes EXECUTING only when the launcher confirms the child and its metadata is durable, and a started attempt is never relaunched whatever survived
+> the front page's six unmeasured numbers, re-measured at the head it merges against
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-073** | **Six front-page numbers were never measured** — five stale under 21 merged PRs; the control split `45 / 14` summed to a right 59 while wrong at every head ◑ | Bro | Review | `#239` |
 | **T-072** | **The gates had never run on Windows** — every `tools/` self-test step in CI is ubuntu, so five printed `a` and two of `check_audit_actor`'s tests were red here while the wall stayed green ◑ | Bro | Review | `#232` |
 | **T-071** | **Every stamp burned a full `ci` run** — `restamp()` moved a correct marker past the attribution line, so `edited` restarted 21 jobs. 19 of 26 runs cancelled ◑ | Bro | Review | merged `#231` |
 | **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still. Pin → 46.0.7, waivers 7 → 4; a gate refuses both now ◑ | Bro | Review | merged `#230` |
@@ -33,7 +34,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — 182 rows read, 77 bound and mutation-verified: **130 / 54 / 58** from 39 / 21 / 182. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 43 left ◑ | Bro | In-Progress | `#233` |
+| **T-062** | **The negative matrix's silent state** — **130 / 54 / 58** of 242 bound. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 43 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |

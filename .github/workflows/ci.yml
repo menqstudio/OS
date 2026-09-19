@@ -371,9 +371,16 @@ jobs:
       - name: Install engine CI dependencies (the runbook gate imports the engine)
         run: pip install --require-hashes -r engine/requirements-ci.txt
       # WHY THIS JOB EXISTS. Every step in this repository that runs a `tools/test_check_*.py`
-      # suite runs on `ubuntu-latest` — measured across all 22 jobs here: 17 ubuntu, 2 windows,
-      # one matrix, and neither windows job touches `tools/`. So the gates that guard this
-      # repository had never been executed on the platform the Owner develops on.
+      # suite runs on `ubuntu-latest`. So the gates that guard this repository had never been
+      # executed on the platform the Owner develops on.
+      #
+      # This comment first said "all 22 jobs here: 17 ubuntu, 2 windows, one matrix", which was
+      # wrong three ways and contradicted itself on arrival: 17 + 2 + 1 is 20, not 22. The 22 came
+      # from `grep -cE '^  [a-z0-9_-]+:$'`, which also counts `push:` and `pull_request:` under
+      # `on:` — a number read off a command whose output I had not looked at. And "neither windows
+      # job touches tools/" stopped being true in the same commit that wrote it, because that
+      # commit added THIS job. Measured now, with the `jobs:` key as the anchor: **21 jobs — 17
+      # ubuntu, 3 windows, 1 two-OS matrix.**
       #
       # That is not hypothetical. `tools/test_check_audit_actor.py` had TWO tests failing on
       # Windows — `check_audit_actor.py` rendered `apps\desktop\src-tauri\core\src\repo.rs` where

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560"
+     role="img" aria-labelledby="t d" font-family="Inter, &apos;Segoe UI&apos;, system-ui, -apple-system, &apos;Noto Sans Armenian&apos;, Arial, sans-serif">
+  <title id="t">Ճարտարապետությունը — երկու կես, մեկ product · Architecture — two halves, one product</title>
+  <desc id="d">light theme. MenQ ground #ffffff, OS accent #3856fe.</desc>
+
+  <!-- ground -->
+  <rect x="0" y="0" width="1200" height="560" rx="12" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="559" rx="12" fill="none" stroke="#e2e5ea"/>
+
+  <text x="40" y="44" font-size="12" letter-spacing="2.4" fill="#5b6473">ARCHITECTURE · ՃԱՐՏԱՐԱՊԵՏՈՒԹՅՈՒՆ</text>
+
+  <!-- the Owner touches the cockpit and nothing else -->
+  <rect x="180" y="72" width="160" height="40" rx="12" fill="#ffffff" stroke="#3856fe"/>
+  <text x="260" y="97" font-size="13" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#3856fe" text-anchor="middle">Owner</text>
+  <text x="364" y="90" font-size="12" fill="#5b6473">the only surface a person touches</text>
+  <text x="364" y="107" font-size="12" fill="#5b6473">միակ մակերեսը, որին մարդ դիպչում ա</text>
+  <line x1="260" y1="112" x2="260" y2="132" stroke="#5b6473" stroke-width="2"/>
+  <polygon points="256,132 260,140 264,132" fill="#5b6473"/>
+
+  <rect x="40" y="140" width="440" height="300" rx="12" fill="#f5f6f8" stroke="#e2e5ea"/>
+  <text x="64" y="176" font-size="16" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">apps/desktop/</text>
+  <text x="64" y="198" font-size="12" fill="#5b6473">Cockpit · Օդաչուի խցիկ</text>
+  <rect x="64" y="216" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="84" y="241" font-size="13" fill="#10131a">React / TypeScript — webview</text>
+  <rect x="64" y="264" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="84" y="289" font-size="13" fill="#10131a">Tauri command — Rust</text>
+  <rect x="64" y="312" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="84" y="337" font-size="13" fill="#10131a">Rust workspace — 10 crates</text>
+  <rect x="64" y="360" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="84" y="385" font-size="13" fill="#10131a">SQLite — local state</text>
+
+  <rect x="720" y="140" width="440" height="300" rx="12" fill="#f5f6f8" stroke="#e2e5ea"/>
+  <text x="744" y="176" font-size="16" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">engine/</text>
+  <text x="744" y="198" font-size="12" fill="#5b6473">Governance engine · Կառավարման engine</text>
+  <rect x="744" y="216" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="764" y="241" font-size="13" fill="#10131a">supervisor — issues the lease</text>
+  <rect x="744" y="264" width="392" height="40" rx="12" fill="#ffffff" stroke="#3856fe"/>
+  <text x="764" y="289" font-size="13" fill="#10131a">engine/.claude/ — the wall, 9 hook events</text>
+  <rect x="744" y="312" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="764" y="337" font-size="13" fill="#10131a">evidence chain — append-only</text>
+  <rect x="744" y="360" width="392" height="40" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="764" y="385" font-size="13" fill="#10131a">control plane — protected</text>
+
+  <!-- what sits between the halves -->
+  <rect x="520" y="216" width="160" height="96" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="600" y="248" font-size="14" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a" text-anchor="middle">bridge/</text>
+  <text x="600" y="272" font-size="11" fill="#5b6473" text-anchor="middle">governed turn →</text>
+  <text x="600" y="292" font-size="11" fill="#5b6473" text-anchor="middle">← signed receipt</text>
+
+  <rect x="520" y="336" width="160" height="96" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="600" y="368" font-size="14" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a" text-anchor="middle">contracts/</text>
+  <text x="600" y="392" font-size="11" fill="#5b6473" text-anchor="middle">5 shared schemas</text>
+  <text x="600" y="412" font-size="11" fill="#5b6473" text-anchor="middle">5 ընդհանուր schema</text>
+  <line x1="484" y1="252" x2="508" y2="252" stroke="#5b6473" stroke-width="2"/>
+  <polygon points="508,248 516,252 508,256" fill="#5b6473"/>
+  <line x1="684" y1="252" x2="708" y2="252" stroke="#5b6473" stroke-width="2"/>
+  <polygon points="708,248 716,252 708,256" fill="#5b6473"/>
+  <line x1="716" y1="292" x2="692" y2="292" stroke="#5b6473" stroke-width="2"/>
+  <polygon points="692,288 684,292 692,296" fill="#5b6473"/>
+  <line x1="516" y1="292" x2="492" y2="292" stroke="#5b6473" stroke-width="2"/>
+  <polygon points="492,288 484,292 492,296" fill="#5b6473"/>
+  <line x1="484" y1="384" x2="516" y2="384" stroke="#5b6473" stroke-width="2" stroke-dasharray="4 4"/>
+  <line x1="684" y1="384" x2="716" y2="384" stroke="#5b6473" stroke-width="2" stroke-dasharray="4 4"/>
+
+  <!-- the honest ending -->
+  <rect x="40" y="472" width="1120" height="64" rx="12" fill="#f3e1e4" stroke="#ac2b40"/>
+  <text x="64" y="500" font-size="13" font-weight="600" fill="#ac2b40">The last hop refuses — production trusted_verified is unreachable in the app.</text>
+  <text x="64" y="521" font-size="13" fill="#ac2b40">Վերջին hop-ը մերժում ա — production trusted_verified-ը հավելվածում անհասանելի ա։</text>
+</svg>

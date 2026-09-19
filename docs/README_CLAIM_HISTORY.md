@@ -156,3 +156,169 @@ No waiver was written, and none should be. The gate was not weakened, given an e
 taught that a forward reference is acceptable — the citation was removed instead. This
 repository has waived one of its own rules once before, on 2026-08-14, and three red merges
 followed; a second waiver on the same night would have been the worse defect of the two.
+
+---
+
+## 4. Corrected on 2026-09-19, at `main` @ `13027bb`
+
+The front page was redesigned — Armenian first, bilingual parity throughout, committed SVG
+artwork under `docs/brand/readme/`. Every number on it was re-measured in the worktree at this
+head before it was printed. These are the ones that changed, the ones the redesign removed
+rather than restated, and the place where a canonical document's numbers turned out to disagree
+with `git`.
+
+### 4a. Stale on the front page — re-measured and corrected
+
+| The README said | It now says | Command / evidence |
+| :--- | :--- | :--- |
+| Engine test suite **2031** tests | **2133** tests, **97** skipped | `PYTHONUTF8=1 BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` → `Ran 2133 tests in 189.762s` · `OK (skipped=97)`. Run in this worktree on **Windows**; the skip count is platform-dependent, so the page names the box it was measured on |
+| `tools/` — **32** repository gates | **39** | `ls tools/check_*.py \| wc -l` → `39`. The tree line and the Development section both carried the old number |
+| Required contexts on `main` — **33** | **34**, plus **5** `deliberately_excluded` | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'` → `34`; the `deliberately_excluded` object in `config/required-checks.json` has 5 keys. `PROJECT_STATE.md` records the same 34 — protection was restored from that file after the repository went private and back |
+| Negative matrix **29** implemented / **12** blocked / **201** unreviewed | **122** / **54** / **66** | `PYTHONUTF8=1 python tools/check_negative_matrix.py` → `GREEN: 242 matrix cases, all bound -- 122 implemented …, 54 blocked …, 66 unreviewed and frozen. No new debt.` The total, 242, is unchanged; what moved is the split, and `unreviewed` fell from 201 to 66 |
+| `.claude/` — 262 definitions + **5** coordination hook events | 262 + **6** | The `hooks` keys of `.claude/settings.json` are `PostToolUse, PreToolUse, SessionStart, Stop, SubagentStart, UserPromptSubmit` — **6**. `CLAUDE.md` has said *six* since `T-019`; the README and this file's own row in `1b` both said five, and both were measured before `PostToolUse` was wired |
+| `.github/workflows/` — **8** workflows · **33** contexts | **8** workflow files · `ci.yml` alone defines **21** jobs · **34** contexts | `ls .github/workflows/*.yml \| wc -l` → `8`; `yaml.safe_load` of `.github/workflows/ci.yml` gives `len(jobs) == 21`, and `grep -cE '^  [a-z0-9-]+:$'` on the same file agrees on 21 job keys. The job count is new to the page |
+| Frontend **758** tests · 80 files, and `# 80 files / 761 tests` in the Development block | **not printed at all** | Two different numbers for the same suite sat forty lines apart in one file. Neither could be settled here: `npx vitest run` needs `node_modules`, and this worktree has none. The page now says the count is unmeasured here and prints nothing, which is the rule this file exists to enforce |
+
+### 4b. New on the front page — measured here, not carried
+
+| Claim | Command | Printed |
+| :--- | :--- | :--- |
+| Bridge suite **210** tests | `PYTHONUTF8=1 BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` | `Ran 210 tests in 0.867s` · `OK` — the same as 2026-08-30, re-run rather than carried |
+| Rust workspace **10** crates | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` | 10 packages: `brops`, `brops-audit-signer`, `brops-broker`, `brops-core`, `brops-executor`, `brops-governed-live`, `brops-launcher`, `brops-provision`, `brops-win-broker`, `brops-win-live` |
+| **59** declared controls — **45** `check` · **14** `tool` | `collections.Counter(v['kind'] for v in json.load(open('config/control-invocation.json'))['controls'].values())` | `Counter({'check': 45, 'tool': 14})`, 59 keys in total |
+| **262** specialist definitions | `ls .claude/agents/*.md \| wc -l` | `262` — re-measured, not carried |
+| `engine/.claude/` wired for **9** hook events | the `hooks` keys of `engine/.claude/settings.json` | `InstructionsLoaded, PostToolUse, PostToolUseFailure, PreToolUse, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit` — 9 |
+| `platform_governed_execution_supported()` is absent from the tree | `grep -rn "fn platform_governed_execution_supported" . --include=*.rs --include=*.py` | No hits. The symbol appears only in two `win-broker` doc comments saying it stays `false`, and in `config/spec-conformance.json`, which records the section as `partial` *because* the function does not exist |
+| MenQ foundation tokens — **8**, and **no accent hue** | `gh api repos/menqstudio/MenQ-Standard/contents/platforms/design/implementation/packages/design-tokens/source/tokens.json` | `"decision": "D-025"`, 8 tokens: `#ffffff`, `#0b0d10`, `8px`, `12px`, and four semantic/component aliases of those four. No colour token beyond the two neutrals — which is why the page says the blue accent is **this repository's own**, from `apps/desktop/src/theme/tokens.css`, and not MenQ's |
+
+### 4c. The canon disagreed with `git`, and `git` won
+
+`PROJECT_STATE.md` says, under **Standing risks**: *"**74 pull requests, 240 files and 46,402
+inserted lines** have merged since, none independently confirmed — measured `5cf9b8c..main`."*
+That sentence was true when it was written, and it is exactly the shape of claim this file exists
+for. Measured again at this head:
+
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l
+    # 75
+
+    git diff --shortstat 5cf9b8c..HEAD
+    # 240 files changed, 46471 insertions(+), 13411 deletions(-)
+
+The gap is one commit. `PROJECT_STATE.md` was measured at `7703bde`; `13027bb` — PR #236, which
+landed after it — is the 75th pull request and 69 of the inserted lines. Re-measured at the
+parent, `git diff --shortstat 5cf9b8c..7703bde` prints exactly `46402`, so the canonical document
+is not wrong about the tree it measured. It is one merge behind, and a front page that copied it
+would have been wrong about the tree a reader is looking at. **The README prints 75 / 240 /
+46,471 and names the head it measured.**
+
+`PROJECT_STATE.md` was deliberately left alone. Editing a canonical document is a change with its
+own update law and its own gates, and it belongs to the session that next moves the head — not to
+a README redesign. It is named here so that session finds it instead of re-deriving it.
+
+### 4d. One number the redesign could not settle
+
+`ci.yml` **jobs**. The brief for this redesign gave **23**. `yaml.safe_load` of
+`.github/workflows/ci.yml` at `13027bb` gives **21**, and `grep -cE '^  [a-z0-9-]+:$'` on the same
+file agrees at 21 job keys. Two independent counts of one file say 21, so **21** is what the page
+prints, and it is described as *jobs in `ci.yml`* rather than as *checks*. The likeliest source of
+23 is a count of reported **contexts** rather than job definitions — `trust-provisioning` is a
+two-OS matrix and reports twice — but that reading was not established here, so the page does not
+state it. `git show 5cf9b8c:.github/workflows/ci.yml` parses to 18 jobs, which rules out a stale
+reading of an older tree.
+
+### 4e. Kept, because it survived the check
+
+The redesign preserves, in substance, every correction-shaped passage the previous README carried:
+the design-versus-shipped warning; the absent spec symbol; *"`.claude/` at the repository root is
+not the wall"*; the first refusal stated **with its mechanism** and the third **with its
+condition**; and `unreviewed` named as *not a pass*. Each was re-read at source — the three
+refusals found at `apps/desktop/src-tauri/src/commands.rs:1375`,
+`apps/desktop/src-tauri/src/governed_turn.rs:230` and
+`apps/desktop/src-tauri/broker/src/main.rs:256` — rather than carried on trust.
+
+What changed is that the honesty is now in the artwork as well as the prose. The banner draws the
+last hop barred and the production state locked; the gate figure colours **nothing** green,
+because nothing on it is a pass; and the negative-matrix bar hatches `unreviewed` and prints
+*unreviewed is not a pass* beside it. A reader who looks only at the pictures still cannot come
+away believing this ships.
+
+### 4f. `main` moved while the page was being written, and the page did not chase it
+
+The redesign started with `origin/main` at `13027bb`. By the time the gates were re-run, two more
+pull requests had landed and `origin/main` was `c197b97` — `#237` and `#238`, both `T-062`, which
+between them rewrote `config/negative-matrix.json` and added `engine/tests/test_governed_acceptance.py`.
+
+Three of the page's rows are therefore already behind the tip. Measured at `c197b97`, from this
+worktree, without checking it out:
+
+| Row | At `13027bb`, which the page prints | At `c197b97` | Command |
+| :--- | :--- | :--- | :--- |
+| Negative matrix | 122 implemented · 54 blocked · 66 unreviewed | **130** · 54 · **58** | `git show c197b97:config/negative-matrix.json`, counting `status` over the 242 cases |
+| Pull requests since `5cf9b8c` | 75 | **77** | `git log --format=%s 5cf9b8c..c197b97 \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` |
+| Inserted lines since `5cf9b8c` | 46,471 (240 files) | **46,766** (240 files) | `git diff --shortstat 5cf9b8c..c197b97` |
+
+The engine suite count at `c197b97` was **not** measured: the new acceptance-test file is only in
+that tree, and running the suite would have meant checking out a head this branch is not based on.
+It is therefore not printed anywhere, here or on the page.
+
+**The page was not updated to the tip, on purpose.** Every number on it is measured at one named
+head, `13027bb`, and the page says which head in its metadata block and again above the table. A
+page whose rows come from a single commit is internally consistent and a reader can re-run it; a
+page that mixes a matrix count from one head with a test count from another cannot be checked
+against anything. Whoever lands this should re-measure at the head it lands on — that is the
+review trigger the page states — and add the row here rather than replacing this one.
+
+### 4g. The head moved under the page before it merged, and §4f said to re-measure
+
+The six corrections above were measured at `13027bb`. Twenty-one pull requests merged while
+this page was being drawn, so at `c197b97` — the head it is opening against — four of its
+figures were already stale and one had never been right at any head. Re-measured, with the
+command each row prints:
+
+| Claim | Said | Measured at `c197b97` | Command |
+| :--- | ---: | ---: | :--- |
+| Engine test suite | 2133 | **2141** | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `implemented` in the matrix | 122 | **130** | `python -c "import collections,json; print(collections.Counter(c['status'] for c in json.load(open('config/negative-matrix.json',encoding='utf-8'))['cases'].values()))"` |
+| `unreviewed` in the matrix | 66 | **58** | the same command — it prints all three |
+| Pull requests since `5cf9b8c` | 75 | **77** | `git log --format=%s 5cf9b8c..HEAD \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` |
+| Inserted lines since `5cf9b8c` | 46,471 | **46,766** | `git diff --shortstat 5cf9b8c..HEAD` |
+| Declared controls, split | 59 — 45 check · 14 tool | 59 — **39 check · 20 tool** | `ls tools/check_*.py \| wc -l` · `ls engine/tools/*.py \| wc -l` |
+
+The last row is the only one that is not staleness. The total, 59, was right; the split was
+not, at `13027bb` or at any other head. `config/control-invocation.json` declares 39 entries
+under `tools/` and 20 under `engine/tools/`, and 39 + 20 is 59 — so a wrong split summed to a
+right total, which is exactly the shape a reader cannot catch. The row now carries the
+commands that print the split rather than asking to be believed — and a glob is a fair
+way to print it only because the two halves of that file were measured to be SET-equal
+to what the globs list, in both directions, with nothing declared that is not on disk
+and nothing on disk that is not declared. Equal counts would not have been enough.
+
+`blocked` (54), `total` (242), the bridge suite (210), the Rust crate count (10), the gate
+scripts (39), the workflow files (8), the `ci.yml` job count (21), the required contexts (34,
++5 excluded), the specialist definitions (262), the extracted schemas (5) and both hook-event
+counts (9 under `engine/.claude/`, 6 under `.claude/`) were each re-measured at `c197b97` and
+were unchanged. They are listed here because "I checked and it had not moved" and "I did not
+check" are different statements, and only one of them is written down by default.
+
+The artwork carries the same numbers, so `docs/brand/readme/verification-{light,dark}.svg` was
+re-drawn with them. The bar is to scale: 130 / 54 / 58 of 242 across the same 1120px track is
+602 / 250 / 268 px, which moved both segment boundaries, the three captions, the plate under
+the hatched label, the four explanation columns and the `unreviewed is not a pass` box. The
+hatch that marks `unreviewed` as an unknown lost one diagonal, because the band it covers got
+narrower. A picture drawn to scale that keeps its old geometry while its labels change is a
+lie no reader can see, which is why the geometry is recomputed here and not eyeballed.
+
+**Why this file keeps needing a new section.** No gate reads `README.md`. Measured two ways:
+`grep -ln 'README\.md' tools/check_*.py` returns nothing — not one of the 39 gates opens the
+page — and `config/canonical-read-manifest.json` names 14 documents, of which `README.md` is not
+one, so `check_doc_claims` never sees it. That gate is the one built for exactly this class of
+error, and it is not idle: it is red on this box right now over two stale numbers in
+`config/toolchain.json`, which is the same defect in a file it does watch. The front page is the
+most-read file in this repository and the only widely-read one that nothing refuses to merge.
+
+This document is the manual stand-in for that gate. It is why six numbers were caught today, and
+it is also why they had to be caught by a person re-running commands instead of by a check that
+goes red on its own — a stand-in that depends on whoever lands the change remembering to look.
+The fix is to put the page's countable claims under `check_doc_claims` the way
+`config/toolchain.json` already is, which is a gate change with its own tests and its own
+mutation proof, not a rider on a redesign. Naming it here is not the same as doing it.

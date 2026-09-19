@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #238 · branch `t062/bind-nm-crash-2`** (base `main`, tip `3909ede`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #239 · branch `docs/readme-menq-design`** (base `main`, tip `c197b97`, task T-073).
 >
-> four more crash cuts bound around the one edge section 5 locks: EXECUTION_STARTING becomes EXECUTING only when the launcher confirms the child and its metadata is durable, and a started attempt is never relaunched whatever survived
+> the front page's six unmeasured numbers, re-measured at the head it merges against
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

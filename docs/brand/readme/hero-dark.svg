@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360"
+     role="img" aria-labelledby="t d" font-family="Inter, &apos;Segoe UI&apos;, system-ui, -apple-system, &apos;Noto Sans Armenian&apos;, Arial, sans-serif">
+  <title id="t">OS — կառավարվող AI-գործառնությունների desktop · OS — a governed AI operations desktop</title>
+  <desc id="d">dark theme. MenQ ground #0b0d10, OS accent #7c8dff.</desc>
+
+  <!-- ground -->
+  <rect x="0" y="0" width="1200" height="360" rx="12" fill="#0b0d10"/>
+  <rect x="0.5" y="0.5" width="1199" height="359" rx="12" fill="none" stroke="#262b37"/>
+
+  <!-- wordmark: the repository's own name. The MenQ wordmark itself is
+       docs/brand/menq-logo.png and is never redrawn here. -->
+  <text x="56" y="152" font-size="112" font-weight="700" letter-spacing="-3" fill="#eef1f6">OS</text>
+  <rect x="56" y="172" width="112" height="8" rx="4" fill="#7c8dff"/>
+  <line x1="240" y1="56" x2="240" y2="196" stroke="#262b37"/>
+
+  <text x="272" y="78" font-size="12" letter-spacing="2.4" fill="#98a2b3">MENQ STUDIO · GOVERNED AI OPERATIONS</text>
+  <text x="272" y="116" font-size="18" fill="#eef1f6">Կառավարվող AI-գործառնությունների desktop՝ անվտանգ cockpit զսպված engine-ի վրա։</text>
+  <text x="272" y="146" font-size="18" fill="#98a2b3">A governed AI operations desktop — a safe cockpit on a contained engine.</text>
+  <text x="272" y="184" font-size="13" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#98a2b3">Rust · Python · React/TypeScript · Tauri 2 · SQLite</text>
+
+  <line x1="56" y1="224" x2="1144" y2="224" stroke="#262b37"/>
+
+  <!-- the designed chain, and where it stops -->
+  <rect x="56" y="248" width="112" height="56" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="112" y="281" font-size="14" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="middle">lease</text>
+  <rect x="200" y="248" width="112" height="56" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="256" y="281" font-size="14" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="middle">gate</text>
+  <rect x="344" y="248" width="128" height="56" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="408" y="281" font-size="14" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="middle">sandbox</text>
+  <rect x="504" y="248" width="176" height="56" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="592" y="281" font-size="14" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="middle">signed receipt</text>
+  <line x1="172" y1="276" x2="188" y2="276" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="188,272 196,276 188,280" fill="#98a2b3"/>
+  <line x1="316" y1="276" x2="332" y2="276" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="332,272 340,276 332,280" fill="#98a2b3"/>
+  <line x1="476" y1="276" x2="492" y2="276" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="492,272 500,276 492,280" fill="#98a2b3"/>
+
+  <!-- the last hop is barred, not drawn as working -->
+  <line x1="684" y1="276" x2="812" y2="276" stroke="#f4869c" stroke-width="2" stroke-dasharray="6 6"/>
+  <circle cx="748" cy="276" r="12" fill="#0b0d10"/>
+  <line x1="740" y1="268" x2="756" y2="284" stroke="#f4869c" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="756" y1="268" x2="740" y2="284" stroke="#f4869c" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="816" y="248" width="328" height="56" rx="12" fill="#332730" stroke="#f4869c"/>
+  <path d="M843 272 V268 A5 5 0 0 1 853 268 V272" fill="none" stroke="#f4869c" stroke-width="2.5"/>
+  <rect x="840" y="272" width="16" height="13" rx="2" fill="#f4869c"/>
+  <text x="872" y="270" font-size="14" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#f4869c">trusted_verified</text>
+  <text x="872" y="291" font-size="12" fill="#f4869c">SHUT · ՓԱԿ — the production gate</text>
+</svg>
