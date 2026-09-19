@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 688" width="1200" height="688"
+     role="img" aria-labelledby="t d" font-family="Inter, &apos;Segoe UI&apos;, system-ui, -apple-system, &apos;Noto Sans Armenian&apos;, Arial, sans-serif">
+  <title id="t">Ճանապարհային քարտեզը · Roadmap</title>
+  <desc id="d">light theme. MenQ ground #ffffff, OS accent #3856fe.</desc>
+
+  <defs>
+    <!-- partly built is hatched, never a solid fill and never green -->
+    <pattern id="partly" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="4" y1="0" x2="4" y2="8" stroke="#885000" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- ground -->
+  <rect x="0" y="0" width="1200" height="688" rx="12" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="687" rx="12" fill="none" stroke="#e2e5ea"/>
+
+  <text x="40" y="44" font-size="12" letter-spacing="2.4" fill="#5b6473">ROADMAP · ՃԱՆԱՊԱՐՀԱՅԻՆ ՔԱՐՏԵԶԸ</text>
+
+  <!-- the gate is the outermost container: no phase can be reached without crossing it first -->
+  <rect x="40" y="64" width="1120" height="336" rx="12" fill="#f3e1e4" stroke="#ac2b40" stroke-width="1.5"/>
+  <rect x="64" y="80" width="8" height="8" rx="2" fill="#ac2b40"/>
+  <text x="84" y="88" font-size="11" font-weight="700" letter-spacing="1.2" fill="#ac2b40">THE GATE · ԳԵՅԹԸ</text>
+
+  <!-- a prohibition sign, not decoration: the struck percent -->
+  <circle cx="88" cy="132" r="20" fill="none" stroke="#ac2b40" stroke-width="2.5"/>
+  <text x="88" y="140" font-size="22" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ac2b40" text-anchor="middle">%</text>
+  <line x1="72" y1="148" x2="104" y2="116" stroke="#ac2b40" stroke-width="2.5" stroke-linecap="round"/>
+  <text x="124" y="124" font-size="15" font-weight="700" fill="#ac2b40">DO NOT READ A PHASE PERCENTAGE ANYWHERE AS A PROMISE ABOUT BEHAVIOUR.</text>
+  <text x="124" y="152" font-size="15" font-weight="700" fill="#ac2b40">ՈՉ ՄԻ ՏԵՂ ՓՈՒԼԻ ՏՈԿՈՍԸ ՈՐՊԵՍ ՎԱՐՔԻ ԽՈՍՏՈՒՄ ՄԻ ԿԱՐԴԱ։</text>
+
+  <rect x="888" y="104" width="256" height="64" rx="12" fill="#ac2b40"/>
+  <text x="1016" y="132" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">READ THE GATE</text>
+  <text x="1016" y="156" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">ԿԱՐԴԱ՛ ԳԵՅԹԸ</text>
+
+  <!-- one level in: the canonical plan file, which is what holds the phases -->
+  <rect x="56" y="184" width="1088" height="200" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="76" y="216" font-size="13" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#3856fe">MASTER_EXECUTION_ROADMAP.md</text>
+  <text x="300" y="216" font-size="12" fill="#5b6473">կանոնական պլանը · the canonical plan — 11 փուլ · 11 phases</text>
+
+  <!-- eleven equal cells: 11 x 80 + 10 gaps x 16 = 880 + 160 = 1040 px, spanning x=80..1120 -->
+  <!-- every cell is 80 x 64. Nothing here is drawn proportional to progress and no cell carries a fill level -->
+  <rect x="80" y="232" width="80" height="64" rx="12" fill="#156c3a"/>
+  <text x="120" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ffffff" text-anchor="middle">0</text>
+
+  <!-- cells 1-10 are identical in geometry, fill, stroke and hatch: the text puts all ten in the same state -->
+  <rect x="176" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="176" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="192" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="216" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">1</text>
+  <rect x="272" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="272" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="288" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="312" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">2</text>
+  <rect x="368" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="368" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="384" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="408" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">3</text>
+  <rect x="464" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="464" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="480" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="504" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">4</text>
+  <rect x="560" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="560" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="576" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="600" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">5</text>
+  <rect x="656" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="656" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="672" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="696" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">6</text>
+  <rect x="752" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="752" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="768" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="792" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">7</text>
+  <rect x="848" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="848" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="864" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="888" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">8</text>
+  <rect x="944" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="944" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="960" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="984" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">9</text>
+  <rect x="1040" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
+  <rect x="1040" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="1056" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
+  <text x="1080" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">10</text>
+
+  <!-- one bracket for phase 0, one bracket for all ten of 1-10: the state is claimed per group, never per phase -->
+  <path d="M80 304 V312 H160 V304" fill="none" stroke="#156c3a" stroke-width="1.5"/>
+  <path d="M84 324 V320 A4 4 0 0 1 92 320 V324" fill="none" stroke="#156c3a" stroke-width="2"/>
+  <rect x="80" y="324" width="16" height="12" rx="2" fill="#156c3a"/>
+  <text x="104" y="336" font-size="12" font-weight="700" fill="#156c3a">LOCKED</text>
+  <text x="80" y="356" font-size="12" fill="#156c3a">ԿՈՂՊՎԱԾ</text>
+  <path d="M176 304 V312 H1120 V304" fill="none" stroke="#885000" stroke-width="1.5"/>
+  <text x="176" y="336" font-size="12" font-weight="700" fill="#885000">PHASES 1–10 — ALL PARTLY BUILT · ՓՈՒԼԵՐ 1–10 — ԲՈԼՈՐԸ ՄԱՍԱՄԲ ԿԱՌՈՒՑՎԱԾ</text>
+  <text x="176" y="356" font-size="11" fill="#5b6473">all ten drawn identically — no per-phase percentage is drawn here, on purpose</text>
+  <text x="176" y="372" font-size="11" fill="#5b6473">բոլոր տասը նույնությամբ գծված — փուլային տոկոս այստեղ գծված չի՝ դիտավորյալ</text>
+
+  <!-- current state: one file holds it, two carry the same banner -->
+  <rect x="40" y="424" width="560" height="120" rx="12" fill="#f5f6f8" stroke="#e2e5ea"/>
+  <text x="64" y="456" font-size="13" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#3856fe">NEXT_CHAT.md</text>
+  <text x="176" y="456" font-size="12" fill="#5b6473">ընթացիկ վիճակը · current state</text>
+  <rect x="64" y="472" width="160" height="56" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="144" y="496" font-size="12" fill="#10131a" text-anchor="middle">ճյուղ</text>
+  <text x="144" y="516" font-size="12" fill="#5b6473" text-anchor="middle">branch</text>
+  <rect x="240" y="472" width="160" height="56" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="320" y="496" font-size="12" fill="#10131a" text-anchor="middle">PR</text>
+  <text x="320" y="516" font-size="12" fill="#5b6473" text-anchor="middle">pull request</text>
+  <rect x="416" y="472" width="160" height="56" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="496" y="496" font-size="12" fill="#10131a" text-anchor="middle">խցանումներ</text>
+  <text x="496" y="516" font-size="12" fill="#5b6473" text-anchor="middle">blockers</text>
+
+  <text x="648" y="456" font-size="12" fill="#5b6473">նույն banner-ը · the same banner</text>
+  <rect x="648" y="472" width="240" height="56" rx="12" fill="#f5f6f8" stroke="#e2e5ea" stroke-dasharray="4 4"/>
+  <text x="768" y="504" font-size="13" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#5b6473" text-anchor="middle">PROJECT_STATE.md</text>
+  <rect x="920" y="472" width="240" height="56" rx="12" fill="#f5f6f8" stroke="#e2e5ea" stroke-dasharray="4 4"/>
+  <text x="1040" y="504" font-size="13" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#5b6473" text-anchor="middle">TASKS.md</text>
+  <line x1="604" y1="500" x2="640" y2="500" stroke="#5b6473" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="640,496 648,500 640,504" fill="#5b6473"/>
+  <line x1="892" y1="500" x2="912" y2="500" stroke="#5b6473" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="912,496 920,500 912,504" fill="#5b6473"/>
+
+  <!-- the honest summary, in the section own words -->
+  <rect x="40" y="568" width="256" height="80" rx="12" fill="#f5f6f8" stroke="#e2e5ea"/>
+  <rect x="64" y="584" width="8" height="8" rx="2" fill="#5b6473"/>
+  <text x="84" y="592" font-size="11" font-weight="700" letter-spacing="1.2" fill="#5b6473">SURFACES · ՄԱԿԵՐԵՍՆԵՐԸ</text>
+  <text x="64" y="616" font-size="12" fill="#10131a">մակերեսները կան</text>
+  <text x="64" y="636" font-size="12" fill="#5b6473">the surfaces exist</text>
+
+  <rect x="312" y="568" width="352" height="80" rx="12" fill="#f3e1e4" stroke="#ac2b40"/>
+  <rect x="336" y="584" width="8" height="8" rx="2" fill="#ac2b40"/>
+  <text x="356" y="592" font-size="11" font-weight="700" letter-spacing="1.2" fill="#ac2b40">GOVERNED CHAIN · ԿԱՌԱՎԱՐՎՈՂ ՇՂԹԱՆ</text>
+  <path d="M620 608 V604 A6 6 0 0 1 632 604 V608" fill="none" stroke="#ac2b40" stroke-width="2.5"/>
+  <rect x="612" y="608" width="28" height="20" rx="4" fill="#ac2b40"/>
+  <text x="336" y="616" font-size="12" font-weight="700" fill="#ac2b40">ապացուցված, բայց ԳԵՅԹՈՎ ԱՆՋԱՏՎԱԾ</text>
+  <text x="336" y="636" font-size="12" font-weight="700" fill="#ac2b40">proven, but GATED OFF</text>
+
+  <rect x="680" y="568" width="480" height="80" rx="12" fill="#f5f6f8" stroke="#885000"/>
+  <rect x="704" y="584" width="8" height="8" rx="2" fill="#885000"/>
+  <text x="724" y="592" font-size="11" font-weight="700" letter-spacing="1.2" fill="#885000">WHAT IS LEFT · ՄՆԱՑԱԾ ԳՈՐԾԸ</text>
+  <text x="704" y="616" font-size="12" fill="#10131a">ԿԱՊԵԼ արդեն կառուցվածը, ՀԵՌԱՑՆԵԼ չհիմնավորված պնդումները</text>
+  <text x="704" y="636" font-size="12" fill="#5b6473">CONNECTING what was built, REMOVING claims nothing established</text>
+</svg>

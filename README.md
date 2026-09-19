@@ -31,7 +31,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Document class / Փաստաթղթի դաս | Informative · Տեղեկատու — the normative documents are [`CLAUDE.md`](./CLAUDE.md), [`PROJECT_STATE.md`](./PROJECT_STATE.md), [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) |
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
-| Measured at / Չափված ա | 2026-09-19, `main` @ `a57fd86`, on a Windows box · Windows-ի վրա |
+| Measured at / Չափված ա | 2026-09-19, `main` @ `6c59a67`, on a Windows box · Windows-ի վրա |
 | Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
@@ -52,6 +52,16 @@ documented claim is not evidence, and a green test is not a passing check.
 ---
 
 ## Ի՞նչ ա OS-ը · What OS is
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/product-dark.svg">
+  <img src="docs/brand/readme/product-light.svg" width="100%"
+       alt="Structural diagram of what OS is. A heading states that OS is ONE product assembled from TWO halves. An outer accent-bordered box labelled OS — one product, two halves — encloses exactly three things and nothing else: on the left the Cockpit panel, apps/desktop/, from menqstudio/BroPS, the human-facing Tauri desktop app, holding six surface chips — conversations, runs, approvals, files, calendar, knowledge; on the right the Engine panel, engine/, from menqstudio/Bro, the governance brain, a security harness that runs AI agents, holding four part chips — signed leases, approval gates, an evidence chain, a protected control plane; and standing between the two halves the enforcement wall, an amber-bordered column headed REQUIRED PATH, BY DESIGN, enclosing four numbered amber stops in order — 1 lease (signed lease), 2 gate (approval gate), 3 sandbox (isolated environment), 4 signed receipt — joined by dashed amber arrows. A dashed amber arrow enters the wall at stop 1 from the cockpit side and a dashed amber arrow leaves after stop 4 into the engine side. An Owner chip stands outside the OS box with a single accent arrow reaching into the Cockpit panel and nothing else; over the engine half a danger-wash label with a red border reads &quot;no person touches this half&quot;. An amber footer band states that &quot;by design&quot; means the chain is the path every AI action is required to cross, not evidence that every action crosses it today; lists what each stop requires — lease must be signed, gate must be approved, sandbox must run inside it, receipt must be signed and recorded; and spells out the encoding: dashed plus amber means required by design, not verified, and nothing on the sheet is green because the section makes no verified claim. No green appears anywhere on the sheet, and no element is drawn to scale. · Կառուցվածքային գծագիր՝ ի՞նչ ա OS-ը։ Վերնագիրը գրում ա, որ OS-ը ՄԵԿ product ա՝ հավաքված ԵՐԿՈՒ կեսից։ Արտաքին տուփը՝ OS, մեկ product, երկու կես, փակում ա ճիշտ երեք բան ու ուրիշ ոչինչ. ձախում՝ Cockpit-ի վահանակը, apps/desktop/, եկել ա menqstudio/BroPS-ից, մարդուն նայող Tauri desktop app, իր մեջ վեց մակերես՝ զրույցներ, run-եր, հաստատումներ, ֆայլեր, օրացույց, գիտելիք. աջում՝ Engine-ի վահանակը, engine/, եկել ա menqstudio/Bro-ից, կառավարման ուղեղը, անվտանգության harness, որ վարում ա AI agent-եր, իր մեջ չորս մաս՝ ստորագրված lease-եր, հաստատման gate-եր, վկայության շղթա, պաշտպանված control plane. ու երկու կեսի արանքում կանգնած ա պարտադրող պատը՝ սաթագույն եզրագծով սյուն «ՊԱՐՏԱԴԻՐ ՈՒՂԻ՝ ՆԱԽԱԳԾՈՎ» վերնագրով, որի մեջ չորս համարակալված սաթագույն կանգառներն են հերթով՝ 1 lease (ստորագրված lease), 2 gate (հաստատման gate), 3 sandbox (մեկուսացված միջավայր), 4 ստորագրված ստացական, միացած կտրտված սաթագույն սլաքներով։ Կտրտված սաթագույն սլաքը մտնում ա պատը խցիկի կողմից՝ 1-ին կանգառին, ու մեկ ուրիշը դուրս գալիս 4-րդից հետո՝ engine-ի կողմը։ Owner-ի պիտակը կանգնած ա OS-ի տուփից ԴՈՒՐՍ ու մեկ սլաքով հասնում ա միայն Cockpit-ի վահանակին. engine-ի կեսի վրայի կարմիր եզրագծով պիտակը գրում ա՝ «մարդ չի դիպչում էս կեսին»։ Սաթագույն վերջին շերտը գրում ա, որ «նախագծով» նշանակում ա՝ շղթան պարտադիր ուղին ա, ոչ թե ապացույց, որ այսօր ամեն գործողություն անցնում ա դրանով. թվարկում ա ամեն կանգառի պարտադիրը՝ lease-ը ստորագրված, gate-ը հաստատված, sandbox-ի ներսում, ստացականը ստորագրված ու գրանցված. ու բացատրում ա նշանները՝ կտրտված գիծ ու սաթագույն նշանակում ա պարտադիր ըստ նախագծի, ոչ ստուգված, ու թերթին կանաչ չկա, որովհետև հատվածը ստուգված պնդում չի անում։ Կանաչ ոչ մի տեղ չկա, ու ոչ մի տարր մասշտաբով գծված չի։">
+</picture>
+
+</div>
 
 **HY:** **OS**-ը մեկ product ա՝ հավաքված երկու կեսից։
 
@@ -218,6 +228,16 @@ shipped build the last hop refuses, by design** — see the warning above.
 
 ## Բրոն, ու ով ինչ իրավունք ունի · Bro, and who may do what
 
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/authority-dark.svg">
+  <img src="docs/brand/readme/authority-light.svg" width="100%"
+       alt="Bro, and who may do what — three axes, three different answers. Across the top, four steps in order: you give a task in any chat, Bro works out what you meant, he confirms it with you, then he hands the work to a specialist. Two things bound that specialist and Bro sets both; a third axis does not exist at all — an accent bracket spans only the first two columns and stops before the third, which is labelled NO THIRD AXIS. Capability is ENFORCED: three rings nested one inside another show the tiers are cumulative — reader (Read / Grep / Glob) sits inside runner (+ Bash), which sits inside builder (+ Edit / Write); one of three tiers, passed to the CLI inline, and the tier is what actually bounds the run. Path is PARTLY, TEXT ONLY: scope / prohibited_scope is stated per task and travels as TEXT in the task prompt, drawn as a dashed amber box whose link down to engine/runtime/bro_security.enforce_scope — the code that genuinely contains a path — is two dead stubs with a red cross through the gap, because a desktop spawn does not reach it; the delegation card says so on every grant. Network is NOT ENFORCED: its panel is the only unfilled one on the sheet, a dashed red outline over bare ground, and where the first column holds a mechanism this one holds an empty hatched void reading ԱՌԱՆՑՔ ՉԿԱ / NO NETWORK AXIS EXISTS — no egress allowlist, no isolation primitive; USE_NETWORK is in the lease schema but no task class permits it, so it cannot validate. Along the bottom, an amber caveat: the 262 pack-role files under .claude/agents/ record the authority each declared role was derived with; Bro READS them to pick the matching tier — they are NOT themselves enforced from the app. · Բրոն, ու ով ինչ իրավունք ունի — երեք առանցք, երեք տարբեր պատասխան։ Վերևում չորս քայլ՝ հերթով. task ես տալիս ցանկացած չաթում, Բրոն հասկանում ա՝ ինչ նկատի ունես, հաստատում ա քեզ հետ, հետո գործը հանձնում ա մասնագետին։ Մասնագետին սահմանափակում ա երկու բան, ու երկուսն էլ Բրոն ա դնում. երրորդ առանցքը ընդհանրապես չկա — շեշտի փակագիծը ընդգրկում ա միայն առաջին երկու սյունը ու կանգնում ա երրորդից առաջ, որը նշված ա ԵՐՐՈՐԴ ԱՌԱՆՑՔ ՉԿԱ։ Կարողությունը ԿԻՐԱՌՎՈՒՄ Ա. երեք ներդրված օղակ ցույց ա տալիս, որ շերտերը կուտակային են՝ reader (Read / Grep / Glob) runner-ի (+ Bash) ներսում, runner-ը՝ builder-ի (+ Edit / Write) ներսում. երեք շերտից մեկը՝ CLI-ին inline փոխանցվող, ու հենց շերտն ա գործարկման իրական սահմանը։ Ուղին ՄԱՍԱՄԲ ա՝ ՄԻԱՅՆ ՏԵՔՍՏ. scope / prohibited_scope-ը նշվում ա ամեն task-ում ու գնում որպես ՏԵՔՍՏ task-ի prompt-ում՝ գծված ա կետագիծ վանդակով, ու նրա կապը engine/runtime/bro_security.enforce_scope-ի հետ երկու կտրված ծայր ա՝ կարմիր խաչով, որովհետև desktop-ից spawn-ը դրան չի հասնում. delegation card-ը դա գրում ա ամեն grant-ում։ Ցանցը ՉԻ ԿԻՐԱՌՎՈՒՄ. նրա վահանակը միակն ա էջում, որ լցոն չունի՝ կետագիծ կարմիր եզրագիծ մերկ ֆոնի վրա, ու որտեղ առաջին սյունը մեխանիզմ ունի, սա դատարկ, շտրիխավորված տարածք ա՝ ԱՌԱՆՑՔ ՉԿԱ, ոչ egress allowlist, ոչ isolation primitive. USE_NETWORK կա lease schema-ում, բայց ոչ մի task class չի թույլատրում, ուրեմն չի վալիդանում։ Ներքևում սաթի գույնի զգուշացում. .claude/agents/-ի 262 pack-role ֆայլերը գրանցում են՝ ինչ իրավունքով ա ամեն հայտարարված դեր ստացվել. Բրոն ԿԱՐԴՈՒՄ ա դրանք շերտն ընտրելու համար — հավելվածից ուժի մեջ չեն։">
+</picture>
+
+</div>
+
 **HY:** Բրոն կոնդուկտորն ա։ Ցանկացած չատում տալիս ես տասկ, ինքը հասկանում ա ինչ նկատի
 ունես, հաստատում ա, ու գործը դնում ա մասնագետների վրա։ Մասնագետին սահմանափակում ա երկու
 բան, ու երկուսն էլ Բրոն ա դնում։
@@ -249,22 +269,22 @@ enforced from the app.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/verification-dark.svg">
   <img src="docs/brand/readme/verification-light.svg" width="100%"
-       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 133 implemented — a test exists and carries the case ID; 54 blocked — each names what must exist first; 55 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2144 engine tests with 97 skipped, 210 bridge tests, 10 Rust crates, 39 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 133 իրագործված, 54 խցանված, 55 չստուգված։ Չստուգվածը անցում չի։">
+       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 144 implemented — a test exists and carries the case ID; 54 blocked — each names what must exist first; 44 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2148 engine tests with 97 skipped, 210 bridge tests, 10 Rust crates, 39 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 144 իրագործված, 54 խցանված, 44 չստուգված։ Չստուգվածը անցում չի։">
 </picture>
 
 </div>
 
 **HY:** Այստեղ տոկոս չկա։ Ամեն տող այն ա, ինչ ստուգումը տպում ա, ու ամեն մեկի կողքը իրեն
-տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `a57fd86`; `main`-ը արագ ա շարժվում,
+տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `6c59a67`; `main`-ը արագ ա շարժվում,
 ուրեմն վազեցրու հրամանը, ոչ թե վստահիր թվին։
 
 **EN:** Nothing here is a percentage. Each row is what a check prints, and each carries the
-command that printed it. The whole table is measured at **one head**, `a57fd86`; `main` moves
+command that printed it. The whole table is measured at **one head**, `6c59a67`; `main` moves
 fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
 | :--- | ---: | :--- |
-| Engine test suite | **2144** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| Engine test suite | **2148** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **210** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **39** | `ls tools/check_*.py \| wc -l` |
@@ -295,9 +315,9 @@ fast, so run the command rather than trusting the number.
 
 | Կարգավիճակ · Status | Քանակ · Count | Իմաստ · Meaning |
 | :--- | ---: | :--- |
-| `implemented` | 133 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
+| `implemented` | 144 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
 | `blocked` | 54 | Ամեն մեկը նշում ա՝ ինչ պիտի նախ գոյություն ունենա։ · Each names what must exist first. |
-| `unreviewed` | 55 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
+| `unreviewed` | 44 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
 | **Ընդամենը · Total** | **242** | Matrix-ի ամեն ID կապված ա երեքից մեկին։ · Every ID in the matrix is bound to one of the three. |
 
 **HY:** `unreviewed`-ը անցում չի։ Դա ազնիվ ելակետն ա գեյթի համար, որ retrofit ա արվել
@@ -309,19 +329,19 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **81 pull request**, **248 ֆայլ** ու **48 103 ավելացված տող** են merge
+Այդ ծայրից ի վեր **85 pull request**, **249 ֆայլ** ու **48 768 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **81 pull requests**, **248 files** and **48,103 inserted lines**
+no P0. Since that head, **85 pull requests**, **249 files** and **48,768 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 81
-    git diff --shortstat 5cf9b8c..HEAD    # 248 files changed, 48103 insertions(+), 13464 deletions(-)
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 85
+    git diff --shortstat 5cf9b8c..HEAD    # 249 files changed, 48768 insertions(+), 13483 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա
@@ -334,6 +354,16 @@ the command that corrected it, is recorded in
 ---
 
 ## Ճանապարհային քարտեզը · Roadmap
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/roadmap-dark.svg">
+  <img src="docs/brand/readme/roadmap-light.svg" width="100%"
+       alt="Roadmap sheet built as nested containers, so the gate is the outermost thing on it. A red-outlined box on a red wash, labelled THE GATE · ԳԵՅԹԸ, encloses the whole plan; inside its top edge a circled percent sign with a slash struck through it stands beside the section's own sentence, in equally large bold red in both languages: DO NOT READ A PHASE PERCENTAGE ANYWHERE AS A PROMISE ABOUT BEHAVIOUR · ՈՉ ՄԻ ՏԵՂ ՓՈՒԼԻ ՏՈԿՈՍԸ ՈՐՊԵՍ ՎԱՐՔԻ ԽՈՍՏՈՒՄ ՄԻ ԿԱՐԴԱ։ At the right of the same band, a solid red badge reads READ THE GATE · ԿԱՐԴԱ՛ ԳԵՅԹԸ. One level in sits the canonical plan file MASTER_EXECUTION_ROADMAP.md — կանոնական պլանը, 11 փուլ · 11 phases — and inside it a strip of eleven cells of exactly the same size, 80 by 64 pixels each. Phase 0 is a solid green cell; phases 1 to 10 are ten cells identical in geometry, fill, amber stroke and amber diagonal hatching, differing only in the numeral. Under the strip, a green bracket with a closed padlock labels the single cell LOCKED · ԿՈՂՊՎԱԾ, and one amber bracket spans all ten remaining cells: PHASES 1–10 — ALL PARTLY BUILT · ՓՈՒԼԵՐ 1–10 — ԲՈԼՈՐԸ ՄԱՍԱՄԲ ԿԱՌՈՒՑՎԱԾ, with the note that all ten are drawn identically and no per-phase percentage is drawn here, on purpose · բոլոր տասը նույնությամբ գծված — փուլային տոկոս այստեղ գծված չի՝ դիտավորյալ. No percentage appears anywhere on the sheet. Below the gate, NEXT_CHAT.md holds the current state as three cells — ճյուղ · branch, PR, խցանումներ · blockers — and two dashed arrows lead out to dashed, muted boxes for PROJECT_STATE.md and TASKS.md, which only carry նույն banner-ը · the same banner. Three closing panels give the honest summary: մակերեսները կան · the surfaces exist, in neutral grey with no mark of approval; on a red wash with a red padlock, ապացուցված, բայց ԳԵՅԹՈՎ ԱՆՋԱՏՎԱԾ · proven, but GATED OFF; and in amber, ԿԱՊԵԼ արդեն կառուցվածը, ՀԵՌԱՑՆԵԼ չհիմնավորված պնդումները · CONNECTING what was built, REMOVING claims nothing established. Green appears exactly once, on phase 0.">
+</picture>
+
+</div>
 
 **HY:** Կանոնական պլանը 11-փուլանոց
 [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md)-ն ա։ Ընթացիկ վիճակը՝ branch,

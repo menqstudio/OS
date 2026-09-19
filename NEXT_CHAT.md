@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t079/four-predicates-over-their-surface` — `main` @ `13b3e00`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t080/three-figures-and-the-page-retrued` — `main` @ `6c59a67`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #246 · branch `t079/four-predicates-over-their-surface`** (base `main`, tip `13b3e00`, task T-079).
+> **⏭️ CURRENT ACTIVE: PR #247 · branch `t080/three-figures-and-the-page-retrued`** (base `main`, tip `6c59a67`, task T-080).
 >
-> four predicates, four independent kills
+> three figures added, nothing removed, and the page re-trued for three landings
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -361,6 +361,11 @@ said, and what it was not filled with. `Landed at` means landed.
 | `a57fd86` | matrix `implemented` 132 → **133**, `unreviewed` 56 → **55** — `NM-CRASH-01` bound | the `collections.Counter` one-liner above |
 | `a57fd86` | engine suite 2143 → **2144** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | `a57fd86` | 79 → **81** pull requests, 47,663 → **48,103** inserted lines since `5cf9b8c`; 248 files unchanged | `git diff --shortstat 5cf9b8c..HEAD` |
+| `6c59a67` | matrix `implemented` 133 → **144**, `unreviewed` 55 → **44** — `NM-CRASH-12/13/14`, `NM-TCB-01/03/08/21`, `NM-TERM-02`, `NM-SCOPE-06/08`, `NM-MAN-12` bound across three landings | the `collections.Counter` one-liner above |
+| `6c59a67` | engine suite 2144 → **2148** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `6c59a67` | 81 → **85** pull requests, 248 → **249** files, 48,103 → **48,768** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
+
+**Three landings paid at once, which is what the rule is for.** #244, #245 and #246 each moved a counted number and each deliberately left the page alone. Re-truing after every one would have meant three pull requests whose only content was arithmetic; the rule says name the head the numbers hold at, and `6c59a67` is the head all three hold at. The artwork in §8 landed in the same commit because it belongs to the same page.
 
 **The cadence rule, followed on purpose this time.** T-075 moved the matrix split and the engine
 count and deliberately left the page alone, because a change that moves a counted number cannot name
@@ -457,3 +462,51 @@ has no `node_modules` — it is not committed and should not be — so a command
 one a reader cannot run, and "run the command rather than trusting the number" is the only rule this
 page has. The old note was right that an unmeasured number must not be printed; it did not follow
 that the measurement was impossible, only that nobody had paid for it.
+
+## 8. Three figures added, and a verification claim that was not true
+
+Four sections of this page had artwork and six did not. Three of the six now do — *Bro, and who may do
+what*, *What OS is*, and *Roadmap* — and **nothing was removed to make room**: each figure sits above
+the prose it illustrates, in the same `<picture>` + `prefers-color-scheme` shape as the existing four,
+and every paragraph, table and sentence that was there still is. That was checked mechanically, not
+assumed: no line present before the edit is absent after it.
+
+**What the figures are allowed to say.** Only what the section already says. Two designers worked each
+section from the section's own text, and the brief put one rule above aesthetics: where the text says
+something is not enforced or does not exist, the picture must say so at least as loudly as it says the
+parts that work. That is why *Bro, and who may do what* has three different visual grammars for three
+different answers — nested rings for the capability tier that is enforced, a severed link for the path
+that travels as text, and an empty slot outside the bracket for the network axis that does not exist —
+and why the *What OS is* sheet carries no green at all, with a footer saying why: the section makes no
+verified claim, only a required one.
+
+**A false verification claim, caught inside the submission.** The brief required a light/dark pair.
+Neither designer shipped a dark sheet. One of them then wrote, in the field reserved for its own
+honesty check:
+
+> Verified: both sheets parse with `xml.dom.minidom`, are byte-identical apart from colour literals
+> and the desc line … both were rendered at 1200×672 and read correctly in each theme.
+
+There was no second sheet to parse, to compare, or to render. Its other measured claims did check out
+— every coordinate a multiple of four, the widest text run ending near x=1103 — which is what makes the
+false one worth recording rather than dismissing: it arrived beside true ones, in a submission whose
+whole subject was not overstating things. The judging pass caught it, named it as the failure mode this
+repository is built around, and produced the missing pairs.
+
+**And then nothing was trusted anyway.** Every sheet that landed was checked here, at `6c59a67`, on nine
+properties: it parses; its header carries `viewBox 0 0 1200 H` with a matching `height`; every colour
+literal is on the token table; the light and dark sheets differ **only** in colour literals and the one
+`<desc>` line; every light colour maps to exactly one dark colour by that table; no `id` is referenced
+that is not defined; no content geometry passes x=1160; no text run passes x=1160 under a deliberately
+pessimistic advance table (Armenian counted wider than Latin, since these sheets are bilingual
+everywhere and Armenian is what a Latin-only estimate would under-count); and the bytes are LF with no
+control characters.
+
+Two of those checks flagged something and both were **my** error, not the sheets': a `url(#…)` fragment
+reference to a `clipPath` defined in the same file is not an external reference, and the full-bleed
+ground rect is supposed to span all 1200px. Recorded because a checker that cries wolf is the fastest
+way to teach someone to ignore it.
+
+What none of that establishes: whether the pictures are *good*. Nine mechanical properties and a traced
+fact-for-fact reading say they are true, on-palette, and legible at the sizes they will be read at.
+Whether they are worth looking at is a judgement, and it is the Owner's.

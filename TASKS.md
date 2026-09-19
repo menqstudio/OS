@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #246 · branch `t079/four-predicates-over-their-surface`** (base `main`, tip `13b3e00`, task T-079).
+> **⏭️ CURRENT ACTIVE: PR #247 · branch `t080/three-figures-and-the-page-retrued`** (base `main`, tip `6c59a67`, task T-080).
 >
-> four predicates, four independent kills
+> three figures added, nothing removed, and the page re-trued for three landings
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-080** | **Three bare sections got artwork, nothing was removed** — and a designer "Verified" a dark sheet it never shipped; nine mechanical checks on every sheet since ◑ | Bro | Review | `#247` |
 | **T-079** | **Four predicates, four independent kills** — a spent nonce, a divergent challenge context, an accessor nobody may add, and a trust class nobody may infer ◑ | Bro | Review | `#246` |
 | **T-078** | **Every TCB violation test poked one file** — the floor is now asserted over the WHOLE pinned set and all seven principals; plus a trigger a neighbour claimed and never checked ◑ | Bro | Review | `#245` |
 | **T-077** | **The crash family is closed in §3** — NM-CRASH-12/13/14; the floor turns out to be defended twice, so one mutant each survives and both together kill ◑ | Bro | Review | `#244` |
