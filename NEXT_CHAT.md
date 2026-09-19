@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t082/hardlink-and-the-rehash` — `main` @ `9c6a024`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t083/frames` — `main` @ `33ebe84`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #249 · branch `t082/hardlink-and-the-rehash`** (base `main`, tip `9c6a024`, task T-082).
+> **⏭️ CURRENT ACTIVE: PR #250 · branch `t083/frames`** (base `main`, tip `33ebe84`, task T-083).
 >
-> the triage sent a test where it could not import what it tests
+> a mutation that did not run looks exactly like a survivor
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -863,6 +863,53 @@ class NegativeMatrixConcurrencyTests(_MatrixCase):
 # ---------------------------------------------------------------------------
 
 
+class NegativeMatrixTerminalTests(_MatrixCase):
+    """NM-TERM-08 -- a refusal that happens BEFORE any row exists cannot write one."""
+
+    def test_nm_term_08_a_pre_row_refusal_cannot_write_a_blocked_acceptance_row(self):
+        """NM-TERM-08 -- UNSEEN never becomes BLOCKED, because there is nothing to advance.
+
+        A turn can be refused before the supervisor has committed anything: peer auth fails, the frame
+        is malformed, the challenge does not verify. Those refusals are real and they are recorded --
+        but NOT as an acceptance row in state BLOCKED, because `BLOCKED` is a state a turn ENTERS from
+        somewhere, and there is nowhere to enter it from.
+
+        Two independent things make that true and both are asserted:
+
+        * `LEGAL_PREDECESSORS[BLOCKED]` is exactly `(ACCEPTED_PREPARED, LEASE_READY)`. Asserted against
+          the table rather than against prose, so a future edit that adds an absent-row predecessor
+          fails here and not in a design review.
+        * `_advance` is an `UPDATE ... WHERE execution_attempt_id = ? AND state IN (...)`. An UPDATE
+          cannot create a row, so an attempt the ledger has never seen raises `NotFound` rather than
+          inserting one. The mechanism, not just the policy.
+
+        And the ledger is asserted still empty afterwards -- a refusal that left a row behind would be
+        a turn the supervisor believes it accepted and refused, which is a different and worse claim
+        than the one the wire made.
+        """
+        case = "NM-TERM-08"
+        conn = _conn()
+        self.assertEqual(
+            gsl.LEGAL_PREDECESSORS[gsl.BLOCKED], (gsl.ACCEPTED_PREPARED, gsl.LEASE_READY),
+            f"{case}: BLOCKED gained a predecessor; an absent row must never be one")
+
+        with self.assertRaises(gsl.NotFound):
+            gsl.advance(conn, "att-unseen", gsl.BLOCKED, 10, failure_reason="peer_denied")
+
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 0,
+            f"{case}: a pre-row refusal wrote an acceptance row")
+
+        # The positive control: from a state that IS a predecessor, the same call succeeds -- so the
+        # refusal above is about the missing row and not about BLOCKED being unreachable.
+        _lease_ready(conn, attempt="att-real")
+        self.assertEqual(
+            gsl.advance(conn, "att-real", gsl.BLOCKED, 20, failure_reason="peer_denied"),
+            gsl.BLOCKED, case)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1, case)
+
+
 class NegativeMatrixFrameTests(_MatrixCase):
     """T-062. Seven of the twenty `NM-FRAME-*` rows, established against the tree.
 

@@ -58,9 +58,7 @@
     "NM-TCB-20",
     "NM-TCB-24",
     "NM-TCB-25",
-    "NM-TERM-08",
     "NM-TIME-15",
-    "NM-XBIND-03",
     "NM-XBIND-05",
     "NM-XBIND-10",
     "NM-XBIND-13"
@@ -1381,10 +1379,10 @@
       "test": "apps/desktop/src-tauri/core/src/governed_bridge_result.rs::tests::nm_term_07_a_reason_outside_the_closed_union_is_a_malformed_frame_not_a_thirtieth_reason"
     },
     "NM-TERM-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "UNSEEN → BLOCKED",
       "section": "§5 (P1-5)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTerminalTests::test_nm_term_08_a_pre_row_refusal_cannot_write_a_blocked_acceptance_row"
     },
     "NM-XBIND-01": {
       "status": "blocked",
@@ -1399,10 +1397,10 @@
       "blocked_on": "Same missing component as NM-XBIND-01, wrong-authority limb: there is no `governed-turn-recorder` authority (`bro_signature.AUTHORITY_TYPES` :223 lists OPERATOR, ISSUER, EVIDENCE, BUILDER, VERIFIER, RELEASE, RECOVERY, ...; zero occurrences of the string anywhere under engine/, apps/desktop/src-tauri/, bridge/, config/, contracts/), no `brops.governed-turn-record.v1` entry in `ARTIFACT_AUTHORITY` (:236), and the record is not signed by ANY key (`build_terminal_record` governed_supervisor.py:706-736 returns canonical bytes only), so \"signed by the evidence-recorder instead\" cannot even be constructed. `verify_artifact` :998-1000 already refuses a key whose `allowed_artifact_types` excludes the type, so once the record type + authority are registered and the signer calls `verify_artifact(record, \"brops.governed-turn-record.v1\", keys)`, an evidence-recorder-signed record refuses with \"may not sign brops.governed-turn-record.v1\" -- but that call site and that registration are what must exist first."
     },
     "NM-XBIND-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Lease handle mismatch",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::NegativeMatrixCrossBindingTest::test_nm_xbind_03_a_lease_handle_that_names_no_stored_lease_is_refused"
     },
     "NM-XBIND-04": {
       "status": "implemented",
