@@ -120,6 +120,11 @@
       "unenforced_reason": "Its own text says fail-closed and it runs on every pull request - but in the `AI-surface inventory gate` job, whose context is NOT among the 33 required in config/required-checks.json, and in a workflow that is additionally `paths:`-filtered. A red run there does not block a merge. This is recorded rather than fixed because making the context required is a branch-protection change, which is the Owner's act and not a gate's.",
       "tracked_by": "TASKS.md"
     },
+    "tools/check_artwork_geometry.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Cockpit · design tokens (drift + contrast)"
+    },
     "tools/check_audit_actor.py": {
       "kind": "check",
       "blocks": "merge",

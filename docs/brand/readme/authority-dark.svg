@@ -143,7 +143,7 @@
   <text x="832" y="532" font-size="11" fill="#f4869c">task class չի թույլատրում — չի վալիդանում։</text>
 
   <!-- declared authority is recorded and read, never applied: a caveat under all three axes -->
-  <rect x="40" y="576" width="1120" height="88" rx="12" fill="#1b1f2a" stroke="#f0b23a"/>
+  <rect x="40" y="576" width="1120" height="88" rx="12" fill="#14171f" stroke="#f0b23a"/>
   <text x="64" y="600" font-size="11" fill="#eef1f6">The 262 pack-role files under <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">.claude/agents/</tspan> record the authority each declared role was derived with.</text>
   <text x="64" y="616" font-size="11" font-weight="700" fill="#f0b23a">Bro READS them to pick the matching tier — they are NOT themselves enforced from the app.</text>
   <text x="64" y="636" font-size="11" fill="#eef1f6">262 pack-role ֆայլերը <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">.claude/agents/</tspan>-ում գրանցում են՝ ինչ իրավունքով ա ամեն հայտարարված դեր ստացվել։</text>

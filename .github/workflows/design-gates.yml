@@ -34,7 +34,7 @@ jobs:
       # their verdict on the real tokens.
       - name: Checker self-tests
         working-directory: tools
-        run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity test_check_c1_tokens
+        run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity test_check_c1_tokens test_check_artwork_geometry
 
       # Fail-closed: any token that disagrees between tokens.ts and aios.css in either
       # theme fails the job.
@@ -62,3 +62,12 @@ jobs:
       # tools_gates section, which refuses a check that nothing executes.
       - name: i18n parity (en/hy/ru)
         run: python tools/check_i18n_parity.py
+      # Fail-closed: the README's figures are claims. `verification-*.svg` draws the negative matrix
+      # to scale, so its segment edges move whenever a row is bound -- and two things beside the bar
+      # were positioned FROM those edges. A label plate escaped its band by 12 px on both sides, and
+      # a paragraph tied to the band's left edge ran to x=1227.8 on a 1200 px canvas and was clipped.
+      # Both were caught by a script in somebody's scratchpad, which is to say: not by this
+      # repository. Parse, canvas, light/dark twin, translation parity, declared colour pairs, palette,
+      # fragment references, the content edge, overlapping runs, byte hygiene, orphans.
+      - name: Artwork geometry (README figures)
+        run: python tools/check_artwork_geometry.py

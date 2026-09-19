@@ -179,7 +179,7 @@ OS/
 ├── contracts/          5 extracted shared schemas — lease · evidence · receipt · grant · contract
 ├── config/             The machine-checkable state — required checks, budgets, the negative matrix
 ├── docs/               Architecture, security model, guides, evidence, brand (bilingual)
-├── tools/              39 check_*.py gate scripts — capabilities · reachability · release signing · …
+├── tools/              40 check_*.py gate scripts — capabilities · reachability · release signing · …
 ├── .claude/            262 generated specialist definitions + 6 coordination hook events
 └── .github/workflows/  8 workflow files · ci.yml alone defines 21 jobs · 34 contexts required on main
 ```
@@ -287,8 +287,8 @@ fast, so run the command rather than trusting the number.
 | Engine test suite | **2152** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **210** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
-| Gate scripts | **39** | `ls tools/check_*.py \| wc -l` |
-| Declared controls | **59** — 39 check · 20 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`; the split is `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of that file |
+| Gate scripts | **40** | `ls tools/check_*.py \| wc -l` |
+| Declared controls | **60** — 40 check · 20 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`; the split is `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of that file |
 | Workflow files | **8** | `ls .github/workflows/*.yml \| wc -l` |
 | Jobs in `ci.yml` | **21** | the `jobs` keys of `.github/workflows/ci.yml` |
 | Required contexts on `main` | **34** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'` |
