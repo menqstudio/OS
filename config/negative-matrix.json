@@ -33,7 +33,6 @@
     "NM-CONC-04",
     "NM-CONC-07",
     "NM-CRASH-01",
-    "NM-CRASH-06",
     "NM-CRASH-07",
     "NM-CRASH-09",
     "NM-CRASH-11",
@@ -76,7 +75,6 @@
     "NM-TERM-02",
     "NM-TERM-04",
     "NM-TERM-08",
-    "NM-TIME-12",
     "NM-TIME-15",
     "NM-XBIND-03",
     "NM-XBIND-05",
@@ -211,10 +209,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTimeTests::test_nm_time_11_one_millisecond_past_lease_expiry_expires"
     },
     "NM-TIME-12": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Wall-clock NTP step (pre-launch)",
       "section": "§5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_time_12_a_wall_clock_step_between_the_lease_persist_and_the_gate_expires_it"
     },
     "NM-TIME-13": {
       "status": "blocked",
@@ -643,10 +641,10 @@
       "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_05_a_crash_after_the_publish_finds_the_blob_and_no_lease_ready"
     },
     "NM-CRASH-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`LEASE_READY` found on restart, lease still valid",
       "section": "§5(8a)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_06_a_restart_finding_lease_ready_inside_the_window_completes_it"
     },
     "NM-CRASH-07": {
       "status": "unreviewed",

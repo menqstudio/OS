@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #239 · branch `docs/readme-menq-design`** (base `main`, tip `c197b97`, task T-073).
+> **⏭️ CURRENT ACTIVE: PR #240 · branch `t062/bind-clock`** (base `main`, tip `45ea71e`, task T-062).
 >
-> the front page's six unmeasured numbers, re-measured at the head it merges against
+> two rows that turn on WHICH clock read a value came from, and the front page re-measured with them
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -34,7 +34,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — **130 / 54 / 58** of 242 bound. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 43 left ◑ | Bro | In-Progress | `#233` |
+| **T-062** | **The negative matrix's silent state** — **132 / 54 / 56** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 41 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |

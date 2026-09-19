@@ -1021,6 +1021,93 @@ class CrashCutTests(_Case):
                          f"{case}: the ban did not move the attempt out of a startable state")
 
 
+    def _counting_clock(self, *, raise_on=None, step_from=None, step_to=None):
+        """A clock that records every read, and optionally cuts or steps at a given read.
+
+        `raise_on=3` raises `KeyboardInterrupt` on the THIRD read; `step_from=3` makes read 3
+        onward answer `step_to`. The returned list lets a test assert how many reads it actually
+        consumed, which is what keeps "the cut was at the gate" from being a guess.
+        """
+        reads = []
+
+        def clock():
+            reads.append(len(reads) + 1)
+            n = len(reads)
+            if raise_on is not None and n == raise_on:
+                raise KeyboardInterrupt("cut at clock read %d" % n)
+            if step_from is not None and n >= step_from:
+                return step_to
+            return self.clock
+
+        return clock, reads
+
+    def test_nm_time_12_a_wall_clock_step_between_the_lease_persist_and_the_gate_expires_it(self):
+        """NM-TIME-12 -- the wall clock steps forward (NTP) after `LEASE_READY` was persisted.
+
+        The gate re-reads the clock rather than reusing the instant the lease was persisted with,
+        so a step past the lease window is seen and the turn EXPIRES instead of launching into a
+        lease that is already dead. If the gate reused the persist-time instant, the step would be
+        invisible and a child would be started under an expired lease -- which is the failure this
+        row exists for.
+
+        Reads 1 and 2 (acceptance, `mark_lease_ready`) answer NOW; read 3 onward answers one
+        millisecond past expiry. The read count is asserted, so "the step landed on the gate" is
+        measured rather than assumed.
+        """
+        case = "NM-TIME-12"
+        document, _handle = self.ready_turn()
+        stepped = self.clock + gsl.LEASE_DURATION_MS + 1
+        clock, reads = self._counting_clock(step_from=3, step_to=stepped)
+
+        self.assertRefused(self.trigger(document, driver=self.driver(clock_ms=clock)),
+                           "lease_expired")
+        self.assertGreaterEqual(len(reads), 3,
+                                f"{case}: the gate never reached a third clock read")
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXPIRED, case)
+        self.assertEqual(row["failure_reason"], "lease_expired", case)
+        self.assertEqual(self.executor.runs, [],
+                         f"{case}: a child was launched under an expired lease")
+
+    def test_nm_crash_06_a_restart_finding_lease_ready_inside_the_window_completes_it(self):
+        """NM-CRASH-06 -- the supervisor died at the launch gate with `LEASE_READY` durable.
+
+        This is the POSITIVE half of the crash family, and it is why the others mean anything: a
+        restart that finds `LEASE_READY` with the lease STILL VALID must finish the turn, not
+        refuse it. A supervisor that treated every interrupted turn as unrecoverable would pass
+        every other NM-CRASH row in this file and still be useless.
+
+        The restart is modelled by closing the connection and reopening the same ledger FILE, so
+        what the second attempt reads is what survived on disk and not in-process state.
+        """
+        case = "NM-CRASH-06"
+        document, _handle = self.ready_turn()
+        clock, reads = self._counting_clock(raise_on=3)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(clock_ms=clock))
+        self.assertEqual(len(reads), 3, f"{case}: the cut was not at the third read")
+
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.LEASE_READY, case)
+        self.assertEqual(self.executor.runs, [], f"{case}: the gate launched before the cut")
+
+        # The restart: nothing in memory carries over.
+        self.conn.close()
+        self.conn = gsl.open_ledger(self.ledger_path)
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.LEASE_READY,
+                         f"{case}: LEASE_READY did not survive on disk")
+
+        later = self.clock + 1_000   # inside the window, 209_000 ms of budget left
+        reply = self.trigger(document, driver=self.driver(clock_ms=lambda: later))
+        self.assertEqual(reply["status"], gtr.STATUS_SIGNED, case)
+        self.assertEqual(len(self.executor.runs), 1, f"{case}: the restart did not launch once")
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.COMPLETED, case)
+
+        again = self.trigger(document, driver=self.driver(clock_ms=lambda: later))
+        self.assertEqual(again, reply, f"{case}: the completed turn was not idempotent")
+        self.assertEqual(len(self.executor.runs), 1, f"{case}: a completed turn executed again")
+
+
 class RefusalsAreReachableTests(_Case):
 
     # ---- pre-record ---------------------------------------------------------

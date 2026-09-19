@@ -322,3 +322,31 @@ goes red on its own — a stand-in that depends on whoever lands the change reme
 The fix is to put the page's countable claims under `check_doc_claims` the way
 `config/toolchain.json` already is, which is a gate change with its own tests and its own
 mutation proof, not a rider on a redesign. Naming it here is not the same as doing it.
+
+## 5. Re-measured at each landing head
+
+§4f set the rule and §4g named why it is needed: no gate reads `README.md`, so a pull request that
+moves a counted thing leaves the front page stale, and only a person re-measuring catches it. Done
+as prose, that would add a section per pull request and bury §1–§4 — the corrections that taught
+something — under arithmetic. So routine re-measurement lands here, one row per head, and prose
+above is kept for a number that was **wrong** rather than merely older.
+
+Read the difference: a row in this table is a figure that moved because the repository moved. A
+section above is a figure that was false when written. §4g's control split was the second kind.
+
+| Landed at | What moved | Measured |
+| :--- | :--- | :--- |
+| `45ea71e` | matrix `implemented` 130 → **132**, `unreviewed` 58 → **56** — `NM-CRASH-06` and `NM-TIME-12` bound | `python -c "import collections,json; print(collections.Counter(c['status'] for c in json.load(open('config/negative-matrix.json',encoding='utf-8'))['cases'].values()))"` |
+| `45ea71e` | engine suite 2141 → **2143** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `45ea71e` | 77 → **78** pull requests, 240 → **248** files, 46,766 → **47,550** inserted lines since `5cf9b8c` | `git log --format=%s 5cf9b8c..HEAD \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` and `git diff --shortstat 5cf9b8c..HEAD` |
+
+Unchanged at this head, and checked rather than assumed: `blocked` 54, total 242, bridge 210,
+Rust crates 10, gate scripts 39, declared controls 59 (39 check · 20 tool), workflow files 8,
+`ci.yml` jobs 21, required contexts 34 (+5 excluded), specialist definitions 262, extracted
+schemas 5, hook events 9 under `engine/.claude/` and 6 under `.claude/`.
+
+The artwork moved with the numbers, because the bar is to scale: 132 / 54 / 56 of 242 over the
+same 1120px track is 611 / 250 / 259 px, against 602 / 250 / 268 at the previous head. Both
+segment boundaries, the three captions, the plate under the hatched label, four explanation
+columns and the `unreviewed is not a pass` box were placed from that arithmetic rather than by
+eye. The hatch kept nine diagonals: its band narrowed by 9px, not enough to drop one.

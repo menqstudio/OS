@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `docs/readme-menq-design` — `main` @ `c197b97`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t062/bind-clock` — `main` @ `45ea71e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #239 · branch `docs/readme-menq-design`** (base `main`, tip `c197b97`, task T-073).
+> **⏭️ CURRENT ACTIVE: PR #240 · branch `t062/bind-clock`** (base `main`, tip `45ea71e`, task T-062).
 >
-> the front page's six unmeasured numbers, re-measured at the head it merges against
+> two rows that turn on WHICH clock read a value came from, and the front page re-measured with them
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
