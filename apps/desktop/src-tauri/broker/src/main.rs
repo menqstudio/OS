@@ -538,6 +538,9 @@ mod linux {
         };
 
         eprintln!("brops-broker: trusted manifest provisioned - serving the 4.10(g) governed ladder");
+        // The custody resolver is taken BEFORE the key resolver is moved into the chain: both read the
+        // same per-turn observation, and there is exactly one of it.
+        let custody = resolver.custody();
         let chain = LadderChain::new(
             Box::new(resolver),
             Box::new(LinuxHopConnector { sockets }),
@@ -546,11 +549,26 @@ mod linux {
             Box::new(UuidTurnIds),
             Box::new(ledger),
         );
-        // `ChainExecutor::new` -- NOT `with_custody`. Unchanged from the direct wiring, and unchanged
-        // deliberately: with no custody resolver every turn resolves to `NoTrustedManifest` and
-        // `persist_committed` REFUSES the commit. Wiring custody is a separate, owner-gated decision and
-        // is not a side effect of replacing the execution path.
-        Box::new(ChainExecutor::new(chain))
+        // WIRED 2026-09-19, by the Owner's decision recorded in `docs/OWNER_ACTION_REQUIRED.md`.
+        //
+        // It was `ChainExecutor::new` -- NOT `with_custody` -- deliberately, and the comment here said so:
+        // with no custody resolver every turn resolves to `NoTrustedManifest` and `persist_committed`
+        // REFUSES the commit. `broker/src/preflight.rs` carried that as the one prerequisite no machine
+        // could provide, because no amount of provisioning changes a line of code.
+        //
+        // The Owner took option A: wire it. What that does NOT do is claim production custody. The label a
+        // committed row carries is decided by `resolve_trust_state` on the anchor's PROVENANCE -- external
+        // root => `trusted_verified`, anything else => `demonstration_custody` -- and the provenance is
+        // derived from which anchor this binary pinned, not from anything a deployment can write. A turn
+        // that verified nothing still commits nothing: `BrokerCustody` returns `NoTrustedManifest` with no
+        // observation recorded, which is the answer this line gave before it changed.
+        match custody {
+            Some(c) => Box::new(ChainExecutor::with_custody(chain, Box::new(c))),
+            // Unreachable from here -- this arm runs only for an unprovisioned resolver, and every early
+            // return above has already fail-closed on that. Written rather than unwrapped because a panic
+            // in the broker's startup path is a worse answer than the refusal it would replace.
+            None => Box::new(ChainExecutor::new(chain)),
+        }
     }
 
     /// Read the peer's OS credentials via `SO_PEERCRED` (kernel-attested at connect time — unforgeable by the
