@@ -92,6 +92,9 @@
 //! infer from an unticked box.
 
 use serde::{Deserialize, Serialize};
+// Qualified on purpose: this module has its own `classify` for the READ surfaces, and two
+// functions with one name in one file is how a reviewer stops being able to tell which rule ran.
+use brops_core::approval_request::{self as approval, ApprovalOutcome};
 use serde_json::Value;
 
 /// Cap on any engine/parse reason string echoed to the UI, so a hostile or huge
@@ -633,6 +636,52 @@ pub async fn read_verifier_verdicts(task_id: Option<String>) -> GovernanceRead {
 #[tauri::command]
 pub async fn read_engine_approval_queue() -> GovernanceRead {
     mirror("approvalQueue", None, |doc| validate_records(doc, parse_identified_record)).await
+}
+
+
+// --- the one REQUEST command (still no decision, and no key) ------------------------
+
+/// Ask the ENGINE to record an approval request. **This side never decides.**
+///
+/// Distinct from the desktop's own approval authority (`T-010`/`T-011` over local SQLite), which is a
+/// different system with a different name and its own native confirmation — `docs/OWNER_ACTION_REQUIRED.md`
+/// fixed that separation as one of five invariants before either half of this path was built. What this
+/// command produces is a RECORD of an ask. The artifact that adjudicates one is a control-room command
+/// carrying an Ed25519 signature over its payload, and nothing in this process can mint that.
+///
+/// Every judgement is `brops_core::approval_request`'s: what the document may contain, and what a reply
+/// may be believed to say. A reply claiming a decision is `Blocked` rather than rendered.
+#[tauri::command]
+pub async fn request_engine_approval(
+    task_id: String,
+    requested_command: String,
+    expected_task_state: String,
+    reason: String,
+    requested_by: String,
+    evidence_refs: Option<Vec<String>>,
+) -> ApprovalOutcome {
+    let refs = evidence_refs.unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    let document = match approval::approval_request_document(
+        &approval::new_request_id(),
+        &task_id,
+        &requested_command,
+        &expected_task_state,
+        &reason,
+        &requested_by,
+        now,
+        &refs,
+    ) {
+        Ok(doc) => doc,
+        // A local refusal is a REFUSAL, not a block: this side knows the ask is malformed, which is a
+        // real answer and not a failure to reach anything.
+        Err(reason) => return ApprovalOutcome::Refused { reason },
+    };
+    let reply = crate::ai::governed_sidecar_approval_request(&document.to_string()).await;
+    approval::classify(reply)
 }
 
 #[cfg(test)]

@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #255 · branch `t021b/approval-request-engine`** (base `main`, tip `12d6efb`, task T-021b).
+> **⏭️ CURRENT ACTIVE: PR #256 · branch `t021c/approval-request-desktop`** (base `main`, tip `c7a0450`, task T-021c).
 >
-> the engine records an ask and cannot decide it
+> the desktop asks across the wall and cannot be told it decided
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
