@@ -119,5 +119,36 @@ class TheGateItselfRunsGreenOnThisTree(unittest.TestCase):
         self.assertEqual(gate.main(), 0)
 
 
+
+# A gate's message names a repository path, and that spelling is part of the contract: people
+# grep it, paste it into an editor, and read it in CI logs from both platforms. `str(Path)` gives
+# `a` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
+# These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
+# exactly why ci.yml now runs the tools suite on windows-latest as well.
+
+class UnreadableSourceMessagePathSpelling(unittest.TestCase):
+    def test_the_cannot_read_message_spells_the_path_with_forward_slashes(self):
+        import contextlib
+        import io
+
+        missing = gate.ROOT / "apps" / "desktop" / "src-tauri" / "core" / "src" / "no-such-file.rs"
+        original = gate.SOURCE
+        gate.SOURCE = missing
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = gate.main()
+        finally:
+            gate.SOURCE = original
+        self.assertEqual(code, 1)
+        said = out.getvalue()
+        self.assertIn("cannot read", said)
+        # Only the path the GATE renders is ours to spell. What follows the colon is the OSError's
+        # own strerror, which names an absolute path in the platform's spelling and is not ours to
+        # rewrite -- so the assertion is on our half, not on the whole line.
+        ours = said.split(":", 2)[1]
+        self.assertNotIn("\\", ours, "the unreadable-source message used OS-native separators")
+        self.assertIn("apps/desktop/src-tauri/core/src/no-such-file.rs", said)
+
 if __name__ == "__main__":
     unittest.main()

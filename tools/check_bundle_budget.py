@@ -155,7 +155,9 @@ def stale_sources(root: pathlib.Path, manifest_path: pathlib.Path) -> list[pathl
         if not path.exists() or path.name.endswith(_NOT_BUNDLED):
             continue
         if path.stat().st_mtime > cutoff:
-            stale.append(path.relative_to(root) if path.is_relative_to(root) else path)
+            # posix spelling: this list is rendered into the RED message below.
+            rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+            stale.append(rel)
     return sorted(stale)
 
 
@@ -267,8 +269,8 @@ def check(root: pathlib.Path) -> list[str]:
         more = f" (+{len(stale) - 5} more)" if len(stale) > 5 else ""
         return [
             f"the build is stale: {len(stale)} bundled source(s) are newer than "
-            f"{manifest_path.relative_to(root)} — {shown}{more}. Run `npm run build` in "
-            f"{DESKTOP} and re-run this gate; measuring the old dist/ reports a size this "
+            f"{manifest_path.relative_to(root).as_posix()} — {shown}{more}. Run `npm run build` in "
+            f"{DESKTOP.as_posix()} and re-run this gate; measuring the old dist/ reports a size this "
             f"tree never had"
         ]
 
