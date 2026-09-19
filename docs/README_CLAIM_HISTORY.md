@@ -589,3 +589,32 @@ parity, right edges, column gaps — is the honest follow-up. It does not exist 
 front page's artwork is checked by me rather than by the repository. Naming it here as a filename was
 itself refused by `check_doc_claims`: *"references … which does not exist. A citation to a file nobody
 filed is how `A-06` happened — twice"*. The gate was right, so the sentence changed.
+
+### 9c. The gate self-test that carried the count it was checking
+
+Carrying `T-072` off the board turned `Coordination · docs consistency gate` **red** on the first run of
+this pull request, in a test written one pull request earlier:
+
+```
+FAIL: test_the_archive_holds_the_rows_and_not_a_summary_of_them
+AssertionError: 13 != 12 : the archive does not hold twelve rows
+```
+
+`self.assertEqual(len(rows), 12)`. The archive was right, the board was right, and the test held a
+constant — the same defect shape as §5's cadence rule, one directory over: **a number written in two
+places agrees only until one of them moves.** The remedy is not a 13.
+
+Both tests in that class now read the count and the ids off the board's own one-line statement, so the
+line that *replaced* the rows is checked against the rows it replaced — in both directions. That is
+strictly more than the constant could do, and it is proved by breaking the real files rather than by the
+green:
+
+| Mutation | Which named test died, by assertion |
+| :--- | :--- |
+| the board claims **14** merged rows and lists 13 | `test_the_board_line_names_as_many_rows_as_it_claims` |
+| the board drops an id it carried off | the count test **and** `test_the_archive_holds_the_rows_and_not_a_summary_of_them` |
+| the archive holds a row the board does not name | `test_the_archive_holds_the_rows_and_not_a_summary_of_them` |
+
+The third is the one the constant never had: an archive that grows a row nobody carried off is now a
+failure, not a silence. And the catch is recorded here rather than amended away — the first commit on
+this branch is the one that broke it.
