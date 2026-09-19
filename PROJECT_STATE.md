@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #261 · branch `t090/roadmap-absence-claims`** (base `main`, tip `bdb239b`, task T-090).
+> **⏭️ CURRENT ACTIVE: PR #262 · branch `t091/matrix-man06-tcb25`** (base `main`, tip `775d48a`, task T-091).
 >
-> three roadmap rows named things that had stopped being absent
+> NM-MAN-06 bound: an unpinned attestation key id is refused before any signature
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
