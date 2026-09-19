@@ -32,7 +32,6 @@
     "NM-CONC-03",
     "NM-CONC-04",
     "NM-CONC-07",
-    "NM-CONC-08",
     "NM-CONC-09",
     "NM-CRASH-01",
     "NM-CRASH-02",
@@ -49,15 +48,11 @@
     "NM-CRASH-13",
     "NM-CRASH-14",
     "NM-CRASH-16",
-    "NM-EVID-05",
     "NM-EVID-12",
     "NM-EVID-13",
-    "NM-FRAME-05",
-    "NM-FRAME-09",
     "NM-FRAME-11",
     "NM-FRAME-12",
     "NM-FRAME-16",
-    "NM-FRAME-17",
     "NM-FRAME-19",
     "NM-FS-02",
     "NM-FS-03",
@@ -65,11 +60,7 @@
     "NM-FS-05",
     "NM-FS-06",
     "NM-FS-07",
-    "NM-FS-08",
     "NM-IPC-01",
-    "NM-IPC-02",
-    "NM-IPC-03",
-    "NM-IPC-04",
     "NM-IPC-06",
     "NM-MAN-01",
     "NM-MAN-02",
@@ -78,47 +69,26 @@
     "NM-MAN-12",
     "NM-MAN-14",
     "NM-NORELAUNCH-01",
-    "NM-NORELAUNCH-02",
-    "NM-NORELAUNCH-03",
     "NM-NORELAUNCH-04",
-    "NM-ORACLE-01",
-    "NM-ORACLE-02",
-    "NM-ORACLE-03",
-    "NM-ORACLE-04",
-    "NM-ORACLE-05",
-    "NM-ORACLE-06",
     "NM-ORACLE-07",
-    "NM-ORACLE-08",
-    "NM-ORACLE-09",
     "NM-ORACLE-10",
     "NM-ORACLE-12",
-    "NM-ORACLE-13",
     "NM-OUTPUT-01",
     "NM-OUTPUT-02",
     "NM-OUTPUT-03",
     "NM-OUTPUT-04",
     "NM-OUTPUT-05",
     "NM-OUTPUT-06",
-    "NM-OUTPUT-08",
-    "NM-OUTPUT-09",
     "NM-PARITY-01",
     "NM-PARITY-02",
-    "NM-PARITY-03",
-    "NM-PARITY-04",
     "NM-PARITY-05",
     "NM-PARITY-06",
     "NM-PARITY-07",
-    "NM-PARITY-08",
     "NM-PARITY-09",
-    "NM-REG-06",
     "NM-REG-13",
     "NM-REG-15",
     "NM-REPLAY-01",
     "NM-REPLAY-02",
-    "NM-REPLAY-03",
-    "NM-REPLAY-04",
-    "NM-REPLAY-07",
-    "NM-REPLAY-09",
     "NM-REPLAY-10",
     "NM-SCOPE-01",
     "NM-SCOPE-02",
@@ -144,7 +114,6 @@
     "NM-TCB-18",
     "NM-TCB-20",
     "NM-TCB-21",
-    "NM-TCB-22",
     "NM-TCB-24",
     "NM-TCB-25",
     "NM-TERM-01",
@@ -156,21 +125,14 @@
     "NM-TERM-08",
     "NM-TIME-01",
     "NM-TIME-02",
-    "NM-TIME-03",
-    "NM-TIME-04",
-    "NM-TIME-05",
     "NM-TIME-12",
     "NM-TIME-15",
     "NM-TIME-17",
     "NM-TIME-19",
     "NM-XBIND-03",
-    "NM-XBIND-04",
     "NM-XBIND-05",
     "NM-XBIND-07",
-    "NM-XBIND-08",
-    "NM-XBIND-09",
     "NM-XBIND-10",
-    "NM-XBIND-11",
     "NM-XBIND-12",
     "NM-XBIND-13"
   ],
@@ -188,16 +150,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-REPLAY-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Supervisor exec replay (same nonce, same challenge)",
       "section": "§5(11), §5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::IdempotenceTests::test_a_second_trigger_for_a_completed_turn_returns_the_identical_frame_nm_replay_03"
     },
     "NM-REPLAY-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Ledger `challenge_replay`",
       "section": "§4.5, §5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_replay_04_challenge_replay_when_the_nonce_already_bought_a_different_challenge"
     },
     "NM-REPLAY-05": {
       "status": "implemented",
@@ -212,10 +174,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixReplayTests::test_nm_replay_06_same_challenge_handle_under_a_new_nonce_is_refused"
     },
     "NM-REPLAY-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Conflicting retry facts",
       "section": "§4.5, §5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_turn_open.py::RefusalsAreReachableTests::test_nm_replay_07_retry_conflict_on_a_different_challenge_under_the_same_nonce"
     },
     "NM-REPLAY-08": {
       "status": "implemented",
@@ -224,10 +186,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixReplayTests::test_nm_replay_08_two_submissions_cannot_reserve_one_execution_attempt_id"
     },
     "NM-REPLAY-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Authority pending single-use",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority.py::IssueTests::test_nm_replay_09_issue_persists_and_replays_byte_for_byte"
     },
     "NM-REPLAY-10": {
       "status": "unreviewed",
@@ -248,22 +210,22 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TIME-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Challenge window (acceptance)",
       "section": "§5, §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_time_03_timestamp_invalid_when_the_challenge_expired_before_acceptance"
     },
     "NM-TIME-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Challenge window lower",
       "section": "§5, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_time_04_timestamp_invalid_when_the_challenge_was_issued_after_acceptance"
     },
     "NM-TIME-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`requested_at` ordering",
       "section": "§5, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_time_05_timestamp_invalid_when_the_request_postdates_its_own_acceptance"
     },
     "NM-TIME-06": {
       "status": "implemented",
@@ -380,10 +342,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixRegistryTests::test_nm_reg_05_invalid_root_sig_is_refused"
     },
     "NM-REG-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Registry rotated between open and accept",
       "section": "§5(3), §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_reg_06_the_registry_is_re_resolved_for_every_acceptance"
     },
     "NM-REG-07": {
       "status": "implemented",
@@ -608,10 +570,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixFrameTests::test_nm_frame_04_wrong_types_and_the_non_json_constants_are_refused"
     },
     "NM-FRAME-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Non-canonical JCS (challenge)",
       "section": "§6.1(1), §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_turn_open.py::RefusalsAreReachableTests::test_nm_frame_05_noncanonical_on_bytes_that_are_not_the_canonical_encoding"
     },
     "NM-FRAME-06": {
       "status": "blocked",
@@ -632,10 +594,10 @@
       "blocked_on": "The §4.5 `brops.governed-sign-result.v1` frame and its 64 KiB reader bound. governed_turn_result.py:97-99 marks the frame NOT IMPLEMENTED (no producer, consumer or schema) and config/spec-conformance.json §4.5 records the same as `partial`. The reply that exists today is the frozen `brops.sign-result.v1` op reply; its readers are bounded at 262144 (`brops_protocol.MAX_FRAME_BYTES`, reached from `brops_socket.request` :135 — the supervisor's path), 524288 (`isolated_signer_server.MAX_FRAME_BYTES` :64) and 8192 (`ipc_framing::MAX_FRAME_PAYLOAD_BYTES`, broker `recv_all`/`read_one_reply` chain_executor.rs:668, :686) — no 65536 sign-result bound exists (`grep -rn 65536` hits only containment-evidence and generation-config caps). What must exist first: the §4.5 frame's validator carrying `MAX_SIGN_RESULT_BYTES = 65536` on the supervisor's signer-reply path (with the ≈9865-byte worst-case fixture the row names), consumed by `AcceptanceDriver._attest_and_sign` (governed_acceptance.py:877)."
     },
     "NM-FRAME-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Oversize authority frame",
       "section": "§2.1, §2.1.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority_server.py::FrameBoundTests::test_nm_frame_09_oversize_frame_refused"
     },
     "NM-FRAME-10": {
       "status": "blocked",
@@ -680,10 +642,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FRAME-17": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Frozen-schema collision",
       "section": "§4.10(h)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "bridge/tests/test_governed_turn_result_bridge.py::DisjointnessTests::test_nm_frame_17_the_discrimination_is_not_via_envelope_jcs_b64"
     },
     "NM-FRAME-18": {
       "status": "implemented",
@@ -806,16 +768,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-NORELAUNCH-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Grant reuse after recovery",
       "section": "§5(10)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::IdempotenceTests::test_nm_norelaunch_02_a_trigger_arriving_at_a_started_attempt_moves_to_recovery_required"
     },
     "NM-NORELAUNCH-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "EXECUTING without terminal proof",
       "section": "§5(10)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::IdempotenceTests::test_an_attempt_left_in_executing_by_a_crash_is_never_relaunched_nm_norelaunch_03"
     },
     "NM-NORELAUNCH-04": {
       "status": "unreviewed",
@@ -866,10 +828,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CONC-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Lease-not-ready trigger",
       "section": "§4.5, §5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_conc_08_lease_not_ready_when_the_lease_document_cannot_be_published"
     },
     "NM-CONC-09": {
       "status": "unreviewed",
@@ -920,16 +882,16 @@
       "blocked_on": "No producer of `output_timeout` and no pull-loop deadline exist. MEASURED: `output_timeout` occurs only as vocabulary (engine/runtime/governed_turn_result.py:232; apps/desktop/src-tauri/core/src/governed_bridge_result.rs:272) and engine/tests/test_governed_acceptance.py:1641-1644 pins it among the reasons with no producer; `EXECUTION_TIMEOUT_MS` is defined nowhere in .py/.rs (only prose at bridge/governed_turn_submit.py:105,240); the broker waits on the §4.7 recorder with an unbounded `child.wait()` (apps/desktop/src-tauri/broker/src/chain_executor.rs:877) and neither executor/src/main.rs nor launcher/src/main.rs measures elapsed time; the §4.10(f) pull loop `ai::governed_pull_output` (apps/desktop/src-tauri/src/ai.rs:3005) has only the per-chunk `SIDECAR_DEADLINE = 120 s` (core/src/governed_sidecar.rs:128), no loop-level bound, and no production caller (`#[allow(dead_code)]` ai.rs:3004; config/reachability-declarations.json:167), so a pull timeout never reaches `record_pre_verification_block` (core/src/receipt_store.rs:209). What must exist first: a recorder that measures elapsed MONOTONIC time against `EXECUTION_TIMEOUT_MS = 120000` and returns `output_timeout` with no receipt (§4.7), and/or a production caller of the pull loop that bounds the whole pull and records its expiry as a terminal durable Block through `record_pre_verification_block`."
     },
     "NM-OUTPUT-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Stream binding",
       "section": "§4.5, §4.10(f)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_output_read.py::VerdictOrderTests::test_nm_output_08_another_turns_live_token_cannot_be_redeemed_against_this_turns_ids"
     },
     "NM-OUTPUT-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Seq out of range",
       "section": "§4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_output_read.py::VerdictOrderTests::test_nm_output_09_seq_out_of_range_is_the_last_verdict"
     },
     "NM-EVID-01": {
       "status": "implemented",
@@ -956,10 +918,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixEvidenceFloorTests::test_nm_evid_04_same_event_count_with_a_different_final_hash_is_a_fork"
     },
     "NM-EVID-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "C (regression guard)",
       "section": "§7 case C",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_ledger.py::EvidenceFloorTests::test_nm_evid_05_a_strictly_higher_head_advances_the_floor"
     },
     "NM-EVID-06": {
       "status": "blocked",
@@ -1052,10 +1014,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-FS-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Orphan temp sweep",
       "section": "§5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_staging_upload.py::StagingSweepTests::test_nm_fs_08_an_orphan_temp_is_unlinked_only_once_no_write_could_own_it"
     },
     "NM-ACL-01": {
       "status": "blocked",
@@ -1154,22 +1116,22 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-IPC-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Authority channel",
       "section": "§2.1, §9(j)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority_server.py::PeerDenyTests::test_nm_ipc_02_non_broker_peer_denied_before_any_frame"
     },
     "NM-IPC-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Signer socket",
       "section": "§9(k), §1.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer_server.py::PeerDenyTests::test_nm_ipc_03_sidecar_peer_denied"
     },
     "NM-IPC-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Supervisor socket",
       "section": "§0.1(2), §2.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::PeerDenyTests::test_nm_ipc_04_non_broker_peer_denied_before_any_frame"
     },
     "NM-IPC-05": {
       "status": "blocked",
@@ -1184,40 +1146,40 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ORACLE-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Supervisor evidence endpoint",
       "section": "§1.3, §4.4/§4.10",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::AttestRunIsNotAnOracleTests::test_nm_oracle_01_the_old_protocol_facts_object_is_a_HARD_ERROR"
     },
     "NM-ORACLE-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Fabricated run",
       "section": "§1.3",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::AttestRunIsNotAnOracleTests::test_nm_oracle_02_a_fabricated_run_gets_no_attestation"
     },
     "NM-ORACLE-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Signer caller bytes",
       "section": "§1.4",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::NeverSignsCallerBytesTest::test_nm_oracle_03_signer_signs_only_recomputed_payload_never_output_bytes"
     },
     "NM-ORACLE-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Attestation forgery",
       "section": "§1.5(0), §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_oracle_04_bad_attestation_is_refused"
     },
     "NM-ORACLE-05": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Derived-hash trust",
       "section": "§4.4, §1.5(3)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::ValidSignTest::test_nm_oracle_05_inline_sha256_claim_is_rejected"
     },
     "NM-ORACLE-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Reference-not-artifact",
       "section": "§1.3, §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_oracle_06_missing_handle_is_refused"
     },
     "NM-ORACLE-07": {
       "status": "unreviewed",
@@ -1226,16 +1188,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ORACLE-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Authority two-step oracle",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority.py::ValidateCreatePendingTests::test_nm_oracle_08_extra_arbitrary_field_rejected"
     },
     "NM-ORACLE-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Create-pending carries hash",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority.py::ValidateCreatePendingTests::test_nm_oracle_09_caller_supplied_request_sha256_rejected_as_malformed"
     },
     "NM-ORACLE-10": {
       "status": "unreviewed",
@@ -1256,10 +1218,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-ORACLE-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Caller-supplied `execution_attempt_id`",
       "section": "§3, §5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_evidence_request.py::NothingGovernedIsMintedTests::test_nm_oracle_13_a_request_carrying_a_supervisor_minted_id_is_refused_malformed"
     },
     "NM-TCB-01": {
       "status": "unreviewed",
@@ -1388,10 +1350,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-22": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Config not in allowlist",
       "section": "§2, §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::RefusalsAreReachableTests::test_nm_tcb_22_model_profile_unknown_blocks_the_row_and_issues_no_lease"
     },
     "NM-TCB-23": {
       "status": "blocked",
@@ -1514,10 +1476,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-XBIND-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Receipt handle mismatch",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_04_missing_chain_handle_is_refused"
     },
     "NM-XBIND-05": {
       "status": "unreviewed",
@@ -1538,16 +1500,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-XBIND-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Identity mismatch",
       "section": "§1.5(6)-equiv, §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_08_unknown_identity_is_refused"
     },
     "NM-XBIND-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Not-completed decision",
       "section": "§4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_09_non_completed_decision_is_refused"
     },
     "NM-XBIND-10": {
       "status": "unreviewed",
@@ -1556,10 +1518,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-XBIND-11": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Policy mismatch",
       "section": "§4.5, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_11_a_policy_the_operator_never_authorized_is_refused"
     },
     "NM-XBIND-12": {
       "status": "unreviewed",
@@ -1586,16 +1548,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-PARITY-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`output` (raw UTF-8, no trim)",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::BropsParityTests::test_nm_parity_03_output_formula"
     },
     "NM-PARITY-04": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`generation_config` (object-JCS, §4.10(g))",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_turn_submit_e2e.py::TheCanonicalBytesAreTheFixturesTests::test_nm_parity_04_the_governed_generation_config_hashes_to_the_digest_the_design_publishes"
     },
     "NM-PARITY-05": {
       "status": "unreviewed",
@@ -1616,10 +1578,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-PARITY-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`request_sha256` (8-field envelope)",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::BropsParityTests::test_nm_parity_08_request_envelope_formula"
     },
     "NM-PARITY-09": {
       "status": "unreviewed",

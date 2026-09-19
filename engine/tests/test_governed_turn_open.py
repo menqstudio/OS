@@ -447,8 +447,11 @@ class RefusalsAreReachableTests(_Case):
         reply = self.open(_request(challenge_doc_b64="not valid base64!!"))
         self.assertEqual(reply["reason"], gto.REFUSE_MALFORMED)
 
-    def test_noncanonical_on_bytes_that_are_not_the_canonical_encoding(self):
-        """Same document, whitespace-padded: the signature still verifies, the gate does not."""
+    def test_nm_frame_05_noncanonical_on_bytes_that_are_not_the_canonical_encoding(self):
+        """NM-FRAME-05: a non-canonical challenge document is refused `noncanonical`.
+
+        Same document, whitespace-padded: the signature still verifies, the gate does not.
+        """
         document = _document(_payload())
         pretty = json.dumps(document, sort_keys=True, indent=1).encode("utf-8")
         reply = self.open(_request(document_bytes=pretty))
@@ -600,7 +603,8 @@ class RefusalsAreReachableTests(_Case):
         self.assertEqual(reply["reason"], gto.REFUSE_HANDLE_MISMATCH)
         self.assertEqual(self.staging_rows(), [])
 
-    def test_retry_conflict_on_a_different_challenge_under_the_same_nonce(self):
+    def test_nm_replay_07_retry_conflict_on_a_different_challenge_under_the_same_nonce(self):
+        """NM-REPLAY-07: same nonce, different turn facts is refused retry_conflict; no second row."""
         self.assertEqual(self.open()["status"], "opened")
         # Same (install_id, request_nonce), different turn.
         other = _payload(task_id="task-2")

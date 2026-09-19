@@ -226,7 +226,8 @@ class PeerDenyTests(unittest.TestCase):
         ))
         self.assertEqual(conn.decoded_reply(), reply)
 
-    def test_sidecar_peer_denied(self):
+    def test_nm_ipc_03_sidecar_peer_denied(self):
+        """NM-IPC-03"""
         signer, _pub, handles = _make_signer()
         conn = FakeConn(
             SIDECAR_UID,

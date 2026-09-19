@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t062/triage-2026-09-19` — `main` @ `a261406`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t062/bind-python-2026-09-19` — `main` @ `42be2cd`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #225 · branch `t062/triage-2026-09-19`** (base `main`, tip `a261406`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #226 · branch `t062/bind-python-2026-09-19`** (base `main`, tip `42be2cd`, task T-062).
 >
-> T-062: 182 unreviewed negative-matrix rows read against the tree; 33 blocked by name, 79 already covered, 59 implementable, 149 left. docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md.
+> T-062: 38 Python negative-matrix rows bound to their existing tests, each mutation-verified; registry 77 / 54 / 111. 37 Rust rows next.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

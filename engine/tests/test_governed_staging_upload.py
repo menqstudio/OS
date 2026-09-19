@@ -1976,8 +1976,10 @@ class StagingSweepTests(_Case):
         self.assertEqual((report.rows, report.orphan_dirs_removed), (0, 1))
         self.assertFalse(session_dir.exists())
 
-    def test_an_orphan_temp_is_unlinked_only_once_no_write_could_own_it(self):
-        """§2.4 names orphan `.tmp-*.part` separately from the whole-`session_dir` unlink, so
+    def test_nm_fs_08_an_orphan_temp_is_unlinked_only_once_no_write_could_own_it(self):
+        """NM-FS-08
+
+        §2.4 names orphan `.tmp-*.part` separately from the whole-`session_dir` unlink, so
         they are collected inside LIVE sessions too — bounded by the cleanup deadline, because
         unlinking a temp an in-flight `os.link` still owns would break that chunk for nothing.
         """

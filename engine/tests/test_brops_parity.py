@@ -59,7 +59,8 @@ class BropsParityTests(unittest.TestCase):
             b'[{"content":"hi","role":"user"},{"content":"hello \xc3\xa9\xe2\x9c\x88","role":"assistant"}]',
         )
 
-    def test_output_formula(self):
+    def test_nm_parity_03_output_formula(self):
+        """NM-PARITY-03"""
         self.assertEqual(bc.output_sha256(OUTPUT), OUTPUT_SHA)
 
     def test_generation_config_formula(self):
@@ -71,7 +72,8 @@ class BropsParityTests(unittest.TestCase):
     def test_policy_bundle_formula(self):
         self.assertEqual(bc.policy_bundle_sha256(POLICY_BUNDLE), POLICY_SHA)
 
-    def test_request_envelope_formula(self):
+    def test_nm_parity_08_request_envelope_formula(self):
+        """NM-PARITY-08"""
         self.assertEqual(
             bc.request_sha256(
                 workspace_id=WORKSPACE_ID,

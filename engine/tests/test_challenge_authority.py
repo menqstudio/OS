@@ -75,7 +75,8 @@ class ValidateCreatePendingTests(unittest.TestCase):
         self.assertEqual(out["request_nonce"], VALID_FIELDS["request_nonce"])
         self.assertEqual(out["run_id"], "run-1")
 
-    def test_caller_supplied_request_sha256_rejected_as_malformed(self):
+    def test_nm_oracle_09_caller_supplied_request_sha256_rejected_as_malformed(self):
+        """NM-ORACLE-09: a caller-supplied request_sha256 in create-pending is refused (malformed)."""
         # §2.1: a caller request_sha256 is an unknown field ⇒ malformed.
         bad = dict(VALID_FIELDS)
         bad["request_sha256"] = "a" * 64
@@ -83,7 +84,8 @@ class ValidateCreatePendingTests(unittest.TestCase):
             validate_create_pending(bad)
         self.assertIn("request_sha256", str(cm.exception))
 
-    def test_extra_arbitrary_field_rejected(self):
+    def test_nm_oracle_08_extra_arbitrary_field_rejected(self):
+        """NM-ORACLE-08: create-pending refuses an arbitrary caller field (no free bytes to sign)."""
         bad = dict(VALID_FIELDS)
         bad["evil_bytes"] = "arbitrary-attacker-controlled"
         with self.assertRaises(ChallengeAuthorityError):
@@ -262,7 +264,8 @@ class IssueTests(unittest.TestCase):
         self.assertEqual(doc["sig"], "sig-deadbeef")
         self.assertIn(b"550e8400-e29b-41d4-a716-446655440000", signed_bytes["data"])
 
-    def test_issue_persists_and_replays_byte_for_byte(self):
+    def test_nm_replay_09_issue_persists_and_replays_byte_for_byte(self):
+        """NM-REPLAY-09: a pending row is consumed once; a repeat issue replays, never re-signs."""
         store = PendingStore(id_fn=lambda: "pending-replay")
         pid, _ = self._create(store)
 

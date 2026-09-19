@@ -312,7 +312,8 @@ def _call(request, *, config, ledger_conn, now=NOW):
 
 
 class PeerDenyTests(unittest.TestCase):
-    def test_non_broker_peer_denied_before_any_frame(self):
+    def test_nm_ipc_04_non_broker_peer_denied_before_any_frame(self):
+        """NM-IPC-04: an unknown uid at the supervisor socket is refused before any frame is read."""
         conn = FakeConn(
             RENDERER_UID,
             inbound=_frame({"op": OP_ACCEPT_OPEN, "challenge_doc": _signed_doc(_valid_payload())}),
@@ -707,7 +708,8 @@ class AttestRunIsNotAnOracleTests(_LifecycleBase):
                   "produced": _produced()})
         return attempt
 
-    def test_the_old_protocol_facts_object_is_a_HARD_ERROR(self):
+    def test_nm_oracle_01_the_old_protocol_facts_object_is_a_HARD_ERROR(self):
+        """NM-ORACLE-01: a caller `facts` object at attest-run is a hard error, never attested."""
         # THE regression. Previously this exact request signed whatever arrived. It must not
         # be silently ignored either — an old caller has to learn its evidence was refused.
         attempt = self._completed_attempt()
@@ -720,7 +722,8 @@ class AttestRunIsNotAnOracleTests(_LifecycleBase):
         self.assertIn("facts", reply["error"])
         self.assertNotIn("attestation", reply)
 
-    def test_a_fabricated_run_gets_no_attestation(self):
+    def test_nm_oracle_02_a_fabricated_run_gets_no_attestation(self):
+        """NM-ORACLE-02: a fabricated run/attempt id gets no attestation (no_terminal_run_state)."""
         reply = self._op({"op": OP_ATTEST_RUN, "run_id": "run-ghost",
                           "execution_attempt_id": "att-ghost"})
         self.assertFalse(reply["ok"])

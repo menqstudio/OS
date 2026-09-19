@@ -298,8 +298,10 @@ class VerdictOrderTests(unittest.TestCase):
         self.assertEqual(f.reason(f.request(execution_attempt_id="attempt-other")),
                          gor.REFUSE_STREAM_BINDING_MISMATCH)
 
-    def test_another_turns_live_token_cannot_be_redeemed_against_this_turns_ids(self):
-        """The cross-turn case, built out of two real streams rather than a mutated id."""
+    def test_nm_output_08_another_turns_live_token_cannot_be_redeemed_against_this_turns_ids(self):
+        """NM-OUTPUT-08
+
+        The cross-turn case, built out of two real streams rather than a mutated id."""
         f = Fixture(b"turn one")
         accept(f.conn, "attempt-2", nonce="nonce-2", receipt_id="rcpt-2", handle="9" * 64)
         other_handle = f.store.publish(b"turn two")
@@ -327,7 +329,8 @@ class VerdictOrderTests(unittest.TestCase):
             f.reason(f.request(seq=99, receipt_id="rcpt-other")),
             gor.REFUSE_STREAM_BINDING_MISMATCH)
 
-    def test_seq_out_of_range_is_the_last_verdict(self):
+    def test_nm_output_09_seq_out_of_range_is_the_last_verdict(self):
+        """NM-OUTPUT-09"""
         f = Fixture(b"tiny")
         self.assertEqual(f.reason(f.request(seq=1)), gor.REFUSE_SEQ_OUT_OF_RANGE)
         self.assertEqual(f.reason(f.request(seq=10 ** 20)), gor.REFUSE_SEQ_OUT_OF_RANGE)

@@ -373,8 +373,10 @@ class NothingGovernedIsMintedTests(_Case):
                           "challenge_accepted_at_ms", "now_ms", "state"):
             self.assertNotIn(forbidden, fields)
 
-    def test_a_request_carrying_a_supervisor_minted_id_is_refused_malformed(self):
-        """The P1-5 door: a requester naming the identity its own execution would later be
+    def test_nm_oracle_13_a_request_carrying_a_supervisor_minted_id_is_refused_malformed(self):
+        """NM-ORACLE-13
+
+        The P1-5 door: a requester naming the identity its own execution would later be
         judged under is refused before any side effect."""
         self.make_ready()
         for extra in ("execution_attempt_id", "lease_id", "receipt_id"):
