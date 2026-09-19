@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import pathlib
 import time
 import uuid
-from typing import Any, Iterator
+from typing import Any
 
-from bro_orchestration_runtime import (_HELD_CLAIM_TOKENS, DurableOrchestrationRuntime,
+from bro_orchestration_runtime import (DurableOrchestrationRuntime,
                                        OrchestrationRuntimeError)
 
 DEFAULT_LEASE_SECONDS = 300
 MAX_LEASE_SECONDS = 86400
-LOCK_TIMEOUT_SECONDS = 10
-STALE_LOCK_SECONDS = 30
 RECONCILER_ID = "system-reconciler"
 
 
@@ -30,97 +27,6 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
         else:
             super().__init__(state_dir, root, **kwargs)
         self.claim_lock = self.state_dir / ".claim.lock"
-
-    def _lock_owner(self) -> str | None:
-        try:
-            return json.loads(self.claim_lock.read_text(encoding="utf-8")).get("owner_token")
-        except (OSError, json.JSONDecodeError, AttributeError):
-            return None
-
-    def _break_stale_lock(self, observed_token: str | None) -> None:
-        """Steal a stale lock by renaming it, so only one breaker can win.
-
-        Unlinking it directly meant every process that saw the same stale lock
-        deleted it, and the second deletion landed on the lock the first breaker
-        had already replaced. Rename is exclusive: the loser gets ENOENT because
-        the source is already gone.
-
-        The token observed before the staleness check is re-read here, so a lock
-        that was released and re-taken in the meantime is left alone.
-        """
-        if self._lock_owner() != observed_token:
-            return
-        stolen = self.claim_lock.with_name(f".claim.stale.{uuid.uuid4().hex}")
-        try:
-            os.replace(self.claim_lock, stolen)
-        except (FileNotFoundError, PermissionError):
-            return
-        stolen.unlink(missing_ok=True)
-
-    @contextlib.contextmanager
-    def _claim_guard(self) -> Iterator[None]:
-        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-        token = uuid.uuid4().hex
-        payload = json.dumps({"owner_token": token, "pid": os.getpid(),
-                              "created_at_epoch": int(time.time())}).encode("utf-8")
-        while True:
-            try:
-                descriptor = os.open(self.claim_lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "wb", closefd=True) as handle:
-                    handle.write(payload)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                break
-            except PermissionError:
-                # Windows: a lock file that another claimant is unlinking (release)
-                # or os.replace-ing (stale break) is briefly delete-pending, and an
-                # O_EXCL open against it fails with EACCES instead of EEXIST. That
-                # is the same "someone else has it right now" answer as
-                # FileExistsError, so it must be retried — otherwise an ordinary
-                # contended claim reports a hard failure and the caller believes
-                # the claim path is broken.
-                #
-                # A real permission problem is NOT retried away: it keeps failing
-                # and runs out the same bounded deadline, which is why the message
-                # names both possibilities rather than asserting one.
-                if time.monotonic() >= deadline:
-                    raise OrchestrationRuntimeError(
-                        "claim lock could not be created: permission denied "
-                        "(a delete-pending race that never cleared, or a state "
-                        "directory this process may not write)") from None
-                time.sleep(0.01)
-            except FileExistsError:
-                try:
-                    age = time.time() - self.claim_lock.stat().st_mtime
-                except FileNotFoundError:
-                    continue
-                if age > STALE_LOCK_SECONDS:
-                    # Read the owner only when actually breaking. Reading it on
-                    # every spin put every waiter in a read/delete race with the
-                    # holder's release, and a lost race there leaks the lock: the
-                    # holder cannot confirm the lock is its own, declines to
-                    # remove it, and everyone else waits out the timeout.
-                    self._break_stale_lock(self._lock_owner())
-                    continue
-                if time.monotonic() >= deadline:
-                    raise OrchestrationRuntimeError("claim lock acquisition timed out")
-                time.sleep(0.01)
-        # This OVERRIDE is the guard the V1 runtime actually acquires, so it — not only the
-        # base implementation — has to record the token. `_guard_held_by_this_process` answers
-        # from that record now (audit round 2, `:380`: pid equality was wrong because pids are
-        # recycled), and a V1 acquisition that did not register would make every base method
-        # it delegates into try to re-acquire a lock this process already holds, and time out.
-        key = str(self.claim_lock)
-        _HELD_CLAIM_TOKENS[key] = token
-        try:
-            yield
-        finally:
-            _HELD_CLAIM_TOKENS.pop(key, None)
-            # Release "my lock", not "the lock". An overrunning holder whose lock
-            # was already broken and retaken must not delete the new holder's,
-            # which would put two processes inside the guard at once.
-            if self._lock_owner() == token:
-                self.claim_lock.unlink(missing_ok=True)
 
     def _mint_lease(self, task_id: str, agent_id: str, now_epoch: int,
                     lease_seconds: int) -> str:

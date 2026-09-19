@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #269 · branch `t098/pin-manifest-custody`** (base `main`, tip `22c0038`, task T-098).
+> **⏭️ CURRENT ACTIVE: PR #270 · branch `t099/one-claim-guard`** (base `main`, tip `77f4dfa`, task T-099).
 >
-> The pin manifest read through its own O_NOFOLLOW descriptor, with the custody check the Windows twin already had
+> One claim guard: the Windows retry moves to the class everyone inherits, and a wrong number I added is corrected
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,8 +18,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-099** | **One claim guard, and a wrong number I added is corrected** - the Windows delete-pending retry lived only in the V1 override, so the base class every caller uses raised a raw `PermissionError`; `ci.yml` has 22 jobs, not the 23 my regex counted ◑ | Bro | Review | `#270` |
 | **T-098** | **The file that decides what the floor measures had no owner check, and its digest came from a second path lookup** - one `O_NOFOLLOW` descriptor answers both now, the inode is compared, and the Windows twin's custody rule exists on Linux ◑ | Bro | Review | `#269` |
-| **T-097** | **The front page gave one `ls` three different answers** - 2152 engine tests where 2205 run, 764 frontend where 781 do, and 40 / 40 / 39 gate scripts on one page where 42 exist; every figure re-measured, both themes and the alt text ◑ | Bro | Review | `#268` |
 | **T-088** | **The custody resolver is wired, by the Owner's decision** - the one prerequisite no machine could provide is `met-by-build`; a demo anchor still commits `demonstration_custody` and never production ◑ | Bro | Review | `#260` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
@@ -38,7 +38,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **35 merged rows** | **Shipped, and none independently confirmed** — `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **36 merged rows** | **Shipped, and none independently confirmed** — `T-097`·`#268`, `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
