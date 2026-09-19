@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `6948aa4`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `fix/crypto-pin-and-waiver-premise` — `main` @ `fdfa5e9`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `6948aa4`.** The only thing open is PR #229 on `state/settle-2026-09-19`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #230 · branch `fix/crypto-pin-and-waiver-premise`** (base `main`, tip `fdfa5e9`, task T-070).
 >
-> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows.
+> cryptography 46.0.3 -> 46.0.7 closes three advisories, one HIGH, that were waived under a reason written about their major-bump neighbours; a new gate refuses both a patch-level waiver and a lost premise
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,9 +75,9 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**62 pull requests, 207 files and 44,630 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on
-2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
+**68 pull requests, 234 files and 45,057 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(62/207/44,630 and
+58/206/44,055 earlier on 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
 **Nothing waits on the Owner.** Branch protection on `main` is live again and verified against
 `config/required-checks.json` (34 contexts, `strict`, `enforce_admins`): a private Free-plan repository
