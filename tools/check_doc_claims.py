@@ -270,6 +270,11 @@ def known_tickets() -> set[str]:
     for rel in ("TASKS.md", "apps/desktop/AUDIT/AUDIT_LEDGER.md",
                 "apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md",
                 "docs/archive/TASKS_ARCHIVE_2026-08.md",
+                # A row carried off the board is still a real ticket. Without this line,
+                # every canonical mention of the twelve merged rows moved out on
+                # 2026-09-19 becomes "a ticket in no board" -- the gate working, and a
+                # genuine RED rather than a formality.
+                "docs/archive/TASKS_ARCHIVE_2026-09.md",
                 "docs/PHASE_10_PRODUCTION_ITEMS.md", "docs/OWNER_ACTION_REQUIRED.md"):
         path = ROOT / rel
         if path.is_file():

@@ -210,23 +210,39 @@ describe('populated — every page renders real rows without crashing', () => {
       // out by a status the page does not recognise.
       arrange('populated');
       const { container } = await mount(page());
-      const asked = new Set(invokeMock.mock.calls.map((c) => String(c[0])));
-      const wanted: string[] = [];
-      for (const cmd of asked) {
-        const rows = POPULATED[cmd];
-        if (!Array.isArray(rows) || rows.length === 0) continue;
-        for (const value of Object.values(rows[0] as Record<string, unknown>)) {
-          // Long enough to be this fixture's own words rather than a status token every page shows.
-          if (typeof value === 'string' && value.length >= 8 && !value.includes('T0')) {
-            wanted.push(value);
+      // Both halves are polled TOGETHER, and that is not defensive style -- it is the fix for a
+      // real flake. `mount` waits for the FIRST invoke and flushes ONE microtask turn, so a page
+      // that asks for several commands can have recorded a row-bearing one before its rows reach
+      // the DOM. Sampling `invokeMock.mock.calls` and `container.textContent` once at that instant
+      // made this assertion depend on timing: it failed on `main` at `a03ffd9` (1 of 40 runs of
+      // `computed-style`) with `wanted` full of task titles and the screen still without them, and
+      // a rerun of the SAME commit came back green.
+      //
+      // Polling is strictly stronger than sampling here. A late invoke is included, a late render
+      // is awaited, and a page that NEVER shows one of its own fixture values still fails -- same
+      // message, same list. Nothing is relaxed and no page is exempted.
+      let wanted: string[] = [];
+      await waitFor(() => {
+        wanted = [];
+        for (const cmd of new Set(invokeMock.mock.calls.map((c) => String(c[0])))) {
+          const rows = POPULATED[cmd];
+          if (!Array.isArray(rows) || rows.length === 0) continue;
+          for (const value of Object.values(rows[0] as Record<string, unknown>)) {
+            // Long enough to be this fixture's own words rather than a status token every page
+            // shows.
+            if (typeof value === 'string' && value.length >= 8 && !value.includes('T0')) {
+              wanted.push(value);
+            }
           }
         }
-      }
-      if (wanted.length === 0) return;      // no row-shaped fixture reaches this page; nothing to prove
-      const shown = container.textContent ?? '';
-      expect(wanted.some((v) => shown.includes(v)),
-        `${name} asked for rows and none of their values is on the screen. Looked for any of: `
-        + `${wanted.slice(0, 6).join(' | ')}`).toBe(true);
+        // No row-shaped fixture reaches this page; nothing to prove. Unchanged, and decided
+        // before this fix -- see the note below on what this test does NOT prove.
+        if (wanted.length === 0) return;
+        const shown = container.textContent ?? '';
+        expect(wanted.some((v) => shown.includes(v)),
+          `${name} asked for rows and none of their values is on the screen. Looked for any of: `
+          + `${wanted.slice(0, 6).join(' | ')}`).toBe(true);
+      });
       // WHAT THIS DOES NOT PROVE, written down rather than left to be assumed.
       //
       // `some`, not `every`: a page whose fixtures are ALL wrong fails here, a page where one of
