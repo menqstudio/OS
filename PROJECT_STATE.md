@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — eleven pull requests merged (`#219`–`#229`), `main` at
-`fdfa5e9`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
+**Last updated · Վերջին թարմացում:** 2026-09-19 — twelve pull requests merged (`#219`–`#230`), `main` at
+`fb08ad8`, its own `ci` green 8/8. The supply-chain gate is green again (three advisories lifted), the `T-055`
 promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
 closed, and the negative matrix read: **113 implemented · 54 blocked · 75 unreviewed**, from 39 / 21 / 182.
 Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #230 · branch `fix/crypto-pin-and-waiver-premise`** (base `main`, tip `fdfa5e9`, task T-070).
+> **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
 >
-> cryptography 46.0.3 -> 46.0.7 closes three advisories, one HIGH, that were waived under a reason written about their major-bump neighbours; a new gate refuses both a patch-level waiver and a lost premise
+> restamp() moved an already-correct AUDIT_CANDIDATE_HEAD marker to the end of the body, past the attribution line every pull request ends with, so the body changed and ci.yml, which listens for edited, restarted 21 jobs
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -51,9 +51,9 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **68 pull
-requests, 234 files and 45,057 inserted lines** have merged since, none independently
-confirmed — measured `5cf9b8c..main`: 68 commits, every one a squash-merged PR.
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **69 pull
+requests, 238 files and 45,731 inserted lines** have merged since, none independently
+confirmed — measured `5cf9b8c..main`, all squash-merged PRs.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
