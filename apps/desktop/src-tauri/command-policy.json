@@ -20,11 +20,6 @@
       "tier": "R",
       "grant": "allow"
     },
-    "cancel_reply": {
-      "tier": "X",
-      "grant": "allow",
-      "protection": "none"
-    },
     "confirm_approval": {
       "tier": "A",
       "grant": "allow"
@@ -38,6 +33,14 @@
       "tier": "L1",
       "grant": "allow"
     },
+    "set_conversation_participants": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "list_conversation_participants": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "create_decision": {
       "tier": "L1",
       "grant": "allow"
@@ -46,15 +49,7 @@
       "tier": "L1",
       "grant": "allow"
     },
-    "create_integration": {
-      "tier": "L1",
-      "grant": "allow"
-    },
     "create_knowledge": {
-      "tier": "L1",
-      "grant": "allow"
-    },
-    "create_library_item": {
       "tier": "L1",
       "grant": "allow"
     },
@@ -63,10 +58,6 @@
       "grant": "allow"
     },
     "create_project": {
-      "tier": "L1",
-      "grant": "allow"
-    },
-    "create_research_item": {
       "tier": "L1",
       "grant": "allow"
     },
@@ -88,6 +79,15 @@
       "grant": "allow",
       "protection": "none"
     },
+    "run_automation": {
+      "tier": "X",
+      "grant": "allow",
+      "protection": "none"
+    },
+    "list_automation_runs": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "delete_conversation": {
       "tier": "L2",
       "grant": "deny",
@@ -103,43 +103,16 @@
       "grant": "deny",
       "protection": "none"
     },
-    "delete_library_item": {
-      "tier": "L2",
-      "grant": "deny",
-      "protection": "none"
-    },
     "delete_memory": {
       "tier": "L2",
       "grant": "deny",
       "protection": "none"
-    },
-    "delete_research_item": {
-      "tier": "L2",
-      "grant": "deny",
-      "protection": "none"
-    },
-    "demonstration_verified_reply": {
-      "tier": "X",
-      "grant": "allow",
-      "protection": "none"
-    },
-    "escalate_approval": {
-      "tier": "A",
-      "grant": "allow"
     },
     "get_analytics": {
       "tier": "R",
       "grant": "allow"
     },
     "get_security_summary": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "knowledge_write_record_state": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "knowledge_write_records": {
       "tier": "R",
       "grant": "allow"
     },
@@ -155,15 +128,7 @@
       "tier": "R",
       "grant": "allow"
     },
-    "list_automation_runs": {
-      "tier": "R",
-      "grant": "allow"
-    },
     "list_automations": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "list_conversation_participants": {
       "tier": "R",
       "grant": "allow"
     },
@@ -196,6 +161,28 @@
       "tier": "R",
       "grant": "allow"
     },
+    "create_library_item": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "delete_library_item": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
+    "list_research": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_research_item": {
+      "tier": "L1",
+      "grant": "allow"
+    },
+    "delete_research_item": {
+      "tier": "L2",
+      "grant": "deny",
+      "protection": "none"
+    },
     "list_memory": {
       "tier": "R",
       "grant": "allow"
@@ -209,10 +196,6 @@
       "grant": "allow"
     },
     "list_projects": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "list_research": {
       "tier": "R",
       "grant": "allow"
     },
@@ -244,19 +227,6 @@
       "tier": "L1",
       "grant": "allow"
     },
-    "memory_write_record_state": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "memory_write_records": {
-      "tier": "R",
-      "grant": "allow"
-    },
-    "open_window": {
-      "tier": "X",
-      "grant": "allow",
-      "protection": "none"
-    },
     "post_message": {
       "tier": "L1",
       "grant": "allow"
@@ -274,6 +244,14 @@
       "tier": "A",
       "grant": "allow"
     },
+    "escalate_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
+    "request_engine_approval": {
+      "tier": "A",
+      "grant": "allow"
+    },
     "remove_task_dependency": {
       "tier": "L1",
       "grant": "allow"
@@ -287,11 +265,7 @@
       "grant": "allow",
       "protection": "none"
     },
-    "request_engine_approval": {
-      "tier": "A",
-      "grant": "allow"
-    },
-    "run_automation": {
+    "demonstration_verified_reply": {
       "tier": "X",
       "grant": "allow",
       "protection": "none"
@@ -317,16 +291,12 @@
       "grant": "allow",
       "protection": "native-confirm"
     },
-    "set_conversation_participants": {
-      "tier": "L1",
-      "grant": "allow"
-    },
-    "set_integration_auth_ref": {
+    "set_integration_status": {
       "tier": "X",
       "grant": "allow",
       "protection": "native-confirm"
     },
-    "set_integration_status": {
+    "set_integration_auth_ref": {
       "tier": "X",
       "grant": "allow",
       "protection": "native-confirm"
@@ -363,7 +333,17 @@
       "grant": "allow",
       "protection": "none"
     },
+    "cancel_reply": {
+      "tier": "X",
+      "grant": "allow",
+      "protection": "none"
+    },
     "stream_run_step": {
+      "tier": "X",
+      "grant": "allow",
+      "protection": "none"
+    },
+    "open_window": {
       "tier": "X",
       "grant": "allow",
       "protection": "none"
@@ -380,6 +360,26 @@
       "tier": "X",
       "grant": "allow",
       "protection": "none"
+    },
+    "memory_write_record_state": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "memory_write_records": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "knowledge_write_record_state": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "knowledge_write_records": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "create_integration": {
+      "tier": "L1",
+      "grant": "allow"
     }
   }
 }
