@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t086/tenth-audit-round` — `main` @ `75fca65`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t021a/approval-request-contract` — `main` @ `ee6cf80`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #253 · branch `t086/tenth-audit-round`** (base `main`, tip `75fca65`, task T-086).
+> **⏭️ CURRENT ACTIVE: PR #254 · branch `t021a/approval-request-contract`** (base `main`, tip `ee6cf80`, task T-021a).
 >
-> the tenth audit round, and the three documents it found stale
+> the approval-request contract, audited before it lands
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
