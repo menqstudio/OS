@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t089/roadmap-figure-retrued` — `main` @ `40dc7ab`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t088/custody-wiring` — `main` @ `a68d50b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #259 · branch `t089/roadmap-figure-retrued`** (base `main`, tip `40dc7ab`, task T-089).
+> **⏭️ CURRENT ACTIVE: PR #260 · branch `t088/custody-wiring`** (base `main`, tip `a68d50b`, task T-088).
 >
-> the roadmap sheet said all ten phases were partly built
+> the custody resolver is wired, by the Owner's decision
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

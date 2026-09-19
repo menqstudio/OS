@@ -269,9 +269,40 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 
 ---
 
-## The custody resolver — Phase 1's last blocker is a decision, and nobody has asked you
+## The custody resolver — DECIDED 2026-09-19: wire it. Nothing here needs you any more
 
-**Opened 2026-09-19. Nothing is blocked on you today for a merge; this blocks a roadmap box.**
+**Opened and answered the same day. The Owner chose option A — wire it — and `T-088` landed the wiring.
+The question and both options are kept below verbatim, because a decision is only legible beside the
+question it answered.**
+
+**What landed.** `build_governed_executor` passes `ProductionResolver::custody()` to
+`ChainExecutor::with_custody`. The custody resolver reads what the key resolution established on THIS
+turn — the anchor token and the key the envelope will be verified with — and ends at
+`resolve_trust_state`; it constructs no `TrustState` of its own, because the trait's own contract says
+building the enum by hand is how a demonstration root gets to call itself production.
+
+**The provenance is NOT a config value, and that is the part worth reading.** A `[trust].root_provenance`
+key would have let anyone who can write the config directory claim your custody for an anchor you never
+held. It is derived instead from WHICH anchor the binary pinned: `broker/src/tcb.rs` compiles in one
+production root whose private half "is held OFFLINE by the operator … never appears in a deployed binary
+or on the serving box", and any other pinned root can only have arrived through `provisioned_with_pin`,
+which is `pub(crate)` and exists for tests. So a deployment under the shipped anchor commits
+`trusted_verified`, and a test or kit anchor commits `demonstration_custody` — with no way for a
+deployment to move itself from the second to the first.
+
+**Proved by breaking it**, three mutants, each killing a named test: reverting `main.rs` to
+`ChainExecutor::new` kills `the_custody_resolver_is_wired_in_the_shipped_broker`; making the provenance
+always `External` kills both the provenance test and
+`a_demo_anchored_turn_commits_as_demonstration_and_never_as_production`; and having `BrokerCustody` build
+`TrustState::Production` by hand kills that same load-bearing one.
+
+**What still gates Phase 1's two rows:** the other 26 prerequisites in `broker/src/preflight.rs` — 13
+installer, 11 machine-admin, 1 offline-root-custodian, 1 platform. None of them is a decision. The table
+now marks the custody row `met-by-build`.
+
+---
+
+*The question as posed, 2026-09-19:*
 
 Phase 1 has two open Definition-of-Done rows — *"One governed round-trip proven end-to-end"* and
 *"Governed output delivery through the wall"* — and their own text blames three refusals:

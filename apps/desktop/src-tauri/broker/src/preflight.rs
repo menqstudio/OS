@@ -59,6 +59,11 @@ pub enum Provisioner {
     /// Nothing on any machine can create it — it is a property of the shipped BINARY, and changing it
     /// is a code change behind the Owner's gate.
     NotProvisionableOnAMachine,
+    /// The shipped binary already provides it: no installer, administrator or key custodian has anything
+    /// to do. It stays in this table because it is still a PREREQUISITE — a reader asking what makes a
+    /// committed row possible should find it here — and because a build that stopped providing it would
+    /// otherwise vanish from the list rather than turn red.
+    MetByTheBuild,
 }
 
 impl Provisioner {
@@ -68,6 +73,7 @@ impl Provisioner {
             Provisioner::MachineAdministrator => "machine-admin",
             Provisioner::OfflineRootCustodian => "offline-root-custodian",
             Provisioner::NotProvisionableOnAMachine => "not-provisionable",
+            Provisioner::MetByTheBuild => "met-by-build",
         }
     }
 }
@@ -324,11 +330,13 @@ pub const REQUIREMENTS: &[Requirement] = &[
     },
     Requirement {
         name: "custody.committed_label_resolver",
-        what: "a custody resolver, so a committed reply can carry a custody label",
-        provisioner: Provisioner::NotProvisionableOnAMachine,
-        refusal: "main.rs builds `ChainExecutor::new`, not `with_custody`, so committed_label() is \
-                  None and persist_committed REFUSES under EVERY value of the config. No \
-                  provisioning changes this; it is an owner-gated code decision",
+        what: "a custody resolver, so a committed reply can carry a custody label. WIRED 2026-09-19 by \
+               the Owner's decision (docs/OWNER_ACTION_REQUIRED.md): build_governed_executor passes \
+               ProductionResolver::custody() to ChainExecutor::with_custody",
+        provisioner: Provisioner::MetByTheBuild,
+        refusal: "with no observation recorded — no turn has verified a manifest under the pinned \
+                  anchor — BrokerCustody returns NoTrustedManifest and persist_committed still \
+                  refuses. What the wiring removed is the case where NO config could ever commit",
     },
 ];
 
@@ -1181,11 +1189,13 @@ fn check_root_custody(host: &dyn Host, cfg: &Cfg) -> Status {
 }
 
 fn check_custody_resolver() -> Status {
-    Status::not_met(
-        "build_governed_executor constructs `ChainExecutor::new`, not `with_custody`, so \
-         committed_label() is None and persist_committed refuses under EVERY value of the config. \
-         This is a property of the shipped binary: no machine can provision it, and changing it is \
-         an owner-gated code decision",
+    Status::met(
+        "build_governed_executor passes `ProductionResolver::custody()` to \
+         `ChainExecutor::with_custody`, so a turn that verified a manifest under the pinned anchor can \
+         commit. What this does NOT establish: the LABEL on that row. `resolve_trust_state` decides it \
+         on the anchor's provenance — the compiled-in production root gives `trusted_verified`, any \
+         other pinned anchor gives `demonstration_custody` — and a turn that verified nothing still \
+         commits nothing",
     )
 }
 
@@ -1333,10 +1343,12 @@ mod tests {
     }
 
     /// A preflight that cannot report a failure is the defect this repository is named for finding.
-    /// On a bare Linux machine with nothing provisioned, the ONLY requirement that may come back MET
-    /// is the platform itself — every other row must be NOT MET or UNMEASURABLE.
+    /// On a bare Linux machine with nothing provisioned, the only requirements that may come back MET
+    /// are the ones no machine provides: the platform itself, and — since 2026-09-19 — the custody
+    /// resolver, which the BUILD provides. Every row an installer, an administrator or a key custodian
+    /// would have to create must be NOT MET or UNMEASURABLE on a machine where none of them has run.
     #[test]
-    fn a_bare_machine_meets_nothing_but_the_platform() {
+    fn a_bare_machine_meets_only_what_no_machine_provides() {
         let report = evaluate(&FakeHost::linux(), None);
         let met: Vec<&str> = report
             .findings
@@ -1344,15 +1356,36 @@ mod tests {
             .filter(|f| f.status.is_met())
             .map(|f| f.requirement.name)
             .collect();
-        assert_eq!(met, vec!["platform.linux_af_unix_peercred"], "{}", report.render());
+        assert_eq!(
+            met,
+            vec!["platform.linux_af_unix_peercred", "custody.committed_label_resolver"],
+            "{}",
+            report.render()
+        );
+        // And neither of them is something this machine did: one is the kernel, one is the binary.
+        for name in &met {
+            let f = report.findings.iter().find(|f| f.requirement.name == *name).unwrap();
+            assert!(matches!(
+                f.requirement.provisioner,
+                Provisioner::NotProvisionableOnAMachine | Provisioner::MetByTheBuild
+            ));
+        }
         assert_eq!(report.exit_code(), 1);
     }
 
-    /// And on a bare NON-Linux machine, nothing at all is met.
+    /// And off Linux, the only thing met is the one the binary carries with it.
+    ///
+    /// This asserted `met() == 0` until the custody wiring landed, which was true and is no longer: the
+    /// custody resolver is a property of the build, so it travels to every platform including the one
+    /// where the broker refuses to run at all. The platform row is still NOT MET, which is what makes
+    /// the report refuse.
     #[test]
-    fn a_bare_non_linux_machine_meets_nothing_at_all() {
+    fn a_bare_non_linux_machine_meets_only_what_the_build_carries() {
         let report = evaluate(&FakeHost::default(), None);
-        assert_eq!(report.met(), 0, "something passed off Linux: {}", report.render());
+        let met: Vec<&str> =
+            report.findings.iter().filter(|f| f.status.is_met()).map(|f| f.requirement.name).collect();
+        assert_eq!(met, vec!["custody.committed_label_resolver"], "{}", report.render());
+        assert!(!status_of(&report, "platform.linux_af_unix_peercred").is_met());
         assert_eq!(report.exit_code(), 1);
     }
 
@@ -1578,18 +1611,18 @@ mod tests {
             .iter()
             .map(|f| f.requirement.name)
             .filter(|n| {
-                // The two custody rows are the honest residue: an offline key and a code decision.
-                *n != "custody.tcb_root_manifest_signature" && *n != "custody.committed_label_resolver"
+                // ONE custody row is the honest residue now: the offline key. The other was a code
+                // decision, the Owner took it on 2026-09-19, and the build provides it — so a
+                // provisioned deployment that still could not commit is no longer a thing this table
+                // describes.
+                *n != "custody.tcb_root_manifest_signature"
             })
             .collect();
         assert!(unexpected.is_empty(), "unexpectedly not met: {unexpected:?}\n{}", report.render());
         // …and the two that remain are exactly the two whose provisioner is not a machine.
-        assert_eq!(report.not_met().len(), 2);
+        assert_eq!(report.not_met().len(), 1);
         for f in report.not_met() {
-            assert!(matches!(
-                f.requirement.provisioner,
-                Provisioner::OfflineRootCustodian | Provisioner::NotProvisionableOnAMachine
-            ));
+            assert!(matches!(f.requirement.provisioner, Provisioner::OfflineRootCustodian));
         }
     }
 
@@ -1810,11 +1843,31 @@ mod tests {
     }
 
     #[test]
-    fn the_custody_resolver_requirement_can_never_be_met_by_provisioning() {
+    fn the_custody_resolver_is_wired_in_the_shipped_broker() {
+        // This test used to assert the opposite -- that the requirement could NEVER be met, because
+        // `main.rs` built `ChainExecutor::new` and no provisioning could change a line of code. The
+        // Owner decided on 2026-09-19 to wire it (docs/OWNER_ACTION_REQUIRED.md), so the assertion is
+        // inverted rather than deleted: reverting the wiring must fail a test, not quietly restore a
+        // refusal that two roadmap rows were waiting on.
+        //
+        // Read out of `main.rs`'s own source, for the same reason the config-key test is: a status this
+        // module PRINTS could agree with itself while the binary did something else.
         let r = evaluate(&provisioned(), None);
-        let d = status_of(&r, "custody.committed_label_resolver").detail();
+        let s = status_of(&r, "custody.committed_label_resolver");
+        assert!(s.is_met(), "{s:?}");
+        let d = s.detail();
         assert!(d.contains("with_custody"), "{d}");
-        assert!(d.contains("no machine can provision it"), "{d}");
+        assert!(d.contains("does NOT establish"), "the evidence must state its own limit: {d}");
+
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("ChainExecutor::with_custody"),
+            "the shipped broker no longer wires custody; this requirement is not met by the build"
+        );
+        assert!(
+            main_rs.contains("resolver.custody()"),
+            "the custody resolver must come from the key resolver that made the observation"
+        );
     }
 
     #[test]

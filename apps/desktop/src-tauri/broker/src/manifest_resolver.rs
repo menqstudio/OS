@@ -11,15 +11,17 @@
 //! `verify_and_accept`.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::chain_executor::{ResolvedTurn, TurnResolver};
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
-    check_and_persist, resolve_production_key, verify_manifest, AntiRollbackFloor, KeyManifest, PinnedRoot,
+    check_and_persist, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
+    PinnedRoot, RootAnchor, RootProvenance, VerifiedManifestRoot,
 };
+use brops_core::production_trust::{resolve_trust_state, TrustState};
 
 use crate::tcb;
 
@@ -63,6 +65,15 @@ struct Provisioned {
     /// The root the manifest is verified against — the TCB PRODUCTION anchor (`crate::tcb`, never config) in
     /// production; a demonstration anchor only in unit tests via [`ProductionResolver::provisioned_with_pin`].
     pinned: PinnedRoot,
+    /// What THIS turn's verification established: the anchor token and the key the envelope will be
+    /// verified with. Written by [`KeyResolver::resolve_keys`], read by [`BrokerCustody`].
+    ///
+    /// It is a per-turn observation and not deployment state, which is why it is a cell rather than a
+    /// constructor argument: `CustodyResolver::resolve` takes no arguments on purpose (custody is a
+    /// property of the deployment and the clock, not of the message), and the envelope key is the one
+    /// input it still needs. `KitCustody` in `proof/src/bin/ladder_turn.rs` does exactly this, and the
+    /// shipped broker now does it the same way rather than a second way.
+    custody: Arc<Mutex<Option<(VerifiedManifestRoot, String)>>>,
 }
 
 /// The broker's production resolver. `None` inner ⇒ no trusted manifest ⇒ fail-closed (every turn Blocks).
@@ -121,12 +132,42 @@ impl ProductionResolver {
                 sup_attest_key_id,
                 facts,
                 pinned,
+                custody: Arc::new(Mutex::new(None)),
             }),
         }
     }
 
     pub fn is_provisioned(&self) -> bool {
         self.inner.is_some()
+    }
+
+    /// What the pinned anchor's custody IS, derived from which anchor the binary pinned.
+    ///
+    /// NOT a config value, and that is the point. `broker/src/tcb.rs` compiles in one production root and
+    /// says of it: the private half "is held OFFLINE by the operator ... never appears in a deployed
+    /// binary or on the serving box". An operator who can write the config directory cannot swap it. Any
+    /// other pinned root reached this resolver through `provisioned_with_pin`, which is `pub(crate)` and
+    /// exists for tests — so it is a demonstration anchor and says so.
+    ///
+    /// The LIMIT is the one `key_manifest` already states and it is not weakened here: this establishes
+    /// which anchor verified the manifest, not that the Owner's custody ceremony was actually honoured.
+    fn root_provenance(pinned: &PinnedRoot) -> RootProvenance {
+        if pinned.root_key_id == tcb::ROOT_KEY_ID {
+            RootProvenance::External
+        } else {
+            RootProvenance::Demonstration
+        }
+    }
+
+    /// A custody resolver bound to this resolver's per-turn observation, or `None` when nothing is
+    /// provisioned — in which case the executor keeps refusing the commit exactly as before.
+    pub fn custody(&self) -> Option<BrokerCustody> {
+        let p = self.inner.as_ref()?;
+        Some(BrokerCustody {
+            cell: Arc::clone(&p.custody),
+            manifest: p.manifest.clone(),
+            signer_key_id: p.signer_key_id.clone(),
+        })
     }
 }
 
@@ -186,7 +227,17 @@ impl KeyResolver for ProductionResolver {
 
         // (1) Verify the manifest against the pinned root — the TCB PRODUCTION anchor in production (never a
         //     config-supplied root); a demonstration anchor only under `provisioned_with_pin` in tests.
-        verify_manifest(&p.manifest, &p.root_sig_b64, &p.pinned).map_err(|_| TurnReason::UpstreamBlocked)?;
+        //
+        //     ANCHORED since the custody wiring (T-088): the same signature check, returning the token that
+        //     says WHICH anchor verified this manifest and what that anchor's custody is. The provenance is
+        //     derived from the pinned root rather than declared anywhere a deployment could write it — see
+        //     `root_provenance` below.
+        let anchor = RootAnchor {
+            pinned: p.pinned.clone(),
+            provenance: Self::root_provenance(&p.pinned),
+        };
+        let verified = verify_manifest_anchored(&p.manifest, &p.root_sig_b64, &anchor)
+            .map_err(|_| TurnReason::UpstreamBlocked)?;
 
         // (2) Anti-rollback: accept only an epoch at/above the floor, advance it, and WRITE IT BACK.
         //
@@ -212,6 +263,13 @@ impl KeyResolver for ProductionResolver {
         let iso_pub = hex32(&iso.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
         let sup_pub = hex32(&sup.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
 
+        // Record what this turn established, for the custody resolver to read. Written AFTER every check
+        // above has passed, so a turn that failed verification leaves no observation behind for the next
+        // one to commit on.
+        if let Ok(mut cell) = p.custody.lock() {
+            *cell = Some((verified, iso.public_key_hex.clone()));
+        }
+
         let f = &p.facts;
         Ok(ResolvedKeys {
             isolated_signer_key_id: p.signer_key_id.clone(),
@@ -222,6 +280,44 @@ impl KeyResolver for ProductionResolver {
             install_id: f.install_id.clone(),
             author: f.author.clone(),
         })
+    }
+}
+
+/// The broker's custody resolver: it reads what the key resolution established this turn and ends at
+/// [`resolve_trust_state`].
+///
+/// It constructs NO [`TrustState`] of its own. The trait's own contract says why — "building the enum by
+/// hand is how a demonstration root gets to call itself production" — and the split this file cares about
+/// is made inside that function, on the anchor's provenance, not here.
+///
+/// With no observation recorded (no turn has resolved keys yet, or the last one failed a check) it
+/// returns `NoTrustedManifest`, so `persist_committed` refuses. That is the same answer the broker gave
+/// before this existed; what changed is that a turn which DID verify now has somewhere to say so.
+pub struct BrokerCustody {
+    cell: Arc<Mutex<Option<(VerifiedManifestRoot, String)>>>,
+    manifest: KeyManifest,
+    signer_key_id: String,
+}
+
+impl crate::chain_executor::CustodyResolver for BrokerCustody {
+    fn resolve(&self) -> TrustState {
+        let held = self.cell.lock().ok().and_then(|g| g.clone());
+        let (verified, envelope_key_hex) = match held {
+            Some(pair) => pair,
+            None => {
+                return TrustState::NoTrustedManifest(
+                    "no turn has verified a manifest under a pinned anchor yet",
+                )
+            }
+        };
+        resolve_trust_state(
+            Some(&self.manifest),
+            Some(&verified),
+            &self.signer_key_id,
+            RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+            now_ms(),
+            &envelope_key_hex,
+        )
     }
 }
 
@@ -263,6 +359,7 @@ impl TurnResolver for ProductionResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_executor::CustodyResolver as _;
     use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
@@ -284,6 +381,124 @@ mod tests {
     /// The DEMONSTRATION root private that matches the compiled-in `tcb::DEMO_ROOT_PUBLIC_KEY_HEX`.
     const DEMO_ROOT_SEED_HEX: &str =
         "0011223344556677001122334455667700112233445566770011223344556677"; // gitleaks:allow (demo test key)
+
+    // ---- custody (T-088, the Owner's decision of 2026-09-19) --------------------------------
+
+    /// A demo-pinned, fully provisioned resolver: the only kind a unit test can build, because the
+    /// production root's private half is held offline and is not in this tree.
+    fn demo_resolver(dir: &std::path::Path, valid_signature: bool) -> (ProductionResolver, String) {
+        let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
+        let signer = SigningKey::from_bytes(&seed32(&"11".repeat(32)));
+        let sup = SigningKey::from_bytes(&seed32(&"22".repeat(32)));
+        let signer_pub = hex(signer.verifying_key().as_bytes());
+        let sup_pub = hex(sup.verifying_key().as_bytes());
+        let manifest: KeyManifest = serde_json::from_value(json!({
+            "manifest_epoch": 2u64,
+            "root_key_id": tcb::DEMO_ROOT_KEY_ID,
+            "keys": [
+                { "key_id": "signer-1", "public_key_hex": signer_pub, "trust_class": "production",
+                  "valid_from_ms": 1, "valid_to_ms": 9999999999999i64, "key_epoch": 2u64,
+                  "revoked": false, "allowed_protocols": [RECEIPT_ENVELOPE_ARTIFACT_TYPE] },
+                { "key_id": "sup-1", "public_key_hex": sup_pub, "trust_class": "production",
+                  "valid_from_ms": 1, "valid_to_ms": 9999999999999i64, "key_epoch": 2u64,
+                  "revoked": false, "allowed_protocols": [RECEIPT_ENVELOPE_ARTIFACT_TYPE] }
+            ]
+        })).unwrap();
+        let sig = if valid_signature {
+            base64::engine::general_purpose::STANDARD
+                .encode(root.sign(&manifest.canonical_bytes()).to_bytes())
+        } else {
+            "bogus".to_string()
+        };
+        let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
+        let facts = ResolvedFacts {
+            workspace_id: "ws".into(), install_id: "inst".into(),
+            system_sha256: "a".repeat(64), history_sha256: "b".repeat(64),
+            generation_config_sha256: "c".repeat(64), requested_at: "1900000000000".into(),
+            run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000,
+            author: "Bro".into(),
+        };
+        let r = ProductionResolver::provisioned_with_pin(
+            demo_pin(), manifest, sig, floor, dir.join("floor.json"),
+            "signer-1".into(), "sup-1".into(), facts,
+        );
+        (r, signer_pub)
+    }
+
+    #[test]
+    fn an_unprovisioned_resolver_offers_no_custody_at_all() {
+        // `build_governed_executor` then falls back to `ChainExecutor::new`, and the commit refuses
+        // exactly as it did before the wiring.
+        assert!(ProductionResolver::fail_closed().custody().is_none());
+    }
+
+    #[test]
+    fn custody_says_nothing_until_a_turn_has_verified_something() {
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = demo_resolver(dir.path(), true);
+        let custody = r.custody().expect("a provisioned resolver offers custody");
+        match custody.resolve() {
+            TrustState::NoTrustedManifest(why) => assert!(why.contains("no turn has verified")),
+            other => panic!("expected NoTrustedManifest, got {other:?}"),
+        }
+        assert!(custody.resolve().committed_label().is_none(), "nothing may commit yet");
+    }
+
+    #[test]
+    fn a_turn_that_fails_verification_leaves_no_observation_behind() {
+        // The observation is written AFTER every check passes. A resolver whose root signature is
+        // garbage must leave custody exactly where it was, or a failed turn would hand the next one a
+        // reason to commit.
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = demo_resolver(dir.path(), false);
+        assert!(r.resolve_keys().is_err(), "a bogus root signature must fail closed");
+        let custody = r.custody().unwrap();
+        assert!(matches!(custody.resolve(), TrustState::NoTrustedManifest(_)));
+        assert!(custody.resolve().committed_label().is_none());
+    }
+
+    #[test]
+    fn a_demo_anchored_turn_commits_as_demonstration_and_never_as_production() {
+        // THE load-bearing one. Everything else about this deployment is correct -- a production-class
+        // key, inside its window, unrevoked, under a root signature that verifies -- and the verdict is
+        // still `demonstration_custody`, because the anchor's private half ships in this tree.
+        let dir = tempfile::tempdir().unwrap();
+        let (r, signer_pub) = demo_resolver(dir.path(), true);
+        let keys = r.resolve_keys().expect("a valid demo manifest resolves");
+        assert_eq!(hex(&keys.isolated_signer_public_key), signer_pub);
+
+        let state = r.custody().unwrap().resolve();
+        match &state {
+            TrustState::DemonstrationCustody { key_id, root_key_id, .. } => {
+                assert_eq!(key_id, "signer-1");
+                assert_eq!(root_key_id, tcb::DEMO_ROOT_KEY_ID);
+            }
+            other => panic!("a demo anchor must not produce {other:?}"),
+        }
+        assert_eq!(state.committed_label(), Some("demonstration_custody"));
+        assert_ne!(state.committed_label(), Some("trusted_verified"));
+    }
+
+    #[test]
+    fn the_provenance_follows_the_pinned_anchor_and_nothing_else() {
+        // Not a config value, deliberately: an operator who can write the config directory would
+        // otherwise be able to claim the Owner's custody for an anchor the Owner never held.
+        let production = PinnedRoot {
+            root_key_id: tcb::ROOT_KEY_ID.to_string(),
+            public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
+        };
+        assert!(matches!(
+            ProductionResolver::root_provenance(&production),
+            RootProvenance::External
+        ));
+        assert!(matches!(
+            ProductionResolver::root_provenance(&demo_pin()),
+            RootProvenance::Demonstration
+        ));
+        // And the two anchors are genuinely different, so the test above is not comparing a thing to
+        // itself.
+        assert_ne!(production.root_key_id, demo_pin().root_key_id);
+    }
 
     #[test]
     fn fail_closed_resolver_blocks_every_turn() {
