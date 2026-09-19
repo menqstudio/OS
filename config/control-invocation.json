@@ -275,6 +275,13 @@
       "blocks": "merge",
       "invoked_by": "Canonical law · read receipt · roadmap order · update law"
     },
+    "tools/check_root_anchor_custody.py": {
+      "kind": "check",
+      "blocks": "nothing",
+      "why": "It runs on every pull request, in the `Trust anchor - no production root private in this tree` job, whose context is not among the 34 required in config/required-checks.json - so a red run there blocks no merge until the Owner promotes it.",
+      "unenforced_reason": "Adding a required context is a branch-protection change, which is the Owner's to apply and not a Builder's: check_repo_state compares config/required-checks.json against live GitHub, so a file claiming a protection that is not live would redden main rather than enforce anything.",
+      "tracked_by": "docs/OWNER_ACTION_REQUIRED.md"
+    },
     "tools/check_runbook_snippets.py": {
       "kind": "check",
       "blocks": "merge",

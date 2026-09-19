@@ -1249,6 +1249,36 @@ jobs:
           BRO_ENV: ci
         run: python -m unittest discover -s engine/tests -t engine/tests -p "test_negative_matrix.py"
 
+  root-anchor-custody:
+    name: Trust anchor · no production root private in this tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # The gate derives an Ed25519 public key from every 32-byte hex literal in the tree, so it needs
+      # `cryptography` and REFUSES with exit 2 without it, rather than reporting a custody property it
+      # could not measure. The same hash-pinned file every other python job installs.
+      - name: Install the crypto dependency (the gate refuses without it)
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      # Every `trusted_verified` this product can render rests on one fact: the private half of
+      # `tcb::ROOT_PUBLIC_KEY_HEX` exists only on the Owner's offline media. Both `tcb.rs` files say so
+      # in a comment, and a comment is not evidence — a seed pasted into a fixture, a runbook snippet or
+      # a JSON sample would hand the trust chain to anyone with a clone and nothing here would notice.
+      #
+      # The CONTRAST is inside the gate and is the reason the result means anything: it must also FIND
+      # the demonstration seed, which is in this tree by design. A sweep that silently matched nothing
+      # would report the strongest possible custody result while measuring none of it.
+      - name: No literal in this tree derives a production trust anchor
+        run: python tools/check_root_anchor_custody.py
+      # Six cases, each driving ONE of the gate's rules and asserting which rules fired, so a case that
+      # passes for the wrong reason is visible instead of counted. They build throwaway trees; none of
+      # them touches this repository's own files.
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_root_anchor_custody
+
   signer-isolation:
     name: Engine · signer isolation proof (linux, dedicated principals)
     runs-on: ubuntu-latest
