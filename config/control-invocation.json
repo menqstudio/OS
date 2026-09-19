@@ -175,6 +175,11 @@
       "blocks": "merge",
       "invoked_by": "Coordination · docs consistency gate"
     },
+    "tools/check_crypto_surface.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Python - pip-audit (PyPI advisories)"
+    },
     "tools/check_dead_tokens.py": {
       "kind": "check",
       "blocks": "merge",

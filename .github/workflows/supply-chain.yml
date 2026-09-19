@@ -135,6 +135,20 @@ jobs:
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # Runs BEFORE pip-audit, and inside this job rather than its own, so it needs no new
+      # required context: every waiver pip-audit is about to honour is checked here first. The
+      # gate defends the two claims the waivers rest on — that this repository's cryptography
+      # surface is Ed25519 with raw keys and reaches no X.509 / PKCS#7 / PKCS#12 / CMS / OCSP
+      # API or ASN.1 key loader, and that no waiver has outlived or side-stepped its own fix.
+      # A waiver whose fix is a PATCH release of the pin is refused: that is exactly how three
+      # advisories, one of them HIGH, sat waived at 46.0.3 while 46.0.5, 46.0.6 and 46.0.7
+      # fixed them, under a sentence written about their major-bump neighbours. Stdlib only,
+      # no network, no engine import.
+      - name: Crypto surface + waiver freshness gate
+        run: python tools/check_crypto_surface.py
+      - name: Gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_crypto_surface
       - name: Install pip-audit (version-pinned)
         run: pip install "pip-audit==2.7.3"
       - name: Audit the engine requirements (fail on any advisory)
