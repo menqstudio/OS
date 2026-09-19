@@ -146,8 +146,16 @@ describe('Memory — a diverged row is not a shade of a recorded one', () => {
     setup();
     await select('Deploy window is Friday');
 
-    const panel = document.querySelector('.wrec-panel[data-wrec="diverged"]');
-    expect(panel).toBeTruthy();
+    // WAITED FOR, like every other assertion in this file. `select` awaits the row opening — the
+    // Delete button — and the diverged panel does not depend on that: it depends on this row's
+    // `memory_write_record_state` read resolving, which is a SEPARATE invoke `select` never sees.
+    // So the bare query raced the very read it is about, and did so invisibly: it passes on any
+    // machine fast enough and fails on a loaded CI runner, which is what it did on run 35468281628.
+    const panel = await waitFor(() => {
+      const found = document.querySelector('.wrec-panel[data-wrec="diverged"]');
+      expect(found).toBeTruthy();
+      return found;
+    });
     expect(panel).toHaveTextContent(/no longer matches its record/i);
     expect(panel).toHaveTextContent(/changed outside the app/i);
     // Both digests are shown, so the claim is checkable rather than decorative.
