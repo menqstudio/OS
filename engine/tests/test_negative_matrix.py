@@ -28,6 +28,7 @@ socket, no key material, no OS trust chain.
 """
 
 import hashlib
+import json
 import pathlib
 import sqlite3
 import sys
@@ -36,6 +37,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import brops_canonical as bc  # noqa: E402
 import brops_protocol as protocol  # noqa: E402
 import challenge_key_registry as registry  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
@@ -964,3 +966,112 @@ class NegativeMatrixFrameTests(_MatrixCase):
                 signer.validate_sign_request(request)
             self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED,
                              f"{case}: a caller-supplied {derived} was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Plan section 18 -- cross-language formula parity (NM-PARITY-*)
+# ---------------------------------------------------------------------------
+
+#: The formula fixture, chosen so EVERY mutation NM-PARITY-01 names changes the bytes. The spec
+#: section lives on the registry row, not here: `check_spec_references.py` reads a § in the source
+#: as a claim that the whole section holds, and what this pins is one formula.
+#: Placement is measured, not decorative: a LEADING NUL so `strip('\x00')` is visible, a TRAILING
+#: SPACE so a bare `rstrip()` is too (NUL is not whitespace, so a NUL at the end would leave
+#: `rstrip()` invisible), an INTERIOR NUL for a mid-string filter, and a DECOMPOSED `e` + U+0301 so
+#: NFC/NFKC composes it. 26 bytes, 18 code points.
+PARITY_SYSTEM = "\x00Bro\x00e\u0301 \u0535\u057d \u2708 \U0001f6e0 ok "
+PARITY_SYSTEM_SHA256 = "f853ac54b4c6c3c832a7801cd165adcaadbc1ccba2239b894d7551cc10aef8bd"
+
+#: NM-PARITY-02. The Unicode vector is already pinned on both sides; the EMPTY list was not, and
+#: an empty history is the case a `null`/omit special-case would quietly change.
+PARITY_HISTORY_UNICODE = [
+    {"content": "hi", "role": "user"},
+    {"content": "hello é✈", "role": "assistant"},
+]
+PARITY_HISTORY_UNICODE_SHA256 = "fbd46857ec1ed759024d56430d5f00214e9a478b6f94ec3933f498aa7cd14c80"
+PARITY_HISTORY_EMPTY_SHA256 = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+
+#: NM-PARITY-09. 2**53 - 1 is Rust's `MAX_GOVERNED_MS` and the largest integer a JSON double
+#: carries exactly.
+MAX_GOVERNED_MS = (1 << 53) - 1
+PARITY_MS_OBJECT = {
+    "challenge_accepted_at_ms": 1_700_000_000_000,
+    "completed_at": MAX_GOVERNED_MS,
+    "requested_at": 0,
+}
+PARITY_MS_JCS = (b'{"challenge_accepted_at_ms":1700000000000,'
+                 b'"completed_at":9007199254740991,"requested_at":0}')
+PARITY_MS_SHA256 = "b839b7c13fcc32d5483cfbf90409973870e1308160ed83b164f3ca04cfb06c52"
+
+
+class NegativeMatrixParityTests(_MatrixCase):
+    """Cross-language formula parity. Each row's Rust half lives in
+    `apps/desktop/src-tauri/core/src/receipt.rs::nm_parity_the_same_fixtures_hash_the_same`
+    and pins the SAME literal to the SAME hex. One side alone proves nothing about parity:
+    both sides drifting together would keep either test green, which is why the fixture and
+    the digest are written out in both files rather than derived in one and imported."""
+
+    def test_nm_parity_01_system_formula_is_raw_utf8_across_unicode_emoji_and_nul(self):
+        """NM-PARITY-01 -- `system` is the RAW UTF-8 bytes: no normalisation, no trimming.
+
+        The fixture carries a NUL at each end of the meaningful text, an interior NUL, a
+        decomposed `e` + combining acute, Armenian, a 3-byte glyph and a 4-byte emoji. Every
+        transformation the row names -- NFC, NFKC, `strip('\x00')`, `rstrip()`, dropping the
+        NUL -- changes these bytes, which is the only reason the pinned digest means anything.
+        """
+        case = "NM-PARITY-01"
+        raw = PARITY_SYSTEM.encode("utf-8")
+        self.assertEqual(len(raw), 26, f"{case}: the fixture is 26 UTF-8 bytes")
+        self.assertEqual(bc.system_bytes(PARITY_SYSTEM), raw,
+                         f"{case}: system_bytes must be the raw UTF-8 and nothing else")
+        self.assertEqual(bc.system_sha256(PARITY_SYSTEM), PARITY_SYSTEM_SHA256, case)
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), PARITY_SYSTEM_SHA256,
+                         f"{case}: the pin is sha256 of the raw bytes, not of a transform")
+        # The NUL survives and the decomposed pair is NOT composed -- stated as assertions so a
+        # normalising rewrite cannot pass by coincidence.
+        self.assertIn(b"\x00", raw, f"{case}: the NUL was dropped")
+        self.assertIn("é", PARITY_SYSTEM, f"{case}: the pair must stay decomposed")
+
+    def test_nm_parity_02_history_formula_pins_empty_history_and_unicode(self):
+        """NM-PARITY-02 -- `history` is compact JSON of `[{content,role}]`, keys ordered,
+        non-ASCII raw UTF-8. The EMPTY list is the arm that was unpinned: `[]` must serialise
+        as exactly `b"[]"`, not `null` and not omitted, or a supervisor and a broker
+        disagreeing about an empty conversation would hash two different runs alike.
+        """
+        case = "NM-PARITY-02"
+        self.assertEqual(bc.history_bytes([]), b"[]", f"{case}: empty history is `[]`")
+        self.assertEqual(bc.history_sha256([]), PARITY_HISTORY_EMPTY_SHA256, case)
+        self.assertEqual(hashlib.sha256(b"[]").hexdigest(), PARITY_HISTORY_EMPTY_SHA256, case)
+        # The Unicode vector too, so this test fails if the non-empty formula drifts as well.
+        self.assertEqual(bc.history_sha256(PARITY_HISTORY_UNICODE),
+                         PARITY_HISTORY_UNICODE_SHA256, case)
+        body = bc.history_bytes(PARITY_HISTORY_UNICODE)
+        self.assertNotIn(rb"\u", body,
+                         f"{case}: non-ASCII must stay raw UTF-8, never a backslash-u escape")
+        self.assertLess(body.index(b"content"), body.index(b"role"),
+                        f"{case}: keys are ordered content < role")
+
+    def test_nm_parity_09_ms_integers_serialize_identically_on_both_sides(self):
+        """NM-PARITY-09 -- every `_ms` value is a BARE INTEGER in the canonical form.
+
+        No exponent, no fractional part, no quotes, at the boundary 2**53 - 1. A float
+        round-trip is the failure this pins: `9007199254740991` becoming `9.007199254740991e15`
+        hashes differently on the two sides while both still 'serialise the same number'.
+
+        It also records an ASYMMETRY rather than asserting it away: `_is_u64_ms` accepts up to
+        2**64, while Rust's `MAX_GOVERNED_MS` is 2**53 - 1. The Python predicate is WIDER, so a
+        timestamp Python accepts can still be refused across the wall -- measured here so the
+        next reader does not discover it from a failing deployment.
+        """
+        case = "NM-PARITY-09"
+        jcs = json.dumps(PARITY_MS_OBJECT, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.assertEqual(jcs, PARITY_MS_JCS, case)
+        self.assertEqual(signer._jcs_bytes(PARITY_MS_OBJECT), PARITY_MS_JCS,
+                         f"{case}: the signer's own canonicaliser must agree")
+        self.assertEqual(hashlib.sha256(jcs).hexdigest(), PARITY_MS_SHA256, case)
+        for forbidden in (b"e+", b"E+", b".0", b'"9007199254740991"'):
+            self.assertNotIn(forbidden, jcs, f"{case}: {forbidden!r} in the canonical form")
+        # The asymmetry, asserted so it cannot be quietly closed in one direction only.
+        self.assertTrue(signer._is_u64_ms(MAX_GOVERNED_MS), case)
+        self.assertTrue(signer._is_u64_ms(1 << 53),
+                        f"{case}: the Python predicate is wider than MAX_GOVERNED_MS")

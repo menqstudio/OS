@@ -1,18 +1,18 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — fifteen pull requests merged (`#219`–`#233`), `main` at
-`3772a65`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
+**Last updated · Վերջին թարմացում:** 2026-09-19 — seventeen pull requests merged (`#219`–`#234`), `main` at
+`68a2948`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
 promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
-closed, and the negative matrix read: **117 implemented · 54 blocked · 71 unreviewed**, from 39 / 21 / 182.
+closed, and the negative matrix read: **120 implemented · 54 blocked · 68 unreviewed**, from 39 / 21 / 182.
 Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
 against the grant's `egress` table, yet a permitted call is still refused for want of a transport.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #234 · branch `t062/bind-nm-time-01`** (base `main`, tip `3772a65`, task T-062).
+> **⏭️ CURRENT ACTIVE: PR #235 · branch `t062/bind-nm-parity`** (base `main`, tip `68a2948`, task T-062).
 >
-> NM-TIME-01 is bound: a seconds-valued completed_at is refused as timestamp_invalid by an ordering check, and the test says plainly that it pins the check rather than which of its two limbs fired
+> the three cross-language parity rows are bound on BOTH sides: the same system, history and millisecond fixtures pinned to the same digests in Python and in Rust, since two sides drifting together keep either test green alone
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -51,8 +51,8 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **70 pull
-requests, 238 files and 45,922 inserted lines** have merged since, none independently
+**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **73 pull
+requests, 240 files and 46,240 inserted lines** have merged since, none independently
 confirmed — measured `5cf9b8c..main`, all squash-merged PRs.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
