@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t096/lease-bounds-execution` — `main` @ `dc6f263`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t097/front-page-numbers` — `main` @ `2045830`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #267 · branch `t096/lease-bounds-execution`** (base `main`, tip `dc6f263`, task T-096).
+> **⏭️ CURRENT ACTIVE: PR #268 · branch `t097/front-page-numbers`** (base `main`, tip `2045830`, task T-097).
 >
-> The lease bounds execution, not only launch: a completion past its expiry is refused as lease_expired
+> The front page gave one ls three different answers; every measured figure re-trued
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,9 +48,9 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2124 OK, 10 skipped
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2205 OK, 97 skipped
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 764 tests / 80 files
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 781 tests / 82 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real

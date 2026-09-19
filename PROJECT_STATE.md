@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-20 — 47 pull requests merged (`#219`–`#265`), `main` at
-`6ca13df`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
+**Last updated · Վերջին թարմացում:** 2026-09-20 — 49 pull requests merged (`#219`–`#267`), `main` at
+`2045830`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
 rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux kernel, and
 one offline root signature only the Owner can make — that last one is the whole blocker, named on the
 Owner page. The negative matrix reads: **155 implemented · 52 blocked · 35 unreviewed**, from 39/21/182.
@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #267 · branch `t096/lease-bounds-execution`** (base `main`, tip `dc6f263`, task T-096).
+> **⏭️ CURRENT ACTIVE: PR #268 · branch `t097/front-page-numbers`** (base `main`, tip `2045830`, task T-097).
 >
-> The lease bounds execution, not only launch: a completion past its expiry is refused as lease_expired
+> The front page gave one ls three different answers; every measured figure re-trued
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -28,7 +28,7 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 |---|---|
 | 0 Foundation | DONE, locked |
 | 1 Bridge | In-Progress — contract, adapter, broker and receipt are real; `_real_callables()` raises unconditionally, and the desktop pre-flight MEASURES its five missing inputs now rather than asserting them (`T-048`). Both refuse |
-| 2 Governance Sidecar | In-Progress — 8/11; the three open boxes are one fact, the approval-**request** path exists on neither side (`T-021`) |
+| 2 Governance Sidecar | Done — 11/11; the approval-**request** path exists on both sides now (`T-021a`–`T-021d`), and nothing in it decides |
 | 3 Desktop Integration | Done — 11/11 |
 | 4 UI/UX System | Done — 12/12 |
 | 5 Memory & Knowledge | Done — 11/11; local writes stay *recorded, not verified*, nothing is signed |
