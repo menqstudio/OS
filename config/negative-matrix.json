@@ -57,15 +57,11 @@
     "NM-SCOPE-04",
     "NM-SCOPE-06",
     "NM-SCOPE-08",
-    "NM-TCB-01",
     "NM-TCB-02",
-    "NM-TCB-03",
-    "NM-TCB-08",
     "NM-TCB-12",
     "NM-TCB-13",
     "NM-TCB-14",
     "NM-TCB-20",
-    "NM-TCB-21",
     "NM-TCB-24",
     "NM-TCB-25",
     "NM-TERM-02",
@@ -1165,10 +1161,10 @@
       "test": "engine/tests/test_governed_evidence_request.py::NothingGovernedIsMintedTests::test_nm_oracle_13_a_request_carrying_a_supervisor_minted_id_is_refused_malformed"
     },
     "NM-TCB-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Login-writable executor",
       "section": "§9(a), §2.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/tcb_integrity.rs::nm_tcb_01_a_login_writable_pinned_artifact_refuses_start_whichever_one_it_is"
     },
     "NM-TCB-02": {
       "status": "unreviewed",
@@ -1177,10 +1173,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Wrong-owner TCB",
       "section": "§9(c)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/tcb_integrity.rs::nm_tcb_03_a_pinned_artifact_owned_by_login_refuses_start_whichever_one_it_is"
     },
     "NM-TCB-04": {
       "status": "blocked",
@@ -1207,10 +1203,10 @@
       "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::tests::nm_tcb_07_distinct_principals_blocks_an_unset_sid"
     },
     "NM-TCB-08": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Verifier == renderer",
       "section": "§9(i)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/windows_broker.rs::nm_tcb_08_any_runtime_principal_collapsed_onto_login_blocks_and_names_itself"
     },
     "NM-TCB-09": {
       "status": "implemented",
@@ -1285,10 +1281,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-21": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Config mutation (generation_config)",
       "section": "§2.4, §2",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_staging_upload.py::FinalRefusalsTests::test_nm_tcb_21_a_generation_config_the_challenge_did_not_commit_to_is_refused_twice"
     },
     "NM-TCB-22": {
       "status": "implemented",

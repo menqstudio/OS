@@ -832,6 +832,64 @@ class FinalRefusalsTests(_Case):
 # ---------------------------------------------------------------------------
 
 
+    def test_nm_tcb_21_a_generation_config_the_challenge_did_not_commit_to_is_refused_twice(self):
+        """NM-TCB-21 — the staged `generation_config` is not the one the signed challenge named.
+
+        `generation_config` is the model's whole behaviour: temperature, sampling, tool exposure. A
+        run whose config is not the config the challenge committed to is a different run wearing an
+        admitted turn's slot. It is defended twice, and this asserts both layers in the order an
+        attacker meets them — but only ONE of them is new here, and which one matters.
+
+        **Layer 1 — the DDL, and this is what this test adds.**
+        `trg_governed_turn_staging_immutable_binding` RAISEs `ABORT` on any UPDATE that changes
+        `generation_config_sha256`, and the row is unchanged afterwards. That is asserted here for the
+        first time. `test_handle_not_challenge_when_the_turn_no_longer_commits_to_the_digest` above
+        *states* it — "the immutable-binding trigger refuses to EDIT the committed digest, which is
+        itself the point" — and then drops the trigger without ever checking the claim. A documented
+        claim nothing checks is the defect shape this whole repository is built around, and it was
+        sitting inside a test.
+
+        **Layer 2 — the re-hash, and this half is shared.** With the trigger dropped, the final
+        handler re-hashes the reassembled bytes against the TURN's committed digest — not merely
+        against the session's own `declared_sha256`, which the sender chose — and refuses
+        `handle_not_challenge`. The neighbour already holds that for `system_sha256`; this holds it
+        for `generation_config_sha256`, which is the artifact this row names.
+
+        Measured, so neither half is a guess: mutating the trigger to stop covering
+        `generation_config_sha256` kills THIS test and nothing else; deleting the layer-2 comparison
+        kills this one and the neighbour together.
+
+        One more distinction the assertion depends on: the two refusals in that function are
+        different verdicts. `sha_mismatch` means the sender lied about its own bytes;
+        `handle_not_challenge` means the bytes are honest and the challenge committed to different
+        ones. Asserting the wrong one would pass against a build that had lost this check entirely.
+        """
+        case = "NM-TCB-21"
+        session_id = self.open_session("generation_config", GENCFG_BYTES)
+        self.send_all_chunks(session_id, GENCFG_BYTES)
+        other = sha(b"a different generation_config")
+
+        # Layer 1: the database refuses to rebind the turn at all.
+        with self.assertRaises(sqlite3.Error) as raised:
+            self.conn.execute(
+                "UPDATE governed_turn_staging SET generation_config_sha256 = ?"
+                " WHERE challenge_handle = ?", (other, self.turn.challenge_handle))
+        self.assertIn("staging row binding is immutable", str(raised.exception), case)
+        self.assertEqual(self.turn_row()["generation_config_sha256"], sha(GENCFG_BYTES),
+                         f"{case}: the refused UPDATE changed the row anyway")
+
+        # Layer 2: defeat the DDL, and the re-hash still refuses.
+        self.conn.execute("DROP TRIGGER trg_governed_turn_staging_immutable_binding")
+        self.conn.execute(
+            "UPDATE governed_turn_staging SET generation_config_sha256 = ?"
+            " WHERE challenge_handle = ?", (other, self.turn.challenge_handle))
+        self.assertEqual(self.turn_row()["generation_config_sha256"], other,
+                         f"{case}: the trigger drop did not take, so layer 2 is untested")
+        self.assertEqual(self.refuse(self.final_request(session_id, 1)),
+                         "handle_not_challenge",
+                         f"{case}: the assembled digest was not held to the challenge's")
+
+
 class IdempotencyTests(_Case):
     def test_an_identical_reopen_returns_the_same_session_and_the_current_cursor(self):
         first = self.call(self.open_request("history", data=HISTORY_BYTES))

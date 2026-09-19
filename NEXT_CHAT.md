@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t077/bind-crash-tail` — `main` @ `3e9c525`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t078/tcb-floor-over-the-whole-set` — `main` @ `7356c80`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #244 · branch `t077/bind-crash-tail`** (base `main`, tip `3e9c525`, task T-077).
+> **⏭️ CURRENT ACTIVE: PR #245 · branch `t078/tcb-floor-over-the-whole-set`** (base `main`, tip `7356c80`, task T-078).
 >
-> the crash family closed in section 3, and a floor defended twice
+> the TCB floor asserted over the whole set, not one sample
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

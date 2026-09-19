@@ -459,6 +459,38 @@ mod tests {
     }
 
     #[test]
+    fn nm_tcb_08_any_runtime_principal_collapsed_onto_login_blocks_and_names_itself() {
+        // NM-TCB-08 -- verifier == renderer. The row is the BROKER (the trusted verifier) collapsed
+        // onto the interactive login SID, which nm_tcb_06 does not cover: that one collapses the
+        // SIDECAR. Rather than add a second single-principal case, this loops all seven and asserts
+        // the verdict names the principal that was collapsed -- so it covers NM-TCB-08 and
+        // generalises NM-TCB-06 in one place.
+        //
+        // The (b) loop visits RUNTIME_PRINCIPALS in order and returns on the first hit, so exactly
+        // one principal is collapsed per iteration and the reported one must be it.
+        for &p in RUNTIME_PRINCIPALS.iter() {
+            let mut s = sids();
+            let login = s.login.clone();
+            match p {
+                Principal::Broker => s.broker = login,
+                Principal::Authority => s.authority = login,
+                Principal::Sidecar => s.sidecar = login,
+                Principal::Supervisor => s.supervisor = login,
+                Principal::Recorder => s.recorder = login,
+                Principal::Executor => s.executor = login,
+                Principal::Signer => s.signer = login,
+            }
+            assert_eq!(
+                verify_distinct_principals(&s),
+                Err(WindowsBrokerViolation::PrincipalIsLoginSid(p)),
+                "NM-TCB-08: {p:?} collapsed onto the login SID was not refused as itself"
+            );
+        }
+        // The positive control: the untouched fixture passes, so the loop is not vacuous.
+        assert!(verify_distinct_principals(&sids()).is_ok());
+    }
+
+    #[test]
     fn nm_tcb_09_distinct_principals_blocks_broker_equal_to_authority() {
         // NM-TCB-09 — the broker SID equal to the authority SID is refused as PrincipalCollision(Broker, Authority).
         // §0.W.3 test (d) P0-1: the broker can never be the authority.
