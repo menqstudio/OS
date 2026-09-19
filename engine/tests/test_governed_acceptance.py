@@ -1983,6 +1983,57 @@ class ConstructionTests(_Case):
         with self.assertRaises(SupervisorError):
             self.acceptance_config(allowlist=frozenset({"claude-sonnet-5"}))
 
+    def test_nm_tcb_25_an_allowlist_mutated_after_signing_leaves_the_record_verifying_identically(self):
+        """NM-TCB-25 -- the execution allowlist is an input to ACCEPTANCE and to nothing else.
+
+        A signed receipt is a claim about what happened, and what happened does not change when a
+        deployment edits its allowlist afterwards. The turn below is signed under an allowlist that
+        holds its profile; the allowlist is then emptied, which is proved to be a real mutation by a
+        fresh turn being refused; and the already-signed envelope still verifies over the exact bytes
+        it was signed over.
+        """
+        # 1. A real turn under a real allowlist, driven through the real front door to STATUS_SIGNED.
+        document, reply = self.run_turn()
+        self.assertEqual(reply["status"], gtr.STATUS_SIGNED)
+        envelope_bytes = unb64u(reply["envelope_jcs_b64"])
+        signature = reply["signature_b64"]
+        self.assertTrue(
+            self.receipt_key.verify(envelope_bytes, signature),
+            "the envelope must verify over the exact transported bytes before anything is mutated")
+        self.assertEqual(self.acceptance_row(document)["generation_config_handle"], sha(GENCFG_BYTES))
+
+        # 2. The allowlist is emptied -- and the mutation is REAL, not merely constructed: a fresh
+        #    turn under the new config is refused by name. Without this the next assertion would be
+        #    satisfied by a mutation that changed nothing.
+        emptied = self.acceptance_config(allowlist=frozenset())
+        self.assertEqual(emptied.execution_allowlist, frozenset())
+        fresh, _handle = self.ready_turn(nonce="550e8400-e29b-41d4-a716-446655440001")
+        self.assertRefused(self.trigger(fresh, driver=self.driver(config=emptied)),
+                           "model_profile_unknown")
+
+        # 3. The record signed BEFORE the mutation verifies identically -- same bytes, same signature,
+        #    same verdict. Nothing about it was ever a function of the allowlist.
+        self.assertTrue(
+            self.receipt_key.verify(envelope_bytes, signature),
+            "NM-TCB-25: an allowlist edited after signing must not invalidate a signed receipt")
+        self.assertEqual(unb64u(reply["envelope_jcs_b64"]), envelope_bytes)
+
+        # 4. The structural half, because (3) would keep passing for an OLD record even if a
+        #    verification path started consulting the allowlist tomorrow. Measured, not described:
+        #    the allowlist is read on exactly one decision path in the whole runtime, at acceptance.
+        runtime = pathlib.Path(__file__).resolve().parents[1] / "runtime"
+        reads = [
+            line.strip()
+            for line in (runtime / "governed_acceptance.py").read_text(encoding="utf-8").splitlines()
+            if "config.execution_allowlist" in line
+        ]
+        self.assertEqual(len(reads), 1, f"the allowlist is read on {len(reads)} paths: {reads}")
+        self.assertIn("generation_config_handle", reads[0])
+        self.assertNotIn(
+            "execution_allowlist",
+            (runtime / "isolated_signer.py").read_text(encoding="utf-8"),
+            "the signer must not know what an execution allowlist is")
+
     def test_an_empty_allowlist_is_constructible_and_refuses_every_turn(self):
         """The `SignerConfig.allowed_policies` precedent: an unprovisioned allowlist is not
         an open one."""
