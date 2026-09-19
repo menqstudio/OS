@@ -103,15 +103,51 @@ class StampedShaTests(unittest.TestCase):
         self.assertEqual(st.stamped_sha(f"AUDIT_CANDIDATE_HEAD: {OTHER}\r\n"), OTHER)
 
 
+#: The attribution line every pull request in this repository ends with — AFTER the marker. This
+#: constant is the whole point of `MarkerPositionTests`: `restamp()` used to relocate the marker
+#: past it, so a body that already named the pushed head came back different and got written.
+FOOTER = "\n\n\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)\n"
+
+
+class MarkerPositionTests(unittest.TestCase):
+    """A correct marker stays where it is, even when something follows it.
+
+    The measured defect: `restamp()` stripped every marker and re-appended at the end, so a body
+    whose marker was already right but not LAST came back reordered. The caller then wrote it, and a
+    write fires `pull_request: edited`, which ci.yml subscribes to by design — all 22 jobs restart
+    and the run in flight is cancelled. 2026-09-19: 26 `ci` pull-request runs over 11 heads, 19
+    cancelled, every head with more than one run.
+    """
+
+    def test_a_correct_marker_with_a_footer_after_it_is_left_alone(self):
+        body = f"## T\n\nProse.\n\nAUDIT_CANDIDATE_HEAD: {SHA}{FOOTER}"
+        self.assertEqual(st.restamp(body, SHA), body)
+
+    def test_a_correct_marker_that_is_last_is_left_alone(self):
+        body = f"## T\n\nProse.\n\nAUDIT_CANDIDATE_HEAD: {SHA}\n"
+        self.assertEqual(st.restamp(body, SHA), body)
+
+    def test_a_stale_marker_with_a_footer_is_replaced_and_still_ends_up_unique(self):
+        body = f"## T\n\nProse.\n\nAUDIT_CANDIDATE_HEAD: {OTHER}{FOOTER}"
+        out = st.restamp(body, SHA)
+        self.assertNotEqual(out, body)
+        self.assertEqual(st.stamped_sha(out), SHA)
+        self.assertEqual(len(st.MARKER.findall(out)), 1)
+
+    def test_prose_that_merely_mentions_the_marker_name_is_not_a_marker(self):
+        # This PR's own description quotes `AUDIT_CANDIDATE_HEAD` in a sentence. Only a line that
+        # is the marker counts, or the tool would refuse to stamp any PR that talks about itself.
+        body = f"anchored in the body as `AUDIT_CANDIDATE_HEAD`\n\nAUDIT_CANDIDATE_HEAD: {SHA}\n"
+        self.assertEqual(st.stamped_sha(body), SHA)
+
+
 class WriteDecisionTests(unittest.TestCase):
     """Whether `main()` WRITES — the layer `test_is_idempotent` does not reach.
 
-    `restamp()` being idempotent says nothing about the tool leaving the body alone, and for a long
-    while the tool did not: its guard compared a freshly built LF body against the CRLF one GitHub
-    returns, so it could never match and every run PATCHed. A PATCH fires `pull_request: edited`,
-    which ci.yml subscribes to on purpose, so a no-op stamp started 21 jobs and cancelled the run
-    in flight. These tests drive `main()` with `gh` and the writer replaced, and assert on the
-    decision rather than on the string.
+    `restamp()` being idempotent on a marker-last body says nothing about the tool leaving a real
+    pull request's body alone, and it did not: with the attribution line after the marker the guard
+    saw a difference and PATCHed. These tests drive `main()` with `gh` and the writer replaced, and
+    assert on the decision rather than on the string.
     """
 
     def setUp(self):
@@ -145,13 +181,20 @@ class WriteDecisionTests(unittest.TestCase):
         finally:
             sys.argv = argv
 
-    def test_a_crlf_body_already_at_the_pushed_sha_is_not_rewritten(self):
-        code = self._drive(f"## T\r\n\r\nprose\r\n\r\nAUDIT_CANDIDATE_HEAD: {SHA}\r\n", SHA)
-        self.assertEqual(code, 0)
+    def test_a_real_pr_body_already_at_the_pushed_sha_is_not_rewritten(self):
+        """The regression, in the shape a real pull request has: footer AFTER the marker."""
+        body = f"## T\n\nprose\n\nAUDIT_CANDIDATE_HEAD: {SHA}{FOOTER}"
+        self.assertEqual(self._drive(body, SHA), 0)
         self.assertEqual(self.written, [], "the body was rewritten though it already named the tip")
 
-    def test_an_lf_body_already_at_the_pushed_sha_is_not_rewritten(self):
+    def test_a_marker_last_body_is_not_rewritten(self):
         self.assertEqual(self._drive(st.restamp("prose", SHA), SHA), 0)
+        self.assertEqual(self.written, [])
+
+    def test_a_crlf_body_already_at_the_pushed_sha_is_not_rewritten(self):
+        """Defensive: no current `gh` read returns CRLF, but #183 recorded one that did."""
+        code = self._drive(f"## T\r\n\r\nprose\r\n\r\nAUDIT_CANDIDATE_HEAD: {SHA}\r\n", SHA)
+        self.assertEqual(code, 0)
         self.assertEqual(self.written, [])
 
     def test_a_stale_sha_is_rewritten(self):

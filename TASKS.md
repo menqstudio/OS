@@ -6,7 +6,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
 >
-> the idempotence guard in stamp_pr_head.py compared an LF body against GitHub CRLF, so every stamp rewrote the body and ci.yml, which listens for edited by design, restarted 21 jobs
+> restamp() moved an already-correct AUDIT_CANDIDATE_HEAD marker to the end of the body, past the attribution line every pull request ends with, so the body changed and ci.yml, which listens for edited, restarted 21 jobs
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-071** | **Every stamp burned a full `ci` run** — the idempotence guard compared an LF body against GitHub's CRLF one, never fired, and `edited` restarts 21 jobs. 19 of today's 26 runs cancelled ◑ | Bro | Review | `#231` |
+| **T-071** | **Every stamp burned a full `ci` run** — `restamp()` moved a correct marker past the attribution line, so the body changed and `edited` restarts 21 jobs. 19 of today's 26 runs cancelled ◑ | Bro | Review | `#231` |
 | **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still. Pin → 46.0.7, waivers 7 → 4; a gate now refuses a patch-level fix or a lost premise ◑ | Bro | Review | merged `#230` |
 | **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently, reddening `main`. Render-assigned refs ◑ | Bro | Review | merged `#227` |
 | **T-068** | **The frontend suite oversubscribed the machine** — vitest's default spent half its time in `environment`; `maxWorkers: 4` halves it ◑ | Bro | Review | merged `#223` |

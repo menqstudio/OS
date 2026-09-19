@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
 >
-> the idempotence guard in stamp_pr_head.py compared an LF body against GitHub CRLF, so every stamp rewrote the body and ci.yml, which listens for edited by design, restarted 21 jobs
+> restamp() moved an already-correct AUDIT_CANDIDATE_HEAD marker to the end of the body, past the attribution line every pull request ends with, so the body changed and ci.yml, which listens for edited, restarted 21 jobs
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

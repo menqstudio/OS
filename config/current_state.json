@@ -116,12 +116,12 @@
     "number": 231,
     "branch": "fix/stamp-idempotence-crlf",
     "state": "open",
-    "what": "T-071: stamp_pr_head.py PATCHed the PR body even when it already named the pushed head, and a body edit is a ci trigger by design, so the repository ritual itself guaranteed one wasted 21-job run per pull request",
-    "note": "the idempotence guard in stamp_pr_head.py compared an LF body against GitHub CRLF, so every stamp rewrote the body and ci.yml, which listens for edited by design, restarted 21 jobs",
+    "what": "T-071: stamp_pr_head.py rewrote the PR body even when it already named the pushed head, because restamp() re-appends the marker at the end and every pull request here has an attribution line after it; a body edit is a ci trigger by design, so the ritual cost one wasted 21-job run per pull request",
+    "note": "restamp() moved an already-correct AUDIT_CANDIDATE_HEAD marker to the end of the body, past the attribution line every pull request ends with, so the body changed and ci.yml, which listens for edited, restarted 21 jobs",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #231 (fix/stamp-idempotence-crlf), task T-071: T-071: stamp_pr_head.py PATCHed the PR body even when it already named the pushed head, and a body edit is a ci trigger by design, so the repository ritual itself guaranteed one wasted 21-job run per pull request Next: five gates print OS-native path separators in their RED messages, two of check_audit_actor s own tests failing on Windows for it; then the four remaining negative-matrix section-2 rows",
+    "current": "PR #231 (fix/stamp-idempotence-crlf), task T-071: T-071: stamp_pr_head.py rewrote the PR body even when it already named the pushed head, because restamp() re-appends the marker at the end and every pull request here has an attribution line after it; a body edit is a ci trigger by design, so the ritual cost one wasted 21-job run per pull request Next: five gates print OS-native path separators in their RED messages, two of check_audit_actor s own tests failing on Windows for it; then the four remaining negative-matrix section-2 rows",
     "_note": "The carrier is current_workflow_pr (#231 on fix/stamp-idempotence-crlf). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

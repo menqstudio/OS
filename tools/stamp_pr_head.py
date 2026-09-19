@@ -49,9 +49,19 @@ def run(*args: str) -> str:
 def restamp(body: str, sha: str) -> str:
     """The body with EXACTLY one marker, naming `sha`.
 
-    Every existing marker goes first. Appending without stripping is how a body ends up with two,
-    and `check_repo_state.py` requires exactly one -- two markers is the same red as none.
+    A body that ALREADY carries exactly one marker naming `sha` is returned untouched. That is not
+    a micro-optimisation: stripping and re-appending MOVES the marker to the end, so a body with
+    anything after it -- this project's pull requests end with an attribution line, after the
+    marker -- came back different even though it already said the right thing, and the caller wrote
+    it. A write fires `pull_request: edited`, which ci.yml subscribes to on purpose, so all 22 jobs
+    restarted and the run in flight was cancelled. Measured 2026-09-19: 26 `ci` pull-request runs
+    over 11 heads, 19 of them cancelled, every head with more than one run.
+
+    Otherwise every existing marker goes first. Appending without stripping is how a body ends up
+    with two, and `check_repo_state.py` requires exactly one -- two markers is the same red as none.
     """
+    if stamped_sha(body) == sha:
+        return body
     return f"{MARKER.sub('', body).rstrip()}\n\nAUDIT_CANDIDATE_HEAD: {sha}\n"
 
 
@@ -69,12 +79,15 @@ def markers(text: str) -> list[str]:
 def stamped_sha(text: str) -> str | None:
     """The sha `text` is already stamped at, or None if it is not stamped at exactly one.
 
-    Built on `markers()`, which is line-ending agnostic three times over: the pattern ends
-    `\\s*$`, every match is `.strip()`ed, and CRLF is normalised first. Measured: that
-    normalisation changes no answer on any body shape tried, so it is belt and braces rather
-    than the load-bearing part -- worth saying because the bug this function exists to kill was
-    NOT in `markers()`. It was in the caller, which compared a freshly built LF body against the
-    CRLF one GitHub returns instead of asking `markers()` anything at all.
+    This is the question the write decision actually turns on, and asking it about the MARKER is
+    what makes the decision robust. The old decision compared whole documents -- `restamp(body) ==
+    body` -- which answers "would rewriting change anything", not "does it already say the right
+    thing", and those differ the moment a body has text after the marker.
+
+    Built on `markers()`, which is line-ending agnostic three times over: the pattern ends `\\s*$`,
+    every match is `.strip()`ed, and CRLF is normalised first. Measured over five body shapes, that
+    normalisation changes no answer, and no current `gh` read of a body returns CRLF at all -- it is
+    belt and braces against the #183 observation, not the load-bearing part.
 
     Zero markers and two markers both answer None: both are states `check_repo_state.py` refuses,
     and neither is "already stamped".
@@ -130,10 +143,10 @@ def main() -> int:
     # repository states about `main` in that same file. Measured 2026-09-19: 26 `ci` runs over 11
     # heads, 19 of them cancelled, every head with more than one run.
     #
-    # The check below used to be `restamp(body, pushed) == body`, which could never be true: the
-    # body comes from GitHub with CRLF and `restamp` builds LF, so the branch was unreachable and
-    # every stamp wrote. The fix is not "handle CRLF" -- `markers()` already did, and its own test
-    # said so -- it is to ask the question in terms of the marker instead of the whole document.
+    # The check below used to be `restamp(body, pushed) == body`. That fires for a body whose marker
+    # is LAST, and not otherwise: `restamp` re-appends at the end, so a body with an attribution
+    # line after the marker came back reordered and was written even though it already named the
+    # pushed head. Every pull request here ends that way, so every one paid for it once.
     if stamped_sha(meta["body"]) == pushed:
         print(f"already stamped at {pushed[:8]}; the body is not rewritten")
         return 0
