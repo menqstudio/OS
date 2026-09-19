@@ -1474,7 +1474,8 @@ mod tests {
     /// refused rather than joined: it is the only way a publication could be made to land on a
     /// pinned store INPUT (`system`/`history`/`generation_config`), or outside the store entirely.
     #[test]
-    fn a_store_publication_refuses_a_name_that_is_not_a_content_address() {
+    fn nm_fs_04_a_store_publication_refuses_a_name_that_is_not_a_content_address() {
+        // NM-FS-04 — a store handle carrying a traversal (`../`) or a nested segment is refused before any path join.
         let hostile = [
             "",
             "system",

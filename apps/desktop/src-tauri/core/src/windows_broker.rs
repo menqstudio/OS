@@ -444,20 +444,23 @@ mod tests {
     }
 
     #[test]
-    fn distinct_principals_blocks_an_unset_sid() {
+    fn nm_tcb_07_distinct_principals_blocks_an_unset_sid() {
+        // NM-TCB-07 — an unset principal SID (one of the seven left empty) is refused as PrincipalUnset.
         let mut s = sids(); s.recorder = String::new();
         assert_eq!(verify_distinct_principals(&s), Err(WindowsBrokerViolation::PrincipalUnset(Principal::Recorder)));
     }
 
     #[test]
-    fn distinct_principals_blocks_any_principal_collapsed_onto_login() {
+    fn nm_tcb_06_distinct_principals_blocks_any_principal_collapsed_onto_login() {
+        // NM-TCB-06 — the sidecar collapsed onto the login SID is refused as PrincipalIsLoginSid(Sidecar).
         // §0.W.3 test (c)/(e): the sidecar (or any of the seven) defaulting to the login SID Blocks.
         let mut s = sids(); s.sidecar = s.login.clone();
         assert_eq!(verify_distinct_principals(&s), Err(WindowsBrokerViolation::PrincipalIsLoginSid(Principal::Sidecar)));
     }
 
     #[test]
-    fn distinct_principals_blocks_broker_equal_to_authority() {
+    fn nm_tcb_09_distinct_principals_blocks_broker_equal_to_authority() {
+        // NM-TCB-09 — the broker SID equal to the authority SID is refused as PrincipalCollision(Broker, Authority).
         // §0.W.3 test (d) P0-1: the broker can never be the authority.
         let mut s = sids(); s.authority = s.broker.clone();
         assert_eq!(
@@ -467,7 +470,8 @@ mod tests {
     }
 
     #[test]
-    fn distinct_principals_blocks_any_two_sharing_a_sid() {
+    fn nm_tcb_05_distinct_principals_blocks_any_two_sharing_a_sid() {
+        // NM-TCB-05 — any two of the seven runtime principals sharing a SID is refused as PrincipalCollision.
         let mut s = sids(); s.signer = s.supervisor.clone();
         assert_eq!(
             verify_distinct_principals(&s),

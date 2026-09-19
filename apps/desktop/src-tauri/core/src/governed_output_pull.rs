@@ -742,7 +742,9 @@ mod tests {
     }
 
     #[test]
-    fn a_signed_but_absurd_output_length_is_refused_before_any_allocation() {
+    fn nm_frame_11_a_signed_but_absurd_output_length_is_refused_before_any_allocation() {
+        // NM-FRAME-11 — oversize output pull: output_bytes above the 8 MiB bound ⇒ OutputTooLarge ⇒ Block,
+        // before any buffer is reserved.
         assert_eq!(expected_chunk_count(MAX_OUTPUT_BYTES + 1), Err(PullError::OutputTooLarge));
         let mut called = false;
         let empty_sha = sha256_hex(b"");
@@ -808,7 +810,8 @@ mod tests {
     // ---- Every gate, one at a time ---------------------------------------------------------------
 
     #[test]
-    fn a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate() {
+    fn nm_output_01_a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate() {
+        // NM-OUTPUT-01 — single-byte flip: SHA256(bytes) != envelope.output_sha256 ⇒ DigestMismatch ⇒ Block.
         let output = b"hello governed world".to_vec();
         let sha = sha256_hex(&output);
         let mut tampered = output.clone();
@@ -818,7 +821,26 @@ mod tests {
     }
 
     #[test]
-    fn a_truncated_chunk_fails_the_length_gate() {
+    fn nm_replay_10_a_replayed_chunk_with_mutated_bytes_fails_the_digest_gate() {
+        // NM-REPLAY-10 — replayed output chunk: the supervisor re-serves an already-served chunk with mutated
+        // bytes, echoing the seq it was asked for (so the echo and length gates pass) ⇒ reassembled
+        // SHA256 != envelope.output_sha256 ⇒ DigestMismatch ⇒ Block.
+        let output: Vec<u8> = (0..(OUTPUT_CHUNK_BYTES * 2)).map(|i| (i % 251) as u8).collect();
+        let sha = sha256_hex(&output);
+        let mut replayed = output[..OUTPUT_CHUNK_BYTES as usize].to_vec();
+        replayed[0] ^= 0x01;
+        let err = pull(&output, &sha, |req| {
+            let seq = req["seq"].as_u64().unwrap();
+            let chunk = if seq == 0 { &output[..OUTPUT_CHUNK_BYTES as usize] } else { &replayed[..] };
+            Ok(ok_reply(TOKEN, seq, chunk, seq == 1))
+        })
+        .unwrap_err();
+        assert_eq!(err, PullError::DigestMismatch);
+    }
+
+    #[test]
+    fn nm_output_02_a_truncated_chunk_fails_the_length_gate() {
+        // NM-OUTPUT-02 — length mismatch: len(bytes) != envelope.output_bytes ⇒ LengthMismatch ⇒ Block.
         let output = b"hello governed world".to_vec();
         let sha = sha256_hex(&output);
         let short = output[..output.len() - 1].to_vec();
@@ -837,7 +859,9 @@ mod tests {
     /// A CRLF conversion keeps the text meaningful and changes the bytes — §4.6 forbids exactly this
     /// class of "helpful" normalization, and the raw-byte digest is what notices.
     #[test]
-    fn a_crlf_normalized_stream_blocks() {
+    fn nm_output_03_a_crlf_normalized_stream_blocks() {
+        // NM-OUTPUT-03 — normalization smuggle: a CRLF-normalized stream is measured and hashed as RAW bytes
+        // (no normalization before the check) ⇒ Block.
         let output = b"line one\nline two\n".to_vec();
         let sha = sha256_hex(&output);
         let converted = b"line one\r\nline two\r\n".to_vec();

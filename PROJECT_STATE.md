@@ -14,9 +14,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #227 · branch `fix/approvals-keydown-race`** (base `main`, tip `82ace2d`, task T-069).
+> **⏭️ CURRENT ACTIVE: PR #228 · branch `t062/bind-rust-2026-09-19`** (base `main`, tip `03c2d3d`, task T-062).
 >
-> T-069: the §D keydown listener was a commit behind its data; it reads refs assigned during render now. Two mutants RED. This is the race that reddened main at 82ace2dc.
+> T-062: 36 Rust negative-matrix rows bound to their existing tests, each mutation-verified; registry 113 / 54 / 75. NM-XBIND-13 honestly left unreviewed.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

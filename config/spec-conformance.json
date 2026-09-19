@@ -383,8 +383,8 @@
         "test_an_unprovisioned_socket_emits_no_governed_frame",
         "test_the_literal_maximum_reply_fits_the_socket_on_the_supervisor_leg",
         "test_neither_framed_ipc_bound_could_ever_carry_a_chunk",
-        "a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate",
-        "a_truncated_chunk_fails_the_length_gate",
+        "nm_output_01_a_one_byte_substitution_fails_the_digest_gate_and_not_the_length_gate",
+        "nm_output_02_a_truncated_chunk_fails_the_length_gate",
         "an_eof_that_disagrees_with_the_signed_length_blocks",
         "a_zero_byte_output_is_one_read_and_verifies",
         "the_output_pull_is_not_reachable_from_the_webview"
