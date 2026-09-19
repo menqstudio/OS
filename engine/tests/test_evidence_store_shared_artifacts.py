@@ -450,8 +450,9 @@ class NegativeMatrixHardlinkTests(unittest.TestCase):
         """
         case = "NM-CONC-07"
         with tempfile.TemporaryDirectory() as tmp:
+            # Not pre-created, for the reason spelled out in the NM-FS-05 test below.
             root = pathlib.Path(tmp) / "store"
-            root.mkdir()
+            self.assertFalse(root.exists(), f"{case}: the store directory must NOT be pre-created -- `_harden_dir` only CHECKS an existing one, and a mkdir under the default umask is 0o755, which posix refuses as world-accessible")
             store = EvidenceStore(root)
 
             first = store.publish(b"artifact")
@@ -492,10 +493,15 @@ class NegativeMatrixHardlinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
             root = base / "store"
-            root.mkdir()
             attacker = base / "attacker"
             attacker.mkdir()
 
+            # NOT pre-created: `_harden_dir` creates AND hardens a missing directory (0o700 on
+            # posix, a private DACL on nt), but only CHECKS an existing one -- and a `mkdir()` under
+            # the default umask is 0o755, which it refuses as world-accessible. Letting the store
+            # make its own directory exercises the production path and is stricter than anything set
+            # here by hand.
+            self.assertFalse(root.exists(), f"{case}: the store directory must NOT be pre-created -- `_harden_dir` only CHECKS an existing one, and a mkdir under the default umask is 0o755, which posix refuses as world-accessible")
             store = EvidenceStore(root)
             handle = store.publish(b"original")
             self.assertEqual(store.read(handle), b"original",
