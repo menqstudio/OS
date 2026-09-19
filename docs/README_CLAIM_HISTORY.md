@@ -685,3 +685,38 @@ ignored.
 controls 59 → **60** (`40 check · 20 tool`) — so the page cannot name a head where its own numbers hold.
 The front page carries the new numbers; its *Measured at* line and §5's rows are paid in the pull
 request after this one, against the head this one lands at.
+
+### 10d. The gate's first CI run failed, on the gate
+
+`Tools · gate self-tests on Windows (python)` went red on this branch's first run, in the gate's own
+real-repository test:
+
+```
+FAIL: test_the_sheets_this_repository_ships_pass_every_rule
+AssertionError: Lists differ: ['docs/brand/readme/architecture-dark.svg: …'] != []
+```
+
+Fourteen sheets, all reported for rule 10 — CRLF line endings. Every one of them is LF in this
+repository, and green locally, twice. **The rule was measuring git's configuration rather than the
+commit.** `.gitattributes` pinned `*.sh` and the hooks to LF and nothing else; this box has
+`core.autocrlf=input`, so a checkout leaves LF alone, and `windows-latest` defaults to `true`, so its
+checkout converts every text file on the way to disk. The gate reads the bytes it finds in the working
+tree, so on that runner it found CRLF and said so — correctly, about the wrong thing.
+
+Reproduced locally rather than reasoned about, by cloning the pushed head the way the runner does:
+
+```
+git -c core.autocrlf=true clone -b t085/artwork-geometry-gate …
+  hero-light.svg in that clone: CRLF pairs = 49
+```
+
+**The fix is not to drop the rule.** `.gitattributes` now carries `*.svg text eol=lf`, with the
+measurement above as its reason, so the working tree is LF wherever it is checked out and the property
+the gate checks is true rather than local. The committed bytes were already LF, so nothing's content
+changed. The gate's message names the attribute, so a reader who deletes the line is told where the
+red came from.
+
+The order here is the point: a gate whose first run is also its first green run has not been tested on
+the platform it will fail on. This one failed on arrival, on a job that is **not** a required context —
+which is exactly what that job is for, and the reason `config/required-checks.json` still keeps it out
+of `contexts` with a written reason.

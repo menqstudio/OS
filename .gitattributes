@@ -8,3 +8,11 @@
 # and every line of it, and the canonical update law would silently stop running
 # locally.
 tools/githooks/* text eol=lf
+# The README's figures must stay LF in the WORKING TREE on every platform, because
+# `tools/check_artwork_geometry.py` reads the bytes it finds there and one of its rules is that
+# these files are LF. MEASURED: without this line the gate is green on a box whose
+# `core.autocrlf` is `input` and RED on `windows-latest`, whose default is `true` -- the runner's
+# checkout converts every sheet and the gate then reports fourteen files for a property of git's
+# configuration rather than of the commit. The committed bytes were already LF, so this line
+# changes no content; it makes the property the gate checks true wherever the tree is checked out.
+*.svg text eol=lf

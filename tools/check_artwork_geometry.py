@@ -200,7 +200,11 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
         if raw.startswith(b"\xef\xbb\xbf"):
             problems.append(f"{rel}: starts with a UTF-8 BOM")
         if b"\r\n" in raw:
-            problems.append(f"{rel}: holds CRLF line endings; these files are LF")
+            problems.append(f"{rel}: holds CRLF line endings. These files are LF, and "
+                            f".gitattributes pins `*.svg text eol=lf` so that is true "
+                            f"wherever the tree is checked out -- a Windows runner whose "
+                            f"core.autocrlf is `true` converts them otherwise, and this "
+                            f"gate would then report git configuration as artwork")
         stray = {b for b in raw if b < 0x20 and b not in (0x09, 0x0A)}
         if stray:
             names = ", ".join(f"0x{b:02x}" for b in sorted(stray))
