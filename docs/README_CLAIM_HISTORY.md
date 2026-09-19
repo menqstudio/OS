@@ -369,6 +369,8 @@ said, and what it was not filled with. `Landed at` means landed.
 | `830fcec` | 85 → **89** pull requests, 249 → **257** files, 48,768 → **49,977** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
 | `75fca65` | gate scripts 39 → **40**, declared controls 59 → **60** (40 check · 20 tool) — `tools/check_artwork_geometry.py`, the gate §9 said did not exist | `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of `config/control-invocation.json` (60 entries) |
 | `75fca65` | 89 → **91** pull requests, 257 → **261** files, 49,977 → **50,787** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
+| `a94513e` | **Phase 2 closed, 11/11** — the roadmap figure said *"PHASES 1–10 — ALL PARTLY BUILT"* and seven of eleven now have every box ticked; the sheet draws each phase's own count and its alt text was re-written with it | `grep -c '^- \[x\]' docs/roadmap/phase-*.md` against `grep -c '^- \[ \]'` |
+| `a94513e` | 91 → **96** pull requests, 261 → **281** files, 50,787 → **53,749** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
 
 **Three landings paid at once, which is what the rule is for.** #244, #245 and #246 each moved a counted number and each deliberately left the page alone. Re-truing after every one would have meant three pull requests whose only content was arithmetic; the rule says name the head the numbers hold at, and `6c59a67` is the head all three hold at. The artwork in §8 landed in the same commit because it belongs to the same page.
 

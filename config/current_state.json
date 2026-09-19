@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "29d69e2477034e34e59fcb145e0a76736eb4d713",
+  "settled_at_main_head": "a94513eb52c1f2d8e2a6d09b9a847fa46b91d531",
   "sync": {
-    "baseline_main_head_at_sync": "29d69e2477034e34e59fcb145e0a76736eb4d713",
-    "snapshot_branch": "t021d/approvals-page-request",
+    "baseline_main_head_at_sync": "a94513eb52c1f2d8e2a6d09b9a847fa46b91d531",
+    "snapshot_branch": "t089/roadmap-figure-retrued",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t021d/approvals-page-request"
+    "branch": "t089/roadmap-figure-retrued"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 257,
-    "branch": "t021d/approvals-page-request",
+    "number": 259,
+    "branch": "t089/roadmap-figure-retrued",
     "state": "open",
-    "what": "the approvals page carries the engine request in a section that names which system it belongs to, usable only when the engine's own queue read succeeded because an ask needs a task id and the state the engine holds it in. Seven specs, including that no verdict command is sent and that an outcome claiming a decision is not rendered as one. And test_roadmap_split gained the two enumerations a roadmap change needs -- boxes closed since the split, and prose the roadmap gained -- each entry carrying its reason, because a box cannot move without a record",
-    "note": "phase 2 closed, 11 of 11",
+    "what": "seven of eleven phases now have every Definition-of-Done box ticked, and the front page's roadmap figure still drew all ten identically under ALL PARTLY BUILT. The sheet draws each phase's own count and a green stroke on the six that closed, keeping the hatch on every one because a solid fill would read as a guarantee; the legend carries the caveat that a ticked box is the Builder's own claim; the alt text was re-written line by line because a description that is false is worse than none; and both language summaries say the same thing",
+    "note": "the roadmap sheet said all ten phases were partly built",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #257 (t021d/approvals-page-request), task T-021d: the approvals page carries the engine request in a section that names which system it belongs to, usable only when the engine's own queue read succeeded because an ask needs a task id and the state the engine holds it in. Seven specs, including that no verdict command is sent and that an outcome claiming a decision is not rendered as one. And test_roadmap_split gained the two enumerations a roadmap change needs -- boxes closed since the split, and prose the roadmap gained -- each entry carrying its reason, because a box cannot move without a record Next: phase 1's two open rows: the code for the governed output pull is in broker/src/ladder_executor.rs and the row is open because build_governed_executor serves UpstreamBlockedExecutor without BROPS_BROKER_CONFIG -- a wiring gap, not missing code",
-    "_note": "The carrier is current_workflow_pr (#257 on t021d/approvals-page-request). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #259 (t089/roadmap-figure-retrued), task T-089: seven of eleven phases now have every Definition-of-Done box ticked, and the front page's roadmap figure still drew all ten identically under ALL PARTLY BUILT. The sheet draws each phase's own count and a green stroke on the six that closed, keeping the hatch on every one because a solid fill would read as a guarantee; the legend carries the caveat that a ticked box is the Builder's own claim; the alt text was re-written line by line because a description that is false is worse than none; and both language summaries say the same thing Next: the merge queue is blocked by an upstream npm registry 400 on the audit endpoint, reproduced locally and unrelated to any change here; the custody wiring the Owner authorised is the next build",
+    "_note": "The carrier is current_workflow_pr (#259 on t089/roadmap-figure-retrued). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "29d69e2477034e34e59fcb145e0a76736eb4d713",
+      "head": "a94513eb52c1f2d8e2a6d09b9a847fa46b91d531",
       "conclusion": "success",
-      "run_id": 35455714960,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 29d69e2, run 35455714960."
+      "run_id": 35456443473,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at a94513e, run 35456443473."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
