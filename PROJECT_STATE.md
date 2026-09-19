@@ -1,18 +1,18 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — thirteen pull requests merged (`#219`–`#231`), `main` at
-`c080cce`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
+**Last updated · Վերջին թարմացում:** 2026-09-19 — fourteen pull requests merged (`#219`–`#232`), `main` at
+`9c76349`, its own `ci` green 7/7. The supply-chain gate is green again (three advisories lifted), the `T-055`
 promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
-closed, and the negative matrix read: **113 implemented · 54 blocked · 75 unreviewed**, from 39 / 21 / 182.
+closed, and the negative matrix read: **116 implemented · 54 blocked · 72 unreviewed**, from 39 / 21 / 182.
 Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
 against the grant's `egress` table, yet a permitted call is still refused for want of a transport.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #232 · branch `fix/gate-messages-posix-paths`** (base `main`, tip `c080cce`, task T-072).
+> **⏭️ CURRENT ACTIVE: PR #233 · branch `t062/bind-nm-ipc-06`** (base `main`, tip `9c76349`, task T-062).
 >
-> the tools gate suite had never run on Windows in CI, so five gates printed OS-native path separators and two of check_audit_actor own tests were red on the Owner box while the wall stayed green
+> three more negative-matrix rows are bound to tests that fail when their control is removed: NM-IPC-06 to the renderer deny-list check, NM-TIME-02 and NM-TIME-19 to the timestamp predicate and the evidence field set
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

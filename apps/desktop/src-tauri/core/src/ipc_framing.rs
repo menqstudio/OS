@@ -182,8 +182,23 @@ mod tests {
         assert_eq!(d.next_frame(), Err(FrameError::DeclaredOversize(u32::MAX as usize)));
     }
 
+    /// `NM-IPC-06` — "Renderer → any service IPC". The matrix row names its spec section and
+    /// `config/negative-matrix.json` carries it; this comment deliberately does NOT repeat the
+    /// number, because `check_spec_references.py` reads a § in the source as a claim that the
+    /// whole section holds, and what was established here is one row. The renderer/login UID is on the deny
+    /// list and is refused by `authorize_peer` BEFORE any frame is read, so no trusted-principal
+    /// channel can be reached from the window. The row bound here is the renderer arm; the same
+    /// assertion block also covers the sidecar arm and the not-on-the-allowlist arm, which belong
+    /// to other rows and are deliberately left where they are rather than split apart.
+    ///
+    /// Order matters and is what the mutation proves: `denied` is consulted FIRST, so a renderer
+    /// gets `Denied`, not `NotAllowed`. Delete that check and the renderer still fails to connect
+    /// — for the weaker reason that it is not the broker — and a test asserting only "connection
+    /// refused" would stay green while the deny list had stopped existing.
     #[test]
-    fn peer_auth_allows_only_broker_denies_renderer_and_sidecar() {
+    fn nm_ipc_06_a_renderer_uid_is_denied_at_a_trusted_channel_door() {
+        // NM-IPC-06 — Renderer → any service IPC: the renderer/login UID is on the deny list and
+        // is refused before any frame is read, with `Denied` rather than the weaker `NotAllowed`.
         const BROKER: u32 = 5002;
         const RENDERER: u32 = 1000;
         const SIDECAR: u32 = 5004;

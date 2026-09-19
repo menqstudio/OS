@@ -56,7 +56,6 @@
     "NM-FS-05",
     "NM-FS-06",
     "NM-IPC-01",
-    "NM-IPC-06",
     "NM-MAN-06",
     "NM-MAN-12",
     "NM-NORELAUNCH-01",
@@ -91,10 +90,8 @@
     "NM-TERM-04",
     "NM-TERM-08",
     "NM-TIME-01",
-    "NM-TIME-02",
     "NM-TIME-12",
     "NM-TIME-15",
-    "NM-TIME-19",
     "NM-XBIND-03",
     "NM-XBIND-05",
     "NM-XBIND-10",
@@ -168,10 +165,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TIME-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Overflow / negative / zero",
       "section": "§1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTimeTests::test_nm_time_02_a_timestamp_outside_u64_or_a_bool_is_malformed"
     },
     "NM-TIME-03": {
       "status": "implemented",
@@ -270,10 +267,10 @@
       "blocked_on": "The §7 lease-time invariant `completed_at_ms ≤ lease_expires_at_ms` is not implemented anywhere on the verify path (identical root to NM-TIME-13 — the row differs only in HOW the stamp got past expiry, which the tree cannot distinguish because nothing reads the lease at completion). MEASURED 2026-09-19: `record_completion(completed_at_ms = lease_expires_at_ms + 1)` returned `created`, state `COMPLETED`, and `load_attestation_state` returned terminal state (completed_at_ms 1210001 vs lease_expires_at_ms 1210000). The signer's only related limb (isolated_signer.py:729-730) is a future-skew bound against its own clock, not the lease. What must exist first: a `completed_at_ms ≤ lease_expires_at_ms` refusal surfacing as governed `lease_expired`, in `governed_supervisor_ledger.record_completion` / `governed_supervisor_server.complete_governed_run` or as a lease `_ms` evidence field checked in `isolated_signer._check_timestamps`. A change to audited security code that this work is not authorised to make."
     },
     "NM-TIME-19": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Evidence seconds leak",
       "section": "§1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixTimeTests::test_nm_time_19_no_seconds_valued_timestamp_field_exists_to_leak"
     },
     "NM-REG-01": {
       "status": "implemented",
@@ -1104,10 +1101,10 @@
       "blocked_on": "This row's stated outcome is `platform_governed_execution_supported() == false`, and no function of that name is DEFINED anywhere in the tree. The only two occurrences are prose in `apps/desktop/src-tauri/win-broker/src/lib.rs` and `.../bin/restricted_launch.rs`, both saying the gate stays false. It is the §0.1 SPEC symbol; config/spec-conformance.json records §0.1 as `partial` for exactly this reason, and the three real refusals that hold the gate are named in CLAUDE.md §6. A test bound to this row would have to invent the symbol."
     },
     "NM-IPC-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Renderer → any service IPC",
       "section": "§9(j)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/ipc_framing.rs::tests::nm_ipc_06_a_renderer_uid_is_denied_at_a_trusted_channel_door"
     },
     "NM-ORACLE-01": {
       "status": "implemented",
