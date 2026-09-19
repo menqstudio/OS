@@ -35,9 +35,6 @@
     "NM-CRASH-07",
     "NM-CRASH-09",
     "NM-CRASH-11",
-    "NM-CRASH-12",
-    "NM-CRASH-13",
-    "NM-CRASH-14",
     "NM-EVID-12",
     "NM-EVID-13",
     "NM-FRAME-12",
@@ -676,22 +673,22 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-CRASH-12": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "after receipt/evidence, before terminal record",
       "section": "§5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::CrashCutsInsideCompletionTests::test_nm_crash_12_a_cut_among_the_terminal_artifacts_leaves_orphan_bytes_and_no_completion"
     },
     "NM-CRASH-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "after terminal record, before ledger `COMPLETED`",
       "section": "§5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::CrashCutsInsideCompletionTests::test_nm_crash_13_a_cut_after_the_last_publish_leaves_executing_not_completed"
     },
     "NM-CRASH-14": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "after evidence-head floor commit, before envelope response",
       "section": "§7 (P1-7)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_supervisor_server.py::CrashCutsInsideCompletionTests::test_nm_crash_14_a_lost_reply_after_the_floor_commit_retries_without_touching_the_floor"
     },
     "NM-CRASH-15": {
       "status": "blocked",
