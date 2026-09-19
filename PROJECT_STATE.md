@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #258 · branch `t087/custody-decision`** (base `main`, tip `a94513e`, task T-087).
+> **⏭️ CURRENT ACTIVE: PR #259 · branch `t089/roadmap-figure-retrued`** (base `main`, tip `40dc7ab`, task T-089).
 >
-> phase 1 waits on a decision, not a deployment
+> the roadmap sheet said all ten phases were partly built
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

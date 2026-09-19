@@ -31,7 +31,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Document class / Փաստաթղթի դաս | Informative · Տեղեկատու — the normative documents are [`CLAUDE.md`](./CLAUDE.md), [`PROJECT_STATE.md`](./PROJECT_STATE.md), [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) |
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
-| Measured at / Չափված ա | 2026-09-19, `main` @ `75fca65`, on a Windows box · Windows-ի վրա |
+| Measured at / Չափված ա | 2026-09-19, `main` @ `a94513e`, on a Windows box · Windows-ի վրա |
 | Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
@@ -329,19 +329,19 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **91 pull request**, **261 ֆայլ** ու **50 787 ավելացված տող** են merge
+Այդ ծայրից ի վեր **96 pull request**, **281 ֆայլ** ու **53 749 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **91 pull requests**, **261 files** and **50,787 inserted lines**
+no P0. Since that head, **96 pull requests**, **281 files** and **53,749 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 91
-    git diff --shortstat 5cf9b8c..HEAD    # 261 files changed, 50787 insertions(+), 13484 deletions(-)
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 96
+    git diff --shortstat 5cf9b8c..HEAD    # 281 files changed, 53749 insertions(+), 13607 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա
@@ -360,7 +360,7 @@ the command that corrected it, is recorded in
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/roadmap-dark.svg">
   <img src="docs/brand/readme/roadmap-light.svg" width="100%"
-       alt="Roadmap sheet built as nested containers, so the gate is the outermost thing on it. A red-outlined box on a red wash, labelled THE GATE · ԳԵՅԹԸ, encloses the whole plan; inside its top edge a circled percent sign with a slash struck through it stands beside the section's own sentence, in equally large bold red in both languages: DO NOT READ A PHASE PERCENTAGE ANYWHERE AS A PROMISE ABOUT BEHAVIOUR · ՈՉ ՄԻ ՏԵՂ ՓՈՒԼԻ ՏՈԿՈՍԸ ՈՐՊԵՍ ՎԱՐՔԻ ԽՈՍՏՈՒՄ ՄԻ ԿԱՐԴԱ։ At the right of the same band, a solid red badge reads READ THE GATE · ԿԱՐԴԱ՛ ԳԵՅԹԸ. One level in sits the canonical plan file MASTER_EXECUTION_ROADMAP.md — կանոնական պլանը, 11 փուլ · 11 phases — and inside it a strip of eleven cells of exactly the same size, 80 by 64 pixels each. Phase 0 is a solid green cell; phases 1 to 10 are ten cells identical in geometry, fill, amber stroke and amber diagonal hatching, differing only in the numeral. Under the strip, a green bracket with a closed padlock labels the single cell LOCKED · ԿՈՂՊՎԱԾ, and one amber bracket spans all ten remaining cells: PHASES 1–10 — ALL PARTLY BUILT · ՓՈՒԼԵՐ 1–10 — ԲՈԼՈՐԸ ՄԱՍԱՄԲ ԿԱՌՈՒՑՎԱԾ, with the note that all ten are drawn identically and no per-phase percentage is drawn here, on purpose · բոլոր տասը նույնությամբ գծված — փուլային տոկոս այստեղ գծված չի՝ դիտավորյալ. No percentage appears anywhere on the sheet. Below the gate, NEXT_CHAT.md holds the current state as three cells — ճյուղ · branch, PR, խցանումներ · blockers — and two dashed arrows lead out to dashed, muted boxes for PROJECT_STATE.md and TASKS.md, which only carry նույն banner-ը · the same banner. Three closing panels give the honest summary: մակերեսները կան · the surfaces exist, in neutral grey with no mark of approval; on a red wash with a red padlock, ապացուցված, բայց ԳԵՅԹՈՎ ԱՆՋԱՏՎԱԾ · proven, but GATED OFF; and in amber, ԿԱՊԵԼ արդեն կառուցվածը, ՀԵՌԱՑՆԵԼ չհիմնավորված պնդումները · CONNECTING what was built, REMOVING claims nothing established. Green appears exactly once, on phase 0.">
+       alt="Roadmap sheet built as nested containers, so the gate is the outermost thing on it. A red-outlined box on a red wash, labelled THE GATE · ԳԵՅԹԸ, encloses the whole plan; inside its top edge a circled percent sign with a slash struck through it stands beside the section's own sentence, in equally large bold red in both languages: DO NOT READ A PHASE PERCENTAGE ANYWHERE AS A PROMISE ABOUT BEHAVIOUR · ՈՉ ՄԻ ՏԵՂ ՓՈՒԼԻ ՏՈԿՈՍԸ ՈՐՊԵՍ ՎԱՐՔԻ ԽՈՍՏՈՒՄ ՄԻ ԿԱՐԴԱ։ At the right of the same band, a solid red badge reads READ THE GATE · ԿԱՐԴԱ՛ ԳԵՅԹԸ. One level in sits the canonical plan file MASTER_EXECUTION_ROADMAP.md — կանոնական պլանը, 11 փուլ · 11 phases — and inside it a strip of eleven cells of exactly the same size, 80 by 64 pixels each. Phase 0 is a solid green cell. Phases 1 to 10 are ten cells identical in geometry, fill and diagonal hatching, and they differ in one thing besides the numeral: the stroke is GREEN on the six whose every Definition-of-Done box is ticked (2, 3, 4, 5, 6, 7) and amber on the four that still carry open rows (1, 8, 9, 10). The hatching stays on every one of them, closed or not: a solid fill would read as a guarantee. Under each of the eleven cells is that phase's own count — 0: 8/8, 1: 10/13, 2: 11/11, 3: 11/11, 4: 12/12, 5: 11/11, 6: 10/10, 7: 8/8, 8: 7/9, 9: 7/9, 10: 2/13 — in the same colour as its stroke. Under the strip, a green bracket with a closed padlock labels the single cell LOCKED · ԿՈՂՊՎԱԾ, and beneath the strip three lines say where the plan stands: in green, 7 OF 11 PHASES — EVERY BOX TICKED · 7 ՓՈՒԼ 11-ԻՑ — ԲՈԼՈՐ ՏՈՒՓԵՐԸ ՆՇՎԱԾ; in amber, phases 1 · 8 · 9 · 10 still carry open rows — 3 · 2 · 2 · 11 of them; and in muted grey, in both languages, that a ticked box is ◑ — the Builder's own claim, never independently confirmed — and that no per-phase percentage is drawn here, on purpose. No percentage appears anywhere on the sheet: a count of ticked boxes is what a phase file says about itself, and a percentage is what a reader would take as a promise about behaviour. Below the gate, NEXT_CHAT.md holds the current state as three cells — ճյուղ · branch, PR, խցանումներ · blockers — and two dashed arrows lead out to dashed, muted boxes for PROJECT_STATE.md and TASKS.md, which only carry նույն banner-ը · the same banner. Three closing panels give the honest summary: մակերեսները կան · the surfaces exist, in neutral grey with no mark of approval; on a red wash with a red padlock, ապացուցված, բայց ԳԵՅԹՈՎ ԱՆՋԱՏՎԱԾ · proven, but GATED OFF; and in amber, ԿԱՊԵԼ արդեն կառուցվածը, ՀԵՌԱՑՆԵԼ չհիմնավորված պնդումները · CONNECTING what was built, REMOVING claims nothing established. Green appears on phase 0's solid cell, on the six closed strokes and their counts, and on the one line that says how many phases are closed — and nowhere else.">
 </picture>
 
 </div>
@@ -370,7 +370,7 @@ the command that corrected it, is recorded in
 PR, blocker — [`NEXT_CHAT.md`](./NEXT_CHAT.md)-ում, ու նույն banner-ը կրում են
 [`PROJECT_STATE.md`](./PROJECT_STATE.md)-ն ու [`TASKS.md`](./TASKS.md)-ը։
 
-Phase 0-ը փակ ա։ Phase 1–10-ը բոլորն էլ մասամբ կառուցված են։ Ազնիվ ամփոփումն ա, որ
+Phase 0-ը փակ ա։ **11 փուլից 7-ի բոլոր Definition-of-Done տուփերը նշված են** — 0-ի կողքին 2, 3, 4, 5, 6, 7 — իսկ 1, 8, 9, 10-ը դեռ կրում են 3 · 2 · 2 · 11 բաց տող։ Ամեն նշված տուփ ◑ ա՝ Builder-ի սեփական պնդումը, մինչև մեկը, ով չի գրել, նայի։ Ազնիվ ամփոփումն ա, որ
 մակերեսները կան, կառավարվող շղթան ապացուցված ա բայց դարպասով փակ, ու մնացած գործը
 հիմնականում **միացնելն** ա այն ինչ արդեն կառուցվել ա, ու **հանելը** այն պնդումների որ
 ոչինչ չի հաստատել։
@@ -382,7 +382,7 @@ Phase 0-ը փակ ա։ Phase 1–10-ը բոլորն էլ մասամբ կառու
 blockers — lives in [`NEXT_CHAT.md`](./NEXT_CHAT.md), with the same banner carried by
 [`PROJECT_STATE.md`](./PROJECT_STATE.md) and [`TASKS.md`](./TASKS.md).
 
-Phase 0 is locked. Phases 1–10 are all partly built. The honest summary: the surfaces exist,
+Phase 0 is locked. **7 of 11 phases have every Definition-of-Done box ticked** — 2, 3, 4, 5, 6, 7 beside phase 0 — and 1, 8, 9, 10 still carry 3 · 2 · 2 · 11 open rows. Every ticked box is ◑, the Builder's own claim, until someone who did not write it looks. The honest summary: the surfaces exist,
 the governed chain is proven but gated off, and the remaining work is mostly **connecting**
 things that were built and **removing** claims nothing established.
 

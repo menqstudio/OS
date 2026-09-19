@@ -48,27 +48,27 @@
   <rect x="192" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="216" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">1</text>
   <rect x="272" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="272" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="272" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="288" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="312" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">2</text>
   <rect x="368" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="368" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="368" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="384" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="408" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">3</text>
   <rect x="464" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="464" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="464" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="480" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="504" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">4</text>
   <rect x="560" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="560" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="560" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="576" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="600" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">5</text>
   <rect x="656" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="656" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="656" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="672" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="696" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">6</text>
   <rect x="752" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
-  <rect x="752" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#885000"/>
+  <rect x="752" y="232" width="80" height="64" rx="12" fill="url(#partly)" stroke="#156c3a"/>
   <rect x="768" y="248" width="48" height="32" rx="8" fill="#f5f6f8"/>
   <text x="792" y="272" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#885000" text-anchor="middle">7</text>
   <rect x="848" y="232" width="80" height="64" rx="12" fill="#f5f6f8"/>
@@ -90,10 +90,21 @@
   <rect x="80" y="324" width="16" height="12" rx="2" fill="#156c3a"/>
   <text x="104" y="336" font-size="12" font-weight="700" fill="#156c3a">LOCKED</text>
   <text x="80" y="356" font-size="12" fill="#156c3a">ԿՈՂՊՎԱԾ</text>
-  <path d="M176 304 V312 H1120 V304" fill="none" stroke="#885000" stroke-width="1.5"/>
-  <text x="176" y="336" font-size="12" font-weight="700" fill="#885000">PHASES 1–10 — ALL PARTLY BUILT · ՓՈՒԼԵՐ 1–10 — ԲՈԼՈՐԸ ՄԱՍԱՄԲ ԿԱՌՈՒՑՎԱԾ</text>
-  <text x="176" y="356" font-size="11" fill="#5b6473">all ten drawn identically — no per-phase percentage is drawn here, on purpose</text>
-  <text x="176" y="372" font-size="11" fill="#5b6473">բոլոր տասը նույնությամբ գծված — փուլային տոկոս այստեղ գծված չի՝ դիտավորյալ</text>
+  <text x="120" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">8/8</text>
+  <text x="216" y="316" font-size="11" font-weight="700" fill="#885000" text-anchor="middle">10/13</text>
+  <text x="312" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">11/11</text>
+  <text x="408" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">11/11</text>
+  <text x="504" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">12/12</text>
+  <text x="600" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">11/11</text>
+  <text x="696" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">10/10</text>
+  <text x="792" y="316" font-size="11" font-weight="700" fill="#156c3a" text-anchor="middle">8/8</text>
+  <text x="888" y="316" font-size="11" font-weight="700" fill="#885000" text-anchor="middle">7/9</text>
+  <text x="984" y="316" font-size="11" font-weight="700" fill="#885000" text-anchor="middle">7/9</text>
+  <text x="1080" y="316" font-size="11" font-weight="700" fill="#885000" text-anchor="middle">2/13</text>
+  <text x="176" y="340" font-size="12" font-weight="700" fill="#156c3a">7 OF 11 PHASES — EVERY BOX TICKED · 7 ՓՈՒԼ 11-ԻՑ — ԲՈԼՈՐ ՏՈՒՓԵՐԸ ՆՇՎԱԾ</text>
+  <text x="176" y="358" font-size="11" font-weight="700" fill="#885000">phases 1 · 8 · 9 · 10 still carry open rows — 3 · 2 · 2 · 11 of them · փուլեր 1 · 8 · 9 · 10՝ բաց տողեր — 3 · 2 · 2 · 11</text>
+  <text x="176" y="376" font-size="11" fill="#5b6473">a ticked box is ◑ — the Builder&apos;s own claim, never independently confirmed; no per-phase percentage is drawn here, on purpose</text>
+  <text x="176" y="392" font-size="11" fill="#5b6473">նշված տուփը ◑ ա — Builder-ի սեփական պնդումը, ոչ անկախ հաստատված; փուլային տոկոս այստեղ գծված չի՝ դիտավորյալ</text>
 
   <!-- current state: one file holds it, two carry the same banner -->
   <rect x="40" y="424" width="560" height="120" rx="12" fill="#f5f6f8" stroke="#e2e5ea"/>
