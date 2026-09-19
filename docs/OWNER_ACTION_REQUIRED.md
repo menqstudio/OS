@@ -6,12 +6,23 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **2026-09-19 — ONE thing needs you: branch protection on `main` is OFF.** The repository went
-> private on 2026-09-18 (the Owner's word, that session), and GitHub does not enforce protection on a
-> private repository under the Free plan — `GET /branches/main/protection` answered HTTP 403 on
-> 2026-09-19, *"Upgrade to GitHub Pro or make this repository public"*. None of the 34 contexts in `config/required-checks.json` is live, and a push to
-> `main` is not refused. Two honest answers, both yours: **GitHub Pro**, or **public again**.
-> `config/required-checks.json` is the state to restore either way.
+> **2026-09-19 — NOTHING here needs you: the Owner settled the visibility question the same day, and
+> live protection is restored.** The repository went private on 2026-09-18, and GitHub enforces neither
+> branch protection nor free Actions minutes on a private Free-plan repository: `GET
+> /branches/main/protection` answered **403** *"Upgrade to GitHub Pro or make this repository public"*,
+> so none of the 34 contexts in `config/required-checks.json` was live and every merge that day was
+> gated by a person READING the checks rather than by GitHub refusing. Then the minutes ran out: at
+> 01:53Z every job of `#229` failed in two seconds with **zero steps** and `duration_ms: 0`, GitHub's
+> annotation reading *"The job was not started because recent account payments have failed or your
+> spending limit needs to be increased"* — twenty-one red jobs that had nothing to do with the code.
+>
+> The Owner made the repository **public again** on 2026-09-19. Going private had **deleted** the
+> protection rules (2026-08-17's), and coming back did not restore them — `GET protection` answered 404
+> *"Branch not protected"*. They were restored FROM `config/required-checks.json`, which is what that
+> file is for: 34 contexts, `strict`, `enforce_admins`, linear history, no force-pushes, no deletions,
+> and `check_repo_state.py` now verifies live protection against the file and passes. **A private
+> repository on this plan means no gate and no minutes; that is the trade, and it is recorded here so
+> the next flip is a decision rather than a surprise.**
 >
 > **The `T-055` deferral is executed — by the Owner, in `#220`.** `config/deferred-enforcement.json` deferred
 > `Production half · the five conditions (T-055)` until **2026-09-06** with an empty `sign_off`; the date
