@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-34 of these and their pull requests. What is here is the account of each defect, which is
+35 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -52,3 +52,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-093** | **NM-OUTPUT-05 bound** - an execution receipt that agrees about the run and the attempt but names another turn's real output is refused, naming the document and the field; measured unprotected first (2,198 tests green with the rule removed) ◑ | Bro | Review | merged `#264` |
 | **T-094** | **The one thing blocking phases 1, 8 and 9 was in no document, and the fact it rests on was checked by nothing** - a gate derives a public key from every 32-byte literal in the tree and refuses if one is a pinned production root's private half; the Owner page names the offline seed as the single remaining action ◑ | Bro | Review | merged `#265` |
 | **T-095** | **Ten assertions could not fail, and the byte that killed them is refused now** - five word-boundary regexes in each of two honesty tests were literal backspaces, so the UI's receipt vocabulary was unguarded; proved by injecting `custody` ◑ | Bro | Review | merged `#266` |
+| **T-096** | **The lease bounded launch and nothing after it** - a completion past `lease_expires_at_ms` is refused as `lease_expired` on both the run's stamp and the supervisor's clock, while an idempotent crash-retry still recovers; `NM-TIME-13` and `NM-TIME-18` out of `blocked` ◑ | Bro | Review | merged `#267` |
