@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #260 · branch `t088/custody-wiring`** (base `main`, tip `a68d50b`, task T-088).
+> **⏭️ CURRENT ACTIVE: PR #261 · branch `t090/roadmap-absence-claims`** (base `main`, tip `bdb239b`, task T-090).
 >
-> the custody resolver is wired, by the Owner's decision
+> three roadmap rows named things that had stopped being absent
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

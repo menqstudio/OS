@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #260 · branch `t088/custody-wiring`** (base `main`, tip `a68d50b`, task T-088).
+> **⏭️ CURRENT ACTIVE: PR #261 · branch `t090/roadmap-absence-claims`** (base `main`, tip `bdb239b`, task T-090).
 >
-> the custody resolver is wired, by the Owner's decision
+> three roadmap rows named things that had stopped being absent
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-090** | **Three roadmap rows named things that had stopped being absent** - a schema that exists now, a count of five that is six, and a record that ended in the present tense ◑ | Bro | Review | `#261` |
 | **T-088** | **The custody resolver is wired, by the Owner's decision** - the one prerequisite no machine could provide is `met-by-build`; a demo anchor still commits `demonstration_custody` and never production ◑ | Bro | Review | `#260` |
 | **T-089** | **The roadmap sheet said all ten phases were partly built** - seven of eleven have every box ticked; the figure, its alt text and both summaries re-trued at `a94513e` ◑ | Bro | Review | `#259` |
 | **T-087** | **Phase 1 waits on a decision, not a deployment** - `custody.committed_label_resolver` is `NotProvisionableOnAMachine` and was on no Owner page; a test now refuses that class of silence ◑ | Bro | Review | `#258` |
@@ -25,7 +26,6 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
 | **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths; five obligations recorded on T-021b ◑ | Bro | Review | `#254` |
-| **T-086** | **The roadmap was in no gate, and three documents were stale** - `check_doc_claims` reads all 11 phase files now; START_HERE said 23 gates against 40 ◑ | Bro | Review | `#253` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
@@ -39,7 +39,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **25 merged rows** | **Shipped, and none independently confirmed** — `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **26 merged rows** | **Shipped, and none independently confirmed** — `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

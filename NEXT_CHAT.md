@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t088/custody-wiring` — `main` @ `a68d50b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t090/roadmap-absence-claims` — `main` @ `bdb239b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #260 · branch `t088/custody-wiring`** (base `main`, tip `a68d50b`, task T-088).
+> **⏭️ CURRENT ACTIVE: PR #261 · branch `t090/roadmap-absence-claims`** (base `main`, tip `bdb239b`, task T-090).
 >
-> the custody resolver is wired, by the Owner's decision
+> three roadmap rows named things that had stopped being absent
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

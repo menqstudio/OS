@@ -87,7 +87,7 @@ stop. Any needed engine gate change → separate audited task.
 >    invariants **fixed now** while the reasoning is fresh — no key, no lease, no nonce, no verdict
 >    crosses; the desktop requests and never decides; the desktop's own T-010/T-011 authority stays a
 >    separate thing — and it is sequenced explicitly **behind the standing audit**. Boxes 2 · 7 · 11
->    stay unticked, because the capability does not exist, and now they name what will build it.
+>    stay unticked, because the capability does not exist, and now they name what will build it. **CLOSED 2026-09-19 — the capability exists**: `T-021a` landed the contract audited before it, `T-021b` the engine record, `T-021c` the desktop command that cannot be told it decided, and `T-021d` the page control. Boxes 2 · 7 · 11 are ticked; the sentence before this one is kept as the record of what was decided while it was still true.
 > 2. ~~**`security`'s §D `sigbreathe` integrity pulse is deliberately NOT applied**~~ — **DECIDED
 >    AND BUILT, 2026-08-15 (boxes 1 · 9 now ticked).** The Owner delegated the decision; it was taken
 >    by reading the page rather than the argument about it, and **the argument turned out to be
