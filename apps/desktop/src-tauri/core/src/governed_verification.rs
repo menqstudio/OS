@@ -1582,6 +1582,56 @@ mod tests {
         (foreign_sha, env_sig)
     }
 
+    /// NM-MAN-06 — a supervisor attestation key id the manifest never pinned is refused at step 1,
+    /// before any signature is checked, and the refusal costs the turn nothing.
+    ///
+    /// The broker does not learn which attestation key to trust from the envelope; it pins one from the
+    /// signed key manifest and compares. An envelope naming any other id is refused whatever else is
+    /// true of it — including a perfectly valid signature over its own payload, which this test gives
+    /// it on purpose.
+    #[test]
+    fn nm_man_06_an_attestation_key_id_not_pinned_from_the_manifest_blocks() {
+        let f = fx();
+        let mut env = envelope(&f);
+        env.supervisor_attestation_key_id = "sup-att-unknown";
+        // RE-SIGNED over the altered payload: the isolated-signer signature is genuine, so step 2
+        // cannot be what refuses this. The only defect is the id. (A test that let step 2 fail would
+        // be asserting the signature check, not the manifest pin — `F-29`'s shape.)
+        let env_sig = sign_b64(&signing_key(7), &env.payload_jcs().unwrap());
+        let k = keys(&f);
+        let a = attest(&f);
+        let mut ledger = InMemoryLedger::new();
+
+        assert!(
+            verify_ed25519(k.isolated_signer_public_key, &env.payload_jcs().unwrap(), &env_sig).is_ok(),
+            "the re-signature must be REAL, or this test refuses for the wrong reason"
+        );
+        assert_ne!(
+            env.supervisor_attestation_key_id, k.supervisor_attestation_key_id,
+            "the fixture must actually differ from the pinned id"
+        );
+
+        match verify_and_accept(
+            &expected(&f), &env, &env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh(),
+        ) {
+            Err(TurnReason::UpstreamBlocked) => {}
+            Err(other) => panic!("expected UpstreamBlocked, got {other:?}"),
+            Ok(_) => panic!("an unpinned attestation key id was ACCEPTED"),
+        }
+
+        // And the refusal spent nothing. Asserted behaviourally rather than by reading the ledger's
+        // private sets: the genuine turn goes through the SAME ledger and must be accepted. If the
+        // refused attempt had claimed the receipt id or consumed the nonce, this would be a replay.
+        let good = envelope(&f);
+        assert!(
+            verify_and_accept(
+                &expected(&f), &good, &f.env_sig, &attest(&f), &k, OUTPUT, &CTX, &mut ledger, &fresh(),
+            )
+            .is_ok(),
+            "NM-MAN-06: the refused turn must leave the receipt id and the nonce unspent"
+        );
+    }
+
     #[test]
     fn a_valid_attestation_for_a_different_turn_is_refused() {
         let f = fx();

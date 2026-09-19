@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-26 of these and their pull requests. What is here is the account of each defect, which is
+27 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -44,3 +44,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-084** | **The page re-trued for four landings at once** — matrix 144→150, engine 2148→2152, the to-scale bar redrawn, and T-072 carried off the board ◑ | Bro | Review | merged `#251` |
 | **T-085** | **No gate read the front page's pictures** - `check_artwork_geometry.py`, eleven rules; it found a dark panel a step lighter than every other panel on its first run ◑ | Bro | Review | merged `#252` |
 | **T-086** | **The roadmap was in no gate, and three documents were stale** - `check_doc_claims` reads all 11 phase files now; START_HERE said 23 gates against 40 ◑ | Bro | Review | merged `#253` |
+| **T-087** | **Phase 1 waits on a decision, not a deployment** - `custody.committed_label_resolver` is `NotProvisionableOnAMachine` and was on no Owner page; a test now refuses that class of silence ◑ | Bro | Review | merged `#258` |

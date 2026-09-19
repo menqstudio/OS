@@ -42,7 +42,6 @@
     "NM-FS-03",
     "NM-FS-06",
     "NM-IPC-01",
-    "NM-MAN-06",
     "NM-NORELAUNCH-04",
     "NM-ORACLE-07",
     "NM-ORACLE-10",
@@ -371,10 +370,10 @@
       "blocked_on": "`resolve_attestation_key(supervisor_attestation_key_id, supervisor_id, now_ms)` (§1.7) and the `key_usage` field it would reject on — neither exists. MEASURED: `resolve_attestation_key` and `key_usage` each have zero occurrences in any .rs/.py/.ts/.tsx/.json/.sql/.sh under apps/desktop/src-tauri, apps/desktop/src, engine, bridge, contracts, config, tools. The supervisor-attestation key is resolved by `resolve_production_key(&manifest, &sup_attest_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)` (manifest_resolver.rs:210; win-live resolver.rs:245-251; config.rs:238-246), i.e. by exactly the predicate a receipt-signing key satisfies, so a receipt-signing key used for attestation is accepted by design in this tree. What must exist first: the usage discriminator on `ManifestKey` (key_manifest.rs:26-37) and a distinct attestation resolver that refuses `key_usage != supervisor_attestation`."
     },
     "NM-MAN-06": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Unknown attestation key id",
       "section": "§4.2, §7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::nm_man_06_an_attestation_key_id_not_pinned_from_the_manifest_blocks"
     },
     "NM-MAN-07": {
       "status": "blocked",

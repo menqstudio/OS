@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t090/roadmap-absence-claims` — `main` @ `bdb239b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t091/matrix-man06-tcb25` — `main` @ `775d48a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #261 · branch `t090/roadmap-absence-claims`** (base `main`, tip `bdb239b`, task T-090).
+> **⏭️ CURRENT ACTIVE: PR #262 · branch `t091/matrix-man06-tcb25`** (base `main`, tip `775d48a`, task T-091).
 >
-> three roadmap rows named things that had stopped being absent
+> NM-MAN-06 bound: an unpinned attestation key id is refused before any signature
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
