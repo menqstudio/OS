@@ -269,6 +269,85 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 
 ---
 
+## The custody resolver — Phase 1's last blocker is a decision, and nobody has asked you
+
+**Opened 2026-09-19. Nothing is blocked on you today for a merge; this blocks a roadmap box.**
+
+Phase 1 has two open Definition-of-Done rows — *"One governed round-trip proven end-to-end"* and
+*"Governed output delivery through the wall"* — and their own text blames three refusals:
+`governed_verification_unconfigured`, the Linux-only `connect_broker`, and `build_governed_executor`.
+That account is true and **incomplete**. Measured at `a94513e`:
+
+`apps/desktop/src-tauri/broker/src/preflight.rs` lists **27** prerequisites for a governed round trip,
+each with the party that can create it: **13 installer · 11 machine-admin · 1 offline-root-custodian ·
+2 not-provisionable-on-a-machine**. The interesting number is the last one. Of those two:
+
+| Requirement | Why no machine can provide it |
+| :--- | :--- |
+| `platform.linux_af_unix_peercred` | the renderer→broker boundary is a kernel-attested peer credential, so the host must be Linux. Not a decision — a platform fact. |
+| `custody.committed_label_resolver` | **this one is yours.** In the file's own words: *"main.rs builds `ChainExecutor::new`, not `with_custody`, so `committed_label()` is None and `persist_committed` REFUSES under EVERY value of the config. No provisioning changes this; it is an owner-gated code decision."* |
+
+**So the last gap is one line of wiring that nobody may add without you.** And the reason it is yours
+rather than mine is written beside it in `broker/src/main.rs`:
+
+> `ChainExecutor::new` — NOT `with_custody`. Unchanged from the direct wiring, and unchanged
+> **deliberately**: with no custody resolver every turn resolves to `NoTrustedManifest` and
+> `persist_committed` REFUSES the commit. Wiring custody is a separate, owner-gated decision and is not
+> a side effect of replacing the execution path.
+
+### What is already proven, so the decision is small
+
+The `Linux · §4.10(g) LADDER round trip` job in CI drives a governed turn on a real Linux runner with
+real service accounts, and `persist_committed` **runs** there — because that driver wires a custody
+resolver itself, with `ChainExecutor::with_custody`. Its own header says so, and says what the
+difference is:
+
+> `persist_committed` still runs (it is inside `run_governed_turn`), but the custody resolver that lets
+> it commit is wired HERE, by this driver … The shipped broker calls `ChainExecutor::new` and therefore
+> commits nothing. **That difference is deliberate and this driver does not change it.**
+
+So the machinery is not in question. What is in question is whether the SHIPPED broker may commit.
+
+### And the honest part: committing does not mean claiming production
+
+`brops_core::production_trust::TrustState::committed_label()` has exactly three answers:
+
+| Trust state | Committed row's label |
+| :--- | :--- |
+| `Production` | `trusted_verified` |
+| `DemonstrationCustody` | `demonstration_custody` |
+| `NoTrustedManifest` | **None — the commit is refused** |
+
+A deployment running under the compiled-in demonstration anchor resolves to `DemonstrationCustody`, so
+it would commit rows labelled `demonstration_custody`. `resolve_trust_state` will not build a
+`Production` state from a `kit_generated` anchor no matter what a config says, and every
+`CustodyResolver` implementation is required by its own trait contract to end there rather than
+constructing a `TrustState` by hand — *"building the enum by hand is how a demonstration root gets to
+call itself production."* Only a manifest verifying under **your offline root** produces
+`trusted_verified`.
+
+### The decision
+
+| Option | What happens | What it costs |
+| :--- | :--- | :--- |
+| **A — wire a custody resolver** in `build_governed_executor`, ending at `resolve_trust_state` | a provisioned Linux deployment completes governed round trips and commits them, labelled for the custody it actually has (`demonstration_custody` under the shipped anchor, `trusted_verified` only under your offline root) | the product starts writing governed rows on provisioned hosts. The label is the honesty, and the label is enforced by a gate that already exists |
+| **B — leave it unwired** | `persist_committed` keeps refusing on every shipped install. Phase 1's two rows stay open **permanently**, since no provisioning can close them | nothing changes, and the roadmap carries two rows that can never tick |
+
+**The recommendation is A**, for one reason: refusing to commit at all is not more honest than
+committing under a label that says exactly what custody produced it. The thing that would be dishonest
+— a demonstration root rendering as production — is prevented by `resolve_trust_state`, not by the
+absence of wiring. Keeping it unwired protects nothing that the label does not already protect, and it
+is why two roadmap rows read as "blocked by deployment" when they are blocked by a sentence nobody has
+written down for you until now.
+
+**If A: what ticks, and when.** Nothing ticks on the wiring alone. Phase 1's two rows tick when a
+deployment meets the other 26 requirements — which is installer and machine-admin work, and is
+separately inventoried in `preflight.rs` with the refusal each missing item fires. The wiring removes
+the one prerequisite that no amount of provisioning can.
+
+**If B: say so and the rows get the honest text.** They will read "cannot be closed as written", with
+this decision named, rather than implying a deployment would close them.
+
 ## The install does the ceremony now
 
 There used to be a page here listing artifacts only the Owner could mint, and a runbook step for

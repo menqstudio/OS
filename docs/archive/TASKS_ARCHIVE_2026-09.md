@@ -38,5 +38,5 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-078** | **Every TCB violation test poked one file** — the floor is now asserted over the WHOLE pinned set and all seven principals; plus a trigger a neighbour claimed and never checked ◑ | Bro | Review | merged `#245` |
 | **T-079** | **Four predicates, four independent kills** — a spent nonce, a divergent challenge context, an accessor nobody may add, and a trust class nobody may infer ◑ | Bro | Review | merged `#246` |
 | **T-080** | **Three bare sections got artwork, nothing was removed** — and a designer "Verified" a dark sheet it never shipped; nine mechanical checks on every sheet since ◑ | Bro | Review | merged `#247` |
-| **T-083** | **A mutation that did not run looks exactly like a survivor** — five times in one day; the harness now refuses a verdict it cannot prove it applied ◑ | Bro | Review | merged `#250` |
-| **T-084** | **The page re-trued for four landings at once** — matrix 144→150, engine 2148→2152, the to-scale bar redrawn, and T-072 carried off the board ◑ | Bro | Review | merged `#251` |
+| **T-081** | **A key with everything right except audience, and a refusal that must carry no bytes** — NM-SCOPE-04, NM-TERM-04 ◑ | Bro | Review | merged `#248` |
+| **T-082** | **The triage sent a test where it could not import what it tests** — only 4 of 12 runtime modules import without `cryptography` ◑ | Bro | Review | merged `#249` |

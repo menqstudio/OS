@@ -67,6 +67,11 @@ SPLIT_COMMIT = "5512d82"
 #: the second half of each row -- the budget gate can only be satisfied by removing text, and the
 #: cheapest text to remove was the end of every sentence. `tools/check_truncated_lines.py` is the
 #: counterweight, and this set is the record of what it made necessary.
+#: One of them carries a SECOND divergence, and it is recorded here rather than left to be inferred.
+#: Index 606 -- phase 1's "One governed round-trip proven end-to-end" -- was corrected on 2026-09-19:
+#: its account blamed three refusals, and `broker/src/preflight.rs` marks a fourth prerequisite
+#: `NotProvisionableOnAMachine` with "it is an owner-gated code decision" in its own refusal field. The
+#: row now names that decision. This set cannot tell one reason from two, so the reason is written here.
 REPAIRED_LINES = {
     603, 604, 605, 606, 607, 608, 609, 612, 613, 614, 615, 617,  # phase 1
     1457, 1459, 1466, 1468,  # phase 10
