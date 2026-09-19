@@ -6,7 +6,32 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **2026-09-19 — NOTHING here needs you: the Owner settled the visibility question the same day, and
+> **2026-09-19 — TWO one-line edits need you, both in files only you touch.**
+>
+> **1. `.github/supply-chain/gitleaks.toml` — the secret gate carries a false positive that any edit
+> can wake.** The committed operator ROOT PUBLIC key (safe by design) is suppressed by an allowlist
+> regex naming the **whole** 64-hex value. gitleaks does not always capture the whole value: measured
+> on `#232`, it captured a **57-character prefix** (`StartColumn 19, EndColumn 90` on a 96-character
+> line), the exact-hex regex therefore did not match, and `Secrets - gitleaks` failed on
+> `.github/workflows/ci.yml:798`. Whether it truncates depends on the file's BYTE SIZE, so a comment
+> added anywhere above it decides the outcome: at **79,665 bytes it fires, at 79,744 it does not** —
+> the same content, the same key, a different verdict. `gitleaks.toml` is yours and not to be touched
+> by a Builder (audit F-47), so the remedy is stated, not applied: allow the KEY NAME rather than the
+> value, which cannot be truncated away — an allowlist entry with `regexTarget = "line"` matching
+> `BRO_OPERATOR_ROOT_PUBKEY:\s*[0-9a-f]{40,64}`. Narrower than today's rule, not wider: it permits
+> that one env var, where the present entry permits that hex string anywhere in the tree.
+>
+> **2. `config/required-checks.json` — promote `Tools · gate self-tests on Windows (python)` from
+> `deliberately_excluded` into `contexts`, after its first green run on `main`.** `#232` added the
+> job because every `tools/` self-test step in CI runs on ubuntu — 17 ubuntu jobs, 2 windows, neither
+> of them `tools/` — so the gates guarding this repository had never run on the platform you develop
+> on, and two of `check_audit_actor`'s own tests were failing there while the wall stayed green. It is
+> excluded rather than required only so a first CI run cannot block every merge on a surprise
+> belonging to the runner; the reason is written beside it in that file.
+>
+> Below: the visibility question, settled the same day.
+
+> **2026-09-19 — settled, kept for the record: the Owner chose public again and the Owner settled the visibility question the same day, and
 > live protection is restored.** The repository went private on 2026-09-18, and GitHub enforces neither
 > branch protection nor free Actions minutes on a private Free-plan repository: `GET
 > /branches/main/protection` answered **403** *"Upgrade to GitHub Pro or make this repository public"*,

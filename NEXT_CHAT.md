@@ -79,12 +79,13 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 none of it is independently confirmed. Every mark added since is ◑. *(62/207/44,630 and
 58/206/44,055 earlier on 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
-**Nothing waits on the Owner.** Branch protection on `main` is live again and verified against
-`config/required-checks.json` (34 contexts, `strict`, `enforce_admins`): a private Free-plan repository
-gets neither the gate nor free Actions minutes, the minutes ran out mid-session on 2026-09-19, and the
-Owner made the repository public again — going private had deleted the rules, so they were restored from
-that file. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
-O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+**Two one-line edits wait on the Owner**, both in files a Builder does not touch:
+`.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed
+operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured a 57-character prefix
+at one file size and not at another (79,665 bytes red, 79,744 green) — and
+`config/required-checks.json` should promote the new Windows tools job once it has one green run.
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
+protection is live and verified. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close

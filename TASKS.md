@@ -48,8 +48,8 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: `T-063`'s tag arm and `parse_audit_candidate`'s marker count —
-[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md). Branch protection is restored (2026-09-19).
+Waiting on the Owner, not rows: two one-line edits (`gitleaks.toml`, requiring the Windows tools
+job) and `T-063`'s tag arm — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
 ## Status tokens
 

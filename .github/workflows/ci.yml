@@ -353,9 +353,23 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history, like the three ubuntu jobs that run these suites. Measured on this
+          # job's FIRST run: without it `test_check_doc_claims` fails with seven lines of
+          # "names `5cf9b8c`, which is not an object in this repository" — the gate holds every
+          # short sha in the canon to being a real object, and a shallow checkout has none of
+          # the history those shas live in. The gate was right; the checkout was wrong.
+          fetch-depth: 0
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # `check_runbook_snippets.py` imports the engine modules it checks signatures against, and
+      # those import `cryptography` — so six of its tests fail with "cannot import bro_protected"
+      # on a bare runner. Also measured on the first run. The supply-chain job that owns that gate
+      # installs the same hash-pinned file for the same reason; this is not a new dependency, it
+      # is the one that gate has always had, made visible by running it somewhere new.
+      - name: Install engine CI dependencies (the runbook gate imports the engine)
+        run: pip install --require-hashes -r engine/requirements-ci.txt
       # WHY THIS JOB EXISTS. Every step in this repository that runs a `tools/test_check_*.py`
       # suite runs on `ubuntu-latest` — measured across all 22 jobs here: 17 ubuntu, 2 windows,
       # one matrix, and neither windows job touches `tools/`. So the gates that guard this
