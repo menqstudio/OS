@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t021d/approvals-page-request` — `main` @ `29d69e2`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t087/custody-decision` — `main` @ `a94513e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #257 · branch `t021d/approvals-page-request`** (base `main`, tip `29d69e2`, task T-021d).
+> **⏭️ CURRENT ACTIVE: PR #258 · branch `t087/custody-decision`** (base `main`, tip `a94513e`, task T-087).
 >
-> phase 2 closed, 11 of 11
+> phase 1 waits on a decision, not a deployment
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
