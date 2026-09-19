@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 776" width="1200" height="776"
+     role="img" aria-labelledby="t d" font-family="Inter, &apos;Segoe UI&apos;, system-ui, -apple-system, &apos;Noto Sans Armenian&apos;, Arial, sans-serif">
+  <title id="t">Ի՞նչ ա OS-ը — մեկ product, երկու կես, մեկ պարտադիր ուղի · What OS is — one product, two halves, one required path</title>
+  <desc id="d">light theme. MenQ ground #ffffff, OS accent #3856fe.</desc>
+
+  <!-- ground -->
+  <rect x="0" y="0" width="1200" height="776" rx="12" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="775" rx="12" fill="none" stroke="#e2e5ea"/>
+
+  <text x="40" y="44" font-size="12" letter-spacing="2.4" fill="#5b6473">WHAT OS IS · Ի՞ՆՉ Ա OS-Ը</text>
+  <text x="40" y="76" font-size="13" font-weight="600" fill="#10131a">OS is ONE product assembled from TWO halves.</text>
+  <text x="40" y="96" font-size="13" fill="#5b6473">OS-ը ՄԵԿ product ա՝ հավաքված ԵՐԿՈՒ կեսից։</text>
+
+  <!-- OS is the enclosure: it holds both halves, the wall between them, and nothing else -->
+  <!-- no bar on this sheet is proportional — the two halves are drawn equal because the text gives no sizes -->
+  <rect x="40" y="184" width="1120" height="392" rx="12" fill="#f5f6f8" stroke="#3856fe"/>
+  <text x="64" y="224" font-size="20" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">OS</text>
+  <text x="104" y="216" font-size="11" fill="#5b6473">one product, two halves</text>
+  <text x="104" y="232" font-size="11" fill="#5b6473">մեկ product, երկու կես</text>
+
+  <text x="600" y="216" font-size="13" font-weight="700" fill="#10131a" text-anchor="middle">the enforcement wall · պարտադրող պատը</text>
+  <text x="600" y="236" font-size="11" letter-spacing="2.4" fill="#885000" text-anchor="middle">REQUIRED PATH, BY DESIGN · ՊԱՐՏԱԴԻՐ ՈՒՂԻ՝ ՆԱԽԱԳԾՈՎ</text>
+
+  <!-- the absence the text asserts, drawn as an absence and not left to inference -->
+  <rect x="888" y="200" width="248" height="48" rx="12" fill="#f3e1e4" stroke="#ac2b40"/>
+  <text x="1012" y="220" font-size="11" fill="#ac2b40" text-anchor="middle">no person touches this half</text>
+  <text x="1012" y="236" font-size="11" fill="#ac2b40" text-anchor="middle">մարդ չի դիպչում էս կեսին</text>
+
+  <!-- half one: the cockpit, and the six surfaces it encloses -->
+  <rect x="64" y="264" width="384" height="288" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="88" y="296" font-size="15" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">apps/desktop/</text>
+  <text x="88" y="320" font-size="12" fill="#10131a">Cockpit · Օդաչուի խցիկ</text>
+  <text x="88" y="344" font-size="11" fill="#5b6473">from · որտեղից՝ <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">menqstudio/BroPS</tspan></text>
+  <text x="88" y="364" font-size="11" fill="#5b6473">the human-facing Tauri desktop app</text>
+  <text x="88" y="380" font-size="11" fill="#5b6473">մարդուն նայող Tauri desktop app</text>
+  <line x1="88" y1="388" x2="424" y2="388" stroke="#e2e5ea"/>
+  <rect x="88" y="400" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="168" y="416" font-size="11" fill="#10131a" text-anchor="middle">conversations</text>
+  <text x="168" y="432" font-size="11" fill="#5b6473" text-anchor="middle">զրույցներ</text>
+  <rect x="264" y="400" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="344" y="416" font-size="11" fill="#10131a" text-anchor="middle">runs</text>
+  <text x="344" y="432" font-size="11" fill="#5b6473" text-anchor="middle">run-եր</text>
+  <rect x="88" y="448" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="168" y="464" font-size="11" fill="#10131a" text-anchor="middle">approvals</text>
+  <text x="168" y="480" font-size="11" fill="#5b6473" text-anchor="middle">հաստատումներ</text>
+  <rect x="264" y="448" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="344" y="464" font-size="11" fill="#10131a" text-anchor="middle">files</text>
+  <text x="344" y="480" font-size="11" fill="#5b6473" text-anchor="middle">ֆայլեր</text>
+  <rect x="88" y="496" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="168" y="512" font-size="11" fill="#10131a" text-anchor="middle">calendar</text>
+  <text x="168" y="528" font-size="11" fill="#5b6473" text-anchor="middle">օրացույց</text>
+  <rect x="264" y="496" width="160" height="40" rx="12" fill="#f5f6f8"/>
+  <text x="344" y="512" font-size="11" fill="#10131a" text-anchor="middle">knowledge</text>
+  <text x="344" y="528" font-size="11" fill="#5b6473" text-anchor="middle">գիտելիք</text>
+
+  <!-- the wall stands between the halves and encloses the four stops, in order -->
+  <rect x="472" y="264" width="256" height="288" rx="12" fill="#ffffff" stroke="#885000" stroke-width="2"/>
+  <rect x="488" y="288" width="224" height="48" rx="12" fill="#f5f6f8"/>
+  <rect x="504" y="300" width="24" height="24" rx="8" fill="#885000"/>
+  <text x="516" y="316" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ffffff" text-anchor="middle">1</text>
+  <text x="540" y="312" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">lease</text>
+  <text x="540" y="328" font-size="11" fill="#5b6473">ստորագրված lease</text>
+  <line x1="600" y1="336" x2="600" y2="344" stroke="#885000" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="592,344 608,344 600,352" fill="#885000"/>
+  <rect x="488" y="352" width="224" height="48" rx="12" fill="#f5f6f8"/>
+  <rect x="504" y="364" width="24" height="24" rx="8" fill="#885000"/>
+  <text x="516" y="380" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ffffff" text-anchor="middle">2</text>
+  <text x="540" y="376" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">gate</text>
+  <text x="540" y="392" font-size="11" fill="#5b6473">հաստատման gate</text>
+  <line x1="600" y1="400" x2="600" y2="408" stroke="#885000" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="592,408 608,408 600,416" fill="#885000"/>
+  <rect x="488" y="416" width="224" height="48" rx="12" fill="#f5f6f8"/>
+  <rect x="504" y="428" width="24" height="24" rx="8" fill="#885000"/>
+  <text x="516" y="444" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ffffff" text-anchor="middle">3</text>
+  <text x="540" y="440" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">sandbox</text>
+  <text x="540" y="456" font-size="11" fill="#5b6473">մեկուսացված միջավայր</text>
+  <line x1="600" y1="464" x2="600" y2="472" stroke="#885000" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="592,472 608,472 600,480" fill="#885000"/>
+  <rect x="488" y="480" width="224" height="48" rx="12" fill="#f5f6f8"/>
+  <rect x="504" y="492" width="24" height="24" rx="8" fill="#885000"/>
+  <text x="516" y="508" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#ffffff" text-anchor="middle">4</text>
+  <text x="540" y="504" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">signed receipt</text>
+  <text x="540" y="520" font-size="11" fill="#5b6473">ստորագրված ստացական</text>
+
+  <!-- half two: the engine, and the four parts it encloses -->
+  <rect x="752" y="264" width="384" height="288" rx="12" fill="#ffffff" stroke="#e2e5ea"/>
+  <text x="776" y="296" font-size="15" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#10131a">engine/</text>
+  <text x="776" y="320" font-size="12" fill="#10131a">Engine · Կառավարման ուղեղը</text>
+  <text x="776" y="344" font-size="11" fill="#5b6473">from · որտեղից՝ <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">menqstudio/Bro</tspan></text>
+  <text x="776" y="364" font-size="11" fill="#5b6473">a security harness that runs AI agents</text>
+  <text x="776" y="380" font-size="11" fill="#5b6473">անվտանգության harness՝ վարում ա AI agent-եր</text>
+  <line x1="776" y1="388" x2="1112" y2="388" stroke="#e2e5ea"/>
+  <rect x="776" y="400" width="160" height="64" rx="12" fill="#f5f6f8"/>
+  <text x="856" y="428" font-size="11" fill="#10131a" text-anchor="middle">signed leases</text>
+  <text x="856" y="444" font-size="11" fill="#5b6473" text-anchor="middle">ստորագրված lease-եր</text>
+  <rect x="952" y="400" width="160" height="64" rx="12" fill="#f5f6f8"/>
+  <text x="1032" y="428" font-size="11" fill="#10131a" text-anchor="middle">approval gates</text>
+  <text x="1032" y="444" font-size="11" fill="#5b6473" text-anchor="middle">հաստատման gate-եր</text>
+  <rect x="776" y="472" width="160" height="64" rx="12" fill="#f5f6f8"/>
+  <text x="856" y="500" font-size="11" fill="#10131a" text-anchor="middle">evidence chain</text>
+  <text x="856" y="516" font-size="11" fill="#5b6473" text-anchor="middle">վկայության շղթա</text>
+  <rect x="952" y="472" width="160" height="64" rx="12" fill="#f5f6f8"/>
+  <text x="1032" y="500" font-size="11" fill="#10131a" text-anchor="middle">protected control plane</text>
+  <text x="1032" y="516" font-size="11" fill="#5b6473" text-anchor="middle">պաշտպանված control plane</text>
+
+  <!-- dashed, amber: every action the cockpit triggers is required to enter at stop 1 and leave after stop 4 -->
+  <line x1="448" y1="312" x2="464" y2="312" stroke="#885000" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="464,308 472,312 464,316" fill="#885000"/>
+  <line x1="728" y1="504" x2="744" y2="504" stroke="#885000" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="744,500 752,504 744,508" fill="#885000"/>
+
+  <!-- the person stands OUTSIDE the product and reaches into exactly one half; drawn last so the arrow is never covered -->
+  <rect x="176" y="120" width="176" height="40" rx="12" fill="#ffffff" stroke="#3856fe"/>
+  <text x="264" y="144" font-size="13" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#3856fe" text-anchor="middle">Owner · Տեր</text>
+  <text x="368" y="136" font-size="12" fill="#5b6473">opens the Cockpit — and nothing else</text>
+  <text x="368" y="152" font-size="12" fill="#5b6473">բացում ա Cockpit-ը — ուրիշ ոչինչ</text>
+  <line x1="264" y1="160" x2="264" y2="256" stroke="#3856fe" stroke-width="2"/>
+  <polygon points="256,256 272,256 264,264" fill="#3856fe"/>
+
+  <!-- the hedge the source text carries: by design is a requirement, not a receipt -->
+  <rect x="40" y="592" width="1120" height="144" rx="12" fill="#f5f6f8" stroke="#885000"/>
+  <text x="64" y="620" font-size="13" font-weight="600" fill="#885000">“By design” — the chain above is the path every AI action is required to cross, not evidence that every action crosses it today.</text>
+  <text x="64" y="640" font-size="13" fill="#885000">«Նախագծով» — վերևի շղթան պարտադիր ուղին ա, ոչ թե ապացույց, որ այսօր ամեն գործողություն անցնում ա դրանով։</text>
+  <text x="64" y="668" font-size="11" fill="#885000">Required at each stop: 1 lease must be signed · 2 gate must be approved · 3 sandbox must run inside it · 4 receipt must be signed and recorded.</text>
+  <text x="64" y="684" font-size="11" fill="#885000">Ամեն կանգառի պարտադիրը՝ 1 lease-ը ստորագրված · 2 gate-ը հաստատված · 3 sandbox-ի ներսում · 4 ստացականը ստորագրված ու գրանցված։</text>
+  <text x="64" y="708" font-size="11" fill="#5b6473">Dashed + amber = required by design, not verified. Nothing on this sheet is green: the section makes no verified claim.</text>
+  <text x="64" y="724" font-size="11" fill="#5b6473">Կտրտված + սաթագույն = պարտադիր ըստ նախագծի, ոչ ստուգված։ Թերթին կանաչ չկա՝ հատվածը ստուգված պնդում չի անում։</text>
+</svg>

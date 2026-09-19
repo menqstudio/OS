@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
+  "settled_at_main_head": "6c59a67d563978f85cc5c5c9238722f21d5a87ac",
   "sync": {
-    "baseline_main_head_at_sync": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
-    "snapshot_branch": "t079/four-predicates-over-their-surface",
+    "baseline_main_head_at_sync": "6c59a67d563978f85cc5c5c9238722f21d5a87ac",
+    "snapshot_branch": "t080/three-figures-and-the-page-retrued",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t079/four-predicates-over-their-surface"
+    "branch": "t080/three-figures-and-the-page-retrued"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 246,
-    "branch": "t079/four-predicates-over-their-surface",
+    "number": 247,
+    "branch": "t080/three-figures-and-the-page-retrued",
     "state": "open",
-    "what": "NM-TERM-02, NM-SCOPE-08, NM-SCOPE-06 and NM-MAN-12 bound: a nonce spent by a terminal refusal is a replay on re-ask, a challenge pre-stored under another workspace or install blocks every turn, a parsed-but-unverified envelope exposes only its key id (asserted by reading the source, because the accessor that would break it does not exist yet), and a key can neither omit nor invent its trust class",
-    "note": "four predicates, four independent kills",
+    "what": "light/dark figure pairs for the three bare README sections placed ABOVE their prose so nothing is removed, plus the page re-trued at 6c59a67 for the three landings that deliberately deferred it -- and a false verification claim from inside a design submission recorded in the claim history",
+    "note": "three figures added, nothing removed, and the page re-trued for three landings",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #246 (t079/four-predicates-over-their-surface), task T-079: NM-TERM-02, NM-SCOPE-08, NM-SCOPE-06 and NM-MAN-12 bound: a nonce spent by a terminal refusal is a replay on re-ask, a challenge pre-stored under another workspace or install blocks every turn, a parsed-but-unverified envelope exposes only its key id (asserted by reading the source, because the accessor that would break it does not exist yet), and a key can neither omit nor invent its trust class Next: triage section 3 has 29 rows left, clusters FS (4) and TCB (4); and the three README figures plus the page re-trued for three deferred landings",
-    "_note": "The carrier is current_workflow_pr (#246 on t079/four-predicates-over-their-surface). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #247 (t080/three-figures-and-the-page-retrued), task T-080: light/dark figure pairs for the three bare README sections placed ABOVE their prose so nothing is removed, plus the page re-trued at 6c59a67 for the three landings that deliberately deferred it -- and a false verification claim from inside a design submission recorded in the claim history Next: triage section 3 has 29 rows left, clusters FS (4) and TCB (4); four README sections are still bare prose and can take the same treatment",
+    "_note": "The carrier is current_workflow_pr (#247 on t080/three-figures-and-the-page-retrued). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "13b3e00a7fe90e65b98ed62d530fe1bfcc7fadf8",
+      "head": "6c59a67d563978f85cc5c5c9238722f21d5a87ac",
       "conclusion": "success",
-      "run_id": 35442034293,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 13b3e00, run 35442034293."
+      "run_id": 35443146255,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 6c59a67, run 35443146255."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

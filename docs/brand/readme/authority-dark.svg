@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 704" width="1200" height="704"
+     role="img" aria-labelledby="t d" font-family="Inter, &apos;Segoe UI&apos;, system-ui, -apple-system, &apos;Noto Sans Armenian&apos;, Arial, sans-serif">
+  <title id="t">Բրոն, ու ով ինչ իրավունք ունի · Bro, and who may do what</title>
+  <desc id="d">dark theme. MenQ ground #0b0d10, OS accent #7c8dff.</desc>
+
+  <!-- Light/dark pair: the two files differ only in colour literals and the desc line.
+       The axis panels and the step boxes use panel fill; the footer band uses panel fill 2
+       (identical in light, distinct in dark) so the footer stays a caveat, not a fourth axis. -->
+
+  <!-- ground -->
+  <rect x="0" y="0" width="1200" height="704" rx="12" fill="#0b0d10"/>
+  <rect x="0.5" y="0.5" width="1199" height="703" rx="12" fill="none" stroke="#262b37"/>
+
+  <text x="40" y="44" font-size="12" letter-spacing="2.4" fill="#98a2b3">BRO, AND WHO MAY DO WHAT · ԲՐՈՆ, ՈՒ ՈՎ ԻՆՉ ԻՐԱՎՈՒՆՔ ՈՒՆԻ</text>
+  <text x="1160" y="44" font-size="12" fill="#98a2b3" text-anchor="end">Bro is the conductor · Բրոն դիրիժորն ա</text>
+
+  <!-- what happens, in order: the task is understood and confirmed before any specialist exists -->
+  <rect x="40" y="64" width="256" height="64" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="56" y="88" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#7c8dff">1</text>
+  <text x="76" y="88" font-size="12" fill="#eef1f6">You give a task — any chat</text>
+  <text x="56" y="112" font-size="11" fill="#98a2b3">Task ես տալիս — ցանկացած չաթում</text>
+
+  <line x1="300" y1="96" x2="316" y2="96" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="316,92 324,96 316,100" fill="#98a2b3"/>
+
+  <rect x="328" y="64" width="256" height="64" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="344" y="88" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#7c8dff">2</text>
+  <text x="364" y="88" font-size="12" fill="#eef1f6">Bro works out what you meant</text>
+  <text x="344" y="112" font-size="11" fill="#98a2b3">Բրոն հասկանում ա՝ ինչ նկատի ունես</text>
+
+  <line x1="588" y1="96" x2="604" y2="96" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="604,92 612,96 604,100" fill="#98a2b3"/>
+
+  <rect x="616" y="64" width="256" height="64" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="632" y="88" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#7c8dff">3</text>
+  <text x="652" y="88" font-size="12" fill="#eef1f6">He confirms it with you</text>
+  <text x="632" y="112" font-size="11" fill="#98a2b3">Հաստատում ա քեզ հետ</text>
+
+  <line x1="876" y1="96" x2="892" y2="96" stroke="#98a2b3" stroke-width="2"/>
+  <polygon points="892,92 900,96 892,100" fill="#98a2b3"/>
+
+  <rect x="904" y="64" width="256" height="64" rx="12" fill="#14171f" stroke="#7c8dff"/>
+  <text x="920" y="88" font-size="12" font-weight="700" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#7c8dff">4</text>
+  <text x="940" y="88" font-size="12" fill="#eef1f6">Hands the work to a specialist</text>
+  <text x="920" y="112" font-size="11" fill="#98a2b3">Գործը հանձնում ա մասնագետին</text>
+
+  <text x="40" y="152" font-size="12" font-weight="700" fill="#eef1f6">TWO things bound a specialist, and Bro sets both. A THIRD axis does not exist at all.</text>
+  <text x="40" y="172" font-size="12" fill="#98a2b3">Մասնագետին սահմանափակում ա ԵՐԿՈՒ բան, ու երկուսն էլ Բրոն ա դնում։ ԵՐՐՈՐԴ առանցքը ընդհանրապես չկա։</text>
+
+  <!-- the bracket covers only the two axes Bro sets; it stops at 776 and the third column starts at 808, outside it -->
+  <text x="40" y="196" font-size="11" letter-spacing="1.2" fill="#7c8dff">BRO SETS BOTH · ԵՐԿՈՒՍՆ ԷԼ ԲՐՈՆ Ա ԴՆՈՒՄ</text>
+  <text x="808" y="196" font-size="11" letter-spacing="1.2" fill="#f4869c">NO THIRD AXIS · ԵՐՐՈՐԴ ԱՌԱՆՑՔ ՉԿԱ</text>
+  <path d="M40 212 V204 H776 V212" fill="none" stroke="#7c8dff" stroke-width="1.5"/>
+
+  <!-- axis 1 of 3 · capability · the verdict is yes -->
+  <rect x="40" y="224" width="352" height="328" rx="12" fill="#14171f" stroke="#262b37"/>
+  <text x="64" y="256" font-size="14" font-weight="700" fill="#eef1f6">Capability · Կարողություն</text>
+  <rect x="64" y="272" width="184" height="24" rx="12" fill="#4ade80"/>
+  <text x="156" y="288" font-size="11" font-weight="700" fill="#0b0d10" text-anchor="middle">ENFORCED · ԿԻՐԱՌՎՈՒՄ Ա</text>
+
+  <!-- the nesting encodes set containment (reader in runner in builder), never magnitude.
+       No quantity anywhere on this sheet is drawn to scale, so no proportional bar and no arithmetic is claimed. -->
+  <rect x="64" y="312" width="304" height="144" rx="12" fill="none" stroke="#4ade80" stroke-width="1.5"/>
+  <rect x="88" y="336" width="256" height="96" rx="12" fill="none" stroke="#4ade80" stroke-width="1.5"/>
+  <rect x="112" y="360" width="208" height="48" rx="12" fill="#0b0d10" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="104" y="328" font-size="12" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6">builder</text>
+  <text x="164" y="328" font-size="11" fill="#98a2b3">կառուցող</text>
+  <text x="352" y="328" font-size="11" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="end">+ Edit / Write</text>
+  <text x="128" y="352" font-size="12" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6">runner</text>
+  <text x="180" y="352" font-size="11" fill="#98a2b3">գործարկող</text>
+  <text x="328" y="352" font-size="11" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6" text-anchor="end">+ Bash</text>
+  <text x="152" y="380" font-size="12" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6">reader</text>
+  <text x="204" y="380" font-size="11" fill="#98a2b3">կարդացող</text>
+  <text x="152" y="400" font-size="11" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6">Read / Grep / Glob</text>
+  <text x="216" y="424" font-size="11" fill="#98a2b3" text-anchor="middle">ամեն օղակ ավելացնում ա ներսինին</text>
+  <text x="216" y="448" font-size="11" fill="#98a2b3" text-anchor="middle">cumulative — each ring adds to the one inside</text>
+
+  <text x="64" y="476" font-size="11" font-weight="700" fill="#4ade80">The tier is what actually bounds the run.</text>
+  <text x="64" y="492" font-size="11" fill="#4ade80">Շերտն ա գործարկման իրական սահմանը։</text>
+  <text x="64" y="516" font-size="11" fill="#98a2b3">One of three tiers, passed to the CLI inline.</text>
+  <text x="64" y="532" font-size="11" fill="#98a2b3">Երեք շերտից մեկը՝ CLI-ին inline փոխանցվող։</text>
+
+  <!-- axis 2 of 3 · path · the verdict is only partly, so the panel border itself is amber -->
+  <rect x="424" y="224" width="352" height="328" rx="12" fill="#14171f" stroke="#f0b23a"/>
+  <text x="448" y="256" font-size="14" font-weight="700" fill="#eef1f6">Path · Ուղի</text>
+  <rect x="448" y="272" width="272" height="24" rx="12" fill="#f0b23a"/>
+  <text x="584" y="288" font-size="11" font-weight="700" fill="#0b0d10" text-anchor="middle">PARTLY, TEXT ONLY · ՄԱՍԱՄԲ՝ ՄԻԱՅՆ ՏԵՔՍՏ</text>
+
+  <!-- dashed: the grant is text, so its border is not a wall -->
+  <rect x="448" y="312" width="304" height="72" rx="12" fill="#0b0d10" stroke="#f0b23a" stroke-dasharray="4 4"/>
+  <text x="464" y="332" font-size="11" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#f0b23a">scope / prohibited_scope</text>
+  <text x="464" y="352" font-size="11" fill="#f0b23a">stated per task, travels as TEXT</text>
+  <text x="464" y="372" font-size="11" fill="#f0b23a">նշվում ա ամեն task-ում՝ որպես ՏԵՔՍՏ</text>
+
+  <!-- the link that is not there: two dead stubs and a cross, never an arrow -->
+  <line x1="600" y1="384" x2="600" y2="392" stroke="#f0b23a" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="600" y1="400" x2="600" y2="408" stroke="#f0b23a" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <line x1="592" y1="388" x2="608" y2="404" stroke="#f4869c" stroke-width="2.5"/>
+  <line x1="608" y1="388" x2="592" y2="404" stroke="#f4869c" stroke-width="2.5"/>
+
+  <rect x="448" y="408" width="304" height="48" rx="12" fill="#0b0d10" stroke="#98a2b3"/>
+  <text x="464" y="428" font-size="11" font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace" fill="#eef1f6">engine/runtime/bro_security.enforce_scope</text>
+  <text x="464" y="448" font-size="11" fill="#98a2b3">ուղին պարունակողը · what contains a path</text>
+
+  <text x="448" y="476" font-size="11" font-weight="700" fill="#f4869c">A desktop spawn does not reach it.</text>
+  <text x="448" y="492" font-size="11" fill="#f4869c">Desktop-ից spawn-ը դրան չի հասնում։</text>
+  <text x="448" y="516" font-size="11" fill="#f0b23a">The delegation card says so on every grant.</text>
+  <text x="448" y="532" font-size="11" fill="#f0b23a">Delegation card-ը դա գրում ա ամեն grant-ում։</text>
+
+  <!-- axis 3 of 3 · network · the panel is the only unfilled one on the sheet, and its
+       mechanism slot occupies exactly the rings' slot in column 1, holding nothing -->
+  <rect x="808" y="224" width="352" height="328" rx="12" fill="none" stroke="#f4869c" stroke-dasharray="8 8"/>
+  <text x="832" y="256" font-size="14" font-weight="700" fill="#eef1f6">Network · Ցանց</text>
+  <rect x="832" y="272" width="224" height="24" rx="12" fill="#f4869c"/>
+  <text x="944" y="288" font-size="11" font-weight="700" fill="#0b0d10" text-anchor="middle">NOT ENFORCED · ՉԻ ԿԻՐԱՌՎՈՒՄ</text>
+
+  <clipPath id="voidclip"><rect x="832" y="312" width="304" height="144" rx="12"/></clipPath>
+  <g clip-path="url(#voidclip)">
+    <line x1="832" y1="344" x2="864" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="832" y1="376" x2="896" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="832" y1="408" x2="928" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="832" y1="440" x2="960" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="832" y1="456" x2="976" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="864" y1="456" x2="1008" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="896" y1="456" x2="1040" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="928" y1="456" x2="1072" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="960" y1="456" x2="1104" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="992" y1="456" x2="1136" y2="312" stroke="#332730" stroke-width="3"/>
+    <line x1="1024" y1="456" x2="1136" y2="344" stroke="#332730" stroke-width="3"/>
+    <line x1="1056" y1="456" x2="1136" y2="376" stroke="#332730" stroke-width="3"/>
+    <line x1="1088" y1="456" x2="1136" y2="408" stroke="#332730" stroke-width="3"/>
+    <line x1="1120" y1="456" x2="1136" y2="440" stroke="#332730" stroke-width="3"/>
+  </g>
+  <rect x="832" y="312" width="304" height="144" rx="12" fill="none" stroke="#f4869c" stroke-dasharray="6 6"/>
+  <text x="984" y="348" font-size="15" font-weight="700" fill="#f4869c" text-anchor="middle">ԱՌԱՆՑՔ ՉԿԱ</text>
+  <text x="984" y="372" font-size="13" font-weight="700" fill="#f4869c" text-anchor="middle">NO NETWORK AXIS EXISTS</text>
+  <text x="984" y="400" font-size="11" fill="#f4869c" text-anchor="middle">no egress allowlist, no isolation primitive</text>
+  <text x="984" y="416" font-size="11" fill="#f4869c" text-anchor="middle">ոչ egress allowlist, ոչ isolation primitive</text>
+
+  <text x="832" y="476" font-size="11" font-weight="700" fill="#f4869c">USE_NETWORK is in the lease schema, but no</text>
+  <text x="832" y="492" font-size="11" font-weight="700" fill="#f4869c">task class permits it — it cannot validate.</text>
+  <text x="832" y="516" font-size="11" fill="#f4869c">USE_NETWORK կա lease schema-ում, բայց ոչ մի</text>
+  <text x="832" y="532" font-size="11" fill="#f4869c">task class չի թույլատրում — չի վալիդանում։</text>
+
+  <!-- declared authority is recorded and read, never applied: a caveat under all three axes -->
+  <rect x="40" y="576" width="1120" height="88" rx="12" fill="#1b1f2a" stroke="#f0b23a"/>
+  <text x="64" y="600" font-size="11" fill="#eef1f6">The 262 pack-role files under <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">.claude/agents/</tspan> record the authority each declared role was derived with.</text>
+  <text x="64" y="616" font-size="11" font-weight="700" fill="#f0b23a">Bro READS them to pick the matching tier — they are NOT themselves enforced from the app.</text>
+  <text x="64" y="636" font-size="11" fill="#eef1f6">262 pack-role ֆայլերը <tspan font-family="&apos;JetBrains Mono&apos;, &apos;Cascadia Code&apos;, ui-monospace, Consolas, &apos;Courier New&apos;, monospace">.claude/agents/</tspan>-ում գրանցում են՝ ինչ իրավունքով ա ամեն հայտարարված դեր ստացվել։</text>
+  <text x="64" y="652" font-size="11" font-weight="700" fill="#f0b23a">Բրոն ԿԱՐԴՈՒՄ ա դրանք շերտն ընտրելու համար — հավելվածից ՈՒԺԻ ՄԵՋ ՉԵՆ։</text>
+</svg>
