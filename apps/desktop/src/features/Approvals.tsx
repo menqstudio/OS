@@ -105,6 +105,25 @@ export function Approvals() {
   const sel = items.length ? Math.min(selected, items.length - 1) : 0;
   const seated = items.length ? items[sel] : null;
 
+  // WHAT THE KEY HANDLER READS, AND WHY IT IS A REF.
+  //
+  // The §D keydown listener used to close over `data` and `selected` and re-register on
+  // `[staged, data, selected]`. A listener that is only correct once its effect has re-run is a
+  // listener that can be wrong: React runs passive effects AFTER the commit, and under load it
+  // defers them, so a keypress arriving in that window was read against the PREVIOUS closure --
+  // an empty list -- and dropped with no retry and no message. That is what reddened `main` at
+  // 82ace2dc: `Approvals.test.tsx`'s `g` pressed 5.1 s after the row was on screen, and
+  // `findByRole('dialog')` waited for a dialog no keypress had staged (T-040's class, the third
+  // remedy its row named -- "a real fix in the component's read ordering", not a longer wait).
+  //
+  // These refs are assigned during RENDER, so they are current the instant the commit that shows
+  // a row lands -- before any effect runs. The handler reads them instead of a captured value, so
+  // it cannot be stale, and its effect no longer depends on the data at all.
+  const dataRef = useRef<typeof data>(undefined);
+  const selectedRef = useRef(0);
+  dataRef.current = data;
+  selectedRef.current = selected;
+
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
     [lang],
@@ -200,11 +219,11 @@ export function Approvals() {
       // browser's own binding (A-11, fifth audit). Pre-existing for `d`/`e`; this round widened
       // it to the grant path, which is the one where a mistaken keystroke matters most.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const list = data ?? [];
+      const list = dataRef.current ?? [];
       if (list.length === 0) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((i) => Math.min(i + 1, list.length - 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((i) => Math.max(i - 1, 0)); return; }
-      const cur = list[Math.min(selected, list.length - 1)];
+      const cur = list[Math.min(selectedRef.current, list.length - 1)];
       if (!cur || cur.status !== 'pending') return;
       const k = e.key.toLowerCase();
       // §D binds `g` to grant. It was missing: grant was reachable only as the pointer
@@ -221,7 +240,9 @@ export function Approvals() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [staged, data, selected]);
+    // `data` and `selected` are read through refs above, so they are deliberately NOT deps: the
+    // listener is registered once per staged-state and is never a commit behind the data.
+  }, [staged]);
 
   // While a confirm dialog is open: Enter commits, Esc cancels.
   useEffect(() => {
