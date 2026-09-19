@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #230 · branch `fix/crypto-pin-and-waiver-premise`** (base `main`, tip `fdfa5e9`, task T-070).
+> **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
 >
-> cryptography 46.0.3 -> 46.0.7 closes three advisories, one HIGH, that were waived under a reason written about their major-bump neighbours; a new gate refuses both a patch-level waiver and a lost premise
+> the idempotence guard in stamp_pr_head.py compared an LF body against GitHub CRLF, so every stamp rewrote the body and ci.yml, which listens for edited by design, restarted 21 jobs
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,26 +18,27 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still. Pin → 46.0.7, waivers 7 → 4, and `check_crypto_surface.py` refuses a patch-level fix or a lost premise; 12 mutants ◑ | Bro | Review | `#230` |
-| **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently (T-040's class, reddened `main`). Render-assigned refs; 2 mutants RED ◑ | Bro | Review | merged `#227` |
-| **T-068** | **The frontend suite oversubscribed the machine** — vitest's default (CPUs−1) spent half its time in `environment`; `maxWorkers: 4` halves it ◑ | Bro | Review | merged `#223` |
+| **T-071** | **Every stamp burned a full `ci` run** — the idempotence guard compared an LF body against GitHub's CRLF one, never fired, and `edited` restarts 21 jobs. 19 of today's 26 runs cancelled ◑ | Bro | Review | `#231` |
+| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still. Pin → 46.0.7, waivers 7 → 4; a gate now refuses a patch-level fix or a lost premise ◑ | Bro | Review | merged `#230` |
+| **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently, reddening `main`. Render-assigned refs ◑ | Bro | Review | merged `#227` |
+| **T-068** | **The frontend suite oversubscribed the machine** — vitest's default spent half its time in `environment`; `maxWorkers: 4` halves it ◑ | Bro | Review | merged `#223` |
 | **T-067** | **`_rest_open_prs` asked about `menqstudio/OS` by name** (H-05); built from `_repo_slug()` now, no slug ⇒ no read ◑ | Bro | Review | merged `#222` |
-| **T-066** | **Two tools lied on 2026-09-19, untested** — UTF-8 git reads; the carrier moves `what`/`current`; `main_ci` measured. 9 mutants ◑ | Bro | Review | merged `#221` |
-| **T-065** | **Supply-chain gate red since 2026-09-07** — `browserslist` and `rustls` lifted, `T-055` executed by the Owner, `actions: read` on Repo-state ◑ | Bro | Review | merged `#220` |
+| **T-066** | **Two tools lied on 2026-09-19, untested** — UTF-8 git reads, the carrier moves `what`/`current`, `main_ci` measured ◑ | Bro | Review | merged `#221` |
+| **T-065** | **Supply-chain gate red since 2026-09-07** — `browserslist` and `rustls` lifted, `T-055` executed by the Owner ◑ | Bro | Review | merged `#220` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | merged `#219` |
-| **T-064** | **The shut gate names WHICH requirement a machine fails** — `preflight.rs`: 27, met / not met / not measurable, and who provisions | Bro | Review | merged `#217` |
-| **T-063** | **The app version is stated 5x in 4 files, unreconciled** — `check_version_parity.py` refuses drift. **Open: the git-tag arm** — a release policy the Owner has not stated | Bro | Todo | merged `#214` |
+| **T-064** | **The shut gate names WHICH requirement a machine fails** — `preflight.rs`: 27, and who provisions each | Bro | Review | merged `#217` |
+| **T-063** | **The app version is stated 5x in 4 files** — the gate refuses drift. **Open: the git-tag arm**, a release policy the Owner has not stated | Bro | Todo | merged `#214` |
 | **T-059** | **`main_ci` was stale by construction** — an OLDER reading passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table; §4 is an `auth_ref` store. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | merged `#207` |
-| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both dates (0 of 796 differ); the gate checks whether that commit MOVED the line | Bro | Review | merged `#219` |
+| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | merged `#219` |
 | **T-062** | **The negative matrix's silent state** — `#225` read 182 rows; `#226`/`#228` bound 38 Python + 36 Rust, mutation-verified. **113 / 54 / 75** (was 39 / 21 / 182). §2 left: `NM-IPC-06`, `NM-XBIND-13`, 3 shell rows ◑ | Bro | In-Progress | merged `#228` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller, `check_ai_surfaces.py`'s context is not required | Bro | Todo | merged `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | merged `#210` |
-| **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH. `docs/PHASE_10_PRODUCTION_ITEMS.md` | — | Blocked | — |
+| **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule** + a worktree-check fix. Own PR, Owner approval | — | Todo | — |
 | **T-021** | **The approval-REQUEST path across the wall** — the read half shipped, the request half exists nowhere; no new trust-boundary input while RED | — | Blocked | — |
-| **T-022** | **The governed automation dispatch** — firing one writes a desktop row that never crosses the wall; its `engine_receipt` evidence is unobserved. After `T-021` | — | Blocked | — |
+| **T-022** | **The governed automation dispatch** — firing one writes a desktop row that never crosses the wall; its `engine_receipt` is unobserved. After `T-021` | — | Blocked | — |
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job (concurrency); one run proves nothing | — | Todo | merged `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at **19 leaves, not 8** | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |

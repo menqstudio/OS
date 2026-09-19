@@ -66,6 +66,25 @@ def markers(text: str) -> list[str]:
     return [m.strip() for m in MARKER.findall(text.replace("\r\n", "\n"))]
 
 
+def stamped_sha(text: str) -> str | None:
+    """The sha `text` is already stamped at, or None if it is not stamped at exactly one.
+
+    Built on `markers()`, which is line-ending agnostic three times over: the pattern ends
+    `\\s*$`, every match is `.strip()`ed, and CRLF is normalised first. Measured: that
+    normalisation changes no answer on any body shape tried, so it is belt and braces rather
+    than the load-bearing part -- worth saying because the bug this function exists to kill was
+    NOT in `markers()`. It was in the caller, which compared a freshly built LF body against the
+    CRLF one GitHub returns instead of asking `markers()` anything at all.
+
+    Zero markers and two markers both answer None: both are states `check_repo_state.py` refuses,
+    and neither is "already stamped".
+    """
+    found = markers(text)
+    if len(found) != 1:
+        return None
+    return found[0].split(":", 1)[1].strip()
+
+
 def patch_command(repo: str, pr: int) -> list[str]:
     """The argv that writes a PR body. REST, never `gh pr edit` -- see the module docstring."""
     return ["gh", "api", "-X", "PATCH", f"repos/{repo}/pulls/{pr}", "--input", "-"]
@@ -104,12 +123,22 @@ def main() -> int:
         raise SystemExit(f"RED: local HEAD {local[:8]} is not what origin has ({pushed[:8]}). "
                          "Push first — the marker must name a commit that exists on GitHub.")
 
-    new = restamp(meta["body"], pushed)
-    if new == meta["body"]:
-        print(f"already stamped at {pushed[:8]}")
+    # Idempotence is not a nicety here, it is minutes. `.github/workflows/ci.yml` listens for
+    # `pull_request: edited` BY DESIGN -- a body edit has to re-run `Repo-state` so the marker is
+    # re-read -- so a PATCH that changes nothing still starts all 21 jobs of `ci` and cancels the
+    # run already in flight. A cancelled run is not a reading of anything, which is the rule this
+    # repository states about `main` in that same file. Measured 2026-09-19: 26 `ci` runs over 11
+    # heads, 19 of them cancelled, every head with more than one run.
+    #
+    # The check below used to be `restamp(body, pushed) == body`, which could never be true: the
+    # body comes from GitHub with CRLF and `restamp` builds LF, so the branch was unreachable and
+    # every stamp wrote. The fix is not "handle CRLF" -- `markers()` already did, and its own test
+    # said so -- it is to ask the question in terms of the marker instead of the whole document.
+    if stamped_sha(meta["body"]) == pushed:
+        print(f"already stamped at {pushed[:8]}; the body is not rewritten")
         return 0
 
-    write_body(args.repo, args.pr, new)
+    write_body(args.repo, args.pr, restamp(meta["body"], pushed))
     print(f"PR #{args.pr} ({branch}) stamped at {pushed}")
     print("Now verify against live GitHub:  python tools/check_repo_state.py")
     return 0

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `fix/crypto-pin-and-waiver-premise` — `main` @ `fdfa5e9`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `fix/stamp-idempotence-crlf` — `main` @ `fb08ad8`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #230 · branch `fix/crypto-pin-and-waiver-premise`** (base `main`, tip `fdfa5e9`, task T-070).
+> **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
 >
-> cryptography 46.0.3 -> 46.0.7 closes three advisories, one HIGH, that were waived under a reason written about their major-bump neighbours; a new gate refuses both a patch-level waiver and a lost premise
+> the idempotence guard in stamp_pr_head.py compared an LF body against GitHub CRLF, so every stamp rewrote the body and ci.yml, which listens for edited by design, restarted 21 jobs
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,7 +75,7 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**68 pull requests, 234 files and 45,057 inserted lines have merged since that head**, and
+**69 pull requests, 238 files and 45,731 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(62/207/44,630 and
 58/206/44,055 earlier on 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
