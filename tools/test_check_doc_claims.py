@@ -444,6 +444,191 @@ class TheOtherThreeChecks(unittest.TestCase):
         self.assertIn("in the read manifest and not on disk", out)
 
 
+class DocumentsCheckedWithoutBeingCanonicalReads(unittest.TestCase):
+    """`ALSO_CHECKED` -- documents whose checkable claims are checked, that no session reads.
+
+    Being CHECKED and being CANONICAL were one property until now, and `README.md` fell
+    between them: nobody needs it to start a session and it is 33 KB, so it belonged in no
+    read manifest -- and therefore, measurably, in no gate. `grep -ln 'README\\.md'
+    tools/check_*.py` returned nothing on 2026-09-19. Six of its numbers had to be found by
+    hand, one of which ("59 declared controls -- 45 check . 14 tool") was wrong at every head
+    it was ever written at while summing to the right total, which is the shape a reader
+    cannot catch.
+
+    These tests hold the two halves apart: that a document in this tuple is really read, and
+    that the tuple is what does it rather than something else in the file.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="doc-claims-also-"))
+        self._saved = m.ALSO_CHECKED
+
+    def tearDown(self):
+        m.ALSO_CHECKED = self._saved
+
+    def _extra(self, root: pathlib.Path, name: str, body: str) -> None:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(body, encoding="utf-8")
+
+    def test_a_document_named_only_in_ALSO_CHECKED_is_checked(self):
+        """The whole point. The manifest does not name `FRONT.md`; the tuple does.
+
+        Mutant: iterate `paths` alone ⇒ green, and the front page goes back to being the one
+        widely-read file nothing refuses to merge."""
+        root = build(self.tmp, doc="Clean.\n")
+        self._extra(root, "FRONT.md", "See [the plan](docs/no-such-plan.md).\n")
+        m.ALSO_CHECKED = ("FRONT.md",)
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("FRONT.md", out)
+        self.assertIn("no-such-plan.md", out)
+
+    def test_the_same_document_is_green_when_the_tuple_does_not_name_it(self):
+        """The control, and it is not optional: without it the red above could be arriving
+        from anywhere. Same root, same broken link, empty tuple.
+
+        Mutant: check every .md file in the tree ⇒ this goes red, and the gate silently
+        acquires a scope nobody declared."""
+        root = build(self.tmp, doc="Clean.\n")
+        self._extra(root, "FRONT.md", "See [the plan](docs/no-such-plan.md).\n")
+        m.ALSO_CHECKED = ()
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("FRONT.md", out)
+
+    def test_a_document_in_both_lists_is_walked_once(self):
+        """`ALSO_CHECKED` widens WHAT is checked; it must not make anything checked twice.
+
+        This test first asserted that one broken citation produces one PROBLEM, and the mutant
+        `extra = list(ALSO_CHECKED)` survived it: the verdict prints `sorted(set(problems))`, so
+        a doubled walk reports the identical defect once anyway and the de-duplication in
+        `extra` looked like dead code. The counters are what actually observe it — a document
+        walked twice has its referents counted twice — so that is what is asserted, on a
+        document with a countable referent and no defect.
+
+        Mutant: `extra = list(ALSO_CHECKED)` ⇒ `2 paths` instead of `1`, and every number in
+        the verdict line silently depends on how the two lists overlap."""
+        root = build(self.tmp, doc="See [the manifest](config/canonical-read-manifest.json).\n")
+        m.ALSO_CHECKED = ("DOC.md",)
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 paths", out)
+        self.assertIn("0 of 0 also-checked", out)
+
+    def test_an_absent_document_is_not_a_problem_but_is_not_silent_either(self):
+        """The asymmetry with the read manifest, pinned in both directions.
+
+        The manifest is a contract about the session read set, so a path it names and the disk
+        lacks is a broken contract and RED. This tuple promises nothing of the kind — it widens
+        scope — and `main(root)` runs over synthetic roots where no README exists. Making
+        absence RED reported "README.md: not on disk" in thirteen tests about other subjects.
+
+        But absent must not read as checked, so the count says `0 of 1`. A reader who sees
+        `1 of 1` knows the file was opened; the existence of the real files is held by the
+        test below, BY NAME.
+
+        Mutant: drop the count from the verdict ⇒ a tuple that names a file nobody filed is
+        indistinguishable from one that was read, which is the silent-skip hole this gate is
+        supposed to be the opposite of."""
+        root = build(self.tmp, doc="Clean.\n")
+        m.ALSO_CHECKED = ("GONE.md",)
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 of 1 also-checked document(s) read", out)
+
+    def test_a_present_document_is_counted_as_read(self):
+        """The positive control for the line above: the same verdict field must be able to say
+        the file WAS opened, or `0 of 1` proves nothing.
+
+        Mutant: hard-code the count to zero ⇒ this goes red while the test above still passes."""
+        root = build(self.tmp, doc="Clean.\n")
+        self._extra(root, "FRONT.md", "Nothing checkable here.\n")
+        m.ALSO_CHECKED = ("FRONT.md",)
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 of 1 also-checked document(s) read", out)
+
+    def test_the_real_repository_has_every_also_checked_document(self):
+        """Absence is not RED in the gate, so it is caught here instead — by name, in the real
+        tree. Delete `README.md` and this fails saying which file went missing.
+
+        Mutant: delete either file from the repository ⇒ red here, rather than a gate that
+        quietly checks one fewer document and still prints GREEN."""
+        for rel in m.ALSO_CHECKED:
+            with self.subTest(document=rel):
+                self.assertTrue((ROOT / rel).is_file(), f"{rel} is named in ALSO_CHECKED and "
+                                                        f"is not in the repository")
+
+    def test_the_front_page_and_its_claim_history_are_the_documents_named(self):
+        """Pinned BY NAME, so deleting either from the tuple fails a test that says what was
+        lost rather than quietly narrowing the gate's reach.
+
+        `docs/README_CLAIM_HISTORY.md` is here too because it is the manual stand-in for this
+        very gate: it carries the record of every front-page number that was ever wrong, and
+        a record whose own citations rot is not a record."""
+        self.assertIn("README.md", m.ALSO_CHECKED)
+        self.assertIn("docs/README_CLAIM_HISTORY.md", m.ALSO_CHECKED)
+
+
+class ControlCharactersInADocument(unittest.TestCase):
+    """Check 5. A canonical document held a real backspace byte and nothing refused it.
+
+    `TASKS.md` offset 1499 carried 0x08 inside T-072's row, reading "five printed `a<BS>`".
+    #232's own commit message says what was meant: "`a\\b` is neither this" — a Windows path,
+    `a` backslash `b`. A shell ate the backslash and left the character its name refers to.
+
+    One byte, in one file, and a scan of every tracked `.md`/`.json`/`.txt`/`.yml` found no
+    other. It is still a rule and not just a fix: that file is in the read set, so the byte was
+    pasted into every session's context, and a backspace renders as nothing in a diff, a
+    terminal and a review. There is no position from which a person catches this.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="doc-claims-ctrl-"))
+
+    def test_a_backspace_in_a_document_is_red_and_says_which_line(self):
+        """The exact defect, reproduced.
+
+        Mutant: drop check 5 ⇒ green, and the byte goes back to being invisible everywhere a
+        human might look."""
+        root = build(self.tmp, doc="fine\nfive printed `a" + chr(8) + "`\nalso fine\n")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("DOC.md:2", out)
+        self.assertIn("0x08", out)
+
+    def test_tab_and_the_line_endings_are_text_and_not_flagged(self):
+        """A rule that called `\\t` unprintable would go red on every indented document in the
+        repository and be switched off within a day.
+
+        Mutant: flag everything below 0x20 ⇒ red here, and the check does not survive contact."""
+        root = build(self.tmp, doc="a\tb\r\nc\n")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_the_verdict_counts_control_characters_so_zero_is_a_measurement(self):
+        """`0 control` in the GREEN line is the difference between "checked and found none" and
+        "did not look" — the same distinction the SKIPPED branch of check 4 exists for.
+
+        Mutant: leave the counter out of the verdict ⇒ a reader cannot tell the rule ran."""
+        root = build(self.tmp, doc="nothing unusual\n")
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 control", out)
+
+    def test_every_distinct_control_character_on_a_line_is_counted_once(self):
+        """Two different control characters on one line is one problem naming both, not two
+        problems, and not one naming only the first.
+
+        Mutant: report the first and stop ⇒ the second byte survives the fix that the first
+        one prompts."""
+        root = build(self.tmp, doc="x" + chr(8) + "y" + chr(7) + "z\n")
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("0x07", out)
+        self.assertIn("0x08", out)
+
+
 class TheRealRepository(unittest.TestCase):
     def test_the_real_canon_makes_no_untrue_claim(self):
         """The documents against the record — the half that is true on every machine.

@@ -1,4 +1,4 @@
-"""Every checkable claim in a canonical document must be checkable, and true.
+r"""Every checkable claim in a canonical document must be checkable, and true.
 
 Every defect found while cutting the read set down had one shape: **something was written
 down, and nothing checked that it was true.** Not one of them was carelessness — each was
@@ -39,9 +39,26 @@ already being written. So the class gets a gate rather than the instances gettin
      machine only where a development machine is what is running it. In CI that half prints
      SKIPPED and says why -- "I could not check" and "it is fine" are different answers.
 
+  5. **No document it reads may hold an unprintable control character.** Found by widening
+     the gate to the front page: `TASKS.md` carried a real 0x08 (backspace) in T-072's row,
+     where `a\b` — a Windows path — had been written and a shell ate the backslash, leaving
+     the control character its name refers to. That file is in the read set, so the byte was
+     pasted into every session, and nothing refused it: a backspace shows as nothing in a
+     rendered diff, a terminal, and a review. Tab, LF and CR are text; below 0x20, nothing
+     else is.
+
+Since 2026-09-19 the documents checked are the read manifest's **plus** `ALSO_CHECKED` —
+`README.md` and this repository's claim history. Being CHECKED and being CANONICAL are
+different properties, and the front page fell between them: it is in no read manifest, so it
+was in no gate, and `grep -ln 'README\.md' tools/check_*.py` returned nothing while six of
+its numbers were stale or false. See `docs/README_CLAIM_HISTORY.md` §6.
+
 What this deliberately does NOT do: judge prose. It cannot tell whether a sentence
 describing a design is still true — only a reader can. It checks the claims that have a
-machine-checkable referent, which is the class that produced every defect above.
+machine-checkable referent, which is the class that produced every defect above. It also
+does not check the front page's COUNTED claims — 2143 engine tests, 39 gate scripts — which
+need a declaration mapping each to the command that prints it. §5 of the claim history is
+still where that drift is caught by hand.
 
 Stdlib plus `git`. Offline. Exit 0 GREEN, 1 RED.
 """
@@ -57,6 +74,25 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST_REL = "config/canonical-read-manifest.json"
+
+# Documents checked here that are NOT canonical reads.
+#
+# The read manifest answers one question -- what must every session read before it can start --
+# and it carries a byte ceiling per path because that text is pasted into a session. `README.md`
+# belongs to neither: nobody needs it to start, and it is 33 KB. So it was in no list, and the
+# consequence was measured on 2026-09-19: `grep -ln 'README\.md' tools/check_*.py` returned
+# nothing. Not one gate opened the most-read file in the repository. Six of its numbers were found
+# stale or false by hand, one of them ("59 declared controls -- 45 check . 14 tool") wrong at every
+# head it had ever been written at while summing to the correct total. That is recorded in
+# `docs/README_CLAIM_HISTORY.md` §4g, which also says plainly that naming the gap is not closing
+# it. This closes the part a machine can settle: paths, commit hashes and ticket ids.
+#
+# Being checked and being canonical are now separate properties, which they always should have
+# been. Adding a document here costs a session nothing.
+ALSO_CHECKED = (
+    "README.md",
+    "docs/README_CLAIM_HISTORY.md",
+)
 
 # A markdown link target that looks like a repository path: not a URL, not an anchor.
 LINK = re.compile(r"\]\(\s*(?!https?:|mailto:|#)([^)\s]+)")
@@ -251,7 +287,7 @@ def main(root: pathlib.Path = ROOT) -> int:
     tickets = known_tickets()
     versions, toolchain_problem = declared_versions(root)
     problems: list[str] = [] if toolchain_problem is None else [toolchain_problem]
-    checked = {"paths": 0, "shas": 0, "tickets": 0, "versions": 0}
+    checked = {"paths": 0, "shas": 0, "tickets": 0, "versions": 0, "control": 0}
     # Resolved once, not per hash: `main` does not move during a run, and a
     # per-hash lookup would make the verdict depend on how many hashes there are.
     base = main_ref(root)
@@ -277,11 +313,31 @@ def main(root: pathlib.Path = ROOT) -> int:
                     f"and every document that repeats the number, in one commit")
         machine_note = f"config/toolchain.json agrees with this machine on {compared} tool(s)"
 
-    for rel in paths:
+    # The read set, then the documents that are checked without being canonical reads. A path in
+    # both is walked once: `ALSO_CHECKED` is a widening of WHAT is checked, never a second pass.
+    #
+    # An absent `ALSO_CHECKED` document is NOT a problem, and the asymmetry with the read manifest
+    # is deliberate. The manifest is a contract about the session read set, so a path it names and
+    # the disk lacks is a broken contract. This tuple makes no such promise -- it widens scope --
+    # and `main(root)` is called on synthetic roots by this gate's own tests, where a missing
+    # README.md is not a defect of anything. Requiring it here reported "README.md: not on disk" in
+    # thirteen tests whose subject was something else entirely.
+    #
+    # Absent is not SILENT, though: the count below prints `2 of 2 also-checked` so a reader can
+    # see the tuple was actually read, and `test_the_real_repository_has_every_also_checked_document`
+    # fails BY NAME if either file disappears from the real tree. A silent skip would hand back
+    # exactly the guarantee this whole change exists to add.
+    extra = [r for r in ALSO_CHECKED if r not in paths]
+    also_read = 0
+    for rel in list(paths) + extra:
         doc = root / rel
         if not doc.is_file():
+            if rel in extra:
+                continue
             problems.append(f"{rel}: in the read manifest and not on disk")
             continue
+        if rel in extra:
+            also_read += 1
         text = doc.read_text(encoding="utf-8", errors="ignore")
 
         # 1 — referenced repository paths exist.
@@ -416,6 +472,28 @@ def main(root: pathlib.Path = ROOT) -> int:
                     f"{rel}: claims {tool} {claimed}; {TOOLCHAIN_REL} records {actual}. Five "
                     f"canonical documents said PowerShell-only cargo on a Debian box")
 
+        # 5 — no unprintable control character.
+        #
+        # Found by widening this gate to the front page: `TASKS.md` held a real 0x08 (backspace)
+        # inside T-072's row, reading "five printed `a<BS>`". #232's own commit message says what
+        # was meant -- "`a\b` is neither this" -- a WINDOWS path, `a` backslash `b`. A shell ate
+        # the backslash and left the control character it names. One byte, in one file, and a scan
+        # of every tracked .md/.json/.txt/.yml found no other.
+        #
+        # It is worth a rule and not just a fix. That file is in the canonical read set, so the
+        # byte was pasted into every session's context, and nothing refused it: a backspace is
+        # invisible in a rendered diff, a terminal, and a code review. Tab, LF and CR are text;
+        # nothing else below 0x20 is, in a document meant to be read.
+        for n, line in enumerate(text.split("\n"), 1):
+            stray = {ch for ch in line if ch < " " and ch != "\t"}
+            if stray:
+                checked["control"] += len(stray)
+                names = ", ".join(f"0x{ord(c):02x}" for c in sorted(stray))
+                problems.append(
+                    f"{rel}:{n}: holds control character(s) {names}, which a rendered diff, a "
+                    f"terminal and a review all show as nothing. A shell ate a backslash and "
+                    f"left what it names")
+
     if problems:
         print("RED: canonical documents make claims that are not true\n")
         for p in sorted(set(problems)):
@@ -424,7 +502,8 @@ def main(root: pathlib.Path = ROOT) -> int:
         return 1
 
     print("GREEN: canonical claims check out; "
-          + ", ".join(f"{v} {k}" for k, v in checked.items()))
+          + ", ".join(f"{v} {k}" for k, v in checked.items())
+          + f"; {also_read} of {len(extra)} also-checked document(s) read")
     print(f"  ({machine_note})")
     return 0
 
