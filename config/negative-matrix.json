@@ -1496,13 +1496,13 @@
       "status": "implemented",
       "under_test": "`system` (raw UTF-8)",
       "section": "plan 19",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixParityTests::test_nm_parity_01_system_formula_is_raw_utf8_across_unicode_emoji_and_nul"
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_01_system_formula_is_raw_utf8_across_unicode_emoji_and_nul"
     },
     "NM-PARITY-02": {
       "status": "implemented",
       "under_test": "`history` (JCS `[{content,role}]`)",
       "section": "plan 19",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixParityTests::test_nm_parity_02_history_formula_pins_empty_history_and_unicode"
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_02_history_formula_pins_empty_history_and_unicode"
     },
     "NM-PARITY-03": {
       "status": "implemented",
@@ -1544,7 +1544,7 @@
       "status": "implemented",
       "under_test": "Time-unit parity",
       "section": "plan 19",
-      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixParityTests::test_nm_parity_09_ms_integers_serialize_identically_on_both_sides"
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_09_ms_integers_serialize_identically_on_both_sides"
     }
   }
 }
