@@ -6,7 +6,7 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **2026-09-19 — TWO one-line edits need you, both in files only you touch.**
+> **2026-09-20 — THREE one-line edits need you, all in files only you touch.**
 >
 > **1. `.github/supply-chain/gitleaks.toml` — the secret gate carries a false positive that any edit
 > can wake.** The committed operator ROOT PUBLIC key (safe by design) is suppressed by an allowlist
@@ -36,6 +36,15 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 >
 > Its first run was green too, on `#232` itself. So the only thing left is moving the key from
 > `deliberately_excluded` into `contexts` and adding the context to live branch protection.
+>
+> **3. `config/required-checks.json` — add `Trust anchor · no production root private in this tree`
+> to `contexts`, after its first green run on `main`.** New with `T-094`. The gate derives an Ed25519
+> public key from every 32-byte hex literal in this tree and refuses if any of them is the private half
+> of a pinned PRODUCTION anchor — the one fact every `trusted_verified` in this product rests on, which
+> until now was asserted in a `tcb.rs` comment and checked by nothing. It runs on every pull request
+> already; what it cannot do until you add the context is BLOCK a merge, and a gate whose failure
+> prevents nothing is the `T-056` pattern this repository names. Its first run is the condition, same
+> as item 2.
 >
 > Below: the visibility question, settled the same day.
 
@@ -266,6 +275,58 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > The line is held, and it was held all along — but by those, not by the name everyone was watching.
 > Earlier prose in the HISTORY sections still uses the old name; that is what was believed when it
 > was written, and it is left alone rather than rewritten.
+
+---
+
+## 0. Your offline root is the one thing between this product and a governed turn
+
+**2026-09-20.** Six roadmap rows are open across phases 1, 8 and 9, and every account of them says the
+same true and unhelpful thing: they need a provisioned deployment. Here is the shape of that, measured
+from `broker/src/preflight.rs` rather than described:
+
+| who provides it | rows |
+|---|---|
+| an installer | 13 |
+| a machine administrator | 11 |
+| the Linux kernel | 1 (`platform.linux_af_unix_peercred`) |
+| the BUILD, since `T-088` | 1 (`custody.committed_label_resolver`) |
+| **you, and nobody else** | **1 — `custody.tcb_root_manifest_signature`** |
+
+Twenty-four of those are a day's work for a person with root on a Debian box, and
+[`docs/DEBIAN_DEPLOYMENT.md`](DEBIAN_DEPLOYMENT.md) is the runbook for them. The last one is a
+signature, and it can only be made by whoever holds the private half of the root public key compiled
+into `apps/desktop/src-tauri/broker/src/tcb.rs`.
+
+### What is established about that key, by arithmetic and not by reading comments
+
+* The pinned production anchor is `3c83c2bc…`. Its private half is **not in this repository**: every
+  32-byte hex literal in every tracked text file was treated as an Ed25519 seed and none of them
+  derives it. That is now a gate — `tools/check_root_anchor_custody.py` — and it runs on every pull
+  request, with the demonstration seed as its control, so a sweep that quietly stopped working cannot
+  report this result.
+* It was pinned on **2026-08-06**, in `#53` (*"Windows production trusted_verified over named pipes"*).
+  Somebody ran `win_gen_root` that day and the ceremony's own runbook writes the seed to
+  `D:\brops-root\root.private.seed` on removable media. **Whether that file still exists is the one
+  fact this repository cannot tell you**, and it is the fact everything else waits on.
+* A demonstration anchor cannot substitute for it. `ProductionResolver::provisioned_with_pin` is
+  `pub(crate)` on purpose and the shipped binary reaches only `provisioned`, which pins the production
+  anchor; on Windows `win_provision` compares any `--root-key` against the production public and exits
+  3 otherwise. Both refusals are deliberate: the demonstration private is readable by anyone with a
+  clone, so an anchor it can sign under must never be able to render `trusted_verified`.
+
+### So there are two paths, and both are days rather than months
+
+1. **You still hold the seed.** Nothing needs building. `win_tcb_pin`, then
+   `win_live_proof.ps1 -RootKey <the seed>` per
+   [`CUSTODY_CEREMONY.md`](../apps/desktop/src-tauri/win-live/CUSTODY_CEREMONY.md), and one governed
+   turn reaches a real `trusted_verified` across three distinct Windows service accounts.
+2. **You do not.** Mint a new root on an offline machine (`win_gen_root --out <path>`), send the
+   PUBLIC hex, and the pin changes in two files — `broker/src/tcb.rs` and `win-live/src/tcb.rs`, which
+   the new gate holds to agreeing with each other, because the Owner holds ONE root and two different
+   production anchors would leave one of them undeployable with nobody saying so.
+
+Neither path is a Builder decision and neither is a code problem, which is why this is the first
+section on this page rather than a line in a roadmap row.
 
 ---
 

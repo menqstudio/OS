@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t093/matrix-output05` — `main` @ `c45438c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t094/anchor-custody-gate` — `main` @ `1fb16cd`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #264 · branch `t093/matrix-output05`** (base `main`, tip `c45438c`, task T-093).
+> **⏭️ CURRENT ACTIVE: PR #265 · branch `t094/anchor-custody-gate`** (base `main`, tip `1fb16cd`, task T-094).
 >
-> NM-OUTPUT-05 bound: an execution receipt naming another turn's output is refused, by name
+> A gate proves no literal in this tree is a pinned production root's private half
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

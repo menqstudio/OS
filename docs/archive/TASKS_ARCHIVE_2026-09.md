@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-29 of these and their pull requests. What is here is the account of each defect, which is
+31 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -47,3 +47,5 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-087** | **Phase 1 waits on a decision, not a deployment** - `custody.committed_label_resolver` is `NotProvisionableOnAMachine` and was on no Owner page; a test now refuses that class of silence ◑ | Bro | Review | merged `#258` |
 | **T-089** | **The roadmap sheet said all ten phases were partly built** - seven of eleven have every box ticked; the figure, its alt text and both summaries re-trued at `a94513e` ◑ | Bro | Review | merged `#259` |
 | **T-090** | **Three roadmap rows named things that had stopped being absent** - a schema that exists now, a count of five that is six, and a record that ended in the present tense ◑ | Bro | Review | merged `#261` |
+| **T-091** | **NM-MAN-06 bound** - an attestation key id the manifest never pinned is refused before any signature check, and the refusal spends neither the receipt nor the nonce ◑ | Bro | Review | merged `#262` |
+| **T-092** | **NM-TCB-25 bound** - an allowlist emptied after signing refuses the NEXT turn and leaves the signed record verifying byte for byte; read on exactly one path ◑ | Bro | Review | merged `#263` |
