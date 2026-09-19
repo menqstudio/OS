@@ -194,10 +194,10 @@
       "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_time_12_a_wall_clock_step_between_the_lease_persist_and_the_gate_expires_it"
     },
     "NM-TIME-13": {
-      "status": "blocked",
+      "status": "implemented",
       "under_test": "Complete time-chain in-window (verify)",
       "section": "§7, §4.5",
-      "blocked_on": "The §7 lease-time invariant `completed_at_ms ≤ lease_expires_at_ms` is not implemented anywhere on the verify path. MEASURED 2026-09-19 against the real ledger (in-memory SQLite via engine/tests/test_negative_matrix.py fixtures): after `_executing()`, `record_completion(conn, 'att-1', _produced(completed_at_ms=lease_expires_at_ms + 1), 40, derived=_derived())` returned `created`, the row moved to `COMPLETED`, and `load_attestation_state` returned terminal state with completed_at_ms=1210001 against lease_expires_at_ms=1210000 — the §4.9 attestation input IS built for a completion past lease expiry; the matrix requires `lease_expired` and no envelope. What must exist first: a check that reads the acceptance row's `lease_expires_at_ms` and refuses `completed_at_ms` past it — in `governed_supervisor_ledger.record_completion` / `governed_supervisor_server.complete_governed_run` (the only functions that hold both values), or a `lease_expires_at_ms` evidence field plus a limb in `isolated_signer._check_timestamps` — surfacing as governed `lease_expired`. This is a gap in a shipped control, reported rather than papered over; closing it is a change to audited security code that this work is not authorised to make."
+      "test": "engine/tests/test_governed_supervisor_ledger.py::CompletionTests::test_nm_time_13_a_completion_stamped_past_its_lease_is_refused_as_lease_expired"
     },
     "NM-TIME-14": {
       "status": "blocked",
@@ -224,10 +224,10 @@
       "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_time_17_a_perfectly_signed_receipt_from_a_year_ago_is_refused"
     },
     "NM-TIME-18": {
-      "status": "blocked",
+      "status": "implemented",
       "under_test": "Wall-clock NTP step (in-exec)",
       "section": "§7",
-      "blocked_on": "The §7 lease-time invariant `completed_at_ms ≤ lease_expires_at_ms` is not implemented anywhere on the verify path (identical root to NM-TIME-13 — the row differs only in HOW the stamp got past expiry, which the tree cannot distinguish because nothing reads the lease at completion). MEASURED 2026-09-19: `record_completion(completed_at_ms = lease_expires_at_ms + 1)` returned `created`, state `COMPLETED`, and `load_attestation_state` returned terminal state (completed_at_ms 1210001 vs lease_expires_at_ms 1210000). The signer's only related limb (isolated_signer.py:729-730) is a future-skew bound against its own clock, not the lease. What must exist first: a `completed_at_ms ≤ lease_expires_at_ms` refusal surfacing as governed `lease_expired`, in `governed_supervisor_ledger.record_completion` / `governed_supervisor_server.complete_governed_run` or as a lease `_ms` evidence field checked in `isolated_signer._check_timestamps`. A change to audited security code that this work is not authorised to make."
+      "test": "engine/tests/test_governed_supervisor_ledger.py::CompletionTests::test_nm_time_18_a_stepped_clock_cannot_buy_a_completion_the_lease_no_longer_covers"
     },
     "NM-TIME-19": {
       "status": "implemented",

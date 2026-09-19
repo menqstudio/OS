@@ -4,17 +4,17 @@
 `6ca13df`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
 rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux kernel, and
 one offline root signature only the Owner can make — that last one is the whole blocker, named on the
-Owner page. The negative matrix reads: **153 implemented · 54 blocked · 35 unreviewed**, from 39/21/182.
-Before: 2026-09-19 — twenty pull requests merged (`#219`–`#237`), `main` at `3909ede`: the supply-chain gate
-green again, the `T-055` promise executed by the Owner, three canon tools fixed so the mirror cannot drift
-unread, and the §D keydown race closed.
+Owner page. The negative matrix reads: **155 implemented · 52 blocked · 35 unreviewed**, from 39/21/182.
+Before: 2026-09-19 — twenty merged (`#219`–`#237`), `main` at `3909ede`: the supply-chain gate green
+again, the `T-055` promise executed by the Owner, three canon tools fixed so the mirror cannot drift
+unread, the §D keydown race closed.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #266 · branch `t095/source-nul-gate`** (base `main`, tip `6ca13df`, task T-095).
+> **⏭️ CURRENT ACTIVE: PR #267 · branch `t096/lease-bounds-execution`** (base `main`, tip `dc6f263`, task T-096).
 >
-> Ten honesty assertions could not fail; the backspace that killed them is refused now
+> The lease bounds execution, not only launch: a completion past its expiry is refused as lease_expired
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -38,16 +38,17 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 | 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked rather than pretending |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
-## Suites, measured on Debian 2026-09-01
+## Suites
 
-| | |
+| Windows, 2026-09-20 | |
 |---|---|
-| engine (Python) | 2124 OK, 10 skipped |
-| Rust workspace, 10 crates | 1149 passed |
-| frontend | typecheck clean, 764 tests / 80 files |
+| engine (Python) | 2205 OK, 97 skipped |
+| frontend | typecheck clean, 781 / 82 files |
+| `tools/` self-tests | 1169 OK |
+| **Debian, 2026-09-01** | |
+| Rust, 10 crates | 1149 passed |
 | `npm audit --audit-level=high` | 0 vulns |
-| FW-1 boundary proof | 23/23 x3, 4 accounts |
-| `tools/` self-tests | 253 passed |
+| FW-1 boundary proof | 23/23 x3 |
 
 Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debian, `cargo` from an ordinary shell.
 

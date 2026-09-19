@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #266 · branch `t095/source-nul-gate`** (base `main`, tip `6ca13df`, task T-095).
+> **⏭️ CURRENT ACTIVE: PR #267 · branch `t096/lease-bounds-execution`** (base `main`, tip `dc6f263`, task T-096).
 >
-> Ten honesty assertions could not fail; the backspace that killed them is refused now
+> The lease bounds execution, not only launch: a completion past its expiry is refused as lease_expired
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,8 +18,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-096** | **The lease bounded launch and nothing after it** - a completion past `lease_expires_at_ms` is refused as `lease_expired` on both the run's stamp and the supervisor's clock, while an idempotent crash-retry still recovers; `NM-TIME-13` and `NM-TIME-18` out of `blocked` ◑ | Bro | Review | `#267` |
 | **T-095** | **Ten assertions could not fail, and the byte that killed them is refused now** - five word-boundary regexes in each of two honesty tests were literal backspaces, so the UI's receipt vocabulary was unguarded; proved by injecting `custody` ◑ | Bro | Review | `#266` |
-| **T-094** | **The one thing blocking phases 1, 8 and 9 was in no document, and the fact it rests on was checked by nothing** - a gate derives a public key from every 32-byte literal in the tree and refuses if one is a pinned production root's private half; the Owner page names the offline seed as the single remaining action ◑ | Bro | Review | `#265` |
 | **T-088** | **The custody resolver is wired, by the Owner's decision** - the one prerequisite no machine could provide is `met-by-build`; a demo anchor still commits `demonstration_custody` and never production ◑ | Bro | Review | `#260` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
@@ -38,7 +38,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **32 merged rows** | **Shipped, and none independently confirmed** — `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **33 merged rows** | **Shipped, and none independently confirmed** — `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
