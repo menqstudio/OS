@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #241 · branch `t074/readme-under-doc-claims`** (base `main`, tip `235acc1`, task T-074).
+> **⏭️ CURRENT ACTIVE: PR #242 · branch `t075/bind-crash-01`** (base `main`, tip `a03ffd9`, task T-075).
 >
-> the front page under check_doc_claims, and a control byte
+> NM-CRASH-01, and a test that was never running
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,11 +18,12 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-075** | **A test that does not exist cannot fail** — NM-CRASH-01 bound; its first copy landed past `unittest.main()` ◑ | Bro | Review | `#242` |
 | **T-074** | **No gate read the front page** — in no manifest meant in no check; `ALSO_CHECKED`, 145 → 204 paths, and a C0 byte found ◑ | Bro | Review | `#241` |
 | **T-073** | **Six front-page numbers were never measured** — five stale, and the control split `45 / 14` summed to a right 59 while wrong at every head ◑ | Bro | Review | merged `#239` |
 | **T-072** | **The gates had never run on Windows** — every `tools/` self-test step ran on ubuntu, five printed `a\b` and two `check_audit_actor` tests were red here ◑ | Bro | Review | `#232` |
 | **T-071** | **Every stamp burned a full `ci` run** — `restamp()` moved a correct marker past the attribution line, so `edited` restarted 21 jobs ◑ | Bro | Review | merged `#231` |
-| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — patch releases fixed them while the pin stood still; a gate refuses both shapes now ◑ | Bro | Review | merged `#230` |
+| **T-070** | **Three advisories, one HIGH, waived under a neighbour's reason** — a gate refuses both shapes now ◑ | Bro | Review | merged `#230` |
 | **T-069** | **The §D keydown listener was a commit behind its data** — a keypress in the passive-effect window was dropped silently ◑ | Bro | Review | merged `#227` |
 | **T-068** | **The frontend suite oversubscribed the machine** — vitest's default spent half its time in `environment`; `maxWorkers: 4` halves it | Bro | Review | merged `#223` |
 | **T-067** | **`_rest_open_prs` named `menqstudio/OS`** (H-05); built from `_repo_slug()` now, no slug ⇒ no read ◑ | Bro | Review | merged `#222` |
@@ -31,9 +32,9 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-064** | **The shut gate names WHICH requirement a machine fails** — `preflight.rs`, and who provisions each | Bro | Review | merged `#217` |
 | **T-063** | **The app version is stated 5x in 4 files** — the gate refuses drift. **Open: the git-tag arm**, a release policy the Owner has not stated | Bro | Todo | merged `#214` |
-| **T-059** | **`main_ci` was stale by construction** — an OLDER reading passes while every run since was `success`; one stepping over a red `main` is refused | Bro | Review | merged `#219` |
+| **T-059** | **`main_ci` was stale by construction** — an OLDER reading passed while every run since was `success`; refused now | Bro | Review | merged `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
-| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
+| **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
 | **T-062** | **The negative matrix's silent state** — **132 / 54 / 56** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 41 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |

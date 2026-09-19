@@ -32,7 +32,6 @@
     "NM-CONC-03",
     "NM-CONC-04",
     "NM-CONC-07",
-    "NM-CRASH-01",
     "NM-CRASH-07",
     "NM-CRASH-09",
     "NM-CRASH-11",
@@ -611,10 +610,10 @@
       "blocked_on": "The §4.10(h) diagnostic decoder on the desktop with its closed `stage` and `upstream_reason` sets. The carrier `bridge.governed-turn-diagnostic.v1` has no producer and no classifier (NOT IMPLEMENTED at governed_bridge_result.rs:917, governed_submit.rs:181, bridge/governed_turn_submit.py:285, bridge/engine_sidecar.py:772-775); `grep -rn upstream_reason apps/desktop/src-tauri/core/src` hits only a test fixture (:923); `DIAGNOSTIC_STAGES` (bridge/governed_turn_submit.py:306) is a published tuple that no code path checks membership against (`UpstreamRefusal.__init__` :297 stores `stage` unchecked). Until the decoder exists, an unknown stage/reason and a known one are indistinguishable on the desktop (both `MalformedFrame`, test :916), so a test cannot bind to an absent control. What must exist first: the diagnostic classifier with `stage ∈ DIAGNOSTIC_STAGES` and `upstream_reason ∈ <per-stage closed set>` arms that fall to the 'anything else' terminal Block. The nearest shipped control, `_reply_arm` :543-546 (test :711), guards the sidecar↔supervisor reply — a different seam."
     },
     "NM-CRASH-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "in `VERIFYING`/`UPLOADING`/`INPUTS_READY` (pre-accept staging)",
       "section": "§5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_staging_upload.py::StagingSweepTests::test_nm_crash_01_a_cut_in_pre_accept_staging_costs_only_the_attempt"
     },
     "NM-CRASH-02": {
       "status": "implemented",

@@ -1801,6 +1801,31 @@ class SupervisorFaultTests(_Case):
 # ---------------------------------------------------------------------------
 
 
+class _CutAtTheAdvance:
+    """A connection proxy that raises on the `VERIFYING` -> `UPLOADING` advance.
+
+    `_Tx.__enter__` returns the connection it was handed, so whatever is passed to
+    `open_staging` is what every statement inside the CAS runs through. Placing the cut on the
+    advance -- and nowhere else -- puts it after the INSERT has really executed and before the
+    transaction commits, which is the only interior seam that CAS has. `seen` is recorded so a
+    test can prove the INSERT ran, otherwise "no row survived" would also be true of a cut that
+    never got that far.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.seen = []
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def execute(self, sql, *args):
+        self.seen.append(" ".join(sql.split())[:48])
+        if " ".join(sql.split()).startswith("UPDATE governed_turn_staging SET state"):
+            raise KeyboardInterrupt("cut between the INSERT and the advance")
+        return self._conn.execute(sql, *args)
+
+
 class StagingSweepTests(_Case):
     """The §2.4 sweep, and the ceiling it exists to lift.
 
@@ -2096,6 +2121,84 @@ class StagingSweepTests(_Case):
         with self.assertRaises(SupervisorError):
             gsu.sweep_forever(conn=self.conn, staging_root=str(self.staging_root),
                               clock_ms=lambda: self.clock, stop=None, interval_ms=0)
+
+    # ---- NM-CRASH-01: a cut in pre-accept staging -----------------------------------
+
+    def test_nm_crash_01_a_cut_in_pre_accept_staging_costs_only_the_attempt(self):
+        """NM-CRASH-01 -- the supervisor dies in `VERIFYING`, `UPLOADING` or `INPUTS_READY`.
+
+        Nothing has been accepted at any of those points, so nothing may be lost but the attempt.
+        The three states are NOT symmetric, and which is which is the part of this row that no
+        other test in this class holds:
+
+        * `VERIFYING` is transient by construction. `open_staging` INSERTs it and advances to
+          `UPLOADING` inside ONE transaction, and the DDL forbids creating a row in any other
+          state, so a cut there leaves **no row at all** and there is nothing to reclaim. The
+          `seen` log proves the INSERT really executed first -- without it, "no row survived"
+          would equally describe a cut that never reached the table.
+        * `UPLOADING` and `INPUTS_READY` are durable, so a cut there leaves a row, its sessions,
+          its chunk rows and its directory, and one §2.4 sweep reclaims all of it.
+
+        The two properties that make the retry possible are proved by their own neighbours and
+        are not restated here: `test_the_sweep_does_not_consume_the_challenge_nonce` holds that
+        the `UNIQUE (install_id, request_nonce)` slot is free afterwards -- which is what denies a
+        sidecar a nonce-burning DoS -- and `test_the_cascade_takes_the_sessions_and_their_chunks`
+        holds that the chunk rows go with their session. This row asserts the re-issue once, at
+        the end, because "costs only the attempt" is not a claim without it.
+        """
+        case = "NM-CRASH-01"
+
+        # (a) VERIFYING -- a cut inside the CAS leaves nothing behind.
+        cut = _CutAtTheAdvance(self.conn)
+        interrupted = gsl.NewStaging(
+            install_id="inst-1", request_nonce="nonce-cut",
+            challenge_handle=sha(b"nonce-cut|challenge"),
+            run_id="run-1", task_id="task-1", workspace_id="ws-1",
+            system_sha256=sha(SYSTEM_BYTES), history_sha256=sha(HISTORY_BYTES),
+            generation_config_sha256=sha(GENCFG_BYTES), challenge_expires_at_ms=EXPIRES,
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            gsl.open_staging(cut, interrupted, self.clock)
+        self.assertTrue(
+            any(s.startswith("INSERT INTO governed_turn_staging") for s in cut.seen),
+            f"{case}: the cut landed before the INSERT, so the rollback proves nothing")
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) AS n FROM governed_turn_staging WHERE state = ?",
+                (gsl.VERIFYING,)).fetchone()["n"], 0,
+            f"{case}: a VERIFYING row survived a cut inside the one transaction that owns it")
+        self.assertIsNone(gsl.load_staging(self.conn, "inst-1", "nonce-cut"), case)
+
+        # (b) UPLOADING and (c) INPUTS_READY -- durable, and never accepted.
+        #
+        # `MAX_CONCURRENT_GOVERNED_TURNS` is 2, and that cap is right: asking for a third live
+        # row here got `StagingQuotaExceeded`, which is the ledger working. So setUp's
+        # `self.turn` IS the mid-upload case rather than an extra one beside it.
+        uploading = self.turn
+        up_sid = self.open_session("system", SYSTEM_BYTES, turn=uploading)
+        up_dir = self.session_dir(up_sid)
+        ready = self.complete_turn(self.new_turn(nonce="nonce-ready"))
+        self.assertEqual(self.turn_row(uploading)["state"], gsl.UPLOADING, case)
+        self.assertEqual(self.turn_row(ready)["state"], gsl.INPUTS_READY, case)
+        self.assertTrue(up_dir.is_dir(), case)
+        self.assertEqual(self.sessions(), 4, f"{case}: 1 mid-upload + 3 published")
+
+        # One sweep, past the challenge expiry: two rows, four sessions, four directories is
+        # the whole pre-accept debt.
+        report = self.sweep(EXPIRES + 1)
+        self.assertEqual((report.rows, report.sessions, report.dirs_removed), (2, 4, 4), case)
+        self.assertEqual(report.failures, (), case)
+        self.assertIsNone(self.turn_row(uploading), case)
+        self.assertIsNone(self.turn_row(ready), case)
+        self.assertEqual(self.sessions(), 0, case)
+        self.assertFalse(up_dir.exists(), f"{case}: the session directory was not reclaimed")
+
+        # And the attempt is all that was lost: the same signed challenge re-issues.
+        reissued = self.new_turn(nonce="nonce-ready", expires=EXPIRES + 60_000, now=EXPIRES + 2)
+        self.assertEqual(self.turn_row(reissued)["state"], gsl.UPLOADING,
+                         f"{case}: the crash cost more than the attempt")
+        _sid, published = self.upload("system", SYSTEM_BYTES, turn=reissued)
+        self.assertEqual(published["status"], "published", case)
 
 
 if __name__ == "__main__":
