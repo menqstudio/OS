@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #247 · branch `t080/three-figures-and-the-page-retrued`** (base `main`, tip `6c59a67`, task T-080).
+> **⏭️ CURRENT ACTIVE: PR #248 · branch `t081/scope-and-termination`** (base `main`, tip `86da183`, task T-081).
 >
-> three figures added, nothing removed, and the page re-trued for three landings
+> a key with everything right except audience, and a refusal that must carry no bytes
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-081** | **A key with everything right except audience, and a refusal that must carry no bytes** — NM-SCOPE-04 and NM-TERM-04; two of my own mutants were invalid and are recorded ◑ | Bro | Review | `#248` |
 | **T-080** | **Three bare sections got artwork, nothing was removed** — and a designer "Verified" a dark sheet it never shipped; nine mechanical checks on every sheet since ◑ | Bro | Review | `#247` |
 | **T-079** | **Four predicates, four independent kills** — a spent nonce, a divergent challenge context, an accessor nobody may add, and a trust class nobody may infer ◑ | Bro | Review | `#246` |
 | **T-078** | **Every TCB violation test poked one file** — the floor is now asserted over the WHOLE pinned set and all seven principals; plus a trigger a neighbour claimed and never checked ◑ | Bro | Review | `#245` |
@@ -29,7 +30,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — **144 / 54 / 44** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 29 left ◑ | Bro | In-Progress | `#233` |
+| **T-062** | **The negative matrix's silent state** — **146 / 54 / 42** of 242 bound. §2 done but 3 shell rows (Linux+root); §3 has 27 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |
