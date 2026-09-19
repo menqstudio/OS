@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-16 of these and their pull requests. What is here is the account of each defect, which is
+17 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -34,3 +34,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-074** | **No gate read the front page** — in no manifest meant in no check; `ALSO_CHECKED`, 145 → 204 paths, and a C0 byte found ◑ | Bro | Review | merged `#241` |
 | **T-075** | **A test that does not exist cannot fail** — NM-CRASH-01 bound; its first copy landed past `unittest.main()` ◑ | Bro | Review | merged `#242` |
 | **T-076** | **A required gate failed 1 run in 40** — `pages.browser.spec.tsx` sampled the DOM once after `mount`; polling instead, 18-red proof ◑ | Bro | Review | merged `#243` |
+| **T-077** | **The crash family is closed in §3** — NM-CRASH-12/13/14; the floor turns out to be defended twice, so one mutant each survives and both together kill ◑ | Bro | Review | merged `#244` |

@@ -73,6 +73,16 @@
       "crosses": "engine -> desktop",
       "rust_mirror": "apps/desktop/src-tauri/src/governance.rs",
       "why_shared": "the append-only chain the security page mirrors; the desktop reads it and appends nothing"
+    },
+    {
+      "id": "approval-request",
+      "file": "approval-request.schema.json",
+      "version": 1,
+      "version_pointer": "/properties/schema/const",
+      "crosses": "desktop -> engine",
+      "rust_mirror": null,
+      "why_shared": "the first contract that crosses in THIS direction: the cockpit asks and the engine records. Both halves have to agree on what an ask is allowed to contain, and the answer is enforced structurally -- additionalProperties false, with no key, signature, nonce, lease or verdict field in it at all",
+      "rust_mirror_note": "NONE yet, and deliberately: the desktop command that sends this document does not exist. T-021 is three steps -- this schema audited before it lands, then the engine endpoint, then the Tauri command -- because docs/OWNER_ACTION_REQUIRED.md fixed five contract invariants and the fifth is that the engine schema change is audited BEFORE the transport that carries it. A Rust mirror added here would be a mirror of a message nothing sends. It arrives with the command, and check_schema_mirrors.py's table is where it will be declared"
     }
   ],
   "engine_internal": {
