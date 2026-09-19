@@ -364,6 +364,9 @@ said, and what it was not filled with. `Landed at` means landed.
 | `6c59a67` | matrix `implemented` 133 → **144**, `unreviewed` 55 → **44** — `NM-CRASH-12/13/14`, `NM-TCB-01/03/08/21`, `NM-TERM-02`, `NM-SCOPE-06/08`, `NM-MAN-12` bound across three landings | the `collections.Counter` one-liner above |
 | `6c59a67` | engine suite 2144 → **2148** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | `6c59a67` | 81 → **85** pull requests, 248 → **249** files, 48,103 → **48,768** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
+| `830fcec` | matrix `implemented` 144 → **150**, `unreviewed` 44 → **38** — `NM-SCOPE-04/06`, `NM-TERM-02/04/08`, `NM-MAN-12`, `NM-FS-05`, `NM-CONC-07`, `NM-XBIND-03` bound across four landings; **more than half the matrix is now bound** | the `collections.Counter` one-liner above |
+| `830fcec` | engine suite 2148 → **2152** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `830fcec` | 85 → **89** pull requests, 249 → **257** files, 48,768 → **49,977** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
 
 **Three landings paid at once, which is what the rule is for.** #244, #245 and #246 each moved a counted number and each deliberately left the page alone. Re-truing after every one would have meant three pull requests whose only content was arithmetic; the rule says name the head the numbers hold at, and `6c59a67` is the head all three hold at. The artwork in §8 landed in the same commit because it belongs to the same page.
 
@@ -510,3 +513,79 @@ way to teach someone to ignore it.
 What none of that establishes: whether the pictures are *good*. Nine mechanical properties and a traced
 fact-for-fact reading say they are true, on-palette, and legible at the sizes they will be read at.
 Whether they are worth looking at is a judgement, and it is the Owner's.
+
+## 9. Four landings paid at once, and the prose under the bar was still tied to the bar
+
+§5's rule is that a change which *moves* a counted number cannot name a head where its own numbers hold,
+because that head does not exist until it merges. So the page is re-trued in the pull request **after**,
+against the head that actually landed, and several landings can be paid at once. Four were owed here:
+`#247`, `#248`, `#249` and `#250` each moved a number and each deliberately deferred the page. They are
+paid in §5 against `830fcec` — matrix `implemented` 144 → **150** and `unreviewed` 44 → **38**, the
+engine suite 2148 → **2152**, and 85 → **89** pull requests / 249 → **257** files / 48,768 → **49,977**
+inserted lines since the ninth audit's head.
+
+**The board hit its ceiling on the way.** Adding T-084's own row took `TASKS.md` to 7,111 bytes against
+a 7,000 ceiling, and `check_canon_budget`'s remedy text says which number moves: not the ceiling. `T-072`
+— merged in `#232`, never independently confirmed — is now verbatim in
+[`docs/archive/TASKS_ARCHIVE_2026-09.md`](archive/TASKS_ARCHIVE_2026-09.md) as its thirteenth row, and
+the live one-line statement on the board names it with the other twelve. The board is 6,920 bytes.
+
+### 9a. Two defects in the figure, one of them mine today and one older than this pull request
+
+The verification sheet's bar is drawn to scale, so its segment edges move every time a row is bound. Two
+things beside the bar were positioned *from* those edges, and both broke when `unreviewed` fell to 38:
+
+| What | How it was placed | What that did at a 176 px band |
+| :--- | :--- | :--- |
+| the label plate behind `unreviewed · չստուգված` | a fixed **200 px**, centred on the band | 972 → 1172 against a band of 984 → 1160: 12 px past the rounded end, and 12 px into the amber band beside it |
+| the four-line `unreviewed` paragraph | left-aligned at the band's **left edge** | two lines ended at **1204.2** and **1227.8** — past the 1200 canvas, so clipped |
+
+The plate is mine, today: a fixed width is correct only while the band is wider than it, and the band had
+never been narrower than 200 px before. The paragraph is older. At the head this page last named it
+already ended at **1176.2** and **1199.8** against a 1160 track — overhanging, but inside the canvas, so
+nothing looked broken. This re-true turned a pre-existing overhang into an actual clip.
+
+**Why §8's nine checks did not catch it.** They were run on the sheets that *landed* in `#247` — the three
+pairs that pull request added. The verification pair is older than `#247`, so the text-advance check had
+never been pointed at it. It is now: all **14** sheets in `docs/brand/readme/` measure `0 text run(s)
+past x=1160` under the pessimistic advance table.
+
+### 9b. The first fix was correct and lasted two rows, which is how the layout changed
+
+Anchoring the paragraph to the track's right edge — 1160 whatever the numbers do — fixed the clipping.
+Then the gap to the *blocked* column was measured rather than eyeballed: **31.3 px**, and the blocked
+column marches right at ~4.6 px per bound row, because it is left-aligned at a band whose left edge is
+`40 + round(implemented / 242 × 1120)`. Two more bound rows and the two columns touch. A layout with two
+rows of headroom is not a fix.
+
+So the prose came off the bar entirely. The three paragraphs now sit on a **fixed grid** at 40 / 440 /
+800, each indented 16 px behind a 4 px rule in its own band's colour, and the `unreviewed is not a pass`
+chip follows its column. **Nothing was removed**: every line is verbatim where it was, the bar is still
+to scale, and the tie between a paragraph and its segment is a colour instead of an x coordinate that has
+to keep up with the numbers.
+
+**Measured, four ways:**
+
+- `plate()` walked over every band width from 40 to 600 px — **no plate escapes its band**. At 204 px, the
+  width the sheet shipped with, it returns exactly the hand-drawn `958 / 200`: the helper agrees with the
+  drawing where the drawing was right, which is the only reason to trust it where the drawing was wrong.
+- the tightest column gap is **183.3 px** and it is now *independent of the split* — drawing 120 / 54 / 68
+  moves the green band from 694 px to 555 px and the gap prints 183.3 px at both. That is the property the
+  old layout lacked, stated as a number rather than as an intention.
+- both sheets survive a **byte-for-byte round trip**: driven to 120 / 54 / 68 and back to 150 / 54 / 38,
+  7,643 → 8,127 → 7,643 bytes, identical. An idempotent run prints "already at 150 / 54 / 38" and proves
+  nothing; this covers the bar paths, the dividers, the plate, the hatch and the in-band numbers.
+- the pair still differs **only** in colour literals and the one `<desc>` line, and every rule colour was
+  already in its own sheet — the palette gained nothing.
+
+The generator refuses to write a sheet whose columns come within 24 px of each other, or whose paragraph
+lines have drifted back onto the bands, and it checks both on every run — including the runs where no
+number moved, which is when a layout regression would otherwise pass unseen.
+
+**What none of this is.** A committed gate. Everything above is a scratchpad tool of mine; no
+`tools/check_*.py` reads these sheets, so the next re-true is protected by a script that lives outside
+the repository. A gate under `tools/` that reads them — parse, palette, pair
+parity, right edges, column gaps — is the honest follow-up. It does not exist yet, and until it does the
+front page's artwork is checked by me rather than by the repository. Naming it here as a filename was
+itself refused by `check_doc_claims`: *"references … which does not exist. A citation to a file nobody
+filed is how `A-06` happened — twice"*. The gate was right, so the sentence changed.

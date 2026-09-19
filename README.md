@@ -31,7 +31,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Document class / Փաստաթղթի դաս | Informative · Տեղեկատու — the normative documents are [`CLAUDE.md`](./CLAUDE.md), [`PROJECT_STATE.md`](./PROJECT_STATE.md), [`MASTER_EXECUTION_ROADMAP.md`](./MASTER_EXECUTION_ROADMAP.md) |
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
-| Measured at / Չափված ա | 2026-09-19, `main` @ `6c59a67`, on a Windows box · Windows-ի վրա |
+| Measured at / Չափված ա | 2026-09-19, `main` @ `830fcec`, on a Windows box · Windows-ի վրա |
 | Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
@@ -269,22 +269,22 @@ enforced from the app.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/verification-dark.svg">
   <img src="docs/brand/readme/verification-light.svg" width="100%"
-       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 144 implemented — a test exists and carries the case ID; 54 blocked — each names what must exist first; 44 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2148 engine tests with 97 skipped, 210 bridge tests, 10 Rust crates, 39 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 144 իրագործված, 54 խցանված, 44 չստուգված։ Չստուգվածը անցում չի։">
+       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 150 implemented — a test exists and carries the case ID; 54 blocked — each names what must exist first; 38 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2152 engine tests with 97 skipped, 210 bridge tests, 10 Rust crates, 39 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 150 իրագործված, 54 խցանված, 38 չստուգված։ Չստուգվածը անցում չի։">
 </picture>
 
 </div>
 
 **HY:** Այստեղ տոկոս չկա։ Ամեն տող այն ա, ինչ ստուգումը տպում ա, ու ամեն մեկի կողքը իրեն
-տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `6c59a67`; `main`-ը արագ ա շարժվում,
+տպող հրամանն ա։ Ամբողջ աղյուսակը **մեկ head-ի** չափում ա՝ `830fcec`; `main`-ը արագ ա շարժվում,
 ուրեմն վազեցրու հրամանը, ոչ թե վստահիր թվին։
 
 **EN:** Nothing here is a percentage. Each row is what a check prints, and each carries the
-command that printed it. The whole table is measured at **one head**, `6c59a67`; `main` moves
+command that printed it. The whole table is measured at **one head**, `830fcec`; `main` moves
 fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
 | :--- | ---: | :--- |
-| Engine test suite | **2148** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| Engine test suite | **2152** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **210** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **39** | `ls tools/check_*.py \| wc -l` |
@@ -315,9 +315,9 @@ fast, so run the command rather than trusting the number.
 
 | Կարգավիճակ · Status | Քանակ · Count | Իմաստ · Meaning |
 | :--- | ---: | :--- |
-| `implemented` | 144 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
+| `implemented` | 150 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
 | `blocked` | 54 | Ամեն մեկը նշում ա՝ ինչ պիտի նախ գոյություն ունենա։ · Each names what must exist first. |
-| `unreviewed` | 44 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
+| `unreviewed` | 38 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
 | **Ընդամենը · Total** | **242** | Matrix-ի ամեն ID կապված ա երեքից մեկին։ · Every ID in the matrix is bound to one of the three. |
 
 **HY:** `unreviewed`-ը անցում չի։ Դա ազնիվ ելակետն ա գեյթի համար, որ retrofit ա արվել
@@ -329,19 +329,19 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **85 pull request**, **249 ֆայլ** ու **48 768 ավելացված տող** են merge
+Այդ ծայրից ի վեր **89 pull request**, **257 ֆայլ** ու **49 977 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **85 pull requests**, **249 files** and **48,768 inserted lines**
+no P0. Since that head, **89 pull requests**, **257 files** and **49,977 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 85
-    git diff --shortstat 5cf9b8c..HEAD    # 249 files changed, 48768 insertions(+), 13483 deletions(-)
+    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 89
+    git diff --shortstat 5cf9b8c..HEAD    # 257 files changed, 49977 insertions(+), 13483 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա
