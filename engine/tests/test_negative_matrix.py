@@ -478,6 +478,70 @@ class NegativeMatrixTimeTests(_MatrixCase):
         # exactly AT issuance: inside the window, so the lower limb must not fire
         self.assertIsNone(gsl.lease_launch_gate(issued, issued, expires), case)
 
+    def test_nm_time_02_a_timestamp_outside_u64_or_a_bool_is_malformed(self):
+        """NM-TIME-02 -- overflow, negative and zero-ish timestamps.
+
+        `validate_sign_request` walks `EVIDENCE_TS_FIELDS` through `_is_u64_ms`, which is
+        `isinstance int AND not isinstance bool AND 0 <= v < 2**64`. Each clause is asserted
+        separately because each is a different way to smuggle a value past a weaker predicate:
+
+          -1      a negative instant, which no clock produces
+          2**64   one past the range the whole protocol encodes timestamps in
+          True    a bool, and `isinstance(True, int)` is True in Python -- the clause that
+                  exists only because of that, and the one a rewrite drops first
+
+        ZERO is asserted to be ACCEPTED, not refused: `0 <= v` is inclusive by design (the
+        epoch is a real instant), so a test that refused it would be pinning a bug. Without
+        that arm, a mutant narrowing the predicate to `0 < v` would pass.
+        """
+        case = "NM-TIME-02"
+        for bad in (-1, 2 ** 64, True):
+            request = _sign_request()
+            request["evidence"]["completed_at"] = bad
+            with self.assertRaises(signer._Refuse, msg=f"{case}: {bad!r} was accepted") as caught:
+                signer.validate_sign_request(request)
+            self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED, f"{case}: {bad!r}")
+        accepted = _sign_request()
+        accepted["evidence"]["requested_at"] = 0
+        accepted["evidence"]["challenge_accepted_at_ms"] = 0
+        try:
+            signer.validate_sign_request(accepted)
+        except signer._Refuse as refused:  # noqa: PERF203 -- the refusal IS the assertion
+            self.fail(f"{case}: 0 is inside `0 <= v` and must be accepted, "
+                      f"but it was refused as {refused.reason!r}")
+
+    def test_nm_time_19_no_seconds_valued_timestamp_field_exists_to_leak(self):
+        """NM-TIME-19 -- evidence seconds leak, pinned as the STRUCTURAL ABSENCE it is.
+
+        The row asks that no seconds-valued instant reach the signed evidence. The control is
+        not a check but the field set itself: every timestamp the signer accepts is one of the
+        three `_ms`-semantic fields, there is no `issued_at_epoch` anywhere in the evidence
+        contract, and the ledger contributes only the four derived digest/counter fields.
+
+        This is deliberately a test about names rather than values, because that is where the
+        control lives. Adding `issued_at_epoch` back to the evidence contract -- the exact
+        regression the row describes -- turns it RED on the first assertion, while any test
+        written against a VALUE would keep passing.
+
+        The `_is_u64_ms` arm is the reason the field set has to carry the weight: a 10-digit
+        seconds value is INSIDE `0 <= v < 2**64` and the predicate cannot tell the units apart.
+        Asserted here so nobody reads the range check as a units check.
+        """
+        case = "NM-TIME-19"
+        self.assertEqual(
+            signer.EVIDENCE_TS_FIELDS,
+            ("requested_at", "completed_at", "challenge_accepted_at_ms"), case)
+        self.assertNotIn("issued_at_epoch", signer.EVIDENCE_FIELDS, case)
+        for field in signer.EVIDENCE_FIELDS:
+            self.assertFalse(field.endswith("_epoch"), f"{case}: {field} names a seconds instant")
+        self.assertEqual(
+            set(gsl.DERIVED_EVIDENCE_FIELDS),
+            {"evidence_final_event_hash", "evidence_event_count",
+             "evidence_last_sequence", "evidence_head_sequence"}, case)
+        # The range predicate accepts a seconds-valued instant, so it is NOT the control.
+        self.assertTrue(signer._is_u64_ms(1_700_000_000), case)
+
+
 class NegativeMatrixReplayTests(_MatrixCase):
     def test_nm_replay_05_same_nonce_bound_to_a_different_challenge_is_refused(self):
         """NM-REPLAY-05 -- a new signed challenge reusing an ALREADY-ACCEPTED nonce. The

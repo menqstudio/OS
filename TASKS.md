@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #232 · branch `fix/gate-messages-posix-paths`** (base `main`, tip `c080cce`, task T-072).
+> **⏭️ CURRENT ACTIVE: PR #233 · branch `t062/bind-nm-ipc-06`** (base `main`, tip `9c76349`, task T-062).
 >
-> the tools gate suite had never run on Windows in CI, so five gates printed OS-native path separators and two of check_audit_actor own tests were red on the Owner box while the wall stayed green
+> three more negative-matrix rows are bound to tests that fail when their control is removed: NM-IPC-06 to the renderer deny-list check, NM-TIME-02 and NM-TIME-19 to the timestamp predicate and the evidence field set
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -33,7 +33,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-060** | **A PR outliving its `Last updated` line reddened `main` on merge** — a squash re-dates both; the gate asks whether the commit MOVED the line | Bro | Review | merged `#219` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
-| **T-062** | **The negative matrix's silent state** — `#225` read 182 rows, `#226`/`#228` bound 38 Python + 36 Rust mutation-verified: **113 / 54 / 75** from 39 / 21 / 182. §2 left: `NM-IPC-06`, `NM-XBIND-13`, 3 shell rows (Linux+root) ◑ | Bro | In-Progress | `#228` |
+| **T-062** | **The negative matrix's silent state** — 182 rows read, 77 bound and mutation-verified: **116 / 54 / 72** from 39 / 21 / 182. §2 done but `NM-XBIND-13` and 3 shell rows (Linux+root); §3 has 57 left ◑ | Bro | In-Progress | `#233` |
 | **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |
