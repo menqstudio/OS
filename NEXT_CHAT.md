@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t098/pin-manifest-custody` — `main` @ `22c0038`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t099/one-claim-guard` — `main` @ `77f4dfa`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #269 · branch `t098/pin-manifest-custody`** (base `main`, tip `22c0038`, task T-098).
+> **⏭️ CURRENT ACTIVE: PR #270 · branch `t099/one-claim-guard`** (base `main`, tip `77f4dfa`, task T-099).
 >
-> The pin manifest read through its own O_NOFOLLOW descriptor, with the custody check the Windows twin already had
+> One claim guard: the Windows retry moves to the class everyone inherits, and a wrong number I added is corrected
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

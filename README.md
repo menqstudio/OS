@@ -290,7 +290,7 @@ fast, so run the command rather than trusting the number.
 | Gate scripts | **42** | `ls tools/check_*.py \| wc -l` |
 | Declared controls | **62** — 48 check · 14 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`; the split is `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of that file |
 | Workflow files | **8** | `ls .github/workflows/*.yml \| wc -l` |
-| Jobs in `ci.yml` | **23** | the `jobs` keys of `.github/workflows/ci.yml` |
+| Jobs in `ci.yml` | **22** | the `jobs` KEY of `.github/workflows/ci.yml`, parsed as YAML — a 2-space-indent regex also catches `push:` under `on:` and answers 23 |
 | Required contexts on `main` | **34** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'` |
 | Specialist definitions | **262** | `ls .claude/agents/*.md \| wc -l` |
 | Cockpit frontend (jsdom) | **781** թեստ · tests, 82 file | `cd apps/desktop && npm ci && npm test` |
