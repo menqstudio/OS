@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #256 · branch `t021c/approval-request-desktop`** (base `main`, tip `c7a0450`, task T-021c).
+> **⏭️ CURRENT ACTIVE: PR #257 · branch `t021d/approvals-page-request`** (base `main`, tip `29d69e2`, task T-021d).
 >
-> the desktop asks across the wall and cannot be told it decided
+> phase 2 closed, 11 of 11
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
 | **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths; five obligations recorded on T-021b ◑ | Bro | Review | `#254` |
@@ -27,7 +28,6 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-083** | **A mutation that did not run looks exactly like a survivor** — five times in one day; the harness now refuses a verdict it cannot prove it applied ◑ | Bro | Review | `#250` |
 | **T-082** | **The triage sent a test where it could not import what it tests** — only 4 of 12 runtime modules import without `cryptography` ◑ | Bro | Review | `#249` |
 | **T-081** | **A key with everything right except audience, and a refusal that must carry no bytes** — NM-SCOPE-04, NM-TERM-04 ◑ | Bro | Review | `#248` |
-| **T-080** | **Three bare sections got artwork, nothing was removed** — and a designer "Verified" a dark sheet it never shipped; nine mechanical checks on every sheet since ◑ | Bro | Review | `#247` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
@@ -41,7 +41,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **19 merged rows** | **Shipped, and none independently confirmed** — `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **20 merged rows** | **Shipped, and none independently confirmed** — `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

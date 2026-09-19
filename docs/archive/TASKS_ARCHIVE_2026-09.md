@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-19 of these and their pull requests. What is here is the account of each defect, which is
+20 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -37,3 +37,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-077** | **The crash family is closed in §3** — NM-CRASH-12/13/14; the floor turns out to be defended twice, so one mutant each survives and both together kill ◑ | Bro | Review | merged `#244` |
 | **T-078** | **Every TCB violation test poked one file** — the floor is now asserted over the WHOLE pinned set and all seven principals; plus a trigger a neighbour claimed and never checked ◑ | Bro | Review | merged `#245` |
 | **T-079** | **Four predicates, four independent kills** — a spent nonce, a divergent challenge context, an accessor nobody may add, and a trust class nobody may infer ◑ | Bro | Review | merged `#246` |
+| **T-080** | **Three bare sections got artwork, nothing was removed** — and a designer "Verified" a dark sheet it never shipped; nine mechanical checks on every sheet since ◑ | Bro | Review | merged `#247` |

@@ -72,6 +72,32 @@ REPAIRED_LINES = {
     1457, 1459, 1466, 1468,  # phase 10
 }
 
+#: Definition-of-Done boxes CLOSED since the split, each naming the change that closed it.
+#:
+#: A box moving from `- [ ]` to `- [x]` diverges from the frozen baseline exactly as a repaired sentence
+#: does, and it is enumerated for the same reason: the roadmap may not change silently. It is a SEPARATE
+#: set from `REPAIRED_LINES` because the two are different claims. A repair finishes a sentence and may
+#: never move a box; a closure moves a box and may rewrite the row with it, because a row whose text
+#: explained why it was open has to stop saying that. One set for both would let either pass as the other.
+CHECKED_SINCE_SPLIT: dict[int, str] = {
+    746: "T-021a-d: the approval-REQUEST path exists end to end -- contract audited before it landed, "
+         "engine record, desktop command, page control",
+    753: "T-021d: the approvals page carries the engine request in a section named apart from the "
+         "desktop's own T-010/T-011 authority",
+    757: "T-021c: the contract test phase 2 called structurally unwritable is written on both sides "
+         "of the wall",
+}
+
+#: Prose the roadmap gained after the split, each line naming what it records.
+#:
+#: A roadmap that cannot be annotated goes stale; one that can be annotated silently is worse. Same rule,
+#: and the same failure for a stale entry: a listed line that does not actually differ is red.
+ANNOTATED_LINES: dict[int, str] = {
+    71: "T-021d: the phase-2 status-board cell reads 11/11. The board is an INDEPENDENT surface from "
+        "the checkboxes -- check_roadmap_order compares the two on purpose -- so closing the boxes "
+        "without moving it would be a phase that says two different things about itself",
+}
+
 
 def pre_split_roadmap() -> str | None:
     """The frozen pre-split document, or None if the fixture is missing."""
@@ -115,10 +141,25 @@ class SplitIsLossless(unittest.TestCase):
         assembled = self.assembled.split("\n")
         self.assertEqual(len(baseline), len(assembled), "the split changed the line count")
         differing = {i for i in range(len(baseline)) if baseline[i] != assembled[i]}
+        overlap = (REPAIRED_LINES & set(CHECKED_SINCE_SPLIT)) \
+            | (REPAIRED_LINES & set(ANNOTATED_LINES)) \
+            | (set(CHECKED_SINCE_SPLIT) & set(ANNOTATED_LINES))
+        self.assertEqual(overlap, set(), "a line may be recorded as one kind of change, not two")
         self.assertEqual(
-            differing, REPAIRED_LINES,
-            "every difference from the pre-split baseline must be a recorded T-049 repair",
+            differing, REPAIRED_LINES | set(CHECKED_SINCE_SPLIT) | set(ANNOTATED_LINES),
+            "every difference from the pre-split baseline must be a recorded repair, a recorded "
+            "closure, or a recorded annotation",
         )
+        for i, why in sorted(CHECKED_SINCE_SPLIT.items()):
+            self.assertTrue(baseline[i].startswith("- [ ]"),
+                            f"line {i + 1} was not an OPEN checkbox row in the baseline")
+            self.assertTrue(assembled[i].startswith("- [x]"),
+                            f"line {i + 1} is recorded as closed and is not `- [x]` now")
+            self.assertTrue(why.strip(), f"line {i + 1} is closed with no reason recorded")
+        for i, why in sorted(ANNOTATED_LINES.items()):
+            self.assertFalse(baseline[i].startswith("- ["),
+                             f"line {i + 1} is a checkbox row; an annotation may not hide a box here")
+            self.assertTrue(why.strip(), f"line {i + 1} is annotated with no reason recorded")
         for i in sorted(REPAIRED_LINES):
             self.assertTrue(
                 baseline[i].startswith("- ["),
