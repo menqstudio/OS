@@ -56,7 +56,6 @@
     "NM-TCB-14",
     "NM-TCB-20",
     "NM-TCB-24",
-    "NM-TCB-25",
     "NM-TIME-15",
     "NM-XBIND-05",
     "NM-XBIND-10",
@@ -1294,10 +1293,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-25": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Allowlist mutated post-execution",
       "section": "§2, §7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::test_nm_tcb_25_an_allowlist_mutated_after_signing_leaves_the_record_verifying_identically"
     },
     "NM-CAP-01": {
       "status": "blocked",

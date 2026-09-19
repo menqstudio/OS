@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t091/matrix-man06-tcb25` — `main` @ `775d48a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t092/matrix-tcb25` — `main` @ `9209060`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #262 · branch `t091/matrix-man06-tcb25`** (base `main`, tip `775d48a`, task T-091).
+> **⏭️ CURRENT ACTIVE: PR #263 · branch `t092/matrix-tcb25`** (base `main`, tip `9209060`, task T-092).
 >
-> NM-MAN-06 bound: an unpinned attestation key id is refused before any signature
+> NM-TCB-25 bound: the execution allowlist is an input to acceptance and to nothing else
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
