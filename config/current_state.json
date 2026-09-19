@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "03c2d3da272f064666adcef6a6b8cb99b91433d9",
+  "settled_at_main_head": "6948aa4c51c790c2f6a418ffe3fb5f305e62b621",
   "sync": {
-    "baseline_main_head_at_sync": "03c2d3da272f064666adcef6a6b8cb99b91433d9",
-    "snapshot_branch": "t062/bind-rust-2026-09-19",
+    "baseline_main_head_at_sync": "6948aa4c51c790c2f6a418ffe3fb5f305e62b621",
+    "snapshot_branch": "state/settle-2026-09-19",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t062/bind-rust-2026-09-19"
+    "branch": "state/settle-2026-09-19"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 228,
-    "branch": "t062/bind-rust-2026-09-19",
+    "number": 229,
+    "branch": "state/settle-2026-09-19",
     "state": "open",
-    "what": "T-062: the 36 Rust rows of the negative matrix an existing test already exercised are bound to it -- renamed to carry the id, the id in a first-line comment, and every one mutation-verified in an isolated worktree with its own cargo target (control broken, cargo test RED, control restored, test ok), three rows replayed by a skeptic. Registry 113 implemented / 54 blocked / 75 unreviewed, from 39 / 21 / 182 this morning. NM-XBIND-13 stays unreviewed: under its mutation another belt refuses and the test stays green, which the reader said rather than hid.",
-    "note": "T-062: 36 Rust negative-matrix rows bound to their existing tests, each mutation-verified; registry 113 / 54 / 75. NM-XBIND-13 honestly left unreviewed.",
+    "what": "The settle commit: records that main is at 6948aa4 and carries no product change.",
+    "note": "Settling the state anchor at main 6948aa4. Nothing else is open; this pull request is the commit that records it.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #228 (t062/bind-rust-2026-09-19), task T-062: T-062: the 36 Rust rows of the negative matrix an existing test already exercised are bound to it -- renamed to carry the id, the id in a first-line comment, and every one mutation-verified in an isolated worktree with its own cargo target (control broken, cargo test RED, control restored, test ok), three rows replayed by a skeptic. Registry 113 implemented / 54 blocked / 75 unreviewed, from 39 / 21 / 182 this morning. NM-XBIND-13 stays unreviewed: under its mutation another belt refuses and the test stays green, which the reader said rather than hid. Next: merge on an exact green head; then the 59 implementable rows of §3, or the four shell rows of §2.",
-    "_note": "The carrier is current_workflow_pr (#228 on t062/bind-rust-2026-09-19). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #229 (state/settle-2026-09-19) settles the state at main 6948aa4. Next: the four §2 rows that remain (NM-IPC-06 is Rust and bindable; NM-TCB-20 / NM-ACL-09 / NM-ACL-12 are shell proofs that need Linux and root, so they cannot be mutation-verified on a Windows box), then §3 its 59 implementable rows. The Owner still owes branch protection: Pro, or public again.",
+    "_note": "The carrier is current_workflow_pr (#229 on state/settle-2026-09-19). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "03c2d3da272f064666adcef6a6b8cb99b91433d9",
+      "head": "6948aa4c51c790c2f6a418ffe3fb5f305e62b621",
       "conclusion": "success",
-      "run_id": 35412896473,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 03c2d3d, run 35412896473."
+      "run_id": 35413630799,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at 6948aa4, run 35413630799."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

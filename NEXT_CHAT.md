@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t062/bind-rust-2026-09-19` — `main` @ `03c2d3d`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `6948aa4`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #228 · branch `t062/bind-rust-2026-09-19`** (base `main`, tip `03c2d3d`, task T-062).
+> **✅ SETTLED — `main` is at `6948aa4`.** The only thing open is PR #229 on `state/settle-2026-09-19`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-062: 36 Rust negative-matrix rows bound to their existing tests, each mutation-verified; registry 113 / 54 / 75. NM-XBIND-13 honestly left unreviewed.
+> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows. The Owner owes branch protection: Pro, or public.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

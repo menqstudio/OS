@@ -1,22 +1,19 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-19 — `#220` merged as `157e292`: the supply-chain gate green again,
-the `T-055` promise executed by the Owner, the canon level with `main`. `#221` (`T-066`) fixes the three tools that
-let it drift. Before: 2026-09-01 — the produced agent's egress is ENFORCED. `repo.rs`'s
-`Call` arm decides every call against the grant's `egress` table (grant schema 1→2, a name→destination
-table, so the flow never states a URL) and records each decision. The 60s tick now DISPATCHES armed
-bundles instead of only enqueuing; bundles are born disarmed and arming needs a confirmed grant. A
-permitted call is still refused for want of a transport. The BUILD agent's half is not built. `check_doc_claims` requires a named commit to be an ancestor of
-`main`, so a dead branch hash is refused on the branch, not on `main` after the merge. The audit pointer and the toolchain are records
-(`code_audit.last_independent_audit`, `config/toolchain.json`).
-`T-046`, `T-048`–`T-053` merged.
+**Last updated · Վերջին թարմացում:** 2026-09-19 — nine pull requests merged (`#219`–`#228`), `main` settled at
+`6948aa4` with its own `ci` green. The supply-chain gate is green again (three advisories lifted), the `T-055`
+promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
+closed, and the negative matrix read: **113 implemented · 54 blocked · 75 unreviewed**, from 39 / 21 / 182.
+Before: 2026-09-01 — the produced agent's egress is ENFORCED; `repo.rs`'s `Call` arm decides every call against
+the grant's `egress` table and records each decision, the 60s tick dispatches armed bundles, a permitted call is
+still refused for want of a transport, and the BUILD agent's half is not built.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #228 · branch `t062/bind-rust-2026-09-19`** (base `main`, tip `03c2d3d`, task T-062).
+> **✅ SETTLED — `main` is at `6948aa4`.** The only thing open is PR #229 on `state/settle-2026-09-19`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-062: 36 Rust negative-matrix rows bound to their existing tests, each mutation-verified; registry 113 / 54 / 75. NM-XBIND-13 honestly left unreviewed.
+> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows. The Owner owes branch protection: Pro, or public.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
