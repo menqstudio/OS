@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #239 · branch `docs/readme-menq-design`** (base `main`, tip `c197b97`, task T-073).
+> **⏭️ CURRENT ACTIVE: PR #240 · branch `t062/bind-clock`** (base `main`, tip `45ea71e`, task T-062).
 >
-> the front page's six unmeasured numbers, re-measured at the head it merges against
+> two rows that turn on WHICH clock read a value came from, and the front page re-measured with them
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
