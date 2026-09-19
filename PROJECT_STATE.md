@@ -1,11 +1,10 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-20 — forty-six pull requests merged (`#219`–`#264`), `main` at
-`1fb16cd`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
-rows. The custody resolver is wired, so the one prerequisite no machine provides is met by the BUILD;
-phase 1 waits on 24 an installer and an administrator provide, the Linux kernel, and one offline root
-signature only the Owner can make. The negative matrix reads: **153 implemented · 54 blocked · 35 unreviewed**,
-from 39 / 21 / 182.
+**Last updated · Վերջին թարմացում:** 2026-09-20 — 47 pull requests merged (`#219`–`#265`), `main` at
+`6ca13df`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
+rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux kernel, and
+one offline root signature only the Owner can make — that last one is the whole blocker, named on the
+Owner page. The negative matrix reads: **153 implemented · 54 blocked · 35 unreviewed**, from 39/21/182.
 Before: 2026-09-19 — twenty pull requests merged (`#219`–`#237`), `main` at `3909ede`: the supply-chain gate
 green again, the `T-055` promise executed by the Owner, three canon tools fixed so the mirror cannot drift
 unread, and the §D keydown race closed.
@@ -13,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #265 · branch `t094/anchor-custody-gate`** (base `main`, tip `1fb16cd`, task T-094).
+> **⏭️ CURRENT ACTIVE: PR #266 · branch `t095/source-nul-gate`** (base `main`, tip `6ca13df`, task T-095).
 >
-> A gate proves no literal in this tree is a pinned production root's private half
+> Ten honesty assertions could not fail; the backspace that killed them is refused now
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -182,7 +182,7 @@ export function Activity() {
       const rows = [...m.entries()].sort((a, b) => b[1] - a[1]);
       return { rows, max: rows.length ? rows[0][1] : 1 };
     };
-    const SYS = ' system';
+    const SYS = '\u0000system';
     const byType = tally((e) => e.eventType);
     const byActor = tally((e) => e.actorId ?? SYS);
 

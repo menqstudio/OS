@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "1fb16cd83cf78a2f53dabea560f007f3376d8d79",
+  "settled_at_main_head": "6ca13df442db3426827f03c40ae0681f432851ba",
   "sync": {
-    "baseline_main_head_at_sync": "1fb16cd83cf78a2f53dabea560f007f3376d8d79",
-    "snapshot_branch": "t094/anchor-custody-gate",
+    "baseline_main_head_at_sync": "6ca13df442db3426827f03c40ae0681f432851ba",
+    "snapshot_branch": "t095/source-nul-gate",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t094/anchor-custody-gate"
+    "branch": "t095/source-nul-gate"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 265,
-    "branch": "t094/anchor-custody-gate",
+    "number": 266,
+    "branch": "t095/source-nul-gate",
     "state": "open",
-    "what": "The fact every trusted_verified rests on was a comment; it is arithmetic now, with the demonstration seed as its control.",
-    "note": "A gate proves no literal in this tree is a pinned production root's private half",
+    "what": "Five word-boundary regexes in each of two honesty tests were literal backspace characters, so the UI receipt vocabulary was unguarded.",
+    "note": "Ten honesty assertions could not fail; the backspace that killed them is refused now",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #265 (t094/anchor-custody-gate), task T-094: The fact every trusted_verified rests on was a comment; it is arithmetic now, with the demonstration seed as its control. Next: Open the demonstration anchor behind a cargo feature, so the named-pipe governed turn runs in CI with no secret.",
-    "_note": "The carrier is current_workflow_pr (#265 on t094/anchor-custody-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #266 (t095/source-nul-gate), task T-095: Five word-boundary regexes in each of two honesty tests were literal backspace characters, so the UI receipt vocabulary was unguarded. Next: Trust core: the pin manifest read through its own fd with an owner check, and the lease as a bound on execution rather than only on launch.",
+    "_note": "The carrier is current_workflow_pr (#266 on t095/source-nul-gate). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "1fb16cd83cf78a2f53dabea560f007f3376d8d79",
+      "head": "6ca13df442db3426827f03c40ae0681f432851ba",
       "conclusion": "success",
-      "run_id": 35467237891,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 1fb16cd, run 35467237891."
+      "run_id": 35469579829,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 6ca13df, run 35469579829."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

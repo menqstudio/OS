@@ -198,13 +198,13 @@ function renderedText(): string {
  *  path, and nothing on this page has custody of anything. */
 const FORBIDDEN = [
   /verifiable/i,
-  /verified/i,
+  /\bverified\b/i,
   /trusted[ _-]?verified/i,
-  /trusted/i,
-  /signed/i,
+  /\btrusted\b/i,
+  /\bsigned\b/i,
   /governed receipt/i,
-  /receipt/i,
-  /custody/i,
+  /\breceipt\b/i,
+  /\bcustody\b/i,
   /tamper[ -]?proof/i,
 ];
 
