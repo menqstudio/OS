@@ -570,6 +570,30 @@ class DocumentsCheckedWithoutBeingCanonicalReads(unittest.TestCase):
         self.assertIn("README.md", m.ALSO_CHECKED)
         self.assertIn("docs/README_CLAIM_HISTORY.md", m.ALSO_CHECKED)
 
+    def test_every_roadmap_phase_file_is_checked(self):
+        """The tenth audit round put the roadmap here, and BY NAME so it cannot quietly leave.
+
+        `docs/roadmap/phase-*.md` is what `tools/check_roadmap_order.py` reads to decide which phase a
+        session may work, and its checked boxes are this repository's central claim about what is
+        finished. It was in no read manifest and no gate. Every phase file on disk must be named --
+        `phase-11.md` arriving unchecked would be the same defect one file later."""
+        on_disk = sorted(p.name for p in (ROOT / "docs" / "roadmap").glob("phase-*.md"))
+        named = sorted(r.split("/")[-1] for r in m.ALSO_CHECKED if "roadmap/phase-" in r)
+        self.assertEqual(named, on_disk, "the roadmap files checked and the roadmap files on disk "
+                                         "are different sets")
+
+    def test_a_dead_path_in_a_roadmap_file_is_caught(self):
+        """Measured, not assumed: pointing the gate at the roadmap reported nothing new, because every
+        path, hash and ticket it cites resolves. A gate that is green on arrival has to be shown to
+        fire, so this breaks a citation in a synthetic phase file and demands the red."""
+        root = build(self.tmp, doc="Clean.\n")
+        self._extra(root, "docs/roadmap/phase-4.md",
+                    "- [x] Shipped. See `apps/desktop/src/no-such-module.ts`.\n")
+        m.ALSO_CHECKED = ("docs/roadmap/phase-4.md",)
+        code, out = run(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("no-such-module.ts", out)
+
 
 class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
     """`docs/archive/TASKS_ARCHIVE_2026-09.md` is a ticket source.

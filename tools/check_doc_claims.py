@@ -89,9 +89,33 @@ MANIFEST_REL = "config/canonical-read-manifest.json"
 #
 # Being checked and being canonical are now separate properties, which they always should have
 # been. Adding a document here costs a session nothing.
+#
+# The eleven roadmap phase files joined on 2026-09-19, in the tenth audit round, for the same reason
+# and a sharper one: `docs/roadmap/phase-*.md` is the document `tools/check_roadmap_order.py` reads to
+# decide WHICH PHASE A SESSION MAY WORK, its 84 checked boxes across phases 1-9 are the repository's
+# central claim about what is finished, and it was in no read manifest and no gate. Measured on
+# arrival: pointing this gate at all eleven files reported nothing beyond the two known
+# `config/toolchain.json` lines -- every path, commit hash and ticket id the roadmap cites resolves
+# today. That is the point. The referents were sound and NOTHING KEPT THEM SOUND, and the roadmap is
+# the one document where a citation to a file nobody filed would be read as a phase being done.
+#
+# What this still does not check, said here so it is not mistaken for more: whether a `[x]` is TRUE.
+# A row can cite a file that exists and claim a behaviour nothing implements. That is the auditor's
+# work, and the tenth round's report is where it is written down.
 ALSO_CHECKED = (
     "README.md",
     "docs/README_CLAIM_HISTORY.md",
+    "docs/roadmap/phase-0.md",
+    "docs/roadmap/phase-1.md",
+    "docs/roadmap/phase-2.md",
+    "docs/roadmap/phase-3.md",
+    "docs/roadmap/phase-4.md",
+    "docs/roadmap/phase-5.md",
+    "docs/roadmap/phase-6.md",
+    "docs/roadmap/phase-7.md",
+    "docs/roadmap/phase-8.md",
+    "docs/roadmap/phase-9.md",
+    "docs/roadmap/phase-10.md",
 )
 
 # A markdown link target that looks like a repository path: not a URL, not an anchor.

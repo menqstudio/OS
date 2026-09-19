@@ -367,6 +367,8 @@ said, and what it was not filled with. `Landed at` means landed.
 | `830fcec` | matrix `implemented` 144 → **150**, `unreviewed` 44 → **38** — `NM-SCOPE-04/06`, `NM-TERM-02/04/08`, `NM-MAN-12`, `NM-FS-05`, `NM-CONC-07`, `NM-XBIND-03` bound across four landings; **more than half the matrix is now bound** | the `collections.Counter` one-liner above |
 | `830fcec` | engine suite 2148 → **2152** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | `830fcec` | 85 → **89** pull requests, 249 → **257** files, 48,768 → **49,977** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
+| `75fca65` | gate scripts 39 → **40**, declared controls 59 → **60** (40 check · 20 tool) — `tools/check_artwork_geometry.py`, the gate §9 said did not exist | `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of `config/control-invocation.json` (60 entries) |
+| `75fca65` | 89 → **91** pull requests, 257 → **261** files, 49,977 → **50,787** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
 
 **Three landings paid at once, which is what the rule is for.** #244, #245 and #246 each moved a counted number and each deliberately left the page alone. Re-truing after every one would have meant three pull requests whose only content was arithmetic; the rule says name the head the numbers hold at, and `6c59a67` is the head all three hold at. The artwork in §8 landed in the same commit because it belongs to the same page.
 
