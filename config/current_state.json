@@ -121,7 +121,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #230 (fix/crypto-pin-and-waiver-premise), task T-070: T-070: the pip-audit waiver list carried three cryptography advisories whose fixes were patch releases of the pin, so the pin moves to 46.0.7, the list drops 7 -> 4, and tools/check_crypto_surface.py enforces the two claims the remaining waivers rest on Next: check_audit_actor prints OS-native path separators and fails two of its own tests on Windows (T-071), then the four remaining negative-matrix section-2 rows",
+    "current": "PR #230 (fix/crypto-pin-and-waiver-premise), task T-070: T-070: the pip-audit waiver list carried three cryptography advisories whose fixes were patch releases of the pin, so the pin moves to 46.0.7, the list drops 7 -> 4, and tools/check_crypto_surface.py enforces the two claims the remaining waivers rest on Next: check_audit_actor.py formats paths with OS separators and fails two of its own tests on Windows while passing in CI on Linux; then the four remaining negative-matrix section-2 rows",
     "_note": "The carrier is current_workflow_pr (#230 on fix/crypto-pin-and-waiver-premise). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
