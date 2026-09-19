@@ -339,5 +339,214 @@ class ProtocolDriftTests(unittest.TestCase):
         self.assertIsNone(reply["task_id"])
 
 
+def approval_request(**overrides) -> dict:
+    body = {
+        "schema": 1,
+        "protocol": engine_sidecar.APPROVAL_REQUEST_PROTOCOL,
+        "op": engine_sidecar.APPROVAL_REQUEST_OP,
+        "request_id": "req-7f2a91c4",
+        "task_id": "task-0001",
+        "requested_command": "approve",
+        "expected_task_state": "awaiting-owner-approval",
+        "reason": "the cockpit operator asks the owner to approve this task",
+        "requested_by_type": "desktop-operator",
+        "requested_by": "gev@cockpit",
+        "requested_at_epoch": 1758240000,
+    }
+    body.update(overrides)
+    return body
+
+
+class ApprovalRequestOpTests(_CleanEnv):
+    """`approval.request` -- the only WRITE in the table, and it is provisioned on its own.
+
+    The read mirror's three variables grant it nothing and it grants them nothing. That is not a
+    preference: a half-provisioned operator must not be able to turn a read into a write by accident,
+    and the only way to say so mechanically is to make each door need its own key.
+    """
+
+    def refusal(self, reply: dict) -> dict:
+        self.assertFalse(reply["ok"], reply)
+        self.assertEqual(reply["protocol"], engine_sidecar.APPROVAL_REPLY_PROTOCOL)
+        self.assertIsInstance(reply["reason"], str)
+        self.assertTrue(reply["reason"])
+        # The same load-bearing rule as the read's, in this protocol's vocabulary: a refusal may not
+        # carry a field a consumer could read as "recorded".
+        for absent in ("recorded", "sequence", "entry_sha256", "chain_head_sha256"):
+            self.assertNotIn(absent, reply)
+        return reply
+
+    def test_the_op_is_served_rather_than_refused_by_name(self):
+        """Before anything else: an op absent from the table is refused as unknown, and that refusal
+        would satisfy every other test in this class for the wrong reason."""
+        reply = drive(approval_request())
+        self.assertNotIn("does not serve", str(reply))
+        self.assertEqual(reply["op"], engine_sidecar.APPROVAL_REQUEST_OP)
+
+    def test_an_unprovisioned_write_is_refused_and_names_its_own_variable(self):
+        reply = self.refusal(drive(approval_request()))
+        self.assertIn("BROPS_APPROVAL_REQUEST_LOG_DIR", reply["reason"])
+
+    def test_the_read_mirrors_provisioning_does_not_provision_the_write(self):
+        """Measured, not assumed: with the READ fully provisioned the write still refuses."""
+        state = pathlib.Path(tempfile.mkdtemp(prefix="gov-state-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(state, ignore_errors=True))
+        os.environ["BROPS_GOVERNANCE_STATE_DIR"] = str(state)
+        reply = self.refusal(drive(approval_request()))
+        self.assertIn("BROPS_APPROVAL_REQUEST_LOG_DIR", reply["reason"])
+
+    def test_a_log_directory_that_does_not_exist_is_refused_rather_than_created(self):
+        missing = pathlib.Path(tempfile.mkdtemp(prefix="approval-log-")) / "not-there"
+        self.addCleanup(lambda: __import__("shutil").rmtree(missing.parent, ignore_errors=True))
+        os.environ["BROPS_APPROVAL_REQUEST_LOG_DIR"] = str(missing)
+        reply = self.refusal(drive(approval_request()))
+        self.assertIn("not an existing directory", reply["reason"])
+        self.assertFalse(missing.exists(), "the sidecar created the store it was refusing to trust")
+
+    def test_the_request_id_is_echoed_on_a_refusal(self):
+        """So a caller can correlate a refusal with the ask that caused it. `None` when the document
+        was not even an object, which is honest rather than a made-up id."""
+        self.assertEqual(self.refusal(drive(approval_request()))["request_id"], "req-7f2a91c4")
+        self.assertIsNone(engine_sidecar._approval_refusal("not a dict", "why")["request_id"])
+
+
+class ApprovalProtocolDriftTests(unittest.TestCase):
+    """Three literals in the sidecar, three constants in the engine module, one wire contract."""
+
+    def test_the_sidecar_and_the_engine_name_the_same_protocols(self):
+        import bro_approval_requests
+
+        self.assertEqual(engine_sidecar.APPROVAL_REQUEST_PROTOCOL,
+                         bro_approval_requests.APPROVAL_REQUEST_PROTOCOL)
+        self.assertEqual(engine_sidecar.APPROVAL_REQUEST_OP,
+                         bro_approval_requests.APPROVAL_REQUEST_OP)
+        self.assertEqual(engine_sidecar.APPROVAL_REPLY_PROTOCOL,
+                         bro_approval_requests.APPROVAL_REPLY_PROTOCOL)
+
+    def test_the_request_and_reply_protocols_are_different_names(self):
+        """A reply that reused the request's protocol could be replayed back in as a request."""
+        self.assertNotEqual(engine_sidecar.APPROVAL_REPLY_PROTOCOL,
+                            engine_sidecar.APPROVAL_REQUEST_PROTOCOL)
+
+    def test_the_sidecars_refusal_has_the_engine_modules_refusal_shape(self):
+        import bro_approval_requests
+
+        engine = bro_approval_requests._refusal({"request_id": "req-1"}, "no")
+        mine = engine_sidecar._approval_refusal({"request_id": "req-1"}, "no")
+        self.assertEqual(set(engine), set(mine))
+        self.assertEqual(engine, mine)
+
+    def test_the_schema_pins_what_both_sides_call_the_protocol(self):
+        schema = json.loads(
+            (pathlib.Path(engine_sidecar._ENGINE) / "schemas" / "approval-request.schema.json")
+            .read_text(encoding="utf-8"))
+        self.assertEqual(schema["properties"]["protocol"]["const"],
+                         engine_sidecar.APPROVAL_REQUEST_PROTOCOL)
+        self.assertEqual(schema["properties"]["op"]["const"],
+                         engine_sidecar.APPROVAL_REQUEST_OP)
+
+
+class ApprovalRequestRecordedTests(_CleanEnv):
+    """The write, provisioned, with the engine's two published facts faked at their public surfaces.
+
+    `queue_state` and `governance_read` are what the real hop calls, and nothing private is reached
+    around them -- so a change that made the hop read the runtime directly would fail here rather than
+    quietly bypass the surfaces the cockpit is held to.
+    """
+
+    HELD = "awaiting-owner-approval"
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="approval-e2e-"))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        os.environ["BROPS_APPROVAL_REQUEST_LOG_DIR"] = str(self.dir)
+        self.records = []
+        held = self.HELD
+        records = self.records
+
+        class _API:
+            def queue_state(self, *, now_epoch):
+                return {"tasks": [{"task_id": "task-0001", "state": held},
+                                  {"task_id": "task-0002", "state": "running"}]}
+
+            def governance_read(self, _request, **_kwargs):
+                return {"ok": True, "records": list(records)}
+
+        self.addCleanup(setattr, engine_sidecar, "_governance_runtime",
+                        engine_sidecar._governance_runtime)
+        self.addCleanup(setattr, engine_sidecar, "_governance_api",
+                        engine_sidecar._governance_api)
+        engine_sidecar._governance_runtime = lambda: object()
+        engine_sidecar._governance_api = lambda _runtime: _API()
+
+    def lines(self):
+        path = self.dir / "approval-requests.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_a_provisioned_ask_is_recorded_and_the_reply_is_not_a_decision(self):
+        reply = drive(approval_request())
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["protocol"], engine_sidecar.APPROVAL_REPLY_PROTOCOL)
+        self.assertTrue(reply["recorded"])
+        self.assertIs(reply["adjudicated"], False)
+        self.assertIs(reply["requester_authenticated"], False)
+        self.assertEqual(reply["sequence"], 1)
+        for banned in ("granted", "disposition", "verdict", "decision", "outcome", "approved"):
+            self.assertNotIn(banned, reply)
+        self.assertEqual(len(self.lines()), 1)
+
+    def test_the_engines_own_clock_is_recorded_beside_the_claim(self):
+        drive(approval_request(requested_at_epoch=1))
+        entry = self.lines()[0]
+        self.assertEqual(entry["claimed_at_epoch"], 1)
+        self.assertGreater(entry["received_at_epoch"], 1)
+
+    def test_a_stale_expectation_is_refused_through_the_whole_hop(self):
+        reply = drive(approval_request(expected_task_state="running"))
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn(self.HELD, reply["reason"])
+        self.assertEqual(self.lines(), [])
+
+    def test_a_task_the_engine_does_not_publish_is_refused(self):
+        reply = drive(approval_request(task_id="task-9999"))
+        self.assertFalse(reply["ok"], reply)
+        self.assertEqual(self.lines(), [])
+
+    def test_a_ref_the_evidence_chain_does_not_hold_is_refused(self):
+        self.records.append({"event_id": "ev-held"})
+        reply = drive(approval_request(evidence_refs=["ev-held", "ev-absent"]))
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn("ev-absent", reply["reason"])
+        self.assertEqual(self.lines(), [])
+
+    def test_refs_the_evidence_chain_holds_are_recorded(self):
+        self.records.extend([{"event_id": "ev-held"}, {"event_id": "ev-two"}])
+        reply = drive(approval_request(evidence_refs=["ev-held", "ev-two"]))
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(self.lines()[0]["request"]["evidence_refs"], ["ev-held", "ev-two"])
+
+    def test_a_second_ask_with_the_same_id_is_recorded_as_a_duplicate(self):
+        self.assertFalse(drive(approval_request())["duplicate"])
+        second = drive(approval_request())
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(second["sequence"], 2)
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_the_log_is_the_only_file_the_hop_creates(self):
+        drive(approval_request())
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["approval-requests.jsonl"])
+
+    def test_a_document_carrying_a_key_is_refused_before_anything_is_written(self):
+        reply = drive({**approval_request(), "key_id": "control-room-1"})
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn("approval-request.schema.json", reply["reason"])
+        self.assertEqual(self.lines(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t021a/approval-request-contract` — `main` @ `ee6cf80`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t021b/approval-request-engine` — `main` @ `12d6efb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #254 · branch `t021a/approval-request-contract`** (base `main`, tip `ee6cf80`, task T-021a).
+> **⏭️ CURRENT ACTIVE: PR #255 · branch `t021b/approval-request-engine`** (base `main`, tip `12d6efb`, task T-021b).
 >
-> the approval-request contract, audited before it lands
+> the engine records an ask and cannot decide it
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
