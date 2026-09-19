@@ -4,16 +4,15 @@
 `6948aa4` with its own `ci` green. The supply-chain gate is green again (three advisories lifted), the `T-055`
 promise executed by the Owner, three canon tools fixed so the mirror cannot drift unread, the §D keydown race
 closed, and the negative matrix read: **113 implemented · 54 blocked · 75 unreviewed**, from 39 / 21 / 182.
-Before: 2026-09-01 — the produced agent's egress is ENFORCED; `repo.rs`'s `Call` arm decides every call against
-the grant's `egress` table and records each decision, the 60s tick dispatches armed bundles, a permitted call is
-still refused for want of a transport, and the BUILD agent's half is not built.
+Before: 2026-09-01 — the produced agent's egress is ENFORCED: `repo.rs`'s `Call` arm decides every call
+against the grant's `egress` table, yet a permitted call is still refused for want of a transport.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `6948aa4`.** The only thing open is PR #229 on `state/settle-2026-09-19`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows. The Owner owes branch protection: Pro, or public.
+> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -66,9 +65,12 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
-**Branch protection on `main` is OFF.** GitHub does not enforce it on a private Free-plan repository
-(private since 2026-09-18; HTTP 403 observed 2026-09-19); none of the 34 contexts in `config/required-checks.json` is live. Pro or
-public — the Owner's call.
+**Branch protection was OFF for a day, and that is why 2026-09-19's merges were gated by reading.** A
+private Free-plan repository gets neither the gate (`GET protection` → 403) nor free Actions minutes,
+which ran out mid-session at 01:53Z: every job of `#229` failed in two seconds with zero steps. The
+Owner made the repository public again; going private had DELETED the rules, so they were restored from
+`config/required-checks.json` — 34 contexts, `strict`, `enforce_admins`, linear, no force-push, no
+deletions — and `check_repo_state.py` verifies them against live GitHub.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts startup,
 so the first-launch trust path is unreachable on the Debian dev box.

@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `6948aa4`.** The only thing open is PR #229 on `state/settle-2026-09-19`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows. The Owner owes branch protection: Pro, or public.
+> **Next:** the four §2 rows left (`NM-IPC-06` is Rust and bindable; `NM-TCB-20` / `NM-ACL-09` / `NM-ACL-12` are shell proofs needing Linux and root), then §3's 59 implementable rows.
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -79,10 +79,12 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on
 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
-**One thing waits on the Owner.** Branch protection on `main` is OFF — GitHub does not enforce it
-on a private Free-plan repository (private since 2026-09-18; HTTP 403 observed 2026-09-19), so no
-required context is live — the 34 in `config/required-checks.json` included: Pro, or public again.
-[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+**Nothing waits on the Owner.** Branch protection on `main` is live again and verified against
+`config/required-checks.json` (34 contexts, `strict`, `enforce_admins`): a private Free-plan repository
+gets neither the gate nor free Actions minutes, the minutes ran out mid-session on 2026-09-19, and the
+Owner made the repository public again — going private had deleted the rules, so they were restored from
+that file. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
+O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close
