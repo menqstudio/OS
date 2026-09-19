@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #263 · branch `t092/matrix-tcb25`** (base `main`, tip `9209060`, task T-092).
+> **⏭️ CURRENT ACTIVE: PR #264 · branch `t093/matrix-output05`** (base `main`, tip `c45438c`, task T-093).
 >
-> NM-TCB-25 bound: the execution allowlist is an input to acceptance and to nothing else
+> NM-OUTPUT-05 bound: an execution receipt naming another turn's output is refused, by name
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

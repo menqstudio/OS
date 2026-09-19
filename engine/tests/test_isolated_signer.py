@@ -34,6 +34,7 @@ from isolated_signer import (  # noqa: E402
     REQUEST_PROTOCOL,
     REFUSAL_ARTIFACT_TYPE,
     REASON_ATTESTATION_INVALID,
+    REASON_CHAIN_DISAGREEMENT,
     REASON_CONTAINMENT_MISSING,
     REASON_HANDLE_MISSING,
     REASON_IDENTITY_DENIED,
@@ -627,6 +628,105 @@ class NegativeMatrixCrossBindingTest(unittest.TestCase):
         self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
                          f"{case}: a chain handle naming nothing was not refused: {result}")
         self.assertEqual(result["reason"], REASON_HANDLE_MISSING, case)
+
+
+class NegativeMatrixOutputBindingTest(unittest.TestCase):
+    """NM-OUTPUT-05 -- the recorder's output and the execution receipt's output are one output."""
+
+    def test_nm_output_05_an_execution_receipt_naming_another_turns_output_is_refused(self):
+        """NM-OUTPUT-05 -- a receipt that agrees about the run and the attempt but not the OUTPUT.
+
+        The signed envelope says: this output, from this attempt, of this run. Three separate
+        documents have to agree before it is signed, and the execution receipt is the executor's own
+        account of what it produced. If the receipt may name a different output than the one being
+        signed, the envelope attests bytes no receipt ever covered -- and the chain reads as intact,
+        because every document resolves and every other field lines up.
+
+        This was MEASURED to be unprotected before the test was written: dropping `output_handle`
+        from `_CHAIN_AGREEMENT["execution_receipt_handle"]` left the whole engine suite green. The
+        four tests that already exercise the agreement loop hold the RECORD to its output handle and
+        the RECEIPT to its attempt id; between them the receipt's output was nobody's job.
+
+        Two choices in the fixture are load-bearing:
+
+        * the decoy is a REAL artifact the store holds. A handle naming bytes nobody stored could be
+          refused by a rule about resolution rather than about agreement, and then this test would
+          pass without exercising the property. It is also the honest adversary -- an executor
+          offering output it genuinely produced, for some other turn.
+        * everything else about the receipt is CORRECT: protocol tag, run id, attempt id. The single
+          defect is which output it claims, so the refusal can only be the rule under test.
+        """
+        case = "NM-OUTPUT-05"
+        store, handles = _build_store()
+        genuine_output = handles["output_handle"]
+
+        # A real artifact, really stored -- some other turn's reply.
+        decoy = store.put(b"a genuine reply, produced by a different turn entirely")
+        self.assertIsNotNone(store.read_verified(decoy),
+                             f"{case}: the decoy must be bytes the store actually holds")
+        self.assertNotEqual(decoy, genuine_output, f"{case}: the decoy must differ")
+
+        # Re-publish the receipt naming the decoy, exactly as a lying executor would: same protocol,
+        # same run, same attempt, different output.
+        receipt = json.loads(store.read_verified(handles["execution_receipt_handle"]).decode("utf-8"))
+        self.assertEqual(receipt["output_handle"], genuine_output,
+                         f"{case}: the fixture's receipt must start out honest")
+        receipt["output_handle"] = decoy
+        handles["execution_receipt_handle"] = store.put(_canon(receipt))
+
+        evidence = _evidence(handles)
+        republished = json.loads(
+            store.read_verified(evidence["execution_receipt_handle"]).decode("utf-8"))
+        self.assertEqual(republished["output_handle"], decoy,
+                         f"{case}: the override did not take -- the test would prove nothing")
+        self.assertEqual(republished["protocol"], "brops.execution-receipt.v1", case)
+        self.assertEqual(republished["run_id"], evidence["run_id"],
+                         f"{case}: the receipt must still agree about the run")
+        self.assertEqual(republished["execution_attempt_id"], evidence["execution_attempt_id"],
+                         f"{case}: the receipt must still agree about the attempt")
+        self.assertEqual(evidence["output_handle"], genuine_output,
+                         f"{case}: the turn being signed is still the genuine output")
+
+        signer, _store, _handles, recorder = _make_signer(prepared=(store, handles))
+        result = signer.sign_result(_request(evidence))
+
+        self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
+                         f"{case}: a receipt naming another output was not refused: {result}")
+        # FULL equality, naming the document as well as the field. `assertIn("output_handle", ...)`
+        # would also be satisfied by the RECORD's refusal, and a refusal that does not say which of
+        # the two accounts differs sends the operator to read both by hand.
+        self.assertEqual(
+            result["reason"],
+            REASON_CHAIN_DISAGREEMENT + ":execution_receipt_handle.output_handle",
+            f"{case}: the refusal must name the receipt and the field")
+        self.assertEqual(recorder.signed_messages, [],
+                         f"{case}: nothing may be signed on the way to a refusal")
+
+        # The CONTRAST, without which every assertion above would also hold for a signer that
+        # refuses everything: the same construction over an honest receipt signs.
+        good_signer, _s, good_handles, good_recorder = _make_signer()
+        good = good_signer.sign_result(_request(_evidence(good_handles)))
+        self.assertEqual(good.get("artifact_type"), ENVELOPE_ARTIFACT_TYPE,
+                         f"{case}: the honest turn must still sign: {good}")
+        self.assertEqual(len(good_recorder.signed_messages), 1, case)
+
+    def test_nm_output_05_the_receipt_is_held_to_the_output_by_a_declared_rule(self):
+        """The structural half: which fields the receipt must agree on is DECLARED, so a field
+        quietly dropped from the rule fails here rather than nowhere.
+
+        The behavioural test above dies if the rule loses `output_handle`. It says nothing about the
+        other two, and this repository has just demonstrated what a silently narrowed agreement tuple
+        looks like: 2198 tests green with the receipt free to name any output at all. Stating the
+        whole tuple means the next narrowing has to be argued for in a diff.
+        """
+        rule = IsolatedSigner._CHAIN_AGREEMENT["execution_receipt_handle"]
+        self.assertEqual(rule[0], "brops.execution-receipt.v1",
+                         "NM-OUTPUT-05: the receipt is identified by its own protocol tag")
+        self.assertEqual(
+            rule[1], ("run_id", "execution_attempt_id", "output_handle"),
+            "NM-OUTPUT-05: the receipt must agree about the run, the attempt AND the output")
+        self.assertIn("execution_receipt_handle", EVIDENCE_CHAIN_HANDLE_FIELDS,
+                      "NM-OUTPUT-05: the receipt left the set of documents the signer re-reads")
 
 
 class StoreTest(unittest.TestCase):
