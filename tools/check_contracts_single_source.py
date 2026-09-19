@@ -224,7 +224,9 @@ def check(root: pathlib.Path) -> list[str]:
 
     for stray in stray_schema_files(root):
         problems.append(
-            f"stray schema {stray} lives outside every declared home "
+            # `.as_posix()`: the return type is Paths by contract (its test calls
+            # `.as_posix()` on each), so the spelling is fixed HERE, where a person reads it.
+            f"stray schema {stray.as_posix()} lives outside every declared home "
             f"({', '.join(_ALLOWED_SCHEMA_DIRS)}) — a copy nobody is holding to anything"
         )
 

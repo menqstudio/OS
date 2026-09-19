@@ -134,7 +134,7 @@ def _line_of(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
 
 
-def check_source(rel: pathlib.Path, text: str) -> list[str]:
+def check_source(rel: str, text: str) -> list[str]:
     problems: list[str] = []
 
     for m in RECORD_CALL.finditer(text):
@@ -200,7 +200,11 @@ def check(root: pathlib.Path) -> tuple[list[str], int, int]:
             text = path.read_text(encoding="utf-8")
             files += 1
             calls += len(RECORD_CALL.findall(text))
-            problems.extend(check_source(path.relative_to(root), text))
+            # `.as_posix()`, never the Path: a message is read by people and grepped by
+            # machines on both platforms, and `apps\desktop\...` is neither this repository's
+            # spelling nor a path any Linux reader can click. Two of this gate's own tests
+            # asserted the posix form and failed on Windows for exactly this.
+            problems.extend(check_source(path.relative_to(root).as_posix(), text))
     if calls == 0:
         problems.append(
             "no audit::record call site was found at all -- this gate would pass "

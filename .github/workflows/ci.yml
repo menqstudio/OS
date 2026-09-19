@@ -341,6 +341,66 @@ jobs:
       - name: Run the engine test suite on Windows
         run: python -B -m unittest discover -s tests -v
 
+  tools-windows:
+    name: Tools · gate self-tests on Windows (python)
+    runs-on: windows-latest
+    env:
+      # cp1252 is the console default on the Windows runner, and several gates read UTF-8 canon
+      # through `git show`. `check_coordination.py` dies with a TypeError on this box without it,
+      # which is a decoding failure and not a verdict — so the variable is part of the job, not a
+      # local convenience.
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history, like the three ubuntu jobs that run these suites. Measured on this
+          # job's FIRST run: without it `test_check_doc_claims` fails with seven lines of
+          # "names `5cf9b8c`, which is not an object in this repository" — the gate holds every
+          # short sha in the canon to being a real object, and a shallow checkout has none of
+          # the history those shas live in. The gate was right; the checkout was wrong.
+          fetch-depth: 0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # `check_runbook_snippets.py` imports the engine modules it checks signatures against, and
+      # those import `cryptography` — so six of its tests fail with "cannot import bro_protected"
+      # on a bare runner. Also measured on the first run. The supply-chain job that owns that gate
+      # installs the same hash-pinned file for the same reason; this is not a new dependency, it
+      # is the one that gate has always had, made visible by running it somewhere new.
+      - name: Install engine CI dependencies (the runbook gate imports the engine)
+        run: pip install --require-hashes -r engine/requirements-ci.txt
+      # WHY THIS JOB EXISTS. Every step in this repository that runs a `tools/test_check_*.py`
+      # suite runs on `ubuntu-latest` — measured across all 22 jobs here: 17 ubuntu, 2 windows,
+      # one matrix, and neither windows job touches `tools/`. So the gates that guard this
+      # repository had never been executed on the platform the Owner develops on.
+      #
+      # That is not hypothetical. `tools/test_check_audit_actor.py` had TWO tests failing on
+      # Windows — `check_audit_actor.py` rendered `apps\desktop\src-tauri\core\src\repo.rs` where
+      # the test asserts `apps/desktop/...` — and the wall stayed green throughout, because on
+      # Linux `str(Path)` already spells `/` and the assertion passes with or without the bug.
+      # Five gates carried that defect in their RED messages. A gate's message is read by people
+      # and grepped by machines from both platforms; `a\b` is neither this repository's spelling
+      # nor a path a Linux reader can click.
+      #
+      # This class of defect can ONLY fail on Windows, which is precisely why no Linux job could
+      # have found it and why this job is a second platform rather than a duplicate of the first.
+      # Stdlib only: no cargo, no node, no engine dependencies, so it is cheap in minutes.
+      #
+      # NOT YET a required context — `config/required-checks.json` is the Owner's file. Until its
+      # job name is added there this job reports and does not block, which
+      # `tools/check_control_invocation.py` accounts for by DERIVING each control's `blocks` from
+      # the workflows plus that file: the controls invoked here still read `blocks: merge` through
+      # their ubuntu steps, and nothing here understates itself.
+      # `working-directory: tools`, exactly as every ubuntu tools step does, and NOT
+      # `discover -s tools -t tools` from the root: measured, that form fails
+      # `test_check_repo_state.DeferredEnforcementTests.test_this_repository_satisfies_the_rule_today`,
+      # because the top-level-directory flag moves what the suite resolves repo-relative paths
+      # against. A job whose only failure is its own invocation teaches the reader nothing.
+      - name: Run the tools gate self-tests on Windows
+        working-directory: tools
+        run: python -m unittest discover -s . -p "test_*.py" -v
+
   trust-provisioning:
     name: Trust provisioning + audit signer (both platforms)
     strategy:

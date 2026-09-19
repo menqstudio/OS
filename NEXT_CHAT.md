@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `fix/stamp-idempotence-crlf` — `main` @ `fb08ad8`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `fix/gate-messages-posix-paths` — `main` @ `c080cce`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #231 · branch `fix/stamp-idempotence-crlf`** (base `main`, tip `fb08ad8`, task T-071).
+> **⏭️ CURRENT ACTIVE: PR #232 · branch `fix/gate-messages-posix-paths`** (base `main`, tip `c080cce`, task T-072).
 >
-> restamp() moved an already-correct AUDIT_CANDIDATE_HEAD marker to the end of the body, past the attribution line every pull request ends with, so the body changed and ci.yml, which listens for edited, restarted 21 jobs
+> the tools gate suite had never run on Windows in CI, so five gates printed OS-native path separators and two of check_audit_actor own tests were red on the Owner box while the wall stayed green
 >
 > **Standing verdict: RED** -- the NINTH round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,16 +75,17 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **The standing independent verdict is RED.** Nine rounds; the current one is
 [`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
 — RED, no P0, all three refusals read at source and closed for the fourth round running.
-**69 pull requests, 238 files and 45,731 inserted lines have merged since that head**, and
+**70 pull requests, 238 files and 45,922 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(62/207/44,630 and
 58/206/44,055 earlier on 2026-09-19; 56/192/39,396 before that; 20/107/19688 until 2026-08-31.)*
 
-**Nothing waits on the Owner.** Branch protection on `main` is live again and verified against
-`config/required-checks.json` (34 contexts, `strict`, `enforce_admins`): a private Free-plan repository
-gets neither the gate nor free Actions minutes, the minutes ran out mid-session on 2026-09-19, and the
-Owner made the repository public again — going private had deleted the rules, so they were restored from
-that file. [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record.
-O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+**Two one-line edits wait on the Owner**, both in files a Builder does not touch:
+`.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed
+operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured a 57-character prefix
+at one file size and not at another (79,665 bytes red, 79,744 green) — and
+`config/required-checks.json` should promote the new Windows tools job once it has one green run.
+[`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
+protection is live and verified. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close

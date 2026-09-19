@@ -106,10 +106,10 @@ def load_declaration() -> dict:
     try:
         return json.loads(DECLARATION.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        print(f"RED: {DECLARATION.relative_to(ROOT)} is missing", file=sys.stderr)
+        print(f"RED: {DECLARATION.relative_to(ROOT).as_posix()} is missing", file=sys.stderr)
         raise SystemExit(1)
     except ValueError as exc:
-        print(f"RED: {DECLARATION.relative_to(ROOT)} is malformed: {exc}", file=sys.stderr)
+        print(f"RED: {DECLARATION.relative_to(ROOT).as_posix()} is malformed: {exc}", file=sys.stderr)
         raise SystemExit(1)
 
 

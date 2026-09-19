@@ -134,5 +134,31 @@ class SpecReferenceGateTests(unittest.TestCase):
         self.assertEqual(gate.check(), [])
 
 
+
+# A gate's message names a repository path, and that spelling is part of the contract: people
+# grep it, paste it into an editor, and read it in CI logs from both platforms. `str(Path)` gives
+# `a` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
+# These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
+# exactly why ci.yml now runs the tools suite on windows-latest as well.
+
+class MissingDeclarationMessagePathSpelling(unittest.TestCase):
+    def test_the_missing_declaration_message_spells_the_path_with_forward_slashes(self):
+        import contextlib
+        import io
+
+        original = gate.DECLARATION
+        gate.DECLARATION = gate.ROOT / "config" / "no-such-declaration.json"
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit):
+                    gate.load_declaration()
+        finally:
+            gate.DECLARATION = original
+        said = err.getvalue()
+        self.assertIn("is missing", said)
+        self.assertNotIn("\\", said, "the missing-declaration message used OS-native separators")
+        self.assertIn("config/no-such-declaration.json", said)
+
 if __name__ == "__main__":
     unittest.main()

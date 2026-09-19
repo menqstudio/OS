@@ -82,7 +82,7 @@ def main() -> int:
     try:
         source = SOURCE.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"RED: cannot read {SOURCE.relative_to(ROOT)}: {exc}")
+        print(f"RED: cannot read {SOURCE.relative_to(ROOT).as_posix()}: {exc}")
         return 1
 
     variants, members, declared, failure = read_model(source)

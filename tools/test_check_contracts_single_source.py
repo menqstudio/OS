@@ -300,5 +300,23 @@ class ContractsSingleSourceTests(unittest.TestCase):
             cs.check(root)
 
 
+
+# A gate's message names a repository path, and that spelling is part of the contract: people
+# grep it, paste it into an editor, and read it in CI logs from both platforms. `str(Path)` gives
+# `a` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
+# These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
+# exactly why ci.yml now runs the tools suite on windows-latest as well.
+
+class StrayMessagePathSpelling(ContractsSingleSourceTests):
+    def test_the_stray_message_spells_the_path_with_forward_slashes(self):
+        root = self._tree()
+        stray = root / "apps" / "desktop" / "src"
+        stray.mkdir(parents=True)
+        (stray / "execution-lease.schema.json").write_text(json.dumps(_schema()), encoding="utf-8")
+        said = [p for p in cs.check(root) if "stray schema" in p]
+        self.assertEqual(len(said), 1, said)
+        self.assertNotIn("\\", said[0], "the stray message used OS-native separators")
+        self.assertIn("apps/desktop/src/execution-lease.schema.json", said[0])
+
 if __name__ == "__main__":
     unittest.main()

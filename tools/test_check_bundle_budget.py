@@ -369,5 +369,23 @@ class RouteBudgetTests(unittest.TestCase):
             cb.check(root)
 
 
+
+# A gate's message names a repository path, and that spelling is part of the contract: people
+# grep it, paste it into an editor, and read it in CI logs from both platforms. `str(Path)` gives
+# `a` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
+# These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
+# exactly why ci.yml now runs the tools suite on windows-latest as well.
+
+class StaleMessagePathSpelling(FreshnessTests):
+    def test_the_staleness_message_spells_paths_with_forward_slashes(self):
+        root, desktop, mpath, base = self._tree(source_offset=-60)
+        p = desktop / "src" / "features" / "Late.tsx"
+        p.write_text("x", encoding="utf-8")
+        os.utime(p, (base + 600, base + 600))
+        problems = cb.check(root)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertNotIn("\\", problems[0], "the stale-build message used OS-native separators")
+        self.assertIn("apps/desktop/src/features/Late.tsx", problems[0])
+
 if __name__ == "__main__":
     unittest.main()
