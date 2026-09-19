@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "a68d50b28941aab33c8c3ab52c966eff0863998f",
+  "settled_at_main_head": "bdb239b36c9452059dd904b57a26392e4f8f0e15",
   "sync": {
-    "baseline_main_head_at_sync": "a68d50b28941aab33c8c3ab52c966eff0863998f",
-    "snapshot_branch": "t088/custody-wiring",
+    "baseline_main_head_at_sync": "bdb239b36c9452059dd904b57a26392e4f8f0e15",
+    "snapshot_branch": "t090/roadmap-absence-claims",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t088/custody-wiring"
+    "branch": "t090/roadmap-absence-claims"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 260,
-    "branch": "t088/custody-wiring",
+    "number": 261,
+    "branch": "t090/roadmap-absence-claims",
     "state": "open",
-    "what": "build_governed_executor passes ProductionResolver::custody() to ChainExecutor::with_custody, so a turn that verified a manifest under the pinned anchor can commit. The provenance is derived from which anchor the binary pinned rather than declared in a config a deployment could write, so a demonstration anchor commits demonstration_custody and never trusted_verified; preflight's custody row moves from NotProvisionableOnAMachine to met-by-build, and the three tests that encoded the old impossibility are re-reasoned rather than renumbered",
-    "note": "the custody resolver is wired, by the Owner's decision",
+    "what": "phase 10 said the vendored copy holds all five schemas (it holds six) and that approval names a schema existing nowhere in the tree (it exists, audited before it landed); phase 2's record of the 2026-08-15 decision ended in the present tense saying the capability does not exist. All three corrected, nothing ticked, and each divergence recorded in the enumeration with its reason",
+    "note": "three roadmap rows named things that had stopped being absent",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #260 (t088/custody-wiring), task T-088: build_governed_executor passes ProductionResolver::custody() to ChainExecutor::with_custody, so a turn that verified a manifest under the pinned anchor can commit. The provenance is derived from which anchor the binary pinned rather than declared in a config a deployment could write, so a demonstration anchor commits demonstration_custody and never trusted_verified; preflight's custody row moves from NotProvisionableOnAMachine to met-by-build, and the three tests that encoded the old impossibility are re-reasoned rather than renumbered Next: phase 1's two rows now wait on 26 provisioning prerequisites and no decision; phase 8 and 9's four rows need the governed automation dispatch and the integrations backing command",
-    "_note": "The carrier is current_workflow_pr (#260 on t088/custody-wiring). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #261 (t090/roadmap-absence-claims), task T-090: phase 10 said the vendored copy holds all five schemas (it holds six) and that approval names a schema existing nowhere in the tree (it exists, audited before it landed); phase 2's record of the 2026-08-15 decision ended in the present tense saying the capability does not exist. All three corrected, nothing ticked, and each divergence recorded in the enumeration with its reason Next: phase 1, 8 and 9's six substantive rows all wait on a provisioned deployment now that the one decision-shaped blocker is wired; the negative matrix's section 3 is the work that still raises the floor from here",
+    "_note": "The carrier is current_workflow_pr (#261 on t090/roadmap-absence-claims). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "a68d50b28941aab33c8c3ab52c966eff0863998f",
+      "head": "bdb239b36c9452059dd904b57a26392e4f8f0e15",
       "conclusion": "success",
-      "run_id": 35459448825,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at a68d50b, run 35459448825."
+      "run_id": 35460513145,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-19: success at bdb239b, run 35460513145."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

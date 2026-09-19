@@ -66,7 +66,7 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
 **Definition of Done.**
 - [ ] Signed, auto-updating Windows build; onboarding/first-run flow shipped.
 - [ ] **Full** enforcement-path CI green (option-C skips retired via T-005).
-- [ ] `contracts/` finalized as the single source; duplicates deleted; versioned. — **versioned and gated, NOT deduped**: `contracts/index.json` carries a `version_pointer` per schema and `tools/check_contracts_single_source.py` makes drift RED, but `engine/schemas/` still holds a byte-identical copy of all five, so the box stays unticked.
+- [ ] `contracts/` finalized as the single source; duplicates deleted; versioned. — **versioned and gated, NOT deduped**: `contracts/index.json` carries a `version_pointer` per schema and `tools/check_contracts_single_source.py` makes drift RED, but `engine/schemas/` still holds a byte-identical copy of all **six** (the sixth is `approval-request`, landed 2026-09-19), so the box stays unticked.
 - [ ] O-1..O-5 closed or owner-signed-deferred (each audited).
 - [x] Every page passes production a11y + performance gates; no placeholder copy. — **DONE 2026-08-29**: axe runs in real Chromium with the app's stylesheet graph and `color-contrast` enabled over 23 pages in two states and two themes, plus the shell and the ⌘K dock, and `perf-budget.json` carries a gzip ceiling for all 23 routes.
 - [ ] `README`/`ARCHITECTURE`/`SECURITY_MODEL`/`CLAUDE`/`PROJECT_STATE` all final and synced.
@@ -75,7 +75,7 @@ enforcement CI cannot go green honestly → stop, do not hide it behind skips.
 - [ ] Production build + signing + auto-update (Windows) + update/rollback tests.
 - [ ] Onboarding/first-run (sidecar provisioning + first governed turn).
 - [ ] T-005 (audited): engine worktree-check native fix → retire option-C skips → full enforcement CI green.
-- [ ] `contracts/` final dedupe (lease/approval/task-contract/mode-grant) + versioning. — **versioning is done, the dedupe is not** (see the Definition-of-Done row above), and `approval` names a schema that exists nowhere in the tree, so this row cannot be finished as written until the approval-request path is built.
+- [ ] `contracts/` final dedupe (lease/approval/task-contract/mode-grant) + versioning. — **versioning is done, the dedupe is not** (see the Definition-of-Done row above), and `approval` named a schema that existed nowhere in the tree — **it exists now**: `contracts/approval-request.schema.json`, audited before it landed and vendored byte-identical into `engine/schemas/` (`T-021a`). So the row's second blocker is gone and the first is not: the dedupe still needs the engine to read `contracts/` directly, which is an audited engine-subtree change and is why this stays unticked.
 - [ ] O-1..O-5 remediation (each its own audited engine branch/PR/Owner approval).
 - [x] Production a11y + performance gate pass over all 22 pages; real HY copy. — **DONE 2026-08-29**, see the Definition-of-Done row above; the honest count is **23** route components in `pages.fixtures.tsx`, each measured in both themes by the browser axe sweep and each given its own gzip ceiling in `apps/desktop/perf-budget.json`.
 - [ ] Finalize all docs; mark every phase ✅.

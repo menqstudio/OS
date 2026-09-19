@@ -67,11 +67,15 @@ SPLIT_COMMIT = "5512d82"
 #: the second half of each row -- the budget gate can only be satisfied by removing text, and the
 #: cheapest text to remove was the end of every sentence. `tools/check_truncated_lines.py` is the
 #: counterweight, and this set is the record of what it made necessary.
-#: One of them carries a SECOND divergence, and it is recorded here rather than left to be inferred.
+#: Three of them carry a SECOND divergence, and it is recorded here rather than left to be inferred.
 #: Index 606 -- phase 1's "One governed round-trip proven end-to-end" -- was corrected on 2026-09-19:
 #: its account blamed three refusals, and `broker/src/preflight.rs` marks a fourth prerequisite
 #: `NotProvisionableOnAMachine` with "it is an owner-gated code decision" in its own refusal field. The
 #: row now names that decision. This set cannot tell one reason from two, so the reason is written here.
+#: Indices 1457 and 1466 -- phase 10's two `contracts/` rows -- were corrected on 2026-09-19 for the same
+#: class of reason: one said the vendored copy held "all five" schemas when it holds six, and the other
+#: said `approval` "names a schema that exists nowhere in the tree" when `contracts/approval-request.schema.json`
+#: landed in T-021a. Neither box moved; both rows still say why they stay unticked.
 REPAIRED_LINES = {
     603, 604, 605, 606, 607, 608, 609, 612, 613, 614, 615, 617,  # phase 1
     1457, 1459, 1466, 1468,  # phase 10
@@ -98,6 +102,11 @@ CHECKED_SINCE_SPLIT: dict[int, str] = {
 #: A roadmap that cannot be annotated goes stale; one that can be annotated silently is worse. Same rule,
 #: and the same failure for a stale entry: a listed line that does not actually differ is red.
 ANNOTATED_LINES: dict[int, str] = {
+    710: "T-090: phase 2's record of the 2026-08-15 decision ended in the present tense -- 'the "
+         "capability does not exist' -- and the capability exists since T-021a-d. The historical "
+         "sentence is kept and the correction sits on the same LINE, because this file also asserts "
+         "the assembled roadmap keeps its line COUNT: an inserted line would shift every index in "
+         "REPAIRED_LINES and silently invalidate the enumeration",
     71: "T-021d: the phase-2 status-board cell reads 11/11. The board is an INDEPENDENT surface from "
         "the checkboxes -- check_roadmap_order compares the two on purpose -- so closing the boxes "
         "without moving it would be a phase that says two different things about itself",
