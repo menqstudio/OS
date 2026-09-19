@@ -292,6 +292,11 @@
       "blocks": "merge",
       "invoked_by": "Repo-state · live GitHub truth verifier"
     },
+    "tools/check_source_control_bytes.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Canonical law · read receipt · roadmap order · update law"
+    },
     "tools/check_spec_references.py": {
       "kind": "check",
       "blocks": "merge",

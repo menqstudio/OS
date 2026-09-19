@@ -303,7 +303,7 @@ class ContractsSingleSourceTests(unittest.TestCase):
 
 # A gate's message names a repository path, and that spelling is part of the contract: people
 # grep it, paste it into an editor, and read it in CI logs from both platforms. `str(Path)` gives
-# `a` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
+# `a\b` on Windows, which is neither this repository's spelling nor clickable for a Linux reader.
 # These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
 # exactly why ci.yml now runs the tools suite on windows-latest as well.
 

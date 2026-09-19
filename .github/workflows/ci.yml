@@ -985,7 +985,7 @@ jobs:
       # closed, and it is the half that cannot be skipped with --no-verify or an env var.
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_wall_bash_gap test_check_main_ci
+        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_check_source_control_bytes test_wall_bash_gap test_check_main_ci
       # `lstrip("./")` strips a CHARACTER SET, not a prefix, and reads exactly like a prefix
       # strip. It was written three times: check_doc_claims.py hit it and fixed it inline
       # leaving only a comment, and check_roadmap_order.py:373 plus check_audit_reports.py:119
@@ -995,6 +995,19 @@ jobs:
       # the other way: `../tools/x` was laundered into `tools/x`, a traversal arriving inside an
       # allow-listed prefix. Two of the three gates this job runs were affected, which is why
       # the sweep lives here (T-053).
+      # A raw control byte renders as nothing in a diff, a terminal or a review, and two of them
+      # cost real controls here on 2026-09-20. Five `\b` word boundaries in EACH of two honesty
+      # tests had become literal backspace characters, so ten `not.toMatch` assertions guarding the
+      # UI's receipt vocabulary were satisfied by every possible input -- proved by injecting the
+      # word `custody` into the rendered fixture, which passed before the repair and failed after
+      # it. And a NUL inside ripgrep's 8,000-byte binary window made `rg` return four hits for a
+      # symbol in its TEST file and zero in the file that DEFINES it, so every grep-based review of
+      # that source was silently incomplete. Neither byte is visible anywhere a person looks.
+      # Hosted in this already-required job on purpose: a gate whose failure cannot block a merge is
+      # the T-056 pattern, and a new non-required context would have been dated Owner debt rather
+      # than enforcement.
+      - name: No raw control bytes in tracked text
+        run: python tools/check_source_control_bytes.py
       - name: No `lstrip` used as a path-prefix strip
         run: python tools/check_no_lstrip_prefix.py
       # Roadmap order: a phase counts as complete only when its Definition-of-Done checkboxes
