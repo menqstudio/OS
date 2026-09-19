@@ -358,6 +358,15 @@ said, and what it was not filled with. `Landed at` means landed.
 | Landed at | What moved | Measured |
 | :--- | :--- | :--- |
 | `235acc1` | the three rows above were re-headed from `45ea71e`, and the page's own *Measured at* with them; PRs since `5cf9b8c` 78 → **79**, inserted lines 47,550 → **47,663** | `git rev-parse --short HEAD` on `main`, and `git diff --shortstat 5cf9b8c..HEAD` |
+| `a57fd86` | matrix `implemented` 132 → **133**, `unreviewed` 56 → **55** — `NM-CRASH-01` bound | the `collections.Counter` one-liner above |
+| `a57fd86` | engine suite 2143 → **2144** (97 skipped) | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| `a57fd86` | 79 → **81** pull requests, 47,663 → **48,103** inserted lines since `5cf9b8c`; 248 files unchanged | `git diff --shortstat 5cf9b8c..HEAD` |
+
+**The cadence rule, followed on purpose this time.** T-075 moved the matrix split and the engine
+count and deliberately left the page alone, because a change that moves a counted number cannot name
+a head where its own numbers hold. This change re-trues the page against `a57fd86` — the head T-075
+actually landed at — and the three rows above are what that produced. The rule now has one clean
+pass behind it rather than only the mistake that wrote it.
 
 Unchanged at this head, and checked rather than assumed: `blocked` 54, total 242, bridge 210,
 Rust crates 10, gate scripts 39, declared controls 59 (39 check · 20 tool), workflow files 8,
@@ -422,3 +431,29 @@ mapping each claim to the command that prints it, and a runner willing to execut
 gate; that is a larger design than this, and §5 is still the place routine drift gets recorded by
 hand. So: the class that produced §4g's *false* row — a path, a hash, a ticket — is closed. The
 class that produced its five *stale* rows is not.
+
+## 7. Three suites the page said it had not measured
+
+This is not a §5 row and the difference matters. §5 is for a figure that moved because the repository
+moved; §1–§4 are for a figure that was false. These three were neither — they were **absent**, and
+the page said so in a note:
+
+> The cockpit frontend (`vitest`) count is **not measured here**, so it is not printed.
+> `npx vitest run` needs `node_modules`, which this checkout does not have, and copying a number
+> you did not measure is exactly what `docs/README_CLAIM_HISTORY.md` exists to stop.
+
+That was correct, and it stayed correct for as long as nobody did the install. `npm ci` then ran from
+the committed `package-lock.json` (221 packages, 33 seconds) and `npx playwright install chromium`
+fetched the browser, so all three suites were run at `a57fd86`:
+
+| Suite | Measured | Command |
+| :--- | ---: | :--- |
+| Cockpit frontend (jsdom) | **764** tests, 80 files | `cd apps/desktop && npm ci && npm test` |
+| Cockpit accessibility (axe) | **59** tests, 3 files | `cd apps/desktop && npm ci && npm run test:a11y` |
+| Cockpit in real Chromium | **433** tests, 6 files | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
+
+Each command **includes the install**, and that is deliberate rather than verbose. A fresh checkout
+has no `node_modules` — it is not committed and should not be — so a command without the install is
+one a reader cannot run, and "run the command rather than trusting the number" is the only rule this
+page has. The old note was right that an unmeasured number must not be printed; it did not follow
+that the measurement was impossible, only that nobody had paid for it.

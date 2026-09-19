@@ -570,6 +570,58 @@ class DocumentsCheckedWithoutBeingCanonicalReads(unittest.TestCase):
         self.assertIn("docs/README_CLAIM_HISTORY.md", m.ALSO_CHECKED)
 
 
+class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
+    """`docs/archive/TASKS_ARCHIVE_2026-09.md` is a ticket source.
+
+    Twelve merged-and-unconfirmed rows left `TASKS.md` on 2026-09-19 because that file is read at the
+    start of every session and carries a 7,000-byte ceiling, and five consecutive pull requests had
+    met the ceiling by shortening prose — including other people's. The ceiling's own remedy text
+    says to move the history out. So the rows moved, verbatim, and the board kept one line naming all
+    twelve and their pull requests.
+
+    `known_tickets()` reads a hard-coded list against the module's ROOT, so there is nothing
+    synthetic to build here: the list only ever describes this repository.
+    """
+
+    def test_the_september_archive_is_a_ticket_source(self):
+        """Named in the list, so deleting the line fails a test that says what was lost.
+
+        MEASURED, and the honest half: deleting this line ALONE does not turn the gate red, because
+        the board's summary row still names all twelve ids. It goes red when the line is gone AND the
+        summary row's ids are gone with it — `T-059` and `T-060` then have no board, and
+        `NEXT_CHAT.md` and `config/current_state.json` both still name them. So this is
+        belt-and-braces today and load-bearing the moment that row is shortened, which is exactly
+        the edit it is here to survive."""
+        source = pathlib.Path(m.__file__).read_text(encoding="utf-8")
+        start = source.index("def known_tickets()")
+        end = source.index("def main(", start)
+        self.assertIn("docs/archive/TASKS_ARCHIVE_2026-09.md", source[start:end])
+
+    def test_every_carried_row_is_still_a_known_ticket(self):
+        """The twelve by name. If a future edit drops one from both the board and the archive, this
+        fails saying which — rather than the gate reporting it as a claim about nothing, which is the
+        same verdict for a very different cause."""
+        carried = ("T-059", "T-060", "T-063", "T-064", "T-065", "T-066",
+                   "T-067", "T-068", "T-069", "T-070", "T-071", "T-073")
+        known = m.known_tickets()
+        for tid in carried:
+            with self.subTest(ticket=tid):
+                self.assertIn(tid, known, f"{tid} was carried off the board and is now in no "
+                                          f"board, ledger or archive")
+
+    def test_the_archive_holds_the_rows_and_not_a_summary_of_them(self):
+        """"Moved the history out" has to mean moved, not paraphrased. Each carried row's id appears
+        in the archive with its merged pull request beside it, which is what makes the board's
+        one-line replacement honest rather than a deletion."""
+        archive = (ROOT / "docs" / "archive" / "TASKS_ARCHIVE_2026-09.md").read_text(
+            encoding="utf-8")
+        rows = [l for l in archive.split("\n") if l.startswith("| **T-")]
+        self.assertEqual(len(rows), 12, "the archive does not hold twelve rows")
+        for row in rows:
+            with self.subTest(row=row[:40]):
+                self.assertIn("merged `#", row, "a carried row lost its pull request")
+
+
 class ControlCharactersInADocument(unittest.TestCase):
     """Check 5. A canonical document held a real backspace byte and nothing refused it.
 
