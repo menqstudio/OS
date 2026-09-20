@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -389,6 +390,110 @@ class OfflineManifestSignerTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertFalse(os.path.exists(out))
 
+
+
+class ExternalAnchorPassthroughTests(unittest.TestCase):
+    """`run_live_turn.sh` can now pass the anchor it has always described.
+
+    Its F-17 note told the reader to "Re-provision with --root-anchor-key-id/--root-anchor-pub-hex plus
+    the externally-signed manifest" for as long as the note existed, while its one `provision_keys.py`
+    call site carried five arguments and none of those flags. The instruction named an outcome no
+    command in the tree could reach.
+
+    This script cannot RUN here — it needs root, seven accounts and a setuid launcher — and it is the
+    one required context `Linux · LIVE 7-service governed turn` executes, so a broken edit blocks every
+    merge. What a test on this box can do is prove the script still PARSES and that the wiring is
+    all-or-none, which is where the danger is: four flags without `--keys-in` provisions fresh keys the
+    signed manifest cannot name.
+    """
+
+    LIVE_SH = os.path.join(os.path.dirname(LIVE_DIR), "live")
+
+    def _script(self) -> str:
+        with open(os.path.join(LIVE_DIR, "run_live_turn.sh"), "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_every_live_shell_script_parses(self):
+        """The syntax gate this tree did not have. `bash -n` costs milliseconds and is the only thing
+        on this box that can tell a broken orchestrator from a working one before Linux CI does."""
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash on this host, so syntax cannot be checked here")
+        scripts = sorted(f for f in os.listdir(LIVE_DIR) if f.endswith(".sh"))
+        self.assertGreaterEqual(len(scripts), 2, scripts)
+        for name in scripts:
+            with self.subTest(script=name):
+                r = subprocess.run([bash, "-n", os.path.join(LIVE_DIR, name)],
+                                   capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, f"{name}: {r.stderr}")
+
+    def test_the_provision_call_site_forwards_the_anchor_arguments(self):
+        invocation = [l for l in self._script().splitlines() if "ANCHOR_ARGS[@]" in l]
+        self.assertTrue(invocation, "the call site forwards nothing, so the flags cannot arrive")
+        # The `+` form, because `set -u` is in force (run_live_turn.sh:18) and an empty array under
+        # older bash would abort the run before it provisioned anything.
+        self.assertIn('${ANCHOR_ARGS[@]+"${ANCHOR_ARGS[@]}"}', self._script())
+
+    def test_the_five_variables_are_all_or_none(self):
+        script = self._script()
+        for var in ("BROPS_KEYS_IN", "BROPS_ROOT_ANCHOR_KEY_ID", "BROPS_ROOT_ANCHOR_PUB_HEX",
+                    "BROPS_MANIFEST_IN", "BROPS_MANIFEST_SIG_IN"):
+            with self.subTest(var=var):
+                self.assertIn(var, script)
+        self.assertIn("needs ALL of", script)
+
+    def _anchor_block(self) -> str:
+        """The block AS IT IS IN THE SCRIPT, not a copy of it.
+
+        The first version of this test inlined its own copy of the logic and ran that. It passed while
+        a mutant that made the script accept a PARTIAL set survived untouched — the test was asserting
+        about a duplicate, which is the exact defect this repository has spent a week removing. The
+        block is extracted from the real file now, so an edit to the script is an edit to what runs
+        here.
+        """
+        script = self._script()
+        first = script.index('ANCHOR_VARS="BROPS_KEYS_IN')
+        last = script.index("# ----- keys + manifest + store + shared config", first)
+        return script[first:last]
+
+    def test_the_all_or_none_logic_actually_refuses_a_partial_set(self):
+        """The script's own bytes, run under a real bash. A partial set must refuse; the full set must
+        pass; and unset must add NOTHING, because this script is a required context and the default
+        path has to stay byte-identical."""
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash on this host")
+        block = "\n".join(["set -u", self._anchor_block(), 'echo "COUNT=${#ANCHOR_ARGS[@]}"'])
+        full = {"BROPS_KEYS_IN": "/k", "BROPS_ROOT_ANCHOR_KEY_ID": "id1",
+                "BROPS_ROOT_ANCHOR_PUB_HEX": "ab" * 32,
+                "BROPS_MANIFEST_IN": "/m", "BROPS_MANIFEST_SIG_IN": "/s"}
+
+        def run(env_extra):
+            env = {k: v for k, v in os.environ.items() if not k.startswith("BROPS_")}
+            env.update(env_extra)
+            return subprocess.run([bash, "-c", block], capture_output=True, text=True, env=env)
+
+        unset = run({})
+        self.assertEqual(unset.returncode, 0, unset.stderr)
+        self.assertIn("COUNT=0", unset.stdout,
+                      "with nothing set the invocation must be the one it has always been")
+
+        complete = run(full)
+        self.assertEqual(complete.returncode, 0, complete.stderr)
+        self.assertIn("COUNT=10", complete.stdout, "five flags and five values")
+
+        for missing in sorted(full):
+            with self.subTest(missing=missing):
+                partial = run({k: v for k, v in full.items() if k != missing})
+                self.assertEqual(partial.returncode, 1,
+                                 f"a set missing {missing} must refuse: {partial.stdout}")
+                self.assertIn("needs ALL of", partial.stdout + partial.stderr)
+
+    def test_the_note_no_longer_promises_what_nothing_could_do(self):
+        script = self._script()
+        self.assertIn("THAT IS NOW REACHABLE FROM HERE", script)
+        self.assertIn("sign_manifest.py", script,
+                      "the note has to name the command that produces the signature")
 
 if __name__ == "__main__":
     unittest.main()
