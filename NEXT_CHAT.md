@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t106/counted-claims` — `main` @ `9cc4d2c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t107/the-blocker-was-not-yours` — `main` @ `4223579`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #277 · branch `t106/counted-claims`** (base `main`, tip `9cc4d2c`, task T-106).
+> **⏭️ CURRENT ACTIVE: PR #278 · branch `t107/the-blocker-was-not-yours`** (base `main`, tip `4223579`, task T-107).
 >
-> The gate asked for a declaration of the counted claims, and nobody wrote it
+> The page that says what waits on the Owner was wrong about what waits on him
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
