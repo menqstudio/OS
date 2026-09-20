@@ -4,7 +4,7 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #280 · branch `t109/anchor-passthrough`** (base `main`, tip `d09661c`, task T-109).
+> **⏭️ CURRENT ACTIVE: PR #281 · branch `t109b/anchor-passthrough`** (base `main`, tip `d09661c`, task T-109).
 >
 > The orchestrator can pass the external anchor it has described since it was written
 >
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-109** | **The orchestrator can pass the anchor it has described since it was written** - five env vars, all-or-none, byte-identical when unset; plus the first `bash -n` gate this tree has had, and the engine count re-trued at the head it landed on ◑ | Bro | Review | `#280` |
+| **T-109** | **The orchestrator can pass the anchor it has described since it was written** - five env vars, all-or-none, byte-identical when unset; plus the first `bash -n` gate this tree has had, and the engine count re-trued at the head it landed on ◑ | Bro | Review | `#281` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |

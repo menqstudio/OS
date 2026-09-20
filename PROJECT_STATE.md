@@ -12,7 +12,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #280 · branch `t109/anchor-passthrough`** (base `main`, tip `d09661c`, task T-109).
+> **⏭️ CURRENT ACTIVE: PR #281 · branch `t109b/anchor-passthrough`** (base `main`, tip `d09661c`, task T-109).
 >
 > The orchestrator can pass the external anchor it has described since it was written
 >
