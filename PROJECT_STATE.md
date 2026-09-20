@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #270 · branch `t099/one-claim-guard`** (base `main`, tip `77f4dfa`, task T-099).
+> **⏭️ CURRENT ACTIVE: PR #271 · branch `t100/one-ucred-format`** (base `main`, tip `33b22b7`, task T-100).
 >
-> One claim guard: the Windows retry moves to the class everyone inherits, and a wrong number I added is corrected
+> One kernel struct read five ways: the signed one is reconciled and the agreement is now checked
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

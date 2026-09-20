@@ -36,8 +36,17 @@ def _peer_uid(conn: socket.socket) -> int | None:
     if so_peercred is None:
         return None
     try:
-        creds = conn.getsockopt(socket.SOL_SOCKET, so_peercred, struct.calcsize("3i"))
-        _pid, uid, _gid = struct.unpack("3i", creds)
+        # `=III`, not `3i`: `struct ucred` is `{pid_t, uid_t, gid_t}` and `uid_t` is UNSIGNED on Linux.
+        # The four other readers of this struct in the tree (`challenge_authority_server`,
+        # `governed_supervisor_server`, `isolated_signer_server`, `floor_writer`) all use `=III`, and
+        # `floor_writer` documents it. This one read it as three SIGNED ints, which agrees for every uid
+        # below 2^31 and differs above: the kernel's `(uid_t)-1` "no uid" arrived as `-1`, and
+        # `(uid_t)-2` — `nobody` on some systems — as `-2`. That is fail-closed, because the gate below
+        # is `uid not in allowed_peer_uids` and an allow-list built from `os.getuid()` holds no negative
+        # numbers, so a negative can only DENY. What it broke is the number a refusal reports, and the
+        # agreement between five readers of one structure. `calcsize` is 12 either way.
+        creds = conn.getsockopt(socket.SOL_SOCKET, so_peercred, struct.calcsize("=III"))
+        _pid, uid, _gid = struct.unpack("=III", creds)
         return uid
     except OSError:
         return None
