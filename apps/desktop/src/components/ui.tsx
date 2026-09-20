@@ -219,8 +219,15 @@ export function usePrefersReducedMotion(): boolean {
 }
 
 /** Integer count-up toward `target`. Snaps instantly when `animate` is false so
- *  reduced-motion users (and non-numeric tiles) get the final value at once. */
-function useCountUp(target: number, animate: boolean): number {
+ *  reduced-motion users (and non-numeric tiles) get the final value at once.
+ *
+ *  Exported since 2026-09-20. It was private, and `features/Activity.tsx` therefore carried a
+ *  byte-identical copy of it (md5 770e7fab…, 575 B) — a copy is what a reader gets when the shared
+ *  thing is not reachable. See `useEasedCountUp` below for the deliberate second curve, and read the
+ *  flag: BOTH take `animate`, where `true` means move. A third copy in `features/Analytics.tsx` took
+ *  `reduced` under the same name, so the two were opposites, and unifying them by name alone would
+ *  have animated exactly for the users who asked for stillness. */
+export function useCountUp(target: number, animate: boolean): number {
   const [value, setValue] = useState(animate ? 0 : target);
   useEffect(() => {
     if (!animate) { setValue(target); return; }
@@ -236,6 +243,33 @@ function useCountUp(target: number, animate: boolean): number {
     return () => cancelAnimationFrame(raf);
   }, [target, animate]);
   return value;
+}
+
+
+/** The same count, on a 900 ms cubic ease-out instead of a 600 ms linear ramp. Analytics' distribution
+ *  total uses this one deliberately — a long number settling is the mockup's behaviour there — so it is
+ *  a second CURVE rather than a second implementation, and it lives here so a reader meets both at once.
+ *
+ *  Its flag is `animate`, like its sibling's. It arrived from `features/Analytics.tsx` where the same
+ *  parameter was named `reduced` and meant the reverse; the call site now passes `!reduced`. */
+export function useEasedCountUp(target: number, animate: boolean): number {
+  const [shown, setShown] = useState<number>(animate ? 0 : target);
+  useEffect(() => {
+    if (!animate) { setShown(target); return; }
+    let raf = 0;
+    let start = 0;
+    const dur = 900;
+    const step = (ts: number) => {
+      if (!start) start = ts;
+      const p = Math.min(1, (ts - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setShown(Math.round(target * eased));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, animate]);
+  return shown;
 }
 
 /** Roving-focus keyboard handler over `[data-roving]` descendants (mirrors the

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../app/store';
-import { Button, Avatar, EmptyState, Skeleton, ErrorState, usePrefersReducedMotion } from '../components/ui';
+import { Button, Avatar, EmptyState, Skeleton, ErrorState, usePrefersReducedMotion, useCountUp } from '../components/ui';
 import { Mark } from '../components/Ambient';
 import { useAsync } from '../hooks/useAsync';
 import { desktop, hasBackend } from '../services/desktop';
@@ -63,25 +63,6 @@ function HudChrome() {
       </span>
     </>
   );
-}
-
-/** Integer count-up on the pulse core. Snaps instantly under reduced motion. */
-function useCountUp(target: number, animate: boolean): number {
-  const [value, setValue] = useState(animate ? 0 : target);
-  useEffect(() => {
-    if (!animate) { setValue(target); return; }
-    let raf = 0;
-    const start = performance.now();
-    const dur = 600;
-    const step = (now: number) => {
-      const p = Math.min(1, (now - start) / dur);
-      setValue(Math.round(target * p));
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [target, animate]);
-  return value;
 }
 
 export function Activity() {
