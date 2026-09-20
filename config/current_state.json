@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "9cc4d2c096428cfb3033b5c2aa3da451ebfa8443",
+  "settled_at_main_head": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
   "sync": {
-    "baseline_main_head_at_sync": "9cc4d2c096428cfb3033b5c2aa3da451ebfa8443",
-    "snapshot_branch": "t106/counted-claims",
+    "baseline_main_head_at_sync": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
+    "snapshot_branch": "t107/the-blocker-was-not-yours",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t106/counted-claims"
+    "branch": "t107/the-blocker-was-not-yours"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 277,
-    "branch": "t106/counted-claims",
+    "number": 278,
+    "branch": "t107/the-blocker-was-not-yours",
     "state": "open",
-    "what": "check_doc_claims' own docstring said it did not check the front page's COUNTED claims and that section 5 of the claim history was where that drift got caught by hand - and its two examples had themselves gone stale. config/counted-claims.json now declares ten: five the gate RECOUNTS from the tree every run, five that need a suite to run and must therefore name an environment, a date and a head. Eight stale sites re-trued, and the skip count is no longer stated as a fact - one head skips 14, 82 and 97 in three environments.",
-    "note": "The gate asked for a declaration of the counted claims, and nobody wrote it",
+    "what": "OWNER_ACTION_REQUIRED section 0 said the root seed was the one thing between this product and a governed turn, and that nothing needed building if the Owner held it. Both false. provision_keys.py mints the signer and supervisor keys fresh every run (:221-224) while build_manifest_bytes (:117) proves the manifest must name their public hexes, so an offline signature cannot name keys that do not exist yet: trusted_verified on Linux is unreachable by construction. Six Builder pieces named, each with the line proving it absent.",
+    "note": "The page that says what waits on the Owner was wrong about what waits on him",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #277 (t106/counted-claims), task T-106: check_doc_claims' own docstring said it did not check the front page's COUNTED claims and that section 5 of the claim history was where that drift got caught by hand - and its two examples had themselves gone stale. config/counted-claims.json now declares ten: five the gate RECOUNTS from the tree every run, five that need a suite to run and must therefore name an environment, a date and a head. Eight stale sites re-trued, and the skip count is no longer stated as a fact - one head skips 14, 82 and 97 in three environments. Next: The environment truth: config/toolchain.json still says this is a Debian box with cargo 1.97.1, which is why two of the four permanently-expected REDs are expected.",
-    "_note": "The carrier is current_workflow_pr (#277 on t106/counted-claims). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #278 (t107/the-blocker-was-not-yours), task T-107: OWNER_ACTION_REQUIRED section 0 said the root seed was the one thing between this product and a governed turn, and that nothing needed building if the Owner held it. Both false. provision_keys.py mints the signer and supervisor keys fresh every run (:221-224) while build_manifest_bytes (:117) proves the manifest must name their public hexes, so an offline signature cannot name keys that do not exist yet: trusted_verified on Linux is unreachable by construction. Six Builder pieces named, each with the line proving it absent. Next: Pieces 1 and 2: split provision_keys.py into --emit-manifest and --keys-in phases, and give the offline root a signing CLI.",
+    "_note": "The carrier is current_workflow_pr (#278 on t107/the-blocker-was-not-yours). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "9cc4d2c096428cfb3033b5c2aa3da451ebfa8443",
+      "head": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
       "conclusion": "success",
-      "run_id": 35485761620,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 9cc4d2c, run 35485761620."
+      "run_id": 35488009714,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 4223579, run 35488009714."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
