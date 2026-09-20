@@ -320,7 +320,34 @@ def known_tickets() -> set[str]:
 COUNTED_CLAIMS = pathlib.Path("config/counted-claims.json")
 
 #: A claim the gate can recount. Anything else must instead say WHERE its number came from.
-DERIVE_KINDS = ("glob", "yaml_block_keys")
+DERIVE_KINDS = ("glob", "yaml_block_keys", "line_regex")
+
+
+def _count_line_regex(root: pathlib.Path, spec: str) -> int:
+    """Count the lines of ONE file that match a regex. Spec is `<path>::<pattern>`.
+
+    Added 2026-09-21 for a claim neither existing kind could recount: the number of rows in
+    `docs/archive/TASKS_ARCHIVE_2026-09.md`. That file's own header said it held `38` of them on the
+    day it held fifty, in the paragraph telling a reader the board carries "one line naming all N of
+    these" — a stale count inside the sentence that exists to make the count findable. Nothing could
+    have caught it: a row is a table line, not a file and not a YAML key.
+
+    `-1` for an unreadable file or an invalid pattern, which can never equal a declared count, so the
+    caller reports a mismatch rather than passing on an absence. A count that could not be taken has
+    not agreed with anything.
+    """
+    path, sep, pattern = spec.partition("::")
+    if not sep or not path.strip() or not pattern:
+        return -1
+    try:
+        body = (root / path.strip()).read_text(encoding="utf-8")
+    except OSError:
+        return -1
+    try:
+        compiled = re.compile(pattern)
+    except re.error:
+        return -1
+    return sum(1 for line in body.splitlines() if compiled.search(line))
 
 
 def _count_glob(root: pathlib.Path, spec: str) -> int:
@@ -407,8 +434,12 @@ def counted_claim_failures(root: pathlib.Path) -> list[str]:
                 if kind not in DERIVE_KINDS:
                     problems.append(f"{where}: derive kind {kind!r} not in {list(DERIVE_KINDS)}")
                 else:
-                    actual = (_count_glob(root, spec) if kind == "glob"
-                              else _count_yaml_block_keys(root, spec))
+                    # A dict, not a chain of ternaries: the two-way version silently routed a THIRD
+                    # kind to the `yaml_block_keys` counter, so a new kind would have been
+                    # miscounted by whichever branch happened to be the `else`.
+                    actual = {"glob": _count_glob,
+                              "yaml_block_keys": _count_yaml_block_keys,
+                              "line_regex": _count_line_regex}[kind](root, spec)
                     if actual != value:
                         problems.append(
                             f"{where}: declares {value} but the tree has {actual} "

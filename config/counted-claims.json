@@ -238,6 +238,17 @@
       "cited_in": [
         "README.md"
       ]
+    },
+    "tasks_archive_2026_09_rows": {
+      "value": 50,
+      "command": "grep -cE '^\\| \\*\\*T-[0-9]+\\*\\*' docs/archive/TASKS_ARCHIVE_2026-09.md",
+      "derive": {
+        "line_regex": "docs/archive/TASKS_ARCHIVE_2026-09.md::^\\| \\*\\*T-\\d+\\*\\*"
+      },
+      "cited_in": [
+        "TASKS.md",
+        "docs/archive/TASKS_ARCHIVE_2026-09.md"
+      ]
     }
   }
 }

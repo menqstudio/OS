@@ -1,20 +1,20 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-20 — 49 pull requests merged (`#219`–`#267`), `main` at
-`2045830`, its own `ci` green there. Seven of eleven phases have every box ticked (0, 2–7); 97 of 115
-rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux kernel, and
-one offline root signature only the Owner can make — that last one is the whole blocker, named on the
-Owner page. The negative matrix reads: **155 implemented · 52 blocked · 35 unreviewed**, from 39/21/182.
-Before: 2026-09-19 — twenty merged (`#219`–`#237`), `main` at `3909ede`: the supply-chain gate green
-again, the `T-055` promise executed by the Owner, three canon tools fixed so the mirror cannot drift
-unread, the §D keydown race closed.
+**Last updated · Վերջին թարմացում:** 2026-09-21 — 63 pull requests merged (`#219`–`#282`), `main` at
+`1f6590c`, its own `ci` RED there on two jobs because this line said `2026-09-20` while the squash
+merging `#282` landed at 00:06 local on the 21st; the line and the tool that rewrote this file without
+moving it are both fixed in this commit. Seven of eleven phases have every box ticked (0, 2–7); 97 of
+115 rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux
+kernel, and one offline root signature only the Owner can make — NOT the whole blocker: six Builder
+pieces did not exist either, all six named in `docs/OWNER_ACTION_REQUIRED.md` §0. The negative matrix
+reads: **155 implemented · 52 blocked · 35 unreviewed**, from 39/21/182.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #282 · branch `t110/broker-binary-e2e`** (base `main`, tip `1eddc57`, task T-110).
+> **⏭️ CURRENT ACTIVE: PR #283 · branch `t111/broker-config-writer`** (base `main`, tip `1f6590c`, task T-111).
 >
-> Nothing in the tree had ever run the brops-broker binary
+> Nothing in the tree had ever written a $BROPS_BROKER_CONFIG document
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

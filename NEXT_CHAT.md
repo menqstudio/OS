@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t110/broker-binary-e2e` — `main` @ `1eddc57`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t111/broker-config-writer` — `main` @ `1f6590c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #282 · branch `t110/broker-binary-e2e`** (base `main`, tip `1eddc57`, task T-110).
+> **⏭️ CURRENT ACTIVE: PR #283 · branch `t111/broker-config-writer`** (base `main`, tip `1f6590c`, task T-111).
 >
-> Nothing in the tree had ever run the brops-broker binary
+> Nothing in the tree had ever written a $BROPS_BROKER_CONFIG document
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

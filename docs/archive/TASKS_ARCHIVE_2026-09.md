@@ -1,20 +1,25 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
-independently confirmed.** The standing verdict is RED — the ninth round,
-[`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](../../apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
+independently confirmed.** The standing verdict is RED — the TENTH round,
+[`apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`](../../apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
 — and a `◑` on a row here is the Builder's own claim, never a confirmation. Check any tick in prose
 against [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](../../apps/desktop/AUDIT/AUDIT_LEDGER.md) before
-believing it.
+believing it. This paragraph named the NINTH round until 2026-09-21, three weeks after the tenth
+superseded it — in the very file whose last line tells a reader not to trust a tick without checking
+the ledger.
 
 They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is read at the start of
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-38 of these and their pull requests. What is here is the account of each defect, which is
-what "how did we get here" means.
+50 of these and their pull requests. What is here is the account of each defect, which is
+what "how did we get here" means. That sentence said `38` from the day twelve more rows were added
+under it until 2026-09-21; the count is now a declared claim in
+[`config/counted-claims.json`](../../config/counted-claims.json), recounted on every run, so it
+cannot go stale unread again.
 
-Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
+Nothing was summarised on the way in. Each row is verbatim from the board on the day it left it.
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
@@ -67,3 +72,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-107** | **The page that says what waits on the Owner was wrong about what waits on him** - the seed was necessary and nowhere near sufficient; six Linux pieces do not exist and `trusted_verified` is unreachable by construction, each cited ◑ | Bro | Review | merged `#278` |
 | **T-108** | **`trusted_verified` was unreachable on Linux by construction; it is not now** - the ceremony is two phases, the kit verifies the signature AND that the manifest names its keys, and no root private touches the serving box ◑ | Bro | Review | merged `#279` |
 | **T-109** | **The orchestrator can pass the anchor it has described since it was written** - five env vars, all-or-none, byte-identical when unset; plus the first `bash -n` gate this tree has had, and the engine count re-trued at the head it landed on ◑ | Bro | Review | merged `#281` |
+| **T-110** | **Nothing in the tree had ever run the `brops-broker` binary** - the first integration test spawns it over a real AF_UNIX socket and pins the fail-closed refusal, the peer check and that one bad peer cannot wedge the loop ◑ | Bro | Review | merged `#282` |
