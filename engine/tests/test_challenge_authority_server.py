@@ -345,5 +345,111 @@ class NeverRaisesTests(unittest.TestCase):
             self.assertFalse(conn.decoded_reply()["ok"])
 
 
+
+class TheConnectionBudgetBoundsOneExchangeTests(unittest.TestCase):
+    """A peer may not hold the challenge authority's serial accept loop (added 2026-09-20).
+
+    Until that day ``SocketPeerConn.recv_exactly`` was an unbounded read loop with no timeout of any
+    kind, so a peer that connected and never completed a frame stalled the loop forever.
+    ``governed_supervisor_server`` had already refused that (the same total deadline, since audit R1)
+    and ``floor_writer`` had its own 30 s version; this service and its sibling had nothing.
+
+    The real class runs here. ``read_peercred_uid`` refuses off Linux, so that ONE attribute is
+    stubbed — the uid read is a separate concern with its own tests in ``test_brops_socket`` — and
+    everything else is the production object. Determinism comes from the BUDGET, not from a clock: a
+    negative budget is already spent at construction.
+    """
+
+    class FakeSock:
+        """Records every timeout armed and every byte asked for."""
+
+        def __init__(self, chunks=()):
+            self.chunks = list(chunks)
+            self.armed = []
+            self.recv_calls = []
+            self.sent = []
+
+        def settimeout(self, seconds):
+            self.armed.append(seconds)
+
+        def recv(self, n):
+            self.recv_calls.append(n)
+            return self.chunks.pop(0) if self.chunks else b""
+
+        def sendall(self, data):
+            self.sent.append(data)
+
+        def close(self):
+            pass
+
+    def setUp(self):
+        import challenge_authority_server as srv
+        self.srv = srv
+        original = srv.read_peercred_uid
+        srv.read_peercred_uid = lambda _sock: 4242
+        self.addCleanup(setattr, srv, "read_peercred_uid", original)
+
+    def _conn(self, sock, budget_s):
+        return self.srv.SocketPeerConn(sock, budget_s=budget_s)
+
+    def test_a_spent_budget_never_reaches_the_socket(self):
+        """THE assertion the previous code could not pass: it called `recv` unconditionally."""
+        sock = self.FakeSock([b"xxxxxxxx"])
+        got = self._conn(sock, -1.0).recv_exactly(8)
+        self.assertEqual(got, b"")
+        self.assertEqual(sock.recv_calls, [],
+                         "a connection past its deadline must not read one more byte")
+
+    def test_a_spent_budget_refuses_the_WRITE_in_this_services_own_vocabulary(self):
+        """Writing under no timeout would hand back, on the write side, exactly the unbounded hold
+        the read side just refused. The refusal is this module's `FrameError`, not a generic one."""
+        sock = self.FakeSock()
+        conn = self._conn(sock, -1.0)
+        # `self.srv.FrameError`, not a bare name: the assertion is that THIS service's own class
+        # is raised, and one of the two test files does not import the name into its namespace.
+        with self.assertRaises(self.srv.FrameError):
+            conn.send_all(b"reply")
+        self.assertEqual(sock.sent, [], "nothing may be written after the budget is spent")
+
+    def test_a_live_budget_reads_through_and_arms_a_POSITIVE_timeout(self):
+        sock = self.FakeSock([b"hello ", b"world"])
+        conn = self._conn(sock, 600.0)
+        self.assertEqual(conn.recv_exactly(11), b"hello world")
+        self.assertTrue(sock.armed, "a read must arm the remaining budget")
+        self.assertTrue(all(t > 0 for t in sock.armed), sock.armed)
+
+    def test_the_deadline_is_armed_ONCE_at_construction_and_not_per_read(self):
+        """A per-read timeout restarts on every byte that arrives, so a drip peer never times out.
+        Two successive reads on one connection must therefore arm a NON-INCREASING budget."""
+        sock = self.FakeSock([b"ab", b"cd"])
+        conn = self._conn(sock, 600.0)
+        armed_at_construction = conn._deadline
+        conn.recv_exactly(2)
+        conn.recv_exactly(2)
+        # The DIRECT assertion. Comparing armed timeouts is not enough: re-arming with the module
+        # default would still shrink the number relative to a 600 s test budget, so a mutant that
+        # reset the deadline on every read survived that comparison. The deadline itself may not move.
+        self.assertEqual(conn._deadline, armed_at_construction,
+                         "the deadline is armed ONCE, at construction, or a drip peer never expires")
+        self.assertGreaterEqual(len(sock.armed), 2, sock.armed)
+        self.assertLessEqual(sock.armed[-1], sock.armed[0],
+                             "the budget must shrink across reads, never reset")
+
+    def test_a_live_budget_writes_and_arms_the_remaining_time(self):
+        sock = self.FakeSock()
+        self._conn(sock, 600.0).send_all(b"reply")
+        self.assertEqual(sock.sent, [b"reply"])
+        self.assertTrue(all(t > 0 for t in sock.armed), sock.armed)
+
+    def test_the_bound_comes_from_the_shared_module_rather_than_a_local_copy(self):
+        """Five accept loops, two bounds, three of them unbounded — the divergence WAS the defect.
+        One number, one place."""
+        import brops_socket
+        self.assertIs(self.srv.brops_socket.recv_exactly_bounded,
+                      brops_socket.recv_exactly_bounded)
+        self.assertEqual(self.srv.brops_socket.CONNECTION_BUDGET_S,
+                         brops_socket.CONNECTION_BUDGET_S)
+
+
 if __name__ == "__main__":
     unittest.main()

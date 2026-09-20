@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #275 · branch `t104/one-countup`** (base `main`, tip `7efc6d2`, task T-104).
+> **⏭️ CURRENT ACTIVE: PR #276 · branch `t105/one-bounded-accept`** (base `main`, tip `bd3fd27`, task T-105).
 >
-> One hook name, three bodies, and two opposite meanings for the same flag
+> A peer could hold the signer's accept loop forever; two of five servers already refused that
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

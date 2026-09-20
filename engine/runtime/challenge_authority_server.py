@@ -27,7 +27,9 @@ import json
 import socket
 import struct
 import sys
+import time
 import traceback
+import brops_socket
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from challenge_authority import (
@@ -70,18 +72,11 @@ def read_peercred_uid(sock: "socket.socket") -> int:
     ``ChallengeAuthorityError`` so the caller can DENY rather than trust an
     unauthenticated peer.
     """
-    if sys.platform != "linux":
-        raise ChallengeAuthorityError(
-            "platform unsupported: SO_PEERCRED peer authentication requires Linux"
-        )
-    # struct ucred is {pid_t pid; uid_t uid; gid_t gid;} == three 32-bit ints.
-    ucred = sock.getsockopt(
-        socket.SOL_SOCKET,
-        socket.SO_PEERCRED,  # type: ignore[attr-defined]
-        struct.calcsize("=III"),
-    )
-    _pid, uid, _gid = struct.unpack("=III", ucred)
-    return uid
+    # Moved to `brops_socket.read_peercred_uid` on 2026-09-20. Three servers carried this
+    # byte-identically but for the exception class -- measured at 840 / 816 / 828 B, all 20 lines,
+    # whose entire diff was that class and the docstring naming it. The wrapper stays because the
+    # NAME is this service's surface: `accept_socket_conn` and its tests reach it here.
+    return brops_socket.read_peercred_uid(sock, error=ChallengeAuthorityError)
 
 
 # ---------------------------------------------------------------------------
@@ -96,24 +91,39 @@ class SocketPeerConn:
 
     The peer uid is captured ONCE, at accept time, from the kernel — it is not
     caller-supplied and cannot be spoofed over the wire.
+
+    The connection also carries a TOTAL deadline (:data:`brops_socket.CONNECTION_BUDGET_S`), armed
+    at construction and shared by both directions, so no peer can hold the serial accept loop.
+
+    **Added 2026-09-20, and it was missing.** This class read `while remaining > 0: recv(remaining)`
+    with no timeout of any kind, so a peer that connected and never completed a frame stalled the
+    accept loop forever. `governed_supervisor_server` had already decided that may not happen (the
+    same deadline, since audit R1) and `floor_writer` had decided it too (30 s); this file and the
+    challenge authority had nothing — and this one is the SIGNER, whose own `serve_forever`
+    docstring promises that "nothing a single peer can do may end" the loop. That promise was about
+    an EXCEPTION; a stall is the same outcome by another road. A per-read timeout would not have
+    been enough either: a peer sending one byte per timeout never times out, which is why the bound
+    is a budget for the whole exchange rather than for one read.
     """
 
-    def __init__(self, sock: "socket.socket") -> None:
+    def __init__(self, sock: "socket.socket", *,
+                 budget_s: float = brops_socket.CONNECTION_BUDGET_S) -> None:
         self._sock = sock
         self.peer_uid = read_peercred_uid(sock)
+        self._deadline = time.monotonic() + budget_s
 
     def recv_exactly(self, n: int) -> bytes:
-        chunks = []
-        remaining = n
-        while remaining > 0:
-            chunk = self._sock.recv(remaining)
-            if not chunk:
-                break  # peer closed early; caller detects the short read
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        return brops_socket.recv_exactly_bounded(
+            self._sock.recv, n,
+            deadline=self._deadline, arm_timeout=self._sock.settimeout)
 
     def send_all(self, data: bytes) -> None:
+        budget = brops_socket.recv_budget_s(self._deadline, time.monotonic())
+        if budget is None:
+            # The budget is spent. Writing under no timeout here would hand back, on the write
+            # side, exactly the unbounded hold the read side just refused.
+            raise FrameError("connection budget exhausted before the reply could be written")
+        self._sock.settimeout(budget)
         self._sock.sendall(data)
 
     def close(self) -> None:
@@ -337,14 +347,11 @@ def bind_listener(socket_path: str) -> "socket.socket":
     Fail-closed on non-Linux hosts: the peer-credential trust chain this service
     depends on (``SO_PEERCRED``) does not exist there.
     """
-    if sys.platform != "linux":
-        raise ChallengeAuthorityError(
-            "platform unsupported: AF_UNIX SO_PEERCRED authority requires Linux"
-        )
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(socket_path)
-    listener.listen(64)
-    return listener
+    # Moved to `brops_socket.bind_listener` on 2026-09-20; the three copies differed only in the
+    # exception class and the noun in this message. `listen(64)` and the deliberate absence of any
+    # directory hardening travelled with it unchanged.
+    return brops_socket.bind_listener(
+        socket_path, error=ChallengeAuthorityError, subject="authority")
 
 
 def accept_socket_conn(listener: "socket.socket") -> SocketPeerConn:
