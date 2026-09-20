@@ -854,6 +854,131 @@ class HonestyTests(unittest.TestCase):
         self.assertEqual(gate.intentionally_ungated(), set(check_capabilities.INTENTIONALLY_UNGATED))
 
 
+
+class StaleAbsenceProseTests(unittest.TestCase):
+    """Prose that says a symbol has no caller, in a run that just derived one.
+
+    On 2026-09-20 an audit found four entries in config/reachability-declarations.json and eight
+    sections of config/spec-conformance.json asserting, in live un-retracted text, that wiring did
+    not exist that the tree contained. Every `expectation` was CORRECT; the reasons beside them had
+    rotted. That file's own $comment had predicted the failure twice and could not catch it, because
+    nothing read the prose. These tests are what reads it.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="brops-prose-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "config").mkdir()
+
+    def _declare(self, reason, *, spec=None):
+        (self.tmp / "config" / "reachability-declarations.json").write_text(
+            json.dumps({"rust_symbols": {"widget": {"reason": reason}}}), encoding="utf-8")
+        (self.tmp / "config" / "spec-conformance.json").write_text(
+            json.dumps({"sections": {"§1": {"missing": spec or "nothing to say here"}}}),
+            encoding="utf-8")
+
+    def _run(self, reached=None):
+        return gate.stale_absence_claims(
+            self.tmp, reached if reached is not None else {"do_the_thing": "src/caller.rs:12"})
+
+    # ---- the defect ----------------------------------------------------------------------------
+
+    def test_a_live_absence_claim_about_a_called_symbol_is_refused(self):
+        self._declare("Nothing calls `do_the_thing`, so the hop is unreachable today.")
+        problems = self._run()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("nothing calls", problems[0])
+        self.assertIn("do_the_thing", problems[0])
+        self.assertIn("src/caller.rs:12", problems[0],
+                      "the refusal must name the caller, so the reader can check it")
+
+    def test_the_same_claim_in_spec_conformance_is_refused_too(self):
+        """The audit found eight of these in the second file, four of them contradicted by other
+        sections of the same file. One rule, both files."""
+        self._declare("fine", spec="The hop does not exist: `do_the_thing` has no caller.")
+        problems = self._run()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("config/spec-conformance.json", problems[0])
+
+    # ---- the near-misses ----------------------------------------------------------------------
+
+    def test_a_labelled_sentence_passes(self):
+        """The convention both files already used by hand. The point is to force the label, not to
+        forbid recording what was believed — the stale text is evidence of when it stopped."""
+        for marker in ("RETRACTED 2026-09-20", "is now HISTORY", "refuted by src/x.rs:1"):
+            with self.subTest(marker=marker):
+                self._declare(f"Nothing calls `do_the_thing` ({marker}).")
+                self.assertEqual(self._run(), [])
+
+    def test_a_true_absence_claim_passes(self):
+        """`declared_unreachable` is often exactly correct, and saying so must stay cheap."""
+        self._declare("Nothing calls `do_the_thing`, and nothing should.")
+        self.assertEqual(self._run({}), [],
+                         "with no derived caller there is nothing to contradict")
+
+    def test_an_absence_phrase_about_another_symbol_passes(self):
+        """The sentence is the unit. A phrase and a name in the same FIELD prove nothing."""
+        self._declare(
+            "Nothing calls `some_other_fn`. `do_the_thing` is called from the broker.")
+        self.assertEqual(self._run(), [])
+
+    def test_the_symbol_match_is_word_bounded(self):
+        """`pull_output` and `governed_pull_output` are real siblings in this repository, with
+        OPPOSITE expectations. A substring match would report the wrong one."""
+        self._declare("Nothing calls `governed_do_the_thing`, a different function.")
+        self.assertEqual(self._run(), [])
+
+    def test_a_phrase_in_one_sentence_and_the_name_in_the_next_is_not_seen(self):
+        """A stated limit, asserted so it cannot quietly become a claim of completeness."""
+        self._declare("Nothing calls it. The function is `do_the_thing`.")
+        self.assertEqual(self._run(), [])
+
+    def test_a_missing_spec_file_does_not_crash_or_accuse(self):
+        (self.tmp / "config" / "reachability-declarations.json").write_text(
+            json.dumps({"rust_symbols": {"w": {"reason": "all quiet"}}}), encoding="utf-8")
+        self.assertEqual(self._run(), [])
+
+    def test_a_malformed_config_is_skipped_rather_than_read_as_clean(self):
+        """Its own loader reports a malformed declarations file; this check must not double-report,
+        and must not silently pass a file it could not read as evidence of nothing."""
+        (self.tmp / "config" / "reachability-declarations.json").write_text(
+            "{not json", encoding="utf-8")
+        (self.tmp / "config" / "spec-conformance.json").write_text(
+            json.dumps({"sections": {"§1": {"missing": "Nothing calls `do_the_thing`."}}}),
+            encoding="utf-8")
+        problems = self._run()
+        self.assertEqual(len(problems), 1, "the readable file is still checked")
+        self.assertIn("spec-conformance", problems[0])
+
+    def test_a_comment_list_is_joined_before_splitting(self):
+        """`$comment` is a list of wrapped lines and its sentences straddle them; the real stale
+        sentence in this repository spanned two."""
+        (self.tmp / "config" / "reachability-declarations.json").write_text(
+            json.dumps({"$comment": ["Nothing calls", "`do_the_thing` today."]}), encoding="utf-8")
+        (self.tmp / "config" / "spec-conformance.json").write_text(
+            json.dumps({"sections": {}}), encoding="utf-8")
+        self.assertEqual(len(self._run()), 1)
+
+    # ---- the regression, against the real files ------------------------------------------------
+
+    def test_this_repository_today_has_no_live_stale_absence_prose(self):
+        problems, _ = gate.check(ROOT)
+        stale = [p for p in problems if "in the same sentence as" in p]
+        self.assertEqual(stale, [], "\n".join(stale))
+
+    def test_the_real_run_derives_callers_for_the_check_to_bite_on(self):
+        """A green result is only worth something if `reached` was non-empty — otherwise this check
+        passes by having nothing to say, which is the shape of defect this suite exists to refuse."""
+        _, summary = gate.check(ROOT)
+        reached = {
+            name: state["callers"][0]
+            for states in (summary["engine"], summary["rust"])
+            for name, state in states.items()
+            if state.get("callers")
+        }
+        self.assertGreaterEqual(len(reached), 4, reached)
+
+
 if __name__ == "__main__":
     unittest.main()
 
