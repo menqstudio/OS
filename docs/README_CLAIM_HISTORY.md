@@ -740,3 +740,48 @@ The order here is the point: a gate whose first run is also its first green run 
 the platform it will fail on. This one failed on arrival, on a job that is **not** a required context —
 which is exactly what that job is for, and the reason `config/required-checks.json` still keeps it out
 of `contexts` with a written reason.
+
+---
+
+## 11. The front page carried a superseded standing verdict for three weeks
+
+Corrected on 2026-09-21, at `main` @ `ace8c1a`. Found by re-measuring instead of re-reading, on the
+Owner's instruction to verify every number rather than believe it.
+
+The tenth independent audit landed on 2026-09-19 and `AUDIT_LEDGER.md` announced it. The banner that
+`tools/sync_active_pr.py` writes into `NEXT_CHAT.md` / `PROJECT_STATE.md` / `TASKS.md` has said
+**TENTH** ever since, because that sentence is READ from the ledger rather than typed. Three places
+that are not written by that tool kept saying NINTH — so one repository stated two standing verdicts
+at once, and the front page stated the older one.
+
+| Claim | Measured | Command |
+| :--- | :--- | :--- |
+| README table row: standing verdict **RED — ninth round**, `2026-08-19-ninth-audit-5cf9b8c.md` | the **TENTH** round, `2026-09-19-tenth-audit-75fca65.md` | `grep -n "TENTH" apps/desktop/AUDIT/AUDIT_LEDGER.md` → *"the **TENTH** independent audit, of `main` @ `75fca65`"*; `tools/sync_active_pr.py::audit_position_sentence()` prints the same |
+| README §"What is not confirmed" (both language blocks): ninth round, `main` @ `5cf9b8c`, **96** pull requests, **281** files, **53,749** inserted lines | the TENTH round, `main` @ `75fca65`, **31** PRs, **121** files, **10,599** insertions | `git log --format=%s 75fca65..HEAD \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` → `31`; `git diff --shortstat 75fca65..HEAD` → `121 files changed, 10599 insertions(+), 1156 deletions(-)` |
+| The same numbers were **also** stale against the head they cited | from `5cf9b8c` the count is **122**, not 96 | `git log --format=%s 5cf9b8c..origin/main \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` → `122`. So the sentence was wrong twice: the wrong head, and the wrong number for that head |
+| `PROJECT_STATE.md` Standing risks: ninth round, **76** pull requests, **240** files, **46,612** lines from `5cf9b8c` | the TENTH round and the numbers above | The two files disagreed with each other — 76 against 96 from the same head — which is what a number copied rather than measured looks like |
+| `PROJECT_STATE.md` Suites: `tools/` self-tests **1222** | **1223** | `cd tools && python -m unittest discover -s . -p "test_*.py"` → `Ran 1223 tests` · `OK (skipped=1)` |
+| `engine_tests` **2299** | **2314** | `python -m unittest discover -s engine/tests -p "test_*.py"` → `Ran 2314 tests` · `OK (skipped=97)` on Windows, and `OK (skipped=17)` on Debian 13 (trixie) under WSL2 on a non-root account |
+
+### Five claims that were checked and were RIGHT
+
+Recorded because a verification pass that only lists what it changed cannot be told from one that only
+looked where it expected to find something.
+
+| Claim | Command | Printed |
+| :--- | :--- | :--- |
+| Rust workspace = **10** crates | `cargo metadata --no-deps --format-version 1` (cargo 1.97.1, Debian) | 10 packages: `brops`, `brops-audit-signer`, `brops-broker`, `brops-core`, `brops-executor`, `brops-governed-live`, `brops-launcher`, `brops-provision`, `brops-win-broker`, `brops-win-live`. A hand-parse of `members` answers **9** and is wrong — the root `brops` package is a member too |
+| Bridge suite **228** tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` | `Ran 228 tests` · `OK` |
+| Frontend **794** tests / **84** files | `cd apps/desktop && npm test` | `Test Files 84`, `Tests 794` |
+| a11y **59** tests | `cd apps/desktop && npm run test:a11y` | `Test Files 3 passed (3)` · `Tests 59 passed (59)` |
+| Negative matrix **242** = 155 / 52 / 35 | `python tools/check_negative_matrix.py` | `GREEN: 242 matrix cases, all bound -- 155 implemented ..., 52 blocked ..., 35 unreviewed` |
+| `Seven of eleven phases have every box ticked (0, 2–7); 97 of 115 rows` | counted `- [x]` / `- [ ]` across `docs/roadmap/phase-*.md` | 0:8/8, 2:11/11, 3:11/11, 4:12/12, 5:11/11, 6:10/10, 7:8/8 all ticked; 1:10/13, 8:7/9, 9:7/9, 10:2/13; total **97/115**, **7 of 11** |
+
+### Two load-sensitive tests, named so they are not mistaken for defects
+
+In a run executed while the whole `tools/check_*.py` battery was running over the same tree,
+`test_backup_restore` reported two errors; alone, and in two later solo runs of the full engine suite,
+it is green. In the frontend run taken under the same load, `src/components/ui.countup.test.tsx`
+reported 2 of its 11 failing at 11,478 ms; alone it is `11 passed` in 6.93 s, and the
+`Cockpit · frontend` context was green on `#284`. Both are duration-sensitive under load. Neither is
+recorded here as a pass — they are recorded as measurements whose conditions are stated.

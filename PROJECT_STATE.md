@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-21 — 64 pull requests merged (`#219`–`#283`), `main` at
-`1cd1940`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-21 — 65 pull requests merged (`#219`–`#284`), `main` at
+`ace8c1a`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #284 · branch `t112/pin-manifest-per-kit`** (base `main`, tip `1cd1940`, task T-112).
+> **✅ SETTLED — `main` is at `ace8c1a`.** The only thing open is PR #285 on `t113/settled-md-refresh`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The §2.5 pin manifest's role table was hardcoded to ONE kit
+> **Next:** Piece 4's remainder: move the ladder driver config ahead of the service starts so that kit can take the 2.5 floor. Then preflight's two requirements stated in config keys the broker no longer reads.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -43,11 +43,11 @@ Each row carries the date it was measured, because they are not measured togethe
 
 | Windows | |
 |---|---|
-| engine (Python) · 2026-09-21 | 2299 OK, 97 skipped |
-| `tools/` self-tests · 2026-09-21 | 1222 OK |
+| engine (Python) · 2026-09-21 | 2314 OK, 97 skipped |
+| `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, WSL2 13 · 2026-09-21 | 2299 OK, **17** skipped |
+| engine (Python), non-root, WSL2 13 · 2026-09-21 | 2314 OK, **17** skipped |
 | Rust, 10 crates · 2026-09-01 | 1149 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
@@ -56,9 +56,9 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — ninth round, `main` at `5cf9b8c`, no P0. **76 pull
-requests, 240 files and 46,612 inserted lines** have merged since, none independently
-confirmed — measured `5cf9b8c..main`, all squash-merged PRs.
+**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **31 pull
+requests, 121 files and 10,599 inserted lines** have merged since, none independently
+confirmed — measured `75fca65..main` on 2026-09-21, squash-merged PRs `#253`–`#284`.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
@@ -70,12 +70,10 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
-**Branch protection was OFF for a day, and that is why 2026-09-19's merges were gated by reading.** A
-private Free-plan repository gets neither the gate (`GET protection` → 403) nor free Actions minutes,
-which ran out mid-session at 01:53Z: every job of `#229` failed in two seconds with zero steps. The
-Owner made the repository public again; going private had DELETED the rules, so they were restored from
-`config/required-checks.json` — 34 contexts, `strict`, `enforce_admins`, linear, no force-push, no
-deletions — and `check_repo_state.py` verifies them against live GitHub.
+**Branch protection is ON and verified against live GitHub** by `check_repo_state.py` — 34 contexts,
+`strict`, `enforce_admins`, linear, no force-push, no deletions, restored from
+`config/required-checks.json` after a day private DELETED the rules. That day, and why 2026-09-19's
+merges were gated by reading instead, is in `docs/archive/`.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts startup,
 so the first-launch trust path is unreachable on the Debian dev box.

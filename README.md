@@ -32,7 +32,7 @@ The chain above is the design. The last hop, `production trusted_verified`, is *
 | Canonical repository / Canonical repo | `github.com/menqstudio/OS`, default branch `main` |
 | Canonical path / Canonical ուղի | `README.md` |
 | Measured at / Չափված ա | 2026-09-19, `main` @ `a94513e`, on a Windows box · Windows-ի վրա |
-| Standing independent verdict / Գործող անկախ վճիռ | **RED** — ninth round · իններորդ ռաունդ, [`apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) |
+| Standing independent verdict / Գործող անկախ վճիռ | **RED** — TENTH round · տասներորդ ռաունդ, [`apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) |
 | Production gate / Արտադրական դարպաս | **SHUT · ՓԱԿ** |
 | Brand / Բրենդ | MenQ foundation tokens · MenQ-ի foundation token-ներ, `menqstudio/MenQ-Standard` decision `D-025`; artwork in [`docs/brand/`](./docs/brand/) |
 | Review trigger / Վերանայման պայման | Any number on this page changes → re-measure, and append the correction to [`docs/README_CLAIM_HISTORY.md`](./docs/README_CLAIM_HISTORY.md)<br>Այս էջի որևէ թիվ փոխվում ա → նորից չափիր, ու ուղղումը ավելացրու նույն ֆայլին |
@@ -269,7 +269,7 @@ enforced from the app.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/verification-dark.svg">
   <img src="docs/brand/readme/verification-light.svg" width="100%"
-       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2299 engine tests, 228 bridge tests, 10 Rust crates, 42 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
+       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2314 engine tests, 228 bridge tests, 10 Rust crates, 42 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
 </picture>
 
 </div>
@@ -284,7 +284,7 @@ fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
 | :--- | ---: | :--- |
-| Engine test suite | **2299** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| Engine test suite | **2314** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **228** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **42** | `ls tools/check_*.py \| wc -l` |
@@ -297,7 +297,7 @@ fast, so run the command rather than trusting the number.
 | Cockpit accessibility (axe) | **59** թեստ · tests | `cd apps/desktop && npm ci && npm run test:a11y` |
 | Cockpit in real Chromium | **433** թեստ · tests | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
 
-> **Skip counts are not stated here.** The engine suite RUNS 2299 tests in every environment and
+> **Skip counts are not stated here.** The engine suite RUNS 2314 tests in every environment and
 > SKIPS a different number in each: measured at `9659281` on 2026-09-20, 14 on the ubuntu runner, 82
 > on the windows runner and 97 on the Builder's box. Two Windows environments disagree by fifteen, so
 > a skip count is not a property of the platform either. All three figures, and the command that
@@ -337,20 +337,20 @@ onto existing code.
 
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
-**HY:** Գործող անկախ վճիռը **RED** ա — իններորդ ռաունդը, `main` @ `5cf9b8c`, P0 չկա։
-Այդ ծայրից ի վեր **96 pull request**, **281 ֆայլ** ու **53 749 ավելացված տող** են merge
+**HY:** Գործող անկախ վճիռը **RED** ա — տասներորդ ռաունդը, `main` @ `75fca65`, P0 չկա։
+Այդ ծայրից ի վեր **31 pull request**, **121 ֆայլ** ու **10 599 ավելացված տող** են merge
 եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
-**EN:** The standing independent verdict is **RED** — the ninth round, `main` @ `5cf9b8c`,
-no P0. Since that head, **96 pull requests**, **281 files** and **53,749 inserted lines**
+**EN:** The standing independent verdict is **RED** — the TENTH round, `main` @ `75fca65`,
+no P0. Since that head, **31 pull requests**, **121 files** and **10,599 inserted lines**
 have merged, and **none of it is independently confirmed**. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 5cf9b8c..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 96
-    git diff --shortstat 5cf9b8c..HEAD    # 281 files changed, 53749 insertions(+), 13607 deletions(-)
+    git log --format=%s 75fca65..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 31
+    git diff --shortstat 75fca65..HEAD    # 121 files changed, 10599 insertions(+), 1156 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա
