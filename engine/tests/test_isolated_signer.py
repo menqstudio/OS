@@ -113,6 +113,16 @@ def _build_store(record_overrides=None, receipt_overrides=None):
         "output_handle": handles["output_handle"],
         "containment_evidence_handle": handles["containment_evidence_handle"],
         "decision": "completed",
+        # The 22-key shape, matched to `_chain_docs.terminal_record` and to what
+        # `governed_supervisor.build_terminal_record` emits. Three of these are compared against the
+        # evidence since 2026-09-20 (`requested_at_ms`/`challenge_accepted_at_ms`/`completed_at_ms`),
+        # and three are not because the evidence does not carry them -- `NM-XBIND-01`.
+        "requested_at_ms": NOW_MS - 5_000,
+        "challenge_accepted_at_ms": NOW_MS - 3_000,
+        "completed_at_ms": NOW_MS - 1_000,
+        "challenge_handle": "c" * 64,
+        "challenge_registry_hash": "d" * 64,
+        "challenge_registry_epoch": 7,
     }
     record.update(record_overrides or {})
     receipt = {
@@ -628,6 +638,104 @@ class NegativeMatrixCrossBindingTest(unittest.TestCase):
         self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
                          f"{case}: a chain handle naming nothing was not refused: {result}")
         self.assertEqual(result["reason"], REASON_HANDLE_MISSING, case)
+
+
+class RecordTimeAgreementTest(unittest.TestCase):
+    """The record and the evidence are two accounts of ONE turn, including when it happened.
+
+    `build_terminal_record` writes 21 data fields; the signer's agreement set named 15. Six were never
+    compared, and all six were MEASURED forging through to a `signed` envelope — the envelope saying
+    `challenge_accepted_at_ms=1699999997000` while the record it names said `1`, both under one
+    signature. The record's bytes were hash-committed by `record_handle` throughout, so nothing was
+    mutable; what was missing is cross-consistency.
+
+    Three of the six are bound here. They are the three the evidence also carries, from the same
+    acceptance/completion rows: `requested_at_ms`, `challenge_accepted_at_ms` and `completed_at_ms`. The
+    other three — `challenge_handle`, `challenge_registry_hash`, `challenge_registry_epoch` — are in no
+    evidence field at all, so binding them is a §5 protocol change and `NM-XBIND-01` now names exactly
+    those three.
+    """
+
+    #: (record field, evidence field, a forged value that is well-formed and wrong)
+    FORGED = (
+        ("challenge_accepted_at_ms", "challenge_accepted_at_ms", 1),
+        ("requested_at_ms", "requested_at", 1),
+        ("completed_at_ms", "completed_at", 999),
+    )
+
+    def test_an_honest_record_still_signs(self):
+        """The control. Without it the three below would also pass against a signer that refused
+        everything, and the whole point is that a TRUE record is accepted."""
+        signer, _store, handles, recorder = _make_signer()
+        result = signer.sign_result(_request(_evidence(handles)))
+        self.assertEqual(result.get("artifact_type"), ENVELOPE_ARTIFACT_TYPE, result)
+        self.assertEqual(len(recorder.signed_messages), 1)
+
+    def test_a_record_disagreeing_about_when_the_turn_happened_is_refused_by_name(self):
+        """One subtest per bound time, each refused with the DOCUMENT's field in the reason.
+
+        The reason names the record's own spelling (`completed_at_ms`), not the evidence's
+        (`completed_at`), because that is the name an operator opens the document to find.
+        """
+        for record_field, evidence_field, forged in self.FORGED:
+            with self.subTest(field=record_field):
+                store, handles = _build_store(record_overrides={record_field: forged})
+                evidence = _evidence(handles)
+                # The fixture must actually disagree, or the subtest proves nothing.
+                self.assertNotEqual(
+                    forged, evidence[evidence_field],
+                    f"the forged {record_field} equals the evidence; the case is vacuous")
+                signer, _s, _h, recorder = _make_signer(prepared=(store, handles))
+                result = signer.sign_result(_request(evidence))
+
+                self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE,
+                                 f"a record disagreeing about {record_field} was signed: {result}")
+                self.assertEqual(
+                    result["reason"],
+                    REASON_CHAIN_DISAGREEMENT + ":record_handle." + record_field,
+                    f"the refusal must name record_handle.{record_field}")
+                self.assertEqual(recorder.signed_messages, [],
+                                 "nothing may be signed on the way to a refusal")
+
+    def test_a_record_that_omits_a_bound_time_is_refused_rather_than_agreeing_vacuously(self):
+        """Absence is not agreement. The loop requires the field to be PRESENT — skipping missing ones
+        would let a record carrying nothing but its protocol tag pass, which is the hole the whole
+        agreement rule replaced."""
+        for record_field, _evidence_field, _forged in self.FORGED:
+            with self.subTest(field=record_field):
+                store, handles = _build_store()
+                record = json.loads(
+                    store.read_verified(handles["record_handle"]).decode("utf-8"))
+                del record[record_field]
+                handles["record_handle"] = store.put(_canon(record))
+                signer, _s, _h, _r = _make_signer(prepared=(store, handles))
+                result = signer.sign_result(_request(_evidence(handles)))
+                self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE, result)
+                self.assertEqual(
+                    result["reason"],
+                    REASON_CHAIN_DISAGREEMENT + ":record_handle." + record_field + "_missing")
+
+    def test_the_three_unbound_fields_are_named_and_stay_named(self):
+        """The honest residue, pinned so it cannot quietly grow or shrink.
+
+        These three are written by the supervisor and carried by no evidence field, so the signer has
+        nothing to compare them against. That is a §5 protocol gap, not an oversight in this rule, and
+        `NM-XBIND-01` names them. If one of them ever becomes comparable — the evidence grows the field —
+        this fails and the row has to be re-read rather than left stale.
+        """
+        _protocol, shared = IsolatedSigner._CHAIN_AGREEMENT["record_handle"]
+        bound = {entry[0] if isinstance(entry, tuple) else entry for entry in shared}
+        store, handles = _build_store()
+        record = json.loads(store.read_verified(handles["record_handle"]).decode("utf-8"))
+        written = set(record) - {"protocol"}
+        self.assertEqual(
+            sorted(written - bound),
+            ["challenge_handle", "challenge_registry_epoch", "challenge_registry_hash"],
+            "the set of record fields the signer cannot compare has changed")
+        # And none of them is in the evidence, which is WHY they cannot be compared.
+        evidence = _evidence(handles)
+        for field in written - bound:
+            self.assertNotIn(field, evidence, f"{field} IS in the evidence now; it can be bound")
 
 
 class NegativeMatrixOutputBindingTest(unittest.TestCase):

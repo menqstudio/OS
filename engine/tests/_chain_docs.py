@@ -22,6 +22,9 @@ def canonical(document: Mapping[str, Any]) -> bytes:
 
 
 def terminal_record(evidence_like: Mapping[str, Any], *, request_sha256: str,
+                    challenge_handle: str = "c" * 64,
+                    challenge_registry_hash: str = "d" * 64,
+                    challenge_registry_epoch: int = 7,
                     **overrides: Any) -> dict:
     """`brops.governed-turn-record.v1`, as `governed_supervisor.build_terminal_record` emits it.
 
@@ -45,6 +48,18 @@ def terminal_record(evidence_like: Mapping[str, Any], *, request_sha256: str,
         "output_handle": evidence_like["output_handle"],
         "containment_evidence_handle": evidence_like["containment_evidence_handle"],
         "decision": "completed",
+        # The six the shape carried for the supervisor and not for the fixtures, added 2026-09-20.
+        # Three of them are now in `_CHAIN_AGREEMENT["record_handle"]` and are read from the evidence,
+        # so a fixture that omitted them would be refused `..._missing` rather than tested:
+        "requested_at_ms": evidence_like["requested_at"],
+        "challenge_accepted_at_ms": evidence_like["challenge_accepted_at_ms"],
+        "completed_at_ms": evidence_like["completed_at"],
+        # ...and three the evidence does not carry at all, so the signer cannot compare them. They are
+        # here because the supervisor writes them and a fixture missing a field is a fixture testing a
+        # document nobody publishes. `NM-XBIND-01` names exactly these three.
+        "challenge_handle": challenge_handle,
+        "challenge_registry_hash": challenge_registry_hash,
+        "challenge_registry_epoch": challenge_registry_epoch,
     }
     document.update(overrides)
     return document

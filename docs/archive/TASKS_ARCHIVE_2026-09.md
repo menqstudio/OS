@@ -11,7 +11,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-37 of these and their pull requests. What is here is the account of each defect, which is
+38 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means.
 
 Nothing was summarised on the way in. Each row is verbatim from the board as of 2026-09-19.
@@ -55,3 +55,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board as of 
 | **T-096** | **The lease bounded launch and nothing after it** - a completion past `lease_expires_at_ms` is refused as `lease_expired` on both the run's stamp and the supervisor's clock, while an idempotent crash-retry still recovers; `NM-TIME-13` and `NM-TIME-18` out of `blocked` ◑ | Bro | Review | merged `#267` |
 | **T-097** | **The front page gave one `ls` three different answers** - 2152 engine tests where 2205 run, 764 frontend where 781 do, and 40 / 40 / 39 gate scripts on one page where 42 exist; every figure re-measured, both themes and the alt text ◑ | Bro | Review | merged `#268` |
 | **T-098** | **The file that decides what the floor measures had no owner check, and its digest came from a second path lookup** - one `O_NOFOLLOW` descriptor answers both now, the inode is compared, and the Windows twin's custody rule exists on Linux ◑ | Bro | Review | merged `#269` |
+| **T-099** | **One claim guard, and a wrong number I added is corrected** - the Windows delete-pending retry lived only in the V1 override, so the base class every caller uses raised a raw `PermissionError`; `ci.yml` has 22 jobs, not the 23 my regex counted ◑ | Bro | Review | merged `#270` |

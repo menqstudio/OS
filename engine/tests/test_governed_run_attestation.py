@@ -156,6 +156,13 @@ def _build_store():
         "generation_config_handle": handles["generation_config_handle"],
         "output_handle": handles["output_handle"],
         "containment_evidence_handle": handles["containment_evidence_handle"],
+        # The three times, spelled as the EVIDENCE spells them. `_chain_docs.terminal_record` reads
+        # them from here because the record and the evidence must report one fact, not two: since
+        # 2026-09-20 the signer compares them, so a fixture without them tests a document the
+        # supervisor never publishes. The values match the attestation state built below.
+        "requested_at": NOW_MS - 5_000,
+        "challenge_accepted_at_ms": NOW_MS - 3_000,
+        "completed_at": NOW_MS - 1_000,
     }
     request_sha256 = _iso._sha256_hex(_iso._jcs_bytes({
         "protocol": _iso.REQUEST_PROTOCOL,
