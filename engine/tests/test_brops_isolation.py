@@ -13,11 +13,15 @@ behavior, and skip-guard the parts that need a real dedicated principal on this 
 import json
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+import socket
+import struct
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -247,5 +251,98 @@ class SignerProcessBoundaryTests(unittest.TestCase):
         raise AssertionError("placeholder — see CI Linux isolation job")
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+class UcredFormatTests(unittest.TestCase):
+    """`struct ucred` is read in five places; one of them read it signed.
+
+    `uid_t` is UNSIGNED 32-bit on Linux. `brops_socket._peer_uid` unpacked `"3i"` — three SIGNED ints —
+    until 2026-09-20, which agrees with `=III` for every uid below 2^31 and differs above it: the
+    kernel's `(uid_t)-1` "no uid" arrived as `-1`, and `(uid_t)-2` (`nobody` on some systems) as `-2`.
+
+    That was fail-closed, because the gate is `uid not in allowed_peer_uids` and an allow-list built from
+    `os.getuid()` holds no negative numbers — so a negative could only deny. What it broke was the number
+    a refusal reports, and the agreement between five readers of one structure.
+    """
+
+    class _StubConn:
+        """A socket that answers one `getsockopt` with the bytes the kernel would have written."""
+
+        def __init__(self, pid: int, uid: int, gid: int) -> None:
+            self.payload = struct.pack("=III", pid, uid, gid)
+            self.asked = []
+
+        def getsockopt(self, level, option, length):
+            self.asked.append((level, option, length))
+            return self.payload[:length]
+
+    def test_the_reader_reports_the_uid_the_kernel_wrote(self):
+        import brops_socket
+
+        # 4294967294 is `(uid_t)-2`; the old `3i` read returned -2 for it. 4294967295 is the kernel's
+        # "no uid". Both are above 2^31, which is exactly where the two formats part company.
+        for uid in (0, 1000, 65534, 2**31, 2**32 - 2, 2**32 - 1):
+            with self.subTest(uid=uid):
+                conn = self._StubConn(4242, uid, uid)
+                with unittest.mock.patch.object(socket, "SO_PEERCRED", 17, create=True):
+                    got = brops_socket._peer_uid(conn)
+                self.assertEqual(got, uid, f"the reader did not report the kernel's uid {uid}")
+                self.assertGreaterEqual(got, 0, "a uid can never be negative")
+        # It asked for exactly the struct's size, not a guess.
+        conn = self._StubConn(1, 2, 3)
+        with unittest.mock.patch.object(socket, "SO_PEERCRED", 17, create=True):
+            brops_socket._peer_uid(conn)
+        self.assertEqual(conn.asked[0][2], struct.calcsize("=III"))
+
+    def test_a_platform_without_so_peercred_answers_none_rather_than_guessing(self):
+        """The control case: without the option there is no peer uid to report, and `None` is what the
+        caller turns into a refusal. A reader that invented a number here would be worse than one that
+        read it signed."""
+        import brops_socket
+
+        conn = self._StubConn(1, 2, 3)
+        # `create=True` because on a host without the option the attribute does not exist at all —
+        # which is the very condition under test, and `patch.object` refuses to patch an absent name
+        # otherwise. `_peer_uid` reads it with `getattr(socket, "SO_PEERCRED", None)`, so absent and
+        # None are the same answer to it.
+        with unittest.mock.patch.object(socket, "SO_PEERCRED", None, create=True):
+            self.assertIsNone(brops_socket._peer_uid(conn))
+        self.assertEqual(conn.asked, [], "it asked the kernel despite having no option to ask with")
+
+    def test_every_so_peercred_read_in_the_tree_uses_the_same_format(self):
+        """Five readers of one kernel structure is already one place too many; while they exist, they
+        have to agree. A sixth that drifts fails here.
+
+        MEASURED BY SHAPE, NOT BY DISTANCE. A first version looked for `struct.unpack` within three
+        lines of the word `SO_PEERCRED`; in the four servers those sit together, but in
+        `brops_socket.py` the option is read into a local thirteen lines above the unpack, so the sweep
+        skipped the very file this test was written for and passed for the wrong reason — the `"3i"`
+        mutant did not kill it. Now every file that mentions `SO_PEERCRED` at all has EVERY
+        three-integer struct format in it checked, whatever line it is on.
+
+        Unifying the five into one helper touches three security-critical AF_UNIX servers and belongs in
+        its own change, so until then the agreement is CHECKED rather than hoped for.
+        """
+        root = pathlib.Path(__file__).resolve().parents[1]
+        ucred_shape = re.compile(r'(?:struct\.unpack|struct\.calcsize)\(\s*"([^"]+)"')
+        # A three-integer native read of `struct ucred` is spelled one of these; `=III` is the only one
+        # that is also correct, because `uid_t` is unsigned.
+        three_ints = {"3i", "3I", "iii", "III", "=3i", "=3I", "=iii", "=III", "@3i", "@III"}
+        offenders, readers, files = [], 0, 0
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            body = path.read_text(encoding="utf-8", errors="replace")
+            if "SO_PEERCRED" not in body:
+                continue
+            files += 1
+            for n, line in enumerate(body.splitlines(), 1):
+                for fmt in ucred_shape.findall(line):
+                    if fmt not in three_ints:
+                        continue
+                    readers += 1
+                    if fmt != "=III":
+                        offenders.append(
+                            f"{path.relative_to(root).as_posix()}:{n} reads struct ucred as {fmt!r}")
+        self.assertGreaterEqual(files, 4, "the sweep found almost no files naming SO_PEERCRED")
+        self.assertGreaterEqual(readers, 5, f"the sweep found only {readers} ucred format(s); it is not looking")
+        self.assertEqual(offenders, [], f"struct ucred is read inconsistently: {offenders}")
