@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "cfdfbcbd80d89093670c0c5dc2bda8838dcfc3c4",
+  "settled_at_main_head": "93df81f8d648d4ef751bab356c072a8a04a8b488",
   "sync": {
-    "baseline_main_head_at_sync": "cfdfbcbd80d89093670c0c5dc2bda8838dcfc3c4",
-    "snapshot_branch": "t102/stale-absence-prose",
+    "baseline_main_head_at_sync": "93df81f8d648d4ef751bab356c072a8a04a8b488",
+    "snapshot_branch": "t103/dead-app-crate-pull",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t102/stale-absence-prose"
+    "branch": "t103/dead-app-crate-pull"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 273,
-    "branch": "t102/stale-absence-prose",
+    "number": 274,
+    "branch": "t103/dead-app-crate-pull",
     "state": "open",
-    "what": "Four reasons in config/reachability-declarations.json and eight sections of config/spec-conformance.json asserted, in live un-retracted text, that wiring did not exist that the tree contains; every expectation was correct and the reasons had rotted. Each stale sentence is labelled where a reader meets it, and tools/check_reachability.py now refuses an absence phrase in the same sentence as a symbol the same run derived a caller for.",
-    "note": "Thirteen keys described wiring the tree contains, and the gate now reads the prose",
+    "what": "ai::governed_pull_output and ai::governed_turn_output_read were a second implementation of the \u00a74.10(f) OutputPull loop in the renderer-hosting app crate, reachable under no condition; the production ladder drives the identical loop in the broker service. Both are deleted with their tests, and every declaration, module doc and matrix row that pointed at them is re-trued in the same commit.",
+    "note": "A second copy of the pull, in the wrong process, that nothing could reach",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #273 (t102/stale-absence-prose), task T-102: Four reasons in config/reachability-declarations.json and eight sections of config/spec-conformance.json asserted, in live un-retracted text, that wiring did not exist that the tree contains; every expectation was correct and the reasons had rotted. Each stale sentence is labelled where a reader meets it, and tools/check_reachability.py now refuses an absence phrase in the same sentence as a symbol the same run derived a caller for. Next: F10 dead code (ai::governed_pull_output, ai::governed_turn_output_read), then F9's triplicated useCountUp and socket loops.",
-    "_note": "The carrier is current_workflow_pr (#273 on t102/stale-absence-prose). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #274 (t103/dead-app-crate-pull), task T-103: ai::governed_pull_output and ai::governed_turn_output_read were a second implementation of the §4.10(f) OutputPull loop in the renderer-hosting app crate, reachable under no condition; the production ladder drives the identical loop in the broker service. Both are deleted with their tests, and every declaration, module doc and matrix row that pointed at them is re-trued in the same commit. Next: F9's triplicated useCountUp and the three socket loops, then F5's never-spawned brops-broker binary.",
+    "_note": "The carrier is current_workflow_pr (#274 on t103/dead-app-crate-pull). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "cfdfbcbd80d89093670c0c5dc2bda8838dcfc3c4",
+      "head": "93df81f8d648d4ef751bab356c072a8a04a8b488",
       "conclusion": "success",
-      "run_id": 35479407775,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at cfdfbcb, run 35479407775."
+      "run_id": 35481482923,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 93df81f, run 35481482923."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

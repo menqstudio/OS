@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #273 · branch `t102/stale-absence-prose`** (base `main`, tip `cfdfbcb`, task T-102).
+> **⏭️ CURRENT ACTIVE: PR #274 · branch `t103/dead-app-crate-pull`** (base `main`, tip `93df81f`, task T-103).
 >
-> Thirteen keys described wiring the tree contains, and the gate now reads the prose
+> A second copy of the pull, in the wrong process, that nothing could reach
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

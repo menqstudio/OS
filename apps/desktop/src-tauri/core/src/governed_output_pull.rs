@@ -131,7 +131,15 @@
 //! would drive this on the BROKER side does not exist. The only pull adapter in the tree,
 //! `ai::governed_pull_output`, is in the renderer-hosting app crate — the wrong process under §0's
 //! LOCKED terminology binding — and the synchronous broker binary cannot call an `async` `tokio`
-//! function in a crate it does not depend on. So a PRODUCTION caller written today would still have to
+//! function in a crate it does not depend on.
+//!
+//! **RETRACTED 2026-09-20. Both halves of (2) are HISTORY.** The broker-side loop EXISTS and is the
+//! production path: `broker/src/ladder_executor.rs:330` calls [`pull_output`] from
+//! `LadderChain::pull` (:325). And `ai::governed_pull_output` was deleted the same day — it was not
+//! the only pull adapter by then, it was the second one, in the wrong process, with no caller under
+//! any condition. What survives of the caution above is the deployment condition, not the code one:
+//! the ladder is the executor only when `$BROPS_BROKER_CONFIG` resolves, which it does on no shipped
+//! install (`broker/src/main.rs:268-270`). So a PRODUCTION caller written today would still have to
 //! invent a token, which is precisely what §4.10(f) forbids. (The CI driver above invents nothing: it
 //! is handed a real frame carrying a real minted token, which is why a proof was reachable when a
 //! product path was not.)
