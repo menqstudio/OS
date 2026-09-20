@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #273 · branch `t102/stale-absence-prose`** (base `main`, tip `cfdfbcb`, task T-102).
+> **⏭️ CURRENT ACTIVE: PR #274 · branch `t103/dead-app-crate-pull`** (base `main`, tip `93df81f`, task T-103).
 >
-> Thirteen keys described wiring the tree contains, and the gate now reads the prose
+> A second copy of the pull, in the wrong process, that nothing could reach
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-102** | **Thirteen keys said wiring did not exist that the tree contains** - every `expectation` was correct and the REASONS beside them had rotted; each stale sentence is labelled where a reader meets it, and the gate now reads the prose no gate read ◑ | Bro | Review | `#273` |
+| **T-103** | **A second copy of the §4.10(f) pull, in the wrong process, that nothing could reach** - the two `ai::` adapters and their tests deleted; every declaration, doc and matrix row that pointed at them re-trued in the same commit ◑ | Bro | Review | `#274` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
@@ -36,7 +36,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **41 merged rows** | **Shipped, and none independently confirmed** — `T-101`·`#272`, `T-100`·`#271`, `T-088`·`#260`, `T-099`·`#270`, `T-098`·`#269`, `T-097`·`#268`, `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **42 merged rows** | **Shipped, and none independently confirmed** — `T-102`·`#273`, `T-101`·`#272`, `T-100`·`#271`, `T-088`·`#260`, `T-099`·`#270`, `T-098`·`#269`, `T-097`·`#268`, `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

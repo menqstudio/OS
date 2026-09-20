@@ -47,9 +47,12 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 ///
 /// The DESKTOP half now exists too, and it is still NOT WIRED: the sidecar's
 /// `bridge.governed-turn-output-read.v1` branch (`bridge/engine_sidecar.py`), the loop + reassembly +
-/// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`), and the internal
-/// `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers that drive it over a one-shot
-/// sidecar. **Nothing calls them**: the pull needs an `output_stream_id`. The §4.10(e) `signed` frame
+/// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`). It used to name two more
+/// pieces here — the internal `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers —
+/// with **Nothing calls them**; both were deleted on 2026-09-20 (T-103) because the production ladder
+/// drives the same loop in the broker service (`broker/src/ladder_executor.rs:330`) and a second copy
+/// in the renderer-hosting process was the wrong process under §0. What that sentence was really
+/// about is unchanged: the pull needs an `output_stream_id`. The §4.10(e) `signed` frame
 /// that mints one has a supervisor-side producer, and as of 2026-08-10 §4.6's
 /// `bridge.governed-turn-result.v1` — the only frame that carries the token across the sidecar boundary —
 /// exists on both hops (`bridge/governed_turn_result_bridge.py`, `brops_core::governed_bridge_result`).

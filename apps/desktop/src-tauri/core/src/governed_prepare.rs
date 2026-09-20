@@ -25,9 +25,11 @@
 //! `PreparedGovernedTurnV1B` object, all hashes/nonces". So this module lives in `brops-core` beside
 //! `broker_orchestrator` / `broker_turns` / `governed_verification` — the crate whose broker-side
 //! logic the `brops-broker` binary wires — and NOT in `apps/desktop/src-tauri/src/`, which is the
-//! renderer-hosting process. `ai::governed_pull_output` is in this tree as the counter-example: it
+//! renderer-hosting process. `ai::governed_pull_output` WAS in this tree as the counter-example: it
 //! was placed in the app crate by following §4.10(f)'s literal "a private function of the
 //! `governed_turn_execute` command", and §0 says that command is a broker-service operation.
+//! It was deleted on 2026-09-20 (T-103), once the broker-side ladder drove the same loop in the
+//! right process — so the counter-example is now history rather than something a reader can open.
 //!
 //! ## Reuse, not a second spelling
 //!
