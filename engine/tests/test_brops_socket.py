@@ -151,10 +151,38 @@ class TheAcceptLoopArmsTheBudgetTests(unittest.TestCase):
         self.assertIn("except (socket.timeout, TimeoutError):", code)
         self.assertIn("def _serve_one(", code)
 
-    def test_the_loop_refuses_a_host_with_no_af_unix_before_binding(self):
-        with self.assertRaises(brops_socket.SocketAclError):
+    def test_the_loop_refuses_an_unusable_socket_path_rather_than_serving(self):
+        """Fails CLOSED on a path it cannot bind, on every platform.
+
+        This assertion used to name `SocketAclError` unconditionally against `/definitely/not/a/socket`
+        and it BROKE CI. Written on a host where `hasattr(socket, "AF_UNIX")` is False, it had encoded
+        "this box has no AF_UNIX" as a property of the code; on ubuntu the guard passes,
+        `_harden_socket_dir` reaches `os.makedirs("/definitely")`, and the refusal is a
+        `PermissionError`. Both are refusals — the CLASS is the platform's, not the contract's.
+
+        The path is now a FILE with a name appended, which no uid can turn into a directory. The
+        permission-denied version would have SUCCEEDED as root, created the directory chain, bound the
+        socket and then blocked in `accept()` forever: a test that hangs the suite on a privileged
+        runner, written to prove that a hang is refused.
+        """
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".notadir", delete=False) as handle:
+            blocker = handle.name
+        self.addCleanup(lambda: pathlib.Path(blocker).unlink(missing_ok=True))
+        with self.assertRaises((brops_socket.SocketAclError, OSError)):
+            brops_socket.serve_forever(
+                blocker + "/nope.sock", lambda _f: {}, allowed_peer_uids=None, max_requests=1)
+
+    def test_a_host_with_no_af_unix_is_refused_by_NAME_before_any_filesystem_work(self):
+        """Where AF_UNIX is absent the refusal must be this module's own, and must come before the
+        directory is touched -- otherwise an operator is told about a path when the real answer is
+        the platform."""
+        if brops_socket._HAS_AF_UNIX:
+            self.skipTest("this host HAS AF_UNIX; the branch under test is the one without it")
+        with self.assertRaises(brops_socket.SocketAclError) as caught:
             brops_socket.serve_forever(
                 "/definitely/not/a/socket", lambda _f: {}, allowed_peer_uids=None, max_requests=1)
+        self.assertIn("AF_UNIX", str(caught.exception))
 
 
 if __name__ == "__main__":
