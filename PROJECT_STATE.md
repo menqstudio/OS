@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #278 · branch `t107/the-blocker-was-not-yours`** (base `main`, tip `4223579`, task T-107).
+> **⏭️ CURRENT ACTIVE: PR #279 · branch `t108/two-phase-root-ceremony`** (base `main`, tip `b39b087`, task T-108).
 >
-> The page that says what waits on the Owner was wrong about what waits on him
+> trusted_verified was unreachable on Linux by construction; it is not now
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

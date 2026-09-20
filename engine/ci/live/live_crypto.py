@@ -70,6 +70,23 @@ def sign_b64std(priv: Ed25519PrivateKey, message: bytes) -> str:
     return base64.b64encode(priv.sign(message)).decode("ascii")
 
 
+def verify_b64std(pub: Ed25519PublicKey, message: bytes, sig_b64: str) -> bool:
+    """True iff the standard-base64 signature verifies; never raises on a bad signature (fail-closed).
+
+    The counterpart `sign_b64std` has existed since this file did; the verifier did not, and its absence
+    had a consequence. `provision_keys.py`'s external-root mode read a manifest and a detached signature
+    from disk and wrote them out again WITHOUT ever checking that one signed the other under the anchor
+    the operator named. The kit cannot re-sign that manifest, so an unverified pair means the kit serves
+    bytes nobody vouched for — and the failure surfaced at run time as a key-resolution refusal rather
+    than at provisioning time as a sentence.
+    """
+    try:
+        pub.verify(base64.b64decode(sig_b64, validate=True), message)
+        return True
+    except Exception:  # noqa: BLE001 — a bad signature is a verdict, not an exception to propagate
+        return False
+
+
 def verify_b64url(pub: Ed25519PublicKey, message: bytes, sig_b64: str) -> bool:
     """True iff the base64url-nopad signature verifies; never raises on a bad signature (fail-closed)."""
     try:
