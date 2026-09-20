@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t101/record-times` — `main` @ `b1ce6f7`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t102/stale-absence-prose` — `main` @ `cfdfbcb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #272 · branch `t101/record-times`** (base `main`, tip `b1ce6f7`, task T-101).
+> **⏭️ CURRENT ACTIVE: PR #273 · branch `t102/stale-absence-prose`** (base `main`, tip `cfdfbcb`, task T-102).
 >
-> The record and the envelope could disagree about when the turn happened, under one signature
+> Thirteen keys described wiring the tree contains, and the gate now reads the prose
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

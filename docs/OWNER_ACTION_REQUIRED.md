@@ -74,6 +74,12 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > `config/required-checks.json` and the deferral entry is deleted. The Builder did not edit the registry;
 > the Owner ran the two-line edit himself on 2026-09-19. Live protection follows once it exists again (above).
 
+> **2026-09-20 — and one decision that is NOT a one-line edit: the public repository grants nothing.**
+> See **§2f**. There is no `LICENSE` anywhere in the tree, `gh repo view menqstudio/OS --json
+> licenseInfo,visibility` answers `{"licenseInfo": null, "visibility": "PUBLIC"}`, and four bundled
+> fonts ship with no notice at all. The outbound TERMS for your own code are yours to name — one file,
+> your words. Everything after that sentence is a Builder task.
+
 > **2026-08-29 — the ninth round's thirteen findings are answered, and NOTHING here needs you.**
 > `I-01`..`I-13` had no owner in `TASKS.md` five days after they were written, twelve were still
 > marked OPEN in the ledger, and `I-04` was marked OPEN two days after its fix merged. All of that is
@@ -1050,6 +1056,87 @@ the verification is. On Debian that is a bind mount
 ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). When it is verified, the item's status line
 moves to `CLOSED` **with a `Sign-off:` line** — `tools/check_residual_items.py` refuses the change
 without one.
+
+---
+
+## 2f. The repository is public and grants nothing — and four bundled fonts ship without their notice
+
+Two defects, opposite in kind. The tenth round's audit found them (`F13`) and every clause below was
+measured, not inferred.
+
+### 1. The first-party code has no outbound licence at all — and this one is yours
+
+There is no `LICENSE`, `NOTICE`, `COPYING` or `COPYRIGHT` in the tree. `git ls-files | grep -iE
+'licen|copying|notice|copyright'` across all **1,394** tracked files returns only agent prose and two
+`engine/skills/` files — zero licence artifacts. No `license` field in `apps/desktop/package.json`
+(the only tracked one), and none in any of the **ten** `Cargo.toml` manifests; each carries
+`publish = false` instead, which stops a crates.io push and grants nothing to a reader. GitHub's own
+detector agrees: `"licenseInfo": null` on a `"PUBLIC"` repository.
+
+So the redistribution is live and default copyright reserves every right. Nobody who clones this
+repository has permission to use, modify or redistribute any of it — **including whoever performs the
+independent audit §2 requires**, and including a future employee or contractor reading it.
+
+**The decision is one sentence and only you can write it:** what terms does MenQ Studio grant on its
+own code? Two shapes, and this page deliberately does not pick:
+
+* **Proprietary / all rights reserved** — a short `LICENSE` stating that the source is published for
+  inspection and audit, with no grant to use or redistribute. This matches "my cockpit first, sellable
+  later" and keeps every option open.
+* **An OSI licence** (Apache-2.0, MIT, AGPL-3.0, …) — a real grant, chosen for what you want others to
+  be able to do. Each has different consequences for a later commercial product, and picking one for
+  you would be a Builder making a business decision.
+
+Once you name the terms, the Builder does the rest in one PR: the root `LICENSE` file, `"license"` in
+`package.json`, `license` under `[workspace.package]` in `apps/desktop/src-tauri/Cargo.toml` with
+`license.workspace = true` in the nine member crates, and — once that exists — dropping
+`private = { ignore = true }` at `.github/supply-chain/deny.toml:73` so `cargo-deny` starts enforcing
+the field instead of being told to skip it. That last step turns the fix into a standing gate, which is
+the only version of it that cannot rot.
+
+### 2. The fonts are the opposite defect, and it needs one fact rather than a decision
+
+`apps/desktop/public/fonts/` holds exactly four files and nothing beside them — no `LICENSE`, no
+`OFL.txt`, no `README`:
+
+    baloo2-800.woff2           18,632 B
+    inter-var.woff2            48,256 B
+    jetbrains-mono-var.woff2   40,404 B
+    noto-armenian-var.woff2    26,812 B
+
+`apps/desktop/src/theme/aios.css:2-5` (line 1 is blank) serves all four as real `@font-face` sources, with no attribution
+comment. `git grep -iE 'SIL Open Font|OFL-1\.1|Open Font License'` over the tracked tree returns
+**zero** hits.
+
+Here the licence is not missing from the world, only from us: Baloo 2, Inter, Noto Sans Armenian and
+JetBrains Mono are each published upstream under the SIL Open Font License 1.1, whose clause 2 requires
+the copyright notice and the licence text to accompany **every** redistributed copy. So this is a
+breached condition of a licence we already rely on, not an absent grant — a different and simpler thing
+to fix than §1.
+
+**What is honestly not known, and is part of the same defect:** the tree records no provenance for any
+of the four. The `woff2` payloads are brotli-compressed, so their embedded name and licence tables
+cannot be read with `grep`, and no upstream URL, release tag or subsetting command is written down
+anywhere. The family identification above is outside knowledge, not repository evidence, and a notice
+built on a guess is the same class of claim this repository refuses everywhere else.
+
+Two ways to close it, both Builder work, neither needing a decision from you:
+
+1. **If you remember where they came from**, one line per family — source and version — is enough, and
+   the notices get written against it.
+2. **Otherwise re-subset all four from pinned upstream releases** and record the release tag and the
+   exact command beside them. Then the provenance is true by construction rather than by memory, which
+   is the answer this repository would give about anything else.
+
+Either way the result is `apps/desktop/public/fonts/LICENSES.md` carrying, per family, the upstream
+copyright line, the full OFL 1.1 text and the source URL plus version — and an attribution comment at
+the top of `aios.css` pointing at it.
+
+### What this is not
+
+It is not a claim that anything is legally wrong today beyond the two facts stated: the repository is
+public with no grant, and four fonts are redistributed without their required notice. Nothing here
+touches the governed surfaces, and the standing verdict is unchanged.
 
 ---
 

@@ -363,5 +363,75 @@ class ProducedArtifactGateTest(unittest.TestCase):
             self.assertIn("not readable JSON", found[n].detail)
 
 
+
+class TheGateTellsTheTruthAboutItsOwnEnforcement(unittest.TestCase):
+    """Every RED run used to end with two false clauses.
+
+    It said the context was "NOT in config/required-checks.json" and that a DATED deferral covered it.
+    Measured: the context was promoted and the deferral entry removed in the SAME commit (`157e292`, #220,
+    2026-09-19). A control describing its own enforcement from memory is the defect this gate exists to
+    catch, one level up — so the line is now read from the two config files, and these are the four
+    answers they can give.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="pa-enforcement-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "config").mkdir()
+
+    def _write(self, required, deferred):
+        (self.tmp / "config" / "required-checks.json").write_text(
+            json.dumps(required), encoding="utf-8")
+        (self.tmp / "config" / "deferred-enforcement.json").write_text(
+            json.dumps(deferred), encoding="utf-8")
+        return gate._enforcement_line(self.tmp)
+
+    def test_a_required_context_is_reported_as_blocking_every_merge(self):
+        line = self._write({"contexts": [gate.CI_CONTEXT, "other"]},
+                           {"deferrals": {}})
+        self.assertIn("IS one of the 2 required contexts", line)
+        self.assertIn("blocks every merge", line)
+
+    def test_a_deliberately_excluded_context_is_reported_as_blocking_nothing_with_its_reason(self):
+        line = self._write(
+            {"contexts": [], "deliberately_excluded": {
+                gate.CI_CONTEXT: "carries a paths: filter, so it reports PENDING"}},
+            {"deferrals": {}})
+        self.assertIn("blocks nothing", line)
+        self.assertIn("paths: filter", line, "the recorded reason must travel with the verdict")
+
+    def test_a_dated_deferral_is_reported_with_its_date(self):
+        line = self._write({"contexts": []},
+                           {"deferrals": {gate.CI_CONTEXT:
+                                          {"deferred_until": "2026-12-31"}}})
+        self.assertIn("DEFERRED until 2026-12-31", line)
+        self.assertIn("the date has teeth", line)
+
+    def test_a_context_named_nowhere_is_reported_as_refused_outright(self):
+        """The branch `check_repo_state` exists for: a job in neither list quietly stops mattering."""
+        line = self._write({"contexts": ["something else"]}, {"deferrals": {}})
+        self.assertIn("named in NEITHER", line)
+        self.assertIn("quietly stops mattering", line)
+
+    def test_unreadable_config_does_not_make_the_gate_claim_enforcement(self):
+        """Absent or malformed files must not read as "required". The fail-safe direction for a status
+        line is to say it cannot find the name, not to assert the strongest answer."""
+        line = gate._enforcement_line(self.tmp / "nowhere")
+        self.assertIn("named in NEITHER", line)
+
+    def test_this_repository_today_agrees_with_its_own_config(self):
+        """The regression itself, asserted against the real files rather than a fixture."""
+        root = pathlib.Path(gate.__file__).resolve().parents[1]
+        required = json.loads(
+            (root / "config" / "required-checks.json").read_text(encoding="utf-8"))
+        line = gate._enforcement_line(root)
+        if gate.CI_CONTEXT in required["contexts"]:
+            self.assertIn("IS one of the", line)
+            self.assertIn(str(len(required["contexts"])), line)
+            self.assertNotIn("NOT in config/required-checks.json", line)
+        else:
+            self.assertNotIn("IS one of the", line)
+
+
 if __name__ == "__main__":
     unittest.main()

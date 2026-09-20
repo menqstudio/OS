@@ -776,11 +776,19 @@ impl GovernedSidecar {
 /// The §4.10(g) submit hop's production transport — the same spawn, reached through the seam the
 /// writer was always designed to be handed.
 ///
-/// This closes `governed_submit`'s "**No production code implements it**". What it does NOT do is
-/// give `governed_turn_submit_prepared` a CALLER: the writer stays declared unreachable in
+/// This closes `governed_submit`'s "**No production code implements it**".
+///
+/// RETRACTED 2026-09-20. This comment used to continue: "What it does NOT do is give
+/// `governed_turn_submit_prepared` a CALLER: the writer stays declared unreachable in
 /// `config/reachability-declarations.json`, because wiring it would move the shipped broker off its
-/// fail-closed executor — a decision for the owner, not a side effect of giving a trait an
-/// implementation.
+/// fail-closed executor — a decision for the owner". Both halves are HISTORY. The writer IS called,
+/// from `broker/src/ladder_executor.rs:389`, and carries `must_have_caller` in that file; and the
+/// Owner took the executor decision on 2026-09-19, so `broker/src/main.rs:566` serves
+/// `ChainExecutor::with_custody` over the `LadderChain` this transport belongs to.
+///
+/// What still holds the line is narrower, and is not about this impl: `$BROPS_BROKER_CONFIG` is
+/// absent on every shipped install, so `build_governed_executor` returns `UpstreamBlockedExecutor`
+/// (`broker/src/main.rs:268-270`) and none of this is reachable by a user.
 impl SubmitTransport for GovernedSidecar {
     fn call(&self, frame: &Value) -> Result<Value, String> {
         let body = serde_json::to_string(frame)

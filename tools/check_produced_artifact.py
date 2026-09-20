@@ -77,20 +77,19 @@ WHAT THIS GATE CANNOT DO — read before trusting it
     declared ``type`` per property. It is not a JSON Schema implementation and does not
     pretend to be one — stdlib only, no dependency.
 
-NOT YET A REQUIRED CHECK, AND THAT DEFERRAL IS ITSELF UNDER A GATE
--------------------------------------------------------------------
-This context is deliberately ABSENT from ``config/required-checks.json`` at the commit that
-introduced it. ``main`` carries 33 required contexts with ``enforce_admins: true``, so a
-required context that can never pass blocks EVERY merge, and fixes were in flight. Adding it
-is a separate, deliberate step, to be taken once that queue drains.
+THIS CONTEXT IS REQUIRED NOW, AND THIS FILE USED TO SAY OTHERWISE
+-----------------------------------------------------------------
+It began deliberately ABSENT from ``config/required-checks.json``: a required context that can
+never pass blocks EVERY merge under ``enforce_admins``, and fixes were in flight. The deferral
+was a DATED entry in ``config/deferred-enforcement.json`` rather than an intention, because
+"once the queue drains" is satisfied by never adding a task and a date is not.
 
-"Once the queue drains" is an intention, and every deferred enforcement in this repository
-has ended as a correctly written control wired to nothing. So the deferral is a DATED entry in
-``config/deferred-enforcement.json``, and ``tools/check_repo_state.py::verify_deferred_enforcement``
-— which runs inside the ALREADY-REQUIRED context ``Repo-state · live GitHub truth verifier`` —
-turns RED once ``deferred_until`` passes while the context is still absent. The trigger is a
-date and not a state on purpose: a state is controlled by the same person who owes the
-enforcement, so "once the queue drains" is satisfied by never adding a task. A date is not.
+**The deferral was honoured.** Measured: the context was promoted and the deferral entry removed
+in the SAME commit — ``157e292`` (#220, 2026-09-19). What was left behind was this paragraph,
+which went on describing the deferral, and a sentence in the RED output asserting that the
+context was "NOT in config/required-checks.json". Both were false for a day before an audit
+caught them, which is the whole reason the status line below is READ from the two config files
+instead of written here: a sentence about a config goes stale the moment the config moves.
 
 Usage:  python3 tools/check_produced_artifact.py [--root DIR]
 Exit 0 + "GREEN: ..." when all five hold; exit 1 + one line per condition otherwise.
@@ -106,6 +105,51 @@ import subprocess
 import sys
 
 CONTRACT = "config/produced-artifact-contract.json"
+
+#: The CI context this gate runs inside. Named once, because three places said three things.
+CI_CONTEXT = "Production half \u00b7 the five conditions (T-055)"
+
+
+def _enforcement_line(root: pathlib.Path) -> str:
+    """What the config files actually say about this gate's own context, read at run time.
+
+    This used to be a sentence, and the sentence was false for a day: it claimed the context was absent
+    from ``required-checks.json`` and covered by a dated deferral, when the context had been promoted and
+    the deferral removed in the same commit (``157e292``, #220). A control that describes its own
+    enforcement from memory is the same defect one level up from the one this gate exists to catch, so it
+    is derived.
+
+    Every branch names the file it read, so a reader can check the answer rather than trust it.
+    """
+    def _load(rel: str) -> dict:
+        try:
+            return json.loads((root / rel).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    required = _load("config/required-checks.json")
+    deferred = _load("config/deferred-enforcement.json")
+    contexts = required.get("contexts") or []
+    excluded = required.get("deliberately_excluded") or {}
+    deferrals = deferred.get("deferrals") or {}
+
+    if CI_CONTEXT in contexts:
+        return (f"`{CI_CONTEXT}` IS one of the {len(contexts)} required contexts in "
+                f"config/required-checks.json, so this RED blocks every merge.")
+    if CI_CONTEXT in excluded:
+        return (f"`{CI_CONTEXT}` is in `deliberately_excluded` in config/required-checks.json, so this "
+                f"RED blocks nothing. The reason recorded there: {str(excluded[CI_CONTEXT])[:200]}")
+    if CI_CONTEXT in deferrals:
+        entry = deferrals[CI_CONTEXT] if isinstance(deferrals[CI_CONTEXT], dict) else {}
+        return (f"`{CI_CONTEXT}` is DEFERRED until {entry.get('deferred_until', '(no date)')} in "
+                f"config/deferred-enforcement.json, enforced by "
+                f"tools/check_repo_state.py::verify_deferred_enforcement, which runs inside a context "
+                f"that IS required — so the date has teeth.")
+    return (f"`{CI_CONTEXT}` is named in NEITHER config/required-checks.json nor "
+            f"config/deferred-enforcement.json, which tools/check_repo_state.py refuses outright: a "
+            f"check nobody requires and nobody declared optional quietly stops mattering.")
+
+
 
 #: Rust sources searched for the scheduler entry point condition 4 names. Condition 4 will not
 #: believe a run row citing `run_due` unless a `fn run_due` is actually defined in the tree.
@@ -596,10 +640,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("No `producer_command` is declared, so nothing yet produces this evidence.",
               file=sys.stderr)
-    print("This context is NOT in config/required-checks.json. That deferral is a DATED entry in "
-          "config/deferred-enforcement.json, enforced by "
-          "tools/check_repo_state.py::verify_deferred_enforcement — which runs inside a context "
-          "that IS required, so the date has teeth.", file=sys.stderr)
+    print(_enforcement_line(root), file=sys.stderr)
     return 1
 
 

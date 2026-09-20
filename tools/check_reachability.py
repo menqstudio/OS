@@ -523,6 +523,118 @@ def bad_reason(text: object) -> bool:
     return normalized in PLACEHOLDER_REASONS or len(text.strip()) < MIN_REASON_CHARS
 
 
+# --------------------------------------------------------------------------------------
+# Stale absence prose (the failure this file's own $comment predicted)
+# --------------------------------------------------------------------------------------
+#
+# Every `expectation` in the declarations file was CORRECT on 2026-09-20. The free text beside it
+# was not, on four entries, and config/spec-conformance.json carried eight more. Nothing read it.
+# This gate already derives the callers, so it can read it.
+
+#: A second prose file, checked by the same rule. It is not this gate's declarations file and this
+#: gate does not own it, but it is the other place in the repository that describes what is and is
+#: not wired, and this gate is the only one that derives callers to check such a claim against.
+SPEC_CONFORMANCE = pathlib.Path("config/spec-conformance.json")
+
+#: Phrases that assert something does not exist or is not called. Deliberately narrow: each one is
+#: about a CALLER or about existence, which is exactly what this gate re-derives every run. Broader
+#: words ("missing", "absent") describe gaps this gate knows nothing about, and flagging those would
+#: teach people to write around the check instead of fixing the claim.
+ABSENCE_PHRASES = (
+    "nothing calls",
+    "nothing in this tree calls",
+    "no production code implements",
+    "no production caller",
+    "no caller exists",
+    "has no caller",
+    "have no caller",
+    "with no caller",
+    "caller-less",
+    "exists nowhere",
+    "exist nowhere",
+    "does not exist",
+    "do not exist",
+    "is not implemented",
+    "are not implemented",
+    "no supplier",
+)
+
+#: A sentence carrying one of these is a RECORD of a claim, not the claim. Both files already use
+#: this convention ("... is now HISTORY too", "The superseded wording follows."), so the rule asks
+#: for the label these files were already applying by hand.
+RETRACTION_MARKERS = ("RETRACTED", "HISTORY", "superseded", "SUPERSEDED", "no longer true",
+                      "used to say", "used to read", "refuted", "REFUTED")
+
+#: Prose keys. `$comment` is a list of lines and is joined before splitting, because its sentences
+#: wrap across entries.
+PROSE_KEYS = ("reason", "note", "missing", "confirmed", "source", "$comment", "_comment")
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def prose_strings(blob: object, path: str = "") -> "list[tuple[str, str]]":
+    """Every prose value in a loaded config, as (key path, text) pairs."""
+    found: list[tuple[str, str]] = []
+    if isinstance(blob, dict):
+        for key, value in blob.items():
+            here = f"{path}.{key}" if path else str(key)
+            if key in PROSE_KEYS and isinstance(value, str):
+                found.append((here, value))
+            elif key in PROSE_KEYS and isinstance(value, list):
+                found.append((here, " ".join(x for x in value if isinstance(x, str))))
+            else:
+                found.extend(prose_strings(value, here))
+    elif isinstance(blob, list):
+        for i, value in enumerate(blob):
+            found.extend(prose_strings(value, f"{path}[{i}]"))
+    return found
+
+
+def stale_absence_claims(
+    root: pathlib.Path, reached: "dict[str, str]"
+) -> "list[str]":
+    """Prose that says a symbol has no caller, in a run that just found one.
+
+    ``reached`` maps symbol name -> the first production caller this run derived. A sentence is
+    refused when it contains an absence phrase AND names one of those symbols AND carries no
+    retraction marker. The symbol match is on a word boundary, so `pull_output` does not match
+    `governed_pull_output`.
+    """
+    problems: list[str] = []
+    if not reached:
+        return problems
+    named = {
+        name: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+        for name in reached
+    }
+    for rel in (DECLARATIONS, SPEC_CONFORMANCE):
+        path = root / rel
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # its own loader reports a missing or malformed declarations file
+        for key, text in prose_strings(blob):
+            for sentence in _SENTENCE_SPLIT.split(text):
+                low = sentence.lower()
+                phrase = next((p for p in ABSENCE_PHRASES if p in low), None)
+                if phrase is None:
+                    continue
+                if any(marker in sentence for marker in RETRACTION_MARKERS):
+                    continue
+                for name, pattern in named.items():
+                    if not pattern.search(sentence):
+                        continue
+                    problems.append(
+                        f"{rel.as_posix()} `{key}` says \"{phrase}\" in the same sentence as "
+                        f"`{name}`, and THIS RUN derived a production caller for it "
+                        f"({reached[name]}). A reason beside a correct `expectation` is still a "
+                        f"claim somebody has to keep true. Either fix the sentence or label it "
+                        f"(one of {list(RETRACTION_MARKERS)}) with the site that refutes it. "
+                        f"Sentence: {sentence.strip()[:240]}"
+                    )
+    return problems
+
+
 def gate_modules(root: pathlib.Path) -> list[str]:
     """Every gate under tools/, as a repo-relative posix path."""
     return sorted(p.relative_to(root).as_posix() for p in (root / "tools").glob(GATE_GLOB))
@@ -921,6 +1033,17 @@ def check(root: pathlib.Path) -> tuple[list[str], dict]:
             f"which is how a passing suite stops meaning anything."
         )
 
+    # --- 6) prose in BOTH config files, against the callers this run derived -----------------
+    # The defect this closes was not a wrong expectation; it was four correct expectations whose
+    # written reasons had gone false, in the only part of the file no gate read.
+    reached = {
+        name: state["callers"][0]
+        for states in (engine_state, rust_state)
+        for name, state in states.items()
+        if state.get("callers")
+    }
+    problems.extend(stale_absence_claims(root, reached))
+
     summary = {
         "registered": len(registered),
         "reached": len(registered) - len(unreached),
@@ -957,6 +1080,10 @@ LIMITS = (
     "    `use`s it from that module): a bare-name scan would have counted ai.rs's unrelated\n"
     "    `resolve()` as calling governed_output_stream::resolve. The price is the other\n"
     "    direction - a call through a trait object, a re-export, or a fn pointer is NOT seen.\n"
+    "  - the prose check is per SENTENCE and per PHRASE: it catches a stale absence claim only when\n"
+    "    the sentence names a symbol declared here AND this run derived a caller for it. Prose about\n"
+    "    anything else - a frame, a file, a table, a symbol nobody declared - is unchecked, and a\n"
+    "    claim split across two sentences is not seen.\n"
     "  What it does hold: comments are stripped (a mention is not a call), and test-only callers\n"
     "  do not count - neither a python tests/ module nor a rust `#[cfg(test)] mod` (that is\n"
     "  precisely how a dead security function, and a whole rust ladder, read as green)."

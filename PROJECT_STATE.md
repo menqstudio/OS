@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #272 · branch `t101/record-times`** (base `main`, tip `b1ce6f7`, task T-101).
+> **⏭️ CURRENT ACTIVE: PR #273 · branch `t102/stale-absence-prose`** (base `main`, tip `cfdfbcb`, task T-102).
 >
-> The record and the envelope could disagree about when the turn happened, under one signature
+> Thirteen keys described wiring the tree contains, and the gate now reads the prose
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
