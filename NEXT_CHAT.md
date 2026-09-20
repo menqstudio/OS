@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t109b/anchor-passthrough` — `main` @ `d09661c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t110/broker-binary-e2e` — `main` @ `1eddc57`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #281 · branch `t109b/anchor-passthrough`** (base `main`, tip `d09661c`, task T-109).
+> **⏭️ CURRENT ACTIVE: PR #282 · branch `t110/broker-binary-e2e`** (base `main`, tip `1eddc57`, task T-110).
 >
-> The orchestrator can pass the external anchor it has described since it was written
+> Nothing in the tree had ever run the brops-broker binary
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
