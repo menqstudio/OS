@@ -39,7 +39,16 @@
     "`39` in PROJECT_STATE.md and `21`/`23` in all three, none of them as a claim about gates or jobs.",
     "So the rule is used only where the value is distinctive enough for its presence to mean something",
     "-- four-digit suite counts -- and never on a claim the gate can simply recompute, where the",
-    "recomputation is the stronger signal anyway."
+    "recomputation is the stronger signal anyway.",
+    "",
+    "WHY THE HEADS NAME A COMMIT ON `main` AND NOT THE BRANCH THE MEASUREMENT RAN ON. These five first",
+    "said `9659281`, the branch commit the suites actually ran on. CI refused it: this repository",
+    "SQUASH-merges and deletes the branch, so that commit exists in the Builder's clone and nowhere",
+    "else -- `git merge-base --is-ancestor 9659281 origin/main` is false. The squash commit `9cc4d2c`",
+    "has a BYTE-IDENTICAL tree (99130a751fc1e6a0277184efb595708b7814aae8, checked both ways), so the",
+    "measurement holds there and that head is durable. The check below now requires reachability from",
+    "`main` rather than mere existence, because 'resolves in my clone' is exactly the asymmetry that",
+    "turned this file red on its first CI run."
   ],
   "claims": {
     "gate_scripts": {
@@ -101,7 +110,7 @@
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9659281",
+        "head": "9cc4d2c",
         "environments": {
           "ubuntu-latest (CI)": {
             "ran": 2243,
@@ -140,7 +149,7 @@
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9659281",
+        "head": "9cc4d2c",
         "environments": {
           "ubuntu-latest (CI)": {
             "ran": 228,
@@ -162,7 +171,7 @@
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9659281",
+        "head": "9cc4d2c",
         "environments": {
           "builder's Windows box (jsdom)": {
             "ran": 794,
@@ -189,7 +198,7 @@
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9659281",
+        "head": "9cc4d2c",
         "environments": {
           "builder's Windows box (jsdom + axe)": {
             "ran": 59,
@@ -207,7 +216,7 @@
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9659281",
+        "head": "9cc4d2c",
         "environments": {
           "builder's Windows box": {
             "crates": 10

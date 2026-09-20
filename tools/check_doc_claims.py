@@ -430,6 +430,21 @@ def counted_claim_failures(root: pathlib.Path) -> list[str]:
                 elif git(root, "cat-file", "-e", head + "^{commit}")[0] != 0:
                     problems.append(f"{where}: `measured.head` {head} is not a commit in this "
                                     f"repository.")
+                else:
+                    # REACHABLE FROM `main`, not merely present. This repository squash-merges and
+                    # deletes the branch, so the commit a measurement actually RAN on exists in the
+                    # Builder's clone and nowhere else. These five heads first named `9659281`, the
+                    # branch commit; every CI job refused it while every local run passed, which is
+                    # the "works on my machine" asymmetry in its purest form. The squash commit has
+                    # the same tree, so the honest citation is the one a fresh clone can resolve.
+                    base = main_ref(root)
+                    if base and git(root, "merge-base", "--is-ancestor", head, base)[0] != 0:
+                        problems.append(
+                            f"{where}: `measured.head` {head} is a commit but is NOT reachable from "
+                            f"{base}. A branch commit resolves in the clone that made it and in no "
+                            f"other, so a fresh checkout — every CI job — cannot check this "
+                            f"provenance. Cite the commit that LANDED; after a squash merge its tree "
+                            f"is the same one you measured.")
                 envs = measured.get("environments")
                 if not isinstance(envs, dict) or not envs:
                     problems.append(

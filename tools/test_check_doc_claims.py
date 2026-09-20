@@ -945,6 +945,33 @@ class CountedClaimTests(unittest.TestCase):
         problems = m.counted_claim_failures(ROOT)
         self.assertEqual(problems, [], "\n".join(problems))
 
+    def test_every_measured_head_is_REACHABLE_FROM_MAIN_and_not_just_a_commit(self):
+        """The failure this rule was written for, and it was found by CI rather than by me.
+
+        The five measured heads first named `9659281` — the branch commit the suites actually ran on.
+        This repository squash-merges and deletes the branch, so that commit exists in the clone that
+        made it and in no other: every local run passed and every CI job refused, which is the
+        "works on my machine" asymmetry in its purest form. The squash commit `9cc4d2c` has a
+        byte-identical tree, so the measurement holds there and a fresh checkout can resolve it.
+        """
+        claims = json.loads(
+            (ROOT / "config" / "counted-claims.json").read_text(encoding="utf-8"))["claims"]
+        base = m.main_ref(ROOT)
+        if base is None:
+            self.skipTest("no main ref in this checkout, so reachability cannot be measured")
+        checked = 0
+        for name, claim in sorted(claims.items()):
+            head = (claim.get("measured") or {}).get("head")
+            if not head:
+                continue
+            checked += 1
+            with self.subTest(claim=name):
+                self.assertEqual(
+                    m.git(ROOT, "merge-base", "--is-ancestor", head, base)[0], 0,
+                    f"{name}: measured.head {head} is not reachable from {base} — a fresh clone "
+                    f"cannot check this provenance")
+        self.assertGreaterEqual(checked, 3, "no measured heads were checked, so this proves nothing")
+
     def test_this_repositorys_declaration_covers_both_kinds(self):
         """A declaration that only held un-derivable claims would pass while checking nothing the
         tree can contradict."""
