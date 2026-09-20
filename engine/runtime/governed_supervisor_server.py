@@ -56,6 +56,7 @@ import traceback
 from dataclasses import dataclass, fields as dataclass_fields
 from typing import Any, Callable, Dict, Mapping, Optional
 
+import brops_socket
 import governed_output_stream as output_streams
 import governed_supervisor_ledger as ledger
 from challenge_authority import peer_is_broker
@@ -207,18 +208,11 @@ def read_peercred_uid(sock: "socket.socket") -> int:
     ``ServerError`` so the caller can DENY rather than trust an unauthenticated
     peer.
     """
-    if sys.platform != "linux":
-        raise ServerError(
-            "platform unsupported: SO_PEERCRED peer authentication requires Linux"
-        )
-    # struct ucred is {pid_t pid; uid_t uid; gid_t gid;} == three 32-bit ints.
-    ucred = sock.getsockopt(
-        socket.SOL_SOCKET,
-        socket.SO_PEERCRED,  # type: ignore[attr-defined]
-        struct.calcsize("=III"),
-    )
-    _pid, uid, _gid = struct.unpack("=III", ucred)
-    return uid
+    # Moved to `brops_socket.read_peercred_uid` on 2026-09-20. Three servers carried this
+    # byte-identically but for the exception class -- measured at 840 / 816 / 828 B, all 20 lines,
+    # whose entire diff was that class and the docstring naming it. The wrapper stays because the
+    # NAME is this service's surface: `accept_socket_conn` and its tests reach it here.
+    return brops_socket.read_peercred_uid(sock, error=ServerError)
 
 
 # ---------------------------------------------------------------------------
@@ -239,60 +233,18 @@ def read_peercred_uid(sock: "socket.socket") -> int:
 #: 120 s is deliberately generous: both peers are local (AF_UNIX), the broker's frames are
 #: 8 KiB and the sidecar's largest is 240 KiB, so no legitimate exchange comes within two
 #: orders of magnitude of it. The number that matters is that it is finite.
-CONNECTION_BUDGET_S = 120.0
+#: MOVED to `brops_socket` on 2026-09-20 and re-exported here, because this module's name is
+#: what the tests, the docstrings and audit R1 cite. It lived here alone while the SIGNER and
+#: the challenge authority had no bound at all -- a control two of five servers implement is a
+#: control the tree does not have. `floor_writer`'s 30 s stays its own: a different service, a
+#: different exchange, and a number chosen for it.
+CONNECTION_BUDGET_S = brops_socket.CONNECTION_BUDGET_S
 
 
-def recv_budget_s(deadline: float, now: float) -> Optional[float]:
-    """The timeout to arm for the next read, or ``None`` when the budget is spent.
-
-    Lifted OUT of :class:`SocketPeerConn` on purpose. That class cannot be constructed on
-    this box — ``read_peercred_uid`` refuses off Linux — so a bound expressed only inside its
-    read loop would sit in a branch no test here can reach, which is how the previous rounds
-    shipped unwitnessed changes. The arithmetic that decides the refusal lives here, where a
-    test drives it directly.
-
-    **Never returns 0.0.** ``socket.settimeout(0)`` puts the socket in NON-BLOCKING mode
-    (and the POSIX ``SO_RCVTIMEO`` it maps to reads 0 as *infinite*), so arming zero at the
-    exact moment the budget expires is the opposite of a deadline. Exhaustion is ``None``,
-    and the caller stops reading.
-    """
-    remaining = deadline - now
-    if remaining <= 0.0:
-        return None
-    return remaining
+recv_budget_s = brops_socket.recv_budget_s
 
 
-def recv_exactly_bounded(
-    recv: Callable[[int], bytes],
-    n: int,
-    *,
-    deadline: float,
-    arm_timeout: Callable[[float], None],
-    now: Callable[[], float] = time.monotonic,
-) -> bytes:
-    """Read up to ``n`` bytes, giving up when the connection budget is exhausted.
-
-    Returns whatever arrived. A short return is the caller's signal: :func:`read_frame`
-    already turns one into a ``FrameError``, so a starved read is a framing refusal rather
-    than a hang. Pure with respect to the socket: ``recv``/``arm_timeout``/``now`` are seams,
-    which is what makes the deadline testable without a socket at all.
-    """
-    chunks = []
-    remaining = n
-    while remaining > 0:
-        budget = recv_budget_s(deadline, now())
-        if budget is None:
-            break  # budget spent; caller sees the short read
-        arm_timeout(budget)
-        try:
-            chunk = recv(remaining)
-        except (socket.timeout, TimeoutError):
-            break
-        if not chunk:
-            break  # peer closed early; caller detects the short read
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+recv_exactly_bounded = brops_socket.recv_exactly_bounded
 
 
 class SocketPeerConn:
@@ -1235,14 +1187,11 @@ def bind_listener(socket_path: str) -> "socket.socket":
     Fail-closed on non-Linux hosts: the peer-credential trust chain this service
     depends on (``SO_PEERCRED``) does not exist there.
     """
-    if sys.platform != "linux":
-        raise ServerError(
-            "platform unsupported: AF_UNIX SO_PEERCRED supervisor front door requires Linux"
-        )
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(socket_path)
-    listener.listen(64)
-    return listener
+    # Moved to `brops_socket.bind_listener` on 2026-09-20; the three copies differed only in the
+    # exception class and the noun in this message. `listen(64)` and the deliberate absence of any
+    # directory hardening travelled with it unchanged.
+    return brops_socket.bind_listener(
+        socket_path, error=ServerError, subject="supervisor front door")
 
 
 def accept_socket_conn(listener: "socket.socket") -> SocketPeerConn:

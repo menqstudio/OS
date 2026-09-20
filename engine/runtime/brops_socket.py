@@ -17,7 +17,9 @@ from __future__ import annotations
 import os
 import socket
 import struct
-from typing import Any, Callable
+import sys
+import time
+from typing import Any, Callable, Optional
 
 import brops_protocol
 
@@ -65,6 +67,124 @@ def _harden_socket_dir(path: str) -> None:
         os.chmod(directory, 0o755)
 
 
+# --------------------------------------------------------------------------------------
+# The TOTAL connection budget, and the three helpers three servers each had a copy of
+# --------------------------------------------------------------------------------------
+#
+# A PER-READ timeout does not bound a connection: a peer that sends one byte per timeout holds the
+# loop indefinitely while never once timing out. This is a budget for the WHOLE exchange, armed at
+# the first read and never re-armed.
+#
+# 120 s is generous and DERIVED rather than chosen: the only party that legitimately connects to the
+# signer gives up after 20 s of its own accord (`isolated_signer_server.request_sign_result`'s
+# default, and `SIGNER_TIMEOUT_S = 20.0` in `engine/ci/live/run_ladder_supervisor.py`), and `request`
+# below defaults to 30 s. Six times the client's own patience cannot bite a legitimate exchange, both
+# peers are local, and the largest frame in the protocol is 240 KiB. What matters is that it is FINITE.
+#
+# Moved here from `governed_supervisor_server` on 2026-09-20. It was the only one of the five accept
+# loops under `engine/runtime/` that had a total budget; `floor_writer` had its own 30 s version; the
+# other three -- including this module's own loop and the SIGNER's -- had nothing. A control two of
+# five servers implement is a control this tree does not have.
+CONNECTION_BUDGET_S = 120.0
+
+
+def recv_budget_s(deadline: float, now: float) -> Optional[float]:
+    """The timeout to arm for the next read, or ``None`` when the budget is spent.
+
+    Deliberately OUTSIDE any socket class. :func:`read_peercred_uid` refuses off Linux, so a bound
+    expressed only inside an accepted connection's read loop would sit in a branch no test on a
+    non-Linux runner can reach -- which is how earlier rounds shipped unwitnessed changes. The
+    arithmetic that decides the refusal lives here, where a test drives it directly.
+
+    **Never returns 0.0.** ``socket.settimeout(0)`` puts the socket in NON-BLOCKING mode (and the
+    POSIX ``SO_RCVTIMEO`` it maps to reads 0 as *infinite*), so arming zero at the exact moment the
+    budget expires is the opposite of a deadline. Exhaustion is ``None``, and the caller stops reading.
+    """
+    remaining = deadline - now
+    if remaining <= 0.0:
+        return None
+    return remaining
+
+
+def recv_exactly_bounded(
+    recv: "Callable[[int], bytes]",
+    n: int,
+    *,
+    deadline: float,
+    arm_timeout: "Callable[[float], None]",
+    now: "Callable[[], float]" = time.monotonic,
+) -> bytes:
+    """Read up to ``n`` bytes, giving up when the connection budget is exhausted.
+
+    Returns whatever arrived. A short return is the caller's signal: a frame reader already turns one
+    into a framing refusal, so a starved read is a refusal rather than a hang. Pure with respect to
+    the socket -- ``recv``/``arm_timeout``/``now`` are seams, which is what makes the deadline
+    testable with no socket at all.
+    """
+    chunks = []
+    remaining = n
+    while remaining > 0:
+        budget = recv_budget_s(deadline, now())
+        if budget is None:
+            break  # budget spent; caller sees the short read
+        arm_timeout(budget)
+        try:
+            chunk = recv(remaining)
+        except (socket.timeout, TimeoutError):
+            break
+        if not chunk:
+            break  # peer closed early; caller detects the short read
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def read_peercred_uid(sock: "socket.socket", *, error: type) -> int:
+    """Return the connecting peer's uid via ``SO_PEERCRED``.
+
+    Linux-only: ``SO_PEERCRED`` yields ``struct ucred { pid, uid, gid }``, unpacked as ``=III``. On
+    any non-Linux host this fails closed with ``error`` so the caller can DENY rather than trust an
+    unauthenticated peer.
+
+    Three servers each carried this, byte-identical but for the exception class and the docstring
+    naming it -- measured 2026-09-20 at 840 / 816 / 828 B, all 20 lines, whose entire diff was
+    ``ChallengeAuthorityError`` / ``ServerError`` / ``SignerServerError``. The message is the same in
+    all three, so only the class is injected; each service keeps its own refusal vocabulary while the
+    logic exists once.
+    """
+    if sys.platform != "linux":
+        raise error("platform unsupported: SO_PEERCRED peer authentication requires Linux")
+    # struct ucred is {pid_t pid; uid_t uid; gid_t gid;} == three 32-bit ints. `=III`, not `3i`:
+    # `uid_t` is UNSIGNED, so the kernel's `(uid_t)-1` must not arrive as `-1`.
+    ucred = sock.getsockopt(
+        socket.SOL_SOCKET,
+        socket.SO_PEERCRED,  # type: ignore[attr-defined]
+        struct.calcsize("=III"),
+    )
+    _pid, uid, _gid = struct.unpack("=III", ucred)
+    return uid
+
+
+def bind_listener(socket_path: str, *, error: type, subject: str) -> "socket.socket":
+    """Bind a fresh AF_UNIX stream listener at ``socket_path`` (Linux path).
+
+    Fail-closed on non-Linux hosts: the peer-credential trust chain these services depend on
+    (``SO_PEERCRED``) does not exist there.
+
+    The three copies differed only in the exception class and one noun in the message ("authority" /
+    "supervisor front door" / "signer"), measured at 579 / 579 / 570 B. Everything else is verbatim,
+    ``listen(64)`` included -- this function deliberately does NOT harden the socket directory,
+    unlink an existing path, or chmod it, because none of the three did, and a shared helper that
+    quietly added those would be a change to a security boundary dressed as de-duplication.
+    """
+    if sys.platform != "linux":
+        raise error(f"platform unsupported: AF_UNIX SO_PEERCRED {subject} requires Linux")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(socket_path)
+    listener.listen(64)
+    return listener
+
+
 def serve_forever(
     socket_path: str,
     handle_frame: Callable[[dict[str, Any]], dict[str, Any]],
@@ -97,6 +217,11 @@ def serve_forever(
             conn, _ = server.accept()
             served += 1
             try:
+                # The bound this loop never had. One request, one reply, so a single TOTAL socket
+                # timeout covers the whole exchange -- the shape `floor_writer` already uses. The
+                # drip-peer case that needs `recv_exactly_bounded` is the multi-read loop in the
+                # signer and the authority, not this one.
+                conn.settimeout(CONNECTION_BUDGET_S)
                 _serve_one(conn, handle_frame, allowed_peer_uids)
             finally:
                 conn.close()
@@ -126,6 +251,10 @@ def _serve_one(
     try:
         request = brops_protocol.read_frame(reader)
     except brops_protocol.ProtocolError:
+        return
+    except (socket.timeout, TimeoutError):
+        # The budget armed by `serve_forever` expired. A stalled peer is a DROPPED connection, never
+        # a handled request: returning closes it and the loop takes the next caller.
         return
     result = handle_frame(request)
     conn.sendall(brops_protocol.encode_frame(result))

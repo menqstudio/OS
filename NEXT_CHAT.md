@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t104/one-countup` — `main` @ `7efc6d2`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t105/one-bounded-accept` — `main` @ `bd3fd27`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #275 · branch `t104/one-countup`** (base `main`, tip `7efc6d2`, task T-104).
+> **⏭️ CURRENT ACTIVE: PR #276 · branch `t105/one-bounded-accept`** (base `main`, tip `bd3fd27`, task T-105).
 >
-> One hook name, three bodies, and two opposite meanings for the same flag
+> A peer could hold the signer's accept loop forever; two of five servers already refused that
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
