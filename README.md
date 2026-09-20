@@ -269,7 +269,7 @@ enforced from the app.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/verification-dark.svg">
   <img src="docs/brand/readme/verification-light.svg" width="100%"
-       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2205 engine tests with 97 skipped, 228 bridge tests, 10 Rust crates, 42 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
+       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2243 engine tests, 228 bridge tests, 10 Rust crates, 42 gate scripts, 34 required contexts. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
 </picture>
 
 </div>
@@ -284,7 +284,7 @@ fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
 | :--- | ---: | :--- |
-| Engine test suite | **2205** թեստ · tests, 97 skipped | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| Engine test suite | **2243** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **228** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **42** | `ls tools/check_*.py \| wc -l` |
@@ -296,6 +296,15 @@ fast, so run the command rather than trusting the number.
 | Cockpit frontend (jsdom) | **794** թեստ · tests, 84 file | `cd apps/desktop && npm ci && npm test` |
 | Cockpit accessibility (axe) | **59** թեստ · tests | `cd apps/desktop && npm ci && npm run test:a11y` |
 | Cockpit in real Chromium | **433** թեստ · tests | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
+
+> **Skip counts are not stated here.** The engine suite RUNS 2243 tests in every environment and
+> SKIPS a different number in each: measured at `9659281` on 2026-09-20, 14 on the ubuntu runner, 82
+> on the windows runner and 97 on the Builder's box. Two Windows environments disagree by fifteen, so
+> a skip count is not a property of the platform either. All three figures, and the command that
+> prints each counted claim on this page, are declared in
+> [`config/counted-claims.json`](config/counted-claims.json) and checked by
+> `tools/check_doc_claims.py` — which recounts what it can count and refuses a stale number where it
+> cannot.
 
 > **HY:** Վերջին երեք տողը մինչև `a57fd86` չէր տպվում, ու պատճառը ազնիվ էր՝ չափված չէր։
 > Հիմա չափված ա — `npm ci` վազեց committed `package-lock.json`-ից, ու երեք սյուիտն էլ վազեցին։

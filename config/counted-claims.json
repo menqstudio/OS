@@ -1,0 +1,223 @@
+{
+  "$comment": [
+    "Every COUNTED claim the canon makes, and how to check it. Enforced by",
+    "tools/check_doc_claims.py::counted_claim_failures.",
+    "",
+    "check_doc_claims.py's own docstring asked for this file by name: it said the gate 'does not check",
+    "the front page's COUNTED claims ... which need a declaration mapping each to the command that",
+    "prints it', and left the drift to be caught by hand in README_CLAIM_HISTORY.md section 5. It WAS",
+    "caught by hand, four audit rounds running, which is how long a by-hand rule lasts.",
+    "",
+    "TWO KINDS OF CLAIM, and the difference is the point.",
+    "",
+    "  derive != null  -- countable from the tree in milliseconds with no dependencies, so the gate",
+    "                     recomputes it every run and a wrong number is RED. There is no excuse for",
+    "                     one of these going stale.",
+    "  derive == null  -- needs a suite to RUN, or a network call, which a gate must not do. These",
+    "                     cannot be verified here, so what is enforced instead is their PROVENANCE: an",
+    "                     environment, a date and a head.",
+    "",
+    "AND THE RULE THAT ACTUALLY CATCHES DRIFT: every file in `cited_in` must CONTAIN the current value",
+    "and must NOT contain any value in `superseded`. A declaration that agrees with the tree while the",
+    "document beside it still says the old number would be a third copy, not a check on the other two.",
+    "The claim-history ledger is deliberately NOT in any `cited_in` list: old numbers belong there.",
+    "",
+    "WHY THE SKIP COUNTS ARE NOT A CLAIM. Measured at one head (2026-09-20) in three environments:",
+    "2243 tests RAN in all three, and 14 / 82 / 97 were skipped on the ubuntu runner, the Windows",
+    "runner and the Builder's Windows box. A skip count is not a property of the code, and not even of",
+    "the PLATFORM -- it is a property of the environment, and three canonical files stated one number",
+    "as fact with no environment named. The count is the invariant; the skips are recorded below as",
+    "measurements, not asserted in prose.",
+    "",
+    "Stdlib only, deliberately: `check_doc_claims` is 'stdlib plus git, offline' and the CI job that",
+    "runs it installs nothing. The ci.yml job count therefore uses a SCOPED scan of that block rather",
+    "than a YAML parse -- the whole-file 2-space-indent regex the README warns about answers 23,",
+    "because `push:` and `pull_request:` sit at that indent under `on:`.",
+    "",
+    "WHY `superseded` APPEARS ON ONLY TWO CLAIMS. It is an absence rule, and absence of a SMALL number",
+    "from a long document is not checkable: measured before shipping this, `40` appears in README.md,",
+    "`39` in PROJECT_STATE.md and `21`/`23` in all three, none of them as a claim about gates or jobs.",
+    "So the rule is used only where the value is distinctive enough for its presence to mean something",
+    "-- four-digit suite counts -- and never on a claim the gate can simply recompute, where the",
+    "recomputation is the stronger signal anyway."
+  ],
+  "claims": {
+    "gate_scripts": {
+      "value": 42,
+      "command": "ls tools/check_*.py | wc -l",
+      "derive": {
+        "glob": "tools/check_*.py"
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "workflow_files": {
+      "value": 8,
+      "command": "ls .github/workflows/*.yml | wc -l",
+      "derive": {
+        "glob": ".github/workflows/*.yml"
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "specialist_definitions": {
+      "value": 262,
+      "command": "ls .claude/agents/*.md | wc -l",
+      "derive": {
+        "glob": ".claude/agents/*.md"
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "frontend_test_files": {
+      "value": 84,
+      "command": "cd apps/desktop && npm test   (the 'Test Files' line)",
+      "derive": {
+        "glob": "apps/desktop/src/**/*.test.ts|apps/desktop/src/**/*.test.tsx"
+      },
+      "cited_in": [
+        "README.md",
+        "NEXT_CHAT.md",
+        "PROJECT_STATE.md",
+        "CLAUDE.md"
+      ]
+    },
+    "ci_jobs": {
+      "value": 22,
+      "command": "the `jobs` KEY of .github/workflows/ci.yml, parsed as YAML",
+      "derive": {
+        "yaml_block_keys": ".github/workflows/ci.yml:jobs"
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "engine_tests": {
+      "value": 2243,
+      "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
+      "derive": null,
+      "measured": {
+        "date": "2026-09-20",
+        "head": "9659281",
+        "environments": {
+          "ubuntu-latest (CI)": {
+            "ran": 2243,
+            "skipped": 14
+          },
+          "windows-latest (CI)": {
+            "ran": 2243,
+            "skipped": 82
+          },
+          "builder's Windows box": {
+            "ran": 2243,
+            "skipped": 97
+          }
+        }
+      },
+      "cited_in": [
+        "README.md",
+        "NEXT_CHAT.md",
+        "PROJECT_STATE.md",
+        "CLAUDE.md"
+      ],
+      "superseded": [
+        2124,
+        2143,
+        2152,
+        2198,
+        2200,
+        2205,
+        2216,
+        2242
+      ]
+    },
+    "bridge_tests": {
+      "value": 228,
+      "command": "BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q",
+      "derive": null,
+      "measured": {
+        "date": "2026-09-20",
+        "head": "9659281",
+        "environments": {
+          "ubuntu-latest (CI)": {
+            "ran": 228,
+            "skipped": 0
+          },
+          "builder's Windows box": {
+            "ran": 228,
+            "skipped": 0
+          }
+        }
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "frontend_tests": {
+      "value": 794,
+      "command": "cd apps/desktop && npm ci && npm test",
+      "derive": null,
+      "measured": {
+        "date": "2026-09-20",
+        "head": "9659281",
+        "environments": {
+          "builder's Windows box (jsdom)": {
+            "ran": 794,
+            "skipped": 0
+          }
+        }
+      },
+      "note": "jsdom, so unlike the engine suite this figure does not vary by host.",
+      "cited_in": [
+        "README.md",
+        "NEXT_CHAT.md",
+        "PROJECT_STATE.md",
+        "CLAUDE.md"
+      ],
+      "superseded": [
+        764,
+        781,
+        790
+      ]
+    },
+    "a11y_tests": {
+      "value": 59,
+      "command": "cd apps/desktop && npm ci && npm run test:a11y",
+      "derive": null,
+      "measured": {
+        "date": "2026-09-20",
+        "head": "9659281",
+        "environments": {
+          "builder's Windows box (jsdom + axe)": {
+            "ran": 59,
+            "skipped": 0
+          }
+        }
+      },
+      "cited_in": [
+        "README.md"
+      ]
+    },
+    "rust_workspace_crates": {
+      "value": 10,
+      "command": "cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml",
+      "derive": null,
+      "measured": {
+        "date": "2026-09-20",
+        "head": "9659281",
+        "environments": {
+          "builder's Windows box": {
+            "crates": 10
+          }
+        }
+      },
+      "note": "Derivable in principle, but only by parsing TOML or shelling out to cargo, and this gate is stdlib-plus-git with no cargo on its runner.",
+      "cited_in": [
+        "README.md"
+      ]
+    }
+  }
+}
