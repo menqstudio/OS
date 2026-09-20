@@ -756,7 +756,21 @@ class IsolatedSigner:
             ("run_id", "task_id", "execution_attempt_id", "workspace_id", "install_id",
              "request_nonce", "receipt_id", "supervisor_id", "request_sha256",
              "system_handle", "history_handle", "generation_config_handle",
-             "output_handle", "containment_evidence_handle", "decision"),
+             "output_handle", "containment_evidence_handle", "decision",
+             # The three TIMES the record and the evidence both report, added 2026-09-20. All three
+             # were measured forging through to a `signed` envelope: a record saying
+             # `challenge_accepted_at_ms=1` under an envelope saying 1699999997000, both under one
+             # signature. Each is an int read back out of the same acceptance/completion row the
+             # evidence is built from (`governed_supervisor.py:735-737` vs `:890/:891/:907`), so the
+             # comparison is between two accounts of ONE fact rather than between two facts.
+             #
+             # Two need an alias because the evidence spells them without the `_ms`. The record's
+             # three remaining fields -- `challenge_handle`, `challenge_registry_hash`,
+             # `challenge_registry_epoch` -- are in no evidence field at all, so binding them is a §5
+             # protocol change and `NM-XBIND-01` is narrowed to them.
+             "challenge_accepted_at_ms",
+             ("requested_at_ms", "requested_at"),
+             ("completed_at_ms", "completed_at")),
         ),
         "execution_receipt_handle": (
             "brops.execution-receipt.v1",
@@ -811,14 +825,18 @@ class IsolatedSigner:
             if protocol is not None and document.get("protocol") != protocol:
                 raise _Refuse(REASON_HANDLE_MISSING)
 
-            for field in shared:
+            for entry in shared:
+                # A shared entry is either a bare name -- the document and the evidence spell it the
+                # same -- or a `(document_field, evidence_field)` pair for the two that do not.
+                field, evidence_field = entry if isinstance(entry, tuple) else (entry, entry)
                 if field not in document:
                     # REQUIRED, not merely "checked where present". Skipping absent fields would
                     # let a document carrying nothing but its protocol tag agree vacuously — a
                     # hole exactly the shape of the presence check this replaces.
                     raise _Refuse(
                         "%s:%s.%s_missing" % (REASON_CHAIN_DISAGREEMENT, handle_field, field))
-                expected = (recomputed or {}).get(field, evidence.get(field))
+                expected = (recomputed or {}).get(
+                    evidence_field, evidence.get(evidence_field))
                 if document[field] != expected:
                     # The field name is part of the reason: a refusal that does not say WHICH
                     # account differs sends the operator to read two documents by hand.
