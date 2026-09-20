@@ -756,5 +756,232 @@ class EntryPointRunsEverything(unittest.TestCase):
         self.assertGreater(guard[0], max(classes))
 
 
+
+class CountedClaimTests(unittest.TestCase):
+    """`config/counted-claims.json`, and the four ways a counted claim goes wrong.
+
+    This gate's docstring used to say it did NOT check counted claims and that section 5 of the claim
+    history was where that drift got caught by hand. It was caught by hand four audit rounds running —
+    and the docstring's own two examples (2143 engine tests, 39 gate scripts) had themselves gone stale
+    against a tree with 2243 and 42. A gate that describes drift it does not catch, with drift in the
+    description, is the shape this suite exists to refuse.
+    """
+
+    def setUp(self):
+        # `TemporaryDirectory`, not `mkdtemp` + `shutil.rmtree`: this suite does not import shutil,
+        # and a test file should not grow an import to hold a cleanup the stdlib already owns.
+        box = tempfile.TemporaryDirectory(prefix="counted-")
+        self.addCleanup(box.cleanup)
+        self.tmp = pathlib.Path(box.name).resolve()
+        (self.tmp / "config").mkdir()
+
+    def _write(self, claims, docs=None):
+        (self.tmp / "config" / "counted-claims.json").write_text(
+            json.dumps({"claims": claims}), encoding="utf-8")
+        for name, body in (docs or {}).items():
+            (self.tmp / name).write_text(body, encoding="utf-8")
+        return m.counted_claim_failures(self.tmp)
+
+    # ---- the derivable half: recounted every run ----------------------------------------------
+
+    def test_a_derived_claim_that_matches_the_tree_passes(self):
+        (self.tmp / "a.py").touch()
+        (self.tmp / "b.py").touch()
+        self.assertEqual(
+            self._write({"files": {"value": 2, "command": "ls *.py", "derive": {"glob": "*.py"},
+                                   "cited_in": ["doc.md"]}},
+                        {"doc.md": "there are 2 files"}),
+            [])
+
+    def test_a_derived_claim_that_disagrees_with_the_tree_is_refused(self):
+        (self.tmp / "a.py").touch()
+        problems = self._write(
+            {"files": {"value": 7, "command": "ls *.py", "derive": {"glob": "*.py"},
+                       "cited_in": ["doc.md"]}},
+            {"doc.md": "there are 7 files"})
+        self.assertTrue(any("declares 7 but the tree has 1" in p for p in problems), problems)
+
+    def test_two_glob_patterns_are_summed(self):
+        (self.tmp / "a.ts").touch()
+        (self.tmp / "b.tsx").touch()
+        self.assertEqual(
+            self._write({"f": {"value": 2, "command": "x", "derive": {"glob": "*.ts|*.tsx"},
+                               "cited_in": ["d.md"]}}, {"d.md": "2"}),
+            [])
+
+    def test_an_unknown_derive_kind_is_refused_rather_than_ignored(self):
+        problems = self._write({"f": {"value": 1, "command": "x", "derive": {"wishes": "x"},
+                                      "cited_in": ["d.md"]}}, {"d.md": "1"})
+        self.assertTrue(any("derive kind 'wishes'" in p for p in problems), problems)
+
+    # ---- the `on:` trap -----------------------------------------------------------------------
+
+    def test_the_job_count_is_scoped_to_the_jobs_block(self):
+        """A whole-file "count 2-space-indented keys" scan answers 3 here, because `push` and
+        `pull_request` sit at that indent under `on:`. That is the exact miscount the README warns
+        about, and the reason this derivation is scoped instead of global."""
+        (self.tmp / "wf.yml").write_text(
+            "name: ci\n"
+            "on:\n"
+            "  push:\n"
+            "    branches: [main]\n"
+            "  pull_request:\n"
+            "jobs:\n"
+            "  first:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo one\n"
+            "  second:\n"
+            "    runs-on: ubuntu-latest\n",
+            encoding="utf-8")
+        self.assertEqual(
+            self._write({"j": {"value": 2, "command": "x",
+                               "derive": {"yaml_block_keys": "wf.yml:jobs"},
+                               "cited_in": ["d.md"]}}, {"d.md": "2 jobs"}),
+            [])
+
+    def test_a_comment_inside_the_jobs_block_is_not_a_job(self):
+        (self.tmp / "wf.yml").write_text(
+            "jobs:\n  only:\n    runs-on: x\n  # not_a_job:\n", encoding="utf-8")
+        self.assertEqual(
+            self._write({"j": {"value": 1, "command": "x",
+                               "derive": {"yaml_block_keys": "wf.yml:jobs"},
+                               "cited_in": ["d.md"]}}, {"d.md": "1"}),
+            [])
+
+    # ---- the measured half: provenance, because a gate must not run a suite --------------------
+
+    def test_a_measured_claim_needs_an_environment_a_date_and_a_head(self):
+        for missing in ("environments", "date", "head"):
+            with self.subTest(missing=missing):
+                measured = {"date": "2026-09-20", "head": "abc1234",
+                            "environments": {"somewhere": {"ran": 5}}}
+                del measured[missing]
+                problems = self._write(
+                    {"suite": {"value": 5, "command": "run it", "derive": None,
+                               "measured": measured, "cited_in": ["d.md"]}},
+                    {"d.md": "5 tests"})
+                self.assertTrue(
+                    any(missing in p for p in problems),
+                    f"the refusal must NAME the missing field {missing}: {problems}")
+
+    def test_a_measured_claim_with_no_measured_block_at_all_is_refused(self):
+        problems = self._write({"s": {"value": 5, "command": "x", "derive": None,
+                                      "cited_in": ["d.md"]}}, {"d.md": "5"})
+        self.assertTrue(any("needs `measured`" in p for p in problems), problems)
+
+    def test_the_command_is_required_because_a_reader_has_to_reproduce_it(self):
+        problems = self._write({"s": {"value": 1, "command": "  ", "derive": {"glob": "*.nope"},
+                                      "cited_in": ["d.md"]}}, {"d.md": "0"})
+        self.assertTrue(any("`command` must name the command" in p for p in problems), problems)
+
+    # ---- the rule that actually catches the drift -----------------------------------------------
+
+    def test_a_document_missing_the_current_value_is_refused(self):
+        (self.tmp / "a.py").touch()
+        problems = self._write(
+            {"f": {"value": 1, "command": "x", "derive": {"glob": "*.py"}, "cited_in": ["d.md"]}},
+            {"d.md": "no numbers here at all"})
+        self.assertTrue(any("does not contain 1" in p for p in problems), problems)
+
+    def test_a_document_still_carrying_a_SUPERSEDED_value_is_refused(self):
+        """The defect verbatim: the declaration is right, the tree is right, and the document beside
+        them still says last month's number."""
+        problems = self._write(
+            {"suite": {"value": 2243, "command": "x", "derive": None,
+                       "measured": {"date": "2026-09-20", "head": "abc1234",
+                                    "environments": {"ubuntu": {"ran": 2243, "skipped": 14}}},
+                       "cited_in": ["d.md"], "superseded": [2205]}},
+            {"d.md": "the engine suite runs 2243 tests\n\nolder prose: 2205 tests"})
+        self.assertTrue(any("still contains the superseded value 2205" in p for p in problems),
+                        problems)
+
+    def test_a_value_is_matched_on_a_DIGIT_boundary_not_a_substring(self):
+        """`22` must not be satisfied by `2243`, or a stale number hides inside a fresh one."""
+        (self.tmp / "x.py").touch()
+        problems = self._write(
+            {"f": {"value": 22, "command": "x", "derive": None,
+                   "measured": {"date": "2026-09-20", "head": "abc1234",
+                                "environments": {"here": {"n": 22}}},
+                   "cited_in": ["d.md"]}},
+            {"d.md": "the suite runs 2243 tests and 1225 assertions"})
+        self.assertTrue(any("does not contain 22" in p for p in problems), problems)
+
+    def test_the_value_may_not_also_be_listed_as_superseded(self):
+        problems = self._write(
+            {"f": {"value": 5, "command": "x", "derive": None,
+                   "measured": {"date": "2026-09-20", "head": "abc1234",
+                                "environments": {"here": {"n": 5}}},
+                   "cited_in": ["d.md"], "superseded": [5]}},
+            {"d.md": "5"})
+        self.assertTrue(any("both the value and superseded" in p for p in problems), problems)
+
+    # ---- fail-closed on its own inputs ----------------------------------------------------------
+
+    def test_a_missing_declaration_is_not_a_problem_on_a_SYNTHETIC_root(self):
+        """The same asymmetry `ALSO_CHECKED` already argues for: `main(root)` runs on synthetic roots
+        throughout this suite, and a declaration that is not there is not a defect of anything. The
+        first version of this check refused it and turned nineteen unrelated tests red."""
+        self.assertEqual(m.counted_claim_failures(self.tmp / "nowhere"), [])
+
+    def test_the_real_repository_declares_its_counted_claims(self):
+        """...and absent is not SILENT: if the declaration ever leaves the real tree, this fails by
+        name rather than the gate quietly checking nothing."""
+        declared = ROOT / "config" / "counted-claims.json"
+        self.assertTrue(declared.is_file(), f"{declared} is gone")
+        claims = json.loads(declared.read_text(encoding="utf-8"))["claims"]
+        self.assertGreaterEqual(len(claims), 5, sorted(claims))
+
+    def test_a_malformed_declaration_is_RED(self):
+        (self.tmp / "config" / "counted-claims.json").write_text("{nope", encoding="utf-8")
+        self.assertTrue(any("malformed" in p for p in m.counted_claim_failures(self.tmp)))
+
+    def test_an_empty_claims_map_is_RED_because_a_gate_with_nothing_to_check_is_not_a_gate(self):
+        self.assertTrue(any("non-empty" in p for p in self._write({})))
+
+    # ---- this repository today -------------------------------------------------------------------
+
+    def test_this_repository_has_no_counted_claim_problems(self):
+        problems = m.counted_claim_failures(ROOT)
+        self.assertEqual(problems, [], "\n".join(problems))
+
+    def test_every_measured_head_is_REACHABLE_FROM_MAIN_and_not_just_a_commit(self):
+        """The failure this rule was written for, and it was found by CI rather than by me.
+
+        The five measured heads first named `9659281` — the branch commit the suites actually ran on.
+        This repository squash-merges and deletes the branch, so that commit exists in the clone that
+        made it and in no other: every local run passed and every CI job refused, which is the
+        "works on my machine" asymmetry in its purest form. The squash commit `9cc4d2c` has a
+        byte-identical tree, so the measurement holds there and a fresh checkout can resolve it.
+        """
+        claims = json.loads(
+            (ROOT / "config" / "counted-claims.json").read_text(encoding="utf-8"))["claims"]
+        base = m.main_ref(ROOT)
+        if base is None:
+            self.skipTest("no main ref in this checkout, so reachability cannot be measured")
+        checked = 0
+        for name, claim in sorted(claims.items()):
+            head = (claim.get("measured") or {}).get("head")
+            if not head:
+                continue
+            checked += 1
+            with self.subTest(claim=name):
+                self.assertEqual(
+                    m.git(ROOT, "merge-base", "--is-ancestor", head, base)[0], 0,
+                    f"{name}: measured.head {head} is not reachable from {base} — a fresh clone "
+                    f"cannot check this provenance")
+        self.assertGreaterEqual(checked, 3, "no measured heads were checked, so this proves nothing")
+
+    def test_this_repositorys_declaration_covers_both_kinds(self):
+        """A declaration that only held un-derivable claims would pass while checking nothing the
+        tree can contradict."""
+        claims = json.loads(
+            (ROOT / "config" / "counted-claims.json").read_text(encoding="utf-8"))["claims"]
+        derived = [k for k, v in claims.items() if v.get("derive")]
+        measured = [k for k, v in claims.items() if not v.get("derive")]
+        self.assertGreaterEqual(len(derived), 3, derived)
+        self.assertGreaterEqual(len(measured), 3, measured)
+
+
 if __name__ == "__main__":
     unittest.main()

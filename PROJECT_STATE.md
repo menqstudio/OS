@@ -12,9 +12,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #276 · branch `t105/one-bounded-accept`** (base `main`, tip `bd3fd27`, task T-105).
+> **⏭️ CURRENT ACTIVE: PR #277 · branch `t106/counted-claims`** (base `main`, tip `9cc4d2c`, task T-106).
 >
-> A peer could hold the signer's accept loop forever; two of five servers already refused that
+> The gate asked for a declaration of the counted claims, and nobody wrote it
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -42,8 +42,8 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 
 | Windows, 2026-09-20 | |
 |---|---|
-| engine (Python) | 2205 OK, 97 skipped |
-| frontend | typecheck clean, 781 / 82 files |
+| engine (Python) | 2243 OK; skips are per-environment |
+| frontend | typecheck clean, 794 / 84 files |
 | `tools/` self-tests | 1169 OK |
 | **Debian, 2026-09-01** | |
 | Rust, 10 crates | 1149 passed |

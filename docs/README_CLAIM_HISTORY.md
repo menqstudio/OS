@@ -371,6 +371,22 @@ said, and what it was not filled with. `Landed at` means landed.
 | `75fca65` | 89 → **91** pull requests, 257 → **261** files, 49,977 → **50,787** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
 | `a94513e` | **Phase 2 closed, 11/11** — the roadmap figure said *"PHASES 1–10 — ALL PARTLY BUILT"* and seven of eleven now have every box ticked; the sheet draws each phase's own count and its alt text was re-written with it | `grep -c '^- \[x\]' docs/roadmap/phase-*.md` against `grep -c '^- \[ \]'` |
 | `a94513e` | 91 → **96** pull requests, 261 → **281** files, 50,787 → **53,749** inserted lines since `5cf9b8c` | `git diff --shortstat 5cf9b8c..HEAD` |
+| `9cc4d2c` | engine suite 2205 → **2243**, and the SKIP COUNT taken out of four documents rather than re-guessed — one head skips **14 / 82 / 97** in three environments, so it is not a property of the code or even of the platform | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q`, run on the ubuntu runner, the windows runner and the Builder's box |
+| `9cc4d2c` | frontend 781 → **794** tests, 82 → **84** files. `CLAUDE.md` was further behind still, at 764 / 80, and its engine line at 2124 / 10 skipped | `cd apps/desktop && npm ci && npm test` |
+| `9cc4d2c` | the counted claims are **declared** now — `config/counted-claims.json`, ten of them | `python tools/check_doc_claims.py` |
+
+**Half of this table is now a gate, and the half that is not says why.** §4g named the gap and this
+section was the workaround: no gate read the counted claims, so a person had to re-measure. That
+lasted four audit rounds. `config/counted-claims.json` closes the half a gate can close — five claims
+are RECOUNTED from the tree on every run (gate scripts, workflow files, specialist definitions,
+frontend test FILES, `ci.yml` jobs), and a wrong number in a cited document is RED by name. The other
+five need a suite to RUN, which a gate must not do, so what is enforced for them is provenance: an
+environment, a date and a head. `check_doc_claims`'s own docstring had asked for exactly this file,
+while carrying two stale numbers inside the sentence that asked.
+
+This row is also the rule above working as intended. The numbers moved across `#272`–`#276`; none of
+those pull requests could name a head at which its own figures held, so the front page was left alone
+and re-trued here, against `9cc4d2c` — the head that actually landed.
 
 **Three landings paid at once, which is what the rule is for.** #244, #245 and #246 each moved a counted number and each deliberately left the page alone. Re-truing after every one would have meant three pull requests whose only content was arithmetic; the rule says name the head the numbers hold at, and `6c59a67` is the head all three hold at. The artwork in §8 landed in the same commit because it belongs to the same page.
 

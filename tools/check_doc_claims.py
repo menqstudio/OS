@@ -55,10 +55,17 @@ its numbers were stale or false. See `docs/README_CLAIM_HISTORY.md` §6.
 
 What this deliberately does NOT do: judge prose. It cannot tell whether a sentence
 describing a design is still true — only a reader can. It checks the claims that have a
-machine-checkable referent, which is the class that produced every defect above. It also
-does not check the front page's COUNTED claims — 2143 engine tests, 39 gate scripts — which
-need a declaration mapping each to the command that prints it. §5 of the claim history is
-still where that drift is caught by hand.
+machine-checkable referent, which is the class that produced every defect above.
+
+COUNTED claims are now one of those. This paragraph used to end "It also does not check the
+front page's COUNTED claims — 2143 engine tests, 39 gate scripts — which need a declaration
+mapping each to the command that prints it. §5 of the claim history is still where that
+drift is caught by hand." It was caught by hand, four audit rounds running — and that
+sentence's own two examples had themselves gone stale (the tree has 2243 and 42). So the
+declaration it asked for exists: `config/counted-claims.json`, enforced below. What a gate
+can recompute in milliseconds it recomputes; what needs a suite to RUN it cannot check, so
+for those it enforces PROVENANCE — an environment, a date, a head — and that every document
+citing the number carries the current one and not a superseded one.
 
 Stdlib plus `git`. Offline. Exit 0 GREEN, 1 RED.
 """
@@ -306,6 +313,172 @@ def known_tickets() -> set[str]:
     return ids
 
 
+# --------------------------------------------------------------------------------------
+# Counted claims (config/counted-claims.json)
+# --------------------------------------------------------------------------------------
+
+COUNTED_CLAIMS = pathlib.Path("config/counted-claims.json")
+
+#: A claim the gate can recount. Anything else must instead say WHERE its number came from.
+DERIVE_KINDS = ("glob", "yaml_block_keys")
+
+
+def _count_glob(root: pathlib.Path, spec: str) -> int:
+    """Count files matching one or more `|`-separated glob patterns."""
+    total = 0
+    for pattern in spec.split("|"):
+        pattern = pattern.strip()
+        if not pattern:
+            continue
+        total += sum(1 for p in root.glob(pattern) if p.is_file())
+    return total
+
+
+def _count_yaml_block_keys(root: pathlib.Path, spec: str) -> int:
+    """Count the keys ONE level inside a top-level YAML block, without a YAML parser.
+
+    Scoped on purpose. This gate is stdlib-plus-git and the job that runs it installs nothing, so a
+    `jobs:` count cannot import yaml — and the whole-file "count 2-space-indented keys" shortcut the
+    README warns about answers 23 for ci.yml, because `push:` and `pull_request:` sit at that indent
+    under `on:`. Counting only INSIDE the named block is what makes the shortcut correct.
+    """
+    rel, key = spec.rsplit(":", 1)
+    try:
+        lines = (root / rel).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return -1
+    inside = False
+    seen = 0
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[:1].isspace():                       # a column-0 key ends or opens a block
+            inside = line.split(":", 1)[0].strip() == key
+            continue
+        if inside and re.match(r"^  [^\s#][^:]*:", line):
+            seen += 1
+    return seen
+
+
+def counted_claim_failures(root: pathlib.Path) -> list[str]:
+    """Every counted claim in the canon, checked the strongest way available for its kind."""
+    path = root / COUNTED_CLAIMS
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # ABSENT IS NOT A PROBLEM, and the asymmetry with the read manifest is the same one already
+        # argued for `ALSO_CHECKED` above: `main(root)` is called on synthetic roots by this gate's
+        # own tests, where a missing declaration is not a defect of anything. Requiring it here
+        # turned nineteen tests red whose subject was something else entirely.
+        #
+        # Absent is not SILENT, though. The verdict line prints `0 counted`, so a reader can see the
+        # declaration was not read, and `test_the_real_repository_declares_its_counted_claims` fails
+        # BY NAME if the file ever leaves the real tree. A silent skip would hand back exactly the
+        # guarantee this check exists to add.
+        return []
+    except ValueError as exc:
+        return [f"{COUNTED_CLAIMS.as_posix()} is malformed: {exc}"]
+
+    claims = blob.get("claims")
+    if not isinstance(claims, dict) or not claims:
+        return [f"{COUNTED_CLAIMS.as_posix()}: 'claims' must be a non-empty object"]
+
+    problems: list[str] = []
+    for name, claim in sorted(claims.items()):
+        where = f"{COUNTED_CLAIMS.as_posix()} `{name}`"
+        if not isinstance(claim, dict):
+            problems.append(f"{where}: must be an object")
+            continue
+        value = claim.get("value")
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            problems.append(f"{where}: `value` must be a non-negative integer; got {value!r}")
+            continue
+        if not isinstance(claim.get("command"), str) or not claim["command"].strip():
+            problems.append(f"{where}: `command` must name the command that PRINTS this number — a "
+                            f"claim a reader cannot reproduce is not a measurement.")
+
+        derive = claim.get("derive")
+        if derive is not None:
+            if not isinstance(derive, dict) or len(derive) != 1:
+                problems.append(f"{where}: `derive` must be an object with exactly one of "
+                                f"{list(DERIVE_KINDS)}")
+            else:
+                (kind, spec), = derive.items()
+                if kind not in DERIVE_KINDS:
+                    problems.append(f"{where}: derive kind {kind!r} not in {list(DERIVE_KINDS)}")
+                else:
+                    actual = (_count_glob(root, spec) if kind == "glob"
+                              else _count_yaml_block_keys(root, spec))
+                    if actual != value:
+                        problems.append(
+                            f"{where}: declares {value} but the tree has {actual} "
+                            f"({kind} {spec!r}). This one is RECOUNTED every run, so it is not a "
+                            f"judgement call: fix the number, and the documents that repeat it.")
+        else:
+            measured = claim.get("measured")
+            if not isinstance(measured, dict):
+                problems.append(
+                    f"{where}: no `derive`, so it needs `measured` — a number a gate cannot recount "
+                    f"must at least say where it came from.")
+            else:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(measured.get("date", ""))):
+                    problems.append(f"{where}: `measured.date` must be YYYY-MM-DD; got "
+                                    f"{measured.get('date')!r}")
+                head = str(measured.get("head", ""))
+                if not re.fullmatch(r"[0-9a-f]{7,40}", head):
+                    problems.append(f"{where}: `measured.head` must be 7-40 hex; got {head!r}")
+                elif git(root, "cat-file", "-e", head + "^{commit}")[0] != 0:
+                    problems.append(f"{where}: `measured.head` {head} is not a commit in this "
+                                    f"repository.")
+                else:
+                    # REACHABLE FROM `main`, not merely present. This repository squash-merges and
+                    # deletes the branch, so the commit a measurement actually RAN on exists in the
+                    # Builder's clone and nowhere else. These five heads first named `9659281`, the
+                    # branch commit; every CI job refused it while every local run passed, which is
+                    # the "works on my machine" asymmetry in its purest form. The squash commit has
+                    # the same tree, so the honest citation is the one a fresh clone can resolve.
+                    base = main_ref(root)
+                    if base and git(root, "merge-base", "--is-ancestor", head, base)[0] != 0:
+                        problems.append(
+                            f"{where}: `measured.head` {head} is a commit but is NOT reachable from "
+                            f"{base}. A branch commit resolves in the clone that made it and in no "
+                            f"other, so a fresh checkout — every CI job — cannot check this "
+                            f"provenance. Cite the commit that LANDED; after a squash merge its tree "
+                            f"is the same one you measured.")
+                envs = measured.get("environments")
+                if not isinstance(envs, dict) or not envs:
+                    problems.append(
+                        f"{where}: `measured.environments` must name at least one environment. A "
+                        f"count with no environment beside it is how three canonical files came to "
+                        f"state one skip number as fact where the same head skips 14, 82 and 97.")
+
+        cited = claim.get("cited_in")
+        if not isinstance(cited, list) or not cited:
+            problems.append(f"{where}: `cited_in` must list the documents that carry this number")
+            continue
+        superseded = claim.get("superseded") or []
+        if value in superseded:
+            problems.append(f"{where}: {value} is both the value and superseded")
+        for rel in cited:
+            doc = root / str(rel)
+            try:
+                body = doc.read_text(encoding="utf-8")
+            except OSError:
+                problems.append(f"{where}: cites {rel}, which cannot be read")
+                continue
+            if not re.search(rf"(?<!\d){value}(?!\d)", body):
+                problems.append(
+                    f"{where}: {rel} does not contain {value}. Either the document is stale or it "
+                    f"never carried this claim — one of the two has to change.")
+            for old in superseded:
+                if re.search(rf"(?<!\d){old}(?!\d)", body):
+                    problems.append(
+                        f"{where}: {rel} still contains the superseded value {old}. The current "
+                        f"number is {value}; old numbers belong in docs/README_CLAIM_HISTORY.md, "
+                        f"which is deliberately not cited here.")
+    return problems
+
+
 def main(root: pathlib.Path = ROOT) -> int:
     try:
         paths = json.loads((root / MANIFEST_REL).read_text(encoding="utf-8"))["paths"]
@@ -522,6 +695,15 @@ def main(root: pathlib.Path = ROOT) -> int:
                     f"{rel}:{n}: holds control character(s) {names}, which a rendered diff, a "
                     f"terminal and a review all show as nothing. A shell ate a backslash and "
                     f"left what it names")
+
+    # 6 — the COUNTED claims, from the declaration this gate's docstring used to say it lacked.
+    #     Recounted where the tree can be counted; provenance-checked where a suite has to run.
+    problems.extend(counted_claim_failures(root))
+    try:
+        checked["counted"] = len(
+            json.loads((root / COUNTED_CLAIMS).read_text(encoding="utf-8"))["claims"])
+    except (OSError, ValueError, KeyError):
+        checked["counted"] = 0
 
     if problems:
         print("RED: canonical documents make claims that are not true\n")
