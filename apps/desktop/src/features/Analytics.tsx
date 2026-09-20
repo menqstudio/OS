@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
-import { Button, Skeleton, ErrorState, EmptyState } from '../components/ui';
+import { Button, Skeleton, ErrorState, EmptyState, usePrefersReducedMotion, useEasedCountUp } from '../components/ui';
 import { BarChart } from '../components/charts/Chart';
 import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
@@ -49,43 +49,11 @@ function DeckChrome() {
   );
 }
 
-// --- prefers-reduced-motion, live ---------------------------------------------
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState<boolean>(
-    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener?.('change', onChange);
-    return () => mq.removeEventListener?.('change', onChange);
-  }, []);
-  return reduced;
-}
-
-// --- count-up on a REAL integer (the mockup's `init()` count animation, ported).
-// Honesty: only ever counts up to the true value; reduced motion jumps to it.
-function useCountUp(value: number, reduced: boolean): number {
-  const [shown, setShown] = useState<number>(reduced ? value : 0);
-  useEffect(() => {
-    if (reduced) { setShown(value); return; }
-    let raf = 0;
-    let start = 0;
-    const dur = 900;
-    const step = (ts: number) => {
-      if (!start) start = ts;
-      const p = Math.min(1, (ts - start) / dur);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setShown(Math.round(value * eased));
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [value, reduced]);
-  return shown;
-}
+// Both hooks this file used to define privately now come from `components/ui`: its
+// `useReducedMotion` was a near-copy of the exported `usePrefersReducedMotion`, and its `useCountUp`
+// was a third function of that name whose second parameter meant the OPPOSITE of the other two's.
+// The eased 900 ms curve it introduced is kept, as `useEasedCountUp`, with the flag turned the right
+// way round — the call site below passes `!reduced`.
 
 // --- the distribution plot: the shared accessible BarChart over real metrics --
 // Delegates to the library `BarChart` (horizontal bars + focusable legend + share%
@@ -258,8 +226,8 @@ export function Analytics() {
   // The deck total follows the CUT, not the whole set: a number that ignores the control
   // right above it is the page contradicting itself.
   const total = metrics.reduce((sum, m) => sum + m.value, 0);
-  const reduced = useReducedMotion();
-  const totalShown = useCountUp(total, reduced);
+  const reduced = usePrefersReducedMotion();
+  const totalShown = useEasedCountUp(total, !reduced);
   const denied = s.error ? /denied|not permitted|permission|blocked|forbidden/i.test(s.error) : false;
 
   // Header posture from the REAL read state. `live`/green is unreachable: the page has
