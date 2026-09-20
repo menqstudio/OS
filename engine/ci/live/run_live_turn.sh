@@ -98,11 +98,49 @@ install -m 0755 "$DRIVER_BIN" "$BIN/live_turn"; chown 0:0 "$BIN/live_turn"
 LAUNCHER_SHA=$(sha256sum "$TCB/privileged-launcher.bin" | cut -d' ' -f1)
 EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 
+# ----- optional EXTERNAL root anchor (the two-phase ceremony, T-108) --------------------------------
+# UNSET, this block does nothing: the array stays empty and the invocation below is exactly the one
+# this script has always made — the kit mints its own root and reports `kit_generated`.
+#
+# SET, it passes the five flags `provision_keys.py` needs to consume a manifest an OFFLINE root signed.
+# That is the path the F-17 note further down has described since it was written, while this script
+# offered no way to take it: its one call site carried five arguments and none of the anchor flags.
+#
+# ALL FIVE OR NONE. Four flags without `--keys-in` provisions FRESH keys the signed manifest cannot
+# name — the ordering impossibility T-108 closed — and a run that quietly fell back to `kit_generated`
+# while its environment asked for an external root would be worse than a refusal.
+ANCHOR_VARS="BROPS_KEYS_IN BROPS_ROOT_ANCHOR_KEY_ID BROPS_ROOT_ANCHOR_PUB_HEX BROPS_MANIFEST_IN BROPS_MANIFEST_SIG_IN"
+ANCHOR_ARGS=()
+ANCHOR_SET=""
+for v in $ANCHOR_VARS; do
+  [ -n "${!v:-}" ] && ANCHOR_SET="$ANCHOR_SET $v"
+done
+if [ -n "$ANCHOR_SET" ]; then
+  for v in $ANCHOR_VARS; do
+    [ -n "${!v:-}" ] || {
+      echo "FAIL: an external root anchor needs ALL of: $ANCHOR_VARS"
+      echo "      set:$ANCHOR_SET"
+      echo "      missing: $v"
+      echo "      Run provision_keys.py --emit-manifest first, sign those bytes with"
+      echo "      sign_manifest.py on the offline machine, then point BROPS_KEYS_IN at the same"
+      echo "      keys directory. Fresh keys can never be the ones an earlier signature names."
+      exit 1
+    }
+  done
+  ANCHOR_ARGS=(--keys-in "$BROPS_KEYS_IN" \
+               --root-anchor-key-id "$BROPS_ROOT_ANCHOR_KEY_ID" \
+               --root-anchor-pub-hex "$BROPS_ROOT_ANCHOR_PUB_HEX" \
+               --manifest-in "$BROPS_MANIFEST_IN" \
+               --manifest-sig-in "$BROPS_MANIFEST_SIG_IN")
+  echo "== EXTERNAL root anchor requested: $BROPS_ROOT_ANCHOR_KEY_ID =="
+fi
+
 # ----- keys + manifest + store + shared config -----------------------------------------------------
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   --launcher-sha "$LAUNCHER_SHA" --executor-sha "$EXECUTOR_SHA" \
   --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" --login-uid "$(id -u "${SUDO_USER:-root}")" \
+  ${ANCHOR_ARGS[@]+"${ANCHOR_ARGS[@]}"} \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
@@ -460,8 +498,23 @@ RESULT_LINE=$(echo "$OUT" | grep -E '^RESULT:' | tail -1)
 # manifest-resolved production key. Whether that is a PRODUCTION claim depends on who controls the
 # root anchor, and this kit generates its own — so the driver reports production_verified=false with
 # root_anchor=kit_generated, and the green condition below asserts exactly the property that was
-# actually demonstrated. Re-provision with --root-anchor-key-id/--root-anchor-pub-hex plus the
-# externally-signed manifest and the same run reports root_anchor=external production_verified=true.
+# actually demonstrated.
+#
+# THAT IS NOW REACHABLE FROM HERE, and until 2026-09-20 it was not: this note described re-provisioning
+# with the anchor flags while the only call site above passed none of them, and `provision_keys.py`
+# minted fresh keys on every run so no offline signature could ever name them. Both are fixed. Export
+# the five BROPS_* variables at the top of this file and the same run reports root_anchor=external:
+#
+#   python3 engine/ci/live/provision_keys.py --root-dir "$LIVE" \
+#       --launcher-sha <sha> --executor-sha <sha> --emit-manifest /media/root/manifest.json
+#   # ...on the AIRGAPPED machine that holds the root private:
+#   python3 engine/ci/live/sign_manifest.py --manifest /media/root/manifest.json \
+#       --root-seed /media/root/root.private.seed --sig-out /media/root/manifest.sig \
+#       --expect-pub <the hex pinned in broker/src/tcb.rs>
+#   # ...then here:
+#   export BROPS_KEYS_IN="$LIVE/keys" BROPS_ROOT_ANCHOR_KEY_ID=<id> \
+#          BROPS_ROOT_ANCHOR_PUB_HEX=<hex> BROPS_MANIFEST_IN=/media/root/manifest.json \
+#          BROPS_MANIFEST_SIG_IN=/media/root/manifest.sig
 # ----- NEGATIVE case: the F-08 store-input binding must actually REFUSE (remediation audit) ------
 # The four unit tests cited for F-08 covered the lease parser and the fd->pin map; the
 # digest-and-compare that IS F-08 had none, so deleting the enforcement left every suite green.

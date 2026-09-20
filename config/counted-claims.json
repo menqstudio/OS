@@ -48,7 +48,13 @@
     "has a BYTE-IDENTICAL tree (99130a751fc1e6a0277184efb595708b7814aae8, checked both ways), so the",
     "measurement holds there and that head is durable. The check below now requires reachability from",
     "`main` rather than mere existence, because 'resolves in my clone' is exactly the asymmetry that",
-    "turned this file red on its first CI run."
+    "turned this file red on its first CI run.",
+    "",
+    "THE HEADS NAME DIFFERENT COMMITS ON PURPOSE. `engine_tests` moved 2243 -> 2259 in #279, and that",
+    "pull request could not declare it: a value measured on a branch cannot cite a landed head, because",
+    "the head does not exist until it merges. So the three-environment comparison stays labelled with",
+    "the head it was actually measured at (9cc4d2c) and the new count carries its own. Restating the",
+    "ubuntu and windows figures at d09661c would be inventing two measurements nobody took."
   ],
   "claims": {
     "gate_scripts": {
@@ -105,22 +111,26 @@
       ]
     },
     "engine_tests": {
-      "value": 2243,
+      "value": 2259,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
         "date": "2026-09-20",
-        "head": "9cc4d2c",
+        "head": "d09661c",
         "environments": {
-          "ubuntu-latest (CI)": {
+          "builder's Windows box @ d09661c": {
+            "ran": 2259,
+            "skipped": 97
+          },
+          "ubuntu-latest (CI) @ 9cc4d2c": {
             "ran": 2243,
             "skipped": 14
           },
-          "windows-latest (CI)": {
+          "windows-latest (CI) @ 9cc4d2c": {
             "ran": 2243,
             "skipped": 82
           },
-          "builder's Windows box": {
+          "builder's Windows box @ 9cc4d2c": {
             "ran": 2243,
             "skipped": 97
           }
@@ -140,7 +150,8 @@
         2200,
         2205,
         2216,
-        2242
+        2242,
+        2243
       ]
     },
     "bridge_tests": {
