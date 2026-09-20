@@ -111,16 +111,20 @@
       ]
     },
     "engine_tests": {
-      "value": 2259,
+      "value": 2299,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
-        "date": "2026-09-20",
-        "head": "d09661c",
+        "date": "2026-09-21",
+        "head": "1cd1940",
         "environments": {
-          "builder's Windows box @ d09661c": {
-            "ran": 2259,
+          "builder's Windows box @ 1cd1940": {
+            "ran": 2299,
             "skipped": 97
+          },
+          "Debian 13 (trixie) WSL2, non-root account @ 1cd1940": {
+            "ran": 2299,
+            "skipped": 17
           },
           "ubuntu-latest (CI) @ 9cc4d2c": {
             "ran": 2243,
@@ -129,10 +133,6 @@
           "windows-latest (CI) @ 9cc4d2c": {
             "ran": 2243,
             "skipped": 82
-          },
-          "builder's Windows box @ 9cc4d2c": {
-            "ran": 2243,
-            "skipped": 97
           }
         }
       },
@@ -151,7 +151,8 @@
         2205,
         2216,
         2242,
-        2243
+        2243,
+        2259
       ]
     },
     "bridge_tests": {
@@ -240,7 +241,7 @@
       ]
     },
     "tasks_archive_2026_09_rows": {
-      "value": 50,
+      "value": 51,
       "command": "grep -cE '^\\| \\*\\*T-[0-9]+\\*\\*' docs/archive/TASKS_ARCHIVE_2026-09.md",
       "derive": {
         "line_regex": "docs/archive/TASKS_ARCHIVE_2026-09.md::^\\| \\*\\*T-\\d+\\*\\*"

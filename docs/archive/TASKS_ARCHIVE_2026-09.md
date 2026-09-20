@@ -13,7 +13,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-50 of these and their pull requests. What is here is the account of each defect, which is
+51 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means. That sentence said `38` from the day twelve more rows were added
 under it until 2026-09-21; the count is now a declared claim in
 [`config/counted-claims.json`](../../config/counted-claims.json), recounted on every run, so it
@@ -73,3 +73,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-108** | **`trusted_verified` was unreachable on Linux by construction; it is not now** - the ceremony is two phases, the kit verifies the signature AND that the manifest names its keys, and no root private touches the serving box ◑ | Bro | Review | merged `#279` |
 | **T-109** | **The orchestrator can pass the anchor it has described since it was written** - five env vars, all-or-none, byte-identical when unset; plus the first `bash -n` gate this tree has had, and the engine count re-trued at the head it landed on ◑ | Bro | Review | merged `#281` |
 | **T-110** | **Nothing in the tree had ever run the `brops-broker` binary** - the first integration test spawns it over a real AF_UNIX socket and pins the fail-closed refusal, the peer check and that one bad peer cannot wedge the loop ◑ | Bro | Review | merged `#282` |
+| **T-111** | **Nothing in the tree had ever written a `$BROPS_BROKER_CONFIG` document** - the writer for a real deployment, with the broker's own 25-key read set, the §2.5 roster and the four `sidecar` rules mirrored and BOUND to the Rust that defines them; 8 mutants, 8 named deaths ◑ | Bro | Review | merged `#283` |
