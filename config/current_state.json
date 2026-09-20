@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "b39b087bdce462f45259e0eb96055d680616471a",
+  "settled_at_main_head": "d09661c57f12ebdbead28048acaa4d368ca5e0a8",
   "sync": {
-    "baseline_main_head_at_sync": "b39b087bdce462f45259e0eb96055d680616471a",
-    "snapshot_branch": "t108/two-phase-root-ceremony",
+    "baseline_main_head_at_sync": "d09661c57f12ebdbead28048acaa4d368ca5e0a8",
+    "snapshot_branch": "t109b/anchor-passthrough",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t108/two-phase-root-ceremony"
+    "branch": "t109b/anchor-passthrough"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 279,
-    "branch": "t108/two-phase-root-ceremony",
+    "number": 281,
+    "branch": "t109b/anchor-passthrough",
     "state": "open",
-    "what": "provision_keys.py minted the serving keys fresh every run while an externally signed manifest had to name them, so no offline signature could ever match. Phase 1 (--emit-manifest) mints and emits the canonical bytes; sign_manifest.py signs them with the offline root; phase 2 (--keys-in) reuses those keys and refuses unless the signature verifies AND the manifest names them. External mode no longer writes a root private key onto the serving box.",
-    "note": "trusted_verified was unreachable on Linux by construction; it is not now",
+    "what": "run_live_turn.sh told the reader to re-provision with the anchor flags while its one provision_keys.py call site passed none of them. Five BROPS_* env vars now pass through, all-or-none: unset the invocation is byte-identical, a partial set refuses by name. Adds the first bash -n gate over engine/ci/live/*.sh, and re-trues engine_tests 2243 to 2259 at d09661c per README_CLAIM_HISTORY section 5.",
+    "note": "The orchestrator can pass the external anchor it has described since it was written",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #279 (t108/two-phase-root-ceremony), task T-108: provision_keys.py minted the serving keys fresh every run while an externally signed manifest had to name them, so no offline signature could ever match. Phase 1 (--emit-manifest) mints and emits the canonical bytes; sign_manifest.py signs them with the offline root; phase 2 (--keys-in) reuses those keys and refuses unless the signature verifies AND the manifest names them. External mode no longer writes a root private key onto the serving box. Next: Re-true engine_tests 2243 to 2259 in config/counted-claims.json at the head this lands on, per README_CLAIM_HISTORY section 5. Then pieces 3-6.",
-    "_note": "The carrier is current_workflow_pr (#279 on t108/two-phase-root-ceremony). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #281 (t109b/anchor-passthrough), task T-109: run_live_turn.sh told the reader to re-provision with the anchor flags while its one provision_keys.py call site passed none of them. Five BROPS_* env vars now pass through, all-or-none: unset the invocation is byte-identical, a partial set refuses by name. Adds the first bash -n gate over engine/ci/live/*.sh, and re-trues engine_tests 2243 to 2259 at d09661c per README_CLAIM_HISTORY section 5. Next: Piece 4 depends on F5: nothing in the tree spawns the brops-broker binary, so a pin manifest for it would measure a file nobody runs.",
+    "_note": "The carrier is current_workflow_pr (#281 on t109b/anchor-passthrough). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "b39b087bdce462f45259e0eb96055d680616471a",
+      "head": "d09661c57f12ebdbead28048acaa4d368ca5e0a8",
       "conclusion": "success",
-      "run_id": 35529338488,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at b39b087, run 35529338488."
+      "run_id": 35531067500,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at d09661c, run 35531067500."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
