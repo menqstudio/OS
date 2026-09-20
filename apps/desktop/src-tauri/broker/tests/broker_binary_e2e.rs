@@ -128,7 +128,12 @@ fn the_binary_binds_serves_one_governed_turn_and_refuses_it_fail_closed() {
     // The correlation ids come back, which is what makes a reply attributable to a request.
     assert_eq!(reply["client_request_id"], CRID_ONE);
     assert_eq!(reply["conversation_id"], "conv-e2e-1");
-    assert_eq!(reply["protocol"], "brops.renderer-governed-turn.v1");
+    // The REPLY protocol is not the request's. I assumed it was, and CI's first compile of this file
+    // caught it: `REQUEST_PROTOCOL` is `brops.renderer-governed-turn.v1`, `RESULT_PROTOCOL`
+    // (governed_turn_ipc.rs:27) is `brops.renderer-governed-turn-result.v1`. They are deliberately
+    // distinct so a request frame can never be replayed as a reply, and the assertion is worth keeping
+    // for exactly that reason.
+    assert_eq!(reply["protocol"], "brops.renderer-governed-turn-result.v1");
     assert!(
         reply["broker_turn_id"].as_str().is_some_and(|s| !s.is_empty()),
         "the broker mints its own turn id: {reply}"
