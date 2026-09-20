@@ -137,6 +137,26 @@ DESKTOP_GOVERNED_SOURCE = Prerequisite(
     "engine tree (deployment Step 6 copies engine/ only)",
 )
 
+#: The three Rust sources that DEFINE what a `$BROPS_BROKER_CONFIG` document must contain: the read
+#: set (`preflight.rs`), the §2.5 roster (`tcb_integrity.rs`) and the `sidecar` block's rules
+#: (`governed_sidecar.rs`). `engine/ci/live/write_broker_config.py` mirrors all three, and
+#: `test_live_broker_config.py` holds the mirrors against these files — so the mirrors are only bound
+#: where the files are present, and this prerequisite is what says so out loud.
+DESKTOP_BROKER_CONTRACT_SOURCE = Prerequisite(
+    "apps/desktop broker-config contract source",
+    lambda: all(
+        (REPO_ROOT / "apps" / "desktop" / "src-tauri" / rel).is_file()
+        for rel in (
+            "broker/src/preflight.rs",
+            "core/src/tcb_integrity.rs",
+            "core/src/governed_sidecar.rs",
+        )
+    ),
+    "apps/desktop/src-tauri/{broker/src/preflight.rs, core/src/tcb_integrity.rs, "
+    "core/src/governed_sidecar.rs} are not present beside the engine tree (deployment "
+    "Step 6 copies engine/ only)",
+)
+
 BRIDGE_SIDECAR = Prerequisite(
     "bridge sidecar",
     lambda: (REPO_ROOT / "bridge" / "engine_sidecar.py").is_file(),

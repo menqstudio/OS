@@ -814,6 +814,60 @@ class CountedClaimTests(unittest.TestCase):
                                       "cited_in": ["d.md"]}}, {"d.md": "1"})
         self.assertTrue(any("derive kind 'wishes'" in p for p in problems), problems)
 
+    # ---- line_regex: the kind a TABLE ROW needed ------------------------------------------------
+
+    def _rows(self, value, spec, body, doc=None):
+        return self._write(
+            {"rows": {"value": value, "command": "grep -c", "derive": {"line_regex": spec},
+                      "cited_in": ["d.md"]}},
+            {"d.md": doc if doc is not None else str(value), "t.md": body})
+
+    def test_matching_lines_of_one_file_are_counted(self):
+        """The claim this kind was added for: `docs/archive/TASKS_ARCHIVE_2026-09.md`'s header said it
+        held 38 rows on the day it held fifty, and neither `glob` nor `yaml_block_keys` can count a
+        table row."""
+        body = ("| ID | Task |\n|----|------|\n"
+                "| **T-001** | one |\n| **T-002** | two |\n"
+                "not a row\n| **T-110** | three |\n")
+        self.assertEqual(self._rows(3, r"t.md::^\| \*\*T-\d+\*\*", body), [])
+
+    def test_a_line_regex_that_disagrees_is_refused_and_says_so(self):
+        body = "| **T-001** | one |\n"
+        problems = self._rows(9, r"t.md::^\| \*\*T-\d+\*\*", body)
+        self.assertTrue(any("declares 9 but the tree has 1" in p for p in problems), problems)
+
+    def test_the_header_separator_is_not_counted_as_a_row(self):
+        """`|----|------|` is a table line and is not a row. A pattern loose enough to match it would
+        overcount by one forever, and the number would still look measured."""
+        body = "| ID | Task |\n|----|------|\n| **T-001** | one |\n"
+        self.assertEqual(self._rows(1, r"t.md::^\| \*\*T-\d+\*\*", body), [])
+
+    def test_a_file_that_is_not_there_is_a_MISMATCH_not_a_pass(self):
+        """The failure mode that matters: a moved or renamed file must not turn a recounted claim into
+        a silent zero-agrees-with-nothing. `-1` can equal no declared count."""
+        problems = self._rows(0, r"gone.md::^x", "")
+        self.assertTrue(any("the tree has -1" in p for p in problems), problems)
+
+    def test_a_spec_without_the_separator_is_a_mismatch(self):
+        problems = self._rows(0, r"t.md", "whatever\n")
+        self.assertTrue(any("the tree has -1" in p for p in problems), problems)
+
+    def test_an_invalid_pattern_is_a_mismatch_rather_than_a_crash(self):
+        """A bad regex must be reported as an uncountable claim, not raise out of the gate: a gate
+        that crashes on one malformed entry reports nothing about the other nine."""
+        problems = self._rows(0, "t.md::(unclosed", "whatever\n")
+        self.assertTrue(any("the tree has -1" in p for p in problems), problems)
+
+    def test_the_real_archive_row_count_is_the_one_declared(self):
+        """Not a fixture: the actual claim, against the actual file. This is the assertion that turns
+        red the next time a row is archived and the header is not re-trued."""
+        root = pathlib.Path(m.__file__).resolve().parents[1]
+        blob = json.loads((root / "config" / "counted-claims.json").read_text(encoding="utf-8"))
+        claim = blob["claims"]["tasks_archive_2026_09_rows"]
+        (kind, spec), = claim["derive"].items()
+        self.assertEqual(kind, "line_regex")
+        self.assertEqual(m._count_line_regex(root, spec), claim["value"])
+
     # ---- the `on:` trap -----------------------------------------------------------------------
 
     def test_the_job_count_is_scoped_to_the_jobs_block(self):

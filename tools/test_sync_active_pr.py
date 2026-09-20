@@ -196,6 +196,153 @@ class BannerLocationTests(unittest.TestCase):
             self.assertEqual(text.count(sap.BANNER_OPEN), 1)
 
 
+class ProjectStateDateTests(unittest.TestCase):
+    """This tool edits a DATED file, so it moves the date — the omission that reddened `main`.
+
+    Measured on 2026-09-21. `rewrite_banners` had written PROJECT_STATE.md on every run since it was
+    written and had never touched its `**Last updated:**` line. `check_coordination`'s rule is not a
+    calendar comparison — it refuses when the newest commit that touched the file left that line at
+    its parent's value, which is the Startup Law — so every pull request had been passing on luck: the
+    line's date happened to equal the merge commit's date. The squash that merged `#282` was committed
+    at 00:06 local on the 21st while the line said the 20th, and `main` went red on two jobs AFTER the
+    merge, where the only fix is another merge.
+    """
+
+    def setUp(self):
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        self._real_root = sap.ROOT
+        sap.ROOT = self.root
+        self.addCleanup(lambda: setattr(sap, "ROOT", self._real_root))
+        self.state = self.root / "PROJECT_STATE.md"
+
+    def write(self, line: str) -> None:
+        self.state.write_text(
+            "# PROJECT_STATE\n\n" + line + "\nsecond line of the same paragraph.\n\n"
+            + sap.BANNER_OPEN + "\nold banner\n" + sap.BANNER_CLOSE + "\n\n## Body\n",
+            encoding="utf-8")
+
+    def other_banner_files(self) -> None:
+        for name in sap.BANNER_FILES:
+            if name == "PROJECT_STATE.md":
+                continue
+            (self.root / name).write_text(
+                "# T\n\n" + sap.BANNER_OPEN + "\nold\n" + sap.BANNER_CLOSE + "\n", encoding="utf-8")
+
+    def test_the_date_moves_to_the_day_it_is_run(self):
+        import datetime as dt
+        self.write("**Last updated · Վերջին թարմացում:** 2026-09-20 — 49 merged, `main` at `2045830`.")
+        moved = sap.refresh_project_state_date(dt.date(2026, 9, 21))
+        self.assertEqual(moved, "2026-09-21")
+        self.assertIn("2026-09-21 — 49 merged", self.state.read_text(encoding="utf-8"))
+
+    def test_only_the_date_is_replaced(self):
+        """The prose after the date is the state's own summary, and the label is bilingual. A tool
+        that rewrote the line rather than the date would delete both."""
+        import datetime as dt
+        self.write("**Last updated · Վերջին թարմացում:** 2026-09-20 — 49 merged, `main` at `2045830`.")
+        sap.refresh_project_state_date(dt.date(2026, 9, 21))
+        text = self.state.read_text(encoding="utf-8")
+        self.assertIn("**Last updated · Վերջին թարմացում:**", text)
+        self.assertIn("49 merged, `main` at `2045830`.", text)
+        self.assertIn("second line of the same paragraph.", text)
+        self.assertIn("## Body", text)
+        self.assertNotIn("2026-09-20", text)
+
+    def test_the_SAME_date_further_down_the_document_is_not_touched(self):
+        """Only the one date in the `Last updated` line moves — by OFFSET, not by string replacement.
+
+        This is the real file's shape: the paragraph that opens with today's date closes with
+        `Before: <yesterday>`, and after a run those two are one day apart. The day a run happens to
+        follow a state whose `Before:` names the same date, a `text.replace(old, new)` would silently
+        rewrite the history too, and the document would claim a previous state it never had.
+        """
+        import datetime as dt
+        self.state.write_text(
+            "# PROJECT_STATE\n\n"
+            "**Last updated:** 2026-09-20 — 49 merged.\n"
+            "Before: 2026-09-20 — `main` at `2045830`, a state this line must keep naming.\n\n"
+            + sap.BANNER_OPEN + "\nold\n" + sap.BANNER_CLOSE + "\n", encoding="utf-8")
+        sap.refresh_project_state_date(dt.date(2026, 9, 21))
+        text = self.state.read_text(encoding="utf-8")
+        self.assertIn("**Last updated:** 2026-09-21 — 49 merged.", text)
+        self.assertIn("Before: 2026-09-20 — `main` at `2045830`", text)
+
+    def test_a_second_run_on_the_same_day_changes_nothing(self):
+        import datetime as dt
+        self.write("**Last updated:** 2026-09-21 — already today.")
+        before = self.state.read_bytes()
+        self.assertIsNone(sap.refresh_project_state_date(dt.date(2026, 9, 21)))
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_missing_line_is_left_to_the_gate_to_report(self):
+        """No line ⇒ no invention. `check_coordination` reports the absence by name; a tool that
+        added one here would manufacture the very claim the gate exists to check."""
+        import datetime as dt
+        self.write("**Not the line at all:** nothing here.")
+        before = self.state.read_bytes()
+        self.assertIsNone(sap.refresh_project_state_date(dt.date(2026, 9, 21)))
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_line_carrying_no_iso_date_is_left_alone(self):
+        import datetime as dt
+        self.write("**Last updated:** recently, honestly.")
+        before = self.state.read_bytes()
+        self.assertIsNone(sap.refresh_project_state_date(dt.date(2026, 9, 21)))
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_rewriting_the_banners_moves_the_date_BY_CONSTRUCTION(self):
+        """The property, not the habit: the date moves because `rewrite_banners` does it, so a third
+        call site cannot be written that forgets. Mutant: move the call out to the two call sites in
+        `main()` ⇒ this fails while both of those still pass."""
+        import datetime as dt
+        self.write("**Last updated:** 2020-01-01 — stale by years.")
+        self.other_banner_files()
+        moved = sap.rewrite_banners("> **NEW**")
+        today = dt.date.today().isoformat()
+        self.assertEqual(moved, today)
+        text = self.state.read_text(encoding="utf-8")
+        self.assertIn(today, text)
+        self.assertIn("> **NEW**", text)
+        self.assertNotIn("2020-01-01", text)
+
+    def test_the_stamp_is_the_LOCAL_date_because_that_is_what_git_records(self):
+        """The bug this fix shipped with for one run, pinned.
+
+        The first version stamped `datetime.now(timezone.utc).date()`. On this `UTC+04:00` box at 00:30
+        local that is YESTERDAY, so the tool moved the line BACKWARDS and `check_coordination` — which
+        reads the commit's date as `%cs`, in the committer's own recorded timezone — went red on the
+        very thing the fix was for. Both sides have to be read off one clock.
+
+        A test that asserts nothing where UTC and local agree is not a weakness of the test: the two
+        differ for four hours of every day on this box, which is when the merges actually land.
+        """
+        import datetime as dt
+        self.write("**Last updated:** 2020-01-01 — stale.")
+        self.assertEqual(sap.refresh_project_state_date(), dt.date.today().isoformat())
+        source = (pathlib.Path(sap.__file__)).read_text(encoding="utf-8")
+        self.assertIn("today = today or dt.date.today()", source)
+        self.assertNotIn("today or dt.datetime.now(dt.timezone.utc).date()", source)
+
+    def test_the_readers_are_IMPORTED_from_the_gate_not_re_spelled(self):
+        """Imported, not re-spelled. Two regexes for one line is how the tool comes to write
+        something the gate does not read back.
+
+        Asserted over the SOURCE TEXT, and not with `assertIs` against the gate's objects, because
+        `re.compile` keeps an internal cache keyed by pattern and flags: a local `re.compile` of the
+        same pattern returns the very same object, so identity passes for a copy. That mutant
+        survived the identity version of this test, which is the whole reason it reads the source.
+        """
+        source = (pathlib.Path(sap.__file__)).read_text(encoding="utf-8")
+        self.assertIn("from check_coordination import _ISO_DATE_RE, _LAST_UPDATED_RE", source)
+        for name in ("_LAST_UPDATED_RE", "_ISO_DATE_RE"):
+            self.assertNotIn(
+                name + " = re.compile", source,
+                "sync_active_pr.py compiles its own %s; it must use the gate's" % name)
+
+
 class AuditPositionTests(unittest.TestCase):
     """The verdict in the banner is READ, not typed.
 

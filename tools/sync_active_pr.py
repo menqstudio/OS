@@ -27,6 +27,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
+# The gate's OWN readers for the `Last updated` line, imported rather than re-spelled: this tool
+# rewrites that line and the gate refuses it, so a second regex here is the drift that would let
+# one succeed while the other reads something else. See refresh_project_state_date().
+from check_coordination import _ISO_DATE_RE, _LAST_UPDATED_RE  # noqa: E402
 # The gate's own readers, so the generator writes exactly what the gate will read back.
 from check_repo_state import MAIN_CI_WORKFLOWS, _live_main_ci, _repo_slug  # noqa: E402
 
@@ -464,7 +468,7 @@ def rewrite_state(pr: int, branch: str, summary: str, head: str,
     return changed
 
 
-def rewrite_banners(banner: str) -> None:
+def rewrite_banners(banner: str) -> str | None:
     """Replace the WHOLE banner block, not just its first line.
 
     The banner is multi-line, and the first version of this replaced `lines[2]` alone. A second run
@@ -485,6 +489,13 @@ def rewrite_banners(banner: str) -> None:
     `tools/roadmap_source.py` uses for `<!-- PHASES -->`. A file without them is REFUSED by name
     rather than guessed at, and the refusal happens for ALL files before any is written, so a
     partial rewrite is not reachable.
+
+    **PROJECT_STATE.md's date moves here, not at the call sites.** One of the three files this
+    rewrites is dated, and `check_coordination` requires the date to move in the same commit as the
+    change. Doing it inside this function is the difference between a property and a habit: there are
+    two call sites today, a third would be written one day, and the one that forgot would redden
+    `main` after a merge rather than before it. Returns the new date, or `None` when it was already
+    today's. See refresh_project_state_date().
     """
     found: list[tuple[pathlib.Path, str, int, int]] = []
     for name in BANNER_FILES:
@@ -500,6 +511,58 @@ def rewrite_banners(banner: str) -> None:
         found.append((p, text, i + len(BANNER_OPEN), j))
     for p, text, i, j in found:
         p.write_text(text[:i] + chr(10) + banner + chr(10) + text[j:], encoding="utf-8")
+    return refresh_project_state_date()
+
+def refresh_project_state_date(today: dt.date | None = None) -> str | None:
+    """Move PROJECT_STATE.md's `Last updated` date to today, because this tool just changed the file.
+
+    THE DEFECT THIS CLOSES, measured on 2026-09-21. `rewrite_banners` edits PROJECT_STATE.md on every
+    single run and had never touched line 3. `check_coordination`'s freshness rule is not really a
+    date comparison — its own docstring says so — it is *update the line in the SAME commit as the
+    change*, and it refuses only when the newest commit that touched the file left the line at the
+    value its parent had. So every pull request satisfied the rule by accident, on the calendar: the
+    line's date happened to equal the merge commit's date. On 2026-09-20 that luck ran out. The
+    squash that merged `#282` was committed at 00:06 local on the 21st, `git log -1 --format=%cs`
+    read `2026-09-21`, the line still said `2026-09-20`, the parent's line said `2026-09-20` too, and
+    `main` went RED on two jobs — the coordination gate and the Windows tools job, whose
+    `test_real_repo_is_consistent` runs that same gate against the real repository. Post-merge, where
+    the only way to fix it is another merge.
+
+    The gate was right. The tool was editing a dated file and not moving the date, which is exactly
+    the omission the Startup Law names. It moves it now, in the same write as the banner, so the law
+    holds by construction rather than by what day it is.
+
+    Only the `YYYY-MM-DD` is replaced; the prose after it is the state's own summary and is not this
+    tool's to rewrite. Returns the new date as a string, `None` when the line already said today (a
+    second run on the same day is not a change) or when there is no parseable date to move — in which
+    case the gate reports the missing line by name and this stays silent rather than inventing one.
+
+    **LOCAL date, not UTC, and that is the whole point of the fix.** The first version of this stamped
+    `datetime.now(timezone.utc).date()`, ran on this `UTC+04:00` box at 00:30 local, and moved the line
+    BACKWARDS from `2026-09-21` to `2026-09-20` — reproducing, in one run, the exact red it was written
+    to close. The gate reads the commit's date as `git log -1 --format=%cs`, which is the date in the
+    COMMITTER's own recorded timezone, and git will record this box's. So the two must be read off the
+    same clock: stamping UTC compares a UTC date against a local one and is wrong by a day for every
+    commit made in the last four hours of a `UTC+N` day. `check_coordination`'s future check allows
+    `today + 1` in UTC precisely so a local date on the far side of UTC midnight is legal.
+    """
+    today = today or dt.date.today()
+    path = ROOT / "PROJECT_STATE.md"
+    text = path.read_text(encoding="utf-8")
+    line = _LAST_UPDATED_RE.search(text)
+    if line is None:
+        return None
+    found = _ISO_DATE_RE.search(line.group(1))
+    if found is None:
+        return None
+    stamp = today.isoformat()
+    if found.group(0) == stamp:
+        return None
+    # Offsets of the date WITHIN the whole document: group(1) starts at line.start(1).
+    start = line.start(1) + found.start(0)
+    path.write_text(text[:start] + stamp + text[start + len(found.group(0)):], encoding="utf-8")
+    return stamp
+
 
 def rewrite_carrier_block(pr: int, branch: str, current: str | None = None) -> bool:
     """Point `next_action_by_carrier` at the PR that is actually carrying the snapshot.
@@ -802,12 +865,14 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
                  " The only thing open is PR #" + str(pr) + " on `" + branch
                  + "`, the pull request that records it.") + others) if pr and branch
                else ((" Nothing is open." if not parked else " Open:" + others)))
-    rewrite_banners(banner or (
+    dated = rewrite_banners(banner or (
         _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
                  + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
                  + tail + "\n>\n> " + audit_position_sentence())))
     rewrite_active_line("main", head)
     print("settled at main " + head[:7] + "; banners point at main, not at a deleted branch")
+    if dated:
+        print("  PROJECT_STATE.md 'Last updated' -> " + dated)
     print("  verify:  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
 
@@ -873,7 +938,7 @@ def main() -> int:
     # This call went missing in an edit, and the line below kept announcing it. A message that
     # reports work it did not do is worse than silence: the banner stayed stale while the tool
     # said it had been rewritten, and the only thing that caught it was reading the file.
-    rewrite_banners(_bounded(banner))
+    dated = rewrite_banners(_bounded(banner))
     rewrite_active_line(args.branch, head)
 
     # ASCII on purpose: this line crashed with a cp1252 UnicodeEncodeError on Windows AFTER the
@@ -881,6 +946,8 @@ def main() -> int:
     print(f"state anchor -> PR #{args.pr} on {args.branch}, main {head[:7]}")
     print(f"  fields changed: {', '.join(changed)}")
     print(f"  banners rewritten: {', '.join(BANNER_FILES)}")
+    if dated:
+        print(f"  PROJECT_STATE.md 'Last updated' -> {dated}")
     print("\nNot committed. Run the two gates, then commit with the work:")
     print("  python tools/check_coordination.py && python tools/check_repo_state.py")
     return 0
