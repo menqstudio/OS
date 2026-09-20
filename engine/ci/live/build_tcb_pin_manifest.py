@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the root-owned §2.5 TCB pin manifest for the live kit (audit **F-10**).
+"""Build the root-owned §2.5 TCB pin manifest for ONE NAMED KIT (audit **F-10**).
 
 `brops_core::tcb_integrity::verify_tcb_integrity` decides the whole §2.5 floor — owner, writability,
 start-time content pin, ancestor safety, and a coverage floor that refuses an under-specified
@@ -12,18 +12,36 @@ entry points at a file that genuinely serves that role here, and where one file 
 it is pinned under each of them rather than a stand-in being invented:
 
   * the three Python service front doors ARE the supervisor / signer / challenge-authority
-    executables in this kit — they are what runs, so they are what gets measured;
+    executables in these kits — they are what runs, so they are what gets measured;
   * the launcher's and the executor's configuration IS the §4.3 lease (uids, the image pin, and now
     the three request digests), so both `.config` roles point at it;
   * the remaining `.config` roles and the broker's pinned-manifest configuration are the one shared
     `config.json` each of those components actually loads;
-  * this kit is orchestrated by `run_live_turn.sh`, not by systemd, so a root-owned copy of that
+  * these kits are orchestrated by a shell script, not by systemd, so a root-owned copy of that
     script is what the two `.unit` roles pin. Writing plausible-looking unit files for units that do
     not exist would make the manifest describe a deployment that isn't this one.
 
+`--kit` NAMES WHICH DEPLOYMENT, AND HAS NO DEFAULT
+-------------------------------------------------
+The role table was ONE hardcoded map until 2026-09-21, written for `run_live_turn.sh`. The §4.10(g)
+ladder kit runs a DIFFERENT set of files under the same logical names, and `run_ladder_turn.sh` said
+so in its own banner rather than using this script: the manifest it produced there "would measure
+files that are not the ones serving this turn. A floor that pins the wrong artifact is worse than no
+floor, and widening that role table is an Architect decision."
+
+That decision is taken. `ROLE_PATHS` and `SOURCE_ORIGIN` are keyed by kit, `--kit` is required with no
+default — a default is the wrong table taken silently — and `TCB_REQUIRED_ARTIFACTS` coverage is
+asserted per kit by `engine/tests/test_live_tcb_pin_manifest.py` rather than waiting for a live turn
+to discover a gap. The `live` table is byte-for-byte the one this script has always used.
+
 Run AFTER everything exists (the lease and the sudoers allowlist are written late), and BEFORE the
 services start — the pin is a start-time measurement, so anything provisioned after it is not
-covered by it.
+covered by it. That ordering is also the one thing the `ladder` table cannot yet satisfy for every
+role: `tcb/ladder-driver.json` is the document that plays `$BROPS_BROKER_CONFIG`'s part on that kit
+and would be the honest binding for `trusted-verifier-broker.pinned-manifest-config`, but
+`run_ladder_turn.sh` writes it at `:759`, after the services start at `:454-456`. The role points at
+`config.json` and the entry says why, so the gap is named rather than papered over; moving that write
+earlier is the step that closes it.
 
 WHERE THE DIGESTS COME FROM, AND WHAT THAT DOES NOT PROVE
 ---------------------------------------------------------
@@ -64,20 +82,147 @@ import json
 import os
 import sys
 
-#: logical_name -> path, RELATIVE TO THE SOURCE TREE, for each pinned artifact that the kit copies
+#: kit -> {logical_name: path RELATIVE TO THE SOURCE TREE}, for each pinned artifact the kit copies
 #: verbatim out of the repository. These are the only entries whose digest has an origin other than
-#: the deployment tree being measured. Everything absent from this map is compiled or provisioned on
-#: the deployment host and is `deployment-measured` — see the module docstring.
+#: the deployment tree being measured. Everything absent from a kit's map is compiled or provisioned
+#: on the deployment host and is `deployment-measured` — see the module docstring.
+#:
+#: Keyed by kit since 2026-09-21. It was ONE flat map, and `run_ladder_turn.sh` said so in its own
+#: banner: "`build_tcb_pin_manifest.py` binds the `supervisor.bin` role to
+#: `engine/ci/live/run_supervisor.py` and both `.unit` roles to `run_live_turn.sh` through a hardcoded
+#: map, so the manifest it produces here would measure files that are not the ones serving this turn.
+#: A floor that pins the wrong artifact is worse than no floor, and widening that role table is an
+#: Architect decision." This is that decision, taken: the table is per kit, and `--kit` is REQUIRED
+#: so no caller can get the wrong one by falling through to a default.
 SOURCE_ORIGIN = {
-    "supervisor.bin": "engine/ci/live/run_supervisor.py",
-    "isolated-signer.bin": "engine/ci/live/run_signer.py",
-    "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
-    # Both `.unit` roles pin a root-owned copy of the orchestrator script, which is a repo file.
-    "trusted-verifier-broker.unit": "engine/ci/live/run_live_turn.sh",
-    "desktop-challenge-authority.unit": "engine/ci/live/run_live_turn.sh",
+    "live": {
+        "supervisor.bin": "engine/ci/live/run_supervisor.py",
+        "isolated-signer.bin": "engine/ci/live/run_signer.py",
+        "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
+        # Both `.unit` roles pin a root-owned copy of the orchestrator script, which is a repo file.
+        "trusted-verifier-broker.unit": "engine/ci/live/run_live_turn.sh",
+        "desktop-challenge-authority.unit": "engine/ci/live/run_live_turn.sh",
+    },
+    "ladder": {
+        # The LADDER kit starts a different supervisor — `run_ladder_turn.sh:455` launches
+        # `run_ladder_supervisor.py`, which is the file that constructs all four §4.10 services. The
+        # §5 supervisor is not running on this kit at all, so pinning it was the defect.
+        "supervisor.bin": "engine/ci/live/run_ladder_supervisor.py",
+        # These two ARE the same files on both kits: `run_ladder_turn.sh:454` and `:456` launch
+        # `run_authority.py` and `run_signer.py` unchanged.
+        "isolated-signer.bin": "engine/ci/live/run_signer.py",
+        "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
+        # And the orchestrator is this kit's own script, not the §5 one.
+        "trusted-verifier-broker.unit": "engine/ci/live/run_ladder_turn.sh",
+        "desktop-challenge-authority.unit": "engine/ci/live/run_ladder_turn.sh",
+    },
 }
 
+#: kit -> {logical_name: a path template}. Resolved against the deployment layout by
+#: `resolve_roles()`; `{}`-named fields only, so a template cannot smuggle in arithmetic or a call.
+#:
+#: Every name in `TCB_REQUIRED_ARTIFACTS` must appear in every kit, or the verifier's coverage floor
+#: refuses the manifest — which is the behaviour we want if a map ever falls behind the required set,
+#: and `test_live_tcb_pin_manifest.py` asserts it for each kit rather than waiting for a live turn.
+ROLE_PATHS = {
+    "live": {
+        # ---- the seven trusted executables ----
+        "supervisor.bin": "{live}/run_supervisor.py",
+        "evidence-recorder-runner.bin": "{bin}/governed_recorder",
+        "privileged-launcher.bin": "{tcb}/privileged-launcher.bin",
+        "contained-executor.bin": "{tcb}/contained-executor.bin",
+        "isolated-signer.bin": "{live}/run_signer.py",
+        "trusted-verifier-broker.bin": "{bin}/live_turn",
+        "desktop-challenge-authority.bin": "{live}/run_authority.py",
+        # ---- each executable's configuration ----
+        "supervisor.config": "{config}",
+        # The recorder's configuration is NOT the shared config.json — it never reads that file. It
+        # reads exactly one root-owned document, at a path compiled into the binary, and takes the
+        # launcher/executor/lease/store/state paths and the two image digests from it. Pinning
+        # config.json here would have measured a file the recorder does not consult while leaving the
+        # file that actually steers it unmeasured.
+        "evidence-recorder-runner.config": "{tcb}/recorder-policy.json",
+        # The launcher takes its invoker/drop-target uids, its image pin and (F-08) the three
+        # request digests from the lease. That file IS its configuration.
+        "privileged-launcher.config": "{tcb}/executor.lease",
+        "contained-executor.config": "{tcb}/executor.lease",
+        "isolated-signer.config": "{config}",
+        "trusted-verifier-broker.config": "{config}",
+        "desktop-challenge-authority.config": "{config}",
+        # ---- IPC / peer-auth policies ----
+        "desktop-challenge-authority.ipc-policy":
+            "{tcb}/desktop-challenge-authority.ipc-policy.json",
+        "trusted-verifier-broker.ipc-policy": "{tcb}/trusted-verifier-broker.ipc-policy.json",
+        # ---- broker pinned-manifest configuration ----
+        "trusted-verifier-broker.pinned-manifest-config": "{config}",
+        # ---- launch steering + trust roots ----
+        "governed-execution-allowlist.source": "{sudoers}",
+        "key-manifest.root-anchor": "{tcb}/root-anchor.json",
+        # ---- the two service "units" ----
+        "trusted-verifier-broker.unit": "{unit}",
+        "desktop-challenge-authority.unit": "{unit}",
+    },
+    "ladder": {
+        # Measured against `run_ladder_turn.sh` on 2026-09-21, role by role. Where a row differs from
+        # the `live` kit above, the difference is a file that kit does not run.
+        "supervisor.bin": "{live}/run_ladder_supervisor.py",   # :455
+        "evidence-recorder-runner.bin": "{bin}/governed_recorder",
+        "privileged-launcher.bin": "{tcb}/privileged-launcher.bin",
+        "contained-executor.bin": "{tcb}/contained-executor.bin",
+        "isolated-signer.bin": "{live}/run_signer.py",         # :456
+        # The broker-side process on this kit is the Rust driver, and its own banner says in four
+        # places that it is NOT the `brops-broker` binary. Pinning `live_turn` here — the §5 driver —
+        # would name a binary this kit never installs.
+        "trusted-verifier-broker.bin": "{bin}/ladder_turn",
+        "desktop-challenge-authority.bin": "{live}/run_authority.py",   # :454
+        # `run_ladder_supervisor.py` is started with BOTH `--config config.json` and
+        # `--ladder tcb/ladder.json`. A role points at one path, and `config.json` is already pinned
+        # under two other roles below, so its bytes are measured either way. `ladder.json` is pinned
+        # by nothing else and carries this kit's §4.2 registry, turn and socket steering — so that is
+        # the document this role names.
+        "supervisor.config": "{tcb}/ladder.json",
+        "evidence-recorder-runner.config": "{tcb}/recorder-policy.json",
+        "privileged-launcher.config": "{tcb}/executor.lease",
+        "contained-executor.config": "{tcb}/executor.lease",
+        "isolated-signer.config": "{config}",
+        "trusted-verifier-broker.config": "{config}",
+        "desktop-challenge-authority.config": "{config}",
+        # Both policy files exist on this kit too: `provision_keys.py` writes all four before
+        # `provision_ladder.py` runs, and the ladder only REWRITES `isolated-signer`'s (at the
+        # supervisor's uid) and adds `supervisor-sidecar`. Neither of those two has a role in
+        # `TCB_REQUIRED_ARTIFACTS`, which is a gap in the rev-30 roster rather than in this map: three
+        # real peer-auth policies steer the ladder turn and the floor measures none of them. Widening
+        # the roster is a spec change and is not this file's to make.
+        "desktop-challenge-authority.ipc-policy":
+            "{tcb}/desktop-challenge-authority.ipc-policy.json",
+        "trusted-verifier-broker.ipc-policy": "{tcb}/trusted-verifier-broker.ipc-policy.json",
+        # NOT `tcb/ladder-driver.json`, which is the document that plays `$BROPS_BROKER_CONFIG`'s part
+        # on this kit and would be the honest binding — it does not exist yet when the pin has to be
+        # taken. `run_ladder_turn.sh` writes it at :759, AFTER the three Python services are started
+        # at :454-456, and a pin is a START-TIME measurement: a manifest built late enough to include
+        # it would be recording the services' bytes after they had already been running. Moving that
+        # write earlier is what lets this role name the file that actually steers the driver, and it
+        # is the next step rather than a silent choice made here.
+        "trusted-verifier-broker.pinned-manifest-config": "{config}",
+        "governed-execution-allowlist.source": "{sudoers}",
+        "key-manifest.root-anchor": "{tcb}/root-anchor.json",
+        "trusted-verifier-broker.unit": "{unit}",
+        "desktop-challenge-authority.unit": "{unit}",
+    },
+}
+
+#: The kits this builder knows. `--kit` takes one of these and has no default, deliberately.
+KITS = tuple(sorted(ROLE_PATHS))
+
 DEPLOYMENT_MEASURED = "deployment-measured"
+
+
+def resolve_roles(kit: str, *, tcb: str, live: str, binaries: str, config: str, sudoers: str,
+                  unit: str) -> dict:
+    """`{logical_name: absolute path}` for one kit, resolved against this deployment's layout."""
+    slots = {"tcb": tcb, "live": live, "bin": binaries, "config": config,
+             "sudoers": sudoers, "unit": unit}
+    return {name: template.format(**slots) for name, template in ROLE_PATHS[kit].items()}
 
 
 def sha256_file(path: str) -> str:
@@ -98,6 +243,11 @@ def main() -> int:
         "--source-dir", required=True,
         help="the repository tree the kit was staged FROM. Required, not optional: it is the only "
              "origin for a pinned digest that is not the deployment tree the pin is checked against")
+    ap.add_argument(
+        "--kit", required=True, choices=KITS,
+        help="which kit's role table to use. Required with NO default: the two kits run different "
+             "files under the same logical names, and a floor that pins the wrong artifact is worse "
+             "than no floor. A default would be the wrong table taken silently")
     args = ap.parse_args()
 
     root = os.path.abspath(args.root_dir)
@@ -105,49 +255,14 @@ def main() -> int:
     live = os.path.join(root, "engine", "ci", "live")
     binaries = os.path.join(root, "bin")
     config = os.path.join(root, "config.json")
-    lease = os.path.join(tcb, "executor.lease")
 
-    # logical_name -> (path, owner). Every name in TCB_REQUIRED_ARTIFACTS must appear, or the
-    # verifier's coverage floor refuses the manifest — which is the behaviour we want if this map
-    # ever falls behind the required set.
-    mapping = {
-        # ---- the seven trusted executables ----
-        "supervisor.bin": os.path.join(live, "run_supervisor.py"),
-        "evidence-recorder-runner.bin": os.path.join(binaries, "governed_recorder"),
-        "privileged-launcher.bin": os.path.join(tcb, "privileged-launcher.bin"),
-        "contained-executor.bin": os.path.join(tcb, "contained-executor.bin"),
-        "isolated-signer.bin": os.path.join(live, "run_signer.py"),
-        "trusted-verifier-broker.bin": os.path.join(binaries, "live_turn"),
-        "desktop-challenge-authority.bin": os.path.join(live, "run_authority.py"),
-        # ---- each executable's configuration ----
-        "supervisor.config": config,
-        # The recorder's configuration is NOT the shared config.json — it never reads that file. It
-        # reads exactly one root-owned document, at a path compiled into the binary, and takes the
-        # launcher/executor/lease/store/state paths and the two image digests from it. Pinning
-        # config.json here would have measured a file the recorder does not consult while leaving the
-        # file that actually steers it unmeasured.
-        "evidence-recorder-runner.config": os.path.join(tcb, "recorder-policy.json"),
-        # The launcher takes its invoker/drop-target uids, its image pin and (F-08) the three
-        # request digests from the lease. That file IS its configuration.
-        "privileged-launcher.config": lease,
-        "contained-executor.config": lease,
-        "isolated-signer.config": config,
-        "trusted-verifier-broker.config": config,
-        "desktop-challenge-authority.config": config,
-        # ---- IPC / peer-auth policies ----
-        "desktop-challenge-authority.ipc-policy":
-            os.path.join(tcb, "desktop-challenge-authority.ipc-policy.json"),
-        "trusted-verifier-broker.ipc-policy":
-            os.path.join(tcb, "trusted-verifier-broker.ipc-policy.json"),
-        # ---- broker pinned-manifest configuration ----
-        "trusted-verifier-broker.pinned-manifest-config": config,
-        # ---- launch steering + trust roots ----
-        "governed-execution-allowlist.source": os.path.abspath(args.sudoers),
-        "key-manifest.root-anchor": os.path.join(tcb, "root-anchor.json"),
-        # ---- the two service "units" ----
-        "trusted-verifier-broker.unit": os.path.abspath(args.unit),
-        "desktop-challenge-authority.unit": os.path.abspath(args.unit),
-    }
+    # logical_name -> path, from THIS KIT's role table. Every name in TCB_REQUIRED_ARTIFACTS must
+    # appear in it, or the verifier's coverage floor refuses the manifest — which is the behaviour we
+    # want if a map ever falls behind the required set.
+    mapping = resolve_roles(
+        args.kit, tcb=tcb, live=live, binaries=binaries, config=config,
+        sudoers=os.path.abspath(args.sudoers), unit=os.path.abspath(args.unit))
+    origins = SOURCE_ORIGIN[args.kit]
 
     source = os.path.abspath(args.source_dir)
     if not os.path.isdir(source):
@@ -162,7 +277,7 @@ def main() -> int:
             return 1
         installed = sha256_file(path)
 
-        relative = SOURCE_ORIGIN.get(logical_name)
+        relative = origins.get(logical_name)
         if relative is None:
             # Compiled or provisioned on this host: there is nowhere else the bytes exist, so the
             # digest is self-measured and the manifest says so instead of implying otherwise.

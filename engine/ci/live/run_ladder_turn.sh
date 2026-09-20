@@ -65,12 +65,21 @@
 #
 # WHAT THIS KIT DELIBERATELY DOES NOT DO
 # ---------------------------------------
-#  * It does NOT run the §2.5 TCB integrity floor. `build_tcb_pin_manifest.py` binds the
-#    `supervisor.bin` role to `engine/ci/live/run_supervisor.py` and both `.unit` roles to
-#    `run_live_turn.sh` through a hardcoded map, so the manifest it produces here would measure
-#    files that are not the ones serving this turn. A floor that pins the wrong artifact is worse
-#    than no floor, and widening that role table is an Architect decision. `run_live_turn.sh` still
-#    proves the floor; this script states its absence instead of implying coverage.
+#  * It does NOT run the §2.5 TCB integrity floor — but the reason CHANGED on 2026-09-21 and the old
+#    one is history. It used to be the role table: `build_tcb_pin_manifest.py` bound `supervisor.bin`
+#    to `run_supervisor.py` and both `.unit` roles to `run_live_turn.sh` through a hardcoded map, so a
+#    manifest built here would have measured files that are not the ones serving this turn, and
+#    widening that table was called an Architect decision. That decision was taken: the builder now
+#    carries a `ladder` table (`--kit ladder`) whose every role names the file this script actually
+#    runs — `run_ladder_supervisor.py` at :455, `run_authority.py` at :454, `run_signer.py` at :456,
+#    `bin/ladder_turn`, `tcb/ladder.json`, this script for both `.unit` roles — and
+#    `engine/tests/test_live_tcb_pin_manifest.py` holds every one of them against this file's own text.
+#    What still blocks BUILDING it here is ORDERING, not naming: a pin is a start-time measurement, and
+#    `tcb/ladder-driver.json` — the document that plays `$BROPS_BROKER_CONFIG`'s part on this kit — is
+#    written at :759, after the three services start at :454-456. A manifest built late enough to pin
+#    it would be recording those services' bytes after they had already been running. Moving that write
+#    ahead of the service starts is the step that lets this kit take the floor, and it is the next row.
+#    `run_live_turn.sh` still proves the floor; this script states what is absent and why.
 #  * It flips NO gate. `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and
 #    `connect_broker` are untouched; the shipped app's governed path stays shut. This runs in CI
 #    against the live kit exactly as the §5 job does and makes nothing reachable in the product.

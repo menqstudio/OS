@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t111/broker-config-writer` — `main` @ `1f6590c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t112/pin-manifest-per-kit` — `main` @ `1cd1940`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #283 · branch `t111/broker-config-writer`** (base `main`, tip `1f6590c`, task T-111).
+> **⏭️ CURRENT ACTIVE: PR #284 · branch `t112/pin-manifest-per-kit`** (base `main`, tip `1cd1940`, task T-112).
 >
-> Nothing in the tree had ever written a $BROPS_BROKER_CONFIG document
+> The §2.5 pin manifest's role table was hardcoded to ONE kit
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2259 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2299 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context

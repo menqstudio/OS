@@ -1,20 +1,19 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-21 — 63 pull requests merged (`#219`–`#282`), `main` at
-`1f6590c`, its own `ci` RED there on two jobs because this line said `2026-09-20` while the squash
-merging `#282` landed at 00:06 local on the 21st; the line and the tool that rewrote this file without
-moving it are both fixed in this commit. Seven of eleven phases have every box ticked (0, 2–7); 97 of
-115 rows. Phase 1 waits on 24 prerequisites an installer and an administrator provide, the Linux
-kernel, and one offline root signature only the Owner can make — NOT the whole blocker: six Builder
-pieces did not exist either, all six named in `docs/OWNER_ACTION_REQUIRED.md` §0. The negative matrix
-reads: **155 implemented · 52 blocked · 35 unreviewed**, from 39/21/182.
+**Last updated · Վերջին թարմացում:** 2026-09-21 — 64 pull requests merged (`#219`–`#283`), `main` at
+`1cd1940`, all seven of its workflows green there. Seven of eleven phases have
+every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
+administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
+the whole blocker: six Builder pieces did not exist either, all six named in
+`docs/OWNER_ACTION_REQUIRED.md` §0. The negative matrix reads: **155 implemented · 52 blocked · 35
+unreviewed**, from 39/21/182.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #283 · branch `t111/broker-config-writer`** (base `main`, tip `1f6590c`, task T-111).
+> **⏭️ CURRENT ACTIVE: PR #284 · branch `t112/pin-manifest-per-kit`** (base `main`, tip `1cd1940`, task T-112).
 >
-> Nothing in the tree had ever written a $BROPS_BROKER_CONFIG document
+> The §2.5 pin manifest's role table was hardcoded to ONE kit
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -40,15 +39,18 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 
 ## Suites
 
-| Windows, 2026-09-20 | |
+Each row carries the date it was measured, because they are not measured together.
+
+| Windows | |
 |---|---|
-| engine (Python) | 2259 OK; skips are per-environment |
-| frontend | typecheck clean, 794 / 84 files |
-| `tools/` self-tests | 1169 OK |
-| **Debian, 2026-09-01** | |
-| Rust, 10 crates | 1149 passed |
-| `npm audit --audit-level=high` | 0 vulns |
-| FW-1 boundary proof | 23/23 x3 |
+| engine (Python) · 2026-09-21 | 2299 OK, 97 skipped |
+| `tools/` self-tests · 2026-09-21 | 1222 OK |
+| frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
+| **Debian** | |
+| engine (Python), non-root, WSL2 13 · 2026-09-21 | 2299 OK, **17** skipped |
+| Rust, 10 crates · 2026-09-01 | 1149 passed |
+| `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
+| FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
 Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debian, `cargo` from an ordinary shell.
 

@@ -406,7 +406,11 @@ chown 0:0 "$TCB"/*.ipc-policy.json; chmod 0644 "$TCB"/*.ipc-policy.json
 # substitution made before the pin was taken was pinned rather than caught. The repo-sourced
 # artifacts now take their digest from $REPO_ROOT and the build REFUSES if the installed copy
 # differs. The compiled and provisioned artifacts stay self-measured; the manifest labels them.
-python3 "$PYLIVE/build_tcb_pin_manifest.py" --root-dir "$LIVE" --source-dir "$REPO_ROOT"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
+# `--kit live` names which role table to use. The builder has no default, deliberately: it now holds
+# a second table for the §4.10(g) ladder kit, which runs `run_ladder_supervisor.py` and its own
+# orchestrator under the same logical names, and a floor that pins the wrong artifact is worse than no
+# floor. The `live` table is byte-for-byte the one this invocation has always got.
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit live --root-dir "$LIVE" --source-dir "$REPO_ROOT"   --sudoers "$SUDOERS" --unit "$TCB/brops-live.unit" --out "$TCB/tcb-pin-manifest.json"   || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
 # The §2.5 floor requires every ANCESTOR of a pinned artifact to be TCB-owned and non-writable by
 # any other principal — a writable parent is a rename/replace vector, so it is treated exactly like
