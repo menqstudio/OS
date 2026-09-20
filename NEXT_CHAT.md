@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t112/pin-manifest-per-kit` — `main` @ `1cd1940`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `ace8c1a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #284 · branch `t112/pin-manifest-per-kit`** (base `main`, tip `1cd1940`, task T-112).
+> **✅ SETTLED — `main` is at `ace8c1a`.** The only thing open is PR #285 on `t113/settled-md-refresh`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> The §2.5 pin manifest's role table was hardcoded to ONE kit
+> **Next:** Piece 4's remainder: move the ladder driver config ahead of the service starts so that kit can take the 2.5 floor. Then preflight's two requirements stated in config keys the broker no longer reads.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2299 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2314 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
@@ -72,11 +72,11 @@ model is invoked; `connect_broker()` refuses off Linux; and the broker serves
 `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config carrying
 a TCB-root-signed manifest, which nothing in the shipped app sets.
 
-**The standing independent verdict is RED.** Nine rounds; the current one is
-[`2026-08-19-ninth-audit-5cf9b8c.md`](apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md)
-— RED, no P0, all three refusals read at source and closed for the fourth round running.
-**76 pull requests, 240 files and 46,612 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(58/206/44,055 earlier on 2026-09-19; 20/107/19688 until 2026-08-31.)*
+**The standing independent verdict is RED.** TEN rounds; the current one is
+[`2026-09-19-tenth-audit-75fca65.md`](apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
+— RED, no P0, and the reason is three named items rather than unconfirmed claims.
+**31 pull requests, 121 files and 10,599 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` on 2026-09-21; it named the NINTH round until then. See `docs/README_CLAIM_HISTORY.md` §11.)*
 
 **Two one-line edits wait on the Owner**, both in files a Builder does not touch:
 `.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed

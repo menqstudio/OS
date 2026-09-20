@@ -82,7 +82,7 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2299 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2314 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py                              # the read set fits
@@ -115,7 +115,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — which nothing in the shipped app sets
 
-**The standing independent verdict is RED.** Nine rounds; the current one is [`2026-08-19-ninth-audit-5cf9b8c.md`](./apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md) — RED, no P0, all three refusals read at source and closed for the fourth round running. The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3); *the Armenian half of this file said 122, and 1+5+13+26 is 45.*
+**The standing independent verdict is RED.** TEN rounds; the current one is [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) — RED, no P0, and its reason is three named items rather than unconfirmed claims. *(It said NINE and named the ninth report until 2026-09-21, while the banner in this same file, which READS the round from the ledger, said TENTH; claim history §11.)* The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3); *the Armenian half of this file said 122, and 1+5+13+26 is 45.*
 
 **O-1…O-5 are all OPEN and none needs an Owner-minted artifact.** Inventory: [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md). What blocks them is deployment wiring and a second principal. Severities, which `tools/check_residual_items.py` holds identical here, in `docs/SECURITY_MODEL.md` §4 and in the inventory — a severity quietly downgraded in one document is how a production item stops being one: **O-1 (HIGH)** bytecode-shadow, the *read* half — CPython imports an existing `.pyc` before any Python check can run · **O-2 (MED)** audit-head anchor · **O-3 (MED)** conductor session token, fail-closed and set, open until a desktop turn reaches it · **O-4 (LOW)** control-room actor — nothing outside tests mints the artifact `_prove_command_actor` would verify · **O-5 (LOW)** evidence high-water, open deliberately: *when* it is minted is an unanswered design question. The one to know:
 

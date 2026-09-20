@@ -126,12 +126,12 @@ builder's own unverified claim*. Never promote your own work to ✅.
 > is the job to watch, along with `python tools/check_contrast.py`.
 
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check`. **40 `check_*.py` files exist; 39 are invoked
+`python tools/generate_agent_definitions.py --check`. **42 `check_*.py` files exist; 41 are invoked
 by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by
-design). *(Measured at this head with `for f in tools/check_*.py; do grep -rqF "tools/$(basename $f)"
-.github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 — the ninth audit
-filed it as `I-10`, the **second consecutive round** in which these counts were wrong, so the method
-is written down here rather than the number alone.)* Three of the 23 need arguments and print usage
+design). *(Measured at `ace8c1a` on 2026-09-21 with `for f in tools/check_*.py; do grep -rqF
+"$(basename $f)" .github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 —
+the ninth audit filed it as `I-10` — and then said 40/39 while the tree held 42/41, so the method is
+written down here rather than the number alone.)* Three of the 42 need arguments and print usage
 instead of a verdict when that loop runs them bare:
 `check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
 Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
