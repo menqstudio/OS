@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
+  "settled_at_main_head": "b39b087bdce462f45259e0eb96055d680616471a",
   "sync": {
-    "baseline_main_head_at_sync": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
-    "snapshot_branch": "t107/the-blocker-was-not-yours",
+    "baseline_main_head_at_sync": "b39b087bdce462f45259e0eb96055d680616471a",
+    "snapshot_branch": "t108/two-phase-root-ceremony",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t107/the-blocker-was-not-yours"
+    "branch": "t108/two-phase-root-ceremony"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 278,
-    "branch": "t107/the-blocker-was-not-yours",
+    "number": 279,
+    "branch": "t108/two-phase-root-ceremony",
     "state": "open",
-    "what": "OWNER_ACTION_REQUIRED section 0 said the root seed was the one thing between this product and a governed turn, and that nothing needed building if the Owner held it. Both false. provision_keys.py mints the signer and supervisor keys fresh every run (:221-224) while build_manifest_bytes (:117) proves the manifest must name their public hexes, so an offline signature cannot name keys that do not exist yet: trusted_verified on Linux is unreachable by construction. Six Builder pieces named, each with the line proving it absent.",
-    "note": "The page that says what waits on the Owner was wrong about what waits on him",
+    "what": "provision_keys.py minted the serving keys fresh every run while an externally signed manifest had to name them, so no offline signature could ever match. Phase 1 (--emit-manifest) mints and emits the canonical bytes; sign_manifest.py signs them with the offline root; phase 2 (--keys-in) reuses those keys and refuses unless the signature verifies AND the manifest names them. External mode no longer writes a root private key onto the serving box.",
+    "note": "trusted_verified was unreachable on Linux by construction; it is not now",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #278 (t107/the-blocker-was-not-yours), task T-107: OWNER_ACTION_REQUIRED section 0 said the root seed was the one thing between this product and a governed turn, and that nothing needed building if the Owner held it. Both false. provision_keys.py mints the signer and supervisor keys fresh every run (:221-224) while build_manifest_bytes (:117) proves the manifest must name their public hexes, so an offline signature cannot name keys that do not exist yet: trusted_verified on Linux is unreachable by construction. Six Builder pieces named, each with the line proving it absent. Next: Pieces 1 and 2: split provision_keys.py into --emit-manifest and --keys-in phases, and give the offline root a signing CLI.",
-    "_note": "The carrier is current_workflow_pr (#278 on t107/the-blocker-was-not-yours). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #279 (t108/two-phase-root-ceremony), task T-108: provision_keys.py minted the serving keys fresh every run while an externally signed manifest had to name them, so no offline signature could ever match. Phase 1 (--emit-manifest) mints and emits the canonical bytes; sign_manifest.py signs them with the offline root; phase 2 (--keys-in) reuses those keys and refuses unless the signature verifies AND the manifest names them. External mode no longer writes a root private key onto the serving box. Next: Re-true engine_tests 2243 to 2259 in config/counted-claims.json at the head this lands on, per README_CLAIM_HISTORY section 5. Then pieces 3-6.",
+    "_note": "The carrier is current_workflow_pr (#279 on t108/two-phase-root-ceremony). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "4223579534ae0758a092a2545b43f5d52a7a4c1c",
+      "head": "b39b087bdce462f45259e0eb96055d680616471a",
       "conclusion": "success",
-      "run_id": 35488009714,
-      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at 4223579, run 35488009714."
+      "run_id": 35529338488,
+      "note": "Read by tools/sync_active_pr.py on 2026-09-20: success at b39b087, run 35529338488."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
