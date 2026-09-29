@@ -593,10 +593,10 @@ class KitRoleTableTests(unittest.TestCase):
             return hits[0]
 
         builder = [i for i, l in enumerate(lines)
-                   if "build_tcb_pin_manifest.py" in l and l.startswith("python3")]
+                   if "build_tcb_pin_manifest.py" in l and l.startswith("python3")
+                   and "--kit ladder" in l]
         self.assertEqual(len(builder), 1, builder)
         build = builder[0]
-        self.assertIn("--kit ladder", lines[build])
         self.assertIn('--source-dir "$REPO_ROOT"', lines[build])
         self.assertIn('--unit "$TCB/brops-ladder.unit"', lines[build])
 
@@ -619,6 +619,43 @@ class KitRoleTableTests(unittest.TestCase):
         # checking the order of files the floor never measures.
         pinned = set(self.roles("ladder").values())
         self.assertEqual(sorted(set(written) - pinned), [])
+
+    def test_the_ladder_kit_starts_brops_broker_over_a_manifest_that_pins_it(self):
+        """OWNER_ACTION_REQUIRED §0 row 5. The product binary is installed and its config written
+        (manifest pending) before its `--kit broker` manifest is built; that manifest is built before
+        any service starts; and the binary is started with `$BROPS_BROKER_CONFIG` exported, once over
+        its own manifest and once over the ladder's, which must be refused by role."""
+        with open(ORCHESTRATOR["ladder"], "r", encoding="utf-8") as f:
+            text = f.read()
+        lines = text.splitlines()
+
+        def first(pattern: str) -> int:
+            hits = [i for i, l in enumerate(lines) if re.search(pattern, l)]
+            self.assertTrue(hits, "no line in run_ladder_turn.sh matches %r" % pattern)
+            return hits[0]
+
+        install = first(r'^install -m 0755 "\$BROKER_BIN" "\$BIN/brops-broker"')
+        config = first(r'^python3 "\$PYLIVE/write_broker_config\.py"')
+        build = first(r'^python3 "\$PYLIVE/build_tcb_pin_manifest\.py" --kit broker '
+                      r'--broker-config "\$BROKER_CONFIG"')
+        start = first(r'^\s*start_service\s+"\$')
+        product = first(r'^run_broker product "\$BROKER_CONFIG"$')
+        negative = first(r'^run_broker ladder-pin "\$BROKER_CONFIG_LADDER_PIN"$')
+        self.assertLess(install, build)
+        self.assertLess(config, build)
+        self.assertLess(build, start, "the broker's pin is taken after a service started")
+        self.assertLess(start, product)
+        self.assertLess(product, negative)
+        # The writer is told the manifest comes after it, and names the one being built.
+        self.assertIn("--pin-manifest-built-after", "\n".join(lines[config:config + 3]))
+        self.assertIn('--tcb-pin-manifest "$BROKER_PIN"', "\n".join(lines[config:config + 3]))
+        self.assertIn('--out "$BROKER_PIN"', lines[build])
+        # The variable is EXPORTED to the product binary, and the verdict reads its stderr for the
+        # line printed only after every config gate passed.
+        self.assertIn('"BROPS_BROKER_CONFIG=$cfg"', text)
+        self.assertIn("BROKER_PROVISIONED='trusted manifest provisioned - serving the 4.10(g) "
+                      "governed ladder'", text)
+        self.assertIn("TCB integrity floor REFUSED.*trusted-verifier-broker.bin", text)
 
 
 if __name__ == "__main__":

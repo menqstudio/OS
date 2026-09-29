@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `6d697e1`.** The only thing open is PR #293 on `t122/settled-at-6d697e1`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
 >
-> **Next:** Row 5 of OWNER_ACTION_REQUIRED §0: the line that exports $BROPS_BROKER_CONFIG and a broker process to read it.
+> T-123: nothing had started brops-broker with $BROPS_BROKER_CONFIG exported
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2323 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2324 OK, 14 skipped |
 | Rust, 10 crates · 2026-09-30 | 1219 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
