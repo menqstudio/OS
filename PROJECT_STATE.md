@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-29 — 69 pull requests merged (`#219`–`#288`), `main` at
-`6977650`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-29 — 71 pull requests merged (`#219`–`#290`), `main` at
+`518dc4c`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #290 · branch `t119/reducedmotion-test-race`** (base `main`, tip `e181ee8`, task T-119).
+> **✅ SETTLED — `main` is at `518dc4c`.** The only thing open is PR #291 on `t120/settled-at-518dc4c`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-119: main e181ee8 went red on a racy Analytics reduced-motion test; test-only fix.
+> **Next:** A §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
