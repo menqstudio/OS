@@ -121,7 +121,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #296 (t125/settled-at-457926e) settles the state at main 457926e. Next: run_ladder_turn.sh must take the five BROPS_* external-anchor variables so the Owner's root reaches the real brops-broker — without a throwaway external root ever rendering production_verified. Then the Owner's ceremony (docs/DEBIAN_CUSTODY_CEREMONY.md).",
+    "current": "PR #296 (t125/settled-at-457926e) settles the state at main 457926e. Next: run_ladder_turn.sh takes the five BROPS_* anchor variables; then the Owner's ceremony.",
     "_note": "The carrier is current_workflow_pr (#296 on t125/settled-at-457926e). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
