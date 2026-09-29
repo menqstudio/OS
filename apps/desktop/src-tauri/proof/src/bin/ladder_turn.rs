@@ -39,11 +39,12 @@
 //!    `governed_verification_unconfigured`, and nothing here makes any of them reachable.
 //!  * `$BROPS_BROKER_CONFIG` is NOT read. The deployment config arrives as `--config`, so no
 //!    environment this driver runs under can be confused with the one that arms the broker.
-//!  * The §2.5 TCB integrity floor is NOT evaluated. `build_tcb_pin_manifest.py` binds
-//!    `bin/live_turn` to the `trusted-verifier-broker.bin` role through a hardcoded map, so a
-//!    manifest built for this kit would measure files that are not the ones serving this turn —
-//!    the same reason `run_ladder_turn.sh` states the floor's absence rather than implying
-//!    coverage. A floor that pins the wrong artifact is worse than no floor.
+//!  * The §2.5 TCB integrity floor is evaluated by ROOT through `--verify-tcb`, before any service
+//!    starts, exactly as `live_turn --verify-tcb` does on the §5 kit — the two share one entry point
+//!    (`proof/src/tcb_verify.rs`). It is not evaluated inside a turn, and this driver's principal is
+//!    not the one that evaluates it; the reason is in that file. Until 2026-09-29 this line said the
+//!    floor was NOT evaluated here: first because the pin builder had one role table, written for the
+//!    §5 kit, and then because `tcb/ladder-driver.json` was written after the services started.
 //!
 //! # The two recorders, and why neither is a change to the chain
 //!
@@ -63,6 +64,7 @@
 //! harnesses shipped checks that could not report PASS at all, through three audit rounds.
 //!
 //! ```text
+//! ladder_turn --config /opt/brops-live/tcb/ladder-driver.json --verify-tcb    # root, first
 //! ladder_turn --config /opt/brops-live/tcb/ladder-driver.json \
 //!             --evidence-dir /opt/brops-live/ladder/driver/positive \
 //!             --expect committed
@@ -77,12 +79,26 @@ fn main() {
     std::process::exit(2);
 }
 
+// The root-side §2.5 floor, shared with `live_turn` so the two kits cannot evaluate different ones.
+#[cfg(target_os = "linux")]
+#[path = "../tcb_verify.rs"]
+mod tcb_verify;
+
 #[cfg(target_os = "linux")]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let flag = |name: &str| -> Option<String> {
         args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
     };
+    if args.iter().any(|a| a == "--verify-tcb") {
+        match flag("--config") {
+            Some(c) => std::process::exit(tcb_verify::verify_tcb("ladder_turn", &c)),
+            None => {
+                eprintln!("ladder_turn: usage: ladder_turn --config <path> --verify-tcb");
+                std::process::exit(2);
+            }
+        }
+    }
     let (config, evidence_dir, expect) =
         match (flag("--config"), flag("--evidence-dir"), flag("--expect")) {
             (Some(c), Some(e), Some(x)) => (c, e, x),

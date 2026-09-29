@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `ace8c1a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t115/ladder-tcb-floor` — `main` @ `f3fdcce`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `ace8c1a`.** The only thing open is PR #285 on `t113/settled-md-refresh`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #286 · branch `t115/ladder-tcb-floor`** (base `main`, tip `f3fdcce`, task T-115).
 >
-> **Next:** Piece 4's remainder: move the ladder driver config ahead of the service starts so that kit can take the 2.5 floor. Then preflight's two requirements stated in config keys the broker no longer reads.
+> T-115: the ladder kit takes the §2.5 TCB floor — its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

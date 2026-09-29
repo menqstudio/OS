@@ -15,8 +15,11 @@ The live kit comes closest and is deliberately not this. `run_ladder_turn.sh` bu
 `$TCB/ladder-driver.json` inside an inline heredoc, for `target/debug/ladder_turn` — the Rust proof
 driver whose own banner says in four places that it "is NOT the `brops-broker` binary". That
 document is a DRIVER's config: it carries a `db.path` the broker never reads (the broker derives its
-database from argv) and it names no §2.5 pin manifest, because the kit that writes it states
-outright that it does not run the TCB integrity floor.
+database from argv). *(This paragraph also said that document "names no §2.5 pin manifest, because
+the kit that writes it states outright that it does not run the TCB integrity floor". The first half
+was never true — it copies `trust.tcb_pin_manifest_path` from `config.json`, which `provision_keys.py`
+writes into every config — and the second stopped being true on 2026-09-29, when that kit started
+building the manifest and evaluating the floor before its services start.)*
 
 WHAT THIS IS
 ------------

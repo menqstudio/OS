@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-21 — 65 pull requests merged (`#219`–`#284`), `main` at
-`ace8c1a`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-29 — 66 pull requests merged (`#219`–`#285`), `main` at
+`f3fdcce`, all seven of its workflows green there; `T-115` is open. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `ace8c1a`.** The only thing open is PR #285 on `t113/settled-md-refresh`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #286 · branch `t115/ladder-tcb-floor`** (base `main`, tip `f3fdcce`, task T-115).
 >
-> **Next:** Piece 4's remainder: move the ladder driver config ahead of the service starts so that kit can take the 2.5 floor. Then preflight's two requirements stated in config keys the broker no longer reads.
+> T-115: the ladder kit takes the §2.5 TCB floor — its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -26,7 +26,7 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 | Phase | Status |
 |---|---|
 | 0 Foundation | DONE, locked |
-| 1 Bridge | In-Progress — contract, adapter, broker and receipt are real; `_real_callables()` raises unconditionally, and the desktop pre-flight MEASURES its five missing inputs now rather than asserting them (`T-048`). Both refuse |
+| 1 Bridge | In-Progress — contract, adapter, broker and receipt are real; both live kits now evaluate the §2.5 floor as root before any service starts (`T-115`, ◑ until its CI run); `_real_callables()` raises unconditionally, and the desktop pre-flight MEASURES its five missing inputs now rather than asserting them (`T-048`). Both refuse |
 | 2 Governance Sidecar | Done — 11/11; the approval-**request** path exists on both sides now (`T-021a`–`T-021d`), and nothing in it decides |
 | 3 Desktop Integration | Done — 11/11 |
 | 4 UI/UX System | Done — 12/12 |

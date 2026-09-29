@@ -36,12 +36,11 @@ to discover a gap. The `live` table is byte-for-byte the one this script has alw
 
 Run AFTER everything exists (the lease and the sudoers allowlist are written late), and BEFORE the
 services start — the pin is a start-time measurement, so anything provisioned after it is not
-covered by it. That ordering is also the one thing the `ladder` table cannot yet satisfy for every
-role: `tcb/ladder-driver.json` is the document that plays `$BROPS_BROKER_CONFIG`'s part on that kit
-and would be the honest binding for `trusted-verifier-broker.pinned-manifest-config`, but
-`run_ladder_turn.sh` writes it at `:759`, after the services start at `:454-456`. The role points at
-`config.json` and the entry says why, so the gap is named rather than papered over; moving that write
-earlier is the step that closes it.
+covered by it. Until 2026-09-29 the `ladder` table could not satisfy that for one role:
+`tcb/ladder-driver.json`, the document that plays `$BROPS_BROKER_CONFIG`'s part on that kit, was
+written after the services started, so `trusted-verifier-broker.pinned-manifest-config` pointed at
+`config.json` instead. `run_ladder_turn.sh` now writes the driver's configs before it builds this
+manifest and before any service starts, and the role names the file that actually steers the driver.
 
 WHERE THE DIGESTS COME FROM, AND WHAT THAT DOES NOT PROVE
 ---------------------------------------------------------
@@ -104,11 +103,11 @@ SOURCE_ORIGIN = {
         "desktop-challenge-authority.unit": "engine/ci/live/run_live_turn.sh",
     },
     "ladder": {
-        # The LADDER kit starts a different supervisor — `run_ladder_turn.sh:455` launches
+        # The LADDER kit starts a different supervisor — `run_ladder_turn.sh`'s `start_service` line launches
         # `run_ladder_supervisor.py`, which is the file that constructs all four §4.10 services. The
         # §5 supervisor is not running on this kit at all, so pinning it was the defect.
         "supervisor.bin": "engine/ci/live/run_ladder_supervisor.py",
-        # These two ARE the same files on both kits: `run_ladder_turn.sh:454` and `:456` launch
+        # These two ARE the same files on both kits: `run_ladder_turn.sh`'s other two `start_service` lines launch
         # `run_authority.py` and `run_signer.py` unchanged.
         "isolated-signer.bin": "engine/ci/live/run_signer.py",
         "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
@@ -165,16 +164,16 @@ ROLE_PATHS = {
     "ladder": {
         # Measured against `run_ladder_turn.sh` on 2026-09-21, role by role. Where a row differs from
         # the `live` kit above, the difference is a file that kit does not run.
-        "supervisor.bin": "{live}/run_ladder_supervisor.py",   # :455
+        "supervisor.bin": "{live}/run_ladder_supervisor.py",
         "evidence-recorder-runner.bin": "{bin}/governed_recorder",
         "privileged-launcher.bin": "{tcb}/privileged-launcher.bin",
         "contained-executor.bin": "{tcb}/contained-executor.bin",
-        "isolated-signer.bin": "{live}/run_signer.py",         # :456
+        "isolated-signer.bin": "{live}/run_signer.py",
         # The broker-side process on this kit is the Rust driver, and its own banner says in four
         # places that it is NOT the `brops-broker` binary. Pinning `live_turn` here — the §5 driver —
         # would name a binary this kit never installs.
         "trusted-verifier-broker.bin": "{bin}/ladder_turn",
-        "desktop-challenge-authority.bin": "{live}/run_authority.py",   # :454
+        "desktop-challenge-authority.bin": "{live}/run_authority.py",
         # `run_ladder_supervisor.py` is started with BOTH `--config config.json` and
         # `--ladder tcb/ladder.json`. A role points at one path, and `config.json` is already pinned
         # under two other roles below, so its bytes are measured either way. `ladder.json` is pinned
@@ -196,14 +195,11 @@ ROLE_PATHS = {
         "desktop-challenge-authority.ipc-policy":
             "{tcb}/desktop-challenge-authority.ipc-policy.json",
         "trusted-verifier-broker.ipc-policy": "{tcb}/trusted-verifier-broker.ipc-policy.json",
-        # NOT `tcb/ladder-driver.json`, which is the document that plays `$BROPS_BROKER_CONFIG`'s part
-        # on this kit and would be the honest binding — it does not exist yet when the pin has to be
-        # taken. `run_ladder_turn.sh` writes it at :759, AFTER the three Python services are started
-        # at :454-456, and a pin is a START-TIME measurement: a manifest built late enough to include
-        # it would be recording the services' bytes after they had already been running. Moving that
-        # write earlier is what lets this role name the file that actually steers the driver, and it
-        # is the next step rather than a silent choice made here.
-        "trusted-verifier-broker.pinned-manifest-config": "{config}",
+        # The document that plays `$BROPS_BROKER_CONFIG`'s part on this kit: `ladder_turn` is run
+        # with `--config tcb/ladder-driver.json`, never with `config.json`. It named `config.json`
+        # until 2026-09-29 because `run_ladder_turn.sh` wrote this file after the services started,
+        # and a pin is a START-TIME measurement. The script now writes it first.
+        "trusted-verifier-broker.pinned-manifest-config": "{tcb}/ladder-driver.json",
         "governed-execution-allowlist.source": "{sudoers}",
         "key-manifest.root-anchor": "{tcb}/root-anchor.json",
         "trusted-verifier-broker.unit": "{unit}",
