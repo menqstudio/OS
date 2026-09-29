@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t121/broker-pin-manifest` — `main` @ `2c2f24e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `6d697e1`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #292 · branch `t121/broker-pin-manifest`** (base `main`, tip `2c2f24e`, task T-121).
+> **✅ SETTLED — `main` is at `6d697e1`.** The only thing open is PR #293 on `t122/settled-at-6d697e1`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-121: the broker's §2.5 floor never asked whether the pinned broker was itself
+> **Next:** Row 5 of OWNER_ACTION_REQUIRED §0: the line that exports $BROPS_BROKER_CONFIG and a broker process to read it.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

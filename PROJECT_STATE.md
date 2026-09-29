@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-30 — 71 pull requests merged (`#219`–`#290`), `main` at
-`518dc4c`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-30 — 73 pull requests merged (`#219`–`#292`), `main` at
+`6d697e1`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #292 · branch `t121/broker-pin-manifest`** (base `main`, tip `2c2f24e`, task T-121).
+> **✅ SETTLED — `main` is at `6d697e1`.** The only thing open is PR #293 on `t122/settled-at-6d697e1`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-121: the broker's §2.5 floor never asked whether the pinned broker was itself
+> **Next:** Row 5 of OWNER_ACTION_REQUIRED §0: the line that exports $BROPS_BROKER_CONFIG and a broker process to read it.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
