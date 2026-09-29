@@ -42,8 +42,8 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: THREE one-line edits (`gitleaks.toml`, and requiring the Windows
-tools job and the anchor-custody context in `config/required-checks.json`), `T-063`'s tag arm, the
+Waiting on the Owner, not rows: TWO one-line edits (`gitleaks.toml`, and requiring the Windows
+tools job in `config/required-checks.json`), `T-063`'s tag arm, the
 offline root seed, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
 (§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 

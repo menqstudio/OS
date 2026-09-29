@@ -70,7 +70,7 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
-**Branch protection is ON and verified against live GitHub** by `check_repo_state.py` — 34 contexts,
+**Branch protection is ON and verified against live GitHub** by `check_repo_state.py` — 35 contexts,
 `strict`, `enforce_admins`, linear, no force-push, no deletions, restored from
 `config/required-checks.json` after a day private DELETED the rules. That day, and why 2026-09-19's
 merges were gated by reading instead, is in `docs/archive/`.

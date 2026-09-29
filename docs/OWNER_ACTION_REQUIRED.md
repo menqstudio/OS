@@ -19,7 +19,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > on your Debian box), hand over the PUBLIC hex, and — once pieces 1 and 2 exist — sign one file
 > offline. Plus the licence terms in §2f. Everything else on the critical path is the Builder's.
 
-> **2026-09-20 — THREE one-line edits need you, all in files only you touch.**
+> **2026-09-20 — THREE one-line edits need you, all in files only you touch.** *(Item 3 is DONE, 2026-09-29: two remain.)*
 >
 > **1. `.github/supply-chain/gitleaks.toml` — the secret gate carries a false positive that any edit
 > can wake.** The committed operator ROOT PUBLIC key (safe by design) is suppressed by an allowlist
@@ -50,6 +50,10 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > Its first run was green too, on `#232` itself. So the only thing left is moving the key from
 > `deliberately_excluded` into `contexts` and adding the context to live branch protection.
 >
+> **3. DONE 2026-09-29, on the Owner's instruction in `#286`.** Its deferral expired on 2026-09-27 and
+> turned `Repo-state` red on every pull request; the job was green on `main` five runs running
+> (`1eddc57`…`f3fdcce`), so the promise was executed rather than re-dated: the context is in `contexts`,
+> the deferral is deleted, and live protection carries 35 contexts. What it said:
 > **3. `config/required-checks.json` — add `Trust anchor · no production root private in this tree`
 > to `contexts`, after its first green run on `main`.** New with `T-094`. The gate derives an Ed25519
 > public key from every 32-byte hex literal in this tree and refuses if any of them is the private half

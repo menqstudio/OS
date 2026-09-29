@@ -181,7 +181,7 @@ OS/
 ├── docs/               Architecture, security model, guides, evidence, brand (bilingual)
 ├── tools/              40 check_*.py gate scripts — capabilities · reachability · release signing · …
 ├── .claude/            262 generated specialist definitions + 6 coordination hook events
-└── .github/workflows/  8 workflow files · ci.yml alone defines 21 jobs · 34 contexts required on main
+└── .github/workflows/  8 workflow files · ci.yml alone defines 21 jobs · 35 contexts required on main
 ```
 
 > **HY: Root-ի `.claude/`-ը wall-ը չի։** Այնտեղ մասնագետ ագենտների սահմանումներն են՝
