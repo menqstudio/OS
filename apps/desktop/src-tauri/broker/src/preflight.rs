@@ -758,7 +758,7 @@ fn check_setuid_launcher(host: &dyn Host, cfg: &Cfg) -> Status {
     // Located through the §2.5 pin manifest, not a key of the broker's config. Until 2026-09-29 this
     // read `execution.launcher_path`, which `build_governed_executor` never reads (the ladder moved
     // the privileged spawn to the supervisor) — so a config holding exactly the keys the broker
-    // reads, which is what `engine/ci/live/write_broker_config.py` writes, reported this row NOT MET
+    // reads, which is what the live kit's broker-config writer (T-111) emits, reported this row NOT MET
     // on a fully provisioned machine. The pinned `privileged-launcher.bin` is the very file the floor
     // measures, which makes it the one honest answer to "which launcher".
     let pin = match read_pin_manifest(host, cfg) {
@@ -1813,7 +1813,7 @@ mod tests {
     fn the_provisioned_broker_config_holds_only_keys_the_broker_reads() {
         // The defect this pins: the fixture's broker config carried `execution.launcher_path` and
         // `supervisor.ledger_db`, which `build_governed_executor` never reads, so two rows passed
-        // here and failed against every config `write_broker_config.py` can produce. A key is
+        // here and failed against every config the T-111 writer can produce. A key is
         // covered when it, or a block containing it, is in the list the broker reads.
         let host = provisioned();
         let cfg: Value =

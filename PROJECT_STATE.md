@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #288 · branch `t117/preflight-locates-from-pin-manifest`** (base `main`, tip `55d852e`, task T-117).
 >
-> T-117: brops-preflight located the setuid launcher and the supervisor ledger through config keys the broker never reads; it now locates both through the §2.5 pin manifest, and the ledger row checks its owner.
+> T-117: preflight locates the launcher and supervisor ledger via the §2.5 pin manifest; CI-caught comment reworded.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

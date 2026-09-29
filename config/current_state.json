@@ -117,7 +117,7 @@
     "branch": "t117/preflight-locates-from-pin-manifest",
     "state": "open",
     "what": "T-117: preflight's launcher and supervisor-ledger rows read keys no broker config carries; both now locate their artifact through the \u00a72.5 pin manifest.",
-    "note": "T-117: brops-preflight located the setuid launcher and the supervisor ledger through config keys the broker never reads; it now locates both through the \u00a72.5 pin manifest, and the ledger row checks its owner.",
+    "note": "T-117: preflight locates the launcher and supervisor ledger via the \u00a72.5 pin manifest; CI-caught comment reworded.",
     "base": "main"
   },
   "next_action_by_carrier": {
