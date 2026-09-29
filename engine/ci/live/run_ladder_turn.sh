@@ -125,9 +125,12 @@ PULL_BIN="$TARGET_DIR/ladder_output_pull"
 # `LadderChain` the broker's `build_governed_executor` builds and runs one turn through
 # `run_governed_turn`. It is NOT the `brops-broker` binary and the phase below says so in its banner.
 DRIVER_BIN="$TARGET_DIR/ladder_turn"
+# The PRODUCT binary, `brops-broker` — the process `$BROPS_BROKER_CONFIG` is read by. Until T-123
+# nothing in this tree had started it with that variable set (OWNER_ACTION_REQUIRED §0 row 5).
+BROKER_BIN="$TARGET_DIR/brops-broker"
 
 if [ -x "$LAUNCHER_BIN" ] && [ -x "$EXECUTOR_BIN" ] && [ -x "$RECORDER_BIN" ] && [ -x "$PULL_BIN" ] \
-   && [ -x "$DRIVER_BIN" ]; then
+   && [ -x "$DRIVER_BIN" ] && [ -x "$BROKER_BIN" ]; then
   echo "== using pre-built launcher/executor/recorder/output-pull/ladder-turn binaries =="
 else
   echo "== building the launcher + the governed-live crate (recorder/executor) + the pull driver =="
@@ -144,8 +147,10 @@ else
       -p brops-launcher -p brops-governed-live ) || { echo "FAIL: build (live kit)"; exit 1; }
   ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
       -p brops-core --bin ladder_output_pull ) || { echo "FAIL: build (pull driver)"; exit 1; }
+  ( cd "$REPO_ROOT" && "$CARGO_BIN" build --manifest-path "$TAURI_DIR/Cargo.toml" \
+      -p brops-broker --bin brops-broker ) || { echo "FAIL: build (brops-broker)"; exit 1; }
 fi
-for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN" "$PULL_BIN" "$DRIVER_BIN"; do
+for b in "$LAUNCHER_BIN" "$EXECUTOR_BIN" "$RECORDER_BIN" "$PULL_BIN" "$DRIVER_BIN" "$BROKER_BIN"; do
   [ -x "$b" ] || { echo "FAIL: missing built binary $b"; exit 1; }
 done
 
@@ -647,6 +652,46 @@ chmod 0644 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR"
           "$DRIVER_CONFIG_NOAUTH"
 chown "$BROKER_USER": "$ROLLED_FLOOR"; chmod 0600 "$ROLLED_FLOOR"
 
+# ----- the PRODUCT broker's deployment (OWNER_ACTION_REQUIRED §0 row 5) -------------------------
+# `brops-broker` itself, not the driver: its binary, the `$BROPS_BROKER_CONFIG` document
+# `write_broker_config.py` writes, and — built with the ladder's pin below, before any service
+# starts — the `--kit broker` §2.5 manifest that pins THAT binary and THAT document. The two name
+# each other (the config names the manifest by path, the manifest pins the config by digest), so the
+# config goes first under `--pin-manifest-built-after`. Its own floor copy, so nothing the driver
+# phase advances can move what this one reads.
+install -m 0755 "$BROKER_BIN" "$BIN/brops-broker"; chown 0:0 "$BIN/brops-broker"
+BROKER_CONFIG="$TCB/broker-config.json"
+BROKER_CONFIG_LADDER_PIN="$TCB/broker-config-ladder-pin.json"
+BROKER_PIN="$TCB/broker-tcb-pin-manifest.json"
+BROKER_OWN_FLOOR="$BROKERSTATE/broker-floor.json"
+BROKER_SYSTEM="$DRIVERDIR/broker-system.txt"
+rm -f "$BROKER_PIN"
+cp "$LIVE/floor.json" "$BROKER_OWN_FLOOR"
+chown "$BROKER_USER": "$BROKER_OWN_FLOOR"; chmod 0600 "$BROKER_OWN_FLOOR"
+python3 -c 'import json,sys; open(sys.argv[2],"w",encoding="utf-8").write(json.load(open(sys.argv[1],encoding="utf-8"))["turn"]["system"])' \
+  "$LADDER_CONFIG" "$BROKER_SYSTEM"
+chown 0:0 "$BROKER_SYSTEM"; chmod 0644 "$BROKER_SYSTEM"
+python3 "$PYLIVE/write_broker_config.py" --base-config "$DRIVER_CONFIG" --out "$BROKER_CONFIG" \
+  --messages-db "$MESSAGES_DB" --system-file "$BROKER_SYSTEM" --window 8 \
+  --floor-path "$BROKER_OWN_FLOOR" --tcb-pin-manifest "$BROKER_PIN" --pin-manifest-built-after \
+  --sidecar-python "$PYTHON_BIN" --sidecar-script "$LIVE/bridge/engine_sidecar.py" \
+  --sidecar-cwd "$SANDBOX" --sidecar-principal "$SIDECAR_USER" \
+  --sidecar-invoker "[\"$SUDO_BIN\",\"-n\",\"-u\",\"$SIDECAR_USER\",\"$ENV_BIN\"]" \
+  || { echo "FAIL: write_broker_config.py refused the product broker's config"; exit 1; }
+# The NEGATIVE control's document: byte-for-byte the same except that it names the LADDER kit's
+# manifest, which pins `bin/ladder_turn` as the broker. Before T-121 that manifest passed this
+# binary's floor; `verify_broker_tcb` must now refuse it by the role it names.
+python3 - "$BROKER_CONFIG" "$BROKER_CONFIG_LADDER_PIN" "$TCB/tcb-pin-manifest.json" <<'PYWRONGPIN' \
+  || { echo "FAIL: could not build the wrong-pin broker config"; exit 1; }
+import json, sys
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+document["trust"]["tcb_pin_manifest_path"] = sys.argv[3]
+with open(sys.argv[2], "w", encoding="utf-8") as fh:
+    json.dump(document, fh, indent=2, sort_keys=True)
+PYWRONGPIN
+chown 0:0 "$BROKER_CONFIG" "$BROKER_CONFIG_LADDER_PIN"
+chmod 0644 "$BROKER_CONFIG" "$BROKER_CONFIG_LADDER_PIN"
+
 # The §2.5 floor requires every ancestor of a pinned artifact to be root-owned and non-writable — a
 # writable parent is a rename/replace vector. The launcher and the recorder also re-check the
 # custody of their own inputs, and /opt is drwxrwxrwx on the hosted runner image.
@@ -668,6 +713,28 @@ ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/bridge" "$LIVE/engine/ci/live" /etc /
 install -m 0644 "$SCRIPT_DIR/run_ladder_turn.sh" "$TCB/brops-ladder.unit"; chown 0:0 "$TCB/brops-ladder.unit"
 python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit ladder --root-dir "$LIVE" --source-dir "$REPO_ROOT" --sudoers "$SUDOERS" --unit "$TCB/brops-ladder.unit" --out "$TCB/tcb-pin-manifest.json" || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit broker --broker-config "$BROKER_CONFIG" --root-dir "$LIVE" --source-dir "$REPO_ROOT" --sudoers "$SUDOERS" --unit "$TCB/brops-ladder.unit" --out "$BROKER_PIN" || { echo "FAIL: the brops-broker §2.5 pin manifest"; exit 1; }
+chown 0:0 "$BROKER_PIN"; chmod 0644 "$BROKER_PIN"
+# THE PRODUCT BROKER MEASURES AS ITSELF, NOT AS ROOT. `ladder_turn --verify-tcb` above runs as root;
+# `brops-broker` evaluates the same floor in its own process, as the broker principal — and two
+# pinned artifacts are deliberately closed to that principal: the recorder sudoers vector (0440 in a
+# 0750 `/etc/sudoers.d`) and the setuid launcher (4750, group = the recorder's). The first CI run of
+# this phase measured it: `Missing { governed-execution-allowlist.source }`, because the broker
+# cannot even stat the file. So the broker is granted READ on exactly those two files and SEARCH on
+# `/etc/sudoers.d` — no execute, no write, no listing; both are non-secret (a binary built from this
+# tree, an argv derivable from `config.json`). Named in OWNER_ACTION_REQUIRED §0 row 5 as a posture
+# decision for the Owner, because a real deployment has to make the same one. After the `-Rb` strip
+# above, and asserted: an ACL that silently did not apply would reproduce the refusal.
+command -v setfacl >/dev/null 2>&1 || { echo "FAIL: setfacl is required to grant the broker its read"; exit 1; }
+setfacl -m "u:$BROKER_USER:x" /etc/sudoers.d
+setfacl -m "u:$BROKER_USER:r" "$SUDOERS" "$TCB/privileged-launcher.bin"
+[ "$(stat -c %a "$TCB/privileged-launcher.bin")" = "4750" ] \
+  || { echo "FAIL: the launcher lost its 4750 mode to the ACL"; exit 1; }
+[ "$(stat -c %a "$SUDOERS")" = "440" ] || { echo "FAIL: the sudoers vector is no longer 0440"; exit 1; }
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "$SUDOERS" >/dev/null || { echo "FAIL: sudo no longer accepts the recorder vector"; exit 1; }
+fi
+getfacl -p /etc/sudoers.d "$SUDOERS" "$TCB/privileged-launcher.bin" 2>/dev/null | grep -E "^# file|$BROKER_USER"
 # Root, and before anything starts, for the reason `proof/src/tcb_verify.rs` gives: the pinned set
 # includes artifacts the serving principals must not be able to read, so root is the only principal
 # that can honestly evaluate it. The driver config names the manifest (`trust.tcb_pin_manifest_path`,
@@ -680,6 +747,7 @@ PIDS=()
 cleanup() {
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
   rm -f "$SUDOERS" "$DRIVER_SUDOERS"
+  setfacl -x "u:$BROKER_USER" /etc/sudoers.d 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -1316,6 +1384,99 @@ else
   echo "  no submit frame: the derivation check has nothing to hash"
 fi
 
+# =================================================================================================
+# THE PRODUCT BINARY: brops-broker, with $BROPS_BROKER_CONFIG exported (OWNER_ACTION_REQUIRED §0 row 5)
+# =================================================================================================
+# Every phase above drives the ladder from Python or from `ladder_turn`, and the driver's banner says
+# at length that it is not this binary. This phase starts `brops-broker` as the broker principal with
+# the variable EXPORTED, sends it one renderer frame, and reads what it did.
+#
+# WHAT IT CAN AND CANNOT PROVE. `build_governed_executor` pins the Owner's OFFLINE production root
+# (`ProductionResolver::provisioned`), and this kit's manifest is signed by a `kit_generated` root.
+# So the turn is refused — and on the wire every refusal is the same `upstream_blocked`, whether the
+# broker never left `UpstreamBlockedExecutor` or refused at the root signature. The reply cannot tell
+# those apart; the broker's own stderr can. `trusted manifest provisioned - serving the 4.10(g)
+# governed ladder` is printed only after EVERY config gate has passed — the §2.5 floor naming this
+# binary, the key manifest, its signature file, the anti-rollback floor, the authority socket, the
+# conversation source, the sidecar principal and the durable ledger. That line is the proof that
+# what remains between this deployment and a governed turn is the Owner's root and nothing else.
+echo
+echo "== BROPS-BROKER: the product binary, with \$BROPS_BROKER_CONFIG exported =="
+BROKER_RUN="$LADDER/broker-run"
+mkdir -p "$BROKER_RUN"; chown "$BROKER_USER": "$BROKER_RUN"; chmod 0700 "$BROKER_RUN"
+BROKER_UID=$(id -u "$BROKER_USER")
+BROKER_PRODUCT_RC=0
+BROKER_PROVISIONED='trusted manifest provisioned - serving the 4.10(g) governed ladder'
+run_broker() {  # <label> <config>  -> leaves $BROKER_RUN/<label>.log and <label>.reply.json
+  local label="$1" cfg="$2" sock="$BROKER_RUN/$1.sock" pid waited=0
+  echo
+  echo "-- brops-broker: $label  (BROPS_BROKER_CONFIG=$cfg)"
+  sudo -u "$BROKER_USER" "${DRIVER_ENV[@]}" "BROPS_BROKER_CONFIG=$cfg" \
+    "$BIN/brops-broker" "$sock" "$BROKER_UID" >"$BROKER_RUN/$label.log" 2>&1 &
+  pid=$!
+  while [ ! -S "$sock" ] && [ "$waited" -lt 50 ]; do sleep 0.2; waited=$((waited + 1)); done
+  # One renderer frame, from the uid the broker was told to admit: a u32 big-endian length, then the
+  # JSON. The conversation is the one row this kit's messages database holds.
+  sudo -u "$BROKER_USER" python3 - "$sock" "$DRIVER_CONFIG" "$label" >"$BROKER_RUN/$label.reply.json" <<'PYRENDER' \
+    || echo "  (no reply from brops-broker $label)"
+import json, socket, struct, sys, uuid
+sock_path, config_path, label = sys.argv[1:4]
+conversation = json.load(open(config_path, encoding="utf-8"))["resolved"]["conversation_id"]
+body = json.dumps({"protocol": "brops.renderer-governed-turn.v1", "conversation_id": conversation,
+                   # A canonical UUIDv4 or the broker answers `malformed` — the first CI run did.
+                   "client_request_id": str(uuid.uuid4())}).encode("utf-8")
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(120)
+s.connect(sock_path)
+s.sendall(struct.pack(">I", len(body)) + body)
+buf = b""
+while len(buf) < 4 or len(buf) < 4 + struct.unpack(">I", buf[:4])[0]:
+    chunk = s.recv(65536)
+    if not chunk:
+        break
+    buf += chunk
+print(buf[4:].decode("utf-8"))
+PYRENDER
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  sed 's/^/    broker| /' "$BROKER_RUN/$label.log"
+  echo "    reply : $(cat "$BROKER_RUN/$label.reply.json")"
+}
+reply_is_blocked_upstream() {  # <label>
+  python3 - "$BROKER_RUN/$1.reply.json" <<'PYREPLY'
+import json, sys
+r = json.load(open(sys.argv[1], encoding="utf-8"))
+ok = (r.get("protocol") == "brops.renderer-governed-turn-result.v1"
+      and r.get("status") == "blocked" and r.get("reason") == "upstream_blocked")
+sys.exit(0 if ok else 1)
+PYREPLY
+}
+
+# POSITIVE: the manifest built for THIS binary. Every gate must pass, and the turn must still be
+# refused — a `committed` here would mean the production pin accepted a kit-signed manifest.
+run_broker product "$BROKER_CONFIG"
+if ! grep -qF "$BROKER_PROVISIONED" "$BROKER_RUN/product.log"; then
+  echo "  BROKER product: RED — it never reported the trusted manifest provisioned"; BROKER_PRODUCT_RC=1
+elif grep -q 'REFUSED\|serving fail-closed' "$BROKER_RUN/product.log"; then
+  echo "  BROKER product: RED — it reported a refusal as well as provisioning"; BROKER_PRODUCT_RC=1
+elif ! reply_is_blocked_upstream product; then
+  echo "  BROKER product: RED — the reply is not blocked/upstream_blocked under a kit_generated root"
+  BROKER_PRODUCT_RC=1
+else
+  echo "  BROKER product: GREEN — every config gate passed, and the kit-signed manifest was still refused"
+fi
+
+# NEGATIVE: the same document naming the LADDER kit's manifest, which pins `bin/ladder_turn` as the
+# broker. The floor must refuse, BY that role, before the key manifest is read.
+run_broker ladder-pin "$BROKER_CONFIG_LADDER_PIN"
+if grep -q 'TCB integrity floor REFUSED.*trusted-verifier-broker.bin' "$BROKER_RUN/ladder-pin.log" \
+   && ! grep -qF "$BROKER_PROVISIONED" "$BROKER_RUN/ladder-pin.log" \
+   && reply_is_blocked_upstream ladder-pin; then
+  echo "  BROKER ladder-pin: GREEN — the floor refused a manifest that pins another binary, by role"
+else
+  echo "  BROKER ladder-pin: RED — a manifest pinning ladder_turn was not refused by the identity check"
+  BROKER_PRODUCT_RC=1
+fi
+
 # ----- evidence out ------------------------------------------------------------------------------
 # Copied into the workspace so CI can upload it and a reader can check the signature without root.
 EVIDENCE_OUT="${LADDER_EVIDENCE_OUT:-${RUNNER_TEMP:-/tmp}/ladder-evidence}"
@@ -1329,6 +1490,8 @@ cp -r "$LADDER/pull" "$EVIDENCE_OUT/pull" 2>/dev/null || true
 cp -r "$LADDER/driver" "$EVIDENCE_OUT/driver" 2>/dev/null || true
 cp "$DRIVER_CONFIG" "$EVIDENCE_OUT/ladder-driver-config.json" 2>/dev/null || true
 cp "$DRIVER_SUDOERS" "$EVIDENCE_OUT/ladder-driver-sudoers" 2>/dev/null || true
+cp -r "$BROKER_RUN" "$EVIDENCE_OUT/broker-run" 2>/dev/null || true
+cp "$BROKER_CONFIG" "$BROKER_PIN" "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$LADDER/pulled-output.bin" "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$LADDER"/authority.log "$LADDER"/supervisor.log "$LADDER"/signer.log "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$TCB/challenge-key-registry.json" "$LADDER_CONFIG" "$EVIDENCE_OUT/" 2>/dev/null || true
@@ -1381,6 +1544,18 @@ else
   echo "DRIVER: RED — runs=$DRIVER_RC verifier=$DRIVER_EV_RC derivation=$DRIVER_DERIVE_RC"
   echo "  custody=$DRIVER_CUSTODY_RC"
   echo "  (0 = green for each). Nothing was fabricated; see the per-run RESULT lines above."
+  RC=1
+fi
+
+# The PRODUCT binary, reported on its own: it proves a third thing — that `brops-broker` reads
+# `$BROPS_BROKER_CONFIG` and passes every config gate — and it cannot prove a governed turn.
+if [ "$BROKER_PRODUCT_RC" = "0" ]; then
+  echo "BROPS-BROKER: GREEN — the product binary, with \$BROPS_BROKER_CONFIG exported, passed its §2.5"
+  echo "  floor over a manifest pinning ITSELF and every other config gate, and refused the turn"
+  echo "  because the kit's root is not the Owner's; handed the ladder kit's manifest, it refused at"
+  echo "  the floor by the trusted-verifier-broker.bin role. NOT a governed turn: that needs the root."
+else
+  echo "BROPS-BROKER: RED — see the per-run lines above. Nothing was fabricated."
   RC=1
 fi
 

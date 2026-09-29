@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `6d697e1`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t123/broker-binary-reads-its-config` — `main` @ `a5e0367`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `6d697e1`.** The only thing open is PR #293 on `t122/settled-at-6d697e1`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
 >
-> **Next:** Row 5 of OWNER_ACTION_REQUIRED §0: the line that exports $BROPS_BROKER_CONFIG and a broker process to read it.
+> T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2323 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2324 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1219 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
