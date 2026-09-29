@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t124/debian-custody-ceremony` — `main` @ `516c736`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `457926e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #295 · branch `t124/debian-custody-ceremony`** (base `main`, tip `516c736`, task T-124).
+> **✅ SETTLED — `main` is at `457926e`.** The only thing open is PR #296 on `t125/settled-at-457926e`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-124: the Linux custody ceremony, and its two tools could not be chained
+> **Next:** run_ladder_turn.sh must take the five BROPS_* external-anchor variables so the Owner's root reaches the real brops-broker — without a throwaway external root ever rendering production_verified. Then the Owner's ceremony (docs/DEBIAN_CUSTODY_CEREMONY.md).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
