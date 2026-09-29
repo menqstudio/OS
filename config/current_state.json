@@ -117,7 +117,7 @@
     "branch": "t115/ladder-tcb-floor",
     "state": "open",
     "what": "T-115: Piece 4's remainder \u2014 the ladder kit writes its driver config before the pin is taken, builds the --kit ladder manifest, and evaluates the \u00a72.5 floor as root before any service starts.",
-    "note": "T-115: the ladder kit takes the \u00a72.5 TCB floor \u2014 its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.",
+    "note": "T-115: the ladder kit takes the \u00a72.5 TCB floor \u2014 its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts. Also carries the Owner's item 3: the trust-anchor gate is a required context (35), its expired deferral deleted.",
     "base": "main"
   },
   "next_action_by_carrier": {

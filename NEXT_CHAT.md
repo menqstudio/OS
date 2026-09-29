@@ -78,7 +78,7 @@ a TCB-root-signed manifest, which nothing in the shipped app sets.
 **31 pull requests, 121 files and 10,599 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` on 2026-09-21; it named the NINTH round until then. See `docs/README_CLAIM_HISTORY.md` §11.)*
 
-**Two one-line edits wait on the Owner**, both in files a Builder does not touch:
+**Two one-line edits wait on the Owner** *(a third, the trust-anchor context, is done in `#286`)*:
 `.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed
 operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured a 57-character prefix
 at one file size and not at another (79,665 bytes red, 79,744 green) — and
