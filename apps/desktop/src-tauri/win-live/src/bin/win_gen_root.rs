@@ -42,10 +42,20 @@ fn main() {
     let public_hex = crypto::public_key_hex(&sk);
     let private_hex = crypto::hex(&seed);
 
-    std::fs::write(&out, &private_hex).unwrap_or_else(|e| {
-        eprintln!("win_gen_root: cannot write {out}: {e}");
-        std::process::exit(2);
-    });
+    // Owner-only from the first byte on POSIX. `std::fs::write` honours the umask, which on the Debian
+    // box this now runs on produced a 0664 root private (measured 2026-09-30). `create_new` also makes
+    // the no-overwrite rule above atomic rather than a check followed by a write.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+        .open(&out)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, private_hex.as_bytes()))
+        .unwrap_or_else(|e| {
+            eprintln!("win_gen_root: cannot write {out}: {e}");
+            std::process::exit(2);
+        });
 
     // Do NOT print the private seed to stdout — it must live only in the file the operator controls.
     println!("RESULT: root keypair generated");
