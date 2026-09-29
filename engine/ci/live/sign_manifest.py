@@ -39,6 +39,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import live_crypto as lc  # noqa: E402  (path-dependent import, as the live runners do)
 
 
+def seed_bytes(raw: bytes):
+    """The 32-byte seed out of a seed file, or `None`.
+
+    `win_gen_root` writes the seed as 64 lowercase hex characters, which is also what
+    `win_provision --root-key` reads. This tool used to accept ONLY 32 raw bytes and its refusal said
+    "`win_gen_root` writes exactly 32 raw bytes" — false, so the Owner's generator and the Owner's
+    signer could not be used together (measured 2026-09-30: exit 3 on a fresh `win_gen_root` file).
+    Both shapes are accepted; their lengths cannot be confused, and one trailing newline is allowed
+    for a file an editor touched. Anything else is refused rather than guessed at.
+    """
+    if len(raw) == 32:
+        return raw
+    text = raw[:-1] if raw.endswith(b"\n") else raw
+    if len(text) == 64 and all(c in b"0123456789abcdef" for c in text):
+        return bytes.fromhex(text.decode("ascii"))
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Sign a live-kit KeyManifest with the offline root private key (Owner-only)")
@@ -69,14 +87,15 @@ def main() -> int:
 
     try:
         with open(args.root_seed, "rb") as f:
-            seed = f.read()
+            raw = f.read()
     except OSError as exc:
         print("FAIL: cannot read --root-seed (%s)" % exc, file=sys.stderr)
         return 2
-    if len(seed) != 32:
+    seed = seed_bytes(raw)
+    if seed is None:
         # The length is reported; the bytes never are.
-        print("FAIL: --root-seed is %d bytes, not a raw 32-byte Ed25519 seed. `win_gen_root` writes "
-              "exactly 32 raw bytes." % len(seed), file=sys.stderr)
+        print("FAIL: --root-seed is %d bytes, which is neither the 64 lowercase hex characters "
+              "`win_gen_root` writes nor a raw 32-byte Ed25519 seed." % len(raw), file=sys.stderr)
         return 3
 
     root = lc.load_private(seed)

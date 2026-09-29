@@ -336,6 +336,35 @@ class OfflineManifestSignerTests(unittest.TestCase):
             f.write(data)
         return path
 
+    def test_it_signs_the_seed_file_win_gen_root_actually_writes(self):
+        """`win_gen_root` writes 64 lowercase hex characters. This tool accepted only 32 raw bytes and
+        told the Owner `win_gen_root` wrote those — so the two Owner tools could not be chained
+        (measured 2026-09-30, exit 3). Mutant: drop the hex branch and this goes red."""
+        root = self.lc.gen_private()
+        hex_seed = self.lc.priv_raw(root).hex().encode("ascii")
+        for label, data in (("as written", hex_seed), ("editor newline", hex_seed + b"\n")):
+            with self.subTest(label):
+                out = os.path.join(self.box, "m-%d.sig" % len(data))
+                r = self._run("--manifest", self.manifest, "--root-seed", self._seed(data),
+                              "--sig-out", out, "--expect-pub", self.lc.pub_hex(root))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                with open(out, "r", encoding="utf-8") as f:
+                    sig = f.read().strip()
+                with open(self.manifest, "rb") as f:
+                    message = f.read()
+                self.assertTrue(self.lc.verify_b64std(
+                    self.lc.load_public_hex(self.lc.pub_hex(root)), message, sig))
+
+    def test_a_seed_file_that_is_neither_shape_is_refused(self):
+        hex_seed = self.lc.priv_raw(self.lc.gen_private()).hex()
+        for label, data in (("63 hex", hex_seed[:-1].encode()), ("uppercase", hex_seed.upper().encode()),
+                            ("two newlines", hex_seed.encode() + b"\n\n"), ("31 raw", b"x" * 31),
+                            ("not hex", b"g" * 64)):
+            with self.subTest(label):
+                r = self._run("--manifest", self.manifest, "--root-seed", self._seed(data))
+                self.assertEqual(r.returncode, 3, r.stderr)
+                self.assertNotIn(hex_seed, r.stdout + r.stderr, "the seed was echoed")
+
     def test_it_signs_and_the_signature_verifies_under_the_derived_public(self):
         root = self.lc.gen_private()
         out = os.path.join(self.box, "m.sig")

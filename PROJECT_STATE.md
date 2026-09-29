@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-30 — 73 pull requests merged (`#219`–`#292`), `main` at
-`6d697e1`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-30 — 75 pull requests merged (`#219`–`#294`), `main` at
+`516c736`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
+> **⏭️ CURRENT ACTIVE: PR #295 · branch `t124/debian-custody-ceremony`** (base `main`, tip `516c736`, task T-124).
 >
-> T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files
+> T-124: the Linux custody ceremony, and its two tools could not be chained
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2324 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2326 OK, 14 skipped |
 | Rust, 10 crates · 2026-09-30 | 1219 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

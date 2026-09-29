@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t123/broker-binary-reads-its-config` — `main` @ `a5e0367`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t124/debian-custody-ceremony` — `main` @ `516c736`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
+> **⏭️ CURRENT ACTIVE: PR #295 · branch `t124/debian-custody-ceremony`** (base `main`, tip `516c736`, task T-124).
 >
-> T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files
+> T-124: the Linux custody ceremony, and its two tools could not be chained
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2324 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2326 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1219 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
