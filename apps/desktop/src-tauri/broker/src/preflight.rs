@@ -755,15 +755,26 @@ fn check_setuid_launcher(host: &dyn Host, cfg: &Cfg) -> Status {
     if !host.platform_is_linux() {
         return Status::unmeasurable("there is no setuid bit on this platform");
     }
-    // NOTE: `execution.launcher_path` is NOT read by `build_governed_executor` (the ladder moved the
-    // privileged spawn to the supervisor). It is used here only to LOCATE the artifact this machine
-    // requirement is about.
-    let path = match cfg.s(&["execution", "launcher_path"]) {
-        Some(p) => p,
+    // Located through the §2.5 pin manifest, not a key of the broker's config. Until 2026-09-29 this
+    // read `execution.launcher_path`, which `build_governed_executor` never reads (the ladder moved
+    // the privileged spawn to the supervisor) — so a config holding exactly the keys the broker
+    // reads, which is what `engine/ci/live/write_broker_config.py` writes, reported this row NOT MET
+    // on a fully provisioned machine. The pinned `privileged-launcher.bin` is the very file the floor
+    // measures, which makes it the one honest answer to "which launcher".
+    let pin = match read_pin_manifest(host, cfg) {
+        Ok(m) => m,
+        Err(why) => {
+            return Status::not_met(format!(
+                "the privileged launcher is located through the §2.5 pin manifest, and {why}"
+            ))
+        }
+    };
+    let path = match pin.artifacts.iter().find(|a| a.logical_name == "privileged-launcher.bin") {
+        Some(a) => a.path.clone(),
         None => {
             return Status::not_met(
-                "no deployment key names the privileged launcher (`execution.launcher_path`), so \
-                 the preflight cannot find the binary the contained execution is entered through",
+                "the §2.5 pin manifest pins no `privileged-launcher.bin`, so the preflight cannot \
+                 find the binary the contained execution is entered through",
             )
         }
     };
@@ -816,22 +827,73 @@ fn check_supervisor_store(host: &dyn Host, cfg: &Cfg) -> Status {
     if !host.platform_is_linux() {
         return Status::unmeasurable("no POSIX ownership or mode bits on this platform");
     }
-    let ledger = match cfg.s(&["supervisor", "ledger_db"]) {
-        Some(p) => p,
-        None => {
+    // Located through the §2.5 pin manifest's pinned CONFIGURATION documents, not a key of the
+    // broker's config. Until 2026-09-29 this read `supervisor.ledger_db` out of the broker's own
+    // config — a key only the SUPERVISOR reads — so a config holding exactly the keys the broker
+    // reads reported this row NOT MET on a fully provisioned machine. Every pinned `*.config`
+    // document is searched rather than `supervisor.config` alone, because the ladder supervisor is
+    // started with two (`--config config.json --ladder ladder.json`) and its role pins the second.
+    // Two pinned documents naming DIFFERENT ledgers is refused: the preflight will not pick one.
+    let pin = match read_pin_manifest(host, cfg) {
+        Ok(m) => m,
+        Err(why) => {
+            return Status::not_met(format!(
+                "the supervisor's ledger is located through the §2.5 pin manifest, and {why}"
+            ))
+        }
+    };
+    let mut named: BTreeSet<String> = BTreeSet::new();
+    for artifact in pin.artifacts.iter().filter(|a| a.logical_name.ends_with(".config")) {
+        let ledger = host
+            .read(&artifact.path)
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|v| v.get("supervisor")?.get("ledger_db")?.as_str().map(str::to_string));
+        if let Some(l) = ledger {
+            named.insert(l);
+        }
+    }
+    let ledger = match named.len() {
+        1 => named.into_iter().next().unwrap_or_default(),
+        0 => {
             return Status::not_met(
-                "no deployment key names the supervisor's durable ledger \
-                 (`supervisor.ledger_db`)",
+                "no configuration document the §2.5 pin manifest pins names the supervisor's \
+                 durable ledger (`supervisor.ledger_db`)",
             )
+        }
+        _ => {
+            return Status::not_met(format!(
+                "pinned configuration documents name {} different supervisor ledgers ({}); the \
+                 preflight will not choose one",
+                named.len(),
+                named.into_iter().collect::<Vec<_>>().join(", ")
+            ))
         }
     };
     let dir = match ledger.rfind('/') {
         Some(i) if i > 0 => ledger[..i].to_string(),
         _ => return Status::not_met(format!("`supervisor.ledger_db` ({ledger}) has no directory")),
     };
+    // The requirement says OWNED BY THE SUPERVISOR, and until 2026-09-29 only the mode was checked: a
+    // 0700 directory owned by any uid at all passed. `uids.supervisor` is in the block the broker
+    // reads, so the owner is measurable against the deployment's own statement of who that is.
+    let supervisor_uid = cfg
+        .get("uids")
+        .and_then(|u| u.get("supervisor"))
+        .and_then(Value::as_u64)
+        .map(|u| u as u32);
     match host.stat(&dir) {
         None => Status::not_met(format!("{dir} is absent")),
         Some(f) if !f.is_dir => Status::not_met(format!("{dir} is not a directory")),
+        Some(_) if supervisor_uid.is_none() => Status::not_met(
+            "the `uids` block names no `supervisor`, so the ledger directory's owner cannot be \
+             compared with the account that must own it",
+        ),
+        Some(f) if Some(f.owner_uid) != supervisor_uid => Status::not_met(format!(
+            "{dir} is owned by uid {}, not the supervisor (uid {}): the party being attested \
+             would not be the one holding its own state",
+            f.owner_uid,
+            supervisor_uid.unwrap_or_default()
+        )),
         Some(f) if f.mode & 0o077 != 0 => Status::not_met(format!(
             "{dir} is mode {:o}: the supervisor's own acceptance/lease state is readable or \
              writable by a principal that is not the supervisor",
@@ -886,6 +948,16 @@ fn check_pin_manifest_path(host: &dyn Host, cfg: &Cfg) -> Status {
             Err(e) => Status::not_met(format!("{path} does not deserialize as a pin manifest: {e}")),
         },
     }
+}
+
+/// The §2.5 pin manifest the broker's config names, parsed, or why it could not be.
+fn read_pin_manifest(host: &dyn Host, cfg: &Cfg) -> Result<TcbPinManifest, String> {
+    let path = pin_manifest_path(host, cfg).ok_or_else(|| {
+        "neither `trust.tcb_pin_manifest_path` nor $BROPS_TCB_PIN_MANIFEST names one".to_string()
+    })?;
+    let bytes = host.read(&path).ok_or_else(|| format!("{path} is absent or unreadable"))?;
+    serde_json::from_slice::<TcbPinManifest>(&bytes)
+        .map_err(|e| format!("{path} does not deserialize as a pin manifest: {e}"))
 }
 
 fn check_pin_coverage(host: &dyn Host, cfg: &Cfg) -> Status {
@@ -1549,7 +1621,14 @@ mod tests {
                 .iter()
                 .map(|n| brops_core::tcb_integrity::TcbArtifact {
                     logical_name: (*n).to_string(),
-                    path: format!("/opt/brops-live/tcb/{n}"),
+                    // Two roles point at files this fixture also stats or reads, because the
+                    // preflight LOCATES those artifacts through the pin manifest — the broker's
+                    // config does not name them, and must not (see `broker_config_keys`).
+                    path: match *n {
+                        "privileged-launcher.bin" => "/kit/privileged-launcher.bin".to_string(),
+                        "supervisor.config" => "/kit/supervisor.json".to_string(),
+                        _ => format!("/opt/brops-live/tcb/{n}"),
+                    },
                     expected_sha256: "0".repeat(64),
                     expected_owner: brops_core::tcb_integrity::TcbOwner::Root,
                 })
@@ -1578,14 +1657,19 @@ mod tests {
                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]
             },
             "resolved": {"workspace_id":"w","install_id":"i","run_id":"r","task_id":"t",
-                         "requested_at_ms": 1735689600000i64},
-            "execution": {"launcher_path": "/kit/privileged-launcher.bin"},
-            "supervisor": {"ledger_db": "/kit/supervisor-state/ledger.db"}
+                         "requested_at_ms": 1735689600000i64}
         })
         .to_string();
+        // The SUPERVISOR's own configuration, which on both kits is a document the supervisor
+        // reads and the broker does not. Here it is a separate file so a test can tell the two
+        // readers apart.
+        let supervisor_cfg =
+            serde_json::json!({"supervisor": {"ledger_db": "/kit/supervisor-state/ledger.db"}})
+                .to_string();
         FakeHost::linux()
             .env("BROPS_BROKER_CONFIG", "/kit/config.json")
             .file("/kit/config.json", &cfg)
+            .file("/kit/supervisor.json", &supervisor_cfg)
             .file("/kit/pin.json", &pin)
             .file("/kit/manifest.json", manifest)
             .file("/kit/manifest.sig", "AAAA")
@@ -1696,6 +1780,146 @@ mod tests {
         let r = evaluate(&host, None);
         let d = status_of(&r, "launcher.setuid_root_binary").detail();
         assert!(d.contains("owned by uid 5001"), "{d}");
+    }
+
+    /// Rewrite one pinned role's path in the fixture's §2.5 manifest.
+    fn repin(mut host: FakeHost, role: &str, path: &str) -> FakeHost {
+        let mut pin: TcbPinManifest =
+            serde_json::from_slice(host.files.get("/kit/pin.json").unwrap()).unwrap();
+        let mut hit = false;
+        for a in pin.artifacts.iter_mut().filter(|a| a.logical_name == role) {
+            a.path = path.to_string();
+            hit = true;
+        }
+        assert!(hit, "the fixture pins no {role}");
+        host.files.insert("/kit/pin.json".into(), serde_json::to_vec(&pin).unwrap());
+        host
+    }
+
+    /// Every dotted leaf path of a JSON document.
+    fn leaf_keys(v: &Value, prefix: &str, out: &mut Vec<String>) {
+        match v.as_object() {
+            Some(m) => {
+                for (k, child) in m {
+                    let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    leaf_keys(child, &path, out);
+                }
+            }
+            None => out.push(prefix.to_string()),
+        }
+    }
+
+    #[test]
+    fn the_provisioned_broker_config_holds_only_keys_the_broker_reads() {
+        // The defect this pins: the fixture's broker config carried `execution.launcher_path` and
+        // `supervisor.ledger_db`, which `build_governed_executor` never reads, so two rows passed
+        // here and failed against every config `write_broker_config.py` can produce. A key is
+        // covered when it, or a block containing it, is in the list the broker reads.
+        let host = provisioned();
+        let cfg: Value =
+            serde_json::from_slice(host.files.get("/kit/config.json").unwrap()).unwrap();
+        let mut leaves = Vec::new();
+        leaf_keys(&cfg, "", &mut leaves);
+        let unread: Vec<&String> = leaves
+            .iter()
+            .filter(|leaf| {
+                !CONFIG_KEYS_READ_BY_BUILD_GOVERNED_EXECUTOR.iter().any(|k| {
+                    leaf.as_str() == *k || leaf.starts_with(&format!("{k}."))
+                })
+            })
+            .collect();
+        assert!(unread.is_empty(), "the fixture's broker config carries unread keys: {unread:?}");
+    }
+
+    #[test]
+    fn the_launcher_is_the_one_the_pin_manifest_pins() {
+        // Repin the launcher to a path that is not setuid: the row must follow the MANIFEST, so it
+        // now reports that file, not the fixture's setuid one.
+        let host = repin(provisioned(), "privileged-launcher.bin", "/kit/other-launcher.bin")
+            .stat("/kit/other-launcher.bin", 0, 0o100755, false);
+        let d = status_of(&evaluate(&host, None), "launcher.setuid_root_binary").detail().to_string();
+        assert!(d.contains("/kit/other-launcher.bin") && d.contains("not setuid"), "{d}");
+    }
+
+    #[test]
+    fn a_pin_manifest_that_pins_no_launcher_is_not_met_by_name() {
+        let mut host = provisioned();
+        let mut pin: TcbPinManifest =
+            serde_json::from_slice(host.files.get("/kit/pin.json").unwrap()).unwrap();
+        pin.artifacts.retain(|a| a.logical_name != "privileged-launcher.bin");
+        host.files.insert("/kit/pin.json".into(), serde_json::to_vec(&pin).unwrap());
+        let r = evaluate(&host, None);
+        let status = status_of(&r, "launcher.setuid_root_binary");
+        assert!(matches!(status, Status::NotMet { .. }), "{status:?}");
+        assert!(status.detail().contains("pins no `privileged-launcher.bin`"), "{status:?}");
+    }
+
+    #[test]
+    fn without_a_pin_manifest_neither_artifact_can_be_located() {
+        let mut host = provisioned();
+        host.files.remove("/kit/pin.json");
+        let r = evaluate(&host, None);
+        for row in ["launcher.setuid_root_binary", "store.supervisor_private_0700"] {
+            let status = status_of(&r, row);
+            assert!(matches!(status, Status::NotMet { .. }), "{row}: {status:?}");
+            let d = status.detail();
+            assert!(d.contains("located through the §2.5 pin manifest") && d.contains("absent"), "{row}: {d}");
+        }
+    }
+
+    #[test]
+    fn the_ladder_shape_finds_the_ledger_in_another_pinned_config() {
+        // The ladder kit pins `ladder.json` under `supervisor.config`, and that document names no
+        // ledger; the supervisor reads its ledger from `config.json`, pinned under the other
+        // `.config` roles. That is a met row, not a missing ledger.
+        let host = repin(provisioned(), "supervisor.config", "/kit/ladder.json")
+            .file("/kit/ladder.json", r#"{"protocol":"brops.ladder-kit.v1"}"#);
+        let host = repin(host, "isolated-signer.config", "/kit/supervisor.json");
+        assert!(status_of(&evaluate(&host, None), "store.supervisor_private_0700").is_met());
+    }
+
+    #[test]
+    fn no_pinned_document_naming_a_ledger_is_not_met() {
+        let host = provisioned().file("/kit/supervisor.json", r#"{"supervisor":{}}"#);
+        let r = evaluate(&host, None);
+        let status = status_of(&r, "store.supervisor_private_0700");
+        assert!(matches!(status, Status::NotMet { .. }), "{status:?}");
+        assert!(status.detail().contains("names the supervisor's durable ledger"), "{status:?}");
+    }
+
+    #[test]
+    fn two_pinned_documents_naming_different_ledgers_are_refused() {
+        let host = repin(provisioned(), "isolated-signer.config", "/kit/elsewhere.json").file(
+            "/kit/elsewhere.json",
+            r#"{"supervisor":{"ledger_db":"/tmp/elsewhere/ledger.db"}}"#,
+        );
+        let r = evaluate(&host, None);
+        let status = status_of(&r, "store.supervisor_private_0700");
+        assert!(matches!(status, Status::NotMet { .. }), "{status:?}");
+        let d = status.detail();
+        assert!(d.contains("2 different supervisor ledgers") && d.contains("will not choose"), "{d}");
+    }
+
+    #[test]
+    fn a_supervisor_store_owned_by_another_account_is_not_met() {
+        let host = provisioned().stat("/kit/supervisor-state", 5001, 0o40700, true);
+        let r = evaluate(&host, None);
+        let status = status_of(&r, "store.supervisor_private_0700");
+        assert!(matches!(status, Status::NotMet { .. }), "{status:?}");
+        assert!(status.detail().contains("owned by uid 5001, not the supervisor (uid 5004)"), "{status:?}");
+    }
+
+    #[test]
+    fn a_uids_block_naming_no_supervisor_cannot_meet_the_store_row() {
+        let mut host = provisioned();
+        let mut cfg: Value =
+            serde_json::from_slice(host.files.get("/kit/config.json").unwrap()).unwrap();
+        cfg["uids"].as_object_mut().unwrap().remove("supervisor");
+        host.files.insert("/kit/config.json".into(), cfg.to_string().into_bytes());
+        let r = evaluate(&host, None);
+        let status = status_of(&r, "store.supervisor_private_0700");
+        assert!(matches!(status, Status::NotMet { .. }), "{status:?}");
+        assert!(status.detail().contains("names no `supervisor`"), "{status:?}");
     }
 
     #[test]
