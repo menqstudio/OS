@@ -253,6 +253,114 @@ pub fn verify_deployment_tcb(
     }
 }
 
+/// The two roles that say WHICH process the floor is about, and so must name the process asking.
+///
+/// `verify_tcb_integrity` measures that each pinned path is TCB-owned, unwritable and at its pinned
+/// digest. It never asks whether the path pinned as `trusted-verifier-broker.bin` is the binary that is
+/// running. Until 2026-09-30 nothing did: both kits pin that role to their PROOF DRIVER (`bin/live_turn`,
+/// `bin/ladder_turn`), so a `brops-broker` handed either kit's manifest passed its own floor while every
+/// byte of itself went unmeasured. The same holds for the document that steers it: a manifest pinning
+/// some other config under `pinned-manifest-config` measures a file the broker never reads.
+pub const BROKER_SELF_ROLES: [&str; 2] =
+    ["trusted-verifier-broker.bin", "trusted-verifier-broker.pinned-manifest-config"];
+
+/// `None` iff every manifest entry under [`BROKER_SELF_ROLES`] resolves to THIS broker: the `.bin`
+/// role to `exe`, the `.pinned-manifest-config` role to `own_config`. Each role must appear at least
+/// once, and EVERY entry under it must match — a second entry naming another file is refused rather
+/// than outvoted, because the floor would then vouch for a file that is not this process.
+///
+/// PURE over an injected `canon` (path -> canonical path, `None` if it does not resolve), so it runs on
+/// every host; `exe` and `own_config` are expected already canonical. Coverage of the other roles is
+/// not this function's question — `verify_tcb_integrity` asks it.
+pub fn broker_identity_violation(
+    manifest: &TcbPinManifest,
+    exe: &std::path::Path,
+    own_config: &std::path::Path,
+    canon: impl Fn(&str) -> Option<std::path::PathBuf>,
+) -> Option<String> {
+    for (role, expected) in BROKER_SELF_ROLES.iter().zip([exe, own_config]) {
+        let entries: Vec<&str> = manifest
+            .artifacts
+            .iter()
+            .filter(|a| a.logical_name == *role)
+            .map(|a| a.path.as_str())
+            .collect();
+        if entries.is_empty() {
+            return Some(format!("the TCB pin manifest pins nothing as `{role}`"));
+        }
+        for pinned in entries {
+            match canon(pinned) {
+                Some(resolved) if resolved == expected => {}
+                Some(resolved) => {
+                    return Some(format!(
+                        "the TCB pin manifest pins `{role}` at {pinned} ({}), which is not this broker's \
+                         {} — a floor measuring another file says nothing about this one",
+                        resolved.display(),
+                        expected.display()
+                    ))
+                }
+                None => {
+                    return Some(format!(
+                        "the TCB pin manifest pins `{role}` at {pinned}, which does not resolve"
+                    ))
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The §2.5 floor as the `brops-broker` PROCESS runs it: [`verify_deployment_tcb`]'s floor, over a
+/// manifest that must also name this process ([`broker_identity_violation`]) and the config it was
+/// started with.
+///
+/// Separate from [`verify_deployment_tcb`] rather than a change to it: that function is also the
+/// proof drivers' `--verify-tcb` (`proof/src/tcb_verify.rs`), run by root as a one-shot process whose
+/// kits are verified in CI and not on a box this change could be measured on.
+///
+/// ONE checked read. The identity decision and the integrity decision are taken over the same parsed
+/// manifest, so they cannot be about two different files.
+pub fn verify_broker_tcb(
+    manifest_path: Option<&str>,
+    login_and_runtime_uids: &[u32],
+    login_uid: u32,
+    own_config: &str,
+) -> Result<(), String> {
+    let path = manifest_path.ok_or_else(|| {
+        format!("no TCB pin manifest configured ({TCB_PIN_MANIFEST_ENV} unset)")
+    })?;
+    #[cfg(target_os = "linux")]
+    {
+        let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)
+            .map_err(|why| format!("TCB pin manifest unreadable or malformed: {why}"))?;
+        // `/proc/self/exe` on Linux: the kernel's own record of the image this process was exec'd from.
+        // A binary replaced or deleted after exec no longer canonicalizes to a pinned path, and refuses.
+        let exe = std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .map_err(|e| format!("cannot resolve this broker's own executable: {e}"))?;
+        let config = std::fs::canonicalize(own_config)
+            .map_err(|e| format!("cannot resolve this broker's config {own_config}: {e}"))?;
+        if let Some(why) = broker_identity_violation(&manifest, &exe, &config, |p| {
+            std::fs::canonicalize(p).ok()
+        }) {
+            return Err(why);
+        }
+        let probe = LinuxFsProbe { login_and_runtime_uids: login_and_runtime_uids.to_vec() };
+        brops_core::tcb_integrity::verify_tcb_integrity(
+            &manifest,
+            &probe,
+            login_and_runtime_uids,
+            login_uid,
+        )
+        .map_err(|v| format!("{v:?}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (path, login_and_runtime_uids, login_uid, own_config);
+        Err("TCB integrity floor requires Linux (owner/mode/O_NOFOLLOW facts)".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +618,146 @@ mod tests {
         std::fs::write(&p, br#"{"artifacts":[],"owner_uids":{}}"#).unwrap();
         assert!(verify_deployment_tcb(Some(p.to_str().unwrap()), &[1000], 1000).is_err());
         let _ = std::fs::remove_file(&p);
+    }
+
+    // ---- the manifest must name THIS broker -------------------------------------------------
+    //
+    // Both in-tree kits pin `trusted-verifier-broker.bin` to their proof driver. Handed either one,
+    // `brops-broker` used to pass its own floor without a byte of itself being measured.
+
+    use brops_core::tcb_integrity::{TcbArtifact, TcbOwner};
+    use std::path::{Path, PathBuf};
+
+    const EXE: &str = "/opt/brops/bin/brops-broker";
+    const CFG: &str = "/opt/brops/tcb/broker-config.json";
+
+    fn pinned(entries: &[(&str, &str)]) -> TcbPinManifest {
+        TcbPinManifest {
+            artifacts: entries
+                .iter()
+                .map(|(role, path)| TcbArtifact {
+                    logical_name: role.to_string(),
+                    path: path.to_string(),
+                    expected_sha256: "00".repeat(32),
+                    expected_owner: TcbOwner::Root,
+                })
+                .collect(),
+            owner_uids: Default::default(),
+        }
+    }
+
+    /// Every path resolves to itself, except the one symlink the tests below need.
+    fn canon(p: &str) -> Option<PathBuf> {
+        match p {
+            "/opt/brops/bin/current" => Some(PathBuf::from(EXE)),
+            "/gone" => None,
+            _ => Some(PathBuf::from(p)),
+        }
+    }
+
+    fn violation(entries: &[(&str, &str)]) -> Option<String> {
+        broker_identity_violation(&pinned(entries), Path::new(EXE), Path::new(CFG), canon)
+    }
+
+    #[test]
+    fn a_manifest_naming_this_broker_and_its_config_is_accepted() {
+        // The control: without it every refusal below could be the predicate refusing everything.
+        assert_eq!(
+            violation(&[
+                ("trusted-verifier-broker.bin", EXE),
+                ("trusted-verifier-broker.pinned-manifest-config", CFG),
+                ("supervisor.bin", "/opt/brops/engine/ci/live/run_ladder_supervisor.py"),
+            ]),
+            None
+        );
+        // A pinned path that RESOLVES to this binary is this binary.
+        assert_eq!(
+            violation(&[
+                ("trusted-verifier-broker.bin", "/opt/brops/bin/current"),
+                ("trusted-verifier-broker.pinned-manifest-config", CFG),
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_kit_manifest_pinning_a_proof_driver_is_refused() {
+        // The defect, as the two in-tree kits produce it.
+        for driver in ["/opt/brops/bin/live_turn", "/opt/brops/bin/ladder_turn"] {
+            let why = violation(&[
+                ("trusted-verifier-broker.bin", driver),
+                ("trusted-verifier-broker.pinned-manifest-config", CFG),
+            ])
+            .expect("a manifest pinning a proof driver must not vouch for brops-broker");
+            assert!(why.contains("trusted-verifier-broker.bin") && why.contains(driver), "{why}");
+        }
+    }
+
+    #[test]
+    fn a_manifest_pinning_another_config_is_refused() {
+        let why = violation(&[
+            ("trusted-verifier-broker.bin", EXE),
+            ("trusted-verifier-broker.pinned-manifest-config", "/opt/brops/config.json"),
+        ])
+        .expect("a manifest pinning a config this broker does not read must be refused");
+        assert!(why.contains("pinned-manifest-config"), "{why}");
+    }
+
+    #[test]
+    fn a_second_entry_naming_another_file_is_refused_not_outvoted() {
+        let why = violation(&[
+            ("trusted-verifier-broker.bin", EXE),
+            ("trusted-verifier-broker.bin", "/opt/brops/bin/live_turn"),
+            ("trusted-verifier-broker.pinned-manifest-config", CFG),
+        ])
+        .expect("one matching entry must not excuse another");
+        assert!(why.contains("live_turn"), "{why}");
+    }
+
+    #[test]
+    fn an_absent_role_or_an_unresolvable_path_is_refused() {
+        let why = violation(&[("trusted-verifier-broker.pinned-manifest-config", CFG)])
+            .expect("no `.bin` entry at all");
+        assert!(why.contains("pins nothing as `trusted-verifier-broker.bin`"), "{why}");
+        let why = violation(&[("trusted-verifier-broker.bin", EXE)]).expect("no config entry");
+        assert!(why.contains("pinned-manifest-config"), "{why}");
+        let why = violation(&[
+            ("trusted-verifier-broker.bin", "/gone"),
+            ("trusted-verifier-broker.pinned-manifest-config", CFG),
+        ])
+        .expect("an unresolvable pin");
+        assert!(why.contains("does not resolve"), "{why}");
+    }
+
+    #[test]
+    fn the_broker_floor_refuses_unconfigured_and_absent_manifests() {
+        let e = verify_broker_tcb(None, &[1000], 1000, "/nonexistent").unwrap_err();
+        assert!(e.contains("no TCB pin manifest configured"), "{e}");
+        let e = verify_broker_tcb(Some("/nonexistent/tcb-pin.json"), &[1000], 1000, "/nonexistent")
+            .unwrap_err();
+        assert!(e.contains("unreadable or malformed") || e.contains("requires Linux"), "{e}");
+    }
+
+    /// The Linux branch reads ONCE through the checked reader, asks the identity question of
+    /// `current_exe`, and only then runs the integrity floor over that same parsed manifest.
+    #[test]
+    fn the_broker_floor_checks_identity_over_the_checked_read_before_integrity() {
+        let src = code_only(include_str!("tcb_probe.rs"));
+        let body = src
+            .split("pub fn verify_broker_tcb")
+            .nth(1)
+            .expect("verify_broker_tcb is gone")
+            .split("#[cfg(not(target_os = \"linux\"))]")
+            .next()
+            .expect("the linux branch is gone")
+            .to_string();
+        let read = body.find("read_pin_manifest_checked(path").expect("not a checked read");
+        let exe = body.find("std::env::current_exe()").expect("identity not taken from the process");
+        let identity = body.find("broker_identity_violation(&manifest").expect("identity unchecked");
+        let floor = body.find("verify_tcb_integrity(").expect("integrity floor not run");
+        assert!(read < exe && exe < identity && identity < floor, "{body}");
+        // And the identity verdict is a refusal, not a value computed and dropped.
+        assert!(body[identity..floor].contains("return Err(why);"), "{body}");
+        assert!(!body.contains("load_pin_manifest("), "{body}");
     }
 }

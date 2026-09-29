@@ -436,6 +436,34 @@ class WriterBehaviourTests(unittest.TestCase):
         self.expect_refusal("does not cover")
         self.assertFalse(os.path.exists(self.dep.out))
 
+    # ---- the real broker's order: this document first, its manifest second ----------------------
+
+    def run_built_after(self, manifest):
+        return subprocess.run(
+            [sys.executable, WRITER, "--pin-manifest-built-after"]
+            + self.dep.argv(**{"--tcb-pin-manifest": manifest}),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={**os.environ, "PYTHONUTF8": "1"})
+
+    def test_a_manifest_built_after_is_named_and_the_next_command_is_printed(self):
+        """The broker's floor pins THIS document by digest, so its manifest cannot exist yet. The
+        flag skips the coverage read only, and the output says the floor refuses until it is built."""
+        later = os.path.join(self.dep.tcb, "later-pin.json")
+        done = self.run_built_after(later)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        document = json.loads(read(self.dep.out))
+        self.assertEqual(document["trust"]["tcb_pin_manifest_path"], later)
+        self.assertIn("NOT BUILT YET", done.stdout)
+        self.assertIn("--kit broker --broker-config %s" % os.path.abspath(self.dep.out), done.stdout)
+
+    def test_a_manifest_that_already_exists_is_refused_under_built_after(self):
+        """An existing manifest cannot pin a document written after it; skipping its read would hide
+        that it is stale by construction."""
+        done = self.run_built_after(self.dep.pin_manifest)
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertIn("already exists", done.stderr)
+        self.assertFalse(os.path.exists(self.dep.out))
+
 
 class TheTreeStillWritesNoConfigForTheProductTests(unittest.TestCase):
     """The claim fifty places in this repository make, kept true by measurement.

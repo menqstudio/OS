@@ -318,10 +318,14 @@ mod linux {
                 .ok()
                 .filter(|p| !p.is_empty())
         });
-        if let Err(why) = brops_broker::tcb_probe::verify_deployment_tcb(
+        // `verify_broker_tcb`, not `verify_deployment_tcb`: the manifest must also pin THIS executable
+        // and THIS config under the broker's own roles. Both in-tree kits pin their proof driver there,
+        // and until 2026-09-30 either kit's manifest passed this floor with the broker itself unmeasured.
+        if let Err(why) = brops_broker::tcb_probe::verify_broker_tcb(
             pin_manifest_path.as_deref(),
             &principals,
             login_uid,
+            &path,
         ) {
             eprintln!("brops-broker: TCB integrity floor REFUSED ({why}) — serving fail-closed");
             return fail_closed();
@@ -733,6 +737,28 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The broker runs the floor that asks whether the manifest names THIS broker, with the config
+    /// path it was started from. `verify_deployment_tcb` is the proof drivers' floor and does not ask;
+    /// handed either in-tree kit's manifest, it passed with `brops-broker` itself unmeasured.
+    #[test]
+    fn the_broker_floor_is_the_one_that_asks_for_this_broker() {
+        let code = broker_code();
+        assert!(!code.contains("verify_deployment_tcb("), "the broker runs the driver's floor");
+        let call = code
+            .split("tcb_probe::verify_broker_tcb(")
+            .nth(1)
+            .expect("the broker does not run verify_broker_tcb")
+            .split(") {")
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(call.contains("&path"), "the floor is not handed $BROPS_BROKER_CONFIG's path: {call}");
+        let after = code.split("tcb_probe::verify_broker_tcb(").nth(1).unwrap();
+        let refused = after.find("return fail_closed()").expect("a refusal that does not refuse");
+        let manifest = after.find("trust\", \"manifest_path\"").expect("manifest_path gone");
+        assert!(refused < manifest, "the floor's refusal comes after the key manifest is read");
     }
 
     /// The broker must never name the calling-principal constructor.

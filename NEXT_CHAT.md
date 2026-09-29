@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `518dc4c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t121/broker-pin-manifest` — `main` @ `2c2f24e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `518dc4c`.** The only thing open is PR #291 on `t120/settled-at-518dc4c`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #292 · branch `t121/broker-pin-manifest`** (base `main`, tip `2c2f24e`, task T-121).
 >
-> **Next:** A §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
+> T-121: the broker's §2.5 floor never asked whether the pinned broker was itself
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,8 +48,8 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2315 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1211 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2323 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1219 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
