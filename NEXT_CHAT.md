@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t117/preflight-locates-from-pin-manifest` — `main` @ `55d852e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `6977650`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #288 · branch `t117/preflight-locates-from-pin-manifest`** (base `main`, tip `55d852e`, task T-117).
+> **✅ SETTLED — `main` is at `6977650`.** The only thing open is PR #289 on `t118/settled-at-6977650`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-117: preflight locates the launcher and supervisor ledger via the §2.5 pin manifest; CI-caught comment reworded.
+> **Next:** A §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
