@@ -310,7 +310,9 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         require(DESKTOP_TCB_SOURCE)
         with tempfile.TemporaryDirectory() as root:
             manifest = self._build(root, "broker")
-            by_role = {a["logical_name"]: a["path"] for a in manifest["artifacts"]}
+            # normpath: the templates join with `/`, which Windows keeps beside its own `\\`.
+            by_role = {a["logical_name"]: os.path.normpath(a["path"])
+                       for a in manifest["artifacts"]}
             self.assertEqual(sorted(by_role), sorted(required_artifacts()))
             # The two roles `tcb_probe::broker_identity_violation` holds to the running process.
             self.assertEqual(by_role["trusted-verifier-broker.bin"],
