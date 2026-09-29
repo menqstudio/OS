@@ -59,14 +59,20 @@ function setup(reduce: boolean) {
 }
 
 /** The animated total is the only `.mono` in the section footer. */
-async function totalText(): Promise<string> {
+function footText(): string {
+  return document.querySelector('.an-foot-r .mono')?.textContent ?? '';
+}
+
+/**
+ * Wait until the data has rendered AND the effects that follow it have run. `useEasedCountUp` moves
+ * its number in a `useEffect`, i.e. one render AFTER `total` changes, so reading the footer the moment
+ * the label appears races that effect. It did, on `main` @ e181ee8: "expected '0' to be '42'" with
+ * the component correct, and green on the same tree one run earlier.
+ */
+async function settled(): Promise<void> {
   await waitFor(() => expect(screen.getAllByText('Total Runs Logged').length).toBeGreaterThan(0));
-  const foot = await waitFor(() => {
-    const el = document.querySelector('.an-foot-r .mono');
-    expect(el).not.toBeNull();
-    return el as HTMLElement;
-  });
-  return foot.textContent ?? '';
+  await waitFor(() => expect(document.querySelector('.an-foot-r .mono')).not.toBeNull());
+  await new Promise((r) => setTimeout(r, 50));
 }
 
 beforeEach(() => invokeMock.mockReset());
@@ -75,13 +81,18 @@ afterEach(() => vi.unstubAllGlobals());
 describe('Analytics — the animated total obeys prefers-reduced-motion', () => {
   it('shows the TRUE total with no frames at all when the user asked for reduced motion', async () => {
     setup(true);
-    expect(await totalText()).toBe(String(TOTAL));
+    // Inside `waitFor`, so the effect that applies the total is not raced. A dropped `!` is still
+    // caught: with frames stubbed out an animating count never leaves 0, and this times out.
+    await waitFor(() => expect(footText()).toBe(String(TOTAL)));
   });
 
   it('animates from zero when motion is allowed — so the flag is read, not ignored', async () => {
     setup(false);
     // Frames are stubbed out, so an animating count is pinned at its starting value. If this read
     // `42` the hook would be snapping for everyone and the test above would pass for the wrong reason.
-    expect(await totalText()).toBe('0');
+    // NOT a `waitFor`: a transient 0 would satisfy one even if the hook snapped to 42 a moment later.
+    // Settle first, then require it to still be 0.
+    await settled();
+    expect(footText()).toBe('0');
   });
 });
