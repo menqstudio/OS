@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
 >
-> T-123: nothing had started brops-broker with $BROPS_BROKER_CONFIG exported
+> T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

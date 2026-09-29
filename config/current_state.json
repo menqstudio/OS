@@ -116,12 +116,12 @@
     "number": 294,
     "branch": "t123/broker-binary-reads-its-config",
     "state": "open",
-    "what": "Closes OWNER_ACTION_REQUIRED \u00a70 row 5 in CI: the ladder kit starts the product brops-broker with its config exported, over a --kit broker manifest; every config gate must pass and the kit-signed manifest must still be refused.",
-    "note": "T-123: nothing had started brops-broker with $BROPS_BROKER_CONFIG exported",
+    "what": "Closes OWNER_ACTION_REQUIRED \u00a70 row 5 in CI: the ladder kit starts the product brops-broker with its config exported. First run: the broker measures as itself, and the sudoers vector and setuid launcher are closed to it; the kit grants read on those two.",
+    "note": "T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #294 (t123/broker-binary-reads-its-config), task T-123: Closes OWNER_ACTION_REQUIRED §0 row 5 in CI: the ladder kit starts the product brops-broker with its config exported, over a --kit broker manifest; every config gate must pass and the kit-signed manifest must still be refused. Next: After #294: row 6 — docs/DEBIAN_CUSTODY_CEREMONY.md, the Linux ceremony runbook (OWNER_ACTION_REQUIRED §0 row 6).",
+    "current": "PR #294 (t123/broker-binary-reads-its-config), task T-123: Closes OWNER_ACTION_REQUIRED §0 row 5 in CI: the ladder kit starts the product brops-broker with its config exported. First run: the broker measures as itself, and the sudoers vector and setuid launcher are closed to it; the kit grants read on those two. Next: After #294: row 6 — docs/DEBIAN_CUSTODY_CEREMONY.md (OWNER_ACTION_REQUIRED §0 row 6); the broker's read grant is an Owner posture decision (§0 row 5).",
     "_note": "The carrier is current_workflow_pr (#294 on t123/broker-binary-reads-its-config). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

@@ -6,7 +6,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #294 · branch `t123/broker-binary-reads-its-config`** (base `main`, tip `a5e0367`, task T-123).
 >
-> T-123: nothing had started brops-broker with $BROPS_BROKER_CONFIG exported
+> T-123: brops-broker with $BROPS_BROKER_CONFIG exported; CI found it cannot read two pinned files
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-123** | **Nothing had started `brops-broker` with `$BROPS_BROKER_CONFIG` exported** — the ladder kit does, over a manifest pinning it; every gate must pass, the kit root still refused. §0 row 5 ◑ | Bro | In-Progress | `t123/broker-binary-reads-its-config` |
+| **T-123** | **Nothing had started `brops-broker` with `$BROPS_BROKER_CONFIG` exported** — the ladder kit does, over a manifest pinning it; every gate must pass, the kit root still refused. CI found the broker cannot read 2 pinned files ◑ | Bro | In-Progress | `t123/broker-binary-reads-its-config` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |

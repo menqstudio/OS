@@ -715,6 +715,26 @@ python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit ladder --root-dir "$LIVE" --so
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
 python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit broker --broker-config "$BROKER_CONFIG" --root-dir "$LIVE" --source-dir "$REPO_ROOT" --sudoers "$SUDOERS" --unit "$TCB/brops-ladder.unit" --out "$BROKER_PIN" || { echo "FAIL: the brops-broker §2.5 pin manifest"; exit 1; }
 chown 0:0 "$BROKER_PIN"; chmod 0644 "$BROKER_PIN"
+# THE PRODUCT BROKER MEASURES AS ITSELF, NOT AS ROOT. `ladder_turn --verify-tcb` above runs as root;
+# `brops-broker` evaluates the same floor in its own process, as the broker principal — and two
+# pinned artifacts are deliberately closed to that principal: the recorder sudoers vector (0440 in a
+# 0750 `/etc/sudoers.d`) and the setuid launcher (4750, group = the recorder's). The first CI run of
+# this phase measured it: `Missing { governed-execution-allowlist.source }`, because the broker
+# cannot even stat the file. So the broker is granted READ on exactly those two files and SEARCH on
+# `/etc/sudoers.d` — no execute, no write, no listing; both are non-secret (a binary built from this
+# tree, an argv derivable from `config.json`). Named in OWNER_ACTION_REQUIRED §0 row 5 as a posture
+# decision for the Owner, because a real deployment has to make the same one. After the `-Rb` strip
+# above, and asserted: an ACL that silently did not apply would reproduce the refusal.
+command -v setfacl >/dev/null 2>&1 || { echo "FAIL: setfacl is required to grant the broker its read"; exit 1; }
+setfacl -m "u:$BROKER_USER:x" /etc/sudoers.d
+setfacl -m "u:$BROKER_USER:r" "$SUDOERS" "$TCB/privileged-launcher.bin"
+[ "$(stat -c %a "$TCB/privileged-launcher.bin")" = "4750" ] \
+  || { echo "FAIL: the launcher lost its 4750 mode to the ACL"; exit 1; }
+[ "$(stat -c %a "$SUDOERS")" = "440" ] || { echo "FAIL: the sudoers vector is no longer 0440"; exit 1; }
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "$SUDOERS" >/dev/null || { echo "FAIL: sudo no longer accepts the recorder vector"; exit 1; }
+fi
+getfacl -p /etc/sudoers.d "$SUDOERS" "$TCB/privileged-launcher.bin" 2>/dev/null | grep -E "^# file|$BROKER_USER"
 # Root, and before anything starts, for the reason `proof/src/tcb_verify.rs` gives: the pinned set
 # includes artifacts the serving principals must not be able to read, so root is the only principal
 # that can honestly evaluate it. The driver config names the manifest (`trust.tcb_pin_manifest_path`,
@@ -727,6 +747,7 @@ PIDS=()
 cleanup() {
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
   rm -f "$SUDOERS" "$DRIVER_SUDOERS"
+  setfacl -x "u:$BROKER_USER" /etc/sudoers.d 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -1398,11 +1419,12 @@ run_broker() {  # <label> <config>  -> leaves $BROKER_RUN/<label>.log and <label
   # JSON. The conversation is the one row this kit's messages database holds.
   sudo -u "$BROKER_USER" python3 - "$sock" "$DRIVER_CONFIG" "$label" >"$BROKER_RUN/$label.reply.json" <<'PYRENDER' \
     || echo "  (no reply from brops-broker $label)"
-import json, socket, struct, sys
+import json, socket, struct, sys, uuid
 sock_path, config_path, label = sys.argv[1:4]
 conversation = json.load(open(config_path, encoding="utf-8"))["resolved"]["conversation_id"]
 body = json.dumps({"protocol": "brops.renderer-governed-turn.v1", "conversation_id": conversation,
-                   "client_request_id": "t123-" + label}).encode("utf-8")
+                   # A canonical UUIDv4 or the broker answers `malformed` — the first CI run did.
+                   "client_request_id": str(uuid.uuid4())}).encode("utf-8")
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(120)
 s.connect(sock_path)
