@@ -39,6 +39,14 @@ specification:
     fail-closes at the floor — which is correct, and is exactly the "gap hidden behind a file that
     looks complete" that `preflight.rs`'s own header warns an installer not to produce.
 
+    One ordering cannot satisfy that, and it is the one the real broker needs. Since 2026-09-30 the
+    broker refuses a manifest that does not pin THIS document under its own config roles, so the
+    manifest must be built AFTER this file exists — while this file names the manifest. For that
+    deployment `--pin-manifest-built-after` skips the read and says, in the output, which command
+    closes the loop; `build_tcb_pin_manifest.py --kit broker --broker-config` then refuses unless this
+    document names the manifest it is building. The default is unchanged: without the flag an absent
+    or under-covering manifest is refused here.
+
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
   * **It provisions nothing.** It writes one JSON document out of values it is handed. It creates no
@@ -359,6 +367,11 @@ def main(argv=None):
                              "prefix's own tokens start with `-` (`-n`, `-u`), and a repeated flag "
                              "hands those to the argument parser as options. This is also the exact "
                              "value that lands in the document")
+    parser.add_argument("--pin-manifest-built-after", action="store_true",
+                        help="the pin manifest does not exist yet and will be built AFTER this "
+                             "document, by build_tcb_pin_manifest.py --kit broker --broker-config "
+                             "<--out>, because it pins this document's digest. Skips the coverage "
+                             "read ONLY; the broker's floor refuses until that manifest exists")
     parser.add_argument("--emit", action="store_true",
                         help="also print the document to stdout (it holds no secret; the allowlist "
                              "above is why)")
@@ -415,7 +428,17 @@ def main(argv=None):
         }
         validate_sidecar(sidecar)
 
-        pinned = validate_pin_manifest(args.tcb_pin_manifest)
+        if args.pin_manifest_built_after:
+            if os.path.exists(args.tcb_pin_manifest):
+                # A manifest that exists already cannot pin a document about to be written: it is
+                # stale by construction, and skipping its read would hide that it is.
+                raise Refused(
+                    "--pin-manifest-built-after, but %s already exists. It cannot pin the digest of "
+                    "a document written after it; remove it and rebuild it after this one"
+                    % args.tcb_pin_manifest)
+            pinned = None
+        else:
+            pinned = validate_pin_manifest(args.tcb_pin_manifest)
 
         document = build(
             base,
@@ -438,7 +461,14 @@ def main(argv=None):
         sys.stdout.write(rendered)
 
     print("broker config: %d keys -> %s" % (len(BROKER_READ_KEYS), args.out))
-    print("  2.5 pin manifest : %s (%d artifacts, full coverage)" % (args.tcb_pin_manifest, pinned))
+    if pinned is None:
+        print("  2.5 pin manifest : %s NOT BUILT YET. Until it is, the broker's floor refuses. Next:"
+              % args.tcb_pin_manifest)
+        print("      build_tcb_pin_manifest.py --kit broker --broker-config %s --out %s ..."
+              % (os.path.abspath(args.out), args.tcb_pin_manifest))
+    else:
+        print("  2.5 pin manifest : %s (%d artifacts, full coverage)"
+              % (args.tcb_pin_manifest, pinned))
     print("  sidecar principal: %s via %s" % (args.sidecar_principal, " ".join(sidecar[INVOKER_KEY])))
     print("  export BROPS_BROKER_CONFIG=%s before starting brops-broker." % os.path.abspath(args.out))
     print("  This document alone does NOT open a governed surface: "

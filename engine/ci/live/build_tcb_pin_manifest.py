@@ -34,6 +34,15 @@ default — a default is the wrong table taken silently — and `TCB_REQUIRED_AR
 asserted per kit by `engine/tests/test_live_tcb_pin_manifest.py` rather than waiting for a live turn
 to discover a gap. The `live` table is byte-for-byte the one this script has always used.
 
+The THIRD kit, `broker`, is the real `brops-broker` (OWNER_ACTION_REQUIRED §0 row 4). Both kits above
+pin `trusted-verifier-broker.bin` to their proof driver, and the broker's floor never asked whether
+that path was itself, so either manifest satisfied it. It asks now (`tcb_probe::verify_broker_tcb`),
+and this kit is the one that can answer: the broker's own binary, and the `$BROPS_BROKER_CONFIG`
+document under both of the broker's config roles. That document and this manifest name each other —
+the config names the manifest by path, the manifest pins the config by digest — so the config is
+written first (`write_broker_config.py --pin-manifest-built-after`) and `--broker-config` refuses one
+that does not name `--out`.
+
 Run AFTER everything exists (the lease and the sudoers allowlist are written late), and BEFORE the
 services start — the pin is a start-time measurement, so anything provisioned after it is not
 covered by it. Until 2026-09-29 the `ladder` table could not satisfy that for one role:
@@ -114,6 +123,15 @@ SOURCE_ORIGIN = {
         # And the orchestrator is this kit's own script, not the §5 one.
         "trusted-verifier-broker.unit": "engine/ci/live/run_ladder_turn.sh",
         "desktop-challenge-authority.unit": "engine/ci/live/run_ladder_turn.sh",
+    },
+    "broker": {
+        # The real `brops-broker` serves the §4.10(g) ladder (`build_governed_executor` builds a
+        # `LadderChain`), so the three Python services are the ladder kit's. There is no in-tree
+        # orchestrator for this kit — the operator's own unit or script starts it — so the two `.unit`
+        # roles have no repository origin and are `deployment-measured`, and the manifest says so.
+        "supervisor.bin": "engine/ci/live/run_ladder_supervisor.py",
+        "isolated-signer.bin": "engine/ci/live/run_signer.py",
+        "desktop-challenge-authority.bin": "engine/ci/live/run_authority.py",
     },
 }
 
@@ -205,7 +223,44 @@ ROLE_PATHS = {
         "trusted-verifier-broker.unit": "{unit}",
         "desktop-challenge-authority.unit": "{unit}",
     },
+    "broker": {
+        # OWNER_ACTION_REQUIRED §0 row 4: the kit whose broker-side binary is `brops-broker` itself.
+        # Both kits above pin that role to a proof driver, and since 2026-09-30 the broker refuses a
+        # manifest that does not pin ITS OWN executable and ITS OWN config under these roles
+        # (`tcb_probe::broker_identity_violation`) — so either of their manifests now refuses there.
+        # Every row not commented here is the ladder kit's, for the reason `SOURCE_ORIGIN` gives.
+        "supervisor.bin": "{live}/run_ladder_supervisor.py",
+        "evidence-recorder-runner.bin": "{bin}/governed_recorder",
+        "privileged-launcher.bin": "{tcb}/privileged-launcher.bin",
+        "contained-executor.bin": "{tcb}/contained-executor.bin",
+        "isolated-signer.bin": "{live}/run_signer.py",
+        "trusted-verifier-broker.bin": "{bin}/brops-broker",
+        "desktop-challenge-authority.bin": "{live}/run_authority.py",
+        "supervisor.config": "{tcb}/ladder.json",
+        "evidence-recorder-runner.config": "{tcb}/recorder-policy.json",
+        "privileged-launcher.config": "{tcb}/executor.lease",
+        "contained-executor.config": "{tcb}/executor.lease",
+        "isolated-signer.config": "{config}",
+        # The broker reads ONE document, the one `$BROPS_BROKER_CONFIG` names
+        # (`write_broker_config.py` writes it). It is both its configuration and its pinned-manifest
+        # configuration: `trust.manifest_path` and the rest of the key-manifest steering live there.
+        "trusted-verifier-broker.config": "{broker_config}",
+        "desktop-challenge-authority.config": "{config}",
+        "desktop-challenge-authority.ipc-policy":
+            "{tcb}/desktop-challenge-authority.ipc-policy.json",
+        "trusted-verifier-broker.ipc-policy": "{tcb}/trusted-verifier-broker.ipc-policy.json",
+        "trusted-verifier-broker.pinned-manifest-config": "{broker_config}",
+        "governed-execution-allowlist.source": "{sudoers}",
+        "key-manifest.root-anchor": "{tcb}/root-anchor.json",
+        "trusted-verifier-broker.unit": "{unit}",
+        "desktop-challenge-authority.unit": "{unit}",
+    },
 }
+
+#: The kits whose table names `{broker_config}`, and so need `--broker-config`. Derived, not listed.
+NEEDS_BROKER_CONFIG = tuple(sorted(
+    kit for kit, table in ROLE_PATHS.items()
+    if any("{broker_config}" in template for template in table.values())))
 
 #: The kits this builder knows. `--kit` takes one of these and has no default, deliberately.
 KITS = tuple(sorted(ROLE_PATHS))
@@ -214,10 +269,13 @@ DEPLOYMENT_MEASURED = "deployment-measured"
 
 
 def resolve_roles(kit: str, *, tcb: str, live: str, binaries: str, config: str, sudoers: str,
-                  unit: str) -> dict:
+                  unit: str, broker_config: str | None = None) -> dict:
     """`{logical_name: absolute path}` for one kit, resolved against this deployment's layout."""
+    if kit in NEEDS_BROKER_CONFIG and broker_config is None:
+        # Never formatted as the string "None": a role pinned at a path that names nothing.
+        raise ValueError("kit %r pins the $BROPS_BROKER_CONFIG document and needs its path" % kit)
     slots = {"tcb": tcb, "live": live, "bin": binaries, "config": config,
-             "sudoers": sudoers, "unit": unit}
+             "sudoers": sudoers, "unit": unit, "broker_config": broker_config}
     return {name: template.format(**slots) for name, template in ROLE_PATHS[kit].items()}
 
 
@@ -230,7 +288,7 @@ def sha256_file(path: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Emit the live kit's §2.5 TCB pin manifest")
+    ap = argparse.ArgumentParser(description="Emit one kit's §2.5 TCB pin manifest")
     ap.add_argument("--root-dir", required=True, help="e.g. /opt/brops-live")
     ap.add_argument("--sudoers", required=True, help="the governed-execution allowlist source")
     ap.add_argument("--unit", required=True, help="root-owned copy of the orchestrator script")
@@ -244,7 +302,35 @@ def main() -> int:
         help="which kit's role table to use. Required with NO default: the two kits run different "
              "files under the same logical names, and a floor that pins the wrong artifact is worse "
              "than no floor. A default would be the wrong table taken silently")
+    ap.add_argument(
+        "--broker-config", default=None,
+        help="the $BROPS_BROKER_CONFIG document (engine/ci/live/write_broker_config.py writes it). "
+             "Required for --kit %s and refused for every other kit. It must already name --out as "
+             "its trust.tcb_pin_manifest_path" % "/".join(NEEDS_BROKER_CONFIG))
     args = ap.parse_args()
+
+    if (args.kit in NEEDS_BROKER_CONFIG) != (args.broker_config is not None):
+        ap.error("--broker-config is required for --kit %s and meaningless for any other kit"
+                 % "/".join(NEEDS_BROKER_CONFIG))
+    broker_config = None
+    if args.broker_config is not None:
+        broker_config = os.path.abspath(args.broker_config)
+        # The two documents name each other: the config names this manifest by PATH, this manifest
+        # pins the config by DIGEST. So the config is written first and this checks the pointer back.
+        # A manifest pinning a config that names some other manifest pins a document whose floor is
+        # not this one.
+        try:
+            with open(broker_config, "r", encoding="utf-8") as f:
+                named = (json.load(f).get("trust") or {}).get("tcb_pin_manifest_path")
+        except (OSError, ValueError, AttributeError) as exc:
+            print("FAIL: --broker-config %s is not a readable JSON document (%s)"
+                  % (broker_config, exc), file=sys.stderr)
+            return 1
+        if not isinstance(named, str) or os.path.realpath(named) != os.path.realpath(args.out):
+            print("FAIL: --broker-config %s names %r as its trust.tcb_pin_manifest_path, not --out %s. "
+                  "The broker would read a different floor from the one being built here."
+                  % (broker_config, named, os.path.abspath(args.out)), file=sys.stderr)
+            return 1
 
     root = os.path.abspath(args.root_dir)
     tcb = os.path.join(root, "tcb")
@@ -257,7 +343,8 @@ def main() -> int:
     # want if a map ever falls behind the required set.
     mapping = resolve_roles(
         args.kit, tcb=tcb, live=live, binaries=binaries, config=config,
-        sudoers=os.path.abspath(args.sudoers), unit=os.path.abspath(args.unit))
+        sudoers=os.path.abspath(args.sudoers), unit=os.path.abspath(args.unit),
+        broker_config=broker_config)
     origins = SOURCE_ORIGIN[args.kit]
 
     source = os.path.abspath(args.source_dir)

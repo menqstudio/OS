@@ -99,7 +99,16 @@ class LiveTcbPinManifestTests(unittest.TestCase):
     @staticmethod
     def _unit_name(kit: str) -> str:
         """The root-owned copy of the orchestrator each kit's two `.unit` roles pin."""
-        return {"live": "brops-live.unit", "ladder": "brops-ladder.unit"}[kit]
+        return {"live": "brops-live.unit", "ladder": "brops-ladder.unit",
+                "broker": "brops-broker.unit"}[kit]
+
+    @staticmethod
+    def _broker_config(root: str) -> str:
+        return os.path.join(root, "tcb", "broker-config.json")
+
+    @staticmethod
+    def _out(root: str) -> str:
+        return os.path.join(root, "tcb", "tcb-pin-manifest.json")
 
     def _kit(self, root: str, kit: str = "live") -> tuple[str, str]:
         """Lay out the file set the builder expects for `kit`, with distinguishable contents.
@@ -114,13 +123,20 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         live = os.path.join(root, "engine", "ci", "live")
         sudoers = os.path.join(root, "sudoers")
         unit = os.path.join(root, "tcb", self._unit_name(kit))
+        broker_config = (self._broker_config(root) if kit in module.NEEDS_BROKER_CONFIG
+                         else None)
         roles = module.resolve_roles(
             kit, tcb=os.path.join(root, "tcb"), live=live, binaries=os.path.join(root, "bin"),
-            config=os.path.join(root, "config.json"), sudoers=sudoers, unit=unit)
+            config=os.path.join(root, "config.json"), sudoers=sudoers, unit=unit,
+            broker_config=broker_config)
         for path in sorted(set(roles.values()) | {sudoers, unit}):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write("content of " + os.path.basename(path))
+        if broker_config is not None:
+            # The document names the manifest that will pin it, as write_broker_config.py writes it.
+            with open(broker_config, "w", encoding="utf-8") as f:
+                json.dump({"trust": {"tcb_pin_manifest_path": self._out(root)}}, f)
         self._stage_source(root, live, kit)
         return sudoers, unit
 
@@ -129,14 +145,15 @@ class LiveTcbPinManifestTests(unittest.TestCase):
                      ) -> subprocess.CompletedProcess:
         if source is None:
             source = os.path.join(os.path.dirname(os.path.normpath(root)), "source-tree")
+        extra = ["--broker-config", self._broker_config(root)] if kit == "broker" else []
         return subprocess.run(
             [sys.executable, BUILDER, "--kit", kit, "--root-dir", root, "--source-dir", source,
-             "--sudoers", sudoers, "--unit", unit, "--out", out],
+             "--sudoers", sudoers, "--unit", unit, "--out", out] + extra,
             capture_output=True, text=True)
 
     def _build(self, root: str, kit: str = "live") -> dict:
         sudoers, unit = self._kit(root, kit)
-        out = os.path.join(root, "tcb", "tcb-pin-manifest.json")
+        out = self._out(root)
         r = self._run_builder(root, sudoers, unit, out, kit=kit)
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(out, "r", encoding="utf-8") as f:
@@ -287,6 +304,68 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         pinned = sorted(a["logical_name"] for a in manifest["artifacts"])
         self.assertEqual(pinned, sorted(required_artifacts()))
 
+    # ---- the broker kit: the real brops-broker, OWNER_ACTION_REQUIRED §0 row 4 ------------------
+
+    def test_the_broker_kit_pins_brops_broker_and_the_document_it_reads(self):
+        require(DESKTOP_TCB_SOURCE)
+        with tempfile.TemporaryDirectory() as root:
+            manifest = self._build(root, "broker")
+            by_role = {a["logical_name"]: a["path"] for a in manifest["artifacts"]}
+            self.assertEqual(sorted(by_role), sorted(required_artifacts()))
+            # The two roles `tcb_probe::broker_identity_violation` holds to the running process.
+            self.assertEqual(by_role["trusted-verifier-broker.bin"],
+                             os.path.join(root, "bin", "brops-broker"))
+            self.assertEqual(by_role["trusted-verifier-broker.pinned-manifest-config"],
+                             self._broker_config(root))
+            self.assertEqual(by_role["trusted-verifier-broker.config"], self._broker_config(root))
+            # Its digest is of the document as written, pointer to this manifest included.
+            with open(self._broker_config(root), "rb") as f:
+                expected = hashlib.sha256(f.read()).hexdigest()
+            pin = [a for a in manifest["artifacts"]
+                   if a["logical_name"] == "trusted-verifier-broker.pinned-manifest-config"][0]
+            self.assertEqual(pin["expected_sha256"], expected)
+            self.assertEqual(pin["digest_origin"], "deployment-measured")
+
+    def test_a_broker_config_naming_another_manifest_is_refused(self):
+        """The two documents name each other. A manifest pinning a config that points at some other
+        manifest pins a document whose floor is not the one being built."""
+        with tempfile.TemporaryDirectory() as root:
+            sudoers, unit = self._kit(root, "broker")
+            with open(self._broker_config(root), "w", encoding="utf-8") as f:
+                json.dump({"trust": {"tcb_pin_manifest_path": "/elsewhere/pin.json"}}, f)
+            out = self._out(root)
+            r = self._run_builder(root, sudoers, unit, out, kit="broker")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("/elsewhere/pin.json", r.stderr)
+            self.assertFalse(os.path.exists(out))
+
+    def test_a_broker_config_that_is_not_json_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            sudoers, unit = self._kit(root, "broker")
+            with open(self._broker_config(root), "w", encoding="utf-8") as f:
+                f.write("{ not json")
+            r = self._run_builder(root, sudoers, unit, self._out(root), kit="broker")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("not a readable JSON document", r.stderr)
+
+    def test_broker_config_is_required_for_the_broker_kit_and_refused_for_the_others(self):
+        base = [sys.executable, BUILDER, "--root-dir", ".", "--source-dir", ".",
+                "--sudoers", "s", "--unit", "u", "--out", "o"]
+        missing = subprocess.run(base + ["--kit", "broker"], capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 2, missing.stderr)
+        self.assertIn("--broker-config", missing.stderr)
+        for kit in ("live", "ladder"):
+            with self.subTest(kit=kit):
+                extra = subprocess.run(base + ["--kit", kit, "--broker-config", "c"],
+                                       capture_output=True, text=True)
+                self.assertEqual(extra.returncode, 2, extra.stderr)
+                self.assertIn("--broker-config", extra.stderr)
+
+    def test_the_broker_config_slot_is_never_rendered_as_none(self):
+        with self.assertRaises(ValueError):
+            builder_module().resolve_roles("broker", tcb="/t", live="/l", binaries="/b",
+                                           config="/c", sudoers="/s", unit="/u")
+
     def test_a_missing_artifact_fails_the_build_instead_of_being_skipped(self):
         with tempfile.TemporaryDirectory() as root:
             sudoers, unit = self._kit(root)
@@ -349,7 +428,8 @@ class KitRoleTableTests(unittest.TestCase):
         rendered as `<sudoers>` / `<unit>` so a table can be compared without a real layout."""
         resolved = builder_module().resolve_roles(
             kit, tcb="/R/tcb", live="/R/engine/ci/live", binaries="/R/bin",
-            config="/R/config.json", sudoers="<sudoers>", unit="<unit>")
+            config="/R/config.json", sudoers="<sudoers>", unit="<unit>",
+            broker_config="/R/tcb/broker-config.json")
         return {name: (path if path.startswith("<") else path[len("/R/"):])
                 for name, path in resolved.items()}
 
@@ -375,9 +455,13 @@ class KitRoleTableTests(unittest.TestCase):
                 self.assertEqual(sorted(self.roles(kit)), roster,
                                  "kit %r does not name exactly the rev-30 roster" % kit)
 
-    def test_there_are_two_kits_and_they_are_the_two_orchestrators(self):
-        self.assertEqual(builder_module().KITS, ("ladder", "live"))
+    def test_there_are_three_kits_and_two_have_an_in_tree_orchestrator(self):
+        """`broker` is the operator's real deployment: its units are theirs, so no script in this tree
+        is its witness. What stands in for one is the broker refusing a manifest that does not pin
+        itself (`tcb_probe::broker_identity_violation`)."""
+        self.assertEqual(builder_module().KITS, ("broker", "ladder", "live"))
         self.assertEqual(sorted(ORCHESTRATOR), ["ladder", "live"])
+        self.assertEqual(builder_module().NEEDS_BROKER_CONFIG, ("broker",))
 
     # ---- the live table did not move ----------------------------------------------------------
 
@@ -419,6 +503,15 @@ class KitRoleTableTests(unittest.TestCase):
     def test_the_broker_side_binary_is_each_kits_own_driver(self):
         self.assertEqual(self.roles("live")["trusted-verifier-broker.bin"], "bin/live_turn")
         self.assertEqual(self.roles("ladder")["trusted-verifier-broker.bin"], "bin/ladder_turn")
+        self.assertEqual(self.roles("broker")["trusted-verifier-broker.bin"], "bin/brops-broker")
+
+    def test_the_broker_kit_differs_from_the_ladder_only_in_the_brokers_own_rows(self):
+        """The real broker serves the ladder (`build_governed_executor` builds a `LadderChain`), so
+        every row but the broker's binary and the document it reads is the ladder kit's."""
+        ladder, broker = self.roles("ladder"), self.roles("broker")
+        differs = sorted(r for r in ladder if ladder[r] != broker[r])
+        self.assertEqual(differs, ["trusted-verifier-broker.bin", "trusted-verifier-broker.config",
+                                   "trusted-verifier-broker.pinned-manifest-config"])
 
     def test_the_ladder_supervisor_config_pins_the_document_nothing_else_pins(self):
         """`run_ladder_supervisor.py` is started with `--config config.json --ladder tcb/ladder.json`.

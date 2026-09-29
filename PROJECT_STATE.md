@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-29 — 71 pull requests merged (`#219`–`#290`), `main` at
+**Last updated · Վերջին թարմացում:** 2026-09-30 — 71 pull requests merged (`#219`–`#290`), `main` at
 `518dc4c`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `518dc4c`.** The only thing open is PR #291 on `t120/settled-at-518dc4c`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #292 · branch `t121/broker-pin-manifest`** (base `main`, tip `2c2f24e`, task T-121).
 >
-> **Next:** A §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
+> T-121: the broker's §2.5 floor never asked whether the pinned broker was itself
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,8 +47,8 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-29 | 2315 OK, 14 skipped |
-| Rust, 10 crates · 2026-09-29 | 1211 passed |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2323 OK, 14 skipped |
+| Rust, 10 crates · 2026-09-30 | 1219 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
