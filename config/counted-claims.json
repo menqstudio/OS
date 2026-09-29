@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2314,
+      "value": 2315,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
-        "date": "2026-09-21",
-        "head": "ace8c1a",
+        "date": "2026-09-29",
+        "head": "b80e572",
         "environments": {
+          "Debian 13 (trixie) native, non-root account @ b80e572": {
+            "ran": 2315,
+            "skipped": 14
+          },
           "builder's Windows box @ ace8c1a": {
             "ran": 2314,
             "skipped": 97
@@ -153,7 +157,8 @@
         2242,
         2243,
         2259,
-        2299
+        2299,
+        2314
       ]
     },
     "bridge_tests": {
@@ -242,7 +247,7 @@
       ]
     },
     "tasks_archive_2026_09_rows": {
-      "value": 52,
+      "value": 53,
       "command": "grep -cE '^\\| \\*\\*T-[0-9]+\\*\\*' docs/archive/TASKS_ARCHIVE_2026-09.md",
       "derive": {
         "line_regex": "docs/archive/TASKS_ARCHIVE_2026-09.md::^\\| \\*\\*T-\\d+\\*\\*"
