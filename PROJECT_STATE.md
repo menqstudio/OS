@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `b80e572`.** The only thing open is PR #287 on `t116/settled-at-b80e572`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #288 · branch `t117/preflight-locates-from-pin-manifest`** (base `main`, tip `55d852e`, task T-117).
 >
-> **Next:** Preflight's two requirements stated in config keys the broker no longer reads; then a §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
+> T-117: preflight locates the launcher and supervisor ledger via the §2.5 pin manifest; CI-caught comment reworded.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-09-29 | 2315 OK, 14 skipped |
-| Rust, 10 crates · 2026-09-01 | 1149 passed |
+| Rust, 10 crates · 2026-09-29 | 1211 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
