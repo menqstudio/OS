@@ -65,21 +65,15 @@
 #
 # WHAT THIS KIT DELIBERATELY DOES NOT DO
 # ---------------------------------------
-#  * It does NOT run the §2.5 TCB integrity floor — but the reason CHANGED on 2026-09-21 and the old
-#    one is history. It used to be the role table: `build_tcb_pin_manifest.py` bound `supervisor.bin`
-#    to `run_supervisor.py` and both `.unit` roles to `run_live_turn.sh` through a hardcoded map, so a
-#    manifest built here would have measured files that are not the ones serving this turn, and
-#    widening that table was called an Architect decision. That decision was taken: the builder now
-#    carries a `ladder` table (`--kit ladder`) whose every role names the file this script actually
-#    runs — `run_ladder_supervisor.py` at :455, `run_authority.py` at :454, `run_signer.py` at :456,
-#    `bin/ladder_turn`, `tcb/ladder.json`, this script for both `.unit` roles — and
-#    `engine/tests/test_live_tcb_pin_manifest.py` holds every one of them against this file's own text.
-#    What still blocks BUILDING it here is ORDERING, not naming: a pin is a start-time measurement, and
-#    `tcb/ladder-driver.json` — the document that plays `$BROPS_BROKER_CONFIG`'s part on this kit — is
-#    written at :759, after the three services start at :454-456. A manifest built late enough to pin
-#    it would be recording those services' bytes after they had already been running. Moving that write
-#    ahead of the service starts is the step that lets this kit take the floor, and it is the next row.
-#    `run_live_turn.sh` still proves the floor; this script states what is absent and why.
+#  * It RUNS the §2.5 TCB integrity floor since 2026-09-29, and did not before. Twice over it could
+#    not: first the pin builder had ONE role table, written for `run_live_turn.sh`, so a manifest
+#    built here would have measured files that are not the ones serving this turn; then, once the
+#    builder carried a `ladder` table (`--kit ladder`), `tcb/ladder-driver.json` — the document that
+#    plays `$BROPS_BROKER_CONFIG`'s part on this kit — was still written after the three services
+#    started, and a pin is a start-time measurement. The driver's deployment is now written first,
+#    the manifest is built after it, and `ladder_turn --verify-tcb` evaluates the floor as root before
+#    any service starts. `engine/tests/test_live_tcb_pin_manifest.py` holds the table and the order
+#    against this file's own text.
 #  * It flips NO gate. `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and
 #    `connect_broker` are untouched; the shipped app's governed path stays shut. This runs in CI
 #    against the live kit exactly as the §5 job does and makes nothing reachable in the product.
@@ -422,10 +416,240 @@ if command -v visudo >/dev/null 2>&1; then
 fi
 echo "== recorder sudo vector (invoker: $SUPERVISOR_USER) =="; cat "$SUDOERS"
 
-# The §2.5 floor's requirement that every ancestor of a pinned artifact be root-owned and
-# non-writable is applied even though the floor itself is not evaluated here (see the header): the
-# launcher and the recorder both re-check the custody of their own inputs, and /opt is
-# drwxrwxrwx on the hosted runner image.
+# =================================================================================================
+# THE LADDER DRIVER'S DEPLOYMENT, WRITTEN BEFORE ANYTHING IS MEASURED
+# =================================================================================================
+# Everything the Rust driver phase further down needs from root is provisioned HERE, before the §2.5
+# pin is taken and before any service starts. It used to be written in that phase, after the three
+# services had been running for minutes, and that ordering was the one thing standing between this
+# kit and the floor: `tcb/ladder-driver.json` is the document that plays `$BROPS_BROKER_CONFIG`'s
+# part on this kit, the honest binding for `trusted-verifier-broker.pinned-manifest-config`, and a
+# pin is a START-TIME measurement. Nothing here reads a socket or a service's state, so nothing in
+# it depended on running where it was.
+echo "== provisioning the ladder driver (binary, fixture, floor, configs) before the pin =="
+# The driver runs AS THE BROKER PRINCIPAL, so it has to live somewhere that principal can traverse
+# and execute. The build tree does not qualify: on a runner it sits under a home directory the
+# service accounts have no path into, and the first live run of this phase died there with
+# `env: '.../target/debug/ladder_turn': Permission denied`. Installed root-owned and non-writable
+# inside the kit, exactly as the launcher, the executor image and the recorder are.
+install -m 0755 "$DRIVER_BIN" "$BIN/ladder_turn"; chown 0:0 "$BIN/ladder_turn"
+DRIVER_EXE="$BIN/ladder_turn"
+DRIVERDIR="$LADDER/driver"
+mkdir -p "$DRIVERDIR"; chown 0:0 "$DRIVERDIR"; chmod 0755 "$DRIVERDIR"
+# The child's working directory. `GovernedSidecar` requires an empty sandbox so the sidecar cannot
+# pick up a nearby project's configuration; ROOT-owned is the tighter reading of "owner-only" here,
+# because then no service account can plant one. World-executable because two principals enter it:
+# the broker `chdir`s before the principal switch and the sidecar's interpreter `getcwd`s after it.
+SANDBOX="$DRIVERDIR/sandbox"
+mkdir -p "$SANDBOX"; chown 0:0 "$SANDBOX"; chmod 0755 "$SANDBOX"
+mkdir -p "$DRIVERDIR/evidence"; chown 0:0 "$DRIVERDIR/evidence"; chmod 0755 "$DRIVERDIR/evidence"
+# One evidence directory per run, owned by the principal that writes it (the same "one owner each"
+# discipline audit F-07/F-28 imposed on the rest of this kit).
+for d in positive third-turn rollback rollback-sign-flip floor-unwritable floor-sign-flip \
+         no-authority; do
+  mkdir -p "$DRIVERDIR/$d"; chown "$BROKER_USER": "$DRIVERDIR/$d"; chmod 0755 "$DRIVERDIR/$d"
+done
+
+# ----- INHERITED FINDING, fixed in the KIT rather than papered over in the code -----------------
+# `provision_keys.py` writes `trust.floor_path` as $LIVE/floor.json — root-owned 0644, inside a
+# root-owned 0755 directory. `check_and_persist` advances the anti-rollback floor and WRITES IT BACK
+# by temp-file + rename in that same directory, and a persist failure REFUSES the turn. That refusal
+# is correct and is NOT weakened here. What is wrong is the ownership: `broker/src/main.rs` already
+# states the requirement this kit violates — floor_path "MUST be owned by / writable only by the
+# broker service principal (file mode 0600, dedicated UID)". So the driver's floor moves into the
+# broker's own 0700 state directory, and the `floor-unwritable` control below drives the ORIGINAL
+# root-owned path and REQUIRES `blocked:keys:floor_not_persisted` — which makes the finding a
+# measured fact on every run rather than a sentence in a report.
+BROKERSTATE="$LIVE/broker-state"
+chown -R "$BROKER_USER": "$BROKERSTATE"; chmod 0700 "$BROKERSTATE"
+BROKER_FLOOR="$BROKERSTATE/floor.json"
+ROLLED_FLOOR="$BROKERSTATE/floor-rolled-forward.json"
+BROKER_DB="$BROKERSTATE/ladder-driver.db"
+MESSAGES_DB="$BROKERSTATE/messages.db"
+cp "$LIVE/floor.json" "$BROKER_FLOOR"
+chown "$BROKER_USER": "$BROKER_FLOOR"; chmod 0600 "$BROKER_FLOOR"
+
+# ----- the conversation, as ONE row in the desktop's own schema --------------------------------
+# `SqliteTurnContent` reads `messages` (migration 0003). The fixture is a real row in the real
+# schema — the migration file is applied verbatim, never re-spelled here — and it carries exactly
+# what this kit already stages: one `user` message whose body is `hi`. NOTHING about a digest is
+# written into it or into the driver's config: `prepare_governed_turn_v1b` derives all three from
+# the bytes this turn actually sends, which is the whole reason the ladder replaced the direct path.
+SCHEMA="$REPO_ROOT/apps/desktop/src-tauri/core/schema/0003_conversations.sql"
+[ -f "$SCHEMA" ] || { echo "FAIL: the conversations migration is missing at $SCHEMA"; exit 1; }
+python3 - "$SCHEMA" "$MESSAGES_DB" "$CONFIG" "$LADDER_CONFIG" <<'PYFIXTURE' \
+  || { echo "FAIL: could not stage the conversation fixture"; exit 1; }
+import json, os, sqlite3, sys
+
+schema_path, db_path, config_path, ladder_path = sys.argv[1:5]
+cfg = json.load(open(config_path, encoding="utf-8"))
+ladder = json.load(open(ladder_path, encoding="utf-8"))
+conversation_id = cfg["resolved"]["conversation_id"]
+history = ladder["turn"]["history"]
+# ONE definition of the turn (`provision_ladder.py` wrote it). A second copy here is exactly how a
+# staged digest and a pinned digest come to disagree.
+if len(history) != 1 or history[0]["role"] != "user":
+    raise SystemExit("this fixture stages ONE user message; ladder.json's turn is %r" % (history,))
+try:
+    os.unlink(db_path)
+except OSError:
+    pass
+conn = sqlite3.connect(db_path)
+conn.executescript(open(schema_path, encoding="utf-8").read())
+conn.execute(
+    "INSERT INTO conversations (id, kind, title, created_at, updated_at) VALUES (?,?,?,?,?)",
+    (conversation_id, "direct", "the ladder driver's governed turn",
+     "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+conn.execute(
+    "INSERT INTO messages (id, conversation_id, role, author, body, created_at) VALUES (?,?,?,?,?,?)",
+    ("m-ladder-driver-1", conversation_id, history[0]["role"], "gev", history[0]["content"],
+     "2026-01-01T00:00:01Z"))
+conn.commit()
+conn.close()
+print("staged 1 conversation + 1 message (%s / role=%s) in %s"
+      % (conversation_id, history[0]["role"], db_path))
+PYFIXTURE
+chown "$BROKER_USER": "$MESSAGES_DB"; chmod 0600 "$MESSAGES_DB"
+
+# The fixture and the STAGED bytes must be one conversation, asserted here rather than discovered
+# as a §4.10(a) `digest_mismatch` in the middle of a turn. The digests are re-derived from the DB
+# ROWS with the submit client's own public formulas (`brops_canonical`) and compared against the
+# digests the launcher's lease pins. Nothing is copied into the driver's config from this check.
+python3 - "$MESSAGES_DB" "$CONFIG" "$LADDER_CONFIG" <<'PYAGREE' \
+  || { echo "FAIL: the conversation fixture and the staged bytes are different turns"; exit 1; }
+import json, os, sqlite3, sys
+sys.path.insert(0, "/opt/brops-live/engine/runtime")
+import brops_canonical as bc
+
+db_path, config_path, ladder_path = sys.argv[1:4]
+cfg = json.load(open(config_path, encoding="utf-8"))
+ladder = json.load(open(ladder_path, encoding="utf-8"))
+conn = sqlite3.connect(db_path)
+rows = conn.execute(
+    "SELECT role, body FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC "
+    "LIMIT 8", (cfg["resolved"]["conversation_id"],)).fetchall()
+conn.close()
+rows.reverse()  # chronological — the order `SqliteTurnContent` sends, and therefore hashes
+derived = {
+    "system": bc.sha256_hex(bc.system_bytes(ladder["turn"]["system"])),
+    "history": bc.sha256_hex(bc.history_bytes([{"role": r, "content": b} for r, b in rows])),
+    "generation_config": bc.sha256_hex(
+        bc.governed_generation_config_bytes(ladder["turn"]["generation_config"])),
+}
+bad = {name: (value, ladder["turn"]["digests"].get(name),
+              cfg["resolved"].get(name + "_sha256"))
+       for name, value in derived.items()
+       if not (value == ladder["turn"]["digests"].get(name)
+               == cfg["resolved"].get(name + "_sha256"))}
+if bad:
+    print("derived / staged / launcher-pinned digests disagree: %r" % (bad,), file=sys.stderr)
+    raise SystemExit(1)
+print("the fixture derives the STAGED digests: system=%s history=%s generation_config=%s"
+      % (derived["system"], derived["history"], derived["generation_config"]))
+PYAGREE
+
+# ----- the driver's own deployment config -------------------------------------------------------
+# A SEPARATE file, root-owned and non-writable, rather than an edit to `config.json`: the three
+# services run against that one, and a proof phase must not be able to move ground under the phases
+# that run before it. The three variants below differ in exactly ONE key each, so
+# what a negative demonstrates cannot be confused with a second change.
+PYTHON_BIN="$(command -v python3)"
+SUDO_BIN="$(command -v sudo)"
+ENV_BIN="$(command -v env)"
+for b in "$PYTHON_BIN" "$SUDO_BIN" "$ENV_BIN"; do
+  case "$b" in /*) ;; *) echo "FAIL: python3/sudo/env must resolve to absolute paths (got '$b')"; exit 1;; esac
+done
+DRIVER_CONFIG="$TCB/ladder-driver.json"
+DRIVER_CONFIG_ROLLBACK="$TCB/ladder-driver-rolled-forward-floor.json"
+DRIVER_CONFIG_ROOTFLOOR="$TCB/ladder-driver-root-owned-floor.json"
+DRIVER_CONFIG_NOAUTH="$TCB/ladder-driver-no-authority.json"
+python3 - "$CONFIG" "$LADDER_CONFIG" "$MESSAGES_DB" "$SANDBOX" "$SIDECAR_USER" \
+  "$PYTHON_BIN" "$SUDO_BIN" "$ENV_BIN" "$LIVE/bridge/engine_sidecar.py" \
+  "$BROKER_FLOOR" "$ROLLED_FLOOR" "$LIVE/floor.json" "$BROKER_DB" \
+  "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
+  "$DRIVER_CONFIG_NOAUTH" \
+  <<'PYCFG' || { echo "FAIL: could not build the ladder-driver configs"; exit 1; }
+import json, sys
+
+(config_path, ladder_path, messages_db, sandbox, sidecar_user, python_bin, sudo_bin, env_bin,
+ sidecar_script, broker_floor, rolled_floor, root_floor, broker_db,
+ out_main, out_rollback, out_rootfloor, out_noauth) = sys.argv[1:18]
+
+cfg = json.load(open(config_path, encoding="utf-8"))
+ladder = json.load(open(ladder_path, encoding="utf-8"))
+
+# `content.system` is the agent's system prompt and it is CONFIGURED; `history` is the user's
+# conversation and it is NOT. That asymmetry is the point: the defect the ladder replaced was not
+# "a value came from config", it was that `system_sha256` was itself a config value. Here the
+# string is configured and the digest is computed from it, so the two cannot diverge — and the
+# string is taken from `ladder.json`, so this kit still has ONE definition of the turn.
+cfg["content"] = {
+    "messages_db": messages_db,
+    "system": ladder["turn"]["system"],
+    # More than the fixture holds, deliberately: a window pinned to the row count would make
+    # `read_window`'s LIMIT untestable, and a window that reaches past the conversation must
+    # return the conversation rather than an error.
+    "window": 8,
+}
+# §2.6. `SidecarPrincipal::from_config` validates every one of these and has no value meaning "as
+# me": absolute program, a prefix that NAMES the account, and a trailing `env` (the principal
+# switch resets the environment, so `BROPS_SUPERVISOR_SOCKET` has to travel as an argument).
+cfg["sidecar"] = {
+    "python": python_bin,
+    "script": sidecar_script,
+    "cwd": sandbox,
+    "principal": sidecar_user,
+    "invoker": [sudo_bin, "-n", "-u", sidecar_user, env_bin],
+}
+cfg["trust"]["floor_path"] = broker_floor
+cfg["db"] = {"path": broker_db}
+# The anchor is a TCB FILE and must stay one: `trust.root_pub_hex` / `trust.root_key_id` inline in
+# the config is refused by the driver outright, so assert their absence where the message is about
+# provisioning rather than reading it as `blocked:setup:config_carries_inline_root_anchor`.
+if "root_pub_hex" in cfg["trust"] or "root_key_id" in cfg["trust"]:
+    raise SystemExit("the kit config carries an inline root anchor; the driver refuses that")
+
+def write(path, document):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(document, fh, indent=2, sort_keys=True)
+
+write(out_main, cfg)
+
+# Variant 1 — the anti-rollback floor rolled FORWARD past the manifest. `check_and_advance` refuses
+# `EpochBelowFloor` before a single hop is made.
+manifest = json.load(open(cfg["trust"]["manifest_path"], encoding="utf-8"))
+floor = json.load(open(broker_floor, encoding="utf-8"))
+with open(rolled_floor, "w", encoding="ascii") as fh:
+    json.dump({"highest_epoch": manifest["manifest_epoch"] + 1,
+               "highest_hash": floor["highest_hash"]}, fh)
+rollback = json.loads(json.dumps(cfg))
+rollback["trust"]["floor_path"] = rolled_floor
+write(out_rollback, rollback)
+
+# Variant 2 — the kit's ORIGINAL root-owned floor. The CAS passes (same epoch, same hash) and the
+# PERSIST cannot: the broker principal may not create a temp file in a root-owned 0755 directory.
+rootfloor = json.loads(json.dumps(cfg))
+rootfloor["trust"]["floor_path"] = root_floor
+write(out_rootfloor, rootfloor)
+
+# Variant 3 — an authority socket that is not there. The §4.1 hop must fail and must be
+# attributed to the CHALLENGE AUTHORITY by name.
+noauth = json.loads(json.dumps(cfg))
+noauth["sockets"]["authority"] = cfg["sockets"]["authority"] + ".absent"
+write(out_noauth, noauth)
+
+print("driver configs: %s (+ rolled-forward floor, + root-owned floor, + absent authority)"
+      % out_main)
+PYCFG
+chown 0:0 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
+         "$DRIVER_CONFIG_NOAUTH"
+chmod 0644 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
+          "$DRIVER_CONFIG_NOAUTH"
+chown "$BROKER_USER": "$ROLLED_FLOOR"; chmod 0600 "$ROLLED_FLOOR"
+
+# The §2.5 floor requires every ancestor of a pinned artifact to be root-owned and non-writable — a
+# writable parent is a rename/replace vector. The launcher and the recorder also re-check the
+# custody of their own inputs, and /opt is drwxrwxrwx on the hosted runner image.
 chown 0:0 "$LIVE" "$TCB" "$BIN"; chmod 0755 "$LIVE" "$TCB" "$BIN"
 chown -R 0:0 "$LIVE/engine" "$LIVE/bridge"
 find "$LIVE/engine" "$LIVE/bridge" -type d -exec chmod 0755 {} +
@@ -433,6 +657,23 @@ chown 0:0 /opt; chmod 0755 /opt
 if command -v setfacl >/dev/null 2>&1; then setfacl -Rb /opt "$LIVE" 2>/dev/null || true; fi
 echo "== TCB ancestor modes =="
 ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/bridge" "$LIVE/engine/ci/live" /etc /etc/sudoers.d
+
+# ----- the §2.5 TCB pin manifest, and the floor evaluated by ROOT (audit F-10) -------------------
+# Built LAST among the provisioning steps and FIRST before anything runs: the pin is a start-time
+# measurement, so everything it names must exist and nothing it names may be written after it. The
+# kit is orchestrated by THIS script rather than by systemd, so a root-owned copy of it is what the
+# two `.unit` roles pin. `--kit ladder` selects the table whose every role names a file this script
+# runs; `engine/tests/test_live_tcb_pin_manifest.py` holds that table, and this ordering, against
+# this file's own text.
+install -m 0644 "$SCRIPT_DIR/run_ladder_turn.sh" "$TCB/brops-ladder.unit"; chown 0:0 "$TCB/brops-ladder.unit"
+python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit ladder --root-dir "$LIVE" --source-dir "$REPO_ROOT" --sudoers "$SUDOERS" --unit "$TCB/brops-ladder.unit" --out "$TCB/tcb-pin-manifest.json" || { echo "FAIL: build_tcb_pin_manifest.py"; exit 1; }
+chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
+# Root, and before anything starts, for the reason `proof/src/tcb_verify.rs` gives: the pinned set
+# includes artifacts the serving principals must not be able to read, so root is the only principal
+# that can honestly evaluate it. The driver config names the manifest (`trust.tcb_pin_manifest_path`,
+# written by `provision_keys.py`) and carries the runtime and login uids the floor tests against. A
+# floor that has not passed means no service starts at all.
+"$BIN/ladder_turn" --config "$DRIVER_CONFIG" --verify-tcb || { echo "FAIL: the §2.5 TCB integrity floor"; exit 1; }
 
 # ----- start the three service servers -----------------------------------------------------------
 PIDS=()
@@ -621,8 +862,8 @@ echo "$NEG_OUT"
 #
 # Four more things it is not: there is no renderer socket and no `SO_PEERCRED` on a renderer→broker
 # hop (the request is built in-process); `$BROPS_BROKER_CONFIG` is never read (the config arrives as
-# `--config`); the §2.5 TCB floor is not evaluated, for the reason this script's header already
-# gives about `build_tcb_pin_manifest.py`; and the custody resolver that lets `persist_committed`
+# `--config`); the §2.5 TCB floor is evaluated once, by root, before the services start — not by
+# this driver's principal and not inside a turn; and the custody resolver that lets `persist_committed`
 # commit is wired by the DRIVER. The shipped broker calls `ChainExecutor::new`, gets
 # `UnresolvedCustody`, and commits nothing. **Nothing in this phase changes that.** No gate is
 # flipped: `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker` are
@@ -633,225 +874,10 @@ echo "== LADDER DRIVER: the REAL LadderChain, from Rust — NOT the brops-broker
 echo "================================================================================"
 
 DRIVER_RC=0
-# The driver runs AS THE BROKER PRINCIPAL, so it has to live somewhere that principal can traverse
-# and execute. The build tree does not qualify: on a runner it sits under a home directory the
-# service accounts have no path into, and the first live run of this phase died there with
-# `env: '.../target/debug/ladder_turn': Permission denied`. Installed root-owned and non-writable
-# inside the kit, exactly as the launcher, the executor image and the recorder are.
-install -m 0755 "$DRIVER_BIN" "$BIN/ladder_turn"; chown 0:0 "$BIN/ladder_turn"
-DRIVER_EXE="$BIN/ladder_turn"
-DRIVERDIR="$LADDER/driver"
-mkdir -p "$DRIVERDIR"; chown 0:0 "$DRIVERDIR"; chmod 0755 "$DRIVERDIR"
-# The child's working directory. `GovernedSidecar` requires an empty sandbox so the sidecar cannot
-# pick up a nearby project's configuration; ROOT-owned is the tighter reading of "owner-only" here,
-# because then no service account can plant one. World-executable because two principals enter it:
-# the broker `chdir`s before the principal switch and the sidecar's interpreter `getcwd`s after it.
-SANDBOX="$DRIVERDIR/sandbox"
-mkdir -p "$SANDBOX"; chown 0:0 "$SANDBOX"; chmod 0755 "$SANDBOX"
-mkdir -p "$DRIVERDIR/evidence"; chown 0:0 "$DRIVERDIR/evidence"; chmod 0755 "$DRIVERDIR/evidence"
-# One evidence directory per run, owned by the principal that writes it (the same "one owner each"
-# discipline audit F-07/F-28 imposed on the rest of this kit).
-for d in positive third-turn rollback rollback-sign-flip floor-unwritable floor-sign-flip \
-         no-authority; do
-  mkdir -p "$DRIVERDIR/$d"; chown "$BROKER_USER": "$DRIVERDIR/$d"; chmod 0755 "$DRIVERDIR/$d"
-done
+# The driver's binary, its evidence directories, its floor, the conversation fixture and all four of
+# its configs were written BEFORE the three services started — see "the ladder driver's deployment,
+# written before anything is measured" above. Its sudoers vector is below: it is not a pinned file.
 
-# ----- INHERITED FINDING, fixed in the KIT rather than papered over in the code -----------------
-# `provision_keys.py` writes `trust.floor_path` as $LIVE/floor.json — root-owned 0644, inside a
-# root-owned 0755 directory. `check_and_persist` advances the anti-rollback floor and WRITES IT BACK
-# by temp-file + rename in that same directory, and a persist failure REFUSES the turn. That refusal
-# is correct and is NOT weakened here. What is wrong is the ownership: `broker/src/main.rs` already
-# states the requirement this kit violates — floor_path "MUST be owned by / writable only by the
-# broker service principal (file mode 0600, dedicated UID)". So the driver's floor moves into the
-# broker's own 0700 state directory, and the `floor-unwritable` control below drives the ORIGINAL
-# root-owned path and REQUIRES `blocked:keys:floor_not_persisted` — which makes the finding a
-# measured fact on every run rather than a sentence in a report.
-BROKERSTATE="$LIVE/broker-state"
-chown -R "$BROKER_USER": "$BROKERSTATE"; chmod 0700 "$BROKERSTATE"
-BROKER_FLOOR="$BROKERSTATE/floor.json"
-ROLLED_FLOOR="$BROKERSTATE/floor-rolled-forward.json"
-BROKER_DB="$BROKERSTATE/ladder-driver.db"
-MESSAGES_DB="$BROKERSTATE/messages.db"
-cp "$LIVE/floor.json" "$BROKER_FLOOR"
-chown "$BROKER_USER": "$BROKER_FLOOR"; chmod 0600 "$BROKER_FLOOR"
-
-# ----- the conversation, as ONE row in the desktop's own schema --------------------------------
-# `SqliteTurnContent` reads `messages` (migration 0003). The fixture is a real row in the real
-# schema — the migration file is applied verbatim, never re-spelled here — and it carries exactly
-# what this kit already stages: one `user` message whose body is `hi`. NOTHING about a digest is
-# written into it or into the driver's config: `prepare_governed_turn_v1b` derives all three from
-# the bytes this turn actually sends, which is the whole reason the ladder replaced the direct path.
-SCHEMA="$REPO_ROOT/apps/desktop/src-tauri/core/schema/0003_conversations.sql"
-[ -f "$SCHEMA" ] || { echo "FAIL: the conversations migration is missing at $SCHEMA"; exit 1; }
-python3 - "$SCHEMA" "$MESSAGES_DB" "$CONFIG" "$LADDER_CONFIG" <<'PYFIXTURE' \
-  || { echo "FAIL: could not stage the conversation fixture"; exit 1; }
-import json, os, sqlite3, sys
-
-schema_path, db_path, config_path, ladder_path = sys.argv[1:5]
-cfg = json.load(open(config_path, encoding="utf-8"))
-ladder = json.load(open(ladder_path, encoding="utf-8"))
-conversation_id = cfg["resolved"]["conversation_id"]
-history = ladder["turn"]["history"]
-# ONE definition of the turn (`provision_ladder.py` wrote it). A second copy here is exactly how a
-# staged digest and a pinned digest come to disagree.
-if len(history) != 1 or history[0]["role"] != "user":
-    raise SystemExit("this fixture stages ONE user message; ladder.json's turn is %r" % (history,))
-try:
-    os.unlink(db_path)
-except OSError:
-    pass
-conn = sqlite3.connect(db_path)
-conn.executescript(open(schema_path, encoding="utf-8").read())
-conn.execute(
-    "INSERT INTO conversations (id, kind, title, created_at, updated_at) VALUES (?,?,?,?,?)",
-    (conversation_id, "direct", "the ladder driver's governed turn",
-     "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
-conn.execute(
-    "INSERT INTO messages (id, conversation_id, role, author, body, created_at) VALUES (?,?,?,?,?,?)",
-    ("m-ladder-driver-1", conversation_id, history[0]["role"], "gev", history[0]["content"],
-     "2026-01-01T00:00:01Z"))
-conn.commit()
-conn.close()
-print("staged 1 conversation + 1 message (%s / role=%s) in %s"
-      % (conversation_id, history[0]["role"], db_path))
-PYFIXTURE
-chown "$BROKER_USER": "$MESSAGES_DB"; chmod 0600 "$MESSAGES_DB"
-
-# The fixture and the STAGED bytes must be one conversation, asserted here rather than discovered
-# as a §4.10(a) `digest_mismatch` in the middle of a turn. The digests are re-derived from the DB
-# ROWS with the submit client's own public formulas (`brops_canonical`) and compared against the
-# digests the launcher's lease pins. Nothing is copied into the driver's config from this check.
-python3 - "$MESSAGES_DB" "$CONFIG" "$LADDER_CONFIG" <<'PYAGREE' \
-  || { echo "FAIL: the conversation fixture and the staged bytes are different turns"; exit 1; }
-import json, os, sqlite3, sys
-sys.path.insert(0, "/opt/brops-live/engine/runtime")
-import brops_canonical as bc
-
-db_path, config_path, ladder_path = sys.argv[1:4]
-cfg = json.load(open(config_path, encoding="utf-8"))
-ladder = json.load(open(ladder_path, encoding="utf-8"))
-conn = sqlite3.connect(db_path)
-rows = conn.execute(
-    "SELECT role, body FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC "
-    "LIMIT 8", (cfg["resolved"]["conversation_id"],)).fetchall()
-conn.close()
-rows.reverse()  # chronological — the order `SqliteTurnContent` sends, and therefore hashes
-derived = {
-    "system": bc.sha256_hex(bc.system_bytes(ladder["turn"]["system"])),
-    "history": bc.sha256_hex(bc.history_bytes([{"role": r, "content": b} for r, b in rows])),
-    "generation_config": bc.sha256_hex(
-        bc.governed_generation_config_bytes(ladder["turn"]["generation_config"])),
-}
-bad = {name: (value, ladder["turn"]["digests"].get(name),
-              cfg["resolved"].get(name + "_sha256"))
-       for name, value in derived.items()
-       if not (value == ladder["turn"]["digests"].get(name)
-               == cfg["resolved"].get(name + "_sha256"))}
-if bad:
-    print("derived / staged / launcher-pinned digests disagree: %r" % (bad,), file=sys.stderr)
-    raise SystemExit(1)
-print("the fixture derives the STAGED digests: system=%s history=%s generation_config=%s"
-      % (derived["system"], derived["history"], derived["generation_config"]))
-PYAGREE
-
-# ----- the driver's own deployment config -------------------------------------------------------
-# A SEPARATE file, root-owned and non-writable, rather than an edit to `config.json`: the three
-# services are already running against that one, and a proof phase must not be able to move ground
-# under the phases that ran before it. The three variants below differ in exactly ONE key each, so
-# what a negative demonstrates cannot be confused with a second change.
-PYTHON_BIN="$(command -v python3)"
-SUDO_BIN="$(command -v sudo)"
-ENV_BIN="$(command -v env)"
-for b in "$PYTHON_BIN" "$SUDO_BIN" "$ENV_BIN"; do
-  case "$b" in /*) ;; *) echo "FAIL: python3/sudo/env must resolve to absolute paths (got '$b')"; exit 1;; esac
-done
-DRIVER_CONFIG="$TCB/ladder-driver.json"
-DRIVER_CONFIG_ROLLBACK="$TCB/ladder-driver-rolled-forward-floor.json"
-DRIVER_CONFIG_ROOTFLOOR="$TCB/ladder-driver-root-owned-floor.json"
-DRIVER_CONFIG_NOAUTH="$TCB/ladder-driver-no-authority.json"
-python3 - "$CONFIG" "$LADDER_CONFIG" "$MESSAGES_DB" "$SANDBOX" "$SIDECAR_USER" \
-  "$PYTHON_BIN" "$SUDO_BIN" "$ENV_BIN" "$LIVE/bridge/engine_sidecar.py" \
-  "$BROKER_FLOOR" "$ROLLED_FLOOR" "$LIVE/floor.json" "$BROKER_DB" \
-  "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
-  "$DRIVER_CONFIG_NOAUTH" \
-  <<'PYCFG' || { echo "FAIL: could not build the ladder-driver configs"; exit 1; }
-import json, sys
-
-(config_path, ladder_path, messages_db, sandbox, sidecar_user, python_bin, sudo_bin, env_bin,
- sidecar_script, broker_floor, rolled_floor, root_floor, broker_db,
- out_main, out_rollback, out_rootfloor, out_noauth) = sys.argv[1:18]
-
-cfg = json.load(open(config_path, encoding="utf-8"))
-ladder = json.load(open(ladder_path, encoding="utf-8"))
-
-# `content.system` is the agent's system prompt and it is CONFIGURED; `history` is the user's
-# conversation and it is NOT. That asymmetry is the point: the defect the ladder replaced was not
-# "a value came from config", it was that `system_sha256` was itself a config value. Here the
-# string is configured and the digest is computed from it, so the two cannot diverge — and the
-# string is taken from `ladder.json`, so this kit still has ONE definition of the turn.
-cfg["content"] = {
-    "messages_db": messages_db,
-    "system": ladder["turn"]["system"],
-    # More than the fixture holds, deliberately: a window pinned to the row count would make
-    # `read_window`'s LIMIT untestable, and a window that reaches past the conversation must
-    # return the conversation rather than an error.
-    "window": 8,
-}
-# §2.6. `SidecarPrincipal::from_config` validates every one of these and has no value meaning "as
-# me": absolute program, a prefix that NAMES the account, and a trailing `env` (the principal
-# switch resets the environment, so `BROPS_SUPERVISOR_SOCKET` has to travel as an argument).
-cfg["sidecar"] = {
-    "python": python_bin,
-    "script": sidecar_script,
-    "cwd": sandbox,
-    "principal": sidecar_user,
-    "invoker": [sudo_bin, "-n", "-u", sidecar_user, env_bin],
-}
-cfg["trust"]["floor_path"] = broker_floor
-cfg["db"] = {"path": broker_db}
-# The anchor is a TCB FILE and must stay one: `trust.root_pub_hex` / `trust.root_key_id` inline in
-# the config is refused by the driver outright, so assert their absence where the message is about
-# provisioning rather than reading it as `blocked:setup:config_carries_inline_root_anchor`.
-if "root_pub_hex" in cfg["trust"] or "root_key_id" in cfg["trust"]:
-    raise SystemExit("the kit config carries an inline root anchor; the driver refuses that")
-
-def write(path, document):
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(document, fh, indent=2, sort_keys=True)
-
-write(out_main, cfg)
-
-# Variant 1 — the anti-rollback floor rolled FORWARD past the manifest. `check_and_advance` refuses
-# `EpochBelowFloor` before a single hop is made.
-manifest = json.load(open(cfg["trust"]["manifest_path"], encoding="utf-8"))
-floor = json.load(open(broker_floor, encoding="utf-8"))
-with open(rolled_floor, "w", encoding="ascii") as fh:
-    json.dump({"highest_epoch": manifest["manifest_epoch"] + 1,
-               "highest_hash": floor["highest_hash"]}, fh)
-rollback = json.loads(json.dumps(cfg))
-rollback["trust"]["floor_path"] = rolled_floor
-write(out_rollback, rollback)
-
-# Variant 2 — the kit's ORIGINAL root-owned floor. The CAS passes (same epoch, same hash) and the
-# PERSIST cannot: the broker principal may not create a temp file in a root-owned 0755 directory.
-rootfloor = json.loads(json.dumps(cfg))
-rootfloor["trust"]["floor_path"] = root_floor
-write(out_rootfloor, rootfloor)
-
-# Variant 3 — an authority socket that is not there. The §4.1 hop must fail and must be
-# attributed to the CHALLENGE AUTHORITY by name.
-noauth = json.loads(json.dumps(cfg))
-noauth["sockets"]["authority"] = cfg["sockets"]["authority"] + ".absent"
-write(out_noauth, noauth)
-
-print("driver configs: %s (+ rolled-forward floor, + root-owned floor, + absent authority)"
-      % out_main)
-PYCFG
-chown 0:0 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
-         "$DRIVER_CONFIG_NOAUTH"
-chmod 0644 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR" \
-          "$DRIVER_CONFIG_NOAUTH"
-chown "$BROKER_USER": "$ROLLED_FLOOR"; chmod 0600 "$ROLLED_FLOOR"
 
 # ----- sudoers: the BROKER may become the SIDECAR with ONE exact argument vector ----------------
 # §2.6 requires the seven principals to be pairwise distinct, and every supervisor surface the

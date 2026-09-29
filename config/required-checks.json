@@ -39,6 +39,7 @@
     "Secrets - gitleaks",
     "Spec · every § reference declares whether it is implemented",
     "Supervisor · durable-ledger DDL single-source gate (F-01)",
+    "Trust anchor · no production root private in this tree",
     "Trust provisioning + audit signer (both platforms) (ubuntu-latest)"
   ],
   "deliberately_excluded": {

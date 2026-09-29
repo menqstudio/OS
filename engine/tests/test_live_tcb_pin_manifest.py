@@ -426,7 +426,19 @@ class KitRoleTableTests(unittest.TestCase):
         else and carries this kit's registry, turn and socket steering."""
         roles = self.roles("ladder")
         self.assertEqual(roles["supervisor.config"], "tcb/ladder.json")
-        self.assertEqual(sum(1 for p in roles.values() if p == "config.json"), 4)
+        self.assertEqual(sum(1 for p in roles.values() if p == "config.json"), 3)
+
+    def test_the_ladder_broker_manifest_config_is_the_document_the_driver_reads(self):
+        """`ladder_turn` is run with `--config tcb/ladder-driver.json` and never with `config.json`.
+        This role named `config.json` until 2026-09-29 only because the script wrote the driver's
+        document after the services started; pinning a file the driver does not read measures
+        nothing about what steers it."""
+        self.assertEqual(self.roles("ladder")["trusted-verifier-broker.pinned-manifest-config"],
+                         "tcb/ladder-driver.json")
+        with open(ORCHESTRATOR["ladder"], "r", encoding="utf-8") as f:
+            script = f.read()
+        self.assertIn('DRIVER_CONFIG="$TCB/ladder-driver.json"', script)
+        self.assertIn('"$BIN/ladder_turn" --config "$DRIVER_CONFIG" --verify-tcb', script)
 
     # ---- the source-origin maps point at real repository files ---------------------------------
 
@@ -469,15 +481,49 @@ class KitRoleTableTests(unittest.TestCase):
         self.assertEqual(len(invocation), 1, invocation)
         self.assertIn("--kit live", invocation[0])
 
-    def test_the_ladder_kit_states_why_it_does_not_build_one(self):
-        """It does not call the builder, and that is now an ORDERING obstacle rather than a naming
-        one. The banner has to say which, or the next reader re-derives the role table that already
-        exists."""
+    def test_the_ladder_kit_pins_everything_it_writes_before_anything_runs(self):
+        """A pin is a START-TIME measurement. On the ladder kit, every file this script itself writes
+        under a pinned role must be written before the manifest is built; the manifest must be built
+        before root evaluates the floor; and the floor must be evaluated before the first service
+        starts. Mutant: move any of these past the next and a named line comes back out of order.
+
+        Until 2026-09-29 this test asserted the opposite — that the kit did NOT call the builder —
+        because `tcb/ladder-driver.json` was written after the services started."""
         with open(ORCHESTRATOR["ladder"], "r", encoding="utf-8") as f:
-            script = f.read()
-        self.assertNotIn("python3 \"$PYLIVE/build_tcb_pin_manifest.py\"", script)
-        self.assertIn("--kit ladder", script)
-        self.assertIn("ORDERING, not naming", script)
+            lines = f.read().splitlines()
+
+        def first(pattern: str) -> int:
+            hits = [i for i, l in enumerate(lines) if re.search(pattern, l)]
+            self.assertTrue(hits, "no line in run_ladder_turn.sh matches %r" % pattern)
+            return hits[0]
+
+        builder = [i for i, l in enumerate(lines)
+                   if "build_tcb_pin_manifest.py" in l and l.startswith("python3")]
+        self.assertEqual(len(builder), 1, builder)
+        build = builder[0]
+        self.assertIn("--kit ladder", lines[build])
+        self.assertIn('--source-dir "$REPO_ROOT"', lines[build])
+        self.assertIn('--unit "$TCB/brops-ladder.unit"', lines[build])
+
+        written = {
+            "tcb/executor.lease": first(r'^cat > "\$TCB/executor\.lease"'),
+            "tcb/recorder-policy.json": first(r'^chown 0:0 "\$RECORDER_POLICY"'),
+            "<sudoers>": first(r'^chmod 0440 "\$SUDOERS"'),
+            "bin/ladder_turn": first(r'^install -m 0755 "\$DRIVER_BIN" "\$BIN/ladder_turn"'),
+            "tcb/ladder-driver.json": first(r"<<'PYCFG'"),
+            "<unit>": first(r'^install -m 0644 .*run_ladder_turn\.sh" "\$TCB/brops-ladder\.unit"'),
+        }
+        for role_path, line in sorted(written.items()):
+            with self.subTest(written=role_path):
+                self.assertLess(line, build, "%s is written after the pin is taken" % role_path)
+        verify = first(r'^"\$BIN/ladder_turn" --config "\$DRIVER_CONFIG" --verify-tcb')
+        start = first(r'^\s*start_service\s+"\$')
+        self.assertLess(build, verify, "the floor is evaluated before its manifest exists")
+        self.assertLess(verify, start, "a service starts before the floor has passed")
+        # Every path asserted above is one the ladder table actually pins, so this cannot drift into
+        # checking the order of files the floor never measures.
+        pinned = set(self.roles("ladder").values())
+        self.assertEqual(sorted(set(written) - pinned), [])
 
 
 if __name__ == "__main__":

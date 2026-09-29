@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `ace8c1a`.** The only thing open is PR #285 on `t113/settled-md-refresh`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #286 · branch `t115/ladder-tcb-floor`** (base `main`, tip `f3fdcce`, task T-115).
 >
-> **Next:** Piece 4's remainder: move the ladder driver config ahead of the service starts so that kit can take the 2.5 floor. Then preflight's two requirements stated in config keys the broker no longer reads.
+> T-115: the ladder kit takes the §2.5 TCB floor — its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-115** | **The ladder kit takes the §2.5 floor** — driver config written before the pin; `ladder_turn --verify-tcb` as root before any service; + Owner item 3 ◑ | Bro | In-Progress | `t115/ladder-tcb-floor` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
@@ -41,11 +42,10 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: THREE one-line edits (`gitleaks.toml`, and requiring the Windows
-tools job and the anchor-custody context in `config/required-checks.json`), `T-063`'s tag arm, the
+Waiting on the Owner, not rows: TWO one-line edits (`gitleaks.toml`, and requiring the Windows
+tools job in `config/required-checks.json`), `T-063`'s tag arm, the
 offline root seed, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
-(§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md). This paragraph said TWO
-until 2026-09-20, which is the same defect the row above it fixes.
+(§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
 ## Status tokens
 
