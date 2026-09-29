@@ -785,3 +785,10 @@ it is green. In the frontend run taken under the same load, `src/components/ui.c
 reported 2 of its 11 failing at 11,478 ms; alone it is `11 passed` in 6.93 s, and the
 `Cockpit · frontend` context was green on `#284`. Both are duration-sensitive under load. Neither is
 recorded here as a pass — they are recorded as measurements whose conditions are stated.
+
+## 12. Two counts moved by `#286`, re-trued at the settle of `main` @ `b80e572`
+
+| Claim | Measured | Command |
+| :--- | :--- | :--- |
+| `engine_tests` **2314** | **2315** | `BRO_ENV=ci python3 -m unittest discover -s engine/tests -t engine/tests -q` at `b80e572` → `Ran 2315 tests` · `OK (skipped=14)` on Debian 13 (trixie), native, non-root. The added test is `test_the_ladder_broker_manifest_config_is_the_document_the_driver_reads`. The Windows row in `PROJECT_STATE.md` is marked not re-measured rather than given a number nobody ran |
+| **34** required contexts (README, both verification sheets, `PROJECT_STATE.md`) | **35** | `gh api repos/menqstudio/OS/branches/main/protection/required_status_checks --jq '.contexts\|length'` → `35`, after the Owner's item 3 added `Trust anchor · no production root private in this tree` |

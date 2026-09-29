@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-29 — 66 pull requests merged (`#219`–`#285`), `main` at
-`f3fdcce`, all seven of its workflows green there; `T-115` is open. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-29 — 67 pull requests merged (`#219`–`#286`), `main` at
+`b80e572`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #286 · branch `t115/ladder-tcb-floor`** (base `main`, tip `f3fdcce`, task T-115).
+> **✅ SETTLED — `main` is at `b80e572`.** The only thing open is PR #287 on `t116/settled-at-b80e572`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-115: the ladder kit takes the §2.5 TCB floor — its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.
+> **Next:** Preflight's two requirements stated in config keys the broker no longer reads; then a §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -26,7 +26,7 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 | Phase | Status |
 |---|---|
 | 0 Foundation | DONE, locked |
-| 1 Bridge | In-Progress — contract, adapter, broker and receipt are real; both live kits now evaluate the §2.5 floor as root before any service starts (`T-115`, ◑ until its CI run); `_real_callables()` raises unconditionally, and the desktop pre-flight MEASURES its five missing inputs now rather than asserting them (`T-048`). Both refuse |
+| 1 Bridge | In-Progress — contract, adapter, broker and receipt are real; both live kits evaluate the §2.5 floor as root before any service starts (`T-115`); `_real_callables()` raises unconditionally, and the desktop pre-flight MEASURES its five missing inputs now rather than asserting them (`T-048`). Both refuse |
 | 2 Governance Sidecar | Done — 11/11; the approval-**request** path exists on both sides now (`T-021a`–`T-021d`), and nothing in it decides |
 | 3 Desktop Integration | Done — 11/11 |
 | 4 UI/UX System | Done — 12/12 |
@@ -43,11 +43,11 @@ Each row carries the date it was measured, because they are not measured togethe
 
 | Windows | |
 |---|---|
-| engine (Python) · 2026-09-21 | 2314 OK, 97 skipped |
+| engine (Python) · 2026-09-21 | not re-measured |
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, WSL2 13 · 2026-09-21 | 2314 OK, **17** skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-29 | 2315 OK, 14 skipped |
 | Rust, 10 crates · 2026-09-01 | 1149 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

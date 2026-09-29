@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t115/ladder-tcb-floor` — `main` @ `f3fdcce`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `b80e572`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #286 · branch `t115/ladder-tcb-floor`** (base `main`, tip `f3fdcce`, task T-115).
+> **✅ SETTLED — `main` is at `b80e572`.** The only thing open is PR #287 on `t116/settled-at-b80e572`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-115: the ladder kit takes the §2.5 TCB floor — its driver config is written before the pin, --kit ladder builds the manifest, and ladder_turn --verify-tcb evaluates it as root before any service starts.
+> **Next:** Preflight's two requirements stated in config keys the broker no longer reads; then a §2.5 pin manifest for the real brops-broker (OWNER_ACTION_REQUIRED §0 row 4).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2314 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2315 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1149 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
