@@ -304,6 +304,16 @@ mod linux {
             },
             provenance: anchor_provenance,
         };
+        // `external` is a claim only the compiled-in pin may make: the five `BROPS_*` variables write
+        // `"provenance": "external"` beside whatever root the operator names, and a throwaway one
+        // would have rendered `production_verified=true` (T-126; read from the code, not run).
+        if let Err(why) = brops_broker::tcb::check_declared_external_anchor(
+            root_anchor.provenance,
+            &root_anchor.pinned.root_key_id,
+            &root_anchor.pinned.public_key_hex,
+        ) {
+            return blocked(&format!("root_anchor_{why}"));
+        }
         // `verify_manifest_anchored` (not `verify_manifest`) — it returns evidence of WHICH anchor the
         // signature verified under, and that evidence is what `resolve_trust_state` requires before it
         // will render production. The driver no longer decides the custody question itself.

@@ -770,6 +770,16 @@ mod linux {
             },
             provenance,
         };
+        // `external` is a claim only the compiled-in pin may make. Without this the file's own word
+        // was the production claim, and a throwaway root exported through the five `BROPS_*`
+        // variables would have rendered `production_verified=true` (T-126; read from the code, not run).
+        if let Err(why) = brops_broker::tcb::check_declared_external_anchor(
+            anchor.provenance,
+            &anchor.pinned.root_key_id,
+            &anchor.pinned.public_key_hex,
+        ) {
+            return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path);
+        }
 
         // ---- (B) the root-signed key manifest + the anti-rollback floor ----
         let manifest_path = match s(&cfg, &["trust", "manifest_path"]) {

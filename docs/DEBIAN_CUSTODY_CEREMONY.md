@@ -1,7 +1,8 @@
 # Debian custody ceremony — the TCB production root on Linux
 
 > **Հայերեն ամփոփում.** Սա քո ձեռքով արվող քայլերն են։ Root-ը ստեղծում ես offline մեքենայի վրա,
-> Builder-ին տալիս ես միայն PUBLIC hex-ը, հետո offline ստորագրում ես մեկ ֆայլ։ Private-ը երբեք
+> Builder-ին տալիս ես միայն PUBLIC hex-ը, հետո offline ստորագրում ես **երկու** ֆայլ (manifest ու
+> registry)։ Private-ը երբեք
 > serving box-ի վրա չի հայտնվում։ Ամեն հրաման ստորև գոյություն ունի և 2026-09-30-ին վազել ա այս
 > Debian-ի վրա, բացի նրանցից, որոնք նշված են որպես ոչ-վազած։
 
@@ -23,7 +24,7 @@ still RED. What it changes is one fact: a manifest signed by a root whose privat
 | root private seed | your offline media only | **yes** |
 | root public hex | `broker/src/tcb.rs` and `win-live/src/tcb.rs`, both `ROOT_PUBLIC_KEY_HEX` | no |
 | serving keys (`keys/`) | the serving box, minted in phase 1 | operational |
-| `manifest.json`, `manifest.sig` | carried between the two boxes | no |
+| `manifest.json`, `manifest.sig`, `registry.bytes`, `registry.sig` | carried between the two boxes | no |
 
 ## Step 1 — mint the root, offline
 
@@ -52,44 +53,72 @@ root. Nothing below verifies until a build carries the new pin.
 ## Step 3 — phase 1 on the serving box: mint the serving keys, emit the bytes
 
 ```bash
-python3 engine/ci/live/provision_keys.py --root-dir /opt/brops-live \
+python3 engine/ci/live/provision_keys.py --root-dir /var/lib/brops-ceremony \
     --launcher-sha <sha> --executor-sha <sha> --emit-manifest /media/root/manifest.json
+python3 engine/ci/live/provision_ladder.py --root-dir /var/lib/brops-ceremony \
+    --emit-registry /media/root/registry.bytes \
+    --keys-in /var/lib/brops-ceremony/keys --root-key-id brops-tcb-root-1
 ```
 
-It writes the keys directory and the canonical manifest bytes, and **stops**: no config, no floor, no
-root private. The manifest names the serving keys it just minted — which is why signing has to come
-after it (T-108).
+It writes the keys directory and the canonical bytes of the **two** things the root signs, and
+**stops**: no config, no floor, no root private. Both name the serving keys it just minted — which is
+why signing has to come after it (T-108).
 
-## Step 4 — sign, offline
+**Not under `/opt/brops-live`.** Both kits `rm -rf /opt/brops-live` before they provision, and
+`--keys-in` is read after that; this page said `/opt/brops-live` until T-126, so the keys would have
+been gone. The kits now refuse a `BROPS_KEYS_IN` inside it. **The keys directory must stay on this box
+until step 5** — the signatures name these keys and no others.
+
+The registry is the §4.2 challenge-key registry. The ladder kit's root signed it with
+`keys/root.priv`, which external mode never writes, so a manifest signature alone could not provision
+the kit that starts the real broker (T-126).
+
+## Step 4 — sign both, offline
 
 ```bash
 python3 engine/ci/live/sign_manifest.py --manifest /media/root/manifest.json \
     --root-seed /media/root/root.private.seed --sig-out /media/root/manifest.sig \
     --expect-pub <the hex from step 1>
+python3 engine/ci/live/sign_manifest.py --manifest /media/root/registry.bytes \
+    --root-seed /media/root/root.private.seed --sig-out /media/root/registry.sig \
+    --expect-pub <the hex from step 1>
 ```
+
+The same tool signs any bytes; its output line says "KeyManifest" for both.
 
 `--expect-pub` is the check that you are signing with the seed you meant: a different seed exits 4 and
 writes nothing. The tool imports only the standard library and `cryptography`.
 
 ## Step 5 — phase 2 on the serving box
 
+The kit that starts the real `brops-broker` — six variables, all or none:
+
 ```bash
-export BROPS_KEYS_IN=/opt/brops-live/keys BROPS_ROOT_ANCHOR_KEY_ID=brops-tcb-root-1 \
+export BROPS_KEYS_IN=/var/lib/brops-ceremony/keys BROPS_ROOT_ANCHOR_KEY_ID=brops-tcb-root-1 \
        BROPS_ROOT_ANCHOR_PUB_HEX=<hex> BROPS_MANIFEST_IN=/media/root/manifest.json \
-       BROPS_MANIFEST_SIG_IN=/media/root/manifest.sig
-sudo -E bash engine/ci/live/run_live_turn.sh
+       BROPS_MANIFEST_SIG_IN=/media/root/manifest.sig BROPS_REGISTRY_SIG_IN=/media/root/registry.sig
+sudo -E bash engine/ci/live/run_ladder_turn.sh
 ```
 
-All five or none — the script refuses a partial set. `provision_keys.py` refuses before writing anything
-unless the signature verifies under the anchor **and** the signed manifest names the keys in
-`BROPS_KEYS_IN`.
+The §5 kit, `run_live_turn.sh`, takes the first five. `provision_keys.py` refuses before writing
+anything unless the manifest signature verifies under the anchor **and** names the keys in
+`BROPS_KEYS_IN`; `provision_ladder.py` refuses before writing anything unless the registry signature
+verifies under the same anchor.
 
-**Not yet possible, and the next Builder row:** `run_live_turn.sh` is the §5 kit. The kit that starts
-the real `brops-broker` is `run_ladder_turn.sh`, and it reads none of the five variables (measured:
-zero occurrences on 2026-09-30). Until it does, this ceremony reaches a real root on the §5 path only.
+**A throwaway root cannot pass this.** The anchor file says `external`, and both drivers
+(`ladder_turn`, `live_turn`) refuse `external` unless its key is `ROOT_PUBLIC_KEY_HEX` compiled into
+`broker/src/tcb.rs` (`check_declared_external_anchor`, T-126). Before T-126 the file's word was the
+whole claim: the §5 kit already took the five variables, so any root exported through them would have
+rendered `production_verified=true` (read from the code; not run). CI runs the refusal on every ladder
+run, with the kit's own root relabelled `external`.
+
+What step 5 prints under your root has **never been observed**: the driver must commit
+`trusted_verified` with `production_verified=true`, and `brops-broker` must still refuse the turn,
+because the production gate is shut independently of the root.
 
 ## Not run on this box
 
-Steps 3 and 5 provision `/opt/brops-live` and fixed-uid service accounts, which this machine does not
-do; they run in CI with a kit-generated root. Steps 1 and 4 ran here, with a throwaway seed that was
-deleted afterwards.
+Step 5 provisions `/opt/brops-live` and fixed-uid service accounts, which this machine does not do; it
+runs in CI with a kit-generated root. Steps 1 and 4 ran here, with a throwaway seed that was deleted
+afterwards; step 3 and both phase-2 provisioners ran here against a scratch directory in T-126's tests
+(`LadderRegistryExternalRootTests`), never against `/var/lib/brops-ceremony`.

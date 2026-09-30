@@ -66,6 +66,17 @@ LIVE=/opt/brops-live
 STORE="$LIVE/store"; SOCK="$LIVE/sock"; REPORT="$LIVE/report"; TCB="$LIVE/tcb"; BIN="$LIVE/bin"; KEYS="$LIVE/keys"
 SUPSTATE="$LIVE/supervisor-state"   # the supervisor's PRIVATE durable ledger (F-01), 0700
 RECSTATE="$LIVE/recorder-state"     # the recorder's PRIVATE evidence head-sequence counter (F-02), 0700
+# Phase 1's keys must survive the wipe below. `--keys-in` is READ and copied into a fresh `keys/`,
+# so a keys directory inside $LIVE would be deleted before phase 2 could read it — and the
+# ceremony document told the Owner to put it exactly there until T-126.
+if [ -n "${BROPS_KEYS_IN:-}" ]; then
+  case "$(realpath -m -- "$BROPS_KEYS_IN")/" in
+    "$LIVE"/*)
+      echo "FAIL: BROPS_KEYS_IN=$BROPS_KEYS_IN is inside $LIVE, which this kit deletes before it"
+      echo "      provisions. Run phase 1 with --root-dir outside $LIVE (docs/DEBIAN_CUSTODY_CEREMONY.md)."
+      exit 1;;
+  esac
+fi
 rm -rf "$LIVE"
 mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$LIVE/engine"
 
