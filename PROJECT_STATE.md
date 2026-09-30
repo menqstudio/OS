@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-09-30 — 76 pull requests merged (`#219`–`#295`), `main` at
-`457926e`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-09-30 — 78 pull requests merged (`#219`–`#297`), `main` at
+`6d50091`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #297 · branch `t126/external-anchor-pinned`** (base `main`, tip `620066e`, task T-126).
+> **✅ SETTLED — `main` is at `6d50091`.** The only thing open is PR #298 on `t127/settled-at-6d50091`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-126: a throwaway root could say external; only the compiled pin may now, and the ladder kit takes the anchor
+> **Next:** Owner: DEBIAN_CUSTODY_CEREMONY.md steps 1-2 (mint the root offline, hand over the public hex); then the Builder repins both tcb.rs, and steps 3-5 need a persistent serving box.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
