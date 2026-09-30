@@ -306,6 +306,114 @@ class TwoPhaseExternalRootCeremonyTests(unittest.TestCase):
         self.assertIn("cannot read", r.stderr)
 
 
+LADDER = os.path.join(LIVE_DIR, "provision_ladder.py")
+LADDER_UIDS = ("--sidecar-uid", "5101", "--supervisor-uid", "5102", "--broker-uid", "5103",
+               "--recorder-user", "brops-recorder")
+
+
+class LadderRegistryExternalRootTests(unittest.TestCase):
+    """The ladder kit's root signs TWO things, and the ceremony signed one (T-126).
+
+    `run_ladder_turn.sh` runs `provision_ladder.py` after `provision_keys.py`, and it signed the §4.2
+    challenge-key registry with `keys/root.priv` — a file external mode does not write. So a kit whose
+    key manifest the Owner's offline root had signed crashed provisioning on a missing file, and the
+    only way to make it provision would have been to let the kit sign its own registry under a root
+    it does not hold. Phase 1 now also emits the registry payload; the Owner signs it with the same
+    `sign_manifest.py`; phase 2 verifies it under the external anchor and refuses before writing.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, LIVE_DIR)
+        import live_crypto as lc  # noqa: E402
+        self.lc = lc
+        box = tempfile.TemporaryDirectory(prefix="ladder-ceremony-")
+        self.addCleanup(box.cleanup)
+        self.box = box.name
+        self.kit = os.path.join(self.box, "live")
+        self.off = os.path.join(self.box, "offline")
+        os.makedirs(self.off)
+        self.root_key = lc.gen_private()
+        self.seed = os.path.join(self.off, "root.private.seed")
+        with open(self.seed, "w", encoding="ascii") as f:
+            f.write(lc.priv_raw(self.root_key).hex())
+
+    def _run(self, *argv):
+        return subprocess.run([sys.executable, *argv], capture_output=True, text=True)
+
+    def _sign(self, message, sig):
+        r = self._run(os.path.join(LIVE_DIR, "sign_manifest.py"), "--manifest", message,
+                      "--root-seed", self.seed, "--sig-out", sig,
+                      "--expect-pub", self.lc.pub_hex(self.root_key))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def _external_kit(self):
+        """Both phases of provision_keys plus the registry emission; returns the registry sig path."""
+        manifest = os.path.join(self.off, "manifest.json")
+        registry = os.path.join(self.off, "registry.bytes")
+        self.assertEqual(_provision(self.kit, "--emit-manifest", manifest).returncode, 0)
+        r = self._run(LADDER, "--root-dir", self.kit, "--emit-registry", registry,
+                      "--keys-in", os.path.join(self.kit, "keys"),
+                      "--root-key-id", "brops-tcb-root-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._sign(manifest, os.path.join(self.off, "manifest.sig"))
+        self._sign(registry, os.path.join(self.off, "registry.sig"))
+        r = _provision(self.kit, "--keys-in", os.path.join(self.kit, "keys"),
+                       "--root-anchor-key-id", "brops-tcb-root-1",
+                       "--root-anchor-pub-hex", self.lc.pub_hex(self.root_key),
+                       "--manifest-in", manifest,
+                       "--manifest-sig-in", os.path.join(self.off, "manifest.sig"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return os.path.join(self.off, "registry.sig")
+
+    def _registry_verifies_under(self, pub_hex):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "engine", "runtime"))
+        import challenge_key_registry as ckr  # noqa: E402
+        doc = _read_json(os.path.join(self.kit, "tcb", "challenge-key-registry.json"))
+        return self.lc.verify_b64url(self.lc.load_public_hex(pub_hex),
+                                     ckr.canonical_bytes(doc["payload"]), doc["root_sig"])
+
+    def test_the_offline_signature_becomes_the_registry_and_no_root_private_is_read(self):
+        sig = self._external_kit()
+        r = self._run(LADDER, "--root-dir", self.kit, *LADDER_UIDS, "--registry-sig-in", sig)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self._registry_verifies_under(self.lc.pub_hex(self.root_key)))
+        self.assertFalse(os.path.exists(os.path.join(self.kit, "keys", "root.priv")))
+        ladder = _read_json(os.path.join(self.kit, "tcb", "ladder.json"))
+        self.assertEqual(ladder["registry"]["root_key_id"], "brops-tcb-root-1")
+
+    def test_an_external_anchor_without_the_registry_signature_writes_nothing(self):
+        self._external_kit()
+        before = open(os.path.join(self.kit, "config.json"), "rb").read()
+        r = self._run(LADDER, "--root-dir", self.kit, *LADDER_UIDS)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("must be signed by that root", r.stderr)
+        self.assertEqual(open(os.path.join(self.kit, "config.json"), "rb").read(), before)
+        self.assertFalse(os.path.exists(os.path.join(self.kit, "tcb", "ladder.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.kit, "tcb", "challenge-key-registry.json")))
+
+    def test_a_valid_root_signature_over_OTHER_bytes_is_refused(self):
+        # The manifest signature is a perfectly good signature by the right root — over the wrong
+        # message. It must not pass as the registry's.
+        self._external_kit()
+        r = self._run(LADDER, "--root-dir", self.kit, *LADDER_UIDS,
+                      "--registry-sig-in", os.path.join(self.off, "manifest.sig"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("does not verify", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.kit, "tcb", "ladder.json")))
+
+    def test_the_kit_generated_mode_still_signs_its_own_registry_and_refuses_a_supplied_one(self):
+        self.assertEqual(_provision(self.kit).returncode, 0)
+        refused = self._run(LADDER, "--root-dir", self.kit, *LADDER_UIDS,
+                            "--registry-sig-in", os.path.join(self.off, "nope.sig"))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("not external", refused.stderr)
+        r = self._run(LADDER, "--root-dir", self.kit, *LADDER_UIDS)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        anchor = _read_json(os.path.join(self.kit, "tcb", "root-anchor.json"))
+        self.assertEqual(anchor["provenance"], "kit_generated")
+        self.assertTrue(self._registry_verifies_under(anchor["public_key_hex"]))
+
+
 class OfflineManifestSignerTests(unittest.TestCase):
     """`sign_manifest.py` — the tool the Linux path had a specification for and no implementation of.
 
@@ -523,6 +631,108 @@ class ExternalAnchorPassthroughTests(unittest.TestCase):
         self.assertIn("THAT IS NOW REACHABLE FROM HERE", script)
         self.assertIn("sign_manifest.py", script,
                       "the note has to name the command that produces the signature")
+
+class LadderKitAnchorPassthroughTests(unittest.TestCase):
+    """`run_ladder_turn.sh` — the kit that starts the real `brops-broker` — takes the external anchor.
+
+    It read none of the five variables until T-126, and it needs a SIXTH: the ladder kit's root also
+    signs the §4.2 registry. Every assertion runs the script's own bytes or reads its own text.
+    """
+
+    SIX = {"BROPS_KEYS_IN": "/k", "BROPS_ROOT_ANCHOR_KEY_ID": "brops-tcb-root-1",
+           "BROPS_ROOT_ANCHOR_PUB_HEX": "ab" * 32, "BROPS_MANIFEST_IN": "/m",
+           "BROPS_MANIFEST_SIG_IN": "/s", "BROPS_REGISTRY_SIG_IN": "/r"}
+
+    def _script(self) -> str:
+        with open(os.path.join(LIVE_DIR, "run_ladder_turn.sh"), "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _block(self) -> str:
+        script = self._script()
+        first = script.index('ANCHOR_VARS="BROPS_KEYS_IN')
+        last = script.index("# ----- keys + manifest + store + shared config", first)
+        return script[first:last]
+
+    def _run(self, env_extra):
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash on this host")
+        block = "\n".join(["set -u", self._block(),
+                           'echo "COUNT=${#ANCHOR_ARGS[@]} LADDER=${#LADDER_ANCHOR_ARGS[@]} '
+                           'MODE=$ANCHOR_MODE"'])
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BROPS_")}
+        env.update(env_extra)
+        return subprocess.run([bash, "-c", block], capture_output=True, text=True, env=env)
+
+    def test_unset_changes_nothing_and_stays_kit_generated(self):
+        r = self._run({})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("COUNT=0 LADDER=0 MODE=kit_generated", r.stdout)
+
+    def test_all_six_forward_to_both_provisioners(self):
+        r = self._run(self.SIX)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("COUNT=10 LADDER=2 MODE=external", r.stdout)
+
+    def test_any_five_of_six_refuse(self):
+        for missing in sorted(self.SIX):
+            with self.subTest(missing=missing):
+                r = self._run({k: v for k, v in self.SIX.items() if k != missing})
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("needs ALL of", r.stdout)
+
+    def test_both_call_sites_forward_what_the_block_builds(self):
+        script = self._script()
+        self.assertIn('${ANCHOR_ARGS[@]+"${ANCHOR_ARGS[@]}"}', script)
+        self.assertIn('${LADDER_ANCHOR_ARGS[@]+"${LADDER_ANCHOR_ARGS[@]}"}', script)
+
+    def test_the_throwaway_negative_names_the_refusal_the_driver_actually_emits(self):
+        # The outcome string is built from two languages: `setup_blocked` prefixes `root_anchor_`
+        # to the reason `check_declared_external_anchor` returns. A rename on either side would
+        # leave the kit expecting an outcome nothing produces.
+        script = self._script()
+        self.assertIn("blocked:setup:root_anchor_external_not_the_pinned_root", script)
+        tcb = os.path.join(REPO_ROOT, "apps", "desktop", "src-tauri", "broker", "src", "tcb.rs")
+        with open(tcb, "r", encoding="utf-8") as f:
+            self.assertIn('Err("external_not_the_pinned_root")', f.read())
+        ladder = os.path.join(REPO_ROOT, "apps", "desktop", "src-tauri", "proof", "src", "bin",
+                              "ladder_turn.rs")
+        with open(ladder, "r", encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("check_declared_external_anchor", text)
+        self.assertIn('format!("root_anchor_{why}")', text)
+
+
+class KeysInSurvivesTheWipeTests(unittest.TestCase):
+    """Both kits `rm -rf /opt/brops-live` before provisioning, and `--keys-in` is read AFTER that.
+
+    The ceremony document said `BROPS_KEYS_IN=/opt/brops-live/keys` until T-126 — the one directory
+    guaranteed to be gone by the time phase 2 reads it. The kits now refuse that before the wipe.
+    """
+
+    def _guard(self, script):
+        with open(os.path.join(LIVE_DIR, script), "r", encoding="utf-8") as f:
+            text = f.read()
+        first = text.index("# Phase 1's keys must survive the wipe below.")
+        last = text.index('rm -rf "$LIVE"', first)
+        return text[first:last]
+
+    def test_a_keys_directory_the_wipe_would_delete_is_refused_in_both_kits(self):
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash on this host")
+        cases = {"/opt/brops-live/keys": 1, "/opt/brops-live": 1,
+                 "/opt/brops-live/../brops-live/keys": 1,
+                 "/var/lib/brops-ceremony/keys": 0, "/opt/brops-live-x/keys": 0}
+        for script in ("run_ladder_turn.sh", "run_live_turn.sh"):
+            block = "LIVE=/opt/brops-live\n" + self._guard(script)
+            for keys_in, want in cases.items():
+                with self.subTest(script=script, keys_in=keys_in):
+                    env = {k: v for k, v in os.environ.items() if not k.startswith("BROPS_")}
+                    env["BROPS_KEYS_IN"] = keys_in
+                    r = subprocess.run([bash, "-c", block], capture_output=True, text=True, env=env)
+                    self.assertEqual(r.returncode, want, r.stdout + r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

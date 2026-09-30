@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `457926e`.** The only thing open is PR #296 on `t125/settled-at-457926e`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #297 · branch `t126/external-anchor-pinned`** (base `main`, tip `620066e`, task T-126).
 >
-> **Next:** run_ladder_turn.sh takes the five BROPS_* anchor variables; then the Owner's ceremony.
+> T-126: a throwaway root could say external; only the compiled pin may now, and the ladder kit takes the anchor
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,8 +47,8 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2326 OK, 14 skipped |
-| Rust, 10 crates · 2026-09-30 | 1219 passed |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2336 OK, 14 skipped |
+| Rust, 10 crates · 2026-09-30 | 1222 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
