@@ -74,8 +74,10 @@
 //!   `FILE_DELETE_CHILD`, so a standard user may create the product's directory there and can
 //!   never afterwards delete or rename it once sealed. Measured, not assumed:
 //!   [`prove_unwritable`] probes every component including `C:\ProgramData` and `C:\`.
-//! * **POSIX** — [`POSIX_MACHINE_ROOT`]`/trust-anchor`, owned by a uid this process is not
-//!   (root, or a dedicated `brops-anchor` account), mode `0755`, every ancestor likewise.
+//! * **POSIX** — [`POSIX_MACHINE_ROOT`]`/trust-anchor`, owned by a uid this process is not,
+//!   mode `0755`, every ancestor likewise. In this product that uid is root: the installer
+//!   below runs as root and nothing else creates the directory. (The measurement would accept
+//!   any other uid, but no dedicated anchor account exists in the tree.)
 //!   **There is no unprivileged POSIX construction**: an owner may always `chmod` a directory
 //!   it owns, so mode bits are not a boundary against the owner, and POSIX has no OWNER RIGHTS
 //!   equivalent. So on POSIX the anchor must already exist when the application starts, and
@@ -125,9 +127,10 @@ pub const INSTALLER_TOOL: &str = "brops_install_anchor";
 /// Two reasons, and the second is the one that actually holds:
 ///
 /// 1. Lexically it is neither `/var/lib/brops` (the `brops` account's home, per the runbook)
-///    nor `/var/lib/brops-anchor` (what `adduser --system brops-anchor` would give the
-///    dedicated account [`CUSTODY_REMEDY`] names). Both of the collisions this product's own
-///    instructions can produce are avoided by name.
+///    nor `/var/lib/brops-anchor` (what `adduser --system brops-anchor` would give a
+///    dedicated anchor account — one the design proposed and nothing builds; the anchor is
+///    root-owned). Both of the collisions this product's own instructions could produce are
+///    avoided by name.
 /// 2. **The name is not the argument.** A runbook can point `--home` anywhere, so no string is
 ///    safe by construction. [`precheck_location`] therefore ASKS: on POSIX it reads
 ///    `/etc/passwd` and refuses a machine root that is, contains, or sits inside any account's
@@ -282,7 +285,8 @@ pub fn preprovision_refusal(platform: &str, anchor_dir: &Path) -> Option<Provisi
              process could rewrite — which is the pin-rewrite attack this anchor exists to \
              close, wearing the costume of a provisioned machine. The anchor must therefore be \
              created by a DIFFERENT uid, before this application starts: {} owned by that uid \
-             (root, or a dedicated brops-anchor account), mode 0755, every ancestor owned by it \
+             (root — the installer named below runs as root, and nothing else in this product \
+             creates it), mode 0755, every ancestor owned by it \
              too, holding {OPERATOR_PIN_FILE} / {REGISTRY_FLOOR_FILE} / {MANIFEST_FILE} at mode \
              0644. The tool that creates it is `{INSTALLER_TOOL}`, run ONCE, AS ROOT, at install \
              time — `{INSTALLER_TOOL} --user <desktop account> --app-data <this application's \
@@ -300,6 +304,11 @@ pub fn preprovision_refusal(platform: &str, anchor_dir: &Path) -> Option<Provisi
 }
 
 /// The remedy every custody refusal ends with, so a reader is never told only what is wrong.
+///
+/// The POSIX half names [`INSTALLER_TOOL`] (spelled out, because a `const` cannot interpolate;
+/// `tests/anchor_custody.rs` holds the two together). It used to tell the deployment to "run
+/// provisioning once as that account (root, or a dedicated brops-anchor account)" — a procedure
+/// [`preprovision_refusal`] refuses for every uid, about an account nothing creates.
 pub const CUSTODY_REMEDY: &str = "\
 The operator-root pin, the registry anti-rollback floor and the provisioning manifest must \
 live where the account running this application cannot write them; otherwise that account \
@@ -308,12 +317,14 @@ raises the floor it also owns, and the whole chain then verifies against materia
 Windows the location is %ProgramData%\\BroPS\\trust-anchor, sealed with a PROTECTED DACL whose \
 OWNER RIGHTS (S-1-3-4) ACE grants read and execute only — that needs no elevation and no second \
 account, but every ancestor must also be one this account cannot open for DELETE. On POSIX the \
-location must be owned by a uid this process is not (root, or a dedicated brops-anchor \
-account), mode 0755, with every ancestor likewise; an owner can always chmod a directory it \
-owns, so POSIX has no unprivileged construction and the deployment must create the directory \
-and run provisioning once as that account. There is no fallback: a deployment that cannot \
-provide the location has no trust anchor, and provisioning refuses rather than pretend \
-otherwise.";
+location must be owned by a uid this process is not, mode 0755, with every ancestor likewise; \
+an owner can always chmod a directory it owns, so POSIX has no unprivileged construction and \
+this application never creates the anchor itself: `brops_install_anchor`, run ONCE, AS ROOT, \
+at install time, mints it root-owned and hands the retained keys to the desktop account. \
+That tool refuses every uid but root, and this application's own provisioning refuses on POSIX \
+for every uid, so there is no procedure to run as the account the application runs as. \
+There is no fallback: a deployment that cannot provide the location has no trust anchor, and \
+provisioning refuses rather than pretend otherwise.";
 
 // ---------------------------------------------------------------------------
 // The proof
@@ -1180,10 +1191,10 @@ pub fn seal(dir: &Path, machine_root: &Path) -> Result<String, ProvisionError> {
             what: format!(
                 "this account cannot seal {} against itself. On POSIX an owner may always chmod \
                  a directory it owns, and there is no OWNER RIGHTS equivalent, so the trust \
-                 anchor must be created by a DIFFERENT uid — root, or a dedicated brops-anchor \
-                 account — at {} (mode 0755), with every ancestor owned by that uid too, and \
-                 provisioning must be run once as that account (the installer's job) before the \
-                 application runs as its own unprivileged uid. {CUSTODY_REMEDY}",
+                 anchor must be created by a DIFFERENT uid at {} (mode 0755), with every \
+                 ancestor owned by that uid too, before the application runs as its own \
+                 unprivileged uid. That is `{INSTALLER_TOOL}`'s job, run once as root at \
+                 install time; this application never runs it. {CUSTODY_REMEDY}",
                 dir.display(),
                 dir.display(),
             ),

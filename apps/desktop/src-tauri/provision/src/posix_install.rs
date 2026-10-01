@@ -134,16 +134,22 @@ pub fn refuse_unless_root(euid: u32) -> Result<(), ProvisionError> {
 }
 
 /// The desktop account the application will run as.
+///
+/// Name and ids, and nothing else. It used to carry `home` as well — passwd field 6, parsed and
+/// stored and read by nothing: the application-data path arrives through `--app-data`, and the
+/// one decision that is about home directories ([`anchor::home_directory_collision`]) reads the
+/// passwd text itself. A field nobody reads is a field somebody will one day trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopUser {
     pub name: String,
     pub uid: u32,
     pub gid: u32,
-    pub home: PathBuf,
 }
 
 /// Resolve `--user <name>` against the CONTENT of `/etc/passwd`. Pure, so it is tested with
-/// fixtures on every machine; [`read_passwd`] is the only part that touches the filesystem.
+/// fixtures wherever this module is compiled — which is every UNIX machine and not Windows:
+/// the module is `#[cfg(unix)]` (see `lib.rs`), and so is `tests/posix_install.rs`.
+/// [`read_passwd`] is the only part that touches the filesystem.
 ///
 /// Refused, each by name:
 ///
@@ -167,6 +173,8 @@ pub fn resolve_user(passwd: &str, name: &str) -> Result<DesktopUser, ProvisionEr
             continue;
         }
         let fields: Vec<&str> = line.split(':').collect();
+        // Six fields is a whole passwd line up to the home directory. The home itself is not
+        // read here, but a line too short to have one is not an account entry.
         if fields.len() < 6 || fields[0] != name {
             continue;
         }
@@ -180,8 +188,7 @@ pub fn resolve_user(passwd: &str, name: &str) -> Result<DesktopUser, ProvisionEr
                 ))
             }
         };
-        let user =
-            DesktopUser { name: name.to_string(), uid, gid, home: PathBuf::from(fields[5]) };
+        let user = DesktopUser { name: name.to_string(), uid, gid };
         match &found {
             Some(first) if first.uid != user.uid || first.gid != user.gid => {
                 return refuse(format!(

@@ -613,7 +613,19 @@ fn a_platform_that_cannot_seal_refuses_at_the_top_and_says_what_is_missing() {
         assert!(text.contains("/var/lib/brops-trust-anchor/trust-anchor"), "{text}");
         assert!(text.contains("DIFFERENT uid"), "{text}");
         assert!(text.contains("0755") && text.contains("0644"), "{text}");
-        assert!(text.contains("brops-anchor"), "{text}");
+        // And it must not prescribe what the code refuses. The remedy used to offer "a
+        // dedicated brops-anchor account" and tell the deployment to "run provisioning once as
+        // that account": no such account is created by anything, `refuse_unless_root` accepts
+        // euid 0 only, and this very function refuses provisioning on POSIX for every uid. This
+        // line used to ASSERT the stale wording was present.
+        assert!(!text.contains("brops-anchor account"), "{text}");
+        assert!(!text.contains("run provisioning once as that account"), "{text}");
+        assert!(
+            anchor::CUSTODY_REMEDY.contains(anchor::INSTALLER_TOOL),
+            "the remedy every custody refusal ends with does not name the one tool that can \
+             act on it: {}",
+            anchor::CUSTODY_REMEDY
+        );
         // WHICH tool creates it, who runs it, and — the honest part — that this application
         // is not the one that does. Until 2026-10-01 this line asserted "no shipped tool
         // creates it yet"; the tool now exists (`posix_install`), and the refusal is unchanged.

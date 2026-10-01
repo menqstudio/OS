@@ -32,8 +32,9 @@ use serde_json::Value;
 /// It is tested against a real sealed directory, with the real operating system refusing the
 /// real writes, in `tests/anchor_custody.rs`, and end to end against the real
 /// `bro_audit_log.verify()` in `audit-signer/tests/anchor_end_to_end.rs`. A store produced
-/// here carries `custody: None`, and `custody_is_absent_from_the_unsealed_entry_points`
-/// asserts that it does, so the two halves cannot be confused for one another.
+/// here carries `custody: None`, and
+/// `anchor_custody.rs::the_unsealed_entry_points_report_that_they_measured_nothing` asserts
+/// that it does, so the two halves cannot be confused for one another.
 fn anchor_of(trust: &Path) -> PathBuf {
     trust.parent().expect("the trust directory has a parent").join("anchor")
 }
@@ -85,17 +86,21 @@ fn repair_digest(trust: &Path, relative: &str) {
 /// to do that with: `mint` destroys the operator root before it returns.
 ///
 /// So this does what the only remaining party who could do it would do — it rewrites the
-/// PIN. A fresh Ed25519 key is minted, `pin/operator-root.pub` is replaced with its public
-/// half, the registry's `operator_public_key` and its `operator-root` entry are rebuilt
-/// around it, the registry and the conductor session are re-signed under it, and every
-/// digest is repaired. The store then verifies again — asserted here, so that when a test
-/// mutates one field afterwards and gets a refusal, the refusal can only be about that
-/// field.
+/// PIN. A fresh Ed25519 key is minted, `<anchor>/operator-root.pub` is replaced with its
+/// public half, the registry's `operator_public_key` and its `operator-root` entry are
+/// rebuilt around it, the registry and the conductor session are re-signed under it, and
+/// the one digest the manifest holds for them (the session's) is repaired. The store then
+/// verifies again — asserted here, so that when a test mutates one field afterwards and
+/// gets a refusal, the refusal can only be about that field.
 ///
-/// That it works at all is the residual this round did not close, exercised in Rust as
-/// well as in `audit-signer/tests/anchor_end_to_end.py` (`case_pin_rewrite`): destroying
-/// the operator root removed the KEY, not the anchor's custody. The pin is still a file in
-/// a directory the app's own account owns.
+/// **That it works HERE is a property of this fixture, not of an install.** The pin lives in
+/// the anchor directory, and these tests build that directory through the unsealed entry
+/// points ([`anchor_of`]) inside a temporary directory this account owns — so this account
+/// can rewrite it. On a provisioned machine the same write is refused by the operating
+/// system: `audit-signer/tests/anchor_end_to_end.py` (`case_pin_rewrite`) runs this attack
+/// step for step against a sealed anchor and asserts that it FAILS. What this helper still
+/// demonstrates is why that custody matters: destroying the operator root removed the KEY,
+/// and an account that can write the pin needs no key.
 fn reroot(trust: &Path) -> SigningKey {
     let root = SigningKey::from_bytes(&throwaway_seed());
     let public = prov::hex(root.verifying_key().as_bytes());
@@ -336,12 +341,14 @@ fn a_modified_registry_is_refused_by_name_and_nothing_is_repaired() {
 }
 
 #[test]
-fn a_re_signed_registry_under_a_different_root_is_refused_even_with_the_digest_repaired() {
+fn a_registry_is_refused_when_the_pin_names_a_different_root() {
     let dir = tempfile::tempdir().unwrap();
     let p = mint_at(dir.path()).unwrap();
 
-    // Swap the pinned anchor for a different, perfectly valid Ed25519 public key and
-    // repair its digest. Only the signature check can catch this.
+    // Swap the pinned anchor for a different, perfectly valid Ed25519 public key. Only the
+    // signature check can catch this. (This test was named `..._even_with_the_digest_repaired`
+    // and said it repaired the pin's digest; there has been none to repair since the pin
+    // moved into the anchor.)
     let other = prov::load_key(&p.trust_dir, "issuer").unwrap();
     fs::write(&p.operator_pin_path, format!("{}\n", other.public_key_hex())).unwrap();
     // Nothing to repair: the pin is not in the manifest digest map any more (it lives beside
@@ -355,10 +362,12 @@ fn a_re_signed_registry_under_a_different_root_is_refused_even_with_the_digest_r
 #[test]
 fn a_registry_signed_by_the_wrong_authority_is_refused_by_the_signature_check_alone() {
     // Everything else about this registry is impeccable: it declares the real pin, its
-    // operator entry IS the pinned key, it is marked production, every authority is
-    // active, and its recorded digest matches. Only the signature is wrong — signed by
-    // the issuer key rather than the operator root. Nothing but the Ed25519 check can
-    // catch it, which is what makes this test the one that proves that check exists.
+    // operator entry IS the pinned key, it is marked production and every authority is
+    // active. There is no recorded digest to disagree with either: the registry lives in
+    // the anchor, beside the manifest, and the manifest digests only the app-side store.
+    // Only the signature is wrong — signed by the issuer key rather than the operator
+    // root. Nothing but the Ed25519 check can catch it, which is what makes this test the
+    // one that proves that check exists.
     let dir = tempfile::tempdir().unwrap();
     let p = mint_at(dir.path()).unwrap();
     let mut payload = payload_of(&p.trust_dir, REGISTRY_REL);
@@ -366,7 +375,6 @@ fn a_registry_signed_by_the_wrong_authority_is_refused_by_the_signature_check_al
     let impostor = prov::load_key(&p.trust_dir, "issuer").unwrap();
     let document = prov::sign_document(&impostor.signing, payload).unwrap();
     fs::write(&p.registry_path, serde_json::to_vec(&document).unwrap()).unwrap();
-    repair_digest(&p.trust_dir, REGISTRY_REL);
 
     let err = mint_at(dir.path()).expect_err("a wrongly signed registry must be refused");
     assert!(err.to_string().contains("does not verify against the operator-root pin"), "{err}");
@@ -786,11 +794,97 @@ fn the_manifest_states_what_became_of_the_operator_root_without_overclaiming() {
     let custody = manifest["operator_root_custody"].as_str().unwrap();
     assert_eq!(custody, prov::OPERATOR_ROOT_CUSTODY);
     assert!(custody.contains("destroyed"), "{custody}");
-    // And the second half, which matters as much: the anchor did NOT move out of reach.
-    assert!(custody.contains("does NOT make the trust root external"), "{custody}");
+    // The overclaim it must not make: that destroying the KEY settled who can rewrite the PIN.
+    // It says so, and hands that question to the string whose claim it is.
+    assert!(
+        custody.contains("says nothing about who can rewrite the operator-root pin"),
+        "{custody}"
+    );
+    assert!(custody.contains("anchor_custody"), "{custody}");
+    assert_eq!(manifest["anchor_custody"].as_str().unwrap(), prov::ANCHOR_CUSTODY);
+
+    // And the two statements in one manifest must not contradict each other. Until T-145 this
+    // test ASSERTED the contradiction: `operator_root_custody` said "pin/operator-root.pub
+    // still lives in this directory" beside an `anchor_custody` saying the pin lives OUTSIDE
+    // the application's data directory — which is where `establish_anchor` writes it.
+    assert!(prov::ANCHOR_CUSTODY.contains("OUTSIDE"), "{}", prov::ANCHOR_CUSTODY);
+    assert!(!custody.contains("still lives in this directory"), "{custody}");
+    assert!(!custody.contains("pin/"), "{custody}");
+    assert!(p.operator_pin_path.starts_with(&p.anchor_dir), "the pin is not in the anchor");
+    assert!(!p.operator_pin_path.starts_with(&p.trust_dir), "the pin is inside the store");
+}
+
+/// `POSTURE.txt` is read by somebody who has the directory and not the source, so it must
+/// describe the layout and the engine setting this install actually has.
+///
+/// It described the layout before the anchor moved: the pin and the floor "in this directory"
+/// under `pin/`, the registry under `registry/config/`, and — the dangerous one — a section
+/// telling the reader that the deployment "must set" `BRO_OPERATOR_ROOT_PIN_SELF_OWNED`,
+/// the switch that turns the engine's custody rule OFF and that `engine_env` deliberately
+/// never exports. Each claim is checked against what the mint really produced.
+#[test]
+fn the_posture_file_describes_the_store_that_was_actually_minted() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = mint_at(dir.path()).unwrap();
     let posture = fs::read_to_string(p.trust_dir.join(prov::POSTURE_FILE)).unwrap();
     assert!(posture.contains("OPERATOR-ROOT PRIVATE HALF IS NOT HERE"), "{posture}");
-    assert!(posture.contains("did NOT move the trust anchor"), "{posture}");
+    assert!(!p.keys_dir.join("operator-root.json").exists());
+
+    // Where the anchor is: not here. The paths it used to name do not exist in the store.
+    assert!(posture.contains("THE TRUST ANCHOR IS NOT HERE EITHER"), "{posture}");
+    assert!(!posture.contains("pin/"), "{posture}");
+    assert!(!posture.contains("registry/config"), "{posture}");
+    assert!(!posture.contains("is a file in this"), "{posture}");
+    assert!(!p.trust_dir.join("pin").exists(), "the store grew a pin directory");
+    assert!(!p.trust_dir.join("registry").exists(), "the store grew a registry directory");
+    for name in [prov::OPERATOR_PIN_FILE, prov::REGISTRY_FLOOR_FILE, prov::MANIFEST_FILE] {
+        assert!(posture.contains(name), "POSTURE.txt does not name {name}:\n{posture}");
+        assert!(p.anchor_dir.join(name).is_file(), "{name} is not in the anchor");
+        assert!(!p.trust_dir.join(name).exists(), "{name} is in the store");
+    }
+
+    // The engine setting: named so a reader recognises it, and never as something to set.
+    assert!(posture.contains("BRO_OPERATOR_ROOT_PIN_SELF_OWNED"), "{posture}");
+    assert!(posture.contains("BroPS does NOT\nset it"), "{posture}");
+    assert!(!posture.contains("must set"), "{posture}");
+    assert!(
+        !p.engine_env().iter().any(|(name, _)| name.contains("SELF_OWNED")),
+        "POSTURE.txt says the acknowledgement is not set, and engine_env exports it"
+    );
+
+    // And what deleting the directory really does: nothing is re-minted over a live anchor.
+    assert!(posture.contains("BroPS does NOT mint a new one"), "{posture}");
+    assert!(!posture.contains("makes BroPS mint a new one"), "{posture}");
+    assert!(!posture.contains("the next launch builds a new one"), "{posture}");
+    assert!(posture.contains(prov::anchor::INSTALLER_TOOL), "{posture}");
+}
+
+/// The recovery a refusal prescribes has to be one that works.
+///
+/// Every `Corrupt` refusal ended "Move or remove the `trust` directory ... to have it re-minted
+/// from scratch". Once an anchor records the store that is false: provisioning finds the
+/// manifest in the anchor, goes to verify the store, and refuses on the files that are no
+/// longer there — demonstrated below with the store removed — and on a real install the anchor
+/// is the half this account cannot remove.
+#[test]
+fn a_refusal_does_not_promise_a_re_mint_that_the_anchor_forbids() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = mint_at(dir.path()).unwrap();
+
+    // The recovery the old text prescribed, carried out: the store is gone, the anchor is not.
+    fs::remove_dir_all(&p.trust_dir).unwrap();
+    let err = mint_at(dir.path()).expect_err("removing the store must not produce a re-mint");
+    assert!(!p.trust_dir.exists(), "something was re-minted over a live anchor: {err}");
+
+    // So no refusal may say it would have worked.
+    let corrupt = prov::ProvisionError::Corrupt { what: "w".into(), detail: "d".into() };
+    let text = corrupt.to_string();
+    assert!(!text.contains("to have it re-minted from scratch"), "{text}");
+    assert!(text.contains("does not by itself get it re-minted"), "{text}");
+    assert!(text.contains("ADMINISTRATOR"), "{text}");
+    assert!(text.contains(prov::anchor::CUSTODY_FILE), "{text}");
+    assert!(text.contains(prov::anchor::INSTALLER_TOOL), "{text}");
+    assert!(text.contains("Nothing was changed or deleted"), "{text}");
 }
 
 #[test]

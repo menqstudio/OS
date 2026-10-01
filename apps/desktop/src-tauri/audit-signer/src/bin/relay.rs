@@ -6,8 +6,10 @@
 //!
 //! **It holds no key and needs no privilege.** It cannot, because `subprocess.run` hands the child
 //! the caller's token: whatever this process could open, the app could open. That is the whole
-//! reason the signer is a pre-existing service and this is a shim. `tests/relay_contract.rs`
-//! asserts that the compiled binary produces no signature when nothing answers the pipe.
+//! reason the signer is a pre-existing service and this is a shim.
+//! `tests/relay_contract.rs::the_compiled_relay_prints_no_document_when_nothing_answers_the_pipe`
+//! runs THIS compiled binary against a pipe nobody serves and asserts an empty stdout and the
+//! unreachable exit code; `the_relay_sources_name_no_key_and_no_custody` holds the other half.
 //!
 //! Nothing is ever written to stdout except the document. A stray log line there would be parsed
 //! by `json.loads(proc.stdout)` and reported as "the signing command did not return a signed

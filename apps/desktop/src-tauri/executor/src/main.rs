@@ -1,7 +1,15 @@
 //! Wave 3b-1B — the contained model **executor** as a SEPARATE binary crate (design-GREEN rev-30 §2/§2.7).
 //!
-//! This is the tiny, pinned image the privileged launcher `fexecve`s at the second exec boundary. By
-//! construction it is the least-privileged process in the system:
+//! **NOT DEPLOYED: nothing `fexecve`s this binary today.** It is the PLACEHOLDER for the pinned model
+//! image, built and unit-tested (`cargo test -p brops-executor`) and installed by nothing: both live kits
+//! (`engine/ci/live/run_live_turn.sh`, `run_ladder_turn.sh`) install
+//! `proof/src/bin/proof_executor.rs` as `contained-executor.bin`, and the desktop bundle declares no
+//! `externalBin`. This header used to open "This is the tiny, pinned image the privileged launcher
+//! `fexecve`s" — the sentence `proof_executor.rs` also opens with, and it is true of that file only.
+//! What follows describes the image this crate is the stand-in FOR: what it must be when the
+//! model-image slice lands and a kit starts installing it.
+//!
+//! By construction it is the least-privileged process in the system:
 //!   * it inherits EXACTLY the rev-30 §2.7 data descriptors — three READ-ONLY inputs (fd 3 = `system`,
 //!     fd 4 = `history`, fd 5 = `generation_config`) and one WRITE-ONLY output pipe (fd 6),
 //!   * it reads each of 3/4/5 to EOF, derives its output purely from those exact bytes, writes the output
@@ -214,6 +222,43 @@ mod tests {
             assert!(hex.bytes().all(|b| b.is_ascii_hexdigit()));
         }
         assert!(text.ends_with('\n'), "output is newline-terminated");
+    }
+
+    /// The image that IS deployed binds the three inputs by the same formula.
+    ///
+    /// `proof_executor.rs::bind` says it "mirrors `executor::build_output`". Nothing held the two
+    /// together: they are two binaries in two crates with no shared function, so either could change
+    /// its binding and the comment would go on saying they agree. This reads the other file's source
+    /// and pins the one line that is the formula, then checks this crate's `binding=` against it.
+    #[test]
+    fn the_deployed_proof_executor_binds_the_inputs_by_the_same_formula() {
+        let deployed = include_str!("../../proof/src/bin/proof_executor.rs").replace("\r\n", "\n");
+        let bind = deployed
+            .split_once("fn bind(system: &[u8], history: &[u8], generation_config: &[u8]) -> String {")
+            .expect("proof_executor.rs no longer has `fn bind(system, history, generation_config)`")
+            .1
+            .split_once("\n    }\n")
+            .expect("proof_executor.rs: `bind` has no end")
+            .0;
+        for line in [
+            "let sh = sha256_hex(system);",
+            "let hh = sha256_hex(history);",
+            "let gh = sha256_hex(generation_config);",
+            "sha256_hex(format!(\"{sh}\\n{hh}\\n{gh}\").as_bytes())",
+        ] {
+            assert!(
+                bind.contains(line),
+                "proof_executor.rs::bind no longer contains `{line}`. It is the image the kits \
+                 install, and it claims to mirror this crate's binding:\n{bind}"
+            );
+        }
+
+        // ...and that formula is this crate's `binding=` line, computed here independently.
+        let (system, history, generation_config) = (b"sys".as_slice(), b"[1]".as_slice(), b"{}".as_slice());
+        let (sh, hh, gh) = (sha256_hex(system), sha256_hex(history), sha256_hex(generation_config));
+        let want = format!("binding={}", sha256_hex(format!("{sh}\n{hh}\n{gh}").as_bytes()));
+        let out = String::from_utf8(build_output(system, history, generation_config)).unwrap();
+        assert!(out.lines().any(|l| l == want), "this crate's binding moved away from {want}:\n{out}");
     }
 
     #[test]

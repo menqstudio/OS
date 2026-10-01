@@ -3,8 +3,10 @@
 //! `provision.rs` proves this crate behaves; it cannot prove that what it writes is
 //! byte-compatible with `engine/runtime/bro_signature.py`, because a Rust test that
 //! asserts Rust's own encoding round-trips is checking the encoder against itself.
-//! This test provisions a real trust store, mints a real `evidence-floor-anchor` with
-//! the real operator key, and hands the directory to `verify_provisioning.py`, which
+//! This test provisions a real trust store, mints a real `evidence-floor-anchor` signed
+//! by the DELEGATED `evidence-floor` key — not the operator root, which provisioning
+//! destroys before it returns and which therefore signs nothing after the registry and
+//! the conductor session — and hands the directory to `verify_provisioning.py`, which
 //! imports the engine's own `bro_signature`, `bro_policy` and `bro_deploy_preflight`
 //! and makes them accept or refuse it. One byte of divergence in key ordering,
 //! separators, string escaping or integer formatting is an Ed25519 signature that does
@@ -16,6 +18,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod prerequisites;
 
 /// The repository root: `<repo>/apps/desktop/src-tauri/provision`.
 fn repo_root() -> PathBuf {
@@ -29,46 +33,15 @@ fn repo_root() -> PathBuf {
     path
 }
 
-/// The interpreter to use. `BROPS_TEST_PYTHON` wins so a CI job can name a venv.
-fn python_candidates() -> Vec<String> {
-    if let Ok(explicit) = std::env::var("BROPS_TEST_PYTHON") {
-        if !explicit.trim().is_empty() {
-            return vec![explicit];
-        }
-    }
-    vec!["python3".to_string(), "python".to_string()]
-}
-
-fn probe(python: &str) -> Result<(), String> {
-    let out = Command::new(python)
-        .args(["-c", "import cryptography, sys; print(sys.version)"])
-        .output()
-        .map_err(|e| format!("could not run `{python}`: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "`{python}` cannot import `cryptography`, which `bro_signature` requires: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
-}
-
+/// The interpreter to use: `prerequisites::resolve_python`, the ONE resolver the four
+/// cross-language tests share. `BROPS_TEST_PYTHON` wins so a CI job can name a venv, and a
+/// named interpreter that fails is fatal rather than a reason to try another.
 fn resolve_python() -> String {
-    let mut reasons = Vec::new();
-    for candidate in python_candidates() {
-        match probe(&candidate) {
-            Ok(()) => return candidate,
-            Err(reason) => reasons.push(reason),
-        }
-    }
-    panic!(
-        "no usable Python for the cross-language byte-compatibility proof. This test does \
-         NOT skip: without it, nothing checks that what Rust signs is what \
-         engine/runtime/bro_signature.py accepts. Set BROPS_TEST_PYTHON to an interpreter \
-         with `cryptography` installed.\n  {}",
-        reasons.join("\n  ")
-    );
+    prerequisites::resolve_python(
+        "cryptography",
+        "the cross-language byte-compatibility proof — that what Rust signs is what \
+         engine/runtime/bro_signature.py accepts",
+    )
 }
 
 /// Give Python a path free of platform surprises. On unix that means resolving symlinks

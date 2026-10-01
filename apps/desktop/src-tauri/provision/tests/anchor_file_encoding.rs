@@ -23,30 +23,17 @@ use std::process::Command;
 use brops_provision::audit_signer::installed_anchor_bytes;
 use serde_json::{json, Value};
 
+mod prerequisites;
+
+/// `prerequisites::resolve_python`, the ONE resolver the four cross-language tests share. This
+/// file's own copy fell back to `python3`/`python` when a named `BROPS_TEST_PYTHON` failed —
+/// the opposite rule from `python_verifier.rs`, one file away. Only `json` is needed here.
 fn resolve_python() -> String {
-    let mut candidates = Vec::new();
-    if let Ok(explicit) = std::env::var("BROPS_TEST_PYTHON") {
-        if !explicit.trim().is_empty() {
-            candidates.push(explicit);
-        }
-    }
-    candidates.extend(["python3".to_string(), "python".to_string()]);
-    let mut reasons = Vec::new();
-    for candidate in candidates {
-        match Command::new(&candidate).args(["-c", "import json"]).output() {
-            Ok(out) if out.status.success() => return candidate,
-            Ok(out) => reasons
-                .push(format!("`{candidate}` failed: {}", String::from_utf8_lossy(&out.stderr))),
-            Err(e) => reasons.push(format!("could not run `{candidate}`: {e}")),
-        }
-    }
-    panic!(
-        "no usable Python to pin the anchor FILE encoding against. This test does NOT skip: the \
-         digest `sign_anchor` records must equal the one bro_audit_log computes over the file it \
-         writes with json.dumps, and nothing else in this crate can check that. Set \
-         BROPS_TEST_PYTHON.\n  {}",
-        reasons.join("\n  ")
-    );
+    prerequisites::resolve_python(
+        "json",
+        "pinning the anchor FILE encoding — the digest `sign_anchor` records must equal the one \
+         bro_audit_log computes over the file it writes with json.dumps",
+    )
 }
 
 /// What `json.dumps(document, sort_keys=True)` really produces for `value`.

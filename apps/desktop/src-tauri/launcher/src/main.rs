@@ -233,6 +233,26 @@ pub fn parse_status(content: &str) -> Option<FinalState> {
 // `st_mode`/`st_uid` an `fstat` of the OPENED executor fd reports (never a `metadata(path)` re-lookup).
 // ---------------------------------------------------------------------------------------------------
 /// `<sys/stat.h>` mode masks, as host-independent literals so this predicate compiles/tests on any OS.
+/// The uid that — besides `root(0)` — may own a TCB artifact this launcher trusts: the lease, the
+/// executor image, the attested-request config, and the store inputs on fds 3/4/5 (§2.5).
+///
+/// **It is 0. There is no second owner, so the floor is "root, and nobody else".**
+///
+/// §2.5 allows a dedicated `brops-admin` principal, and this constant was `500` under a TODO to bind it
+/// from the root-owned `TcbPinManifest` (`owner_uids[BropsAdmin]`). The binding was never written and the
+/// account was never made: `engine/install/brops_install.sh` creates uids 5001-5007 and no other, nothing
+/// in the tree creates or reserves a `brops-admin`, and the kit's own pin manifest maps `brops_admin` to
+/// 0 (`engine/ci/live/build_tcb_pin_manifest.py`). So a setuid-root binary accepted, as the owner of the
+/// file every launch parameter is taken from, whichever account happened to hold uid 500 — a number in
+/// the range Debian hands out dynamically to system accounts (100-999), i.e. one a package's `postinst`
+/// can be given. Recorded as audit item R-23 on 2026-08-06 and left standing.
+///
+/// Narrowing it costs nothing that exists: every artifact the kits install is root-owned. When a
+/// `brops-admin` uid is really provisioned it must arrive here from the root-owned pin manifest, not as a
+/// number in this source; until then do not put one back.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const TCB_OWNER_BROPS_ADMIN_UID: u32 = 0;
+
 const S_IFMT_MASK: u32 = 0o170000;
 const S_IFREG_BITS: u32 = 0o100000;
 const GROUP_OTHER_WRITE_BITS: u32 = 0o022;
@@ -548,10 +568,8 @@ mod linux {
     use std::io::Read;
     use std::os::unix::io::{FromRawFd, IntoRawFd};
 
-    // The dedicated `brops-admin` TCB owner uid (§2.5): root(0) or brops-admin may own the executor image
-    // AND the lease file. TODO: bind from the root-owned TcbPinManifest (`owner_uids[BropsAdmin]`); pinned
-    // as the boundary constant so the fstat'd-fd owner check accepts exactly the two TCB principals.
-    const TCB_OWNER_BROPS_ADMIN_UID: u32 = 500;
+    // `TCB_OWNER_BROPS_ADMIN_UID` is at the crate root (it is 0 — root only — and says why there), so
+    // the host-independent tests can hold it; this module reaches it through `use super::*`.
 
     // §4.7 per-artifact ceiling: a store-input inode (fd 3/4/5) must be a regular file no larger than this.
     // An over-ceiling inode is NOT accepted as a valid store input (the fail-closed gate refuses it), which
@@ -1816,14 +1834,136 @@ mod tests {
         );
     }
 
+    /// This file's own source, for the two checks below that are about what the REAL path does. The
+    /// real path is `#[cfg(target_os = "linux")]` and needs root to run, so what it is written from is
+    /// the only thing a unit test on any host can hold.
+    ///
+    /// Only the PRODUCT half — everything above this test module. The tests below quote the very
+    /// strings they look for, so a scan of the whole file would find the test's own text and pass.
+    ///
+    /// Line endings are normalised first: a Windows checkout with `core.autocrlf=true` hands
+    /// `include_str!` a CRLF file, and a scan written against `\n` would then find nothing — which
+    /// for the "must not mention" assertions below would read as a pass.
+    fn product_source() -> String {
+        let file = include_str!("main.rs").replace("\r\n", "\n");
+        let (product, _tests) = file
+            .split_once("\n#[cfg(test)]\nmod tests {\n")
+            .expect("main.rs no longer ends with `#[cfg(test)] mod tests`");
+        assert!(product.contains("\nfn main() {"), "the product half of main.rs has no main()");
+        product.to_string()
+    }
+
+    /// The body of `fn <name>(` in the product half, from its signature line to the closing brace at
+    /// the signature's own indentation. Panics unless there is exactly one such function.
+    fn function_source(name: &str) -> String {
+        let source = product_source();
+        let needle = format!("fn {name}(");
+        let starts: Vec<usize> = source.match_indices(&needle).map(|(at, _)| at).collect();
+        assert_eq!(starts.len(), 1, "`{needle}` appears {} times in main.rs", starts.len());
+        let line_start = source[..starts[0]].rfind('\n').map_or(0, |at| at + 1);
+        let indent = &source[line_start..starts[0]];
+        assert!(indent.chars().all(|c| c == ' '), "`{needle}` is not at the start of its line");
+        let close = format!("\n{indent}}}\n");
+        let end = source[starts[0]..]
+            .find(&close)
+            .unwrap_or_else(|| panic!("no closing brace found for `{needle}`"));
+        source[starts[0]..starts[0] + end].to_string()
+    }
+
     #[test]
     fn the_attested_config_is_read_from_a_compile_time_path() {
         // IDX-4's whole point is that the broker cannot steer this. If the path ever becomes an argv flag
         // or an environment lookup, the check reduces to "compare the lease against a file the attacker
         // chose". The launcher takes exactly three argv tokens (lease, image, cgroup) and an EMPTY
         // environment, so pinning the constant here is what keeps the source out of the broker's reach.
-        assert!(ATTESTED_REQUEST_PATH.starts_with('/'));
-        assert!(!ATTESTED_REQUEST_PATH.contains(".."));
+        //
+        // This test used to assert only that the constant starts with `/` and contains no `..`. Neither
+        // pinned the value, and neither would have noticed the regression described above: the reader
+        // could have taken its path from argv and both assertions would still have held.
+
+        // (1) The value. The deployment places the root-owned config exactly here; moving it is a
+        //     change to the trust boundary and has to be made in this test as well.
+        assert_eq!(ATTESTED_REQUEST_PATH, "/opt/brops-live/config.json");
+
+        // (2) The reader takes NO argument, so there is no parameter a caller could route a path
+        //     through, and it is called exactly once, with none.
+        let reader = function_source("read_and_verify_attested_request");
+        assert!(
+            reader.starts_with(
+                "fn read_and_verify_attested_request() -> Result<AttestedRequest, Refusal> {"
+            ),
+            "the attested-request reader grew a parameter:\n{}",
+            reader.lines().next().unwrap_or("")
+        );
+        assert_eq!(
+            product_source().matches("= read_and_verify_attested_request()?;").count(),
+            1,
+            "the real path must call the reader exactly once, with no argument"
+        );
+
+        // (3) What it opens is the constant — and nothing in it can name another source for a path.
+        assert!(
+            reader.contains("CString::new(ATTESTED_REQUEST_PATH)"),
+            "the reader no longer builds its path from ATTESTED_REQUEST_PATH"
+        );
+        assert_eq!(reader.matches("CString::new(").count(), 1, "the reader builds a second path");
+        assert_eq!(reader.matches("libc::open(").count(), 1, "the reader opens a second file");
+        assert!(reader.contains("c.as_ptr()"), "the open() does not use the path built above");
+        for runtime_source in ["args", "env::", "var(", "var_os(", "getenv", "argv"] {
+            assert!(
+                !reader.contains(runtime_source),
+                "the attested-request reader mentions `{runtime_source}`: its path must come from \
+                 the compile-time constant and from nowhere a caller controls"
+            );
+        }
+    }
+
+    #[test]
+    fn no_uid_but_root_owns_a_tcb_artifact_while_no_brops_admin_account_exists() {
+        // The launcher is setuid-root and takes the invoker, the drop target and the image pin FROM the
+        // lease, so "who may own the lease" is the root of everything else it enforces. It used to
+        // accept uid 500 as well as root — a `brops-admin` account that no installer creates or
+        // reserves, at a number Debian allocates dynamically to system accounts.
+        assert_eq!(
+            TCB_OWNER_BROPS_ADMIN_UID, 0,
+            "a second TCB owner uid is back in the launcher's source. It must come from the \
+             root-owned pin manifest for an account an installer really creates, not from a literal"
+        );
+        const REG: u32 = 0o100000; // S_IFREG
+
+        // The lease, the executor image and the attested config all go through this predicate.
+        assert!(image_owner_mode_ok(REG | 0o644, 0, TCB_OWNER_BROPS_ADMIN_UID));
+        for uid in [1u32, 99, 100, 499, 500, 501, 999, 1000, 5001, 5007, 65534, u32::MAX] {
+            assert!(
+                !image_owner_mode_ok(REG | 0o644, uid, TCB_OWNER_BROPS_ADMIN_UID),
+                "a 0644 regular file owned by uid {uid} was accepted as TCB-owned"
+            );
+        }
+
+        // And the store inputs on fds 3/4/5 go through the fd-set verdict with the same constant.
+        assert_eq!(verify_launcher_fd_set(&good_fds(), TCB_OWNER_BROPS_ADMIN_UID), Ok(()));
+        for uid in [500u32, 1000, 5007] {
+            let mut fds = good_fds();
+            let mut owned_elsewhere = ident(4);
+            owned_elsewhere.uid = uid;
+            fds[4].identity = Some(owned_elsewhere);
+            assert_eq!(
+                verify_launcher_fd_set(&fds, TCB_OWNER_BROPS_ADMIN_UID),
+                Err(FdViolation::StoreInputCustody(4)),
+                "a store input owned by uid {uid} passed the custody floor"
+            );
+        }
+
+        // The real path uses THIS constant at every owner check, and no other number.
+        let uses = product_source().matches("TCB_OWNER_BROPS_ADMIN_UID)").count();
+        assert!(uses >= 4, "expected the lease, image, config and fd-set checks; found {uses}");
+        for reader in ["read_and_verify_lease", "read_and_verify_attested_request", "open_executor_image"] {
+            let body = function_source(reader);
+            assert!(
+                body.contains("image_owner_mode_ok(st.st_mode, st.st_uid, TCB_OWNER_BROPS_ADMIN_UID)"),
+                "`{reader}` no longer checks its file's owner against the one TCB-owner constant"
+            );
+        }
     }
 
     #[test]

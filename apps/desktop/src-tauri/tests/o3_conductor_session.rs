@@ -22,6 +22,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// The prerequisite guard `brops-provision`'s tests use, included by path rather than copied —
+// the same way `audit-signer/tests/anchor_end_to_end.rs` takes it. It carries the ONE
+// interpreter rule the four cross-language tests share.
+#[path = "../provision/tests/prerequisites/mod.rs"]
+mod prerequisites;
+
 /// The repository root: `<repo>/apps/desktop/src-tauri`.
 fn repo_root() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -34,45 +40,14 @@ fn repo_root() -> PathBuf {
     path
 }
 
-fn probe(python: &str) -> Result<(), String> {
-    let out = Command::new(python)
-        .args(["-c", "import cryptography, sys; print(sys.version)"])
-        .output()
-        .map_err(|e| format!("could not run `{python}`: {e}"))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "`{python}` cannot import `cryptography`, which `bro_signature` requires: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
-}
-
+/// `prerequisites::resolve_python`: one resolver, one rule (a named `BROPS_TEST_PYTHON` is the
+/// only interpreter tried). This file used to carry its own copy of it.
 fn resolve_python() -> String {
-    let mut candidates = Vec::new();
-    if let Ok(explicit) = std::env::var("BROPS_TEST_PYTHON") {
-        if !explicit.trim().is_empty() {
-            candidates.push(explicit);
-        }
-    }
-    if candidates.is_empty() {
-        candidates = vec!["python3".to_string(), "python".to_string()];
-    }
-    let mut reasons = Vec::new();
-    for candidate in candidates {
-        match probe(&candidate) {
-            Ok(()) => return candidate,
-            Err(reason) => reasons.push(reason),
-        }
-    }
-    panic!(
-        "no usable Python for the O-3 cross-language proof. This test does NOT skip: without \
-         it, nothing checks that the environment this application exports is the environment \
-         that makes the engine read the provisioned registry. Set BROPS_TEST_PYTHON to an \
-         interpreter with `cryptography` installed.\n  {}",
-        reasons.join("\n  ")
-    );
+    prerequisites::resolve_python(
+        "cryptography",
+        "the O-3 cross-language proof — that the environment this application exports is the \
+         environment that makes the engine read the provisioned registry",
+    )
 }
 
 /// Give Python a path free of platform surprises — the same reasoning, and the same

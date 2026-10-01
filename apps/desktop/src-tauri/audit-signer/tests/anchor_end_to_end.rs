@@ -53,34 +53,16 @@ fn repo_root() -> PathBuf {
     path
 }
 
+/// `prerequisites::resolve_python` — the same module the comment above includes by path "rather
+/// than duplicated: a second copy would be a second policy". This function was that second
+/// copy, eleven lines below the comment: it fell back past a failing `BROPS_TEST_PYTHON`, which
+/// `python_verifier.rs` does not.
 fn resolve_python() -> String {
-    let mut candidates = Vec::new();
-    if let Ok(explicit) = std::env::var("BROPS_TEST_PYTHON") {
-        if !explicit.trim().is_empty() {
-            candidates.push(explicit);
-        }
-    }
-    candidates.extend(["python3".to_string(), "python".to_string()]);
-    let mut reasons = Vec::new();
-    for candidate in candidates {
-        match Command::new(&candidate)
-            .args(["-c", "import cryptography, sys; print(sys.version)"])
-            .output()
-        {
-            Ok(out) if out.status.success() => return candidate,
-            Ok(out) => reasons.push(format!(
-                "`{candidate}` cannot import `cryptography`, which bro_signature requires: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )),
-            Err(e) => reasons.push(format!("could not run `{candidate}`: {e}")),
-        }
-    }
-    panic!(
-        "no usable Python for the audit-anchor cross-language proof. This test does NOT skip: \
-         without it, nothing checks that the anchor this Rust signer produces is one the engine \
-         module that has to install it will accept. Set BROPS_TEST_PYTHON.\n  {}",
-        reasons.join("\n  ")
-    );
+    prerequisites::resolve_python(
+        "cryptography",
+        "the audit-anchor cross-language proof — that the anchor this Rust signer produces is \
+         one the engine module that has to install it will accept",
+    )
 }
 
 /// A provisioned trust store, a minted signer key registered into it, and a live server.
@@ -595,10 +577,15 @@ fn rewriting_the_operator_pin_is_refused_by_the_operating_system_and_the_forgery
 fn registration_applies_the_plan_for_real_or_says_why_it_could_not() {
     let posture = match spec::winimpl::app_token_posture() {
         Ok(p) => p,
-        Err(why) => {
-            println!("SKIP registration: this process's token could not be measured: {why}");
-            return;
-        }
+        // NOT a skip. A token the product's own function cannot measure is a failure of that
+        // function, on the machine in front of us — not a prerequisite a runner lacks. This arm
+        // was a `println!` and a bare `return`: the pattern the comment further down says was
+        // removed, a green run that said nothing, left standing on the one branch nobody moved.
+        Err(why) => panic!(
+            "registration_applies_the_plan_for_real_or_says_why_it_could_not: this process's own \
+             token could not be measured ({why}), so neither the registration nor its refusal \
+             was exercised"
+        ),
     };
     if posture != spec::AppTokenPosture::ElevatedAdministrator {
         println!(

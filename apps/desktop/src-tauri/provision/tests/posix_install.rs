@@ -4,7 +4,11 @@
 //!
 //! **The decisions** — who the desktop account is, whether the caller is root, what an
 //! already-present anchor means, what one path's owner and mode say about the floor — are pure
-//! functions, and they run on every machine in every `cargo test`.
+//! functions, and they run in every `cargo test` on every UNIX machine. **Not on Windows:** this
+//! whole file is `#![cfg(unix)]` (below), because the module it tests is `#[cfg(unix)]` — its
+//! types are `uid`/`gid`/mode and its construction is `chown`. On `windows-latest` these tests
+//! are absent, not skipped, and this header used to say "on every machine". That is a stated
+//! exception to `prerequisites/mod.rs`'s "never compiled out" rule, and it is listed there.
 //!
 //! **The construction** cannot. There is no unprivileged way to build a root-owned anchor, so
 //! the one test that mints for real, as root, and then asks the kernel *as the desktop uid*
@@ -77,7 +81,6 @@ fn a_named_account_resolves_to_exactly_its_passwd_line() {
     let user = install::resolve_user(PASSWD, "gev").expect("gev is listed");
     assert_eq!(user.name, "gev");
     assert_eq!((user.uid, user.gid), (1000, 1001), "uid and gid are fields 3 and 4, not swapped");
-    assert_eq!(user.home, PathBuf::from("/home/gev"));
     // A line listed twice with the SAME ids is one account, not an ambiguity.
     assert_eq!(install::resolve_user(PASSWD, "same").expect("same").uid, 1600);
     // A prefix is not a match: `ge` and `gevorg` are different accounts from `gev`.
@@ -153,7 +156,6 @@ fn an_unprivileged_caller_is_refused_and_nothing_is_created() {
             name: "someone".into(),
             uid: euid(),
             gid: 0,
-            home: tmp.path().to_path_buf(),
         },
         app_data_dir: app_data.clone(),
         machine_root: machine_root.clone(),
@@ -933,8 +935,7 @@ fn root_installs_an_anchor_the_desktop_uid_verifies_and_cannot_touch() {
     assert!(text.contains("\"squatter\"") && text.contains("collides with the home"), "{text}");
     assert!(!machine_root.exists() && !app_data.exists(), "a refused install wrote");
 
-    let root_as_desktop =
-        install::DesktopUser { name: "root".into(), uid: 0, gid: 0, home: "/root".into() };
+    let root_as_desktop = install::DesktopUser { name: "root".into(), uid: 0, gid: 0 };
     let passwd = install::read_passwd().expect("passwd");
     let text = refusal_text(install::install_anchor(&request(&root_as_desktop), &passwd));
     println!("REFUSED (uid 0 as the desktop account): {text}");

@@ -1,7 +1,10 @@
 //! Wave 3b-1B — the §2.7 contained executor image (LINUX-RUN live governed turn).
 //!
-//! This is the tiny, pinned image the privileged launcher `fexecve`s at the second exec boundary. On
-//! entry it:
+//! This is the tiny, pinned image the privileged launcher `fexecve`s at the second exec boundary — and
+//! of the two files that say so, this is the one it is true of: both live kits install THIS binary as
+//! `contained-executor.bin`. `executor/` (the `brops-executor` crate) is the not-yet-deployed placeholder
+//! for the model image and is installed by nothing. Neither runs a model: this one reports what it
+//! observed about its own containment, which is what the live proof is about. On entry it:
 //!   (a) enumerates `/proc/self/fd` and REPORTS the descriptors it found. rev-30 §2.7 says that set is
 //!       exactly {3,4,5,6} by the time an executor runs (0/1/2 neutralized by the launcher, every fd ≥ 7
 //!       closed);
@@ -145,7 +148,10 @@ mod linux {
         true
     }
 
-    /// Deterministic input→output binding (mirrors `executor::build_output`).
+    /// Deterministic input→output binding: the same formula as `executor::build_output`'s `binding=`
+    /// line. Two binaries, no shared function — what holds them together is
+    /// `executor/src/main.rs::the_deployed_proof_executor_binds_the_inputs_by_the_same_formula`, which
+    /// reads THIS function's source. Change it here and that test goes red.
     fn bind(system: &[u8], history: &[u8], generation_config: &[u8]) -> String {
         let sh = sha256_hex(system);
         let hh = sha256_hex(history);
