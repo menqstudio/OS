@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-01 — 80 pull requests merged (`#219`–`#299`), `main` at
-`158a174`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-01 — 82 pull requests merged (`#219`–`#301`), `main` at
+`c7e6253`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and one offline root signature only the Owner can make — NOT
 the whole blocker: six Builder pieces did not exist either, all six named in
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #301 · branch `t130/no-owner-key-ceremony`** (base `main`, tip `de6ed04`, task T-130).
+> **✅ SETTLED — `main` is at `c7e6253`.** The only thing open is PR #302 on `t132/settled-at-c7e6253`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-130: an Owner-key ceremony contradicted #78; removed, and a gate forbids its return
+> **Next:** Builder: T-131, design an install-minted broker root. Nothing waits on the Owner for custody.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
