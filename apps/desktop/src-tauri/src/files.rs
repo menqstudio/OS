@@ -134,7 +134,18 @@ fn files_root() -> Result<PathBuf, String> {
 
 /// Defense-in-depth denylist: even inside the files root, never touch known
 /// secret/credential/startup paths. Enforced on top of root confinement so that
-/// a broad `BROPS_FILES_ROOT` (e.g. `$HOME`) still can't reach these.
+/// a broad `BROPS_FILES_ROOT` still can't reach these.
+///
+/// "Broad" is a parent of home (`/home`, `C:\Users`) or a directory that holds dotfiles
+/// of its own — not `$HOME`, which this comment gave as its example: [`reject_unsafe_root`]
+/// refuses a root that IS the home directory before any path reaches here.
+///
+/// **It matches every component of the CANONICAL path, the root's own included.** So a files
+/// root that sits under a directory on the list — `~/.config/brops/files`, anything inside a
+/// `.git` checkout — is refused whole: `list_dir(None)` answers `PATH_REFUSED` for the root
+/// itself. That is stricter than the purpose stated above needs, and it is left as it is on
+/// purpose: testing only the part of the path below the root would make such a root usable,
+/// which widens what this surface accepts, and that is the Owner's call, not a cleanup.
 fn is_sensitive(path: &Path) -> bool {
     // Matching is case-insensitive (a `.SSH` or `Credentials.JSON` must not slip
     // through) and covers common variants, not just exact names.

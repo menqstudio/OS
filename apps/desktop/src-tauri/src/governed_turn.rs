@@ -45,7 +45,7 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 /// used to be named here was DELETED on 2026-08-10: it had zero production callers and its table
 /// diverged from the design it cited.
 ///
-/// The DESKTOP half now exists too, and it is still NOT WIRED: the sidecar's
+/// The DESKTOP half now exists too — wired in the broker service, NOT in this process: the sidecar's
 /// `bridge.governed-turn-output-read.v1` branch (`bridge/engine_sidecar.py`), the loop + reassembly +
 /// §4.6/§7.1 whole-output gate (`brops_core::governed_output_pull`). It used to name two more
 /// pieces here — the internal `ai::governed_turn_output_read` / `ai::governed_pull_output` helpers —
@@ -62,10 +62,16 @@ const MAX_REPLY_BYTES: u64 = (brops_core::ipc_framing::MAX_FRAME_PAYLOAD_BYTES a
 ///
 /// **Updated 2026-08-12: the PRODUCER now exists too** — `brops_core::governed_prepare` and
 /// `brops_core::governed_submit::governed_turn_submit_prepared`, in the broker-side crate where §0 puts
-/// it. Two things still keep a §4.6 frame off any live path: its subprocess spawn is an injected seam
-/// (`governed_submit::SubmitTransport`) that no production code implements, and nothing calls the
-/// helper — the broker's one production `GovernedExecutor` drives the same hops over direct AF_UNIX and
-/// spawns the recorder rather than a sidecar.
+/// it.
+///
+/// **Corrected (T-145): both halves ARE implemented and called, in the broker.** This paragraph went
+/// on to say the subprocess spawn was "an injected seam (`governed_submit::SubmitTransport`) that no
+/// production code implements, and nothing calls the helper". Neither has been true since the ladder
+/// landed: `brops_core::governed_sidecar::GovernedSidecar` implements `SubmitTransport` (and that
+/// module's own doc carries a "RETRACTED 2026-09-20" note saying so), and
+/// `broker/src/ladder_executor.rs` calls `governed_turn_submit_prepared` and drives the output pull.
+/// So "not in this process", two paragraphs up, is the whole of what is unwired: the desktop half lives in
+/// the broker service, which is where §0 puts it, and is not reachable from this command.
 /// `config/reachability-declarations.json` carries the declarations and `governed_output_pull`'s and
 /// `governed_bridge_result`'s module docs carry the reasoning. This command is not where it would start
 /// either: a thin proxy carrying `{conversation_id, agent?}` never sees a stream token, an envelope or
@@ -169,9 +175,10 @@ enum BrokerAccessError {
     /// No broker IPC transport is compiled for this target OS.
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     UnsupportedPlatform,
-    /// The transport exists; establishing the connection failed. Carries the concrete cause.
+    /// The transport exists; establishing the connection failed. Carries the socket that was tried
+    /// and the concrete cause.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    ConnectFailed(String),
+    ConnectFailed { socket: String, detail: String },
 }
 
 impl BrokerAccessError {
@@ -187,17 +194,17 @@ impl BrokerAccessError {
                 os = std::env::consts::OS,
                 arch = std::env::consts::ARCH,
             ),
-            Self::ConnectFailed(detail) => format!(
+            Self::ConnectFailed { socket, detail } => format!(
                 "{BROKER_UNAVAILABLE}: a broker IPC transport is implemented for this host but the \
-                 connection to `{BROKER_SOCKET_PATH_DISPLAY}` could not be established ({detail}). The \
+                 connection to `{socket}` could not be established ({detail}). The \
                  broker was NOT reached, so this is a transport failure, not a broker decision."
             ),
         }
     }
 }
 
-/// The socket path named in the `ConnectFailed` reason. On a host with no transport the constant does
-/// not exist, and that arm is unreachable there anyway.
+/// The socket the command connects to. On a host with no transport there is no socket, the value is
+/// never opened, and the `ConnectFailed` arm that would name it is unreachable.
 #[cfg(target_os = "linux")]
 const BROKER_SOCKET_PATH_DISPLAY: &str = BROKER_SOCKET_PATH;
 #[cfg(not(target_os = "linux"))]
@@ -215,8 +222,19 @@ const BROKER_SOCKET_PATH_DISPLAY: &str = "<no broker socket on this platform>";
 /// with any of these.
 #[tauri::command]
 pub fn governed_turn_execute(request: serde_json::Value) -> Result<serde_json::Value, String> {
+    governed_turn_execute_at(BROKER_SOCKET_PATH_DISPLAY, request)
+}
+
+/// [`governed_turn_execute`] against a named socket. The command always passes the one production
+/// path; the parameter exists so a test can name a socket that CANNOT exist. The Linux
+/// connect-failure test used to look for `/run/brops/broker.sock` and `return` when it found one —
+/// a pass with no assertion, on exactly the provisioned hosts where the answer matters.
+fn governed_turn_execute_at(
+    socket_path: &str,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let request_json = serde_json::to_vec(&request).map_err(|_| "malformed_request".to_string())?;
-    let mut conn = connect_broker().map_err(|e| e.reason())?;
+    let mut conn = connect_broker(socket_path).map_err(|e| e.reason())?;
     let reply = send_governed_turn(conn.as_mut(), &request_json).map_err(|e: TransportError| {
         format!(
             "{BROKER_TRANSPORT_FAILED}: connected to the broker, but the framed exchange failed \
@@ -230,16 +248,19 @@ pub fn governed_turn_execute(request: serde_json::Value) -> Result<serde_json::V
 /// [`BrokerAccessError::UnsupportedPlatform`] (the Windows §0.W named-pipe broker is a separately-audited
 /// slice), so governed real-mode is unavailable there rather than silently degraded — and, since the
 /// audit, rather than masquerading as a broker that was contacted and did not answer.
-fn connect_broker() -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
+fn connect_broker(socket_path: &str) -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::net::UnixStream;
         let cause = |what: &str, e: std::io::Error| {
             // `io::ErrorKind` is Debug-only, so the kind is formatted with `{:?}`; the full
             // `e` follows in parentheses for the human-readable cause.
-            BrokerAccessError::ConnectFailed(format!("{what}: {:?} ({e})", e.kind()))
+            BrokerAccessError::ConnectFailed {
+                socket: socket_path.to_string(),
+                detail: format!("{what}: {:?} ({e})", e.kind()),
+            }
         };
-        let s = UnixStream::connect(BROKER_SOCKET_PATH).map_err(|e| cause("connect", e))?;
+        let s = UnixStream::connect(socket_path).map_err(|e| cause("connect", e))?;
         // Audit F-32/F-36: without these the reply read is untimed, so a broker-side endpoint that
         // accepts the connection and then never writes and never closes hangs this Tauri command
         // forever. Fail-closed is a transport error the renderer sees as `blocked`; hanging is not.
@@ -251,6 +272,7 @@ fn connect_broker() -> Result<Box<dyn BrokerConn>, BrokerAccessError> {
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = socket_path;
         Err(BrokerAccessError::UnsupportedPlatform)
     }
 }
@@ -418,6 +440,28 @@ mod tests {
         assert!(got.is_err(), "a reply larger than the framing can produce must be refused");
     }
 
+    /// The cap is `>=`, and this is the test that knows it. The one above feeds cap + 1, which a
+    /// mutated `>` refuses just the same — so the boundary itself was pinned by nothing. Exactly
+    /// the cap is refused (a maximal frame and a truncated flood look alike there); one byte under
+    /// it is a reply and comes back whole.
+    #[test]
+    fn the_ingress_cap_is_refused_at_exactly_the_cap_and_admits_one_byte_under() {
+        let read = |len: usize| {
+            let mut r = OneShot(vec![b'x'; len]);
+            read_bounded(
+                &mut r,
+                |_| Ok(()),
+                ticking_clock(Duration::from_millis(1)),
+                Duration::from_millis(EXCHANGE_BUDGET_MS),
+                MAX_REPLY_BYTES,
+            )
+        };
+        let cap = MAX_REPLY_BYTES as usize;
+        assert!(read(cap).is_err(), "a reply of exactly the cap must be refused");
+        let under = read(cap - 1).expect("one byte under the cap is a legal reply");
+        assert_eq!(under.len(), cap - 1);
+    }
+
     /// `SO_RCVTIMEO` reads zero as "block forever", so the one value this must never hand a socket is
     /// `Duration::ZERO` — the exact value naive `budget - elapsed` produces at the instant the budget
     /// runs out, i.e. the moment the bound is most needed.
@@ -479,11 +523,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_connect_failure_reports_the_transport_not_an_unsupported_platform() {
-        // Precondition: no broker service is provisioned in a test environment.
-        if std::path::Path::new(BROKER_SOCKET_PATH).exists() {
-            return;
-        }
-        let err = governed_turn_execute(serde_json::json!({ "conversation_id": "c" }))
+        // A socket that cannot exist: a path inside a directory this test just created. No
+        // precondition about the host, so nothing here can decline to assert — it used to
+        // `return` when `/run/brops/broker.sock` existed, i.e. on every provisioned box.
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("no-broker-here.sock");
+        let socket = socket.to_str().expect("a utf-8 temp path");
+        let err = governed_turn_execute_at(socket, serde_json::json!({ "conversation_id": "c" }))
             .expect_err("no broker socket => no broker reply");
         assert!(
             err.starts_with(BROKER_UNAVAILABLE),
@@ -493,8 +539,10 @@ mod tests {
             !err.starts_with(BROKER_UNSUPPORTED),
             "a host that HAS the transport must never claim `{BROKER_UNSUPPORTED}`: {err}"
         );
-        assert!(err.contains(BROKER_SOCKET_PATH), "reason must name the socket it tried: {err}");
+        assert!(err.contains(socket), "reason must name the socket it tried: {err}");
         assert!(err.contains("connect"), "reason must name the failed step: {err}");
+        // The command itself names the production socket and no other.
+        assert_eq!(BROKER_SOCKET_PATH_DISPLAY, BROKER_SOCKET_PATH);
     }
 
     /// The three non-decision prefixes must stay mutually distinguishable — a caller classifies on the

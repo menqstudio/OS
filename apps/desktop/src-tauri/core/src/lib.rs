@@ -524,6 +524,52 @@ mod tests {
         assert_eq!(log[0].outcome, "ok");
     }
 
+    /// One automation whose run cannot be recorded must not starve the ones after it.
+    ///
+    /// `run_due` returned on the first `?`, so every automation listed after a failing one was
+    /// skipped on that tick and on every later one. The failure is induced the only way a local
+    /// action can produce one — at the database — with a trigger that aborts the run row of ONE
+    /// automation; both orders are driven, so the test does not depend on which is listed first.
+    #[test]
+    fn one_failing_automation_does_not_starve_the_rest_of_the_tick() {
+        for broken_first in [true, false] {
+            let c = conn();
+            let mk = |name: &str| {
+                let a = repo::automations::create(
+                    &c,
+                    NewAutomation { name: name.into(), trigger: "every: 1m".into(), action: "notify: tick".into() },
+                    crate::repo::audit::Actor::local_operator(),
+                )
+                .unwrap();
+                arm(&c, &a.id);
+                a
+            };
+            let (first, second) = (mk("first"), mk("second"));
+            let order: Vec<String> =
+                repo::automations::list(&c).unwrap().into_iter().map(|a| a.id).collect();
+            let pos = |id: &str| order.iter().position(|x| x == id).unwrap();
+            let (early, late) =
+                if pos(&first.id) < pos(&second.id) { (&first, &second) } else { (&second, &first) };
+            let (broken, healthy) = if broken_first { (early, late) } else { (late, early) };
+            c.execute_batch(&format!(
+                "CREATE TRIGGER break_one BEFORE INSERT ON automation_runs \
+                 WHEN NEW.automation_id = '{}' BEGIN SELECT RAISE(ABORT, 'induced'); END;",
+                broken.id
+            ))
+            .unwrap();
+
+            let tick = repo::automations::run_due(&c, i64::MAX);
+
+            assert!(tick.is_err(), "a tick in which a run failed must still report the failure");
+            assert_eq!(
+                repo::automations::list_runs(&c, &healthy.id).unwrap().len(),
+                1,
+                "the healthy automation must have run (broken listed first: {broken_first})"
+            );
+            assert_eq!(repo::automations::list_runs(&c, &broken.id).unwrap().len(), 0);
+        }
+    }
+
     #[test]
     fn scheduler_fires_due_interval_automations_only() {
         let c = conn();

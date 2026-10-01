@@ -316,8 +316,7 @@
     },
     "set_run_step_status": {
       "tier": "X",
-      "grant": "allow",
-      "protection": "none"
+      "grant": "deny"
     },
     "set_task_status": {
       "tier": "L1",

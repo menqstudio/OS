@@ -1,10 +1,13 @@
-//! Phase-2 (Governance Sidecar) — the desktop READ-ONLY governance mirror IPC.
+//! Phase-2 (Governance Sidecar) — the desktop governance mirror IPC: four READS and one
+//! REQUEST.
 //!
-//! "Mirror, never decide." These Tauri commands READ engine governance surfaces —
+//! "Mirror, never decide." Four of these Tauri commands READ engine governance surfaces —
 //! the decision ledger, the evidence chain, the verifier verdicts, and the engine
 //! approval QUEUE — by asking the governed engine sidecar (the SAME subprocess the
 //! governed AI turn uses, via [`crate::ai::governed_sidecar_read`]). They exist to
-//! surface engine truth honestly, not to author it. Concretely, every command here:
+//! surface engine truth honestly, not to author it. The fifth, [`request_engine_approval`],
+//! is not a read: it asks the engine to RECORD an approval request (see the last section).
+//! It decides nothing either, and it holds no key. Concretely, each of the four reads:
 //!
 //!   * is READ-ONLY. None takes `State<AppState>`, so none can touch the local
 //!     database; none takes a key, lease, nonce, verdict, or any decision/mutation
@@ -22,7 +25,12 @@
 //!   * validates engine JSON against the existing engine schemas
 //!     (`engine/schemas/verifier-receipt.schema.json`,
 //!     `engine/schemas/evidence-event.schema.json`) and rejects anything that does
-//!     not conform (fail-closed).
+//!     not conform (fail-closed). "Anything" was an overstatement until T-145: a record
+//!     with an EXTRA key, an evidence event with no `previous_event_hash` at all, and a
+//!     receipt listing the same evidence id twice all parsed, though both schemas set
+//!     `additionalProperties: false`, the event schema lists the field as `required` and
+//!     the receipt schema sets `uniqueItems`. All three are refused now. What is still not
+//!     checked is anything a schema cannot say — see the next section.
 //!
 //! # What this mirror does NOT establish (read this before trusting a record)
 //!
@@ -63,9 +71,11 @@
 //! true and nothing noticed** — the repository's signature defect, an honest comment
 //! written the moment it was true and never revisited. All four surfaces are served:
 //! `bro_control_room_api.GOVERNANCE_SURFACES` names exactly `decisionLedger`,
-//! `evidenceChain`, `verdicts` and `approvalQueue` (`:47`), `governance_read` dispatches
-//! all four (`:568`, `:616-621`), and `bridge/engine_sidecar.py` relays the reply verbatim
-//! (`_op_governance_read`, `:477`, wired at `:808`).
+//! `evidenceChain`, `verdicts` and `approvalQueue`, `ControlRoomAPIV1.governance_read`
+//! dispatches all four through `_governance_surface`, and `bridge/engine_sidecar.py` relays
+//! the reply verbatim (`_op_governance_read`, registered under `GOVERNANCE_READ_OP` in the
+//! op table). Symbols, not line numbers: this paragraph cited `:568`, `:477` and `:808`,
+//! and all three had moved.
 //!
 //! What is still true is narrower and is the part that matters: a **shipped** install
 //! reaches `Blocked`, because the engine refuses the read until
@@ -74,22 +84,32 @@
 //! missing endpoint, and a page that says "the engine has not been built yet" would now be
 //! telling the owner the wrong thing.
 //!
-//! # What this module does NOT carry: the approval-REQUEST path
+//! # The approval-REQUEST path (it exists; this section used to say it did not)
 //!
 //! Phase 2's Definition of Done pairs the read IPC with *"the approval-**request** path
-//! works"* — the desktop POSTing an owner approval **request** that the engine's Ed25519
-//! system adjudicates. **No such path exists, on either side.** There is no
-//! `approval-request` schema in `engine/schemas/` (21 schemas; none is one), no
-//! desktop→engine command, and `read_engine_approval_queue` below is the QUEUE READ ONLY.
-//! The grant/deny/escalate buttons on the `approvals` page drive the **desktop's own**
-//! approval system (T-010/T-011: `confirm_approval` / `reject_approval` /
+//! works"* — the desktop sending an owner approval **request** that the engine's Ed25519
+//! system adjudicates. Until T-021c this section read *"No such path exists, on either
+//! side. There is no `approval-request` schema in `engine/schemas/` (21 schemas; none is
+//! one), no desktop→engine command"* — and it went on reading that with all three in the
+//! tree, in this very file:
+//!
+//!   * `engine/schemas/approval-request.schema.json` (the 22nd schema): an UNSIGNED ask the
+//!     engine records and does not act on;
+//!   * [`request_engine_approval`] below, the desktop→engine command, manifest-declared and
+//!     capability-gated (unlike the four reads);
+//!   * `bridge/engine_sidecar.py::_op_approval_request` — "THE ONLY WRITE IN THIS TABLE", one
+//!     line to one append-only log.
+//!
+//! What it is NOT is a decision. The reply can say RECORDED; there is no field in which it
+//! could say GRANTED, and `brops_core::approval_request::classify` turns a reply that claims
+//! one into `Blocked`. The artifact that adjudicates is an owner-signed control-room command,
+//! which nothing in this process can mint.
+//!
+//! And it is still not the `approvals` page. The grant/deny/escalate buttons there drive the
+//! **desktop's own** approval system (T-010/T-011: `confirm_approval` / `reject_approval` /
 //! `escalate_approval` over local SQLite, behind a native dialog the webview cannot forge)
 //! — a real authority, but the desktop's, not a request to the engine.
-//!
-//! That gap is deliberate and Phase 2 pre-authorised it in its own Contracts section: an
-//! `approval-request` shape that needs an engine schema change is *"an audited engine
-//! task, flagged, not done here"*. It is flagged here rather than left for a reader to
-//! infer from an unticked box.
+//! `read_engine_approval_queue` below remains the QUEUE READ ONLY.
 
 use serde::{Deserialize, Serialize};
 // Qualified on purpose: this module has its own `classify` for the READ surfaces, and two
@@ -308,6 +328,57 @@ fn req_str<'a>(o: &'a Value, k: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing or non-string field '{k}'"))
 }
 
+/// Refuse a record carrying a key its schema does not define.
+///
+/// Both mirrored schemas set `"additionalProperties": false`, and the engine holds its own
+/// receipts to the exact key set (`bro_completion._check_verifier_receipt`). The parsers here
+/// read the fields they knew and ignored the rest, so a record with anything extra in it — a
+/// `signature`, a `verified: true`, a second `verdict` under another spelling — was mirrored as
+/// conforming. Nothing read the extra key, which is the point: a record that is not the shape the
+/// engine publishes did not come from the engine's publisher, and "fail-closed on anything that
+/// does not conform" has to include that.
+fn reject_unknown_keys(o: &Value, what: &str, allowed: &[&str]) -> Result<(), String> {
+    let obj = o.as_object().ok_or_else(|| format!("{what}: record must be a JSON object"))?;
+    match obj.keys().find(|k| !allowed.contains(&k.as_str())) {
+        Some(extra) => Err(format!("{what}: unknown field '{extra}' (the schema allows no extras)")),
+        None => Ok(()),
+    }
+}
+
+/// `verifier-receipt.schema.json` `properties`, all of them `required`.
+const VERIFIER_RECEIPT_KEYS: &[&str] = &[
+    "schema",
+    "artifact_type",
+    "key_id",
+    "receipt_id",
+    "task_id",
+    "builder_agent_id",
+    "verifier_agent_id",
+    "verifier_role",
+    "independence_level",
+    "task_contract_sha256",
+    "completion_manifest_sha256",
+    "candidate_head",
+    "candidate_tree",
+    "evidence_event_ids",
+    "verdict",
+    "issued_at_epoch",
+    "expires_at_epoch",
+];
+
+/// `evidence-event.schema.json` `properties`, all of them `required`.
+const EVIDENCE_EVENT_KEYS: &[&str] = &[
+    "schema",
+    "event_id",
+    "previous_event_hash",
+    "task_id",
+    "event_type",
+    "agent_id",
+    "payload_hash",
+    "issued_at_epoch",
+    "key_id",
+];
+
 fn req_int(o: &Value, k: &str) -> Result<i64, String> {
     let n = o
         .get(k)
@@ -324,6 +395,7 @@ fn req_int(o: &Value, k: &str) -> Result<i64, String> {
 /// hash/id patterns, a non-empty evidence list) are all enforced; anything off is a
 /// hard error (fail-closed).
 pub fn parse_verifier_receipt(o: &Value) -> Result<VerifierReceipt, String> {
+    reject_unknown_keys(o, "verifier-receipt", VERIFIER_RECEIPT_KEYS)?;
     if o.get("schema").and_then(|v| v.as_i64()) != Some(1) {
         return Err("verifier-receipt: schema must be 1".to_string());
     }
@@ -391,6 +463,13 @@ pub fn parse_verifier_receipt(o: &Value) -> Result<VerifierReceipt, String> {
     if evidence_event_ids.is_empty() {
         return Err("verifier-receipt: evidence_event_ids must have at least one entry".to_string());
     }
+    // `uniqueItems: true`. A receipt that lists one event twice reads, on a card that counts
+    // them, as resting on more evidence than it names.
+    for (i, id) in evidence_event_ids.iter().enumerate() {
+        if evidence_event_ids[..i].contains(id) {
+            return Err(format!("verifier-receipt: evidence_event_ids lists '{id}' more than once"));
+        }
+    }
     Ok(VerifierReceipt {
         receipt_id: receipt_id.to_string(),
         key_id: key_id.to_string(),
@@ -412,6 +491,7 @@ pub fn parse_verifier_receipt(o: &Value) -> Result<VerifierReceipt, String> {
 
 /// Validate + parse one evidence event against evidence-event.schema.json (fail-closed).
 pub fn parse_evidence_event(o: &Value) -> Result<EvidenceEvent, String> {
+    reject_unknown_keys(o, "evidence-event", EVIDENCE_EVENT_KEYS)?;
     if o.get("schema").and_then(|v| v.as_i64()) != Some(1) {
         return Err("evidence-event: schema must be 1".to_string());
     }
@@ -423,10 +503,17 @@ pub fn parse_evidence_event(o: &Value) -> Result<EvidenceEvent, String> {
     if !is_engine_id(task_id) {
         return Err("evidence-event: task_id does not match the engine id pattern".to_string());
     }
-    // `previous_event_hash` is nullable (the genesis event) but, when present, a
-    // 64-hex chain link.
+    // `previous_event_hash` is REQUIRED and nullable: the genesis event says `null` out loud.
+    // A record with no such field at all used to be read as genesis too — so dropping the
+    // field from any event turned a chain link into a chain start, and the schema lists it
+    // under `required` precisely so that cannot be done by omission.
     let previous_event_hash = match o.get("previous_event_hash") {
-        None | Some(Value::Null) => None,
+        None => {
+            return Err(
+                "evidence-event: previous_event_hash is required (null for the genesis event)".to_string(),
+            )
+        }
+        Some(Value::Null) => None,
         Some(Value::String(s)) if is_hex_of_len(s, 64) => Some(s.clone()),
         Some(_) => {
             return Err("evidence-event: previous_event_hash must be null or 64 hex chars".to_string())
@@ -631,8 +718,8 @@ pub async fn read_verifier_verdicts(task_id: Option<String>) -> GovernanceRead {
 }
 
 /// Mirror the engine approval QUEUE (read-only). This is the QUEUE READ ONLY — it
-/// carries no approve/deny/request authority (approval-request POST is a separate,
-/// gated engine task and is intentionally NOT part of this surface).
+/// carries no approve/deny/request authority. Asking the engine to record a request is
+/// [`request_engine_approval`], a separate command with its own capability grant.
 #[tauri::command]
 pub async fn read_engine_approval_queue() -> GovernanceRead {
     mirror("approvalQueue", None, |doc| validate_records(doc, parse_identified_record)).await
@@ -751,6 +838,57 @@ mod tests {
     }
 
     // --- schema parse: fail-closed rejections ---
+
+    /// The genesis event says `null`; it does not say nothing. A MISSING `previous_event_hash`
+    /// parsed as genesis, so removing the field from any event made it a chain start.
+    #[test]
+    fn an_evidence_event_with_no_previous_hash_field_is_refused() {
+        let mut ev = valid_event();
+        ev.as_object_mut().unwrap().remove("previous_event_hash");
+        let err = parse_evidence_event(&ev).expect_err("the field is required by the schema");
+        assert!(err.contains("previous_event_hash is required"), "{err}");
+        // …and the explicit null still parses as genesis.
+        assert!(parse_evidence_event(&valid_event()).unwrap().previous_event_hash.is_none());
+    }
+
+    /// `additionalProperties: false`, in both schemas. An extra key was ignored, not refused.
+    #[test]
+    fn a_record_with_a_key_the_schema_does_not_define_is_refused() {
+        let mut ev = valid_event();
+        ev["signature"] = json!("AAAA");
+        let err = parse_evidence_event(&ev).expect_err("an extra key is not a conforming event");
+        assert!(err.contains("unknown field 'signature'"), "{err}");
+
+        let mut r = valid_receipt();
+        r["verified"] = json!(true);
+        let err = parse_verifier_receipt(&r).expect_err("an extra key is not a conforming receipt");
+        assert!(err.contains("unknown field 'verified'"), "{err}");
+
+        // The key lists are the schemas' own: every field of a valid fixture is allowed, and
+        // nothing is allowed that a valid fixture lacks.
+        let keys = |v: &Value| -> Vec<String> {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        let mut want: Vec<String> = EVIDENCE_EVENT_KEYS.iter().map(|k| k.to_string()).collect();
+        want.sort();
+        assert_eq!(keys(&valid_event()), want);
+        let mut want: Vec<String> = VERIFIER_RECEIPT_KEYS.iter().map(|k| k.to_string()).collect();
+        want.sort();
+        assert_eq!(keys(&valid_receipt()), want);
+    }
+
+    /// `uniqueItems: true`. The same evidence id twice is one piece of evidence.
+    #[test]
+    fn a_receipt_listing_one_evidence_event_twice_is_refused() {
+        let mut r = valid_receipt();
+        r["evidence_event_ids"] = json!(["ev-1", "ev-2", "ev-1"]);
+        let err = parse_verifier_receipt(&r).expect_err("duplicate evidence ids must be refused");
+        assert!(err.contains("more than once"), "{err}");
+        r["evidence_event_ids"] = json!(["ev-1", "ev-2"]);
+        assert!(parse_verifier_receipt(&r).is_ok());
+    }
 
     #[test]
     fn rejects_non_green_verdict() {

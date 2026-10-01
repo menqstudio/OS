@@ -165,6 +165,95 @@ class GateTests(unittest.TestCase):
         self.assertTrue(any(p.startswith("docs/TABLE.md") for p in problems), problems)
         self.assertFalse(any(p.startswith("docs/HISTORY.md") for p in problems), problems)
 
+    # ---- T-145 (H2): the custody wording the trust self-test showed on screen ----------------
+
+    #: phrase -> the sentence it was written for, as it stood in the tree (the file is named so a
+    #: reader can find where it was). Every phrase added with this batch is a key here, and
+    #: `test_each_custody_phrase_is_what_makes_its_sentence_red` proves each one is load-bearing.
+    CUSTODY_SURVIVORS = {
+        "offline-hsm": (
+            "apps/desktop/src-tauri/src/governed_selftest.rs",
+            'anchor (a public constant), NOT a secret offline-HSM key — so this proves the machinery\n'),
+        "offline-root custody": (
+            "apps/desktop/src-tauri/src/governed_selftest.rs",
+            "custody. Live AI turns still run fail-closed; production offline-root custody + a live\n"),
+        "offline-root-verified": (
+            "apps/desktop/src/services/desktop.ts",
+            " * compiled-in demonstration anchor, not an offline-root-verified production manifest), so\n"),
+        "production offline root": (
+            "apps/desktop/src-tauri/core/schema/0099_new.sql",
+            "-- compiled-in DEMONSTRATION anchor — NEVER the production offline root, and the executor\n"),
+        "the operator's offline root": (
+            "apps/desktop/src-tauri/win-live/proof/CROSS_ACCOUNT_PROOF.md",
+            ">    the operator's offline root **cannot** reproduce a production `trusted_verified`.\n"),
+    }
+
+    def test_each_custody_phrase_is_what_makes_its_sentence_red(self):
+        for phrase, (rel, sentence) in self.CUSTODY_SURVIVORS.items():
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, gate.FORBIDDEN_PHRASES)
+                t = Tree()
+                self.addCleanup(t.close)
+                t.write(rel, sentence)
+                problems, _ = gate.check(t.root)
+                self.assertTrue(
+                    any(p.startswith(rel) and f'"{phrase}"' in p for p in problems), problems)
+                # Without THIS phrase the same sentence is green: no other phrase or token covers
+                # it, so removing the phrase from the list is removing the check.
+                kept = gate.FORBIDDEN_PHRASES
+                gate.FORBIDDEN_PHRASES = tuple(p for p in kept if p != phrase)
+                try:
+                    problems, _ = gate.check(t.root)
+                finally:
+                    gate.FORBIDDEN_PHRASES = kept
+                self.assertEqual(problems, [], f"{phrase!r} is not what catches its sentence")
+
+    def test_the_true_custody_note_is_green(self):
+        # What replaced it. A gate that also refused the correction would be a gate on a topic.
+        self.t.write(
+            "apps/desktop/src-tauri/src/governed_selftest.rs",
+            "No person holds a production key and none ever will: trust is minted by the install. "
+            "A root minted that way commits demonstration_custody, not trusted_verified, until the "
+            "Owner accepts install-minted custody after an independent audit.\n"
+            "// It contrasted the anchor with a secret key in an HSM kept off the machine.\n")
+        self.t.write("docs/WHY.md", "Nobody holds an offline root, and no HSM is involved.\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertEqual(problems, [])
+
+    def test_a_phrase_exemption_excuses_that_phrase_in_that_file_and_nothing_else(self):
+        migration = "apps/desktop/src-tauri/core/schema/0018_demonstration_verified.sql"
+        self.assertEqual(gate.PHRASE_EXEMPT[migration], ("production offline root",))
+        self.t.write(migration, "-- NEVER the production offline root\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertEqual(problems, [], "the applied migration's one wording is excused")
+        # The same wording in the NEXT migration is not history yet.
+        self.t.write("apps/desktop/src-tauri/core/schema/0019_next.sql",
+                     "-- NEVER the production offline root\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("apps/desktop/src-tauri/core/schema/0019_next.sql"))
+        # And the excused file is still swept for every other phrase and every token.
+        self.t.write(migration, "-- NEVER the production offline root; ask for the owner's offline key\n"
+                                "-- then run win_gen_root\n")
+        problems, _ = gate.check(self.t.root)
+        mine = [p for p in problems if p.startswith(migration)]
+        self.assertEqual(len(mine), 1, problems)
+        self.assertIn("owner's offline", mine[0])
+        self.assertIn("win_gen_root", mine[0])
+        self.assertNotIn("production offline root", mine[0])
+
+    def test_every_phrase_exemption_is_still_needed_in_the_real_tree(self):
+        # An exemption whose file has stopped containing its phrase excuses nothing and waits for
+        # the wording to come back unseen. Checked against THIS repository, not a throwaway tree.
+        root = pathlib.Path(gate.__file__).resolve().parents[1]
+        for rel, phrases in gate.PHRASE_EXEMPT.items():
+            self.assertFalse(rel.startswith(gate.EXEMPT_PREFIXES), f"{rel} is already exempt whole")
+            text = (root / rel).read_text(encoding="utf-8").lower()
+            for phrase in phrases:
+                with self.subTest(file=rel, phrase=phrase):
+                    self.assertIn(phrase, gate.FORBIDDEN_PHRASES, "an exemption for no rule")
+                    self.assertIn(phrase, text, f"{rel} no longer says {phrase!r}: drop the entry")
+
     def test_an_honest_sentence_about_the_removal_is_green(self):
         self.t.write("docs/WHY.md", "Nobody holds an offline root; the install mints trust.\n")
         problems, _ = gate.check(self.t.root)

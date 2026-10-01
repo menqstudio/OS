@@ -2717,8 +2717,16 @@ pub mod automations {
     /// run, or last run at least one interval ago), running its LOCAL action and logging the run.
     /// Returns the runs fired this tick. Only local, non-AI actions ever fire unattended here — an
     /// AI-reaching action would route through the governed, fail-closed chain, not this loop.
+    ///
+    /// **One failure does not end the tick.** Every `?` in here used to return on the spot, so an
+    /// automation whose run could not be recorded stopped every automation listed after it AND
+    /// the whole produced-agent half below — every minute, for as long as that one row stayed
+    /// broken — and the caller discarded the error, so nothing said so. Each due automation and
+    /// the agent half are now attempted regardless; the FIRST error is returned once all of them
+    /// have been, so a tick that failed anywhere still reports as failed.
     pub fn run_due(conn: &Connection, now_ms: i64) -> CoreResult<Vec<AutomationRun>> {
         let mut fired = Vec::new();
+        let mut first_error: Option<CoreError> = None;
         for a in list(conn)? {
             if !a.enabled {
                 continue;
@@ -2727,9 +2735,15 @@ pub mod automations {
                 Some(i) => i,
                 None => continue, // manual / unrecognized → not scheduled
             };
-            let last_ms = list_runs(conn, &a.id)?
-                .first()
-                .and_then(|r| r.ran_at.parse::<i64>().ok());
+            let last_ms = match list_runs(conn, &a.id) {
+                Ok(runs) => runs.first().and_then(|r| r.ran_at.parse::<i64>().ok()),
+                // Not knowing when it last ran is not a reason to fire it: skip this one, keep
+                // the error, go on to the next.
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                    continue;
+                }
+            };
             let due = match last_ms {
                 Some(t) => now_ms.saturating_sub(t) >= interval,
                 None => true,
@@ -2737,7 +2751,12 @@ pub mod automations {
             if due {
                 // Unattended: this loop runs on a 60s timer with nobody at the
                 // cockpit, so the run is the scheduler's, not a person's.
-                fired.push(run(conn, &a.id, audit::Actor::scheduler())?);
+                match run(conn, &a.id, audit::Actor::scheduler()) {
+                    Ok(r) => fired.push(r),
+                    Err(e) => {
+                        first_error.get_or_insert(e);
+                    }
+                }
             }
         }
         // The produced-agent half of the same tick. It enqueues AND dispatches.
@@ -2761,17 +2780,29 @@ pub mod automations {
         //
         // A store root that is absent is not an error: no agent has been built.
         if let Some(root) = super::agent_runs::default_store_root() {
-            super::agent_runs::enqueue_due(conn, now_ms, &root)?;
-            // Bounded, so one tick cannot become unbounded work: a backlog is
-            // drained across ticks rather than inside one. `claim_and_run`
-            // returns None when nothing is queued, which ends the loop early.
-            for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
-                if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
-                    break;
+            let agents = || -> CoreResult<()> {
+                super::agent_runs::enqueue_due(conn, now_ms, &root)?;
+                // Bounded, so one tick cannot become unbounded work: a backlog is
+                // drained across ticks rather than inside one. `claim_and_run`
+                // returns None when nothing is queued, which ends the loop early.
+                for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
+                    if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
+                        break;
+                    }
                 }
+                Ok(())
+            };
+            // Inside this half the first error still ends it: a dispatch that failed is not
+            // retried within the tick. What changed is that it no longer depends on the
+            // automation half above having succeeded.
+            if let Err(e) = agents() {
+                first_error.get_or_insert(e);
             }
         }
-        Ok(fired)
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(fired),
+        }
     }
 
     pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
