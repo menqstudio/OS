@@ -13,7 +13,7 @@
 - **911 findings confirmed** by the second agent: 2 high · 252 medium · 657 low. **9 refuted.**
 - **A refutation rate of 9 in 920 is low enough to be a finding about the verifier.** It lowered severities freely — the readers reported far more than two highs — but it almost never rejected. Treat "confirmed" as "a second agent opened the line and agreed", not as proof. The Builder reproduced the two highs by hand; **none of the others was re-checked by the Builder** unless its row says so.
 - **605 further findings were seen and not returned**, because each reader was capped at 12. They are not in this file and were not verified.
-- **Two sweeps returned nothing** on the first run (`doc-vs-doc`, `doc-vs-code`; the API answered 529). They were re-run; their findings are appended in §5 when they exist.
+- **Two sweeps returned nothing** on the first run (`doc-vs-doc`, `doc-vs-code`; the API answered 529). They were re-run and returned; their findings are in §5.
 - **No reader ran `cargo test`, `npm test` or a CI kit.** One sweep ran the engine and tools suites. Every "no caller" claim rests on text search, which cannot see dynamic dispatch or macro-generated calls.
 - Files a reader said it did **not** read end to end are listed in §4. A file absent from that list was *reported* read in full; that report was not checked.
 
@@ -1773,7 +1773,71 @@ As the readers reported it, verbatim.
 
 ## 5. The two re-run sweeps
 
-Not landed yet.
+`doc-vs-doc` and `doc-vs-code` returned on the second run: **21 more findings** a second agent confirmed, all open. They overlap the slices' findings above and were not de-duplicated against them.
+
+- **`README.md:327`** (medium, stale-claim) — README and TASKS state the negative matrix as 150/54/38; the gate prints 155/52/35, and README disagrees with itself on four more counts
+  - README.md:327-329 "150 / 54 / 38" and TASKS.md:30 "150 / 54 / 38" vs README.md:272 alt-text and PROJECT_STATE.md:8 "155 · 52 · 35"; check_negative_matrix.py prints 155/52/35. README also :182 "40 check_*.py" vs :290 "43"; :184 "21 jobs" vs :293 "22"; :294 "34" vs :184 "35".
+  - fix: Set the README table and T-062 row to 155/52/35 and the tree block to 43 gate scripts, 22 jobs, 35 contexts, and add these lines to config/counted-claims.json so the gate recounts them.
+- **`apps/desktop/README.md:49`** (medium, stale-claim) — Desktop README claims no outstanding Critical/High findings while the standing verdict is RED and O-1 is an open HIGH
+  - :49 "ten rounds of adversarial review with no outstanding Critical/High findings" vs NEXT_CHAT.md:76 "The standing independent verdict is RED" and CLAUDE.md section 6 "O-1 (HIGH)" OPEN. Same file :42 "69 tests"; :45 BROPS_AI_PROVIDER `claude` where ai.rs:427 accepts only `claude-cli`.
+  - fix: Replace the sentence with the standing RED verdict and a pointer to AUDIT_LEDGER.md, and correct the provider name to claude-cli.
+- **`config/current_state.json:110`** (medium, stale-claim) — The machine mirror names the NINTH round as the standing verdict and phases 2-10 as not done; the canon says TENTH round and phases 2-7 done
+  - :110 stop_gates "verdict is RED -- the NINTH round, ...2026-08-19-ninth-audit-5cf9b8c.md"; :50 "The NINTH round" beside :49's tenth-audit path; :101 "phases_2_to_10": "not_done". NEXT_CHAT.md:76 "TEN rounds"; PROJECT_STATE.md:30-35 phases 2-7 Done. START_HERE.md:59 "Two independent audits have run".
+  - fix: Point stop_gates[1] and last_independent_audit_note at the tenth round, replace phases_2_to_10 with per-phase status, and cut START_HERE's 2026-08-14 'where things stand' block down to a pointer.
+- **`docs/ARCHITECTURE.md:32`** (medium, design-contradiction) — Architecture claims CI proves the Windows cross-account named-pipe turn on every PR; the kit's own docs say no CI runs it and it cannot be reproduced
+  - :32 "machine-proven end to end on Linux ... and on Windows (named pipes, cross-account, distinct service accounts), and CI runs both on every PR" vs WIRING_LIVE_TRUST.md:14-17 "built but not reproducibly proven from this tree ... no CI workflow runs any of it". ci.yml:796,814 run only cargo test and -SelfTest.
+  - fix: State what CI runs on Windows (in-process chain, DACL paths, harness self-tests) and that the cross-account pipe turn is an unreproducible operator report; also correct WIRING/CROSS_ACCOUNT 'no CI workflow', which ci.yml:796 falsifies.
+- **`docs/ARCHITECTURE.md:83`** (medium, stale-claim) — Architecture's not-done list says the approval-request path and contracts/ do not exist; both are in the tree
+  - :83 "That path does not exist on either side - no `approval-request` schema in `engine/schemas/`" and :92 "`contracts/` is still a placeholder" vs engine/schemas/approval-request.schema.json, contracts/ holding 6 schemas + index.json, and PROJECT_STATE.md:30 "exists on both sides now". TASKS.md:35 also says "exists nowhere".
+  - fix: Rewrite both bullets in both language halves to what T-021a-d and the contracts extraction built, and close or re-scope the T-021 row.
+- **`docs/ARCHITECTURE.md:83`** (medium, design-contradiction) — Approval-request path documented as non-existent in ARCHITECTURE and in governance.rs's own module doc, but it is implemented and registered
+  - ARCHITECTURE:56 'exactly four Tauri commands', :83 'That path does not exist on either side - no approval-request schema in engine/schemas/, no desktop->engine command'. governance.rs:81 says the same. Yet governance.rs:655 defines request_engine_approval, lib.rs:395 registers it, engine/schemas/approval-request.schema.json exists.
+  - fix: Update ARCHITECTURE's governance-surfaces section and the governance.rs module header to describe the fifth command (a recorded ask, never a decision) and drop the 'READ-ONLY, only read filters' and 'no such path' sentences.
+- **`docs/ARCHITECTURE.md:32`** (medium, design-contradiction) — 'CI runs the Windows cross-account named-pipe proof on every PR' contradicts WIRING_LIVE_TRUST, CROSS_ACCOUNT_PROOF and the workflow
+  - ARCHITECTURE:32 'machine-proven end to end ... on Windows (named pipes, cross-account, distinct service accounts), and CI runs both on every PR'. WIRING_LIVE_TRUST:15-17: named-pipe path 'built but not reproducibly proven from this tree ... no CI workflow runs any of it'. ci.yml:786-814 runs cargo tests and '-SelfTest' only.
+  - fix: State that on Windows CI runs the in-process chain tests, same-account pipe tests and harness self-tests, and that the cross-account run is an unreproducible operator narrative.
+- **`docs/OPERATOR_GUIDE.md:7`** (medium, stale-claim) — Four documents say provisioning is Windows-only and the POSIX path is unbuilt/unpackaged; the root installer exists and the .deb ships it
+  - OPERATOR_GUIDE:7 'Windows is the only platform the app can currently run on'; SECURITY_MODEL:245 'that branch has never executed'; CLAUDE.md:128 'Not packaged yet'. Tree: provision/src/posix_install.rs, bin/brops_install_anchor.rs, tauri.conf.json:51-52 ships both installers, deb/postinst:22 calls brops-install.
+  - fix: Replace the 'Windows-only / never executed / not packaged' text with the current state: the app still refuses to self-provision on POSIX, but a root installer exists, is packaged in the .deb and is called by postinst.
+- **`docs/OPERATOR_GUIDE.md:186`** (medium, stale-claim) — Provider configuration documented wrongly: 'claude' is not an accepted value, Anthropic is never auto-selected, and there is no default provider
+  - OPERATOR_GUIDE:186 'Force `claude` \| anthropic \| ollama'; :189 'If set (and provider not forced), selects the metered Anthropic API'; ai.rs:3-6 says the same. resolve_provider (ai.rs:405-458) accepts only 'claude-cli', returns Err for 'claude', never picks Anthropic without BROPS_AI_PROVIDER=anthropic, and Errs when nothing is set.
+  - fix: Correct the table and the ai.rs header to the real rules: values governed-engine\|claude-cli\|anthropic\|ollama, ungoverned ones need BROPS_ALLOW_UNGOVERNED=1, no auto-selection of Anthropic, nothing set is a refusal.
+- **`docs/OWNER_ACTION_REQUIRED.md:931`** (medium, design-contradiction) — The page of record says all five O-items wait on the Owner; the inventory and CLAUDE.md say none does
+  - :931 "O-1 ... O-5 - all five are waiting on you", :954 "Mint the evidence-floor anchor offline", :962 "credentials you hold" vs :9 "Custody needs nothing from you, ever" and PHASE_10 :42 "not credentials but wiring and packaging". OPERATOR_GUIDE.md:369 still says "three ... [a phrase gate-refused since #314]".
+  - fix: Rewrite section 2c (and OPERATOR_GUIDE :369) from the PHASE_10 section 0 table: per item, the wiring or packaging that blocks it, with no Owner act and no offline mint.
+- **`docs/SECURITY_MODEL.md:28`** (medium, stale-claim) — Security model says the production root pin is compiled into the broker; since T-140 the broker reads its root from the floor-pinned anchor file
+  - :19 "TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)", :28 "production root pin is compiled in (never read from config)" vs OWNER_ACTION_REQUIRED.md:305 "The Linux broker no longer pins a compiled root ... reads its root from the anchor file" and broker/src/tcb.rs:8-10.
+  - fix: Update section 1.1's diagram and first invariant to the floor-pinned anchor file plus INSTALL_MINTED_CUSTODY_ACCEPTED=false, and say the compiled constant now only gates the 'external' label.
+- **`docs/SECURITY_MODEL.md:239`** (medium, stale-claim) — Four documents say POSIX provisioning has never executed and the app is Windows-only; the root installer is built, run in CI and wired into the .deb
+  - SECURITY_MODEL:245 "that branch has never executed"; OPERATOR_GUIDE:7 "Windows is the only platform the app can currently run on"; PROJECT_STATE:78 "Provisioning is Windows-only" vs DEBIAN_INSTALL_PROVISIONING.md:193 "Built and run as root here and in CI" (ci.yml:599). CLAUDE.md:128 "Not packaged yet" vs tauri.conf.json:49-52.
+  - fix: Replace 'Windows-only / never executed' with the measured state: brops_install_anchor mints the POSIX anchor as root (T-137), postinst calls it (T-138), and no dpkg -i has been run end to end.
+- **`docs/SECURITY_MODEL.md:284`** (medium, design-contradiction) — Refusal 1 is still called unconditional in nine places, and the security model lists as future work the probe T-048 already built
+  - :284 "returns Some(...) **unconditionally**" and :417 "make governed_verification_unconfigured() a real provisioning probe instead of a hardcoded Some" vs README.md:151 "was an unconditional Some(...) until T-048 made it a measurement" and commands.rs:1376-1388 (returns None when nothing is missing).
+  - fix: Use CLAUDE.md's wording everywhere ('while any of its five compile-time inputs is absent', chat only) and strike section 5 item 2's probe clause as done.
+- **`docs/SECURITY_MODEL.md:19`** (medium, stale-claim) — Trust-boundary section says the broker's root pin is compiled in; the Linux broker no longer pins a compiled root
+  - SECURITY_MODEL:19 'TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)', :28 'The production root pin is compiled in (never read from config)' under 'Invariants that HOLD today'. broker/src/tcb.rs:4: 'The Linux broker no longer pins a compiled-in root (T-131 slice C)' - it reads the floor-pinned anchor file.
+  - fix: Rewrite section 1.1's diagram and first invariant to say the Linux broker takes its root from the floor-pinned anchor file and the compiled constant only gates the 'external' label.
+- **`docs/SECURITY_MODEL.md:161`** (medium, design-contradiction) — Floor posture selection described as two variables with the env acknowledgement selecting the local floor; code honours that env only in CI and has a third (file) variable
+  - SECURITY_MODEL:161 'Two variables, and nothing else, select the posture'; :168 'BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged selects AcknowledgedLocalFloor'. bro_custody.py:151-163 raises unless BRO_ENV=ci ('honoured only in CI'), and :131-143 accepts BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE instead.
+  - fix: Rewrite section 1.3a to name the _FILE form as the production selector and say the raw env form is refused outside BRO_ENV=ci.
+- **`CLAUDE.md:98`** (low, stale-claim) — CLAUDE.md states two different Rust test totals
+  - CLAUDE.md:86 'cargo test --workspace  # 1288 passed' but :98 'passes 1012 tests' and :157 (Armenian) '1012'. PROJECT_STATE:51 says 1288. A grep of #[test]/#[tokio::test] attributes under src-tauri (excluding target) counts 1315, so 1012 is the stale one; I did not run cargo test.
+  - fix: Remove the number from section 5 and the Armenian section 3 so only the dated figure in section 4 carries it.
+- **`docs/ARCHITECTURE.md:156`** (low, design-contradiction) — The English and Armenian halves of the CI cell disagree on the check count and on how many jobs are excluded
+  - EN :46 "38 checks report on a pull request ... Four pull-request jobs are excluded ... and a fifth never reports" (then names two) vs HY :156 "37 ստուգում ... Բացառված են ուղիղ երկուսը" (exactly two). config/required-checks.json lists 5 deliberately_excluded. EN also says "the 34 required" then "35 ... required".
+  - fix: Make both halves name all five excluded jobs from required-checks.json with one check count, and have the HY half point at the EN cell rather than restate numbers.
+- **`docs/ARCHITECTURE.md:92`** (low, stale-claim) — contracts/ described as a README-only placeholder (both languages); it holds six schemas, and other docs say five
+  - ARCHITECTURE:92 'contracts/ is still a placeholder - a README describing intent, no extracted schemas' (also :161). contracts/ holds 6 *.schema.json plus index.json listing six ids incl. approval-request. CLAUDE.md:62 and contracts/README.md say 'the five schemas'; index.json comment says 'Four of the five'.
+  - fix: Delete the placeholder bullet in both halves of ARCHITECTURE and change 'five' to six (or list them) in CLAUDE.md, contracts/README.md and the index.json comment.
+- **`docs/SECURITY_MODEL.md:284`** (low, stale-claim) — governed_verification_unconfigured() described as returning Some 'unconditionally' / 'a hardcoded Some'; it is computed from five constants and has a None branch
+  - SECURITY_MODEL:284 'returns Some(GOVERNED_VERIFICATION_UNCONFIGURED) unconditionally', :417 'instead of a hardcoded Some'. commands.rs:1376-1388 calls governed_provisioning_missing(...) over five consts and 'if missing.is_empty() { return None; }'. CLAUDE.md:114 and PROJECT_STATE:29 describe it correctly.
+  - fix: Say it returns Some while any of its five compile-time inputs is absent (all are today), matching CLAUDE.md.
+- **`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md:3`** (low, stale-claim) — Floor Writer design status says no product code lands under it; the service is implemented
+  - FLOOR_WRITER_SERVICE_DESIGN:3 'Status: PROPOSAL. Not Architect-audited. No product code lands under this document.' Tree: engine/runtime/floor_writer.py (1088 lines), run_floor_writer.py, provision_floor_writer.py. SECURITY_MODEL:233 'Implementation exists and is not Architect-approved; the design merged as PR #112 and this is the build'.
+  - fix: Update the status line to say an implementation exists under R1-R5 and is not Architect-approved.
+- **`docs/design/WINDOWS_BROKER_DESIGN.md:605`** (low, design-contradiction) — Broker design and operator guide say eight runtime principals; the code and the normative clause say seven, and the gate does not read these two documents
+  - WINDOWS_BROKER_DESIGN:160 'All eight runtime SIDs', :605 'verify_distinct_principals() - resolve all eight runtime SIDs'; OPERATOR_GUIDE:273 'Eight distinct principals' (then lists 6 services + 1 executor). windows_broker.rs:39 'RUNTIME_PRINCIPALS: [Principal; 7]'. check_principal_model.py COUNT_CLAIMS covers three other docs only.
+  - fix: Correct both documents to seven (naming the same seven as the enum) and add them to COUNT_CLAIMS so the gate holds them.
 
 ## 6. Where the raw result is
 
