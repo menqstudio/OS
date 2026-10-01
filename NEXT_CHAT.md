@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t136/install-accounts` — `main` @ `377537b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t137/posix-anchor-install` — `main` @ `560bbbd`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #306 · branch `t136/install-accounts`** (base `main`, tip `377537b`, task T-136).
+> **⏭️ CURRENT ACTIVE: PR #307 · branch `t137/posix-anchor-install`** (base `main`, tip `560bbbd`, task T-137).
 >
-> T-136: slice B, first increment; the installer creates the service accounts and CI calls it
+> T-137: slice D; a root installer mints the engine anchor on POSIX and proves it for the desktop uid
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -49,7 +49,7 @@ Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2340 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1222 passed
+cd apps/desktop/src-tauri && cargo test --workspace              # 1242 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing

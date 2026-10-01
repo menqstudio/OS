@@ -224,6 +224,18 @@ pub fn running_as_root() -> bool {
 /// The tag for "the suite is running as root, where no location is out of reach".
 pub const TAG_NOT_ROOT: &str = "unprivileged-posix-account";
 
+/// The tag for "this process IS root" — the exact opposite of [`TAG_NOT_ROOT`], and needed by
+/// exactly one test: `posix_install.rs`'s end-to-end install, which has to create an anchor
+/// owned by a uid the desktop account is not. No single process satisfies both tags, which is
+/// why that test is `#[ignore]`d in an ordinary run and executed on its own under `sudo`.
+pub const TAG_ROOT_INSTALLER: &str = "posix-root-installer";
+
+/// The tag for "the desktop uid under test can read `engine/runtime` and import
+/// `cryptography`", which the same end-to-end test needs to run the real `bro_signature` AS
+/// that uid. True for the invoking user of a `sudo` run; false for `nobody` on a box whose
+/// checkout lives under a `0700` home.
+pub const TAG_ENGINE_AS_DESKTOP_UID: &str = "engine-readable-by-desktop-uid";
+
 /// The tag for the POSIX fixture no unprivileged process can build.
 pub const TAG_POSIX_FOREIGN_ANCHOR: &str = "posix-foreign-anchor";
 

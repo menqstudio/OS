@@ -83,7 +83,7 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2340 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1222 passed
+cd apps/desktop/src-tauri && cargo test --workspace              # 1242 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
@@ -91,7 +91,7 @@ python3 tools/check_handoff_ready.py                             # a new session
 for g in tools/check_*.py; do python3 "$g"; done                 # see §5 for the ones needing args
 ```
 
-Engine, Rust: 2026-09-30; frontend: 2026-08-31. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
+Engine, Rust: 2026-10-01; frontend: 2026-08-31. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
 
 ## 5. Environment
 
@@ -125,7 +125,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **There is no path in this repository to a production trust root.** `broctl build-registry` hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses a development registry when the pin comes from the production path. See [`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md).
 
-**Provisioning is Windows-only** — sealing the anchor refuses on POSIX and provisioning aborts startup, so on this Debian box the first-launch trust path is unreachable.
+**On POSIX the app never provisions itself** — a root installer does (`brops_install_anchor`, T-137). Not packaged yet, so first launch still refuses here.
 
 ## 7. Rules for AI sessions
 
@@ -176,7 +176,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 **Production վստահության արմատ սարքելու ճանապարհ այս repo-ում չկա** — `broctl`-ը կոշտ գրում ա `"production": false` ու `--production`-ը մերժում ա։
 
-**Provisioning-ը Windows-only ա** — POSIX-ում startup-ը կանգնում ա, ուրեմն այս Debian-ի վրա առաջին գործարկման վստահության ուղին անհասանելի ա։
+**POSIX-ում ծրագիրն ինքը չի provision անում** — անում ա root installer-ը (`brops_install_anchor`, T-137), որ դեռ package արած չի։
 
 ## 5. Կանոններ
 

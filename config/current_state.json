@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "377537bbf76763ae7a7d49a4d45268f30aac8748",
+  "settled_at_main_head": "560bbbda8c4b69efea0ebb5e3f06f0bfa12abac2",
   "sync": {
-    "baseline_main_head_at_sync": "377537bbf76763ae7a7d49a4d45268f30aac8748",
-    "snapshot_branch": "t136/install-accounts",
+    "baseline_main_head_at_sync": "560bbbda8c4b69efea0ebb5e3f06f0bfa12abac2",
+    "snapshot_branch": "t137/posix-anchor-install",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t136/install-accounts"
+    "branch": "t137/posix-anchor-install"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 306,
-    "branch": "t136/install-accounts",
+    "number": 307,
+    "branch": "t137/posix-anchor-install",
     "state": "open",
-    "what": "engine/install/brops_install.sh accounts creates the seven fixed service accounts idempotently; CI's live and ladder jobs call it instead of running useradd; the ladder job runs it twice to prove idempotence as root.",
-    "note": "T-136: slice B, first increment; the installer creates the service accounts and CI calls it",
+    "what": "Adds provision::posix_install and the brops_install_anchor binary: root mints the engine anchor, a desktop-uid child delivers the store, and success is declared only after the app verification passes as that uid; CI runs the root test.",
+    "note": "T-137: slice D; a root installer mints the engine anchor on POSIX and proves it for the desktop uid",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #306 (t136/install-accounts), task T-136: engine/install/brops_install.sh accounts creates the seven fixed service accounts idempotently; CI's live and ladder jobs call it instead of running useradd; the ladder job runs it twice to prove idempotence as root. Next: Builder: slice D (POSIX anchor), the rest of B (deployment), then C (broker root). Nothing waits on the Owner.",
-    "_note": "The carrier is current_workflow_pr (#306 on t136/install-accounts). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #307 (t137/posix-anchor-install), task T-137: Adds provision::posix_install and the brops_install_anchor binary: root mints the engine anchor, a desktop-uid child delivers the store, and success is declared only after the app verification passes as that uid; CI runs the root test. Next: Builder: the rest of slice B (deployment, and wiring postinst to the anchor tool), then C (broker root). Nothing waits on the Owner.",
+    "_note": "The carrier is current_workflow_pr (#307 on t137/posix-anchor-install). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "a705778da4f9eeccdf251ea1fbbf0c3719ea27c5",
+      "head": "377537bbf76763ae7a7d49a4d45268f30aac8748",
       "conclusion": "success",
-      "run_id": 36832203678,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-01: success at a705778, run 36832203678."
+      "run_id": 36834794009,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-01: success at 377537b, run 36834794009."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

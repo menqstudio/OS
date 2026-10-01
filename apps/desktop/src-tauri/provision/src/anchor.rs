@@ -80,7 +80,9 @@
 //!   it owns, so mode bits are not a boundary against the owner, and POSIX has no OWNER RIGHTS
 //!   equivalent. So on POSIX the anchor must already exist when the application starts, and
 //!   [`preprovision_refusal`] refuses — by name, before anything is minted — when it does
-//!   not. [`seal`] refuses too, as the second line of the same argument.
+//!   not. [`seal`] refuses too, as the second line of the same argument. What creates it is
+//!   the root-run installer in `posix_install` ([`INSTALLER_TOOL`]), which this application
+//!   never calls.
 //!
 //! Nothing here has a permissive branch. A platform this module cannot seal, a location whose
 //! custody cannot be measured, and a location that is measured and turns out writable are all
@@ -101,6 +103,13 @@ pub const REGISTRY_FLOOR_FILE: &str = "registry-min";
 pub const MANIFEST_FILE: &str = "PROVISIONING.json";
 /// Written beside them, for whoever finds the directory without this source.
 pub const CUSTODY_FILE: &str = "CUSTODY.txt";
+
+/// The name of the root-run installer binary that creates the POSIX anchor
+/// (`provision/src/bin/brops_install_anchor.rs`; its library half is `posix_install`).
+///
+/// It lives here, not in `posix_install`, because [`preprovision_refusal`] names it and that
+/// function is pure and compiled on every platform — including the ones the installer is not.
+pub const INSTALLER_TOOL: &str = "brops_install_anchor";
 
 /// The POSIX machine-wide root, and **why it is not `/var/lib/brops`**.
 ///
@@ -275,10 +284,15 @@ pub fn preprovision_refusal(platform: &str, anchor_dir: &Path) -> Option<Provisi
              created by a DIFFERENT uid, before this application starts: {} owned by that uid \
              (root, or a dedicated brops-anchor account), mode 0755, every ancestor owned by it \
              too, holding {OPERATOR_PIN_FILE} / {REGISTRY_FLOOR_FILE} / {MANIFEST_FILE} at mode \
-             0644. NOTE, plainly: no shipped tool creates it yet — the installer that mints an \
-             anchor as another uid is not written, so this platform is NOT supported for a \
-             first launch today, and this refusal is the honest form of that. An anchor already \
-             in place IS used: provisioning verifies it and starts",
+             0644. The tool that creates it is `{INSTALLER_TOOL}`, run ONCE, AS ROOT, at install \
+             time — `{INSTALLER_TOOL} --user <desktop account> --app-data <this application's \
+             data directory>` — which mints the anchor as root, hands the retained keys to the \
+             desktop account, and does not report success until this same launch-time check \
+             passes FOR that account. NOTE, plainly: this application never runs that tool and \
+             never will — it would be the application building its own anchor by another name — \
+             so a machine whose install step did not run it is NOT supported for a first \
+             launch, and this refusal is the honest form of that. An anchor already in place IS \
+             used: provisioning verifies it and starts",
             anchor_dir.display(),
         ),
         remedy: CUSTODY_REMEDY.to_string(),

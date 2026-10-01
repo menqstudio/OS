@@ -9,7 +9,8 @@
 
 Status: **APPROVED by the Owner on 2026-10-01** («այո»). Task `T-131`. Slice A landed in `T-135`;
 slice B's ACCOUNTS step in `T-136` (`engine/install/brops_install.sh accounts`, which CI's two kit jobs
-now call instead of running `useradd` themselves); the rest of B, and C and D, are in progress. Approval is of the design, not of any slice's code — every slice is ◑.
+now call instead of running `useradd` themselves); slice D's engine anchor in `T-137`
+(`provision::posix_install`, binary `brops_install_anchor`). The rest of B, and C, are open. Approval is of the design, not of any slice's code — every slice is ◑.
 Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / proposal.
 
 ## 1 · The decision this serves
@@ -127,6 +128,27 @@ no prompt and no key, and its prototype (the CI kit) is already green on every r
 * **rpm and AppImage do not provision.** `bundle.targets` is `"all"`; rpm has its own
   `postInstallScript` key, unwired, and AppImage has no install step at all.
 * **Purge removes nothing.** No `postrm` deletes the anchor or the accounts.
+
+### 7.2 What slice D settled, and what it left (2026-10-01)
+
+Built ✅ and run as root here and in CI: root mints with the existing `mint` into a root-owned handoff
+directory, never inside the desktop account's tree; a child that has dropped to the desktop uid
+copies the store into `<app_data>/trust`; and success is declared only after the application's own
+`verify_existing` passes **as that uid** plus a static owner/mode floor root measures. 48 write,
+rename and replace attempts as the desktop uid, all denied by the kernel.
+
+Left open, each needing a decision or a later slice:
+
+* **Anchor owner is root, not `brops-anchor`** as §4.1 proposed. Both give the property; a dedicated
+  account is not built.
+* **`postinst` does not reach it yet.** It calls `/usr/lib/brops/brops-install --user`; this tool is
+  `brops_install_anchor --user --app-data`, and `--app-data` has no safe default (the manifest binds
+  the path, and Tauri's moves with `XDG_DATA_HOME`). Slice B's entry point must supply it.
+* **A deleted store strands the anchor.** If the user removes `<app_data>/trust`, the root-owned
+  anchor stays, the installer refuses it as unverifiable, and the app cannot rename it aside.
+* **Not atomic against power loss**: a run killed after the manifest is written leaves an anchor
+  the next run refuses.
+* **Accounts outside `/etc/passwd`** (LDAP, systemd-homed) are refused by name.
 
 ## 8 · Slices (they parallelise once this is approved)
 
