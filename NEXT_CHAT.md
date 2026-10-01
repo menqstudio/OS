@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `c6bdb77`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t149/review-wave2` — `main` @ `6b5604c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c6bdb77`.** The only thing open is PR #316 on `t148/settled-at-c6bdb77`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
 >
-> **Next:** T-145 wave 2 (Rust, frontend), then the documents second pass.
+> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1 (Owner decision)
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,9 +48,9 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2617 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2620 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1408 passed
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 984 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real

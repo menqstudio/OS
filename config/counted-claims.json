@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2617,
+      "value": 2620,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
-        "date": "2026-10-01",
-        "head": "73e5ccb",
+        "date": "2026-10-02",
+        "head": "6b5604c",
         "environments": {
+          "Debian 13 (trixie) native @ 6b5604c + T-145 wave 2": {
+            "ran": 2620,
+            "skipped": 13
+          },
           "Debian 13 (trixie) native, non-root account @ 73e5ccb + T-145 wave 1": {
             "ran": 2617,
             "skipped": 13
@@ -206,7 +210,8 @@
         2243,
         2259,
         2299,
-        2314
+        2314,
+        2617
       ]
     },
     "bridge_tests": {
@@ -232,13 +237,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 801,
+      "value": 984,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
-        "date": "2026-10-01",
-        "head": "81736b4",
+        "date": "2026-10-02",
+        "head": "6b5604c",
         "environments": {
+          "Debian 13 (trixie) native @ 6b5604c + T-145 wave 2": {
+            "ran": 984,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native, node 20 (jsdom) @ 81736b4 + T-138": {
             "ran": 801,
             "skipped": 0
@@ -259,17 +268,22 @@
       "superseded": [
         764,
         781,
-        790
+        790,
+        801
       ]
     },
     "a11y_tests": {
-      "value": 59,
+      "value": 82,
       "command": "cd apps/desktop && npm ci && npm run test:a11y",
       "derive": null,
       "measured": {
-        "date": "2026-09-20",
-        "head": "9cc4d2c",
+        "date": "2026-10-02",
+        "head": "6b5604c",
         "environments": {
+          "Debian 13 (trixie) native @ 6b5604c + T-145 wave 2": {
+            "ran": 82,
+            "skipped": 0
+          },
           "builder's Windows box (jsdom + axe)": {
             "ran": 59,
             "skipped": 0

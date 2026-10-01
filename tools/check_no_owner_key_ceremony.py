@@ -33,8 +33,7 @@ forbidden token — its own test file, which is exempt by path and therefore pro
 and the matcher fired. A walk that read nothing would otherwise pass vacuously.
 
 ONE WORDING IN ONE FILE is a narrower exemption than history, and it is a separate table
-(`PHRASE_EXEMPT`): an applied SQL migration whose comment cannot be edited, and the review record
-that quotes what it found. Each is excused for the phrases named beside it and swept for
+(`PHRASE_EXEMPT`): an applied SQL migration whose comment cannot be edited. It is excused for the phrases named beside it and swept for
 everything else, and the test fails an entry whose file has stopped containing its phrase.
 
 Usage:  python tools/check_no_owner_key_ceremony.py [repo-root]
@@ -143,7 +142,7 @@ EXEMPT_PREFIXES = (
 #: Exempt for the NAMED phrases only, by exact path — never a prefix, and never the whole file.
 #:
 #: `EXEMPT_PREFIXES` above switches every rule off for a path. That is right for history that may
-#: say anything, and far too wide for a file that has to carry ONE wording: these two stay swept
+#: say anything, and far too wide for a file that has to carry ONE wording: it stays swept
 #: for every token and every other phrase. An entry is a debt with a reason beside it, and
 #: `test_check_no_owner_key_ceremony` fails an entry whose file no longer contains its phrase, so
 #: an exemption cannot outlive the thing it excused.
@@ -154,12 +153,6 @@ PHRASE_EXEMPT = {
     # them. The wording is corrected where it is live (`governed_selftest.rs`), not here.
     "apps/desktop/src-tauri/core/schema/0018_demonstration_verified.sql": (
         "production offline root",
-    ),
-    # The whole-repository read QUOTES the custody note it found, as the finding. The orchestrator
-    # owns that file; when it redacts the quote (as it did for the wave-1 phrases) this entry goes.
-    "docs/WHOLE_REPO_READ_2026-10-01.md": (
-        "offline-hsm",
-        "offline-root custody",
     ),
 }
 
