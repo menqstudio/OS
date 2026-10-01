@@ -5,9 +5,20 @@ recompute-then-sign the flat ``brops.governed-receipt-envelope.v1`` payload afte
 verifying the supervisor attestation ITSELF). This module is the socket wiring
 ONLY — the exact mirror of ``challenge_authority_server``: it binds a
 unix-domain socket, authenticates each connecting peer by ``SO_PEERCRED`` uid,
-allowlists ONLY the broker uid (renderer/sidecar are DENIED), reads exactly one
+admits exactly ONE uid and denies every other, reads exactly one
 length-prefixed bounded JSON frame, dispatches the single ``sign-result`` op into
 the signer, and writes the framed reply.
+
+WHICH uid that is belongs to the deployment, not to this module. The parameter is
+named ``allowed_broker_uid`` and the predicate ``peer_is_broker`` because the first
+deployment of this door (the §5 kit, ``engine/ci/live/run_signer.py``) names the
+BROKER in ``isolated-signer.ipc-policy.json``, and there the renderer and the
+sidecar are denied. The §4.10(g) ladder kit names the SUPERVISOR in that same file,
+because there the supervisor drives §5 itself: its client is
+:func:`request_sign_result` below, bound as ``AcceptanceDriver.sign_result``. Both
+are "the one peer this signer admits"; neither is both at once. This docstring said
+"allowlists ONLY the broker uid" beside a client written for the supervisor, while
+``governed_acceptance`` said no supervisor→signer transport existed at all.
 
 Crucially this stays a RECOMPUTE-then-sign authority, never a
 ``sign(arbitrary_bytes)`` oracle: the server passes the received verified inputs
@@ -38,7 +49,6 @@ from __future__ import annotations
 
 import json
 import socket
-import struct
 import sys
 import time
 import traceback
@@ -97,13 +107,14 @@ def read_peercred_uid(sock: "socket.socket") -> int:
 
 
 def peer_is_broker(peer_uid: Any, allowed_broker_uid: Any) -> bool:
-    """Return True IFF the connecting peer is the trusted broker UID.
+    """Return True IFF the connecting peer is the ONE uid this signer admits.
 
-    The signer's only accepted peer is the broker UID; every other peer
-    (renderer/login uid, sidecar uid) is DENIED. A strict, fail-closed identity
-    match — no ranges, no group membership. ``bool`` is excluded explicitly
-    (it is an ``int`` subclass) so a stray ``True`` can never masquerade as a
-    uid.
+    That uid is the deployment's (see the module docstring): the broker in the §5
+    kit, the supervisor in the §4.10(g) ladder kit. The names here say "broker"
+    for the first of those. Every other peer is DENIED. A strict, fail-closed
+    identity match — no ranges, no group membership. ``bool`` is excluded
+    explicitly (it is an ``int`` subclass) so a stray ``True`` can never
+    masquerade as a uid.
     """
     if not isinstance(peer_uid, int) or isinstance(peer_uid, bool):
         return False
@@ -380,8 +391,10 @@ def serve_forever(
 #     signer, so a caller that sends the bare sign-request is answered `unknown op None`;
 #   * the wire REPLY is not the signer's reply. `dispatch` FLATTENS it into the broker's op
 #     shape: `signature` rather than `signature_b64`, `ok` rather than `status`, and the
-#     refusal arm carries `error` beside `reason`. `governed_verification.rs` decodes exactly
-#     those names, so the flattening is correct and must not change.
+#     refusal arm carries `error` beside `reason`. The broker's `chain_executor.rs` decodes
+#     exactly those names (`reply.get("payload")` / `.get("signature")`), so the flattening
+#     is correct and must not change. (`governed_verification.rs`, which this comment used to
+#     name, reads none of these keys: it is handed `signature_b64` as a parameter.)
 #
 # Both halves were invisible to every test, because every test that drives the driver wires
 # `sign_result` to `IsolatedSigner.sign_result` IN-PROCESS. That is the defect class this
@@ -460,13 +473,14 @@ def request_sign_result(socket_path: str, sign_request: Any, *,
                         timeout: float = 20.0) -> Dict[str, Any]:
     """One ``sign-result`` round trip over the signer's AF_UNIX socket.
 
-    This is the production binding for ``AcceptanceDriver.sign_result``. ``brops_socket`` is
-    imported lazily so the pure translation above stays importable — and testable — on a host
-    with no AF_UNIX at all, which is exactly where the request/reply mismatch above needed to
-    be caught and was not.
+    This is the binding ``AcceptanceDriver.sign_result`` is given where the SUPERVISOR is the
+    signer's admitted peer (``engine/ci/live/run_ladder_supervisor.py``). The pure translation
+    above -- :func:`sign_result_request` / :func:`sign_result_reply` -- needs no socket and is
+    testable on a host with no AF_UNIX at all, which is exactly where the request/reply
+    mismatch above needed to be caught and was not. (This docstring claimed ``brops_socket``
+    was "imported lazily" for that reason; the module imports it at the top, and importing it
+    is harmless everywhere -- it refuses at CALL time off AF_UNIX, not at import.)
     """
-    import brops_socket
-
     return sign_result_reply(
         brops_socket.request(socket_path, sign_result_request(sign_request), timeout=timeout))
 

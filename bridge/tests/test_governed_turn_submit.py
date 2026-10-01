@@ -392,6 +392,15 @@ class IngressTests(unittest.TestCase):
             ({**GENERATION_CONFIG, "temperature": "3.00"}, "over range"),
             ({**GENERATION_CONFIG, "top_p": "1.01"}, "over range, regex passes"),
             ({**GENERATION_CONFIG, "max_output_tokens": 4096}, "a JSON number"),
+            # `$` under `.match` also matches before a TRAILING NEWLINE, so each of these was
+            # accepted as canonical; the Rust authority refuses every one.
+            ({**GENERATION_CONFIG, "max_output_tokens": "256\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "temperature": "1.00\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "top_p": "1.00\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "model": GENERATION_CONFIG["model"] + "\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "engine_id": GENERATION_CONFIG["engine_id"] + "\n"},
+             "trailing newline"),
+            ({**GENERATION_CONFIG, "temperature": "\n1.00"}, "leading newline"),
             ({**GENERATION_CONFIG, "seed": "1"}, "unknown field"),
         ):
             with self.subTest(why=why):

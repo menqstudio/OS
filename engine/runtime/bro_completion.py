@@ -348,8 +348,19 @@ def _require_store_agrees_with_head(task_id: str, store: pathlib.Path, keys: dic
     What remains is a different reason: this check must be able to see a chain event the
     submitted list does NOT contain, which is the whole point of corroborating the store
     against the head, and it must hard-error on a document claiming to be a chain event and
-    failing verification rather than skipping it. A shared enumerator that skipped unknown
-    documents would be the wrong instrument here even now that it exists.
+    failing verification rather than skipping it.
+
+    The strictness of the two scanners, stated the right way round (this paragraph had it
+    backwards until 2026-10-01, describing ``_scan_events`` as the enumerator that "skipped
+    unknown documents"). ``bro_evidence._scan_events`` is the STRICTER one: it raises on a file
+    it cannot parse and on an ``evidence-event`` whose field set is neither a chain event's nor
+    an execution receipt's. THIS loop is the more lenient: an unparsable file and any
+    ``evidence-event`` whose field set is not exactly ``EVENT_FIELDS`` are both ``continue``.
+    That leniency costs this check nothing it had: an account that can rewrite a stored event
+    into a shape this loop skips can also delete the file, and the docstring above already
+    says the only way to turn this check off is to destroy signed evidence. But it does mean
+    the two field-set rules are written twice and are NOT the same rule; a change to what
+    counts as a chain event has to be made in both.
     """
     from bro_evidence import EVENT_FIELDS
     from bro_signature import verify_artifact
@@ -494,6 +505,21 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
     which needs no new configuration; that placement is weaker by construction and the
     acknowledgement rule applies there too.
 
+    .. note::
+
+       **Read this before the warning below (2026-10-01).** The move that warning asks for --
+       *"moving the WRITE to a second principal -- a floor-writer service"* -- HAS been made.
+       It is ``floor_writer.py``, selected by ``ServiceFloor`` (``BRO_EVIDENCE_FLOOR_WRITER``;
+       see :func:`_floor_posture`). Under that posture this function is never reached: the only
+       callers are ``_load_head_floor`` and ``_advance_head_floor``, and both are reachable
+       solely from the ``AcknowledgedLocalFloor`` branches of ``_floor_read`` /
+       ``_commit_head_floor`` (``TheLocalWriteIsReachableOnlyFromTheAcknowledgedPosture`` holds
+       that). So everything below describes the LOCAL posture only, and that posture exists
+       only where the deployment has already set the self-owned acknowledgement -- which is
+       why the contradiction still stands there: it is what that deployment disclosed. The
+       warning said "the only satisfiable posture is the acknowledgement" until this note; that
+       stopped being true when ``ServiceFloor`` landed.
+
     .. warning::
 
        **The escape route in the paragraph above cannot be configured. This is an open design
@@ -564,6 +590,15 @@ def _refuse_self_owned_floor(directory: pathlib.Path) -> None:
     (rename the floor away, put an empty one back). Both questions are now asked of the
     operating system through ``bro_custody``, on every platform; a platform with neither branch
     REFUSES, because "no check here" is what produced this finding.
+
+    WHERE THIS RUNS TODAY (2026-10-01). Production reaches this function only through
+    ``_head_floor_dir``, and reaches THAT only under ``AcknowledgedLocalFloor`` -- i.e. only
+    after ``self_owned_acknowledged()`` has already answered True. So in production the
+    acknowledgement arm below always returns, and the per-platform custody branches under it
+    execute only when the function is called directly, which is what ``FloorCustodyTests``
+    does. They are kept as the rule a future local posture WITHOUT the acknowledgement would
+    have to pass, not as a control the shipped paths depend on; the control those paths depend
+    on is that the write lives in ``floor_writer`` under ``ServiceFloor``.
     """
     if not directory.exists():
         # Not an exemption: a floor that is not there is refused a moment later by
@@ -822,7 +857,9 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
     .. warning::
 
        **This function is the other half of the contradiction documented on
-       ``_head_floor_dir``.** It writes the mark AS the account the mark polices, so the write
+       ``_head_floor_dir``, and it is the LOCAL posture's write only.** Under ``ServiceFloor``
+       the write is ``floor_writer``'s and nothing reaches this function (see the note on
+       ``_head_floor_dir``). Here it writes the mark AS the account the mark polices, so the write
        below needs precisely the capability ``_refuse_self_owned_floor`` exists to refuse: a
        floor this process cannot write raises ``CompletionError`` here, and a floor it can write
        is refused there. There is no directory that satisfies both. Do not "fix" this by
@@ -843,20 +880,31 @@ def _advance_head_floor(store: pathlib.Path, task_id: str, head_sequence: int,
         with _floor_write_lock(directory):
             # Read INSIDE the lock. Reading outside it is the defect: the value compared
             # would be one another writer is free to have replaced before the rename lands.
-            if head_sequence <= _load_head_floor(store, task_id)[0]:
-                return
             final = directory / f"{task_id}.floor.json"
-            temporary = directory / f"{task_id}.floor.json.tmp"
-            temporary.write_text(
-                json.dumps({"task_id": task_id, "head_sequence": head_sequence,
-                            "evidence_head_sha256": head_digest}),
-                encoding="utf-8")
-            # Rename over the old mark so a crash mid-write cannot leave a truncated file
-            # that the loader above would (correctly) refuse forever.
-            temporary.replace(final)
+            if head_sequence > _load_head_floor(store, task_id)[0]:
+                temporary = directory / f"{task_id}.floor.json.tmp"
+                temporary.write_text(
+                    json.dumps({"task_id": task_id, "head_sequence": head_sequence,
+                                "evidence_head_sha256": head_digest}),
+                    encoding="utf-8")
+                # Rename over the old mark so a crash mid-write cannot leave a truncated file
+                # that the loader above would (correctly) refuse forever.
+                temporary.replace(final)
 
+            # The enrolment runs on EVERY call that finds a mark, not only on the call that
+            # wrote it. The mark and the roster are two renames, and until 2026-10-01 a
+            # `return` above skipped this block whenever the mark was already at the head: a
+            # failure between the two renames left a mark the roster did not name, the retry
+            # (same head) returned early, and the roster stayed empty for good. A task missing
+            # from the roster is "never seen", so deleting its mark then read as a first
+            # sighting -- the R-06 reset, with no attacker and one crash.
+            #
+            # The ORDER is kept (mark, then roster) on purpose. Enrolling first would turn the
+            # same crash into a roster naming a task with no mark, which `_load_head_floor`
+            # refuses as a removed mark FOREVER -- a self-inflicted denial only an operator can
+            # clear. This way round the gap is repaired by the next completion of the task.
             known = _load_floor_index(directory)
-            if task_id not in known:
+            if task_id not in known and final.exists():
                 index = directory / _FLOOR_INDEX
                 index_tmp = directory / (_FLOOR_INDEX + ".tmp")
                 index_tmp.write_text(

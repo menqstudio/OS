@@ -341,6 +341,29 @@ class RefusalTest(unittest.TestCase):
 
     # ---- §1.5 step 4: the policy-authorization check must be able to FAIL ------------------
 
+    def test_a_lone_surrogate_in_an_attested_string_is_a_refusal_and_never_a_raise(self):
+        """`sign_result` promises it never raises on hostile input. A lone surrogate passed the
+        type-and-length check, passed attestation (those bytes are `ensure_ascii`-escaped), and
+        then raised `UnicodeEncodeError` where the request envelope is encoded as raw UTF-8."""
+        import governed_supervisor
+        from isolated_signer import _capped_str, REASON_MALFORMED
+
+        signer, _store, handles, recorder = _make_signer()
+        for field in ("workspace_id", "install_id", "request_nonce", "run_id"):
+            with self.subTest(field=field):
+                evidence = _evidence(handles)
+                evidence[field] = "\ud800"
+                result = signer.sign_result(_request(evidence))
+                self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE, result)
+                self.assertEqual(result["reason"], REASON_MALFORMED)
+        self.assertEqual(recorder.signed_messages, [])
+        # The supervisor's mirror must refuse the same value BEFORE attesting it.
+        for value in ("\ud800", "ok\udfff", "plain", "\u00e9\u4e2d", ""):
+            with self.subTest(value=value):
+                self.assertEqual(governed_supervisor._capped_str(value), _capped_str(value))
+        self.assertFalse(_capped_str("\ud800"))
+        self.assertTrue(_capped_str("\u00e9\u4e2d"), "real non-ASCII text is still a value")
+
     def _sign_under_policy(self, **config_over):
         store, handles = _build_store()
         signer, _s, _h, _r = _make_signer(prepared=(store, handles))

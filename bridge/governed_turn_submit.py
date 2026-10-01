@@ -18,8 +18,8 @@ They sit beside the parts that were already shipped: the renderer's thin
 `governed_turn_execute` proxy, the renderer↔broker IPC, the payload-aware idempotency store
 and the broker orchestration control flow (`apps/desktop/src-tauri/src/governed_turn.rs`,
 `core/src/broker_client.rs`, `core/src/governed_turn_ipc.rs`, `core/src/broker_turns.rs`,
-`core/src/broker_orchestrator.rs`). What is STILL missing is the wiring, not the writer —
-see "NOT WIRED" at the bottom, which says exactly what that costs and what it does not.
+`core/src/broker_orchestrator.rs`). The wiring exists too, since 2026-09-20 — see "WIRED, AND
+STILL UNREACHABLE" at the bottom, which says exactly what is connected and what still refuses.
 
 What it drives, in this exact order (§4.10(g), §6.1 steps 1-2-3)
 ----------------------------------------------------------------
@@ -118,30 +118,37 @@ protecting nothing (the class deleted rather than shipped in §4.10(a)/(c)). The
 pinned by a test instead, so widening a field regex turns it RED. `system` and `history` DO
 get their ceilings checked, because both are caller-sized and both can overflow.
 
-NOT WIRED — read this before believing a turn moves
-----------------------------------------------------
-Nothing in production writes a `bridge.governed-turn-submit.v1` frame, and as of 2026-08-12
-the reason is the WIRING rather than the writer. `governed_turn_submit_prepared` now exists
-(`apps/desktop/src-tauri/core/src/governed_submit.rs`) and builds the frame; two things keep
-it off a live path. First, its subprocess spawn is an injected seam
-(`governed_submit::SubmitTransport`) that **no production code implements** — the tree's one
-bridge-spawn seam, `ai::governed_sidecar_call`, is `async` `tokio` in the renderer-hosting app
-crate and carries `engine_trust::apply`, while the broker binary is synchronous and does not
-depend on that crate. Second, **nothing calls the helper**: the broker's one production
-`GovernedExecutor`, `broker/src/chain_executor.rs::ChainExecutor`, drives the same §4.10(a0)/
-(a)(b)(c)/(d) hops over DIRECT AF_UNIX and spawns the recorder rather than a sidecar, and its
-`ProductionResolver` reads the three artifact digests from static deployment config instead of
-from a prepared turn. So this branch is still reachable only from tests, and the §4.10(f)
-desktop pull stays unreachable behind it. `config/reachability-declarations.json` names the
-symbols that wait on exactly that (five now, not six: the §4.6 `parse_frame` entry came out
-when `governed_turn_submit_prepared` gave it a caller).
+WIRED, AND STILL UNREACHABLE — read this before believing a turn moves
+-----------------------------------------------------------------------
+This section was headed "NOT WIRED" and named two blockers until 2026-10-01. Both were
+RETRACTED on 2026-09-20 (`config/reachability-declarations.json` carries the retraction) and
+this docstring went on stating them:
 
-The supervisor side is also not deployed: `engine/ci/live/run_supervisor.py` constructs no
-`OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService`, so the live
-socket serves none of the five protocols driven here (a test in the engine suite asserts
-that absence). What IS proven is the whole ladder against the REAL services, real Ed25519
-keys, a real durable ledger and the real isolated signer, in
-``engine/tests/test_governed_turn_submit_e2e.py``.
+* *"its subprocess spawn is an injected seam (`governed_submit::SubmitTransport`) that no
+  production code implements"* — `impl SubmitTransport for GovernedSidecar` is in
+  `apps/desktop/src-tauri/core/src/governed_sidecar.rs`.
+* *"nothing calls the helper"* — `broker/src/ladder_executor.rs` calls
+  `governed_turn_submit_prepared` from `LadderChain`, and `broker/src/main.rs` builds the
+  transport and hands it to `LadderChain::new`.
+
+So a production code path DOES write a `bridge.governed-turn-submit.v1` frame and spawn this
+sidecar. What keeps a user's turn from reaching it is not the wiring any more, it is the
+refusals in front of it, and they still hold: the broker serves its fail-closed
+`UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest
+verifies under the floor-pinned root anchor, which nothing in the shipped app sets;
+`connect_broker()` refuses off Linux; and a turn that does run commits only
+`demonstration_custody`. The broker's OTHER executor, `broker/src/chain_executor.rs::
+ChainExecutor`, is still the direct-AF_UNIX path that spawns the recorder rather than a
+sidecar; which of the two a deployment gets is decided by that config.
+
+The supervisor side is deployed only by a CI kit. `engine/ci/live/run_ladder_supervisor.py`
+constructs `OpenService`/`StagingService`/`EvidenceRequestService`/`OutputReadService` and
+serves the five protocols driven here; `engine/ci/live/run_supervisor.py`, the older live
+kit's supervisor, constructs none of them (a test in the engine suite asserts that absence),
+and no packaged product starts either. What IS proven is the whole ladder against the REAL
+services, real Ed25519 keys, a real durable ledger and the real isolated signer, in
+``engine/tests/test_governed_turn_submit_e2e.py``, and end to end under real uids by the
+ladder kit in CI.
 
 Only the Python standard library is used, and no clock, file or subprocess is touched
 anywhere in this file. The one impure thing is the injected `request_supervisor` seam.

@@ -77,6 +77,44 @@ class AuthorityIdentityTests(unittest.TestCase):
         self.assertFalse(authority.can_build)
 
 
+class PolicyUnderAnotherRootTests(unittest.TestCase):
+    """Every loader takes its caller's `root`. The three error messages named the path
+    `relative_to` the MODULE's root, which raises `ValueError` for any other one -- so a missing
+    or broken policy under a non-default root was a plain `ValueError`, not an `AuthorityError`,
+    and `bro_contracts` / `bro_completion` catch only the latter."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "agents").mkdir()
+        self.policy = self.root / "agents" / "authority-policy.json"
+
+    def refused(self, needle):
+        with self.assertRaises(AuthorityError) as caught:
+            validate_authority_policy(self.root)
+        self.assertIn(needle, str(caught.exception))
+        self.assertIn("authority-policy.json", str(caught.exception))
+
+    def test_a_missing_policy_is_an_authority_error(self):
+        self.refused("missing")
+
+    def test_an_invalid_policy_is_an_authority_error(self):
+        self.policy.write_text("{not json", encoding="utf-8")
+        self.refused("invalid JSON")
+
+    def test_a_policy_that_is_not_an_object_is_an_authority_error(self):
+        self.policy.write_text("[1, 2]", encoding="utf-8")
+        self.refused("must contain an object")
+
+    def test_under_the_module_root_the_message_stays_relative(self):
+        import bro_authority
+        with self.assertRaises(AuthorityError) as caught:
+            bro_authority._json(ROOT / "agents" / "no-such-policy.json")
+        self.assertEqual(str(caught.exception), "missing agents/no-such-policy.json")
+
+
 class RiskCeilingTests(unittest.TestCase):
     """authority-policy.json caps every role at a risk_ceiling. Until it is
     compared against a task's risk it is data, not a ceiling."""

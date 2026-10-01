@@ -1,13 +1,15 @@
 """Wave 3b-1 — the ACL-controlled local IPC transport for the signer/supervisor services
 (design §1.1; audit P0-1).
 
-A service binds a **Unix domain socket** inside an owner-only (0700) directory, so the
-filesystem already restricts who can reach the socket path. On Linux the server ALSO
-reads the connecting peer's credentials via `SO_PEERCRED` and admits ONLY a configured
-allow-list of peer UIDs — so even a process of a *different* user that can see the socket
-path is refused unless it is the dedicated caller principal (e.g. the signer admits only
-the supervisor UID; a same-login-user attacker is denied). This is the machine-enforced
-"only the supervisor connects to the signer" boundary, proven by the Linux CI job.
+A service binds a **Unix domain socket** that is deliberately WORLD-CONNECTABLE: a directory this
+module creates is 0755 and the socket itself is 0666, because the caller is a *different* uid by
+design and a static permission could not admit it while refusing everyone else. The filesystem is
+therefore NOT the gate. The gate is `SO_PEERCRED`: on Linux the server reads the connecting peer's
+credentials and admits ONLY a configured allow-list of peer UIDs, so a process of any other user
+that can reach the socket path is refused unless it is the dedicated caller principal (e.g. the
+signer admits only the supervisor UID; a same-login-user attacker is denied). A peer whose uid
+cannot be read is refused too. This is the machine-enforced "only the supervisor connects to the
+signer" boundary, proven by the Linux CI job.
 
 Frames use `brops_protocol` (u32 length prefix, 256 KiB cap, strict decode).
 """
@@ -19,6 +21,7 @@ import socket
 import struct
 import sys
 import time
+import traceback
 from typing import Any, Callable, Optional
 
 import brops_protocol
@@ -32,21 +35,32 @@ class SocketAclError(Exception):
 
 
 def _peer_uid(conn: socket.socket) -> int | None:
-    """The connecting peer's UID via SO_PEERCRED (Linux). None where unavailable — the
-    caller then relies on the socket directory's 0700 ownership for isolation."""
+    """The connecting peer's UID via SO_PEERCRED (Linux), or None where it cannot be read.
+
+    None is a DENIAL whenever an allow-list is configured (`_serve_one`): the socket is
+    world-connectable, so there is no directory permission to fall back on. (This docstring said
+    the caller "relies on the socket directory's 0700 ownership"; the directory is 0755.)
+    """
     so_peercred = getattr(socket, "SO_PEERCRED", None)
     if so_peercred is None:
         return None
     try:
         # `=III`, not `3i`: `struct ucred` is `{pid_t, uid_t, gid_t}` and `uid_t` is UNSIGNED on Linux.
-        # The four other readers of this struct in the tree (`challenge_authority_server`,
-        # `governed_supervisor_server`, `isolated_signer_server`, `floor_writer`) all use `=III`, and
-        # `floor_writer` documents it. This one read it as three SIGNED ints, which agrees for every uid
-        # below 2^31 and differs above: the kernel's `(uid_t)-1` "no uid" arrived as `-1`, and
+        # This one read it as three SIGNED ints until 2026-09-20, which agrees for every uid below
+        # 2^31 and differs above: the kernel's `(uid_t)-1` "no uid" arrived as `-1`, and
         # `(uid_t)-2` — `nobody` on some systems — as `-2`. That is fail-closed, because the gate below
         # is `uid not in allowed_peer_uids` and an allow-list built from `os.getuid()` holds no negative
-        # numbers, so a negative can only DENY. What it broke is the number a refusal reports, and the
-        # agreement between five readers of one structure. `calcsize` is 12 either way.
+        # numbers, so a negative can only DENY. What it broke is the number a refusal reports.
+        #
+        # THREE raw readers of this struct remain under `engine/runtime/`, and the count this
+        # comment used to give ("the four other readers ... all use `=III`") was stale from the day
+        # the consolidation landed: `challenge_authority_server`, `governed_supervisor_server` and
+        # `isolated_signer_server` no longer read it at all -- they call `read_peercred_uid` below.
+        # The three are this function, `read_peercred_uid`, and `floor_writer.read_peer_uid`. This
+        # one is NOT folded into `read_peercred_uid` because their contracts differ on purpose:
+        # that one refuses by platform NAME and raises the caller's error, this one answers `None`
+        # wherever the option is absent and never raises (`test_brops_isolation.UcredFormatTests`
+        # holds both halves, and holds every reader to `=III`).
         creds = conn.getsockopt(socket.SOL_SOCKET, so_peercred, struct.calcsize("=III"))
         _pid, uid, _gid = struct.unpack("=III", creds)
         return uid
@@ -217,12 +231,23 @@ def serve_forever(
             conn, _ = server.accept()
             served += 1
             try:
-                # The bound this loop never had. One request, one reply, so a single TOTAL socket
-                # timeout covers the whole exchange -- the shape `floor_writer` already uses. The
-                # drip-peer case that needs `recv_exactly_bounded` is the multi-read loop in the
-                # signer and the authority, not this one.
-                conn.settimeout(CONNECTION_BUDGET_S)
-                _serve_one(conn, handle_frame, allowed_peer_uids)
+                # The bound this loop never had, and then had in name only. Until 2026-10-01 this
+                # was `conn.settimeout(CONNECTION_BUDGET_S)` under a comment calling it "a single
+                # TOTAL socket timeout": a socket timeout restarts on every `recv`, and the frame
+                # was read through `makefile().read`, so a peer sending one byte per interval held
+                # this single-threaded loop for as long as it liked (measured: a 1.0 s "budget"
+                # held 3.6 s and still got its reply). ONE monotonic deadline now covers the read
+                # AND the reply, through `recv_exactly_bounded` -- the helper the comment above it
+                # says exists for exactly this.
+                deadline = time.monotonic() + CONNECTION_BUDGET_S
+                _serve_one(conn, handle_frame, allowed_peer_uids, deadline=deadline)
+            except Exception:  # noqa: BLE001 - one connection must never kill the loop
+                # The belt the four sibling accept loops already wear. `_serve_one` catches a
+                # malformed or stalled READ; a peer that hangs up before its reply raised
+                # `BrokenPipeError` out of `sendall`, and a raising `handle_frame` did the same --
+                # either ended the service and unlinked its socket. This loop IS the service's
+                # availability, so nothing one peer can do may end it.
+                traceback.print_exc(file=sys.stderr)
             finally:
                 conn.close()
     finally:
@@ -233,10 +258,29 @@ def serve_forever(
             pass
 
 
+class _BudgetedReader:
+    """The one method `brops_protocol.read_frame` needs, with every read charged to ONE deadline.
+
+    `read` may return short (or empty) once the budget is spent or the peer has closed;
+    `brops_protocol._read_exactly` turns an empty read into a `ProtocolError`, so a starved frame is
+    a dropped connection and never a hang.
+    """
+
+    def __init__(self, conn: socket.socket, deadline: float) -> None:
+        self._conn = conn
+        self._deadline = deadline
+
+    def read(self, n: int) -> bytes:
+        return recv_exactly_bounded(
+            self._conn.recv, n, deadline=self._deadline, arm_timeout=self._conn.settimeout)
+
+
 def _serve_one(
     conn: socket.socket,
     handle_frame: Callable[[dict[str, Any]], dict[str, Any]],
     allowed_peer_uids: "frozenset[int] | None",
+    *,
+    deadline: float,
 ) -> None:
     # ACL: enforce the peer-UID allow-list. An unlisted peer — OR a peer whose UID cannot
     # be read (SO_PEERCRED unavailable) — is dropped WITHOUT reading its frame. Because the
@@ -247,16 +291,20 @@ def _serve_one(
         uid = _peer_uid(conn)
         if uid is None or uid not in allowed_peer_uids:
             return  # denied — connection closed by the finally in serve_forever
-    reader = conn.makefile("rb")
     try:
-        request = brops_protocol.read_frame(reader)
+        request = brops_protocol.read_frame(_BudgetedReader(conn, deadline))  # type: ignore[arg-type]
     except brops_protocol.ProtocolError:
-        return
-    except (socket.timeout, TimeoutError):
-        # The budget armed by `serve_forever` expired. A stalled peer is a DROPPED connection, never
-        # a handled request: returning closes it and the loop takes the next caller.
+        # Malformed, closed early, or starved past the budget: `recv_exactly_bounded` returns short
+        # and the frame reader refuses. A stalled peer is a DROPPED connection, never a handled
+        # request: returning closes it and the loop takes the next caller.
         return
     result = handle_frame(request)
+    # The reply is charged to the same deadline. `sendall`'s timeout is the total for the whole
+    # send, so what is left of the budget is armed once; a spent budget sends nothing.
+    budget = recv_budget_s(deadline, time.monotonic())
+    if budget is None:
+        return
+    conn.settimeout(budget)
     conn.sendall(brops_protocol.encode_frame(result))
 
 

@@ -165,6 +165,48 @@ class Generation(unittest.TestCase):
         with self.assertRaises(pfw.ProvisionError):
             pfw.mint_generation(self.path)
 
+    # ---- the store's own generation: the number was read from --config ALONE ----------------
+
+    def state(self, document=None, raw=None):
+        path = pathlib.Path(self._tmp.name) / "floor-state.json"
+        path.write_text(raw if raw is not None else json.dumps(document), encoding="utf-8")
+        return path
+
+    def test_a_missing_config_does_not_mint_one_over_a_store_at_a_higher_generation(self):
+        """`--reprovision` with a missing or different `--config`: the config path answers 0,
+        and the floor that replaced generation 9 was minted as generation 1."""
+        state = self.state({"install_id": "x", "generation": 9, "roster": [], "floors": {}})
+        self.assertFalse(self.path.exists())
+        self.assertEqual(pfw.mint_generation(self.path, state), 10)
+
+    def test_the_higher_of_the_config_and_the_store_is_what_is_minted_above(self):
+        state = self.state({"generation": 9})
+        self.path.write_text(json.dumps({"generation": 3}), encoding="utf-8")
+        self.assertEqual(pfw.mint_generation(self.path, state), 10)
+        self.path.write_text(json.dumps({"generation": 12}), encoding="utf-8")
+        self.assertEqual(pfw.mint_generation(self.path, state), 13)
+
+    def test_a_store_that_cannot_say_its_generation_needs_a_config_that_can(self):
+        for name, raw in (("corrupt", "{not json"), ("no number", json.dumps({"roster": []})),
+                          ("a bool", json.dumps({"generation": True})),
+                          ("zero", json.dumps({"generation": 0}))):
+            with self.subTest(store=name):
+                state = self.state(raw=raw)
+                if self.path.exists():
+                    self.path.unlink()
+                with self.assertRaises(pfw.ProvisionError) as caught:
+                    pfw.mint_generation(self.path, state)
+                self.assertIn("generation cannot be read", caught.exception.detail)
+                # ...and with a config that CAN say it, the corrupt store stays re-provisionable.
+                self.path.write_text(json.dumps({"generation": 7}), encoding="utf-8")
+                self.assertEqual(pfw.mint_generation(self.path, state), 8)
+
+    def test_a_store_that_does_not_exist_changes_nothing(self):
+        absent = pathlib.Path(self._tmp.name) / "absent" / "floor-state.json"
+        self.assertEqual(pfw.mint_generation(self.path, absent), 1)
+        self.path.write_text(json.dumps({"generation": 7}), encoding="utf-8")
+        self.assertEqual(pfw.mint_generation(self.path, absent), 8)
+
 
 class PeerAllowlist(PlanFixture):
     """§1.8 and §1.2, decided at provisioning where they can still be fixed."""

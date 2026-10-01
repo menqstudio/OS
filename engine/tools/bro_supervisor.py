@@ -49,6 +49,7 @@ from bro_repository_state import RepositoryStateError, resolve_state
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 from bro_stop_controller import register, terminate_group
 
+from bro_run_receipt import wrapped_command
 from broctl import sign_payload
 
 DEFAULT_LEASE_SECONDS = 15 * 60
@@ -698,7 +699,8 @@ def main(argv: list[str] | None = None) -> int:
         request = TaskRequest.load(json.loads(pathlib.Path(args.request).read_text(encoding="utf-8")))
         approval = (json.loads(pathlib.Path(args.approval).read_text(encoding="utf-8"))
                     if args.approval else None)
-        command = [a for a in args.builder_command if a != "--"]
+        # ONE leading `--` is this tool's separator; every later one is the builder's own.
+        command = wrapped_command(args.builder_command)
         if not command:
             raise SupervisorError("no builder command given")
         result = run_task(

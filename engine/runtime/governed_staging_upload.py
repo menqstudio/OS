@@ -184,6 +184,23 @@ STAGING_FINAL_REFUSAL_REASONS: Tuple[str, ...] = (
 _CHUNK_PEER_DENIED = REFUSE_MALFORMED
 _FINAL_PEER_DENIED = REFUSE_MALFORMED
 
+
+def peer_denied_reply(protocol: Any) -> Optional[Dict[str, Any]]:
+    """The reply a staging protocol gives a principal that may not send it, or ``None`` for a
+    protocol that is not one of the three.
+
+    The ONE statement of that mapping outside the three handlers. The front door needs it for
+    a supervisor with no ``StagingService`` configured, and until 2026-10-01 kept its own copy
+    with the three reasons typed in again -- under a docstring saying it did not.
+    """
+    if protocol == STAGING_OPEN_PROTOCOL:
+        return staging_open_refused(REFUSE_PEER_DENIED)
+    if protocol == STAGING_CHUNK_PROTOCOL:
+        return chunk_refused(_CHUNK_PEER_DENIED, 0)
+    if protocol == STAGING_FINAL_PROTOCOL:
+        return final_refused(_FINAL_PEER_DENIED)
+    return None
+
 #: The exhaustive request field sets. Anything else — most pointedly an
 #: ``execution_attempt_id``, a ``lease_id`` or a ``receipt_id`` — is ``malformed`` before
 #: any side effect, the same P1-5 door §4.10(a0) closes.
@@ -688,6 +705,15 @@ def handle_staging_chunk(
         # frame and must die here anyway.
         if len(data) > MAX_STAGING_CHUNK_BYTES:
             raise _Refuse(REFUSE_OVERSIZE_CHUNK, "decoded chunk exceeds 184320 bytes")
+        if not data:
+            # No chunk is ever empty: `n_chunks(0)` is 0, so an empty artifact sends none, and
+            # the ledger's own rule is `chunk_len must be a positive int`. Without this an
+            # empty chunk at the cursor of an already-FULL session passed both length checks
+            # below (0 over nothing, and 0 == the 0 bytes still due), wrote a stray
+            # `<seq>.chunk`, and only then met that ledger rule -- as a `SupervisorError`, the
+            # class reserved for faults that are NOT the peer's, raised at will by the
+            # untrusted sidecar.
+            raise _Refuse(REFUSE_MALFORMED, "a chunk carries at least one byte")
 
         session = staging.load_session(conn, session_id)
         if session is None:
@@ -1055,6 +1081,17 @@ def sweep_staging(conn: Any, staging_root: Any, now_ms: int) -> StagingSweep:
     # Everything still on disk that no surviving session names. This is the half that
     # survives a crash in the middle of the pass above, and the half that collects a
     # directory whose row was deleted by a cascade rather than by name.
+    #
+    # THE ORDER IS THE SAFETY PROPERTY: the directory is listed FIRST and the rows are read
+    # AFTER. A session's row is committed before its directory is created, so every directory
+    # in `entries` either has a row the later SELECT will see, or really is an orphan. Until
+    # 2026-10-01 the two statements were the other way round, and the sweep runs in its own
+    # thread on its own connection: a session opened (and a chunk ACKed) between the row
+    # snapshot and the listing was on disk, absent from the snapshot, and DELETED as an
+    # orphan -- a LIVE turn's durable chunks, which the docstring above says this never
+    # removes. Measured by a forced interleave: `orphan_dirs_removed=1`, and the turn's
+    # `final` then answered `session_corrupt`.
+    entries = sorted(root.iterdir())
     live_dirs = {
         pathlib.Path(row["session_dir"]).name
         for row in conn.execute(
@@ -1063,7 +1100,7 @@ def sweep_staging(conn: Any, staging_root: Any, now_ms: int) -> StagingSweep:
     }
     orphan_dirs_removed = 0
     temps_removed = 0
-    for entry in sorted(root.iterdir()):
+    for entry in entries:
         if not entry.is_dir() or entry.is_symlink():
             # The supervisor's private 0700 root holds session directories. Anything else is
             # not this sweep's to delete, and is reported rather than removed or ignored.

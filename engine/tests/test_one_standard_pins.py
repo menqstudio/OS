@@ -51,6 +51,7 @@ sys.path.insert(0, str(ROOT / "runtime"))
 
 import _prerequisites  # noqa: E402
 import bro_audit_log  # noqa: E402
+import bro_orchestration_runtime  # noqa: E402
 import bro_security  # noqa: E402
 import bro_signature  # noqa: E402
 import brops_canonical  # noqa: E402
@@ -201,6 +202,9 @@ class TheTwoEncodingFamiliesMustStayDifferent(unittest.TestCase):
                 self.assertEqual(bro_signature.canonical_bytes(value), expected)
                 self.assertEqual(bro_security.canonical_bytes(value), expected)
                 self.assertEqual(isolated_signer._jcs_bytes(value), expected)
+                # The ninth `json.dumps(sort_keys, compact)` in the runtime, and the only one
+                # this module did not hold to either formula.
+                self.assertEqual(bro_orchestration_runtime._canonical(value), expected)
 
     def test_the_isolated_signers_own_two_encoders_are_a_deliberate_pair(self):
         """`isolated_signer` holds BOTH: `_canonical_bytes` for the evidence digest the
@@ -276,6 +280,19 @@ class TheRequestEnvelopeHasOneFormula(unittest.TestCase):
         authority, canonical, signer = self._all_three()
         self.assertEqual(authority, canonical)
         self.assertEqual(canonical, signer)
+
+    def test_the_supervisors_recomputation_is_the_fourth_and_agrees_too(self):
+        """There are FOUR hand-written copies of this envelope, not three: the supervisor's
+        `recompute_request_sha256` (§4.10(a0), the `accept_open` seam) was pinned by nothing,
+        while its docstring said "byte-identical to" the other three. The copies stay -- four
+        principals, four TCBs, see `TheGovernedCanonicalizerHasOneStandard` -- and are held
+        equal here instead."""
+        authority, canonical, _signer = self._all_three()
+        supervisor = governed_supervisor.recompute_request_sha256(self.FACTS)
+        self.assertEqual(supervisor, canonical)
+        self.assertEqual(supervisor, authority)
+        self.assertEqual(governed_supervisor.REQUEST_ENVELOPE_PROTOCOL,
+                         brops_canonical.REQUEST_PROTOCOL)
 
     def test_the_declared_request_field_set_is_the_one_that_is_hashed(self):
         """`brops_canonical._REQUEST_FIELDS` had no reader in the whole tree: it declared the

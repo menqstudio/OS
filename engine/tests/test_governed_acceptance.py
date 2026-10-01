@@ -1369,6 +1369,30 @@ class RefusalsAreReachableTests(_Case):
         self.assertEqual(row["failure_reason"], "model_profile_unknown")
         self.assertEqual(self.executor.runs, [])
 
+    def test_a_RESUMED_prepared_row_meets_the_allowlist_before_any_lease(self):
+        """The allowlist is consulted AFTER the CAS commits the row, in a second commit. A fault
+        between the two leaves an `ACCEPTED_PREPARED` row -- and the resume path used to carry
+        it to the lease and the launch without the allowlist ever being asked."""
+        document, _handle = self.ready_turn()
+        refusing = self.acceptance_config(allowlist=frozenset())
+
+        from unittest import mock
+        died = RuntimeError("the process died between the CAS and the BLOCKED edge")
+        with mock.patch.object(gac.ledger, "advance", side_effect=died):
+            with self.assertRaises(RuntimeError):
+                self.trigger(document, driver=self.driver(config=refusing))
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.ACCEPTED_PREPARED,
+                         "the fixture must leave the prepared row the crash would leave")
+
+        # The retry, under the same refusing allowlist.
+        self.assertRefused(self.trigger(document, driver=self.driver(config=refusing)),
+                           "model_profile_unknown")
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.BLOCKED)
+        self.assertIsNone(row["lease_handle"], "no lease may be issued for a blocked profile")
+        self.assertEqual(self.executor.runs, [], "and nothing may be launched")
+
     def test_a_blocked_attempt_re_serves_its_own_reason(self):
         document, _handle = self.ready_turn()
         driver = self.driver(config=self.acceptance_config(allowlist=frozenset()))
@@ -1652,20 +1676,63 @@ class RefusalsAreReachableTests(_Case):
         document, _handle = self.ready_turn()
         self.assertNotIn(isg.REASON_CHAIN_DISAGREEMENT, gtr.GOVERNED_REFUSAL_REASONS)
 
+        # The reason AS THE SIGNER SPELLS IT. This stub fed the bare constant until 2026-10-01,
+        # a string `IsolatedSigner` never emits, and so passed while the real refusal -- which
+        # names the handle and the field after a colon -- went unmapped and raised.
         def refuse(_request):
             return {"artifact_type": isg.REFUSAL_ARTIFACT_TYPE, "status": "refused",
-                    "reason": isg.REASON_CHAIN_DISAGREEMENT}
+                    "reason": isg.REASON_CHAIN_DISAGREEMENT + ":record_handle.run_id"}
 
         self.assertRefused(self.trigger(document, driver=self.driver(sign_result=refuse)),
                            "hash_mismatch")
+
+    def test_a_REAL_signer_chain_disagreement_is_a_typed_hash_mismatch(self):
+        """The same verdict with no stub deciding the string: the real `IsolatedSigner`, over a
+        store whose published record disagrees with the attested evidence about `run_id`."""
+        document, _handle = self.ready_turn()
+        seen = {}
+
+        def sign_result(request):
+            record_handle = request["evidence"]["record_handle"]
+
+            class _Disagreeing(isg.ArtifactStore):
+                def read_verified(inner, handle):
+                    data = super().read_verified(handle)
+                    if handle == record_handle and data is not None:
+                        record = json.loads(data.decode("utf-8"))
+                        record["run_id"] = "some-other-run"
+                        return json.dumps(record).encode("utf-8")
+                    return data
+
+            store = _Disagreeing()
+            for handle, data in self.store.blobs.items():
+                store.put(data, handle)
+            signer = self.signer()
+            signer._store = store
+            reply = signer.sign_result(request)
+            seen["reason"] = reply.get("reason")
+            return reply
+
+        reply = self.trigger(document, driver=self.driver(sign_result=sign_result))
+        self.assertEqual(seen.get("reason"),
+                         isg.REASON_CHAIN_DISAGREEMENT + ":record_handle.run_id",
+                         "the fixture must produce the signer's own refusal, not a guess at it")
+        self.assertRefused(reply, "hash_mismatch")
+
+    def test_an_unknown_suffixed_signer_reason_is_not_trimmed_into_a_member(self):
+        """Mapping on the head must not become a way to launder any `member:anything` string
+        into the closed union: only the table's own heads are rewritten."""
+        self.assertEqual(gac._signer_reason("hash_mismatch:whatever"), "hash_mismatch:whatever")
+        self.assertNotIn(gac._signer_reason("hash_mismatch:whatever"),
+                         gtr.GOVERNED_REFUSAL_REASONS)
+        self.assertEqual(gac._signer_reason(7), "malformed")
 
     def test_every_signer_refusal_reason_lands_inside_the_closed_union(self):
         reasons = [getattr(isg, name) for name in dir(isg) if name.startswith("REASON_")]
         self.assertGreaterEqual(len(reasons), 13)
         for reason in reasons:
             with self.subTest(reason=reason):
-                mapped = gac._SIGNER_REASONS.get(reason, reason)
-                self.assertIn(mapped, gtr.GOVERNED_REFUSAL_REASONS)
+                self.assertIn(gac._signer_reason(reason), gtr.GOVERNED_REFUSAL_REASONS)
 
     def test_every_accept_open_refusal_reason_lands_inside_the_closed_union(self):
         import governed_supervisor as gs

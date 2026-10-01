@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
 import bro_stop_controller
-from bro_audit_log import AuditError, append, read_all, verify
+from bro_audit_log import AuditError, AuditMalformed, append, read_all, verify
 from bro_stop_controller import is_group_alive, list_registered, register, stop_all
 
 
@@ -92,6 +92,59 @@ class AuditLedgerTests(unittest.TestCase):
                                encoding="utf-8")
         with self.assertRaises(AuditError):
             verify(self.ledger)
+
+    def test_every_malformed_ledger_shape_is_an_audit_error_and_never_a_raw_exception(self):
+        """`verify()` documents "Raises AuditError on any break". Four shapes a tamperer can
+        write in one line each raised something else, and a caller that catches AuditError
+        alone (`bro_backup`) got a traceback."""
+        import json
+
+        def fresh():
+            for name in list(self.dir.iterdir()):
+                name.unlink()
+            append(self.ledger, "a", {"x": 1})
+            self.assertEqual(verify(self.ledger), 1)        # the control: it verifies first
+
+        head = self.ledger.with_suffix(self.ledger.suffix + ".head")
+        record = lambda: json.loads(self.ledger.read_text(encoding="utf-8").splitlines()[0])
+
+        def without(field):
+            document = record()
+            del document[field]
+            self.ledger.write_text(json.dumps(document) + "\n", encoding="utf-8")
+
+        for name, tamper in (
+            ("a corrupt head", lambda: head.write_text("{not json", encoding="utf-8")),
+            ("a head that is not an object", lambda: head.write_text("[1, 2]", encoding="utf-8")),
+            ("a head that is not UTF-8", lambda: head.write_bytes(b"\xff\xfe")),
+            ("a record that is not an object",
+             lambda: self.ledger.write_text("[1, 2]\n", encoding="utf-8")),
+            ("a record with no kind", lambda: without("kind")),
+            ("a record with no payload", lambda: without("payload")),
+            ("a ledger that is not UTF-8", lambda: self.ledger.write_bytes(b"\xff\xfe\n")),
+        ):
+            with self.subTest(shape=name):
+                fresh()
+                self.assertTrue(head.exists(), "the fixture must have a head to tamper with")
+                tamper()
+                with self.assertRaises(AuditError) as caught:
+                    verify(self.ledger)
+                # ...and the SUBCLASS, so `bro_monitor` can still tell content it cannot read
+                # from a chain that was written and then broken.
+                self.assertIsInstance(caught.exception, AuditMalformed)
+
+    def test_a_broken_link_is_a_plain_audit_error_not_a_malformed_ledger(self):
+        import json
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        lines = self.ledger.read_text(encoding="utf-8").splitlines()
+        rec = json.loads(lines[0])
+        rec["payload"]["x"] = 999
+        lines[0] = json.dumps(rec, sort_keys=True)
+        self.ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with self.assertRaises(AuditError) as caught:
+            verify(self.ledger)
+        self.assertNotIsInstance(caught.exception, AuditMalformed)
 
     def test_ledger_inside_repo_is_refused(self):
         with self.assertRaises(AuditError):

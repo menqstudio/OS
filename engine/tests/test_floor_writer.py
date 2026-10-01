@@ -85,6 +85,9 @@ class ServiceFixture(unittest.TestCase):
             "install_id": INSTALL, "marks_root": str(self.marks_root),
             "socket_path": str(root / "fw.sock"), "generation": 7,
             "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [CALLER]}}), encoding="utf-8")
+        # The umask on this box is 0o002, so `write_text` leaves a GROUP-WRITABLE file, and the
+        # config custody rule refuses that -- correctly. Provisioning writes it 0644.
+        self.config_path.chmod(0o644)
         self.config = fw.load_service_config(
             {fw.ENV_SERVICE_CONFIG: str(self.config_path)})
         # Provisioning writes the first authoritative document. §4.2: a floor is not
@@ -154,6 +157,7 @@ class Negatives(ServiceFixture):
             "install_id": INSTALL, "marks_root": str(self.marks_root),
             "socket_path": str(root / "fw.sock"), "generation": 7,
             "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [OTHER]}}), encoding="utf-8")
+        split.chmod(0o644)
         config = fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(split)})
         denied = fw.handle(_advance(), config=config, peer_uid=CALLER)
         self.assertEqual(denied["reason"], "peer_denied")
@@ -329,10 +333,73 @@ class Negatives(ServiceFixture):
             with self.subTest(case=name):
                 path = root / f"{name}.json"
                 path.write_text(json.dumps(document), encoding="utf-8")
+                path.chmod(0o644)   # custody passes, so the refusal is the CONTENT's
                 with self.assertRaises(fw.FloorWriterError) as caught:
                     fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)})
                 self.assertEqual(caught.exception.reason, "scope_unavailable")
                 self.assertIn(expected, caught.exception.detail)
+
+    def test_12c_a_config_another_principal_can_rewrite_is_refused_before_it_is_parsed(self):
+        """The config carries the per-op peer allowlist: whoever can write it decides who may
+        advance a floor. `load_service_config` said custody-unverifiable means raise, and read
+        the file with no custody check at all."""
+        root = pathlib.Path(self._tmp.name)
+        document = json.loads(self.config_path.read_text(encoding="utf-8"))
+        for name, mode in (("group-writable", 0o664), ("world-writable", 0o646)):
+            with self.subTest(case=name):
+                path = root / f"{name}.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                path.chmod(mode)
+                with self.assertRaises(fw.FloorWriterError) as caught:
+                    fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)})
+                self.assertEqual(caught.exception.reason, "scope_unavailable")
+                self.assertIn("fails custody", caught.exception.detail)
+                # The positive control: the SAME bytes at the provisioned mode load.
+                path.chmod(0o644)
+                self.assertEqual(
+                    fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)}).install_id, INSTALL)
+
+    def test_12d_a_config_reached_through_a_symlink_is_refused(self):
+        link = pathlib.Path(self._tmp.name) / "link.json"
+        link.symlink_to(self.config_path)
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(link)})
+        self.assertEqual(caught.exception.reason, "scope_unavailable")
+
+    def test_12e_a_config_under_a_swappable_ancestor_is_refused(self):
+        loose = pathlib.Path(self._tmp.name) / "loose"
+        loose.mkdir()
+        loose.chmod(0o775)   # group-writable, no sticky bit: the chain can be renamed aside
+        path = loose / "fw-config.json"
+        path.write_text(self.config_path.read_text(encoding="utf-8"), encoding="utf-8")
+        path.chmod(0o644)
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)})
+        self.assertIn("ancestor", caught.exception.detail)
+        loose.chmod(0o755)
+        self.assertEqual(
+            fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(path)}).generation, 7)
+
+    def test_08c_a_sequence_beyond_64_bits_is_refused_before_anything_is_committed(self):
+        """A 3900-character head_sequence fits the 4096-byte request, was committed, and its reply
+        -- which repeats it -- could then never be framed, for this request or any later get."""
+        before = self.document()
+        for head in (fw.MAX_HEAD_SEQUENCE + 1, 10 ** 3900):
+            with self.subTest(digits=len(str(head))):
+                reply = self.ask(_advance(head=head))
+                self.assertEqual(reply["reason"], "malformed")
+                self.assertEqual(self.document(), before, "a refused advance must commit nothing")
+        # The positive control: the largest sequence the bound admits is advanced AND framable.
+        reply = self.ask(_advance(head=fw.MAX_HEAD_SEQUENCE))
+        self.assertEqual(reply["outcome"], fw.OUTCOME_ADVANCED)
+        self.assertLessEqual(len(_encode(reply)), fw.MAX_FLOOR_FRAME_BYTES)
+
+    def test_08d_a_stored_sequence_beyond_64_bits_is_corrupt_not_served(self):
+        self.ask(_advance(head=5))
+        document = self.document()
+        document["floors"]["task-1"]["head_sequence"] = fw.MAX_HEAD_SEQUENCE + 1
+        (self.config.marks_dir / fw.STATE_FILE).write_text(json.dumps(document), encoding="utf-8")
+        self.assertEqual(self.ask(_get())["reason"], "mark_corrupt")
 
     def test_12b_an_absent_config_variable_refuses(self):
         with self.assertRaises(fw.FloorWriterError) as caught:
@@ -408,6 +475,100 @@ class FramingBoundary(ServiceFixture):
                 self.assertLessEqual(
                     len(_encode(reply)), fw.MAX_FLOOR_FRAME_BYTES,
                     "the refusal must fit the frame it has to be sent in")
+
+
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
+class TheConnectionBudgetIsTotal(ServiceFixture):
+    """§1.7 calls `CONNECTION_BUDGET_S` a TOTAL budget and says a per-recv timeout is not a bound.
+    It was armed as a per-recv timeout. These drive the real `serve_connection` over a real
+    socket pair; the uid `SO_PEERCRED` reports on one is this process's own, which is why the
+    assertions are about TIME and the framing verdict, never about admission."""
+
+    def _served(self, budget, writer):
+        import socket
+        import time
+        ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(ours.close)
+        self.addCleanup(theirs.close)
+        original = fw.CONNECTION_BUDGET_S
+        fw.CONNECTION_BUDGET_S = budget
+        self.addCleanup(setattr, fw, "CONNECTION_BUDGET_S", original)
+        thread = threading.Thread(target=writer, args=(theirs,), daemon=True)
+        started = time.monotonic()
+        thread.start()
+        reply = fw.serve_connection(ours, self.config)
+        elapsed = time.monotonic() - started
+        ours.close()
+        thread.join(timeout=30)
+        return reply, elapsed
+
+    def test_a_drip_peer_is_cut_off_at_the_budget_not_read_to_completion(self):
+        import time
+        frame = _encode(_get())
+        wire = len(frame).to_bytes(fw.LENGTH_PREFIX_BYTES, "big") + frame
+
+        def drip(sock):
+            # One byte per 0.05 s: every single `recv` returns well inside a 0.4 s timeout, so a
+            # per-recv timeout never fires and the whole frame arrives after ~len(wire) * 0.05 s.
+            try:
+                for byte in wire:
+                    sock.sendall(bytes([byte]))
+                    time.sleep(0.05)
+            except OSError:
+                pass
+
+        self.assertGreater(len(wire) * 0.05, 2.0, "the drip must outlast the budget by a margin")
+        reply, elapsed = self._served(0.4, drip)
+        self.assertEqual(reply["reason"], "malformed")
+        self.assertLess(elapsed, 1.5, f"a 0.4 s budget held the serial loop for {elapsed:.2f} s")
+
+    def test_a_prompt_peer_is_answered_inside_the_same_budget(self):
+        frame = _encode(_get())
+        wire = len(frame).to_bytes(fw.LENGTH_PREFIX_BYTES, "big") + frame
+        reply, _elapsed = self._served(5.0, lambda sock: sock.sendall(wire))
+        # Reaching `handle` is the control: this process's uid is not on the allowlist, so the
+        # verdict is the per-op denial -- a decision about the REQUEST, not about its framing.
+        self.assertEqual(reply["reason"], "peer_denied")
+
+
+@unittest.skipUnless(_LINUX, LINUX_ONLY)
+class OneConnectionCannotEndTheLoop(ServiceFixture):
+    """§1.9: one writer process. An exception escaping one connection ended it."""
+
+    def test_a_fault_in_one_connection_is_logged_and_the_next_peer_is_accepted(self):
+        import contextlib
+        import io
+
+        class Sock:
+            closed = 0
+
+            def close(self):
+                Sock.closed += 1
+
+        class Server:
+            accepts = 0
+
+            def accept(self):
+                Server.accepts += 1
+                if Server.accepts > 2:
+                    raise OSError(9, "the listener is gone; this is how the test stops the loop")
+                return Sock(), None
+
+        served = []
+
+        def exploding(sock, config):
+            served.append(sock)
+            raise RuntimeError("a fault serve_connection has no name for")
+
+        original = fw.serve_connection
+        fw.serve_connection = exploding
+        self.addCleanup(setattr, fw, "serve_connection", original)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(OSError):
+            fw.serve_forever(Server(), self.config)
+        self.assertEqual(len(served), 2, "the loop must survive the first fault and serve again")
+        self.assertEqual(Sock.closed, 2, "each faulted connection is still closed")
+        self.assertIn("RuntimeError", stderr.getvalue(), "the fault is logged, not swallowed")
 
 
 @unittest.skipUnless(_LINUX, LINUX_ONLY)
@@ -614,6 +775,7 @@ class RunnerStartup(unittest.TestCase):
             del document[key]
         path = self.root / "fw-config.json"
         path.write_text(json.dumps(document), encoding="utf-8")
+        path.chmod(0o644)
         return path
 
     def start(self, config_path=None):
@@ -641,8 +803,11 @@ class RunnerStartup(unittest.TestCase):
     def test_a_malformed_config_refuses(self):
         path = self.root / "bad.json"
         path.write_text("{not json", encoding="utf-8")
+        path.chmod(0o644)   # so the refusal below is the parse, not the file's custody
         result = self.start(path)
         self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read", result.stderr)
+        self.assertNotIn("fails custody", result.stderr)
 
     def test_a_config_without_a_per_op_allowlist_refuses(self):
         result = self.start(self.config(peers=None))

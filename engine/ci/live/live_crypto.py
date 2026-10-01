@@ -17,6 +17,8 @@ boundary. Raw 32-byte key material is the interchange form (``public_key_hex`` i
 from __future__ import annotations
 
 import base64
+import os
+import sys
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -55,9 +57,24 @@ def load_public_hex(hex_str: str) -> Ed25519PublicKey:
     return Ed25519PublicKey.from_public_bytes(bytes.fromhex(hex_str))
 
 
+# `brops_protocol` lives in engine/runtime. Every runner that imports this module has already put
+# that directory on the path; this makes the helper importable on its own as well.
+_RUNTIME = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "runtime"))
+if _RUNTIME not in sys.path:
+    sys.path.insert(0, _RUNTIME)
+
+from brops_protocol import decode_base64url  # noqa: E402
+
+
 def _unb64url(sig_b64: str) -> bytes:
-    pad = "=" * (-len(sig_b64) % 4)
-    return base64.urlsafe_b64decode(sig_b64 + pad)
+    """base64url WITHOUT padding -> exact bytes, through the engine's one STRICT decoder.
+
+    This was `base64.urlsafe_b64decode(sig + padding)`, which skips any character outside the
+    alphabet: a signature with a `=`, a newline or a `!` in it decoded to the same 64 bytes and
+    verified. The Rust side decodes with `URL_SAFE_NO_PAD`, which refuses all three.
+    """
+    return decode_base64url(sig_b64)
 
 
 def sign_b64url(priv: Ed25519PrivateKey, message: bytes) -> str:

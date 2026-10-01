@@ -65,7 +65,8 @@ EXPECTED_FRAGMENT = {
         "/opt/brops-live/bridge/engine_sidecar.py\n",
 }
 FIXTURE_CONFIG = {"execution": {
-    "recorder_command": ["sudo", "-n", "-u", "brops-recorder", "/opt/brops-live/bin/governed_recorder"],
+    "recorder_command": ["/usr/bin/sudo", "-n", "-u", "brops-recorder",
+                         "/opt/brops-live/bin/governed_recorder"],
     "report_dir": "/opt/brops-live/report",
     "evidence_state_dir": "/opt/brops-live/evidence-state",
     "recorder_store_dir": "/opt/brops-live/store",
@@ -96,6 +97,16 @@ def _outside_block(script: str) -> list[tuple[int, str]]:
     lines = script.split("\n")
     a, b = lines.index(BLOCK_OPEN), lines.index(BLOCK_CLOSE)
     return [(i, line) for i, line in enumerate(lines) if not a <= i <= b]
+
+
+def _marked(script: str, marker: str) -> str:
+    """The lines between `# >>> marker >>>` and `# <<< marker <<<`, markers included."""
+    lines = script.split("\n")
+    opens = [i for i, line in enumerate(lines) if line.strip() == "# >>> %s >>>" % marker]
+    closes = [i for i, line in enumerate(lines) if line.strip() == "# <<< %s <<<" % marker]
+    if len(opens) != 1 or len(closes) != 1 or closes[0] < opens[0]:
+        raise AssertionError("%s markers: %d open, %d close" % (marker, len(opens), len(closes)))
+    return "\n".join(lines[opens[0]:closes[0] + 1]) + "\n"
 
 
 def _shell_function(script: str, name: str) -> str:
@@ -131,6 +142,41 @@ class KitSudoersTextTests(unittest.TestCase):
         for function in ("sudoers_find_visudo", "sudoers_stage_begin", "sudoers_stage_end",
                          "sudoers_install"):
             self.assertIn("\n%s() {" % function, live)
+
+    def test_both_kits_carry_the_same_generators_and_host_blocks(self):
+        """Four more things the two kits each carry a copy of, with nothing holding the copies
+        equal until 2026-10-01: the recorder-policy generator (a root-owned TCB document), the
+        group helper, and the two blocks that record and restore the host's /opt."""
+        live, ladder = (_script(name) for name in KITS)
+        self.assertEqual(_heredoc(live, "PYPOLICY")[1], _heredoc(ladder, "PYPOLICY")[1])
+        self.assertEqual(_shell_function(live, "add_group"), _shell_function(ladder, "add_group"))
+        for marker in ("host-record", "host-restore"):
+            with self.subTest(block=marker):
+                self.assertEqual(_marked(live, marker), _marked(ladder, marker))
+        self.assertIn("gpasswd -M", _shell_function(live, "add_group"))
+        code = "\n".join(line for line in (live + ladder).split("\n")
+                         if not line.lstrip().startswith("#"))
+        self.assertNotIn("usermod", code,
+                         "an append-only group cannot express either kit's stated topology")
+
+    def test_neither_kit_touches_the_host_outside_the_recorded_blocks(self):
+        """/opt is changed in ONE place per kit, and never recursively. `setfacl -Rb /opt` stripped
+        the ACLs of every other package under /opt; `chown`/`chmod` of /opt was never undone."""
+        for name in KITS:
+            script = _script(name)
+            record = _marked(script, "host-record")
+            outside = script.replace(record, "").replace(_marked(script, "host-restore"), "")
+            code = "\n".join(line for line in outside.split("\n")
+                             if not line.lstrip().startswith("#"))
+            with self.subTest(kit=name):
+                for needle in ("chown 0:0 /opt", "chmod 0755 /opt", "setfacl -Rb /opt",
+                               '"$OPT_DIR"'):
+                    self.assertNotIn(needle, code)
+                self.assertNotRegex(record, r"setfacl -R\w* \"?\$OPT_DIR")
+                self.assertEqual([line for line in code.split("\n") if line.startswith("OPT_DIR=")],
+                                 ["OPT_DIR=/opt"])
+                # ...and the restore really is inside the function the trap runs.
+                self.assertIn(_marked(script, "host-restore"), _shell_function(script, "cleanup"))
 
     def test_the_block_is_aimed_at_the_real_directory_and_the_absolute_visudo_first(self):
         """The executed tests below substitute these three; the kits must not."""
@@ -576,6 +622,169 @@ class KitCleanupTests(_Harness):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual([r["argv"] for r in self.records("setfacl")],
                          [["-x", "u:brops-verifier_broker", "/etc/sudoers.d"]])
+
+
+class KitHostStateTests(_Harness):
+    """The kits' footprint OUTSIDE /opt/brops-live, and what they leave INSIDE it, run for real
+    against a stand-in /opt. `chmod`, `stat` and `rm` are the real tools; `chown`, `setfacl` and
+    `getfacl` are recording stand-ins (the first two need root, the third must not read a real ACL).
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.opt = os.path.join(self.tmp, "opt")
+        self.live = os.path.join(self.opt, "brops-live")
+        self.tcb = os.path.join(self.live, "tcb")
+        self.keys = os.path.join(self.live, "keys")
+        os.makedirs(self.tcb)
+        os.makedirs(self.keys)
+        os.chmod(self.opt, 0o777)            # the hosted runner image: drwxrwxrwx
+        self.launcher = os.path.join(self.tcb, "privileged-launcher.bin")
+        self.root_priv = os.path.join(self.keys, "root.priv")
+        self.evil = os.path.join(self.tmp, "attacker-launcher")
+        for path in (self.launcher, self.root_priv, self.evil):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("x")
+        os.chmod(self.launcher, 0o4750)
+        with open(os.path.join(self.toolbin, "getfacl"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nprintf '# file: %s\\n# owner: someone\\nuser::rwx\\n' \"$2\"\n")
+        os.chmod(os.path.join(self.toolbin, "getfacl"), 0o755)
+        for tool in ("printf",):
+            real = shutil.which(tool)
+            if real:
+                os.symlink(real, os.path.join(self.toolbin, tool))
+
+    def preamble(self, kit: str, *, record: bool) -> str:
+        script = _script(kit)
+        text = ("BROKER_USER=brops-verifier_broker\nPIDS=()\n"
+                'SUDOERS="$SUDOERS_DIR/a"\nDRIVER_SUDOERS="$SUDOERS_DIR/b"\n'
+                "OPT_DIR=%s\nLIVE=%s\nTCB=%s\nKEYS=%s\nEVIL_LAUNCHER=%s\n"
+                % (self.opt, self.live, self.tcb, self.keys, self.evil))
+        text += _shell_function(script, "cleanup") + "trap cleanup EXIT\n"
+        if record:
+            text += _marked(script, "host-record")
+        return text
+
+    def mode(self, path: str) -> int:
+        return stat.S_IMODE(os.stat(path).st_mode)
+
+    def test_the_record_block_hardens_opt_itself_and_never_recurses_over_it(self):
+        for kit in KITS:
+            with self.subTest(kit=kit):
+                os.chmod(self.opt, 0o777)
+                if os.path.exists(self.log):
+                    os.unlink(self.log)
+                done = self.run_block(kit, 'echo "DURING=$(stat -c %a "$OPT_DIR")"\nkill -KILL $$\n',
+                                      preamble=self.preamble(kit, record=True))
+                self.assertIn("DURING=755", done.stdout, done.stderr)
+                self.assertEqual(self.mode(self.opt), 0o755, "SIGKILL runs no trap: still hardened")
+                self.assertEqual([r["argv"] for r in self.records("setfacl")],
+                                 [["-b", self.opt], ["-Rb", self.live]])
+                self.assertEqual([r["argv"] for r in self.records("chown")], [["0:0", self.opt]])
+
+    def test_cleanup_puts_opt_back_and_defuses_what_the_kit_leaves_behind(self):
+        owner = "%d:%d" % (os.stat(self.opt).st_uid, os.stat(self.opt).st_gid)
+        for kit in KITS:
+            for ending in ("exit 3\n", "kill -TERM $$\nsleep 30\n"):
+                with self.subTest(kit=kit, ending=ending.split()[0]):
+                    os.chmod(self.opt, 0o777)
+                    os.chmod(self.launcher, 0o4750)
+                    for path in (self.root_priv, self.evil):
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write("x")
+                    if os.path.exists(self.log):
+                        os.unlink(self.log)
+                    done = self.run_block(kit, ending, preamble=self.preamble(kit, record=True))
+                    self.assertNotIn("unbound variable", done.stderr)
+                    self.assertEqual(self.mode(self.opt), 0o777,
+                                     "the kit left the host's /opt different from how it found it")
+                    self.assertEqual([r["argv"] for r in self.records("chown")],
+                                     [["0:0", self.opt], [owner, self.opt]])
+                    self.assertEqual(self.records("setfacl")[-1]["argv"], ["--restore=-"])
+                    self.assertEqual(self.mode(self.launcher), 0o750,
+                                     "a setuid-root launcher was left behind")
+                    self.assertFalse(os.path.exists(self.root_priv),
+                                     "the kit root's private key was left on disk")
+                    self.assertFalse(os.path.exists(self.evil))
+
+    def test_an_exit_before_the_host_was_touched_restores_nothing(self):
+        """The trap is armed long before the record block runs. With nothing recorded there is
+        nothing to put back, and /opt must not be chown-ed or chmod-ed to an empty value."""
+        for kit in KITS:
+            with self.subTest(kit=kit):
+                os.chmod(self.opt, 0o777)
+                if os.path.exists(self.log):
+                    os.unlink(self.log)
+                done = self.run_block(kit, "exit 4\n", preamble=self.preamble(kit, record=False))
+                self.assertEqual(done.returncode, 4, done.stderr)
+                self.assertEqual(done.stderr, "")
+                self.assertEqual(self.mode(self.opt), 0o777)
+                self.assertEqual(self.records("chown"), [])
+                self.assertEqual([r["argv"] for r in self.records("setfacl")
+                                  if r["argv"][:1] != ["-x"]], [])
+
+    def test_add_group_sets_the_member_list_rather_than_appending_to_it(self):
+        for name in ("getent", "groupadd", "gpasswd", "usermod"):
+            self.fake(os.path.join(self.toolbin, name), name)
+        for kit in KITS:
+            with self.subTest(kit=kit):
+                if os.path.exists(self.log):
+                    os.unlink(self.log)
+                driver = os.path.join(self.tmp, "groups.sh")
+                with open(driver, "w", encoding="utf-8") as f:
+                    f.write("set -u\n" + _shell_function(_script(kit), "add_group")
+                            + 'add_group brops-report brops-recorder brops-supervisor; echo "RC=$?"\n')
+                done = subprocess.run([self.bash, driver], capture_output=True, text=True,
+                                      timeout=60, check=False,
+                                      env={"PATH": self.toolbin, "LC_ALL": "C"})
+                self.assertIn("RC=0", done.stdout, done.stderr)
+                self.assertEqual([r["argv"] for r in self.records("gpasswd")],
+                                 [["-M", "brops-recorder,brops-supervisor", "brops-report"]])
+                self.assertEqual(self.records("usermod"), [])
+
+
+class RecorderInvokerTests(_Harness):
+    """The recorder invoker out of the TCB-owned config is an ABSOLUTE path. A bare `sudo` is
+    resolved through the caller's $PATH; the sidecar invoker is refused for that reason
+    (`write_broker_config.validate_sidecar`) and this one was REQUIRED to be the bare word."""
+
+    def build(self, kit: str, command: list) -> subprocess.CompletedProcess:
+        _, body = _heredoc(_script(kit), "PYSUDO")
+        config = os.path.join(self.tmp, "config.json")
+        with open(config, "w", encoding="utf-8") as f:
+            json.dump(dict(FIXTURE_CONFIG, execution=dict(
+                FIXTURE_CONFIG["execution"], recorder_command=command)), f)
+        invoker = "brops-verifier_broker" if kit == "run_live_turn.sh" else "brops-supervisor"
+        return subprocess.run(
+            [sys.executable, "-c", body, config, invoker, "brops-recorder",
+             os.path.join(self.tmp, "fragment")],
+            capture_output=True, text=True, timeout=60, check=False)
+
+    def test_a_bare_or_wrong_invoker_is_refused_and_the_absolute_one_accepted(self):
+        recorder = "/opt/brops-live/bin/governed_recorder"
+        for kit in KITS:
+            for name, argv0, accepted in (("absolute", "/usr/bin/sudo", True),
+                                          ("bare", "sudo", False),
+                                          ("relative", "bin/sudo", False),
+                                          ("another program", "/usr/bin/env", False),
+                                          ("empty", "", False)):
+                with self.subTest(kit=kit, invoker=name):
+                    done = self.build(kit, [argv0, "-n", "-u", "brops-recorder", recorder])
+                    self.assertEqual(done.returncode == 0, accepted, done.stderr)
+                    if not accepted:
+                        self.assertIn("unexpected recorder_command", done.stderr)
+
+    def test_the_provisioner_emits_the_absolute_invoker_the_kits_require(self):
+        sys.path.insert(0, LIVE_DIR)
+        try:
+            import provision_keys
+        finally:
+            sys.path.remove(LIVE_DIR)
+        self.assertEqual(provision_keys.SUDO_BIN, "/usr/bin/sudo")
+        source = _script("provision_keys.py")
+        self.assertIn('recorder_command = [SUDO_BIN, "-n", "-u", args.sudo_recorder_user',
+                      source)
+        self.assertNotIn('["sudo", "-n", "-u"', source + _script("provision_ladder.py"))
 
 
 class FragmentTextTests(_Harness):

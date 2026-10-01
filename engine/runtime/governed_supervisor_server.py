@@ -3,10 +3,20 @@
 The PURE decision logic lives in ``governed_supervisor`` (the ``accept_open`` two-phase
 verify and the state-driven ``build_run_attestation``); the DURABLE state lives in
 ``governed_supervisor_ledger``. This module is the wiring ONLY: it binds a unix-domain
-socket, authenticates each connecting peer by ``SO_PEERCRED`` uid, allowlists ONLY the
-broker uid (the renderer and sidecar are DENIED, matching the challenge-authority front
-door), then reads exactly one length-prefixed JSON frame, dispatches it, and writes the
-framed reply.
+socket, authenticates each connecting peer by ``SO_PEERCRED`` uid, admits TWO principals and
+denies every other uid (the renderer included), then reads exactly one length-prefixed JSON
+frame, dispatches it, and writes the framed reply.
+
+The two principals, and what each may send (this paragraph said "allowlists ONLY the broker
+uid (the renderer and sidecar are DENIED ...)" long after the second one was admitted):
+
+  * the BROKER uid speaks the §5 ``op`` set below, and nothing keyed on ``protocol``;
+  * the SIDECAR uid -- only where the deployment configures one -- speaks exactly the six
+    protocols in :data:`SIDECAR_PROTOCOLS` (the §4.10(a0) open, the three §4.10(a)(b)(c)
+    staging messages, the §4.10(d) trigger and the §4.10(f) output read) and no ``op`` at all.
+
+The two uids must differ: a deployment that gives both roles one uid is refused as a §2.6
+principal collapse rather than served.
 
 **§5 v2 op set (F-01).** The five ops walk ONE durable attempt through its lifecycle:
 ``accept-open`` (verify → CAS an acceptance row → lease), ``launch-gate`` (the step-8a
@@ -21,7 +31,7 @@ old-protocol ``attest-run {facts}`` is a hard error, never a silently-ignored fi
 Trust-boundary properties enforced here (all fail-closed):
 
   * peer authentication happens at accept time via the OS (``SO_PEERCRED``);
-    a non-broker peer is refused BEFORE any frame is read.
+    a peer that is neither admitted uid is refused BEFORE any frame is read.
   * the request frame is length-prefixed (4-byte big-endian) and hard-bounded
     to ``MAX_FRAME_BYTES`` (8192); an oversize/short/truncated frame is refused.
   * ``now_ms`` is NEVER taken from the wire — the supervisor's own clock
@@ -571,30 +581,23 @@ def dispatch(
 def _staging_unconfigured(request: Mapping[str, Any]) -> Dict[str, Any]:
     """A staging message on a supervisor with no ``StagingService``.
 
-    The reply is produced by the protocol's OWN handler with an impossible sidecar uid
-    (``None``, which ``peer_is_sidecar`` refuses fail-closed), rather than assembled here.
-    That way this layer never has to know which reason each of the three closed sets uses
-    for "you are not allowed to send this" — it asks the module that owns the set.
+    The reply is the one each protocol gives a principal that may not send it, and it comes
+    from the module that owns the three closed reason sets:
+    ``governed_staging_upload.peer_denied_reply``. This layer never has to know which reason
+    each set uses for "you are not allowed to send this".
+
+    (This docstring said that from the start, and described a mechanism -- "the protocol's OWN
+    handler with an impossible sidecar uid ... rather than assembled here" -- that the code
+    below it did not use: it assembled the three replies by hand with hard-coded reasons, a
+    second copy of the mapping ``governed_staging_upload`` already holds.)
     """
-    from governed_staging_upload import (
-        STAGING_CHUNK_PROTOCOL,
-        STAGING_FINAL_PROTOCOL,
-        STAGING_OPEN_PROTOCOL,
-        staging_open_refused,
-        chunk_refused,
-        final_refused,
-        REFUSE_MALFORMED,
-        REFUSE_PEER_DENIED as STAGING_PEER_DENIED,
-    )
+    from governed_staging_upload import peer_denied_reply
 
     protocol = request.get("protocol")
-    if protocol == STAGING_OPEN_PROTOCOL:
-        return staging_open_refused(STAGING_PEER_DENIED)
-    if protocol == STAGING_CHUNK_PROTOCOL:
-        return chunk_refused(REFUSE_MALFORMED, 0)
-    if protocol == STAGING_FINAL_PROTOCOL:
-        return final_refused(REFUSE_MALFORMED)
-    raise ServerError("unknown staging protocol %r" % (protocol,))
+    reply = peer_denied_reply(protocol)
+    if reply is None:
+        raise ServerError("unknown staging protocol %r" % (protocol,))
+    return reply
 
 
 def _op_accept_open(request, config, conn, verify_sig, recompute_request_sha256, clock_ms):
@@ -651,6 +654,16 @@ def _op_accept_open(request, config, conn, verify_sig, recompute_request_sha256,
     return {"ok": True, "op": OP_ACCEPT_OPEN, "lease": _lease_to_dict(lease)}
 
 
+#: What each of `governed_supervisor_ledger.lease_launch_gate`'s three causes means, for the
+#: reply detail. Keyed on the words that function returns.
+_LAUNCH_GATE_DETAIL = {
+    "lease_not_yet_valid": "the supervisor's clock is before the lease was issued",
+    "lease_expired": "the lease window has passed",
+    "insufficient_remaining_budget":
+        "remaining lease budget below %d ms" % ledger.MIN_LAUNCH_REMAINING_MS,
+}
+
+
 def _op_launch_gate(request, conn, clock_ms):
     _require_exact_fields(request, OP_LAUNCH_GATE, ("execution_attempt_id",))
     attempt = _require_str(request, "execution_attempt_id")
@@ -663,8 +676,17 @@ def _op_launch_gate(request, conn, clock_ms):
                 "execution_attempt_id": attempt}
     # The gate failed against the supervisor's OWN lease window: the attempt is durably
     # EXPIRED and no launch may follow.
-    return _refusal(OP_LAUNCH_GATE, "lease_expired",
-                    "remaining lease budget below %d ms" % ledger.MIN_LAUNCH_REMAINING_MS)
+    #
+    # ONE reason word, deliberately (see REFUSE_LEASE_EXPIRED) -- but the gate has THREE causes
+    # and persists which one fired as the row's `failure_reason`. The detail used to be the
+    # fixed sentence "remaining lease budget below 180000 ms" for all three, which is false for
+    # a lease that is not yet valid and for one that has plainly expired, and it is the only
+    # account of the refusal an operator gets. It now says what the ledger recorded.
+    row = ledger.load_acceptance(conn, attempt)
+    cause = row["failure_reason"] if row is not None else None
+    return _refusal(OP_LAUNCH_GATE, REFUSE_LEASE_EXPIRED,
+                    "%s: %s" % (cause, _LAUNCH_GATE_DETAIL.get(
+                        cause, "the step-8a launch gate refused this lease")))
 
 
 def _op_execution_started(request, conn, clock_ms):
@@ -985,7 +1007,8 @@ def handle_connection(
     try:
         raw = read_frame(conn, frame_bound)
         request = json.loads(raw.decode("utf-8"))
-        # The sidecar's grant is four protocol names wide. Anything else it sends is refused
+        # The sidecar's grant is exactly `SIDECAR_PROTOCOLS` wide (six names; this said "four"
+        # after the open and the output read were added). Anything else it sends is refused
         # here, in the transport, so the op handlers below never see a non-broker caller.
         if not broker_peer and (
             not isinstance(request, dict) or request.get("protocol") not in SIDECAR_PROTOCOLS
@@ -1105,7 +1128,12 @@ def _try_write(conn: Any, reply: Mapping[str, Any],
         return
     except OSError:
         return  # peer already gone; nothing to do, connection is closed by loop
-    except FrameError:
+    except (FrameError, TypeError, ValueError):
+        # Over the bound, or a reply `json.dumps` could not encode at all. The second pair is
+        # what `challenge_authority_server._try_write` and `isolated_signer_server._try_write`
+        # -- this function's two siblings, copied from one original -- already caught, and this
+        # copy had drifted away from: an unencodable reply raised `TypeError` straight through
+        # the function whose docstring says no reply problem escapes it.
         pass  # fall through to the minimal reply below
     try:
         write_frame(conn, _encode_reply({"ok": False, "error": "reply exceeded frame bound"}),

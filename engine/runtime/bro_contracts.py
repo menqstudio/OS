@@ -602,5 +602,17 @@ def validate_registered_schemas(root: pathlib.Path = ROOT) -> int:
             cls(schema)
         except Exception as exc: raise ContractError(f"invalid registered schema {item.get('id')}: {exc}") from exc
         count+=1
-    if count != len(registry.get("schemas",[])): raise ContractError("schema registry drift")
+    # Drift between the REGISTRY and the DIRECTORY. This line used to compare `count` with the
+    # length of the very list `count` had just been incremented over, so it could not be false:
+    # every failure inside the loop raises first. What it claimed to catch is checked here
+    # instead: a schema file on disk that the registry does not name (validated by nothing), and
+    # a path registered twice. A registered path that is MISSING already raised in the loop.
+    registered = [item["path"] for item in registry.get("schemas", [])]
+    on_disk = sorted("schemas/" + p.name for p in (root / "schemas").glob("*.schema.json"))
+    unregistered = sorted(set(on_disk) - set(registered))
+    duplicated = sorted({p for p in registered if registered.count(p) > 1})
+    if unregistered or duplicated:
+        raise ContractError(
+            "schema registry drift: unregistered schema file(s) %s; path(s) registered more "
+            "than once %s" % (unregistered, duplicated))
     return count

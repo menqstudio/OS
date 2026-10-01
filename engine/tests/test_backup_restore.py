@@ -92,6 +92,32 @@ class BackupRestoreTests(unittest.TestCase):
         with self.assertRaises(bro_backup.BackupError):
             self._backup()
 
+    def test_a_refused_ledger_leaves_nothing_in_the_destination(self):
+        """"Never archived" (the module docstring). The copy used to come BEFORE the chain
+        check, so the refused ledger -- and every file copied before it -- was left in the
+        destination, and the next run refused that as "not empty"."""
+        lines = self.ledger.read_text(encoding="utf-8").splitlines()
+        rec = json.loads(lines[0]); rec["payload"] = {"reason": "forged"}
+        lines[0] = json.dumps(rec, sort_keys=True)
+        tampered = "\n".join(lines) + "\n"
+        honest = self.ledger.read_text(encoding="utf-8")
+        dest = self.tmp / "archive"
+        # Both orders: the bad ledger first, and after a healthy source has been walked.
+        for order in (("shadow", "recovery"), ("recovery", "shadow")):
+            with self.subTest(order=order):
+                self.ledger.write_text(tampered, encoding="utf-8")
+                sources = {name: self.sources[name] for name in order}
+                with self.assertRaises(bro_backup.BackupError):
+                    bro_backup.backup(sources, dest, now=NOW)
+                leftover = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*")) \
+                    if dest.exists() else []
+                self.assertEqual(leftover, [], "a refused backup wrote into the destination")
+                # ...so the SAME destination takes the next, healthy run.
+                self.ledger.write_text(honest, encoding="utf-8")
+                bro_backup.backup(sources, dest, now=NOW)
+                bro_backup.verify_archive(dest)
+                shutil.rmtree(dest)
+
     def test_tampered_archive_is_caught_before_restore(self):
         archive = self._backup()
         target = archive / "recovery" / "a.state.json"

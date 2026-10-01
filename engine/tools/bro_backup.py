@@ -172,10 +172,21 @@ def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int,
     # verify_signed_payload then binds the signature to this artifact type.
     manifest: dict = {"schema": 1, "artifact_type": MANIFEST_ARTIFACT_TYPE,
                       "created_at_epoch": int(now), "sources": {}}
+    # PASS ONE: decide. Every source name is validated, every file enumerated and every ledger
+    # chain-verified BEFORE a single byte is written under `dest`. The module docstring says a
+    # ledger that fails verification is "never archived", and until 2026-10-01 the copy came
+    # first: `shutil.copyfile` ran, then `_chain_count` refused, and the refused ledger -- with
+    # every file copied before it -- was left sitting in `dest`, which the next run then
+    # refused as "backup destination is not empty".
+    planned = []
     for name, source in sources.items():
         if "/" in name or "\\" in name or name in {"", ".", ".."}:
             raise BackupError(f"invalid source name: {name!r}")
         files = _iter_files(pathlib.Path(source))
+        chains = {rel: _chain_count(absolute, anchor_keys) for rel, absolute in files}
+        planned.append((name, source, files, chains))
+    # PASS TWO: copy what pass one accepted.
+    for name, source, files, chains in planned:
         entries = []
         for rel, absolute in files:
             target = dest / name / rel
@@ -185,8 +196,7 @@ def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int,
                 "rel": rel,
                 "sha256": _sha256(absolute),
                 "bytes": absolute.stat().st_size,
-                "audit_chain": (lambda c: {"count": c} if c is not None else None)(
-                    _chain_count(absolute, anchor_keys)),
+                "audit_chain": (lambda c: {"count": c} if c is not None else None)(chains[rel]),
             })
         manifest["sources"][name] = {
             "kind": "file" if pathlib.Path(source).expanduser().is_file() else "dir",

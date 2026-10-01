@@ -302,6 +302,17 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
         return sorted(markers), sorted(slots)
 
     # ---- tests --------------------------------------------------------------
+    def test_an_allow_that_prepared_nothing_does_not_say_it_prepared_a_journal(self):
+        """The allow reason is the audit ledger's `detail` for the verdict. A READ prepares no
+        recovery journal and reserves no lease, and its ledger record said it had."""
+        env = self._bundle_env()
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            allowed, reason = authorize_tool(self._state(), "Read", TOOL_INPUT, tool_use_id=TUID)
+            self.assertTrue(allowed, reason)
+            self.assertIn("allowed by capability kernel", reason)
+            self.assertNotIn("recovery journal prepared", reason)
+            self.assertEqual(self._ledger_state(), ([], []), "a read reserved a lease")
+
     def test_specialist_mutation_authorizes_and_settles_end_to_end(self):
         env = self._bundle_env()
         with self._patches(), patch.dict(os.environ, env, clear=False):

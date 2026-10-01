@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# Wave 3b — LIVE production governed-turn orchestrator (LINUX-RUN, REAL root + REAL service accounts).
+# Wave 3b — LIVE governed-turn orchestrator (LINUX-RUN, REAL root + REAL service accounts).
 #
-# Assembles ONE genuine production `trusted_verified` end-to-end on a Debian box: it provisions the setuid
-# launcher + executor image + protected store + the four Ed25519 keypairs + the root-signed production key
-# manifest, starts the THREE live Python service servers (challenge-authority, governed-supervisor,
-# isolated-signer) as their dedicated service accounts, then runs the Rust `live_turn` driver as the broker
-# account. The driver drives the real broker chain (challenge -> supervisor(+lease) -> privileged
-# recorder->setuid launcher->executor -> supervisor attest-run -> isolated-signer sign-result ->
-# verify_and_accept -> production trust) and prints ONE `RESULT:` line. It NEVER fakes a trusted_verified.
+# Demonstrates ONE chain-bound governed turn end-to-end on a Debian box, under a root the KIT ITSELF
+# generates: it provisions the setuid launcher + executor image + protected store + the four Ed25519
+# keypairs + the root-signed key manifest, starts the THREE live Python service servers
+# (challenge-authority, governed-supervisor, isolated-signer) as their dedicated service accounts, then
+# runs the Rust `live_turn` driver as the broker account. The driver drives the real broker chain
+# (challenge -> supervisor(+lease) -> privileged recorder->setuid launcher->executor -> supervisor
+# attest-run -> isolated-signer sign-result -> verify_and_accept) and prints ONE `RESULT:` line.
+#
+# What GREEN means, in the words the green branch at the bottom uses: the chain bound a verified turn,
+# and it committed as `demonstration_custody`. It is NOT a production claim and this kit cannot make
+# one -- the root anchor is kit-generated, so custody of it is unproven. This header promised "ONE
+# genuine production `trusted_verified`" and "-> production trust" until 2026-10-01, long after the
+# green condition stopped asserting either.
+#
+# HOST STATE. While it runs the kit owns /opt/brops-live, one fragment in /etc/sudoers.d, three system
+# groups, and it makes /opt itself root-owned 0755 with no ACL. On EVERY exit path `cleanup` removes the
+# fragment, restores /opt's owner, mode and ACL, clears the launcher's setuid bit and deletes the kit
+# root's private key. /opt/brops-live and the groups are left (the next run replaces the tree).
 #
 # Requires: real root (sudo), the pre-created service accounts (brops-verifier_broker 5001, brops-challenge
 # 5002, brops-supervisor 5004, brops-recorder 5005, brops-signer 5006, brops-executor 5007), a Rust
@@ -26,6 +37,8 @@ SIGNER_USER=brops-signer
 EXECUTOR_USER=brops-executor
 
 [ "$(id -u)" = "0" ] || { echo "FAIL: run as root (sudo) — real service accounts + setuid launcher"; exit 1; }
+# The recorder invoker the config pins is this absolute path (provision_keys.SUDO_BIN).
+[ -x /usr/bin/sudo ] || { echo "FAIL: /usr/bin/sudo is not executable; the recorder invoker is pinned to it"; exit 1; }
 
 # A predictable file mode for the cross-uid store/report/output files (content-addressed integrity holds
 # regardless, but 0644 keeps a reader on a different uid able to open them).
@@ -65,7 +78,11 @@ done
 LIVE=/opt/brops-live
 STORE="$LIVE/store"; SOCK="$LIVE/sock"; REPORT="$LIVE/report"; TCB="$LIVE/tcb"; BIN="$LIVE/bin"; KEYS="$LIVE/keys"
 SUPSTATE="$LIVE/supervisor-state"   # the supervisor's PRIVATE durable ledger (F-01), 0700
-RECSTATE="$LIVE/recorder-state"     # the recorder's PRIVATE evidence head-sequence counter (F-02), 0700
+RECSTATE="$LIVE/recorder-state"     # the recorder's evidence head-sequence counter (F-02): recorder-owned,
+                                    # supervisor-group-READABLE, 0750 (set below; not 0700)
+# The one directory OUTSIDE $LIVE this kit changes. A variable only so the test can run the
+# host-record / host-restore blocks against a directory that is not the real /opt.
+OPT_DIR=/opt
 rm -rf "$LIVE"
 mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$LIVE/engine"
 
@@ -247,10 +264,16 @@ chown 0:0 "$TCB/root-anchor.json"; chmod 0644 "$TCB/root-anchor.json"
 # `sup/`+`rec/` namespaces at `2750`, which in turn needs the signer moved into `brops-store` and the
 # signer's `<store>/<handle>` resolution taught about two directories. That is a topology change, not
 # this one.
+# IDENTICAL in run_live_turn.sh and run_ladder_turn.sh (`test_live_sudoers_install.py` holds the two
+# copies equal). The member list is SET, not appended to. The two kits share these group names and
+# state different memberships for `brops-report` (the broker in the §5 kit, the supervisor in the
+# ladder kit), and `usermod -aG` only ever added: on a box that ran both, the broker stayed in
+# `brops-report` under a comment calling its absence "the tighter arrangement".
 add_group() {  # <group> <members...>
-  local g="$1"; shift
+  local g="$1" members; shift
   getent group "$g" >/dev/null || groupadd --system "$g" || return 1
-  for m in "$@"; do usermod -aG "$g" "$m" || return 1; done
+  members="$(IFS=,; printf '%s' "$*")"
+  gpasswd -M "$members" "$g" >/dev/null || return 1
 }
 add_group brops-store  "$SUPERVISOR_USER" "$RECORDER_USER" || { echo "FAIL: brops-store group";  exit 1; }
 add_group brops-report "$RECORDER_USER"   "$BROKER_USER"   || { echo "FAIL: brops-report group"; exit 1; }
@@ -369,11 +392,18 @@ sudoers_install() {  # <staged file> <target directly inside $SUDOERS_DIR>
 # The vector is now pinned. The five deployment-static arguments are exact; only the three per-run
 # output FILE NAMES are wildcarded, and only because they carry the broker turn / attempt ids.
 #
-# The wildcards are NOT the wall. `sudo` does not apply `FNM_PATHNAME` when matching command
-# arguments, so `*` there matches `/` — `…/report/*` would happily match `…/report/../../etc/x`.
-# The wall is the recorder's own root-owned policy (`$TCB/recorder-policy.json`), which pins every
-# path and requires the three output names to resolve DIRECTLY inside its own directories. This rule
-# is the outer layer: it stops a hostile vector before the trusted binary is even entered.
+# The wildcards are NOT the wall, for two reasons. `sudo` does not apply `FNM_PATHNAME` when
+# matching command arguments, so `*` there matches `/` — `…/report/*` would happily match
+# `…/report/../../etc/x`. And sudoers matches the arguments as ONE string joined by spaces, so `*`
+# also matches a SPACE: `--out …/report/live-x --launcher /tmp/evil ….out` satisfies the `--out`
+# pattern while handing the recorder a second `--launcher`. So this rule does NOT pin "one argument
+# vector" in the sense of a fixed list of words; it pins a prefix and three patterns.
+# The wall is the recorder itself: its root-owned policy (`$TCB/recorder-policy.json`) pins every
+# path and requires the three output names to resolve DIRECTLY inside its own directories, and its
+# argument parser refuses an unknown or REPEATED flag (`governed_recorder.rs::parse_args`). This
+# rule is the outer layer: it stops the plainly hostile vector before the trusted binary is entered.
+# P0-A below tests the swapped `--launcher`; the smuggled-through-a-wildcard form is covered by the
+# recorder's own unit tests, not by this kit.
 #
 # Built from $CONFIG, which is where the broker's argv comes from, so the two cannot drift apart.
 SUDOERS=/etc/sudoers.d/brops-live-recorder
@@ -387,6 +417,28 @@ cleanup() {
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
   rm -f "$SUDOERS"
   sudoers_stage_end
+  # >>> host-restore >>>
+  # IDENTICAL in run_live_turn.sh and run_ladder_turn.sh (`test_live_sudoers_install.py` holds
+  # the two copies equal and runs them). Put back what the kit changed OUTSIDE its own root, and
+  # defuse what it leaves INSIDE it. Until 2026-10-01 neither kit did either: /opt stayed
+  # root:root 0755 with every ACL beneath it stripped, and a setuid-root launcher and the kit
+  # root's PRIVATE key stayed on disk until the next run's `rm -rf`.
+  #
+  # Every variable is read as `${X:-}`. This trap is armed before most of them are assigned, and
+  # an exit that early changed nothing there is to undo.
+  if [ -n "${EVIL_LAUNCHER:-}" ]; then rm -f -- "$EVIL_LAUNCHER"; fi
+  if [ -n "${TCB:-}" ] && [ -f "$TCB/privileged-launcher.bin" ]; then
+    chmod u-s "$TCB/privileged-launcher.bin" 2>/dev/null || true
+  fi
+  if [ -n "${KEYS:-}" ]; then rm -f -- "$KEYS/root.priv"; fi
+  if [ -n "${OPT_DIR:-}" ] && [ -n "${OPT_RESTORE_OWNER:-}" ] && [ -n "${OPT_RESTORE_MODE:-}" ]; then
+    chown "$OPT_RESTORE_OWNER" "$OPT_DIR" 2>/dev/null || true
+    chmod "$OPT_RESTORE_MODE" "$OPT_DIR" 2>/dev/null || true
+    if [ -n "${OPT_RESTORE_ACL:-}" ]; then
+      printf '%s\n' "$OPT_RESTORE_ACL" | setfacl --restore=- 2>/dev/null || true
+    fi
+  fi
+  # <<< host-restore <<<
 }
 trap cleanup EXIT
 
@@ -401,7 +453,10 @@ broker_user, recorder_user, out_path = sys.argv[2], sys.argv[3], sys.argv[4]
 # The invoker prefix has to be exactly `sudo -n -u <recorder> <bin>`; anything else means the argv
 # this rule pins is not the argv the broker will actually send.
 command = ex["recorder_command"]
-if command[:1] != ["sudo"] or command[1:4] != ["-n", "-u", recorder_user] or len(command) != 5:
+# The invoker is an ABSOLUTE path to sudo, never the bare word: the caller executes element 0 as
+# given, and a bare name is whatever its $PATH says it is.
+if (not command[:1] or not command[0].startswith("/") or command[0].rsplit("/", 1)[-1] != "sudo"
+        or command[1:4] != ["-n", "-u", recorder_user] or len(command) != 5):
     print("unexpected recorder_command %r" % (command,), file=sys.stderr)
     sys.exit(1)
 recorder_bin = command[4]
@@ -473,14 +528,29 @@ chown -R 0:0 "$LIVE/engine"; find "$LIVE/engine" -type d -exec chmod 0755 {} +
 # content pin below it. A real operator would have to fix this before deploying, so the kit fixes it
 # here rather than pretending the deployment root is safe.
 echo "== hardening the deployment root (/opt was $(stat -c %A /opt)) =="
-chown 0:0 /opt; chmod 0755 /opt
-# The mode bits are only the whole truth if there is no ACL beside them. These directories carry
-# default ACLs inherited from the runner image (the `+` in ls), and the probe reads mode and
-# ownership, not ACLs — a documented narrowing that can only make it MORE permissive than reality.
-# Strip the ACLs from the pinned tree so the two agree, instead of relying on the narrowing.
-if command -v setfacl >/dev/null 2>&1; then
-  setfacl -Rb /opt "$LIVE" 2>/dev/null || true
+# These directories carry default ACLs inherited from the runner image (the `+` in ls), and the
+# probe reads mode and ownership, not ACLs — a documented narrowing that can only make it MORE
+# permissive than reality. The block below strips them so the two agree.
+# >>> host-record >>>
+# IDENTICAL in run_live_turn.sh and run_ladder_turn.sh. What $OPT_DIR WAS, recorded before it is
+# touched, so `cleanup` puts it back on every exit path. The kit needs it root-owned 0755 while it
+# runs (the §2.5 floor refuses a writable ancestor); it has no business leaving a machine's /opt
+# different from how it found it.
+OPT_RESTORE_OWNER="$(stat -c '%u:%g' "$OPT_DIR")" || OPT_RESTORE_OWNER=""
+OPT_RESTORE_MODE="$(stat -c '%a' "$OPT_DIR")" || OPT_RESTORE_MODE=""
+OPT_RESTORE_ACL=""
+if command -v getfacl >/dev/null 2>&1; then
+  OPT_RESTORE_ACL="$(getfacl -p "$OPT_DIR" 2>/dev/null)" || OPT_RESTORE_ACL=""
 fi
+chown 0:0 "$OPT_DIR"; chmod 0755 "$OPT_DIR"
+# The mode bits are only the whole truth if there is no ACL beside them, so the ACLs are stripped
+# from $OPT_DIR ITSELF and from the kit's own tree. This was `setfacl -Rb /opt "$LIVE"`: recursive
+# over ALL of /opt, i.e. over every other package installed there, none of which is this kit's.
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -b "$OPT_DIR" 2>/dev/null || true
+  setfacl -Rb "$LIVE" 2>/dev/null || true
+fi
+# <<< host-record <<<
 # The floor refuses on an ancestor a non-TCB principal could write, and "which bit, on which
 # directory" is exactly what a refusal needs to be actionable. Print the pinned set's ancestors.
 echo "== TCB ancestor modes (the §2.5 floor checks these) =="
@@ -536,6 +606,31 @@ expect_blocked() {  # <label> <expected-reason-substring> <output>
   return 0
 }
 
+# ----- a chain-level negative needs a chain-level positive control ------------------------------
+# `expect_blocked` makes a negative name its reason, and for the three negatives that go through
+# `live_turn` the only reason there is to name is `chain:UpstreamBlocked` -- the broker's ONE
+# catch-all, returned from dozens of sites in `chain_executor.rs` (socket connect, spawn,
+# report read, ...). So "refused with chain:UpstreamBlocked" is also what a supervisor that died
+# two steps ago looks like, and those negatives would go GREEN on it: the defect `expect_blocked`
+# was written to prevent, one level up. The P0 block already answers this for the recorder with a
+# positive control. This is the same control for the chain: after each restore, the SAME honest
+# turn that opened the kit must bind again. Then the refusal before it is attributable to the one
+# thing that negative changed, because the chain demonstrably works on both sides of it.
+expect_honest_turn() {  # <label>
+  local label="$1" out line
+  out=$(sudo -u "$BROKER_USER" "$BIN/live_turn" --config "$CONFIG" 2>&1)
+  line=$(echo "$out" | grep -E '^RESULT:' | tail -1)
+  echo "  $line"
+  if echo "$line" | grep -qE 'demonstration_custody.*bound=true'; then
+    echo "$label CONTROL: GREEN — the restored deployment still binds an honest turn"
+    return 0
+  fi
+  echo "$label CONTROL: RED — the chain cannot complete an HONEST turn after the restore, so the"
+  echo "  refusal above may be a broken deployment rather than the check this negative names."
+  echo "$out"
+  return 1
+}
+
 # ----- run ONE live governed turn as the broker account -------------------------------------------
 echo "== running the live governed turn as $BROKER_USER =="
 OUT=$(sudo -u "$BROKER_USER" "$BIN/live_turn" --config "$CONFIG" 2>&1)
@@ -568,6 +663,7 @@ expect_blocked "F-08 NEGATIVE" "chain:UpstreamBlocked" "$TAMPER_OUT" || {
   echo "  The executor ran on bytes the receipt does not attest. This is F-08, live."
   exit 1
 }
+expect_honest_turn "F-08" || exit 1
 
 # ----- NEGATIVE: argv must not steer the recorder (round-3 P0) -------------------------------------
 # The recorder is the identity the supervisor trusts. Until this round the broker uid could invoke it
@@ -698,6 +794,7 @@ expect_blocked "STORE-CUSTODY NEGATIVE" "chain:UpstreamBlocked" "$GW_OUT" || {
   echo "  A store input the broker's group can rewrite was accepted."
   exit 1
 }
+expect_honest_turn "STORE-CUSTODY" || exit 1
 
 # ----- NEGATIVE: attested digests that diverge from the lease must refuse ------------------------
 # IDX-4: the lease's three request pins must equal `resolved.*_sha256` in the root-owned config AT
@@ -721,6 +818,7 @@ expect_blocked "LEASE-BINDING NEGATIVE" "chain:UpstreamBlocked" "$DIV_OUT" || {
   echo "  The attested request can name bytes never executed."
   exit 1
 }
+expect_honest_turn "LEASE-BINDING" || exit 1
 
 echo
 echo "================================ live governed turn ================================"

@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_control_room_api import (ACTOR_ATTESTATION_MISSING, ACTOR_PROVEN_BY_SESSION,
                                   ACTOR_PROVEN_PER_COMMAND, CONTROL_ROOM_ACTOR_ARTIFACT,
-                                  CONTROL_ROOM_COMMAND_ARTIFACT,
+                                  CONTROL_ROOM_COMMAND_ARTIFACT, OWNER_ACTOR_UNPROVABLE,
                                   ControlRoomAPIError, ControlRoomAPIV1)
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
 from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE
@@ -340,7 +340,14 @@ class ControlRoomActorProofTests(unittest.TestCase):
             self.api.validate_command_intent(owner, now_epoch=self.now + 1,
                                              actor_attestation=None)
         message = str(caught.exception)
-        self.assertIn(ACTOR_ATTESTATION_MISSING, message)
+        # The OWNER's refusal, naming the OWNER's artifact. This asserted
+        # ACTOR_ATTESTATION_MISSING, i.e. that an owner is told to present a
+        # `conductor-session` -- the one artifact `_prove_command_actor` refuses for an owner.
+        self.assertIn(OWNER_ACTOR_UNPROVABLE, message)
+        self.assertIn("control-room-command", message)
+        self.assertNotIn(ACTOR_ATTESTATION_MISSING, message)
+        self.assertNotIn("conductor-session", message)
+        self.assertIn("owner/owner-gev", message)
 
     def test_an_owner_command_bound_to_this_command_is_proven(self) -> None:
         owner = self.command(requested_by_type="owner", requested_by="owner-gev")

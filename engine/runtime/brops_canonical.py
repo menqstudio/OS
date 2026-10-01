@@ -2,9 +2,17 @@
 
 The desktop verifier (Rust `brops-core::receipt`) and this Python signer must agree
 **byte-for-byte** on every hashed artifact, or the desktop's `bind` against its own
-`Expected` fails and the turn Blocks. This module is the one place those formulas live,
-so the signer, the supervisor attestation, and the content-addressed store all hash the
-same way, and the cross-language parity suite can pin each one.
+`Expected` fails and the turn Blocks. This module is the one place those formulas live
+for the `brops.receipt.v1` signer path (`engine/tools/brops_receipt_signer.py`), so the
+signer, the supervisor attestation, and the content-addressed store all hash the same
+way, and the cross-language parity suite can pin each one.
+
+"The one place" has an exception a reader must know about: the `brops.request.v1`
+envelope (:func:`request_sha256`) is ALSO written out by hand in
+`challenge_authority`, `governed_supervisor` and `isolated_signer`. Those three are
+separate trusted principals that each recompute it independently and deliberately do
+not import this module; `engine/tests/test_one_standard_pins.py` holds all four to the
+same bytes, non-ASCII ids included.
 
 Design: `docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md` §4.0a (artifact canonical-byte
 formulas) and §4 (the receipt/request envelopes). Reuses the engine's JCS canonicalizer
@@ -251,12 +259,18 @@ GOVERNED_GENERATION_CONFIG_FIELDS = (
 #: Per-field acceptance, §4.10(g) verbatim. Two of them are a regex AND an integer-range
 #: check on the DIGITS, never a float parse: `_REGEX` alone would admit `"2.99"` for
 #: `temperature` (in range only up to `2.00`) and `"1048577"` for `max_output_tokens`.
+#:
+#: Applied with ``fullmatch``, and that is the rule, not a style. These were ``^...$`` patterns
+#: under ``.match`` until 2026-10-01, and in Python ``$`` also matches just BEFORE a trailing
+#: newline: ``"256\n"``, ``"1.00\n"`` and an ``engine_id`` ending in ``"\n"`` were each accepted
+#: as "a canonical value" and returned unchanged for hashing. The Rust authority
+#: (``governed_prepare.rs``) checks the exact byte length and every byte, and refuses all three.
 _GOVERNED_GENERATION_CONFIG_REGEX = {
-    "engine_id": re.compile(r"^[A-Za-z0-9._-]{1,128}$"),
-    "model": re.compile(r"^[A-Za-z0-9._:-]{1,128}$"),
-    "max_output_tokens": re.compile(r"^[1-9][0-9]{0,6}$"),
-    "temperature": re.compile(r"^[0-2]\.[0-9]{2}$"),
-    "top_p": re.compile(r"^[01]\.[0-9]{2}$"),
+    "engine_id": re.compile(r"[A-Za-z0-9._-]{1,128}"),
+    "model": re.compile(r"[A-Za-z0-9._:-]{1,128}"),
+    "max_output_tokens": re.compile(r"[1-9][0-9]{0,6}"),
+    "temperature": re.compile(r"[0-2]\.[0-9]{2}"),
+    "top_p": re.compile(r"[01]\.[0-9]{2}"),
 }
 
 #: `(field, inclusive_low, inclusive_high)` in HUNDREDTHS for the two fixed-point fields and
@@ -310,7 +324,7 @@ def validate_governed_generation_config(
             raise ValueError(
                 f"generation_config.{field} must be a STRING, never a JSON number "
                 f"(got {type(value).__name__})")
-        if not _GOVERNED_GENERATION_CONFIG_REGEX[field].match(value):
+        if not _GOVERNED_GENERATION_CONFIG_REGEX[field].fullmatch(value):
             raise ValueError(f"generation_config.{field}={value!r} is not a canonical value")
         bound = _GOVERNED_GENERATION_CONFIG_RANGE.get(field)
         if bound is not None:

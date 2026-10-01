@@ -19,14 +19,15 @@ and a setuid launcher. It is a typed seam whose shipped default (`RefusingExecut
 `platform_unsupported` **pre-record**, so a stand-in is the only way any test on any platform
 reaches step 6, and that is stated here rather than implied by a green run.
 
-**§4.10(g) is PARTIAL.** Everything below is driven from a submit frame this test writes.
-As of 2026-08-12 the trusted side CAN write one — `prepare_governed_turn_v1b` and
-`governed_turn_submit_prepared` exist in `apps/desktop/src-tauri/core/src/` — but nothing in
-production does: that helper has no caller, its subprocess spawn is an injected seam no
-production code implements, and the broker's one production `GovernedExecutor` spawns the
-recorder rather than a sidecar. Nor is there a counterparty: `engine/ci/live/run_supervisor.py`
-constructs none of the three services this file constructs, which its own test asserts. So
-this is a proof that the ladder WORKS, not that anything walks it.
+**§4.10(g), and who walks it.** Everything below is driven from a submit frame this test
+writes. The trusted side writes one too — `prepare_governed_turn_v1b` and
+`governed_turn_submit_prepared` in `apps/desktop/src-tauri/core/src/` — and since 2026-09-20 it
+is wired: the broker's `ladder_executor::LadderChain` calls the helper over
+`impl SubmitTransport for GovernedSidecar`. (This paragraph said the helper "has no caller"
+until 2026-10-01.) The counterparty exists in CI only: `engine/ci/live/run_ladder_supervisor.py`
+constructs the services this file constructs, while `engine/ci/live/run_supervisor.py` still
+constructs none of them, which its own test asserts. So this file proves the ladder WORKS; the
+ladder kit proves something walks it under real uids; nothing a user can launch does.
 
 No prerequisite here is optional: everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is a hard error

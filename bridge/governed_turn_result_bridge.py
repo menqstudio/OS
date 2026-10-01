@@ -128,13 +128,18 @@ branch in ``engine_sidecar._dispatch``. ``engine/tests/test_governed_turn_submit
 walks that ladder against the real supervisor services and comes back with a §4.6 frame
 whose envelope verifies, so this hop is exercised end to end rather than in isolation.
 
-One hop further out, on the trusted side, the WRITER now exists (2026-08-12):
+One hop further out, on the trusted side, the WRITER exists (2026-08-12):
 ``brops_core::governed_prepare.prepare_governed_turn_v1b`` and
-``brops_core::governed_submit.governed_turn_submit_prepared``. It is still not on a live path —
-the helper has no caller, its subprocess spawn is an injected seam no production code
-implements, and the broker's one production ``GovernedExecutor``
-(``broker/src/chain_executor.rs``) spawns the recorder rather than a sidecar. So the frame is
-produced and consumed only from tests, and the §4.10(f) pull behind it stays unreachable.
+``brops_core::governed_submit.governed_turn_submit_prepared`` — and since 2026-09-20 it is
+WIRED: ``broker/src/ladder_executor.rs`` (``LadderChain``) calls the helper, over
+``impl SubmitTransport for GovernedSidecar`` in ``core/src/governed_sidecar.rs``. This
+paragraph said "the helper has no caller, its subprocess spawn is an injected seam no
+production code implements" until 2026-10-01, after that claim had been retracted in
+``config/reachability-declarations.json``. The frame is therefore produced and consumed on a
+production code path, which a user still cannot reach: the broker serves ``LadderChain`` only
+when ``$BROPS_BROKER_CONFIG`` names a deployment that verifies under the floor-pinned root
+anchor, nothing in the shipped app sets it, and the fail-closed executor is what runs
+otherwise.
 
 Only the Python standard library is used, and no clock, socket, subprocess or file is
 touched anywhere in this file.

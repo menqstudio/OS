@@ -127,14 +127,22 @@ class ChallengeAuthorityError(Exception):
 # ---------------------------------------------------------------------------
 
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
 def _is_sha256_hex(value: Any) -> bool:
+    """Exactly 64 hex DIGITS, either case (``validate_create_pending`` lowercases what it admits).
+
+    A character-set check, not a parse. Until 2026-10-01 this was ``int(value, 16)``, and Python's
+    integer parser is far more generous than "hex": it takes a ``0x`` prefix, a sign, surrounding
+    whitespace and ``_`` separators. So ``" " + "a" * 63``, ``"+" + "a" * 63``, ``"0x" + "a" * 62``
+    and ``"\n" + "a" * 63`` were all "64 hex characters", were copied into the challenge payload
+    and were SIGNED. ``governed_supervisor._is_sha256_hex`` is the same rule; the signer's copy of
+    this name (``isolated_signer._is_sha256_hex``) is stricter still -- lowercase only.
+    """
     if not isinstance(value, str) or len(value) != 64:
         return False
-    try:
-        int(value, 16)
-    except ValueError:
-        return False
-    return True
+    return all(c in _HEX_DIGITS for c in value)
 
 
 def _nonempty_str(value: Any) -> bool:
@@ -142,7 +150,24 @@ def _nonempty_str(value: Any) -> bool:
 
 
 def _bounded_id(value: Any) -> bool:
-    return isinstance(value, str) and 0 < len(value) <= MAX_ID_LEN
+    """A non-empty id of at most ``MAX_ID_LEN`` UTF-8 BYTES.
+
+    Bytes, not characters. This counted ``len(value)`` until 2026-10-01, and the frame bound
+    the reply has to fit is a BYTE bound: four ids of 128 astral characters are 128 "chars"
+    each and twelve bytes per character once ``json.dumps`` escapes them, so a create-pending
+    that passed validation was accepted, its row was burned ``ISSUED``, and the issue reply
+    (8438 bytes against the 8192 cap) could not be framed -- nothing was written, and the
+    replay sent nothing either. The Rust authority (``win-live/src/servers.rs::id_ok``) has
+    always measured ``s.len()``, which is bytes; this now agrees with it. A string that cannot
+    be encoded at all (a lone surrogate) is not an id.
+    """
+    if not isinstance(value, str):
+        return False
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return 0 < size <= MAX_ID_LEN
 
 
 def _is_int(value: Any) -> bool:
@@ -209,7 +234,7 @@ def validate_create_pending(fields: Mapping[str, Any]) -> Dict[str, Any]:
     ):
         if not _bounded_id(value):
             raise ChallengeAuthorityError(
-                "%s must be a non-empty string of <= %d chars" % (name, MAX_ID_LEN),
+                "%s must be a non-empty string of <= %d UTF-8 bytes" % (name, MAX_ID_LEN),
                 reason=REASON_FIELD_INVALID,
             )
 

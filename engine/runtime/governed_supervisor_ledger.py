@@ -69,8 +69,6 @@ FAILED = "FAILED"
 EXPIRED = "EXPIRED"
 RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
 
-TERMINAL_STATES = frozenset({COMPLETED, BLOCKED, FAILED, EXPIRED, RECOVERY_REQUIRED})
-
 #: The closed domain the ``state`` column may hold — identical to the SQL CHECK. A stored
 #: value outside it means a corrupt/foreign DB and is refused, never interpreted.
 ALL_STATES = frozenset({
@@ -92,7 +90,9 @@ LEGAL_PREDECESSORS: Dict[str, Tuple[str, ...]] = {
     RECOVERY_REQUIRED: (EXECUTION_STARTING, EXECUTING),
 }
 
-# §5 step-8a budget constants — mirror supervisor_ledger.rs / governed_supervisor.py.
+# §5 step-8a budget constants — THE Python definition, mirroring `supervisor_ledger.rs`.
+# `governed_supervisor.py` does not carry a second pair to mirror: it IMPORTS these two (this
+# comment used to name it as a mirror, from when it restated them as literals).
 MIN_LAUNCH_REMAINING_MS = 180_000
 LEASE_DURATION_MS = 210_000
 
@@ -329,6 +329,18 @@ _IDENTITY_FIELDS: Tuple[str, ...] = ("install_id", "request_nonce")
 _DIGEST_COMPARED_FIELDS: Tuple[str, ...] = ("lease_payload_bytes",)
 
 #: Every bound field compared when deciding idempotent-retry vs hard conflict.
+#:
+#: **WHERE THIS COMPARISON RUNS -- AND WHERE IT DOES NOT (2026-10-01).** It runs inside
+#: :func:`accept_prepare`, and NO production code calls ``accept_prepare``: only the two test
+#: suites do. The front door (``governed_supervisor_server``) and the §5 driver
+#: (``governed_acceptance``) both call :func:`reuse_or_prepare`, whose challenge-found branch
+#: compares ``install_id`` and ``request_nonce`` and nothing else before answering
+#: ``IDEMPOTENT``. So the "rolled-back registry epoch" case described below is refused HERE
+#: and is still answered ``IDEMPOTENT`` on the path a deployment takes. That is tolerable for
+#: one reason -- the caller gets back the ORIGINAL row and lease, original epoch included, so a
+#: replay buys no additional execution -- but it is not the guard the next paragraph reads as,
+#: and nobody should rely on it as one. Whether ``reuse_or_prepare`` should compare the
+#: registry binding as well is an open design question, not something this comment decides.
 #:
 #: **DERIVED, not hand-maintained — and that is the fix, not a style choice.** This used to
 #: be a literal 15-name tuple beside an INSERT that bound 23, and the eight-name gap was not
@@ -622,8 +634,6 @@ DERIVED_EVIDENCE_FIELDS: Tuple[str, ...] = (
     "evidence_last_sequence",
     "evidence_head_sequence",
 )
-COMPLETION_DIGEST_FIELDS: Tuple[str, ...] = ()
-COMPLETION_COUNT_FIELDS: Tuple[str, ...] = ()
 COMPLETION_FIELDS: Tuple[str, ...] = COMPLETION_HANDLE_FIELDS + COMPLETION_TS_FIELDS
 
 
@@ -696,9 +706,11 @@ def derive_evidence_from_chain(chain_bytes: bytes, output_handle: str) -> Dict[s
     # Verify the LINK, not only the summary fields (audit A-02, 2026-08-14).
     #
     # Until this ran, nothing recomputed ``previous_event_hash`` and ``final_event_hash`` was taken
-    # straight off the document with only a format check (:669, :674-675) -- while
-    # ``final_event_hash`` is the discriminator ``_evidence_floor_cas`` raises ``EvidenceFork`` on
-    # (:793-799). The fork detector's identity was a field nothing bound to the events it
+    # straight off the document with only a format check (the ``_is_lower_sha256_hex`` tests
+    # above, in this function) -- while ``final_event_hash`` is the discriminator
+    # ``_evidence_floor_cas`` raises ``EvidenceFork`` on. (Both were cited by line number, and
+    # both numbers had drifted onto other statements.) The fork detector's identity was a field
+    # nothing bound to the events it
     # summarises, with the ``payload_sha256`` check twenty lines up showing the authors knew how to
     # bind one.
     #
@@ -746,15 +758,16 @@ def validate_completion_facts(produced: Any) -> Dict[str, Any]:
     missing = allowed - keys
     if missing:
         raise LedgerError("missing completion field(s) %s" % sorted(missing))
-    for field in COMPLETION_HANDLE_FIELDS + COMPLETION_DIGEST_FIELDS:
+    # Handles and timestamps are everything a caller reports. The digest and the counts are in
+    # `DERIVED_EVIDENCE_FIELDS` and never arrive on the wire -- which is why the two tuples that
+    # used to be iterated here (`COMPLETION_DIGEST_FIELDS`, `COMPLETION_COUNT_FIELDS`) were both
+    # EMPTY: two loops that validated nothing and read as though they validated something.
+    for field in COMPLETION_HANDLE_FIELDS:
         if not _is_lower_sha256_hex(produced[field]):
             raise LedgerError("%s must be 64 lowercase hex chars" % field)
     for field in COMPLETION_TS_FIELDS:
         if not _is_u64_ms(produced[field]):
             raise LedgerError("%s must be a u64 epoch-ms int" % field)
-    for field in COMPLETION_COUNT_FIELDS:
-        if not _is_pos_i63(produced[field]):
-            raise LedgerError("%s must be a positive int (>= 1)" % field)
     return {field: produced[field] for field in COMPLETION_FIELDS}
 
 
@@ -1134,16 +1147,6 @@ def load_acceptance_by_challenge(conn: sqlite3.Connection,
     ).fetchone()
 
 
-def load_lease(conn: sqlite3.Connection, execution_attempt_id: str) -> Optional[sqlite3.Row]:
-    """The durable lease bindings for an attempt (used to re-return the SAME lease on an
-    idempotent ``accept-open`` retry rather than minting a second one)."""
-    return conn.execute(
-        "SELECT lease_id, execution_attempt_id, lease_issued_at_ms, lease_expires_at_ms, state"
-        " FROM governed_turn_acceptance WHERE execution_attempt_id = ?",
-        (execution_attempt_id,),
-    ).fetchone()
-
-
 def load_lease_by_nonce(conn: sqlite3.Connection, install_id: str,
                         request_nonce: str) -> Optional[sqlite3.Row]:
     """The durable lease bindings keyed by the accepted ``(install_id, request_nonce)`` —
@@ -1157,7 +1160,7 @@ def load_lease_by_nonce(conn: sqlite3.Connection, install_id: str,
 
 __all__ = [
     "ACCEPTED_PREPARED", "LEASE_READY", "EXECUTION_STARTING", "EXECUTING", "COMPLETED",
-    "BLOCKED", "FAILED", "EXPIRED", "RECOVERY_REQUIRED", "TERMINAL_STATES",
+    "BLOCKED", "FAILED", "EXPIRED", "RECOVERY_REQUIRED",
     "LEASE_DURATION_MS", "MIN_LAUNCH_REMAINING_MS",
     "CREATED", "IDEMPOTENT",
     "COMPLETION_FIELDS", "DERIVED_HANDLE_FIELDS", "load_acceptance",
@@ -1166,7 +1169,7 @@ __all__ = [
     "LedgerError", "NotFound", "StaleEvidence",
     "accept_prepare", "advance", "apply_schema", "canonical_bytes", "gate_and_start",
     "load_acceptance_by_challenge",
-    "lease_launch_gate", "load_attestation_state", "load_lease", "load_lease_by_nonce",
+    "lease_launch_gate", "load_attestation_state", "load_lease_by_nonce",
     "mark_executing", "mark_lease_ready", "open_ledger", "record_completion",
     "reuse_or_prepare", "validate_completion_facts",
 ]

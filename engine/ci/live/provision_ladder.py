@@ -270,7 +270,8 @@ def main() -> int:
     # The kit builds `sudo -n -u <recorder> <bin>` for the BROKER. The ladder's spawner is the
     # SUPERVISOR, and the account it drops to must be stated here rather than inherited, so the
     # sudoers rule and this vector are generated from one value.
-    if recorder_command[:4] != ["sudo", "-n", "-u", args.recorder_user]:
+    if (not os.path.isabs(recorder_command[0]) or os.path.basename(recorder_command[0]) != "sudo"
+            or recorder_command[1:4] != ["-n", "-u", args.recorder_user]):
         raise SystemExit("unexpected recorder_command prefix %r" % (recorder_command[:4],))
 
     ladder = {

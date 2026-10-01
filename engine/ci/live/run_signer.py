@@ -21,7 +21,6 @@ Run AS the signer account:  sudo -u brops-signer python3 run_signer.py --config 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -32,6 +31,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
 import ipc_policy
+import kit_store  # noqa: E402
 import live_crypto as lc  # noqa: E402
 import isolated_signer_server as iss  # noqa: E402
 from isolated_signer import ArtifactStore, IsolatedSigner, SignerConfig, SignerError  # noqa: E402
@@ -39,8 +39,11 @@ from isolated_signer import ArtifactStore, IsolatedSigner, SignerConfig, SignerE
 
 class FileArtifactStore(ArtifactStore):
     """A content-addressed store backed by files under ``store_dir`` named by their sha256 handle. Reads at
-    sign time (so the broker-written output blob is visible), and — like the dict store — refuses any blob
-    whose bytes do not hash to the handle that names it (content-addressed integrity)."""
+    sign time (so the RECORDER-published output blob is visible — the broker was removed from the store and
+    writes nothing into it), and — like the dict store — refuses any blob whose bytes do not hash to the
+    handle that names it (content-addressed integrity). The read itself is ``kit_store.read_blob``, shared
+    with the ladder supervisor: this class read a blob of ANY size into memory before hashing it, while
+    that copy of the same store capped it."""
 
     def __init__(self, store_dir: str) -> None:
         super().__init__()  # empty in-memory backing; we override read_verified to hit disk
@@ -48,16 +51,11 @@ class FileArtifactStore(ArtifactStore):
 
     def read_verified(self, handle):  # type: ignore[override]
         # A handle is a 64-hex content address; reject anything else before touching the filesystem.
-        if not isinstance(handle, str) or len(handle) != 64 or any(c not in "0123456789abcdef" for c in handle):
+        if not kit_store.is_handle(handle):
             return None
-        path = os.path.join(self._dir, handle)
-        if not os.path.isfile(path):
+        if not os.path.isfile(os.path.join(self._dir, handle)):
             return None
-        with open(path, "rb") as f:
-            data = f.read()
-        if hashlib.sha256(data).hexdigest() != handle:
-            raise SignerError("store corruption: blob digest != handle")
-        return data
+        return kit_store.read_blob(self._dir, handle, error=SignerError)
 
 
 def main() -> int:

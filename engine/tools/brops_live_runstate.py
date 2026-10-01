@@ -23,7 +23,6 @@ authoritative fields, so `produce_sign_request` attests real, proven runs only.
 
 from __future__ import annotations
 
-import base64
 import json
 import pathlib
 import re
@@ -33,6 +32,7 @@ from bro_evidence import load_head, validate_chain
 from bro_execution_lease import validate_execution_lease
 from bro_receipt import verify_passing_receipt
 from bro_signature import verify_artifact
+from brops_protocol import ProtocolError, decode_base64url
 from brops_supervisor_attest import RunState
 
 
@@ -191,10 +191,10 @@ class LiveRunStateProvider:
         if not isinstance(containment_evidence, dict):
             raise RunStateValidationError("run record `containment_evidence` must be an object")
         try:
-            policy_bundle = base64.urlsafe_b64decode(
-                record["policy_bundle_b64"] + "=" * (-len(record["policy_bundle_b64"]) % 4)
-            )
-        except Exception as exc:  # noqa: BLE001
+            # The strict decoder: the bundle's DIGEST is what the signer authorizes, so the
+            # bytes decoded must be the bytes sent, not whatever a lenient decode makes of them.
+            policy_bundle = decode_base64url(record["policy_bundle_b64"])
+        except ProtocolError as exc:
             raise RunStateValidationError(f"policy_bundle_b64 not decodable: {exc}")
 
         return RunState(

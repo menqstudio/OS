@@ -307,6 +307,34 @@ class RepositoryBindingTests(WorkspaceFixture):
         with self.assertRaises(WorkspaceError):
             verify_repository_binding(self.workspace())
 
+    def test_a_push_redirected_without_touching_the_url_line_is_denied(self):
+        """`url =` was the only key read. Each of these leaves it naming the authorized
+        repository and sends the push somewhere else."""
+        config = self.workspace_root / ".git" / "config"
+        honest = config.read_text(encoding="utf-8")
+        verify_repository_binding(self.workspace())          # the control: the honest file passes
+        elsewhere = "https://github.com/someone-else/elsewhere.git"
+        for name, extra, needle in (
+            ("pushurl", "\tpushurl = %s\n" % elsewhere, "outside the authorized repository"),
+            ("PushURL", "\tPushURL = %s\n" % elsewhere, "outside the authorized repository"),
+            ("insteadOf", '[url "%s"]\n\tinsteadOf = https://github.com/menqstudio/\n'
+             % elsewhere, "rewrites remote urls"),
+            ("pushInsteadOf", '[url "%s"]\n\tpushInsteadOf = https://github.com/\n'
+             % elsewhere, "rewrites remote urls"),
+            ("include", "[include]\n\tpath = /tmp/other.gitconfig\n", "includes another config"),
+            ("includeIf", '[includeIf "gitdir:~/"]\n\tpath = /tmp/other.gitconfig\n',
+             "includes another config"),
+        ):
+            with self.subTest(case=name):
+                config.write_text(honest + extra, encoding="utf-8")
+                with self.assertRaises(WorkspaceError) as caught:
+                    verify_repository_binding(self.workspace())
+                self.assertIn(needle, str(caught.exception))
+        # A pushurl that names the SAME repository is not a redirect and is still accepted.
+        same = [u for u in honest.split() if "github.com" in u][0]
+        config.write_text(honest + "\tpushurl = %s\n" % same, encoding="utf-8")
+        verify_repository_binding(self.workspace())
+
 
 _OMIT = object()
 

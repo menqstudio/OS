@@ -26,7 +26,6 @@ Run AS the supervisor account:  sudo -u brops-supervisor python3 run_supervisor.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -38,6 +37,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
 import ipc_policy
+import kit_store  # noqa: E402
 import live_crypto as lc  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
 import governed_supervisor_server as gss  # noqa: E402
@@ -98,38 +98,14 @@ def main() -> int:
     # component that actually captured the executor's bytes, and it is the only writer of this
     # directory. Bounded so a hostile file cannot exhaust the supervisor.
     evidence_dir = cfg["execution"]["evidence_state_dir"]
-    MAX_EVIDENCE_BYTES = 1 << 20
 
+    # Both seams are `kit_store`'s, shared with the ladder supervisor: each runner used to carry
+    # its own copy of the read and of the atomic publish.
     def read_run_evidence(attempt: str):
-        # The attempt id reaches the filesystem, so it must not be able to escape the directory.
-        # It is a supervisor-minted id, but the supervisor does not get to assume its own inputs.
-        if not attempt or not all(c.isalnum() or c in "-_" for c in attempt):
-            return None
-        path = os.path.join(evidence_dir, attempt + ".evidence.json")
-        try:
-            with open(path, "rb") as fh:
-                data = fh.read(MAX_EVIDENCE_BYTES + 1)
-        except OSError:
-            return None
-        if len(data) > MAX_EVIDENCE_BYTES:
-            return None
-        return data
+        return kit_store.read_run_evidence(evidence_dir, attempt)
 
     def publish_artifact(data: bytes) -> str:
-        handle = hashlib.sha256(data).hexdigest()
-        final = os.path.join(store_dir, handle)
-        if not os.path.exists(final):
-            tmp = final + ".tmp-%d" % os.getpid()
-            with open(tmp, "wb") as fh:
-                fh.write(data)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, final)
-            try:
-                os.chmod(final, 0o644)  # a different uid (the signer) reads it by handle
-            except OSError:
-                pass
-        return handle
+        return kit_store.publish_blob(store_dir, data)
 
     config = SupervisorConfig(
         launcher_executable_sha256=launcher_sha,

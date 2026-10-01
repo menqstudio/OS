@@ -114,19 +114,25 @@ _BASIS_UNPROVEN = frozenset({ACTOR_RUNTIME_ORIGINATED, ACTOR_ASSIGNEE_LEASE,
 # artifact (M-4 / O-3), which binds a role and an agent id to a key no agent
 # process holds. A command claiming `bro` / `bro-000` must present one.
 #
-# The owner has no equivalent, and this task does not invent one: there is no
-# owner-authority artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no
-# signature field in `schemas/control-room-command.schema.json`, and no trusted
-# key that could sign either. An owner-issued command is therefore REFUSED by
-# name rather than validated on its say-so. What would close it is written out in
-# OWNER_ACTOR_UNPROVABLE, and all three of those files are outside this change.
+# The OWNER is proven by a different artifact, and this module ACCEPTS it: a
+# `control-room-command` signed under the dedicated `control-room` authority and
+# bound to the exact command (`CONTROL_ROOM_COMMAND_ARTIFACT` below;
+# `_prove_command_actor` verifies it). This paragraph said, until 2026-10-01, that
+# "there is no owner-authority artifact type", "no signature field" in the schema
+# and "no trusted key that could sign either", and that an owner command "is
+# therefore REFUSED by name" -- above the very constants and the very code that
+# register, consume and accept one. All three exist. What an owner command is
+# refused for today is narrower and is stated in OWNER_ACTOR_UNPROVABLE: nothing
+# in the shipped product MINTS the artifact (O-4), so a command that arrives with
+# NO attestation is a bare claim, and a bare claim is refused.
 #
 # Known and deliberate limit: a `conductor-session` artifact proves the caller
 # holds an operator-issued session credential; it is not bound to this individual
 # command, so within its validity window it authorises any command the caller can
 # already reach. That is a session credential's semantics, and it is a strictly
 # smaller claim than "anyone who can spell bro-000". Per-command non-repudiation
-# needs the signed `control-room-command` artifact type described below.
+# is what the owner's `control-room-command` artifact gives, and the conductor's
+# session does not.
 # --------------------------------------------------------------------------- #
 CONTROL_ROOM_ACTORS = {("owner", "owner-gev"), (CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID)}
 
@@ -154,8 +160,11 @@ ACTOR_PROVEN_PER_COMMAND = "owner-signed-control-room-command"
 CONTROL_ROOM_ACTOR_ARTIFACT = CONDUCTOR_SESSION_ARTIFACT
 
 #: How a proven actor identity is described in the reply. There is deliberately no
-#: value here meaning "the caller said so".
-ACTOR_PROVEN_BY_SESSION = "operator-signed-conductor-session"
+#: value here meaning "the caller said so". The WRITER's constant under this module's name,
+#: not a second spelling of its value: this line was the literal
+#: `"operator-signed-conductor-session"` again, a few dozen lines below the comment that says
+#: the basis vocabulary is "imported ... never re-spelled here".
+ACTOR_PROVEN_BY_SESSION = RUNTIME_ACTOR_PROVEN
 
 ACTOR_ATTESTATION_MISSING = (
     "control-room command actor identity is self-asserted: the command carries no "
@@ -820,8 +829,17 @@ class ControlRoomAPIV1:
         if actor not in CONTROL_ROOM_ACTORS:
             raise ControlRoomAPIError("command actor identity is not canonical")
         if attestation is None:
-            raise ControlRoomAPIError(f"{ACTOR_ATTESTATION_MISSING}; actor claimed: "
-                                      f"{actor[0]}/{actor[1]}")
+            # The two actors are told to present DIFFERENT artifacts, because they are proven by
+            # different ones (below). Every actor used to get ACTOR_ATTESTATION_MISSING, which
+            # names only the conductor's `conductor-session` -- the one artifact the owner path
+            # refuses -- while OWNER_ACTOR_UNPROVABLE, written for this case, was used by nothing.
+            if actor[0] == CONDUCTOR_ROLE:
+                missing = ACTOR_ATTESTATION_MISSING
+            else:
+                missing = ("control-room command actor identity is self-asserted: "
+                           f"{OWNER_ACTOR_UNPROVABLE}. Present the signed artifact document as "
+                           "the `actor_attestation` argument")
+            raise ControlRoomAPIError(f"{missing}; actor claimed: {actor[0]}/{actor[1]}")
         keys = self.runtime.evidence_keys
         if keys is None:
             raise ControlRoomAPIError(

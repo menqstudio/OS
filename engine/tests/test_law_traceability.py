@@ -178,6 +178,28 @@ class HumanViewDriftTests(unittest.TestCase):
         records = [law for law in registry["laws"] if "responsibility" in law]
         verify_law_index_sync(ROOT, records)  # must not raise
 
+    def test_a_law_id_must_stand_alone_and_is_not_satisfied_by_a_longer_one(self):
+        """`lid in text` was a substring test, so `L1` was "present" in any index that carried
+        `L10`..`L16`. Driven against a copy of the live index with the L1 entry's ID removed
+        and its NAME left in place -- the one drift the name check cannot see."""
+        import tempfile
+        registry = __import__("json").loads(
+            (ROOT / "laws" / "registry.json").read_text(encoding="utf-8"))
+        records = [law for law in registry["laws"] if "responsibility" in law]
+        live = (ROOT / "laws" / "LAW_INDEX.md").read_text(encoding="utf-8")
+        self.assertIn("## L1 —", live)
+        self.assertIn("L10", live)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "laws").mkdir()
+            index = root / "laws" / "LAW_INDEX.md"
+            index.write_text(live, encoding="utf-8")
+            verify_law_index_sync(root, records)                      # the control: a copy passes
+            index.write_text(live.replace("## L1 —", "## —"), encoding="utf-8")
+            with self.assertRaises(TraceabilityError) as caught:
+                verify_law_index_sync(root, records)
+            self.assertIn("L1 absent", str(caught.exception))
+
     def test_drifted_law_index_is_denied(self):
         with self.assertRaises(TraceabilityError):
             verify_law_index_sync(ROOT, [{"id": "L404", "name": "Nonexistent Law"}])

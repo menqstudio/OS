@@ -38,8 +38,9 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
   `op: "governance.read"` routes to the engine's `bro_control_room_api.governance_read` and relays its
   `brops.governance-read.v1` reply **verbatim**, so the three-valued shape survives the hop
   (`ok:true`+records / `ok:true`+`empty:true` / `ok:false`+error — a refusal never carries a `records`
-  key). An op this build does not implement is refused **by name**, never silently ignored. Ops are
-  READS: none reaches `_real_callables`, the supervisor socket, the signer or the builder.
+  key). An op this build does not implement is refused **by name**, never silently ignored. No op
+  reaches the execution path — `_real_callables`, the supervisor socket, the signer or the builder.
+  All are reads except `approval.request`, the one append-only WRITE, to its own provisioned log.
   Protocol note: [`docs/BRIDGE_SIDECAR_OP_PROTOCOL.md`](../docs/BRIDGE_SIDECAR_OP_PROTOCOL.md).
 - **`apps/desktop` `Provider::GovernedEngine`** (desktop provider, `src-tauri/src/ai.rs`) — **opt-in,
   default OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and

@@ -19,9 +19,12 @@ and its reply is relayed VERBATIM, because that reply is three-valued and the mi
 value is the fragile one: `ok:true`+`records` (read, found these), `ok:true`+
 `empty:true` (read, found nothing), `ok:false`+`error` (could not read). A refusal
 never carries a `records` key at any hop, so no consumer can mistake a blind engine
-for a quiet one. Ops are READS: nothing dispatched here may reach `_real_callables`,
-the supervisor socket, the signer or the builder. An op this build does not
-implement is refused BY NAME — never ignored, never answered with an empty read.
+for a quiet one. No op reaches the EXECUTION path: nothing dispatched here may reach
+`_real_callables`, the supervisor socket, the signer or the builder. All ops but one
+are reads; the exception is `approval.request`, the single WRITE in the table, which
+appends one record to its own operator-provisioned log and to nothing else. An op this
+build does not implement is refused BY NAME — never ignored, never answered with an
+empty read.
 
 Protocol dispatch — the two requests that are neither an op nor a task-request
 ------------------------------------------------------------------------------
@@ -45,15 +48,20 @@ decided by the supervisor, against its own durable row and its own clock — inc
 
 The §4.10(g) submit is the WHOLE turn: §4.10(a0) open → §4.10(a)(b)(c) staging upload
 → §4.10(d) execute trigger → the §4.10(e) reply re-framed into §4.6, all inside one
-one-shot subprocess, and then exit. It is stateful across 8 to 57 supervisor round
-trips and it is the one path here that causes an execution. It still originates no
+one-shot subprocess, and then exit. It is stateful across 10 to 57 supervisor round
+trips (`governed_turn_submit` derives both ends; the floor is 10, not the 8 the shape
+suggests) and it is the one path here that causes an execution. It still originates no
 verdict: the order and the shapes live in `governed_turn_submit`, every decision
 lives with the supervisor, and the re-framing is `governed_turn_result_bridge`'s
-field-for-field copy. As of 2026-08-12 the trusted side CAN write a submit frame —
+field-for-field copy. The trusted side writes the submit frame —
 `brops_core::governed_submit::governed_turn_submit_prepared` builds it and asserts the
-§4.10(g) cross-bindings — but in production this branch is still unreached: that helper
-has no caller, its subprocess spawn is an injected seam no production code implements,
-and the broker's one production executor spawns the recorder rather than a sidecar.
+§4.10(g) cross-bindings — and since 2026-09-20 that helper is WIRED: the broker's
+`ladder_executor::LadderChain` calls it over `impl SubmitTransport for GovernedSidecar`
+(`core/src/governed_sidecar.rs`), which is what spawns this process. (This paragraph
+said the helper "has no caller" and its spawn was "an injected seam no production code
+implements" until 2026-10-01.) A user still cannot reach this branch: the broker serves
+`LadderChain` only when `$BROPS_BROKER_CONFIG` names a deployment that verifies under
+the floor-pinned root anchor, and nothing in the shipped app sets it.
 
 A LOCAL failure of this hop (no socket provisioned, connect/timeout, an unframable
 request, a reply that is not a §4.10(f) frame) yields **no §4.10(f) frame at all**
@@ -264,15 +272,23 @@ def _signed_self_test_callables() -> tuple[Callable[[dict], Any], Callable[[Any]
 
 
 # --------------------------------------------------------------------------- #
-# Real mode — the sidecar is a pure RELAY to the supervisor service (audit P0-1). It
-# holds no signer material and never reaches the signer. It forwards the run handle
-# {run_id, execution_attempt_id} to the supervisor service, which builds the
-# authoritative run state, attests, and relays to the isolated signer service; the
-# sidecar returns the governed-result's output + signed receipt wire to the desktop.
-# The desktop STILL Blocks (NoTrustedManifest) until 3b-2/3b-3 — design §5 STOP.
+# Real mode — DESIGNED as a pure RELAY to the supervisor service (audit P0-1), and NOT
+# BUILT. The design: the sidecar holds no signer material and never reaches the signer;
+# it forwards the run handle {run_id, execution_attempt_id} to the supervisor service,
+# which builds the authoritative run state, attests, and relays to the isolated signer
+# service; the sidecar returns the governed-result's output + signed receipt wire.
+#
+# What is in the tree: `_real_callables` below raises on EVERY path (Wave 3b-1B is not
+# landed), so no relay happens, and `_GovernedOutcome` -- the shape that relay would
+# return -- is instantiated by nothing. Both are unbuilt Wave 3b-1B scaffolding
+# (`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`), kept because
+# `engine/tests/test_governed_turn_result.py` names the class as the frozen consumer.
+# The governed turn that DOES run goes through `bridge.governed-turn-submit.v1` instead.
 # --------------------------------------------------------------------------- #
 class _GovernedOutcome:
-    """A SupervisorResult-shaped relay of the supervisor service's governed-result."""
+    """A SupervisorResult-shaped relay of the supervisor service's governed-result.
+
+    UNBUILT SCAFFOLDING: nothing constructs this (see the block comment above)."""
 
     def __init__(self, run_id: str, governed: dict) -> None:
         r = governed.get("receipt", {}) or {}
@@ -339,9 +355,11 @@ def _real_callables(
 #                       this build serves. Never a silent no-op, and never a reply
 #                       shaped like a satisfied read.
 #
-# Every op here is a READ. None may reach `_real_callables`, the supervisor socket,
-# the signer or the builder: that path stays exactly as fail-closed as it was, and a
-# read must not even be able to knock on it.
+# No op here reaches the EXECUTION path. None may reach `_real_callables`, the supervisor
+# socket, the signer or the builder: that path stays exactly as fail-closed as it was, and
+# an op must not even be able to knock on it. Every op is a READ except ONE:
+# `approval.request` (below) is an append-only WRITE to its own operator-provisioned log.
+# This comment said "Every op here is a READ" after that write was registered in `_OPS`.
 # --------------------------------------------------------------------------- #
 
 #: Reply protocol for a refusal that belongs to no richer protocol of its own.
@@ -367,8 +385,9 @@ _GOVERNANCE_REGISTRY_ROOT_ENV = "BROPS_GOVERNANCE_REGISTRY_ROOT"
 
 #: The approval-REQUEST wire contract -- the one WRITE this dispatch serves. Held as literals for the
 #: same reason the read's are: the refusal below has to be emitable when `bro_approval_requests` will
-#: not import, which is exactly when its constants are out of reach. `ProtocolDriftTests` pins all
-#: three to the engine module's, so they cannot drift apart in silence.
+#: not import, which is exactly when its constants are out of reach. `ApprovalProtocolDriftTests`
+#: (`bridge/tests/test_sidecar_ops.py`) pins all three to the engine module's, so they cannot drift
+#: apart in silence. (`ProtocolDriftTests`, which this comment used to name, pins the READ's two.)
 APPROVAL_REQUEST_PROTOCOL = "brops.approval-request.v1"
 APPROVAL_REQUEST_OP = "approval.request"
 APPROVAL_REPLY_PROTOCOL = "brops.approval-request-reply.v1"
@@ -933,9 +952,9 @@ def _governed_turn(request: dict, argv: list[str]) -> dict:
 def _dispatch(request: dict, argv: list[str]) -> dict:
     """Route one parsed request to its handler. Never raises; never returns None.
 
-    Three disjoint shapes, in the order they are recognised: a top-level `protocol`
-    naming the 4.10(f) output read, an `op`, and - with neither - the original
-    `bridge.task-request`. The disjointness is structural rather than conventional: the
+    Four disjoint shapes, in the order they are recognised: a top-level `protocol`
+    naming the 4.10(f) output read, a top-level `protocol` naming the 4.10(g) submit,
+    an `op`, and - with none of those - the original `bridge.task-request`. The disjointness is structural rather than conventional: the
     task-request schema is `additionalProperties:false` and has no `protocol` key, so it
     cannot grow one; and no op is keyed on `protocol`.
 

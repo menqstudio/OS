@@ -252,16 +252,41 @@ def verify_repository_binding(workspace: Workspace) -> None:
 
     `.git/config` is a prohibited *agent* target; prohibited_paths constrain
     tool inputs, not this module's own reads.
+
+    Every way THIS FILE can say where a push goes is read, not only ``url =``. Until 2026-10-01
+    that one key was the whole check, and git has three more that leave it untouched while
+    sending the push elsewhere:
+
+    * ``pushurl`` -- a remote's push destination, which overrides ``url`` for pushes. It is held
+      to the same rule as ``url``.
+    * ``url.<base>.insteadOf`` / ``pushInsteadOf`` -- rewrite a matching url at use time, so the
+      ``url =`` line this function approved is not the address git contacts. Refused outright:
+      the binding names ONE repository and a rewrite rule has no value this could compare.
+    * ``[include]`` / ``[includeIf]`` -- pull further configuration, including any of the
+      above, from a file this function does not read. Refused for the same reason.
+
+    Key names are matched case-insensitively, as git matches them. What this still does NOT
+    see is the user's global and the system git config; those are outside the repository and
+    outside this module's reach, and the release-grant path is what gates a push.
     """
     config = git_config_path(workspace.root)
     try:
         text = config.read_text(encoding="utf-8")
     except OSError as exc:
         raise WorkspaceError(f"cannot read repository config: {exc}") from exc
-    urls = re.findall(r"^\s*url\s*=\s*(.+?)\s*$", text, re.MULTILINE)
+    flags = re.MULTILINE | re.IGNORECASE
+    if re.search(r"^\s*\[\s*include(if)?\b", text, flags):
+        raise WorkspaceError(
+            "repository config includes another config file, which this binding cannot read")
+    rewrite = re.search(r"^\s*(push)?insteadof\s*=", text, flags)
+    if rewrite:
+        raise WorkspaceError(
+            f"repository config rewrites remote urls ({rewrite.group(0).strip()} ...), so the "
+            "configured url is not the address git would contact")
+    urls = re.findall(r"^\s*url\s*=\s*(.+?)\s*$", text, flags)
     if not urls:
         raise WorkspaceError("repository has no remote url")
-    for url in urls:
+    for url in urls + re.findall(r"^\s*pushurl\s*=\s*(.+?)\s*$", text, flags):
         if normalize_remote(url) != workspace.allowed_remote_repository:
             raise WorkspaceError(f"remote {url} is outside the authorized repository")
 

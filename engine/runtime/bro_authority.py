@@ -26,15 +26,31 @@ class AgentAuthority:
     risk_ceiling: str
 
 
+def _shown(path: pathlib.Path) -> str:
+    """The path as a message should name it: relative to this module's ROOT when it is under
+    it, and whole otherwise.
+
+    Every caller passes its OWN root (`_load_policy(root)`), and the three messages below used
+    `path.relative_to(ROOT)` unconditionally. For a path under any other root that call raises
+    `ValueError` -- from inside the `except` that was building the `AuthorityError` -- so a
+    missing or invalid policy under a non-default root surfaced as a plain `ValueError`, which
+    the callers that catch `AuthorityError` (`bro_contracts`, `bro_completion`) do not catch.
+    """
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _json(path: pathlib.Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise AuthorityError(f"missing {path.relative_to(ROOT)}") from exc
+        raise AuthorityError(f"missing {_shown(path)}") from exc
     except json.JSONDecodeError as exc:
-        raise AuthorityError(f"invalid JSON in {path.relative_to(ROOT)}: {exc}") from exc
+        raise AuthorityError(f"invalid JSON in {_shown(path)}: {exc}") from exc
     if not isinstance(value, dict):
-        raise AuthorityError(f"{path.relative_to(ROOT)} must contain an object")
+        raise AuthorityError(f"{_shown(path)} must contain an object")
     return value
 
 

@@ -96,6 +96,37 @@ class DeployPreflightTests(PreflightFixture):
         external.mkdir()
         self.assertEqual(self.run_preflight(BRO_EXECUTION_LEASE_LEDGER=str(external)), [])
 
+    def test_every_ledger_and_store_the_runtime_reads_is_checked(self):
+        """The preflight says it checks "every machine-local ledger/store that is configured".
+        Its list held six names and the runtime read ten. Each one is driven here, both ways."""
+        import bro_deploy_preflight
+        for var in bro_deploy_preflight.LEDGER_VARS:
+            with self.subTest(var=var):
+                inside = self.run_preflight(**{var: str(self.root / "state" / "x")})
+                self.assertTrue(any(var in f and "outside the repository" in f for f in inside),
+                                inside)
+                relative = self.run_preflight(**{var: "var/x"})
+                self.assertTrue(any(var in f and "absolute" in f for f in relative), relative)
+                self.assertEqual(self.run_preflight(**{var: str(self.tmp / "external")}), [])
+
+    def test_the_list_is_the_runtimes_own_and_cannot_fall_behind_it(self):
+        """Derived from the runtime's source: every `BRO_*` name the engine reads that ends in a
+        ledger/store/directory/floor word must be in the preflight's list. The three it lacked
+        -- the audit ledger, the mode-grant nonce ledger and the session-state directory -- are
+        named so this test cannot be satisfied by an edit that drops them again."""
+        import re
+        import bro_deploy_preflight
+        pattern = re.compile(r'"(BRO_[A-Z_]*(?:LEDGER|STORE|STATE_DIR|HEAD_FLOOR))"')
+        read = set()
+        for directory in (ROOT / "runtime", ROOT / "tools"):
+            for path in directory.glob("*.py"):
+                read |= set(pattern.findall(path.read_text(encoding="utf-8")))
+        self.assertGreaterEqual(len(read), 10, sorted(read))
+        self.assertEqual(sorted(read - set(bro_deploy_preflight.LEDGER_VARS)), [],
+                         "the runtime reads a store the deployment preflight does not check")
+        for var in ("BRO_AUDIT_LEDGER", "BRO_MODE_GRANT_NONCE_LEDGER", "BRO_SESSION_STATE_DIR"):
+            self.assertIn(var, bro_deploy_preflight.LEDGER_VARS)
+
     def test_shadow_without_ledger_fails_open_and_is_caught(self):
         failures = self.run_preflight(BRO_ENFORCEMENT="shadow")
         self.assertTrue(any("BRO_SHADOW_LEDGER" in f for f in failures), failures)

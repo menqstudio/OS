@@ -131,6 +131,7 @@ class DurabilityFixture(unittest.TestCase):
             "install_id": INSTALL, "marks_root": str(self.marks_root),
             "socket_path": str(self.root / "fw.sock"), "generation": 3,
             "peers": {fw.OP_GET: [CALLER], fw.OP_ADVANCE: [CALLER]}}), encoding="utf-8")
+        self.config_path.chmod(0o644)   # the config custody rule refuses a group-writable file
         self.config = fw.load_service_config({fw.ENV_SERVICE_CONFIG: str(self.config_path)})
         # Provisioning's first document, written the way provisioning writes it.
         fw.commit_state(self.config, {"install_id": INSTALL, "generation": 3,

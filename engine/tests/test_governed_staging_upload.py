@@ -1950,6 +1950,77 @@ class StagingSweepTests(_Case):
         _sid, published = self.upload("generation_config", GENCFG_BYTES, turn=third)
         self.assertEqual(published["status"], "published")
 
+    def test_a_session_opened_DURING_the_pass_is_not_collected_as_an_orphan(self):
+        """The sweep has its own thread and its own connection, so a turn can open a session
+        and have a chunk ACKed between any two of its statements. The forced interleave below
+        puts exactly that between the sweep's read of the session rows and whatever it does
+        next. With the rows read BEFORE the directory was listed, the new directory was on
+        disk, missing from the row snapshot, and removed -- a live turn's ACKed chunk."""
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+        case = self
+        opened = {}
+
+        class _OpensASessionAfterTheRowSnapshot:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+            def execute(self, sql, *args):
+                cursor = self._conn.execute(sql, *args)
+                if (" ".join(sql.split()).startswith(
+                        "SELECT session_dir FROM governed_turn_staging_session")
+                        and not opened):
+                    rows = cursor.fetchall()            # the snapshot is TAKEN here
+                    sid = case.open_session("system", SYSTEM_BYTES)
+                    opened["sid"] = sid
+                    opened["seq"] = case.send_all_chunks(sid, SYSTEM_BYTES)
+
+                    class _Snapshot:
+                        def fetchall(inner):
+                            return rows
+                    return _Snapshot()
+                return cursor
+
+        report = gsu.sweep_staging(_OpensASessionAfterTheRowSnapshot(self.conn),
+                                   str(self.staging_root), self.clock)
+
+        self.assertIn("sid", opened, "the interleave must actually have happened")
+        self.assertEqual(report.orphan_dirs_removed, 0, report)
+        self.assertEqual(report.failures, ())
+        self.assertTrue(self.session_dir(opened["sid"]).is_dir(),
+                        "a LIVE session's directory was swept as an orphan")
+        published = self.call(self.final_request(opened["sid"], opened["seq"]))
+        self.assertEqual(published["status"], "published", published)
+
+    def test_an_empty_chunk_is_a_typed_refusal_and_writes_nothing(self):
+        """An authorised sidecar could raise `SupervisorError` at will: an empty chunk at the
+        cursor of a session that already holds all its declared bytes."""
+        sid = self.open_session("system", SYSTEM_BYTES)
+        seq = self.send_all_chunks(sid, SYSTEM_BYTES)
+        before = sorted(p.name for p in self.session_dir(sid).iterdir())
+        reply = self.call(self.chunk_request(sid, seq, b""))
+        self.assertEqual((reply["status"], reply["reason"]), ("refused", "malformed"), reply)
+        self.assertEqual(sorted(p.name for p in self.session_dir(sid).iterdir()), before,
+                         "a refused chunk must leave no file behind")
+        # The positive control: the session is untouched and still publishes.
+        self.assertEqual(self.call(self.final_request(sid, seq))["status"], "published")
+
+    def test_a_replay_against_a_PUBLISHED_session_whose_chunk_is_gone_is_a_typed_refusal(self):
+        """`ARTIFACT_READY -> SESSION_CORRUPT` is not an edge the DDL has. The replay path tried
+        to take it and the peer got a raw `sqlite3.IntegrityError` out of the trigger."""
+        sid, reply = self.upload("system", SYSTEM_BYTES)
+        self.assertEqual(reply["status"], "published", reply)
+        self.assertEqual(self.session_row(sid)["state"], gsl.ARTIFACT_READY)
+        (self.session_dir(sid) / "0.chunk").unlink()
+
+        replay = self.call(self.chunk_request(sid, 0, SYSTEM_BYTES[:gsu.MAX_STAGING_CHUNK_BYTES]))
+        self.assertEqual((replay["status"], replay["reason"]), ("refused", "session_corrupt"),
+                         replay)
+        self.assertEqual(self.session_row(sid)["state"], gsl.ARTIFACT_READY,
+                         "a published artifact's session must stay published")
+
     def test_the_session_cap_is_the_turn_cap_times_the_uploadable_artifacts(self):
         """§2.4's "(= 2 turns x 3 artifacts)" as arithmetic rather than a second literal —
         and still exactly the LOCKED 6, which is what the derivation has to reproduce."""

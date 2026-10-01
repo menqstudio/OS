@@ -299,7 +299,7 @@ def main() -> int:
              "origin for a pinned digest that is not the deployment tree the pin is checked against")
     ap.add_argument(
         "--kit", required=True, choices=KITS,
-        help="which kit's role table to use. Required with NO default: the two kits run different "
+        help="which kit's role table to use. Required with NO default: the kits run different "
              "files under the same logical names, and a floor that pins the wrong artifact is worse "
              "than no floor. A default would be the wrong table taken silently")
     ap.add_argument(

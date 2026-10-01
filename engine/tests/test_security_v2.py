@@ -426,6 +426,36 @@ class SecurityV2Tests(unittest.TestCase):
     def test_registered_schemas_compile(self):
         self.assertGreaterEqual(validate_registered_schemas(ROOT), 10)
 
+    def test_the_schema_registry_drift_check_can_actually_fail(self):
+        """It compared a counter with the length of the list the counter had just been run over,
+        so "schema registry drift" was a message nothing could produce."""
+        import shutil
+        from bro_contracts import ContractError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            shutil.copytree(ROOT / "schemas", root / "schemas")
+            registered = validate_registered_schemas(root)          # the control: a copy passes
+            self.assertEqual(registered, validate_registered_schemas(ROOT))
+
+            # A schema file the registry does not name is validated by nothing.
+            stray = root / "schemas" / "stray.schema.json"
+            stray.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+            with self.assertRaises(ContractError) as caught:
+                validate_registered_schemas(root)
+            self.assertIn("schema registry drift", str(caught.exception))
+            self.assertIn("schemas/stray.schema.json", str(caught.exception))
+            stray.unlink()
+
+            # The same path registered twice.
+            registry_path = root / "schemas" / "registry.json"
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            registry["schemas"].append(dict(registry["schemas"][0]))
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            with self.assertRaises(ContractError) as caught:
+                validate_registered_schemas(root)
+            self.assertIn("registered more than once", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

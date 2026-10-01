@@ -80,7 +80,13 @@ class BoundToTheRustTests(unittest.TestCase):
             "the writer's coverage check would pass a manifest verify_tcb_integrity refuses, or "
             "refuse one it accepts")
 
-    def test_the_sidecar_rules_are_the_brokers_own(self):
+    def test_the_sidecar_constants_are_the_brokers_own(self):
+        """The four CONSTANTS, and nothing more. This test was named `..._rules_are_the_brokers_own`
+        and a reader took the name at its word: `validate_sidecar`'s five rules are a second
+        implementation of `SidecarPrincipal::from_config`, and what is compared here is two key
+        names, one program name and one number. Binding the rule LOGIC needs one table of
+        accept/refuse fixtures run by a Rust test and by this file; that table does not exist.
+        """
         module = writer_module()
         source = read(SIDECAR_RS)
 
