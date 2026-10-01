@@ -2,8 +2,9 @@
 //!
 //! # Why this exists
 //!
-//! `build_governed_executor` (`broker/src/main.rs`) is a ladder of 15 `return fail_closed()`
-//! branches. That is correct — the broker must never serve a governed turn it cannot back — but it
+//! `build_governed_executor` (`broker/src/main.rs`) is a ladder of `return fail_closed()`
+//! branches. (This sentence carried a count — 15 — that the function had outgrown; the number is
+//! gone rather than corrected, because nothing held it.) That is correct — the broker must never serve a governed turn it cannot back — but it
 //! is *illegible*: every one of those branches produces the same observable, a `blocked` reply, and
 //! several of them produce it before anything is printed. An operator who wants to know **why** a
 //! machine cannot run a governed turn has to read Rust and then guess which branch fired first.
@@ -161,7 +162,8 @@ pub const REQUIREMENTS: &[Requirement] = &[
     Requirement {
         name: "principals.seven_distinct_accounts",
         what: "seven pairwise-distinct OS service accounts (broker, challenge, sidecar, supervisor, \
-               recorder, signer, executor) that exist on this machine",
+               recorder, signer, executor) that exist on this machine — every uid the `uids` block \
+               declares is looked up in the account database, not taken on the config's word",
         provisioner: Provisioner::MachineAdministrator,
         refusal: "§2.6; governed_supervisor_server.handle_connection refuses a principal collapse, \
                   and every supervisor surface gates on a strict uid equality",
@@ -255,7 +257,10 @@ pub const REQUIREMENTS: &[Requirement] = &[
         provisioner: Provisioner::MachineAdministrator,
         refusal: "main.rs's own comment: floor_path \"MUST be owned by / writable only by the broker \
                   service principal (file mode 0600, dedicated UID)\"; else \
-                  `blocked:keys:floor_not_persisted`",
+                  ProductionResolver::resolve_keys refuses the turn and the renderer is answered \
+                  `upstream_blocked`. (`blocked:keys:floor_not_persisted` is the PROOF DRIVER's name \
+                  for the same failure — proof/src/bin/ladder_turn.rs — and the broker emits no \
+                  such string)",
     },
     Requirement {
         name: "trust.signer_key_id",
@@ -320,11 +325,14 @@ pub const REQUIREMENTS: &[Requirement] = &[
     },
     Requirement {
         name: "db.durable_acceptance_ledger",
-        what: "the broker's SQLite file — derived from its socket argv, NOT from config — is \
-               openable, so replay defence survives a restart",
+        what: "the broker's SQLite file — derived from its socket argv (`<stem>.sock` → \
+               `<stem>.db`), NOT from config — has a directory the broker account owns and can \
+               write, so the ledger can be created and replay defence survives a restart",
         provisioner: Provisioner::MachineAdministrator,
-        refusal: "main.rs: `durable acceptance ledger unavailable at {db_path} ({e}) - serving \
-                  fail-closed`",
+        refusal: "main.rs `serve()`: a socket path not ending in `.sock` → EXIT_BAD_ARGUMENT; \
+                  `cannot open broker DB` → EXIT_DB, before the socket is bound; and, if only the \
+                  ledger's second open fails, `durable acceptance ledger unavailable at {db_path} \
+                  ({e}) - serving fail-closed`",
     },
     // ---- custody ------------------------------------------------------------------------------
     Requirement {
@@ -359,7 +367,7 @@ pub const REQUIREMENTS: &[Requirement] = &[
 /// is a mirror, and a mirror that cannot be checked is how one contract acquires two implementations.
 ///
 /// `db.path` is deliberately ABSENT: the broker derives its database path from its socket argv
-/// (`socket_path.replace(".sock", ".db")`) and never reads a `db` block. The live kit writes one for
+/// ([`crate::broker_db_path`]) and never reads a `db` block. The live kit writes one for
 /// the proof driver, which is a different consumer.
 pub const CONFIG_KEYS_READ_BY_BUILD_GOVERNED_EXECUTOR: &[&str] = &[
     "content.messages_db",
@@ -412,6 +420,10 @@ pub trait Host {
     /// Resolve an OS account name to a uid. `None` when there is no such account (or no such
     /// concept on this platform).
     fn account_uid(&self, name: &str) -> Option<u32>;
+    /// The reverse lookup: the name of the OS account holding `uid`, or `None` when no account does
+    /// (or the platform has no such concept). It is how a NUMBER written in a config is told apart
+    /// from an account that exists.
+    fn uid_account(&self, uid: u32) -> Option<String>;
 }
 
 /// The real host.
@@ -451,7 +463,9 @@ impl Host for RealHost {
     #[cfg(not(unix))]
     fn stat(&self, _path: &str) -> Option<PathFacts> {
         // No uid ownership to report. Every caller of `stat` is gated on `platform_is_linux`, so
-        // this never becomes a silent NotMet.
+        // this never becomes a silent NotMet — and that is held by a test now
+        // (`off_linux_nothing_is_reported_absent_because_stat_could_not_answer`). When this comment
+        // was only a comment, three callers were not gated and reported files that exist as absent.
         None
     }
 
@@ -469,6 +483,23 @@ impl Host for RealHost {
 
     #[cfg(not(target_os = "linux"))]
     fn account_uid(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    fn uid_account(&self, uid: u32) -> Option<String> {
+        // SAFETY: `getpwuid` reads the passwd database and returns a pointer into a static buffer
+        // owned by libc; `pw_name` is copied out of it before any other libc call can clobber it.
+        let pw = unsafe { libc::getpwuid(uid) };
+        if pw.is_null() {
+            return None;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
+        Some(name.to_string_lossy().into_owned())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn uid_account(&self, _uid: u32) -> Option<String> {
         None
     }
 }
@@ -644,7 +675,7 @@ pub fn evaluate(host: &dyn Host, socket_path: Option<&str>) -> Report {
             "sidecar.spawn_triple" => check_spawn_triple(host, &cfg),
             "sidecar.principal_and_invoker" => check_sidecar_principal(host, &cfg),
             "resolved.identifiers" => check_resolved(&cfg),
-            "db.durable_acceptance_ledger" => check_ledger(host, socket_path),
+            "db.durable_acceptance_ledger" => check_ledger(host, &cfg, socket_path),
             "custody.tcb_root_manifest_signature" => check_root_custody(host, &cfg),
             "custody.committed_label_resolver" => check_custody_resolver(),
             other => Status::unmeasurable(format!(
@@ -711,8 +742,18 @@ fn check_seven_accounts(host: &dyn Host, cfg: &Cfg) -> Status {
         }
     };
     uids.insert(sidecar_uid);
+    // The row says the accounts EXIST. The six uids in the `uids` block are numbers the config
+    // wrote down, and until this lookup only the sidecar — named by account — was ever resolved:
+    // six distinct numbers belonging to nobody read as six accounts.
+    let unowned: Vec<u32> = uids.iter().copied().filter(|u| host.uid_account(*u).is_none()).collect();
+    if !unowned.is_empty() {
+        return Status::not_met(format!(
+            "the deployment declares uids that no account on this machine holds: {unowned:?}. A \
+             number in the `uids` block is not an account; §2.6 needs seven that exist"
+        ));
+    }
     if uids.len() == 7 {
-        Status::met(format!("seven distinct uids: {uids:?}"))
+        Status::met(format!("seven distinct uids, each held by an account: {uids:?}"))
     } else {
         Status::not_met(format!(
             "§2.6 needs seven pairwise-distinct principals; this deployment resolves {} distinct \
@@ -1073,7 +1114,7 @@ fn check_floor_custody(host: &dyn Host, cfg: &Cfg) -> Status {
         (Some(f), Some(b)) if f.owner_uid != b => Status::not_met(format!(
             "{path} is owned by uid {} but the broker runs as {b}; the resolver writes the advanced \
              floor back by temp-file + rename in that directory, and a persist failure refuses the \
-             turn (blocked:keys:floor_not_persisted)",
+             turn (the broker answers `upstream_blocked`)",
             f.owner_uid
         )),
         (Some(f), Some(_)) if f.mode & 0o077 != 0 => Status::not_met(format!(
@@ -1124,6 +1165,12 @@ fn check_messages_db(host: &dyn Host, cfg: &Cfg) -> Status {
              digests, so there is nothing honest to sign",
         ),
     };
+    if !host.platform_is_linux() {
+        return Status::unmeasurable(format!(
+            "`content.messages_db` names {path}, but this platform's `stat` answers nothing, so \
+             whether it exists is not something the preflight can say here"
+        ));
+    }
     match host.stat(&path) {
         Some(f) if !f.is_dir => Status::met(format!("{path} exists")),
         Some(_) => Status::not_met(format!("{path} is a directory, not a database")),
@@ -1148,16 +1195,28 @@ fn check_window(cfg: &Cfg) -> Status {
 
 fn check_spawn_triple(host: &dyn Host, cfg: &Cfg) -> Status {
     let mut missing = Vec::new();
-    let mut present = Vec::new();
+    let mut named = Vec::new();
     for key in ["python", "script", "cwd"] {
         match cfg.s(&["sidecar", key]) {
             None => missing.push(format!("`sidecar.{key}` is unset")),
-            Some(p) => {
-                if host.stat(&p).is_some() {
-                    present.push(format!("{key}={p}"));
-                } else {
-                    missing.push(format!("`sidecar.{key}` names {p}, which is absent"));
-                }
+            Some(p) => named.push((key, p)),
+        }
+    }
+    // An unset key is a fact about the config and is NOT MET on any platform. Whether a NAMED path
+    // exists is a fact about the filesystem, and off Linux `stat` cannot answer it.
+    if missing.is_empty() && !host.platform_is_linux() {
+        return Status::unmeasurable(
+            "all three of `sidecar.python`, `sidecar.script` and `sidecar.cwd` are named, but this \
+             platform's `stat` answers nothing, so whether they exist is not measurable here",
+        );
+    }
+    let mut present = Vec::new();
+    if host.platform_is_linux() {
+        for (key, p) in named {
+            if host.stat(&p).is_some() {
+                present.push(format!("{key}={p}"));
+            } else {
+                missing.push(format!("`sidecar.{key}` names {p}, which is absent"));
             }
         }
     }
@@ -1213,7 +1272,7 @@ fn check_resolved(cfg: &Cfg) -> Status {
     }
 }
 
-fn check_ledger(host: &dyn Host, socket_path: Option<&str>) -> Status {
+fn check_ledger(host: &dyn Host, cfg: &Cfg, socket_path: Option<&str>) -> Status {
     let socket = match socket_path {
         Some(s) => s,
         None => {
@@ -1223,19 +1282,55 @@ fn check_ledger(host: &dyn Host, socket_path: Option<&str>) -> Status {
             )
         }
     };
-    let db = socket.replace(".sock", ".db");
+    // The broker's own rule, not a copy of it. A path with no `.sock` suffix used to come back
+    // from a local `replace(".sock", ".db")` UNCHANGED — the "database" was the socket — and this
+    // row then reported MET for it.
+    let db = match crate::broker_db_path(socket) {
+        Some(db) => db,
+        None => {
+            return Status::not_met(format!(
+                "the socket path {socket} does not end in `.sock`, so no database path can be \
+                 derived from it that is not the socket itself; the broker refuses to start on it"
+            ))
+        }
+    };
     let dir = match db.rfind(['/', '\\']) {
         Some(i) if i > 0 => db[..i].to_string(),
         _ => return Status::not_met(format!("{db} has no parent directory")),
     };
-    match host.stat(&dir) {
-        Some(f) if f.is_dir => Status::met(format!(
-            "{dir} exists, so the ledger at {db} has somewhere to live"
+    if !host.platform_is_linux() {
+        return Status::unmeasurable(format!(
+            "the ledger would be {db}, but this platform has no ownership or mode for {dir} that \
+             the preflight could compare with the broker account"
+        ));
+    }
+    // "A directory exists" is not "the broker can open its ledger there": SQLite has to CREATE the
+    // file and its journal in that directory, as the broker account. This row used to stop at
+    // `is_dir`, so a root-owned 0755 directory — where the broker's open fails — read as MET.
+    let broker_uid = cfg.i(&["uids", "broker"]).map(|u| u as u32);
+    match (host.stat(&dir), broker_uid) {
+        (None, _) => Status::not_met(format!(
+            "{dir} does not exist, so the durable acceptance ledger cannot be opened at {db}: the \
+             broker exits with EXIT_DB before it binds its socket, and serves nothing at all"
         )),
-        Some(_) => Status::not_met(format!("{dir} is not a directory")),
-        None => Status::not_met(format!(
-            "{dir} does not exist, so the durable acceptance ledger cannot be opened at {db} and \
-             the broker serves fail-closed"
+        (Some(f), _) if !f.is_dir => Status::not_met(format!("{dir} is not a directory")),
+        (Some(_), None) => Status::not_met(format!(
+            "`uids.broker` is not declared, so whether the broker account can create {db} in \
+             {dir} cannot be judged"
+        )),
+        (Some(f), Some(b)) if f.owner_uid != b => Status::not_met(format!(
+            "{dir} is owned by uid {} but the broker runs as {b}; SQLite must create {db} and its \
+             journal there as the broker, and this row does not guess at group or ACL access",
+            f.owner_uid
+        )),
+        (Some(f), Some(_)) if f.mode & 0o300 != 0o300 => Status::not_met(format!(
+            "{dir} is mode {:o}: its owner cannot both write and search it, so {db} cannot be \
+             created there",
+            f.mode & 0o7777
+        )),
+        (Some(f), Some(b)) => Status::met(format!(
+            "{dir} is 0{:o} owned by the broker uid {b}, so the ledger at {db} can be created there",
+            f.mode & 0o7777
         )),
     }
 }
@@ -1345,6 +1440,9 @@ mod tests {
         files: BTreeMap<String, Vec<u8>>,
         stats: BTreeMap<String, PathFacts>,
         accounts: BTreeMap<String, u32>,
+        /// How many times `stat` was asked. A test reads it to hold "off Linux, nobody calls
+        /// `stat`" as a measurement instead of a comment.
+        stat_calls: std::cell::Cell<usize>,
     }
 
     impl FakeHost {
@@ -1388,10 +1486,18 @@ mod tests {
             self.files.get(path).cloned()
         }
         fn stat(&self, path: &str) -> Option<PathFacts> {
+            self.stat_calls.set(self.stat_calls.get() + 1);
+            // The real non-unix `stat` answers `None` for every path; so does this one.
+            if !self.linux {
+                return None;
+            }
             self.stats.get(path).cloned()
         }
         fn account_uid(&self, name: &str) -> Option<u32> {
             self.accounts.get(name).copied()
+        }
+        fn uid_account(&self, uid: u32) -> Option<String> {
+            self.accounts.iter().find(|(_, u)| **u == uid).map(|(name, _)| name.clone())
         }
     }
 
@@ -1603,11 +1709,38 @@ mod tests {
         assert!(src.contains("tcb_probe::TCB_PIN_MANIFEST_ENV"));
     }
 
+    /// The §2.5 roster is the core constant, used through `missing_required()`, and this module
+    /// writes NONE of it down a second time.
+    ///
+    /// Read from the source, because that is the only place a copy could be: the previous body of
+    /// this test asserted two things about the imported constant (`contains`, `len() >= 20`) and
+    /// would have stayed green with a second roster typed out twenty lines above it. The one role
+    /// this module legitimately names as a literal is the launcher it looks up; any other roster
+    /// name appearing as a string literal in the production half is a copy starting.
     #[test]
     fn the_tcb_roster_is_the_real_constant_not_a_copy() {
-        // If this ever needs updating, the roster was copied. It is referenced directly.
-        assert!(TCB_REQUIRED_ARTIFACTS.contains(&"privileged-launcher.bin"));
-        assert!(TCB_REQUIRED_ARTIFACTS.len() >= 20);
+        let source = include_str!("preflight.rs");
+        let production = source
+            .split_once("#[cfg(test)]")
+            .expect("preflight.rs must still delimit its test module")
+            .0;
+        assert!(production.contains("fn check_pin_coverage("), "the production half is what is scanned");
+        assert!(TCB_REQUIRED_ARTIFACTS.len() >= 20, "a scan over a near-empty roster would be vacuous");
+
+        let written_out: Vec<&str> = TCB_REQUIRED_ARTIFACTS
+            .iter()
+            .copied()
+            .filter(|role| production.contains(&format!("\"{role}\"")))
+            .collect();
+        assert_eq!(
+            written_out,
+            vec!["privileged-launcher.bin"],
+            "roster roles written out as literals in preflight.rs. The roster is \
+             `brops_core::tcb_integrity::TCB_REQUIRED_ARTIFACTS`; a second list here is a second \
+             contract"
+        );
+        // And coverage is decided by the constant's own method, not by a loop over names here.
+        assert!(production.contains("manifest.missing_required()"));
     }
 
     // ---- platform ---------------------------------------------------------------------------
@@ -1734,7 +1867,8 @@ mod tests {
                     logical_name: (*n).to_string(),
                     // Two roles point at files this fixture also stats or reads, because the
                     // preflight LOCATES those artifacts through the pin manifest — the broker's
-                    // config does not name them, and must not (see `broker_config_keys`).
+                    // config does not name them, and must not (see
+                    // `the_provisioned_broker_config_holds_only_keys_the_broker_reads`).
                     path: match *n {
                         "privileged-launcher.bin" => "/kit/privileged-launcher.bin".to_string(),
                         "supervisor.config" => "/kit/supervisor.json".to_string(),
@@ -1802,7 +1936,13 @@ mod tests {
             .stat("/kit/privileged-launcher.bin", 0, 0o104750, false)
             .stat("/kit/supervisor-state", 5004, 0o40700, true)
             .stat("/kit/broker-state", 5001, 0o40700, true)
+            .account("brops-broker", 5001)
+            .account("brops-challenge", 5002)
             .account("brops-sidecar", 5003)
+            .account("brops-supervisor", 5004)
+            .account("brops-recorder", 5005)
+            .account("brops-signer", 5006)
+            .account("brops-executor", 5007)
     }
 
     #[test]
@@ -2065,7 +2205,32 @@ mod tests {
         let r = evaluate(&host, None);
         let d = status_of(&r, "trust.floor_is_broker_owned_0600").detail();
         assert!(d.contains("owned by uid 0"), "{d}");
-        assert!(d.contains("floor_not_persisted"), "{d}");
+        // The reason named is the one the BROKER returns. This asserted `floor_not_persisted`,
+        // which is `ladder_turn`'s outcome string and appears nowhere in the broker's refusal.
+        assert!(d.contains("`upstream_blocked`"), "{d}");
+        assert!(!d.contains("floor_not_persisted"), "{d}");
+    }
+
+    /// ...and that is read off the resolver itself, so the sentence cannot go stale quietly again:
+    /// a persist failure maps to `UpstreamBlocked`, and the broker's resolver holds no
+    /// `floor_not_persisted` string to emit.
+    #[test]
+    fn the_brokers_persist_refusal_is_upstream_blocked_and_it_names_no_stage() {
+        // CRLF-normalised: `include_str!` reads the checkout's bytes, and a Windows checkout's line
+        // endings would otherwise make the two-line needle below unfindable there.
+        let resolver = include_str!("manifest_resolver.rs").replace("\r\n", "\n");
+        assert!(
+            resolver.contains(
+                "check_and_persist(&floor, &p.manifest, &p.floor_path)\n                \
+                 .map_err(|_| TurnReason::UpstreamBlocked)?"
+            ),
+            "the resolver no longer maps a persist failure to UpstreamBlocked; the floor row's \
+             `refusal` text and `check_floor_custody`'s message describe that mapping"
+        );
+        assert!(!resolver.contains("floor_not_persisted"));
+        let row = REQUIREMENTS.iter().find(|r| r.name == "trust.floor_is_broker_owned_0600").unwrap();
+        assert!(row.refusal.contains("`upstream_blocked`"), "{}", row.refusal);
+        assert!(row.refusal.contains("PROOF DRIVER"), "{}", row.refusal);
     }
 
     #[test]
@@ -2182,9 +2347,135 @@ mod tests {
             Status::Unmeasurable { .. }
         ));
         let r = evaluate(&host, Some("/nowhere/broker.sock"));
-        assert!(status_of(&r, "db.durable_acceptance_ledger")
-            .detail()
-            .contains("does not exist"));
+        let d = status_of(&r, "db.durable_acceptance_ledger").detail();
+        assert!(d.contains("does not exist"), "{d}");
+        // What the broker does there is EXIT, before it binds. This said it "serves fail-closed".
+        assert!(d.contains("EXIT_DB") && !d.contains("serves fail-closed"), "{d}");
+    }
+
+    const LEDGER: &str = "db.durable_acceptance_ledger";
+
+    /// MET means the broker account can create its ledger there — not that a directory exists.
+    #[test]
+    fn the_ledger_row_is_met_only_by_a_directory_the_broker_owns_and_can_write() {
+        let met = evaluate(&provisioned(), Some("/kit/broker-state/broker.sock"));
+        let s = status_of(&met, LEDGER);
+        assert!(s.is_met(), "{s:?}");
+        assert!(s.detail().contains("/kit/broker-state/broker.db"), "{s:?}");
+
+        // A directory that merely EXISTS — root-owned, where the broker's `Connection::open` fails.
+        let host = provisioned().stat("/kit/broker-state", 0, 0o40755, true);
+        let s = status_of(&evaluate(&host, Some("/kit/broker-state/broker.sock")), LEDGER).clone();
+        assert!(matches!(s, Status::NotMet { .. }), "{s:?}");
+        assert!(s.detail().contains("owned by uid 0"), "{s:?}");
+
+        // Owned by the broker and not writable by it.
+        let host = provisioned().stat("/kit/broker-state", 5001, 0o40500, true);
+        let s = status_of(&evaluate(&host, Some("/kit/broker-state/broker.sock")), LEDGER).clone();
+        assert!(matches!(s, Status::NotMet { .. }), "{s:?}");
+        assert!(s.detail().contains("mode 500"), "{s:?}");
+
+        // A regular file where the directory should be.
+        let host = provisioned().stat("/kit/broker-state", 5001, 0o100600, false);
+        let s = status_of(&evaluate(&host, Some("/kit/broker-state/broker.sock")), LEDGER).clone();
+        assert!(s.detail().contains("is not a directory"), "{s:?}");
+
+        // No `uids.broker` to compare the owner with.
+        let mut host = provisioned();
+        let mut cfg: Value = serde_json::from_slice(host.files.get("/kit/config.json").unwrap()).unwrap();
+        cfg["uids"].as_object_mut().unwrap().remove("broker");
+        host.files.insert("/kit/config.json".into(), cfg.to_string().into_bytes());
+        let s = status_of(&evaluate(&host, Some("/kit/broker-state/broker.sock")), LEDGER).clone();
+        assert!(matches!(s, Status::NotMet { .. }), "{s:?}");
+        assert!(s.detail().contains("`uids.broker` is not declared"), "{s:?}");
+    }
+
+    /// A socket path with no `.sock` suffix has no database path — the broker refuses to start on
+    /// it — and the row says so instead of measuring the socket's own directory and reporting MET.
+    #[test]
+    fn a_socket_path_without_the_sock_suffix_cannot_meet_the_ledger_row() {
+        for socket in ["/kit/broker-state/broker", "/kit/broker-state/broker.socket"] {
+            let s = status_of(&evaluate(&provisioned(), Some(socket)), LEDGER).clone();
+            assert!(matches!(s, Status::NotMet { .. }), "{socket}: {s:?}");
+            assert!(s.detail().contains("does not end in `.sock`"), "{socket}: {s:?}");
+        }
+    }
+
+    // ---- the accounts exist ------------------------------------------------------------------
+
+    /// Seven distinct NUMBERS are not seven accounts. Every uid the deployment declares is looked
+    /// up; until it was, only the sidecar — the one named by account — had ever been resolved.
+    #[test]
+    fn a_declared_uid_that_no_account_holds_cannot_meet_the_seven_accounts_row() {
+        const ROW: &str = "principals.seven_distinct_accounts";
+        assert!(status_of(&evaluate(&provisioned(), None), ROW).is_met());
+
+        let mut host = provisioned();
+        host.accounts.remove("brops-signer");
+        host.accounts.remove("brops-executor");
+        let s = status_of(&evaluate(&host, None), ROW).clone();
+        assert!(matches!(s, Status::NotMet { .. }), "{s:?}");
+        assert!(s.detail().contains("[5006, 5007]"), "the unowned uids are named: {s:?}");
+        assert!(s.detail().contains("no account on this machine holds"), "{s:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_real_host_resolves_a_uid_to_its_account_and_an_unheld_uid_to_nothing() {
+        assert_eq!(RealHost.uid_account(0).as_deref(), Some("root"));
+        // `(uid_t)-2`: not `nobody` (65534) and not `(uid_t)-1`, and no account database holds it.
+        assert_eq!(RealHost.uid_account(u32::MAX - 1), None);
+    }
+
+    // ---- off Linux --------------------------------------------------------------------------
+
+    /// The fully provisioned deployment, described to a host that is not Linux.
+    fn provisioned_off_linux() -> FakeHost {
+        let mut host = provisioned();
+        host.linux = false;
+        host
+    }
+
+    /// Off Linux `stat` answers `None` for every path. Three checks called it without asking the
+    /// platform first, so files that EXIST were reported "does not exist" / "which is absent" —
+    /// NOT MET, a statement about the machine, where the truth is that nothing was measured.
+    #[test]
+    fn off_linux_nothing_is_reported_absent_because_stat_could_not_answer() {
+        let host = provisioned_off_linux();
+        let report = evaluate(&host, Some("/kit/broker-state/broker.sock"));
+        for row in ["content.messages_db", "sidecar.spawn_triple", "db.durable_acceptance_ledger"] {
+            let s = status_of(&report, row);
+            assert!(matches!(s, Status::Unmeasurable { .. }), "{row}: {s:?}");
+        }
+        // The comment on the non-unix `RealHost::stat` — every caller is gated on the platform —
+        // as a measurement: across the WHOLE report, nobody asked.
+        assert_eq!(host.stat_calls.get(), 0, "a check called `stat` without asking the platform");
+        // And no finding at all words a non-answer as an absence.
+        for f in &report.findings {
+            let d = f.status.detail();
+            assert!(
+                !(d.contains("does not exist") || d.contains("which is absent") || d.contains("is absent")),
+                "{}: {d}",
+                f.requirement.name
+            );
+        }
+    }
+
+    /// What IS decidable off Linux stays decided: an unset key is a fact about the config.
+    #[test]
+    fn off_linux_an_unset_key_is_still_not_met_rather_than_unmeasurable() {
+        let mut host = provisioned_off_linux();
+        let mut cfg: Value = serde_json::from_slice(host.files.get("/kit/config.json").unwrap()).unwrap();
+        cfg["content"].as_object_mut().unwrap().remove("messages_db");
+        cfg["sidecar"].as_object_mut().unwrap().remove("script");
+        host.files.insert("/kit/config.json".into(), cfg.to_string().into_bytes());
+        let report = evaluate(&host, Some("/kit/broker-state/broker"));
+        assert!(matches!(status_of(&report, "content.messages_db"), Status::NotMet { .. }));
+        let triple = status_of(&report, "sidecar.spawn_triple");
+        assert!(matches!(triple, Status::NotMet { .. }), "{triple:?}");
+        assert!(triple.detail().contains("`sidecar.script` is unset"), "{triple:?}");
+        // ...and so is a socket path the broker would refuse on any platform.
+        assert!(matches!(status_of(&report, LEDGER), Status::NotMet { .. }));
     }
 
     const CUSTODY: &str = "custody.tcb_root_manifest_signature";

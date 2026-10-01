@@ -15,11 +15,17 @@
 //!      governed turn through [`broker_orchestrator::run_governed_turn`] with a broker-minted [`BrokerIds`]
 //!      and a [`GovernedExecutor`], and writes the framed committed/blocked reply.
 //!
-//! The challenge→authority→supervisor→signer→verification chain is a follow-up slice, so the injected
-//! executor here fails closed with [`TurnReason::UpstreamBlocked`]: the broker never fabricates an accepted
-//! output it did not actually get from the signed-envelope chain. Every renderer request is therefore
-//! answered with a well-formed `blocked` reply — real, correct, and fail-closed — until the real executor
-//! lands.
+//! WHICH executor is decided once, at startup, by `build_governed_executor`, and it is fail-closed in
+//! both directions. When `$BROPS_BROKER_CONFIG` names a deployment that passes the §2.5 TCB floor and
+//! whose key manifest verifies under the floor-pinned root anchor, the executor is the rev-30 §4.10(g)
+//! sidecar ladder (`brops_broker::ladder_executor::LadderChain`). In EVERY other case — the variable
+//! unset, which is every shipped install because nothing in the product sets it, or any part of that
+//! deployment refused — it is [`UpstreamBlockedExecutor`], which answers every renderer request with a
+//! well-formed `blocked` reply ([`TurnReason::UpstreamBlocked`]). The broker never fabricates an
+//! accepted output it did not actually get from the signed-envelope chain.
+//!
+//! (This paragraph said the chain "is a follow-up slice" and that every request is blocked "until the
+//! real executor lands" for as long as the ladder has been built below it.)
 //!
 //! The `bind`/`accept`/`recv` + `SO_PEERCRED` read are the only host-specific parts and are gated behind
 //! `#[cfg(target_os = "linux")]`. On every other host `main` prints the platform-unsupported banner and
@@ -52,6 +58,10 @@ const EXIT_PLATFORM_UNSUPPORTED: i32 = 2;
 const EXIT_DB: i32 = 3;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const EXIT_SOCKET: i32 = 4;
+/// An argument the broker was started with cannot be used: a socket path that does not end in
+/// `.sock`, or an allowed-renderer uid that is not a uid. Refused before any file is opened.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const EXIT_BAD_ARGUMENT: i32 = 5;
 
 /// Per-read/write deadline armed on every accepted renderer connection (audit F-31). The accept loop
 /// is serial by design — one governed turn per connection — so a peer that connects and then stays
@@ -97,12 +107,14 @@ pub fn init_broker_schema(conn: &Connection) -> Result<(), String> {
 pub use brops_core::real_ids::RealBrokerIds;
 
 // ---------------------------------------------------------------------------------------------------
-// Governed executor. The real challenge→authority→supervisor→signer→verification chain is a follow-up
-// slice; until it lands the broker fails closed: it refuses every turn with UpstreamBlocked rather than
-// fabricate an accepted output. This is the correct fail-closed behavior, not a stub that lies.
+// The fail-closed FALLBACK executor: what `build_governed_executor` returns when `$BROPS_BROKER_CONFIG`
+// is absent or anything in the deployment it names is refused, and what the non-Linux build would hold.
+// It refuses every turn with UpstreamBlocked rather than fabricate an accepted output. This is the
+// correct fail-closed behavior, not a stub that lies — and it is the default, not an interim: the real
+// executor (the §4.10(g) ladder) is built below, and only for a deployment that earns it.
 // ---------------------------------------------------------------------------------------------------
 
-/// The interim [`GovernedExecutor`]: no real upstream chain is wired yet, so every turn is refused closed.
+/// The fail-closed [`GovernedExecutor`]: no trusted deployment is provisioned, so every turn is refused.
 pub struct UpstreamBlockedExecutor;
 impl GovernedExecutor for UpstreamBlockedExecutor {
     fn execute_and_verify(
@@ -159,14 +171,43 @@ mod linux {
         let socket_path = args
             .next()
             .unwrap_or_else(|| "/run/brops/broker.sock".to_string());
-        let allowed_uid = args
-            .next()
-            .and_then(|s| s.parse::<u32>().ok())
+        // The default applies to an ABSENT argument only. A uid argument that is present and does
+        // not parse used to fall through to the same default — `.and_then(|s| s.parse().ok())` —
+        // so a typo in the launcher's uid made the broker admit ITS OWN uid as the renderer, with
+        // no error and no log line. Whoever starts the broker named a renderer; if that name cannot
+        // be read the answer is not a different principal, it is no broker.
+        let allowed_uid = match args.next() {
             // SAFETY: getuid never fails and touches no memory.
-            .unwrap_or_else(|| unsafe { libc::getuid() });
+            None => unsafe { libc::getuid() },
+            Some(raw) => match raw.parse::<u32>() {
+                Ok(uid) => uid,
+                Err(_) => {
+                    eprintln!(
+                        "brops-broker: the allowed-renderer uid argument {raw:?} is not a uid; \
+                         refusing to start rather than admit this broker's own uid in its place"
+                    );
+                    return Err(EXIT_BAD_ARGUMENT);
+                }
+            },
+        };
 
-        // Open the broker DB and initialize the four governed-turn schemas before accepting a single peer.
-        let db_path = socket_path.replace(".sock", ".db");
+        // The database lives beside the socket: `<stem>.sock` → `<stem>.db`, by ONE rule shared with
+        // the preflight (`brops_broker::broker_db_path`). It used to be
+        // `socket_path.replace(".sock", ".db")`, which leaves a path with no `.sock` in it UNCHANGED:
+        // the database was then opened and initialised AT the socket path, and the stale-socket
+        // unlink a few lines down deleted it under the open connection.
+        let db_path = match brops_broker::broker_db_path(&socket_path) {
+            Some(path) => path,
+            None => {
+                eprintln!(
+                    "brops-broker: the socket path {socket_path:?} does not end in `.sock`, so no \
+                     database path can be derived from it that is not the socket itself; refusing to start"
+                );
+                return Err(EXIT_BAD_ARGUMENT);
+            }
+        };
+
+        // Open the broker DB and initialize the three governed-turn schemas before accepting a single peer.
         let conn = Connection::open(&db_path).map_err(|e| {
             eprintln!("brops-broker: cannot open broker DB: {e}");
             EXIT_DB

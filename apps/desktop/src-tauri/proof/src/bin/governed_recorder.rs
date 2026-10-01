@@ -600,11 +600,14 @@ mod linux {
         guard::parse_policy(&bytes)
     }
 
-    /// Re-hash the image at a policy-pinned path and compare it to the policy's digest.
-    fn verify_image(what: &str, path: &str, pinned: &str, require_setuid: bool) -> Result<(), String> {
+    /// Re-hash the image at a policy-pinned path, compare it to the policy's digest, and return the
+    /// digest that was MEASURED. That returned value — taken from the descriptor this check read — is
+    /// what the run then records in its containment report and evidence chain.
+    fn verify_image(what: &str, path: &str, pinned: &str, require_setuid: bool) -> Result<String, String> {
         let (facts, bytes) = read_measured(path)?;
         let actual = brops_core::governed_message_store::sha256_hex(&bytes);
-        guard::check_image(&format!("{what} {path}"), &facts, &actual, pinned, require_setuid)
+        guard::check_image(&format!("{what} {path}"), &facts, &actual, pinned, require_setuid)?;
+        Ok(actual)
     }
 
     /// Read-increment-write the recorder's durable head-sequence counter (audit F-02).
@@ -660,23 +663,37 @@ mod linux {
         };
         // The two images this chain is about to run, re-hashed against the root-owned pin immediately
         // before the exec. `--launcher` used to be whatever the caller typed and was `execve`d unchecked.
-        if let Err(e) = verify_image("launcher", &plan.launcher, &plan.launcher_sha256, true) {
-            return err(&e);
-        }
-        if let Err(e) = verify_image("executor", &plan.executor, &plan.executor_sha256, false) {
-            return err(&e);
-        }
+        //
+        // The three digests kept here are the ones this run RECORDS. The containment report and the
+        // evidence chain used to re-read all three paths AFTER the run with
+        // `std::fs::read(p).map(sha256_hex).unwrap_or_default()`: a second open by path, of files
+        // that had been verified on another descriptor a fork and an exec earlier — and a read that
+        // failed became an EMPTY digest inside a published, content-addressed report. What is
+        // recorded now is what was measured, when it was measured, and there is no failed read left
+        // to turn into a blank.
+        let launcher_sha256 =
+            match verify_image("launcher", &plan.launcher, &plan.launcher_sha256, true) {
+                Ok(measured) => measured,
+                Err(e) => return err(&e),
+            };
+        let executor_sha256 =
+            match verify_image("executor", &plan.executor, &plan.executor_sha256, false) {
+                Ok(measured) => measured,
+                Err(e) => return err(&e),
+            };
         // The lease is the launcher's §4.3 configuration (invoker uid, drop-target uids, the executor
         // image pin and the three request digests). It carries no digest of its own in the policy — root
-        // rewrites it every provisioning — so what is asserted is its custody.
-        match read_measured(&plan.lease) {
-            Ok((facts, _)) => {
+        // rewrites it every provisioning — so what is asserted is its custody, and its digest is taken
+        // from the same read.
+        let lease_sha256 = match read_measured(&plan.lease) {
+            Ok((facts, bytes)) => {
                 if let Err(e) = guard::tcb_custody(&format!("lease {}", plan.lease), &facts) {
                     return err(&e);
                 }
+                brops_core::governed_message_store::sha256_hex(&bytes)
             }
             Err(e) => return err(&e),
-        }
+        };
 
         let store = plan.store.clone();
         let out_path = plan.out.clone();
@@ -859,11 +876,6 @@ mod linux {
         // decision, so this report states what it saw and does not overclaim.
         if let Some(cp) = containment_out.as_deref() {
             if produced {
-                let sha = |p: &str| -> String {
-                    std::fs::read(p)
-                        .map(|b| brops_core::governed_message_store::sha256_hex(&b))
-                        .unwrap_or_default()
-                };
                 let (ruid, rgid) = unsafe { (libc::getuid(), libc::getgid()) };
                 // Sorted keys + compact separators: the bytes are content-addressed, so the encoding
                 // must be deterministic for the same facts.
@@ -871,16 +883,16 @@ mod linux {
                     "protocol": "brops.containment-evidence.v1",
                     "cgroup": cgroup_for_report,
                     "executor_path": executor_for_report,
-                    "executor_sha256": sha(&executor_for_report),
+                    "executor_sha256": executor_sha256,
                     "fd_contract": "0=/dev/null:ro,1=/dev/null:wo,2=/dev/null:wo,3=system:ro,4=history:ro,5=generation_config:ro,6=output:wo",
                     "invoker_gid": rgid,
                     "invoker_uid": ruid,
                     "launcher_exit": exit_code,
                     "launcher_gate": "passed",
                     "launcher_path": launcher_for_report,
-                    "launcher_sha256": sha(&launcher_for_report),
+                    "launcher_sha256": launcher_sha256,
                     "lease_path": lease_for_report,
-                    "lease_sha256": sha(&lease_for_report),
+                    "lease_sha256": lease_sha256,
                     "output_bytes": report.len(),
                 });
                 // serde_json's Map is a BTreeMap by default: `to_vec` emits sorted keys with compact
@@ -914,11 +926,6 @@ mod linux {
         // not have, since they described nothing.
         if let Some(ep) = evidence_out.as_deref() {
             if produced {
-                let sha = |p: &str| -> String {
-                    std::fs::read(p)
-                        .map(|b| brops_core::governed_message_store::sha256_hex(&b))
-                        .unwrap_or_default()
-                };
                 let head_sequence = match next_head_sequence(&evidence_state, euid) {
                     Ok(n) => n,
                     Err(e) => return err(&e),
@@ -927,14 +934,14 @@ mod linux {
                 let mut events = Vec::new();
                 for (sequence, event_type, payload) in [
                     (1u64, "lease-validated", serde_json::json!({
-                        "lease_path": lease_for_report, "lease_sha256": sha(&lease_for_report),
+                        "lease_path": lease_for_report, "lease_sha256": lease_sha256,
                     })),
                     (2, "execution-launched", serde_json::json!({
                         "cgroup": cgroup_for_report,
                         "executor_path": executor_for_report,
-                        "executor_sha256": sha(&executor_for_report),
+                        "executor_sha256": executor_sha256,
                         "launcher_path": launcher_for_report,
-                        "launcher_sha256": sha(&launcher_for_report),
+                        "launcher_sha256": launcher_sha256,
                     })),
                     (3, "output-captured", serde_json::json!({
                         "launcher_exit": exit_code,
@@ -1071,19 +1078,38 @@ mod tests {
         v
     }
 
-    /// The exact argv the broker builds (`chain_executor.rs`), with per-run ids of the real shape.
+    /// The argv the broker builds, BUILT BY THE BROKER'S OWN TYPE
+    /// (`brops_broker::chain_executor::RecorderArgs`, which `LinuxGovernedExecution::execute` passes
+    /// to the spawn). The deployment paths are this fixture's; the flags, their order and their
+    /// number are not written here at all. It used to be a hand-typed list described as "the exact
+    /// argv the broker builds": a flag added in the broker would have been refused by `plan` on the
+    /// live kit while every test here stayed green.
+    fn broker_argv(report: &str, containment: &str, evidence: &str) -> Vec<String> {
+        let mut v = vec!["/opt/brops-live/bin/governed_recorder".to_string()];
+        v.extend(
+            brops_broker::chain_executor::RecorderArgs {
+                recorder_store_dir: "/opt/brops-live/store",
+                launcher_path: "/opt/brops-live/tcb/privileged-launcher.bin",
+                executor_path: "/opt/brops-live/tcb/contained-executor.bin",
+                lease_file: "/opt/brops-live/tcb/executor.lease",
+                cgroup_arg: "cgroup-live",
+                report_path: report,
+                containment_path: containment,
+                evidence_path: evidence,
+                evidence_state_dir: "/opt/brops-live/recorder-state",
+            }
+            .to_argv(),
+        );
+        v
+    }
+
+    /// The broker's argv, with per-run ids of the real shape.
     fn honest_argv() -> Vec<String> {
-        argv(&[
-            ("--store", "/opt/brops-live/store"),
-            ("--launcher", "/opt/brops-live/tcb/privileged-launcher.bin"),
-            ("--executor", "/opt/brops-live/tcb/contained-executor.bin"),
-            ("--lease", "/opt/brops-live/tcb/executor.lease"),
-            ("--cgroup", "cgroup-live"),
-            ("--out", "/opt/brops-live/report/live-8b2f-9c1e.out"),
-            ("--containment-out", "/opt/brops-live/report/live-8b2f-9c1e.out.containment.json"),
-            ("--evidence-out", "/opt/brops-live/recorder-state/9c1e.evidence.json"),
-            ("--evidence-state", "/opt/brops-live/recorder-state"),
-        ])
+        broker_argv(
+            "/opt/brops-live/report/live-8b2f-9c1e.out",
+            "/opt/brops-live/report/live-8b2f-9c1e.out.containment.json",
+            "/opt/brops-live/recorder-state/9c1e.evidence.json",
+        )
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1344,11 +1370,15 @@ mod tests {
         }
     }
 
-    /// The exact bytes `run_live_turn.sh` writes to `$TCB/recorder-policy.json` (compact, sorted keys,
-    /// derived from `config.json`), against the exact argv `chain_executor.rs` builds with a real
-    /// broker-turn UUID and a real 32-hex attempt id. If the provisioner's wire format ever drifts from
-    /// what this parser accepts, the live kit would refuse every turn — this says so at `cargo test`
-    /// time instead of on the Linux runner.
+    /// A policy document in the SHAPE `run_live_turn.sh` writes to `$TCB/recorder-policy.json`
+    /// (compact, sorted keys), against the argv the broker's own `RecorderArgs` builds for a real
+    /// broker-turn UUID and a real 32-hex attempt id.
+    ///
+    /// What is and is not held here, because this comment used to claim both halves as "exact":
+    /// the ARGV is the broker's — built by its type, so a flag added there reaches `plan` in this
+    /// test. The POLICY is a FIXTURE: a literal typed to match what the kit's `json.dump` produces
+    /// from `config.json`. Nothing here reads the kit, so a key the kit adds or renames is caught
+    /// on the Linux runner (`ci.yml` runs the kit) and not by this test.
     #[test]
     fn the_provisioned_document_drives_the_real_broker_spawn() {
         let provisioned = concat!(
@@ -1368,21 +1398,55 @@ mod tests {
 
         let turn = "3f2a1c9e-77bd-4a11-9f3e-1c2d3e4f5a6b";
         let attempt = "9c1e4b7a2d3f4e5a6b7c8d9e0f1a2b3c";
-        let real = argv(&[
-            ("--store", "/opt/brops-live/store"),
-            ("--launcher", "/opt/brops-live/tcb/privileged-launcher.bin"),
-            ("--executor", "/opt/brops-live/tcb/contained-executor.bin"),
-            ("--lease", "/opt/brops-live/tcb/executor.lease"),
-            ("--cgroup", "cgroup-live"),
-            ("--out", &format!("/opt/brops-live/report/live-{turn}-{attempt}.out")),
-            (
-                "--containment-out",
-                &format!("/opt/brops-live/report/live-{turn}-{attempt}.out.containment.json"),
-            ),
-            ("--evidence-out", &format!("/opt/brops-live/recorder-state/{attempt}.evidence.json")),
-            ("--evidence-state", "/opt/brops-live/recorder-state"),
-        ]);
-        plan(&p, &real, RECORDER_UID).expect("the real broker spawn must be accepted by the real policy");
+        let real = broker_argv(
+            &format!("/opt/brops-live/report/live-{turn}-{attempt}.out"),
+            &format!("/opt/brops-live/report/live-{turn}-{attempt}.out.containment.json"),
+            &format!("/opt/brops-live/recorder-state/{attempt}.evidence.json"),
+        );
+        plan(&p, &real, RECORDER_UID).expect("the broker's spawn must be accepted by the policy");
+    }
+
+    /// The digests a run RECORDS are the ones it MEASURED before the exec — read from the source,
+    /// because `recorder()` forks and execs a setuid launcher and cannot be called here.
+    ///
+    /// Both the containment report and the evidence chain used to re-open the launcher, the
+    /// executor and the lease by path after the run, and turned a failed read into an empty string.
+    #[test]
+    fn the_recorded_digests_are_the_measured_ones_and_never_a_reread_or_a_blank() {
+        let source = include_str!("governed_recorder.rs");
+        let code: String = source
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let run = code
+            .split("pub fn recorder(")
+            .nth(1)
+            .expect("the recorder's run function is gone")
+            .split("mod tests")
+            .next()
+            .expect("split always yields a head");
+        assert!(run.contains("execve("), "the run function is what is scanned");
+
+        // No path is opened a second time to be hashed, and no failed read becomes a digest.
+        assert!(!run.contains("std::fs::read("), "the run re-reads a file by path");
+        assert!(!run.contains("unwrap_or_default()"), "a failed read can become an empty digest again");
+        // The three recorded digests are bound to what the pre-exec checks returned...
+        for binding in [
+            "let launcher_sha256 =\n            match verify_image(\"launcher\"",
+            "let executor_sha256 =\n            match verify_image(\"executor\"",
+            "let lease_sha256 = match read_measured(&plan.lease)",
+        ] {
+            assert_eq!(run.matches(binding).count(), 1, "missing or duplicated: {binding}");
+        }
+        // ...and each is what BOTH documents carry: once in the containment report, once in the chain.
+        for field in [
+            "\"launcher_sha256\": launcher_sha256,",
+            "\"executor_sha256\": executor_sha256,",
+            "\"lease_sha256\": lease_sha256,",
+        ] {
+            assert_eq!(run.matches(field).count(), 2, "{field}");
+        }
     }
 
     // ---------------------------------------------------------------------------------------------

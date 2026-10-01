@@ -56,7 +56,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use brops_core::governed_bridge_result::SignedTurnResult;
 use brops_core::governed_message_store::AcceptedOutput;
@@ -74,8 +74,9 @@ use brops_core::governed_verification::{
     SupervisorAttestation,
 };
 
-use crate::chain_executor::{GovernedTurnChain, HopConnector, SystemWallClock, WallClock};
-use crate::chain_hops::{hop_roundtrip, parse_reply, Principal};
+use crate::chain_executor::{
+    request_challenge, GovernedTurnChain, HopConnector, PendingFacts, SystemWallClock, WallClock,
+};
 use crate::manifest_resolver::KeyResolver;
 
 // =================================================================================================
@@ -144,6 +145,12 @@ impl TurnIds for UuidTurnIds {
 /// Fail-closed: an unopenable DB, an unreadable row, a `role` outside the closed §4.10(g) set, or a
 /// non-UTF8 body all Block. There is no "skip the bad row" arm — a history with a message missing is a
 /// different conversation, and hashing it would commit the chain to bytes the user never saw.
+///
+/// **It opens the database READ-ONLY.** It is a read of somebody else's store — the desktop owns the
+/// `messages` table — and it used to be `Connection::open`, whose default flags are read-write AND
+/// create: a `content.messages_db` naming a file that did not exist, in a directory the broker could
+/// write, CREATED an empty database there on every turn and then blocked on the missing table. A
+/// missing file is now the unopenable DB this paragraph always promised, and nothing is left behind.
 pub struct SqliteTurnContent {
     messages_db_path: String,
     system: String,
@@ -201,8 +208,11 @@ impl SqliteTurnContent {
 
 impl TurnContent for SqliteTurnContent {
     fn resolve(&self, req: &ValidatedRequest) -> Result<TurnMaterial, TurnReason> {
-        let conn = rusqlite::Connection::open(&self.messages_db_path)
-            .map_err(|_| TurnReason::UpstreamBlocked)?;
+        let conn = rusqlite::Connection::open_with_flags(
+            &self.messages_db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|_| TurnReason::UpstreamBlocked)?;
         let history = Self::read_window(&conn, &req.conversation_id, self.window)?;
         // A conversation with no messages is not a turn. Refusing here rather than hashing the empty
         // history keeps "there was nothing to send" from producing a signed receipt for nothing.
@@ -232,7 +242,10 @@ pub struct LadderChain {
 
 impl LadderChain {
     /// Build with the real §7.1 wall clock. Every production construction goes through here; only
-    /// [`with_clock`](LadderChain::with_clock) can replace it, and only a freshness test does.
+    /// [`with_clock`](LadderChain::with_clock) can replace it, and only this module's freshness
+    /// tests do (`a_stale_receipt_is_refused_at_the_ladders_acceptance` and its neighbours). Until
+    /// those existed this sentence named tests that had never been written, and `with_clock` had no
+    /// caller at all.
     pub fn new(
         keys: Box<dyn KeyResolver>,
         connector: Box<dyn HopConnector>,
@@ -257,21 +270,6 @@ impl LadderChain {
         self
     }
 
-    /// One framed request→reply roundtrip to the challenge authority. The op is read off the request
-    /// being sent, so the echo check cannot be satisfied by a constant that drifted from the builder —
-    /// the same discipline, and the same `chain_hops::parse_reply`, the direct path uses.
-    fn hop(&self, principal: Principal, request: &Value) -> Result<Value, TurnReason> {
-        let op = request
-            .get("op")
-            .and_then(Value::as_str)
-            .ok_or(TurnReason::UpstreamBlocked)?
-            .to_string();
-        let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
-        let mut conn = self.connector.connect(principal).map_err(|e| e.to_turn_reason())?;
-        let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
-        parse_reply(&op, &reply).map_err(|e| e.to_turn_reason())
-    }
-
     /// §4.1: obtain the signed challenge for exactly the PREPARED facts.
     ///
     /// `requested_at_ms` is not a fresh clock read — it is `prepared.context().requested_at` parsed
@@ -280,6 +278,10 @@ impl LadderChain {
     /// of the eight §2.2 fields both sides hash. A second `now()` here would differ by however long
     /// preparation took and the turn would Block on a binding that is really a clock skew.
     /// [`tests::the_challenge_facts_are_the_prepared_facts`] is that equality, as arithmetic.
+    ///
+    /// The two hops themselves — the ten-key `create-pending` object, the `issue` request, the one
+    /// reply parser — are `chain_executor::request_challenge`, the same function the direct path
+    /// calls. This module used to carry its own copy of all three.
     fn issue_challenge(
         &self,
         prepared: &PreparedGovernedTurnV1B,
@@ -289,33 +291,25 @@ impl LadderChain {
         let ctx = prepared.context();
         let requested_at_ms: i64 =
             ctx.requested_at.parse().map_err(|_| TurnReason::UpstreamBlocked)?;
-        let create_pending = json!({
-            "op": "create-pending",
-            "run_id": run_id,
-            "task_id": task_id,
-            "workspace_id": ctx.workspace_id,
-            "install_id": ctx.install_id,
-            "request_nonce": ctx.request_nonce,
-            "system_sha256": ctx.system_sha256,
-            "history_sha256": ctx.history_sha256,
-            "generation_config_sha256": ctx.generation_config_sha256,
-            "requested_at_ms": requested_at_ms,
-        });
-        let reply = self.hop(Principal::ChallengeAuthority, &create_pending)?;
-        let pending_id = reply
-            .get("pending_challenge_id")
-            .and_then(Value::as_str)
-            .ok_or(TurnReason::UpstreamBlocked)?
-            .to_string();
-
-        let issue = json!({ "op": "issue", "pending_challenge_id": pending_id });
-        let reply = self.hop(Principal::ChallengeAuthority, &issue)?;
-        let document = reply.get("challenge").ok_or(TurnReason::UpstreamBlocked)?;
+        let document = request_challenge(
+            self.connector.as_ref(),
+            &PendingFacts {
+                run_id,
+                task_id,
+                workspace_id: &ctx.workspace_id,
+                install_id: &ctx.install_id,
+                request_nonce: &ctx.request_nonce,
+                system_sha256: &ctx.system_sha256,
+                history_sha256: &ctx.history_sha256,
+                generation_config_sha256: &ctx.generation_config_sha256,
+                requested_at_ms,
+            },
+        )?;
         // The bytes §4.10(a0) will re-hash. `serde_json::to_vec` over a `Value` object is
         // sorted-key/compact — the same JCS shortcut `ReceiptEnvelope::payload_jcs` and the ladder's
         // Python half (`_canonical_bytes`) both take for this fixed ASCII key set, so the handle the
         // supervisor computes is the handle this side committed to.
-        let bytes = serde_json::to_vec(document).map_err(|_| TurnReason::UpstreamBlocked)?;
+        let bytes = serde_json::to_vec(&document).map_err(|_| TurnReason::UpstreamBlocked)?;
         ChallengeDocument::from_bytes(&bytes).map_err(|e| e.to_turn_reason())
     }
 
@@ -451,8 +445,10 @@ impl GovernedTurnChain for LadderChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_hops::Principal;
     use brops_core::governed_prepare::GovernedGenerationConfig;
     use brops_core::receipt::sha256_hex;
+    use serde_json::json;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -613,6 +609,40 @@ mod tests {
             10,
         );
         assert!(matches!(missing.resolve(&req("c1")), Err(TurnReason::UpstreamBlocked)));
+    }
+
+    /// The source READS the desktop's database; it must never make one. A path naming a file that
+    /// is not there, in a directory that IS there and is writable, used to be created empty on
+    /// every turn (`Connection::open` is read-write-create) before the turn blocked on the missing
+    /// table.
+    #[test]
+    fn a_missing_database_file_blocks_and_is_not_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("messages.db");
+        let src = SqliteTurnContent::new(path.to_string_lossy().to_string(), "sys", 10);
+        assert!(matches!(src.resolve(&req("c1")), Err(TurnReason::UpstreamBlocked)));
+        assert!(!path.exists(), "a read of the conversation store created {path:?}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "and left nothing beside it");
+    }
+
+    /// ...and the read-only open still reads: the control for the test above.
+    #[test]
+    fn a_real_database_file_is_read_through_the_read_only_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("messages.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, \
+                 role TEXT NOT NULL, author TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL); \
+                 INSERT INTO messages VALUES ('001', 'c1', 'user', 'u', 'hi', '001');",
+            )
+            .unwrap();
+        }
+        let src = SqliteTurnContent::new(path.to_string_lossy().to_string(), "sys", 10);
+        let material = src.resolve(&req("c1")).expect("the conversation is read");
+        assert_eq!(material.history, msgs(&[("user", "hi")]));
+        assert_eq!(material.system, "sys");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -854,6 +884,425 @@ mod tests {
         assert_eq!(doc.generation_config_sha256(), ctx.generation_config_sha256);
         assert_eq!(doc.request_nonce(), ctx.request_nonce);
         assert_eq!(doc.bytes(), serde_json::to_vec(&document).unwrap().as_slice());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Rungs 4-7: submit, echo check, §4.10(f) pull, §7.1 acceptance — and the clock
+    // ---------------------------------------------------------------------------------------------
+    //
+    // Everything above stops at the authority hop: `chain()` wires a transport and a ledger that
+    // PANIC when reached. So until these existed, no test in this crate ran the ladder past rung 3,
+    // `with_clock` had no caller, and the "freshness test" its doc cited was not there. What follows
+    // is a whole turn against fakes of the two things outside this process — the challenge authority
+    // and the one-shot sidecar — each of which derives its reply from what it was actually SENT, the
+    // way the real ones do, and signs with real Ed25519 keys so `verify_and_accept` runs its real
+    // predicate.
+
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use brops_core::governed_output_pull::{
+        BRIDGE_OUTPUT_READ_PROTOCOL, BRIDGE_OUTPUT_READ_RESULT_PROTOCOL,
+    };
+    use brops_core::governed_submit::BRIDGE_SUBMIT_PROTOCOL;
+    use brops_core::governed_verification::{InMemoryLedger, RECEIPT_ENVELOPE_ARTIFACT_TYPE};
+    use brops_core::receipt::request_envelope_sha256;
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use std::collections::VecDeque;
+
+    const LADDER_OUTPUT: &[u8] = b"the ladder's governed reply";
+    const H64: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    /// The turn's `requested_at`: a REAL epoch-ms value, for the reason `chain_executor`'s fixture
+    /// gives — with a toy clock the stale limit goes negative and the stale branch is unreachable.
+    const T_PREPARED_MS: i64 = 1_900_000_000_000;
+    const T_COMPLETED_MS: i64 = T_PREPARED_MS + 2_000;
+    /// The broker's clock at acceptance on an ordinary turn: 1 s after it completed.
+    const T_ACCEPTED_NOW_MS: i64 = T_COMPLETED_MS + 1_000;
+
+    fn signer_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+    fn supervisor_key() -> SigningKey {
+        SigningKey::from_bytes(&[9u8; 32])
+    }
+
+    /// Pinned keys whose private halves the fakes below sign with.
+    struct SigningKeys;
+    impl KeyResolver for SigningKeys {
+        fn resolve_keys(&self) -> Result<crate::manifest_resolver::ResolvedKeys, TurnReason> {
+            Ok(crate::manifest_resolver::ResolvedKeys {
+                isolated_signer_key_id: "signer-1".into(),
+                isolated_signer_public_key: signer_key().verifying_key().to_bytes(),
+                supervisor_attestation_key_id: "sup-1".into(),
+                supervisor_attestation_public_key: supervisor_key().verifying_key().to_bytes(),
+                workspace_id: "ws".into(),
+                install_id: "inst".into(),
+                author: "Bro".into(),
+            })
+        }
+    }
+
+    struct FixedTurnIds;
+    impl TurnIds for FixedTurnIds {
+        fn new_run_id(&self) -> String {
+            "run-ladder-1".into()
+        }
+        fn new_task_id(&self) -> String {
+            "task-ladder-1".into()
+        }
+    }
+
+    /// A clock that gives each reading ONCE, in order, and `None` once the script is spent. The
+    /// ladder reads it twice — at preparation and again at acceptance — and the two readings are
+    /// what these tests move.
+    struct ScriptedClock(Mutex<VecDeque<Option<i64>>>);
+    impl ScriptedClock {
+        fn of(readings: &[Option<i64>]) -> Arc<dyn WallClock> {
+            Arc::new(ScriptedClock(Mutex::new(readings.iter().copied().collect())))
+        }
+    }
+    impl WallClock for ScriptedClock {
+        fn now_ms(&self) -> Option<i64> {
+            self.0.lock().unwrap().pop_front().flatten()
+        }
+    }
+
+    /// What the two fakes share: the facts the authority was asked to sign, and a count of how
+    /// often each was reached.
+    #[derive(Default)]
+    struct Wire {
+        /// The `create-pending` request, as sent, plus the `request_sha256` the authority derived.
+        pending: Option<Value>,
+        authority_connects: usize,
+        sidecar_protocols: Vec<String>,
+    }
+
+    /// The challenge authority: answers `create-pending`, then signs a challenge over exactly the
+    /// facts that request carried — recomputing `request_sha256` itself, as the real one does.
+    struct FakeAuthority(Rc<RefCell<Wire>>);
+    struct FakeAuthorityConn {
+        wire: Rc<RefCell<Wire>>,
+        request: Option<Value>,
+    }
+    impl HopConnector for FakeAuthority {
+        fn connect(
+            &self,
+            _p: Principal,
+        ) -> Result<Box<dyn crate::chain_hops::HopConn>, crate::chain_hops::HopError> {
+            self.0.borrow_mut().authority_connects += 1;
+            Ok(Box::new(FakeAuthorityConn { wire: Rc::clone(&self.0), request: None }))
+        }
+    }
+    impl crate::chain_hops::HopConn for FakeAuthorityConn {
+        fn send_all(&mut self, frame: &[u8]) -> Result<(), crate::chain_hops::HopError> {
+            let body = brops_core::ipc_framing::decode_one(frame)
+                .map_err(crate::chain_hops::HopError::Frame)?;
+            self.request = serde_json::from_slice(body).ok();
+            Ok(())
+        }
+        fn recv_all(&mut self) -> Result<Vec<u8>, crate::chain_hops::HopError> {
+            let request = self.request.take().ok_or(crate::chain_hops::HopError::BadReply)?;
+            let text = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
+            let reply = match request["op"].as_str() {
+                Some("create-pending") => {
+                    let mut pending = request.clone();
+                    pending["request_sha256"] = Value::String(request_envelope_sha256(
+                        &text(&request, "workspace_id"),
+                        &text(&request, "install_id"),
+                        &text(&request, "request_nonce"),
+                        &text(&request, "system_sha256"),
+                        &text(&request, "history_sha256"),
+                        &text(&request, "generation_config_sha256"),
+                        &request["requested_at_ms"].as_i64().unwrap_or_default().to_string(),
+                    ));
+                    self.wire.borrow_mut().pending = Some(pending);
+                    json!({"ok": true, "op": "create-pending", "pending_challenge_id": "p1"})
+                }
+                Some("issue") => {
+                    let pending = self.wire.borrow().pending.clone().unwrap_or(Value::Null);
+                    json!({"ok": true, "op": "issue", "challenge": {
+                        "payload": {
+                            "task_id": pending["task_id"],
+                            "run_id": pending["run_id"],
+                            "generation_config_sha256": pending["generation_config_sha256"],
+                            "request_sha256": pending["request_sha256"],
+                            "install_id": pending["install_id"],
+                            "request_nonce": pending["request_nonce"],
+                        },
+                        "sig": "not-verified-on-this-side",
+                    }})
+                }
+                _ => return Err(crate::chain_hops::HopError::BadReply),
+            };
+            brops_core::ipc_framing::encode_frame(&serde_json::to_vec(&reply).unwrap())
+                .map_err(crate::chain_hops::HopError::Frame)
+        }
+    }
+
+    /// How a test bends the sidecar's otherwise honest answers.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Sidecar {
+        Honest,
+        /// The §4.10(e) transport echo names another run than the signed envelope does.
+        EchoesAnotherRun,
+        /// The §4.10(f) pull serves bytes of the right LENGTH that are not the signed output.
+        ServesOtherBytes,
+    }
+
+    /// The one-shot sidecar and everything behind it: on a submit frame it plays the supervisor and
+    /// the isolated signer — a real 29-key attested evidence and a real 23-key envelope, each signed
+    /// — and on an output-read frame it serves the output.
+    struct FakeSidecar {
+        wire: Rc<RefCell<Wire>>,
+        behaviour: Sidecar,
+    }
+    impl FakeSidecar {
+        fn signed_frame(&self) -> Value {
+            let pending = self.wire.borrow().pending.clone().expect("submit before create-pending");
+            let text = |k: &str| pending[k].as_str().unwrap_or_default().to_string();
+            let output_sha256 = sha256_hex(LADDER_OUTPUT);
+            let mut evidence = serde_json::Map::new();
+            for (k, v) in [
+                ("run_id", text("run_id")),
+                ("execution_attempt_id", "att-ladder-1".to_string()),
+                ("task_id", text("task_id")),
+                ("request_nonce", text("request_nonce")),
+                ("receipt_id", "receipt-ladder-1".to_string()),
+                ("workspace_id", text("workspace_id")),
+                ("install_id", text("install_id")),
+                ("supervisor_id", "sup".to_string()),
+                ("executor_id", "exec".to_string()),
+                ("builder_id", "build".to_string()),
+                ("policy_id", "pol".to_string()),
+                ("policy_version", "1".to_string()),
+                ("policy_bundle_handle", H64.to_string()),
+                ("system_handle", text("system_sha256")),
+                ("history_handle", text("history_sha256")),
+                ("generation_config_handle", text("generation_config_sha256")),
+                ("output_handle", output_sha256.clone()),
+                ("containment_evidence_handle", H64.to_string()),
+                ("record_handle", H64.to_string()),
+                ("lease_handle", H64.to_string()),
+                ("execution_receipt_handle", H64.to_string()),
+                ("evidence_final_event_hash", H64.to_string()),
+                ("decision", "completed".to_string()),
+            ] {
+                evidence.insert(k.to_string(), Value::String(v));
+            }
+            for (k, v) in [
+                ("requested_at", pending["requested_at_ms"].as_i64().unwrap_or_default()),
+                ("challenge_accepted_at_ms", T_PREPARED_MS),
+                ("completed_at", T_COMPLETED_MS),
+                ("evidence_event_count", 3),
+                ("evidence_last_sequence", 12),
+                ("evidence_head_sequence", 12),
+            ] {
+                evidence.insert(k.to_string(), json!(v));
+            }
+            let evidence_jcs = serde_json::to_vec(&Value::Object(evidence)).unwrap();
+            let evidence_sig = URL_SAFE_NO_PAD.encode(supervisor_key().sign(&evidence_jcs).to_bytes());
+
+            let mut envelope = serde_json::Map::new();
+            for (k, v) in [
+                ("artifact_type", RECEIPT_ENVELOPE_ARTIFACT_TYPE.to_string()),
+                ("key_id", "signer-1".to_string()),
+                ("receipt_id", "receipt-ladder-1".to_string()),
+                ("run_id", text("run_id")),
+                ("execution_attempt_id", "att-ladder-1".to_string()),
+                ("task_id", text("task_id")),
+                ("workspace_id", text("workspace_id")),
+                ("install_id", text("install_id")),
+                ("request_nonce", text("request_nonce")),
+                ("record_handle", H64.to_string()),
+                ("lease_handle", H64.to_string()),
+                ("execution_receipt_handle", H64.to_string()),
+                ("evidence_final_event_hash", H64.to_string()),
+                ("supervisor_attestation_key_id", "sup-1".to_string()),
+                ("request_sha256", text("request_sha256")),
+                ("output_sha256", output_sha256.clone()),
+                ("attestation_evidence_sha256", sha256_hex(&evidence_jcs)),
+            ] {
+                envelope.insert(k.to_string(), Value::String(v));
+            }
+            for (k, v) in [
+                ("output_bytes", LADDER_OUTPUT.len() as i64),
+                ("challenge_accepted_at_ms", T_PREPARED_MS),
+                ("completed_at_ms", T_COMPLETED_MS),
+                ("evidence_event_count", 3),
+                ("evidence_last_sequence", 12),
+                ("evidence_head_sequence", 12),
+            ] {
+                envelope.insert(k.to_string(), json!(v));
+            }
+            let envelope_jcs = serde_json::to_vec(&Value::Object(envelope)).unwrap();
+            let envelope_sig = URL_SAFE_NO_PAD.encode(signer_key().sign(&envelope_jcs).to_bytes());
+
+            let echoed_run = match self.behaviour {
+                Sidecar::EchoesAnotherRun => "run-of-another-turn".to_string(),
+                _ => text("run_id"),
+            };
+            json!({
+                "protocol": "bridge.governed-turn-result.v1",
+                "ok": true,
+                "output_stream_id": URL_SAFE_NO_PAD.encode([0x5au8; 32]),
+                "error": null,
+                "receipt": {
+                    "envelope_jcs_b64": URL_SAFE_NO_PAD.encode(&envelope_jcs),
+                    "signature_b64": envelope_sig,
+                    "attestation_evidence_jcs_b64": URL_SAFE_NO_PAD.encode(&evidence_jcs),
+                    "attestation_signature_b64": evidence_sig,
+                    "containment_evidence_b64": null,
+                    "lease_id": "lease-ladder-1",
+                    "run_id": echoed_run,
+                    "execution_attempt_id": "att-ladder-1",
+                    "supervisor_attestation_key_id": "sup-1",
+                    "output_sha256": output_sha256,
+                    "output_bytes": LADDER_OUTPUT.len(),
+                },
+            })
+        }
+    }
+    impl SubmitTransport for FakeSidecar {
+        fn call(&self, frame: &Value) -> Result<Value, String> {
+            let protocol = frame["protocol"].as_str().unwrap_or_default().to_string();
+            self.wire.borrow_mut().sidecar_protocols.push(protocol.clone());
+            if protocol == BRIDGE_SUBMIT_PROTOCOL {
+                return Ok(self.signed_frame());
+            }
+            if protocol == BRIDGE_OUTPUT_READ_PROTOCOL {
+                let mut served = LADDER_OUTPUT.to_vec();
+                if self.behaviour == Sidecar::ServesOtherBytes {
+                    served[0] ^= 0x01;
+                }
+                return Ok(json!({
+                    "protocol": BRIDGE_OUTPUT_READ_RESULT_PROTOCOL,
+                    "ok": true,
+                    "error": null,
+                    "output_stream_id": frame["output_stream_id"],
+                    "seq": frame["seq"],
+                    "bytes_b64": URL_SAFE_NO_PAD.encode(&served),
+                    "eof": true,
+                }));
+            }
+            Err(format!("the ladder sent a frame that is neither relay frame: {protocol}"))
+        }
+    }
+
+    /// One whole ladder over the two fakes, with the given clock readings.
+    fn whole_ladder(behaviour: Sidecar, clock: &[Option<i64>]) -> (LadderChain, Rc<RefCell<Wire>>) {
+        let wire = Rc::new(RefCell::new(Wire::default()));
+        let chain = LadderChain::new(
+            Box::new(SigningKeys),
+            Box::new(FakeAuthority(Rc::clone(&wire))),
+            Box::new(CountingContent(Rc::new(RefCell::new(0)))),
+            Box::new(FakeSidecar { wire: Rc::clone(&wire), behaviour }),
+            Box::new(FixedTurnIds),
+            Box::new(InMemoryLedger::new()),
+        )
+        .with_clock(ScriptedClock::of(clock));
+        (chain, wire)
+    }
+
+    const FRESH: [Option<i64>; 2] = [Some(T_PREPARED_MS), Some(T_ACCEPTED_NOW_MS)];
+
+    /// The control every refusal below is measured against: with honest fakes and a fresh clock the
+    /// ladder runs all seven rungs and returns the output the signed envelope names.
+    #[test]
+    fn the_ladder_accepts_a_turn_whose_every_rung_answered() {
+        let (chain, wire) = whole_ladder(Sidecar::Honest, &FRESH);
+        let accepted = chain.run_verified(&req("c1"), "bt-1", "orchestrator-nonce").expect("accepted");
+        assert_eq!(accepted.accepted_body.as_bytes(), LADDER_OUTPUT);
+        assert_eq!(accepted.envelope_body_sha256, sha256_hex(LADDER_OUTPUT));
+        assert_eq!(accepted.message_id, "m-bt-1");
+        assert_eq!(accepted.conversation_id, "c1");
+        assert_eq!(accepted.author, "Bro");
+        assert_eq!(accepted.created_at_ms, T_COMPLETED_MS);
+
+        let wire = wire.borrow();
+        assert_eq!(wire.authority_connects, 2, "create-pending and issue, one connection each");
+        assert_eq!(
+            wire.sidecar_protocols,
+            [BRIDGE_SUBMIT_PROTOCOL, BRIDGE_OUTPUT_READ_PROTOCOL],
+            "one submit, then one §4.10(f) read for an output under one chunk"
+        );
+        // The challenge was asked for at the PREPARED time, and for the ids this chain minted.
+        let pending = wire.pending.as_ref().unwrap();
+        assert_eq!(pending["requested_at_ms"], T_PREPARED_MS);
+        assert_eq!(pending["run_id"], "run-ladder-1");
+        assert_eq!(pending["task_id"], "task-ladder-1");
+    }
+
+    /// §7.1 freshness at the ladder's acceptance. The receipt is genuine and every signature
+    /// verifies; the broker's clock at ACCEPTANCE is simply one millisecond past the window.
+    #[test]
+    fn a_stale_receipt_is_refused_at_the_ladders_acceptance() {
+        let late = T_ACCEPTED_NOW_MS + 300_000 + 1;
+        let (chain, wire) = whole_ladder(Sidecar::Honest, &[Some(T_PREPARED_MS), Some(late)]);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked),
+            "a receipt older than the §1 window must not be accepted by the ladder"
+        );
+        // It was refused AT acceptance: the submit and the pull both happened first.
+        assert_eq!(wire.borrow().sidecar_protocols.len(), 2);
+    }
+
+    /// The clock is read a SECOND time, at acceptance, and a reading the host could not give is a
+    /// Block there — never the turn-start reading reused, and never a zero.
+    #[test]
+    fn a_clock_unreadable_at_acceptance_blocks_the_turn() {
+        let (chain, wire) = whole_ladder(Sidecar::Honest, &[Some(T_PREPARED_MS), None]);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(wire.borrow().sidecar_protocols.len(), 2, "the turn ran up to acceptance");
+    }
+
+    /// ...and one unreadable at the START blocks before anything is prepared or sent: no nonce is
+    /// minted against a time nobody knows, and no principal is dialled.
+    #[test]
+    fn a_clock_unreadable_at_preparation_blocks_before_any_hop() {
+        let (chain, wire) = whole_ladder(Sidecar::Honest, &[None, Some(T_ACCEPTED_NOW_MS)]);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(wire.borrow().authority_connects, 0);
+        assert!(wire.borrow().sidecar_protocols.is_empty());
+        // A clock set before 1970 is the same refusal: it is not a `u64` time.
+        let (chain, wire) = whole_ladder(Sidecar::Honest, &[Some(-1), Some(T_ACCEPTED_NOW_MS)]);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(wire.borrow().authority_connects, 0);
+    }
+
+    /// Rung 5: a transport echo that disagrees with the SIGNED envelope blocks before the pull
+    /// spends a round trip — the sidecar is the party §2.4 declares compromised.
+    #[test]
+    fn a_transport_echo_that_disagrees_with_the_signed_envelope_blocks_before_the_pull() {
+        let (chain, wire) = whole_ladder(Sidecar::EchoesAnotherRun, &FRESH);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked)
+        );
+        assert_eq!(
+            wire.borrow().sidecar_protocols,
+            [BRIDGE_SUBMIT_PROTOCOL],
+            "no output-read may follow a submit whose echo did not match"
+        );
+    }
+
+    /// Rung 6: bytes of the right length that are not the signed output are refused by the pull's
+    /// gate against the SIGNED digest, and nothing is accepted.
+    #[test]
+    fn pulled_bytes_that_are_not_the_signed_output_are_refused() {
+        let (chain, _wire) = whole_ladder(Sidecar::ServesOtherBytes, &FRESH);
+        assert_eq!(
+            chain.run_verified(&req("c1"), "bt-1", "n").err(),
+            Some(TurnReason::UpstreamBlocked)
+        );
     }
 
     /// The module contains no fallback to the direct path. Asserted against the SOURCE, the same way
