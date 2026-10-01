@@ -9,9 +9,9 @@ BroPS (*Bro's Personal Space*) is a command-first desktop cockpit for working wi
 of specialist AI agents across conversations, projects, tasks, knowledge, files, and more. It is a
 single-user local desktop app; your data lives in a local database on your machine.
 
-This guide describes **what the app actually does today**. Screens still waiting on their backend
-are called out as **Not yet connected**, and the governed "Verified" AI path is called out as
-**fail-closed** — both are honest, current states, not marketing.
+This guide describes **what the app actually does today**. Every sidebar screen is backed by real
+commands and your local database, and the governed "Verified" AI path is called out as
+**fail-closed** — an honest, current state, not marketing.
 
 ---
 
@@ -23,11 +23,14 @@ workspace pane, a **global search / command palette**, and a language + theme sw
 The sidebar groups (from `nav.ts`):
 
 - **Core:** Home · Command · Chat · Group Chat · Projects · Tasks · Agents
-- **Intelligence:** Knowledge · Memory · Decisions · Research\* · Library\*
+- **Intelligence:** Knowledge · Memory · Decisions · Bridge · Research · Library
 - **Operations:** Calendar · Automations · Approvals · Activity · Notifications
 - **System:** Files · Integrations · Analytics · Security · Settings
 
-\* **Research** and **Library** are **Not yet connected** — see §14.
+**Bridge** is the governed-bridge panel: a read-only mirror of the engine's decision ledger and
+verifier verdicts plus a governed turn you send by an explicit click. It shows only what the desktop
+actually received, so on a machine with no engine or broker provisioned it reads as blocked or
+unreachable rather than empty-and-fine.
 
 ---
 
@@ -44,14 +47,19 @@ Talk to a single agent. Features that exist:
 ### Governed replies are fail-closed (important)
 
 BroPS distinguishes **ungoverned** providers (your local `claude` CLI, the Anthropic API, or
-Ollama — these answer normally) from **governed** execution (a turn routed through the engine's
+Ollama) from **governed** execution (a turn routed through the engine's
 security wall to earn a cryptographically **verified** receipt).
 
 The governed "Verified" path is **not finished** and is deliberately **fail-closed**: a governed
 turn is **Blocked** and shows a transient notice — *"Governed reply blocked (unverified)"* — with
 **no message saved**. This is by design: BroPS refuses to show a governed answer it cannot verify.
-For everyday use, use an ungoverned provider; governed "Verified" mode will light up when the
-signed-receipt signer work lands.
+
+An ungoverned provider answers only where it has been **allowed**. The default build refuses to
+generate at all — *"no AI provider configured"* — unless `BROPS_ALLOW_UNGOVERNED=1` is set in the
+environment the app was launched from, or it is the `dev-ungoverned` development build, which sets
+it. That flag is a development opt-in, not an everyday setting: with it the local `claude` CLI
+answers, contained but not governed, and the UI says so. Governed "Verified" mode needs an
+independent audit and the Owner's approval before it opens; it will not light up by itself.
 
 ---
 
@@ -116,15 +124,21 @@ Both are backed by real storage and feed the global search (§13).
   confirmation dialog** driven by the app's backend, not a webview button — so an approval can't be
   forged by page content. **Rejecting** is a dedicated, fail-safe action. You cannot approve your
   own request (self-approval is refused, even across app restarts).
-- **Decisions** — record decisions with a title and rationale, and review the log.
+- **Decisions** — review the decision log and the read-only mirror of the engine's evidence chain.
+  There is no control on this page for recording a new decision today: the backend command exists
+  and nothing in the interface calls it.
 
 ---
 
 ## 10. Calendar, Automations, Activity, Notifications
 
 - **Calendar** — a **month view**; create and delete events.
-- **Automations** — create trigger→action automations and toggle them **enabled/disabled** (this is
-  the record-and-manage surface; automations are stored, not yet a background scheduler).
+- **Automations** — create trigger→action automations, toggle them **enabled/disabled**, run one
+  now, and read its run history. **A local scheduler does run them:** once a minute the app fires
+  every enabled automation whose interval trigger (`every: <N>m`, `h` or `d`) is due and logs the
+  run. Only local, non-AI actions ever fire unattended — an action that reaches a model goes through
+  the governed, fail-closed chain instead. Disabling is one click and is never confirmed; deleting
+  is.
 - **Activity** — a feed of what has happened in the app.
 - **Notifications** — your notifications list; **mark as read**.
 
@@ -164,12 +178,15 @@ selecting one opens the *specific* project / task / note / conversation, not jus
 
 ---
 
-## 14. Screens that are "Not yet connected"
+## 14. Research and Library
 
-BroPS is honest about unfinished surfaces. **Research** and **Library** currently show a plain
-*"Not yet connected to the backend"* placeholder — no fake data — until their backend lands
-(Roadmap Phase 4). Everything else in the sidebar is backed by real commands and your local
-database.
+Both were "Not yet connected" placeholders when this guide was first written, and both are wired
+now. **Research** runs a question through the same one-shot path as Ask Bro and keeps research
+items (title, question, findings, status) in your local database; **Library** keeps reusable items
+(title, kind, body, tags) you add. Deleting an item from either is **refused** today: those two
+hard deletes are among the six the app denies until they gain an undo or a native confirmation,
+and the page says so rather than pretending the item is gone. No sidebar screen shows a "Not yet
+connected" placeholder any more.
 
 ---
 

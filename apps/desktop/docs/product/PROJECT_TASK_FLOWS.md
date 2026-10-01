@@ -1,14 +1,14 @@
 - **Purpose:** Define the canonical, implementable UX flows for Projects and Tasks in BroPS Phase 1 — creation, workspace tabs, task lifecycle, task views, message-to-task and agent delegation, and project close.
 - **Scope:** Project creation, project workspace tabs, task board/list lifecycle, the eight task views, create-task-from-message, assign-to-agent, the review→done evidence gate, project close, and the per-flow states every screen must handle. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md), [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
+- **Related:** [WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md), [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
 - **Last updated:** 2026-07-19.
 
 # Project & Task Flows
 
 Status: Draft canonical
 
-This document is the detailed UX contract for the **Projects** and **Tasks** workspaces defined in [WORKSPACES.md](WORKSPACES.md) and projected in [NAVIGATION.md](NAVIGATION.md). Every execution, delegation, evidence, and approval rule defers to [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md); no flow here may weaken those rules. Where a flow prepares a protected action or a recordable choice, it hands off to [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
+This document is the detailed UX contract for the **Projects** and **Tasks** workspaces defined in [WORKSPACES.md](WORKSPACES.md) and projected in [NAVIGATION.md](NAVIGATION.md). Every execution, delegation, evidence, and approval rule defers to [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md); no flow here may weaken those rules. Where a flow prepares a protected action or a recordable choice, it hands off to [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md).
 
 ## 1. Canonical vocabulary
 
@@ -71,7 +71,7 @@ Tasks render two ways over the same data:
 
 **Task card fields:** title, owner avatar (human or agent badge), status chip, priority (Low/Med/High/Urgent), deadline (with overdue styling), dependency count, evidence indicator, blocker flag, agent-run indicator.
 
-**State model** (canonical, matches AI_RUNTIME Project Execution):
+**State model** (canonical, matches [USER_FLOWS.md](USER_FLOWS.md) §3 Project Execution — AI_RUNTIME has no section of that name):
 
 `planned → active → blocked → review → done`, with `cancelled` reachable from any non-terminal state.
 
@@ -137,7 +137,7 @@ A human reviewer (default the project owner) opens the review: the completion cr
 
 Done is impossible without this gate. Bro reports the task complete only when execution evidence and verification both exist.
 
-Per-flow states: **loading** (agent connecting / evidence rendering skeleton); **empty** (no evidence yet — review action disabled with "awaiting evidence"); **error** (agent/tool failure surfaced verbatim, task to blocked, retry/reassign offered); **offline** (run cannot start; queued with a note; an in-flight run's last known state is shown stale); **permission-denied** (user cannot delegate to that agent or cannot review — action hidden with reason); **blocked** (blocker reason mandatory, unblock owner suggested); **awaiting-approval** (run paused on an approval chip; resolving it in DECISION_APPROVAL_FLOWS.md resumes or cancels the run).
+Per-flow states: **loading** (agent connecting / evidence rendering skeleton); **empty** (no evidence yet — review action disabled with "awaiting evidence"); **error** (agent/tool failure surfaced verbatim, task to blocked, retry/reassign offered); **offline** (run cannot start; queued with a note; an in-flight run's last known state is shown stale); **permission-denied** (user cannot delegate to that agent or cannot review — action visible but disabled, with the reason; STATES.md §6); **blocked** (blocker reason mandatory, unblock owner suggested); **awaiting-approval** (run paused on an approval chip; resolving it in DECISION_APPROVAL_FLOWS.md resumes or cancels the run).
 
 ## 7. Project close flow
 
@@ -158,13 +158,13 @@ Per-flow states: **loading** (criteria/risk aggregation skeleton); **empty** (no
 
 ## 8. Global state contract
 
-Every flow above must render seven states honestly; none may hide execution, approval, ownership, failure, or uncertainty (Global Rule, USER_FLOWS.md):
+Every flow above must render the following seven states honestly — seven of the ten canonical states in [STATES.md](STATES.md), which also defines `populated`, `destructive-confirmation` and `success`; none may hide execution, approval, ownership, failure, or uncertainty (Global Rule, USER_FLOWS.md):
 
 - **loading** — skeletons, not blank; keep the shell interactive and cancelable.
 - **empty** — purposeful first-run guidance with the primary CTA, never a dead end.
 - **error** — precise, verbatim where safe; preserve user input; offer retry; never fabricate success.
 - **offline** — last synced snapshot with a staleness badge; writes queue and replay idempotently.
-- **permission-denied** — read-only or hidden per role, with a request-access path; never a silent failure.
+- **permission-denied** — read-only, or visible but disabled per role (STATES.md §6: a denied action is never hidden), with a request-access path; never a silent failure.
 - **blocked** — visible reason and, where possible, an unblock owner and path.
 - **awaiting-approval** — the pending action, its scope, impact, and expiry are shown; execution is held until the approval resolves.
 
@@ -174,7 +174,7 @@ Every flow above must render seven states honestly; none may hide execution, app
 
 Կարգավիճակ՝ Draft canonical
 
-Այս փաստաթուղթը **Projects** և **Tasks** աշխատանքային տարածքների մանրամասն UX պայմանագիրն է ([WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md))։ Կատարման, delegation-ի, evidence-ի և approval-ի բոլոր կանոնները ենթարկվում են [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ին. այստեղ ոչ մի հոսք չի կարող թուլացնել դրանք։ Երբ հոսքը պատրաստում է պաշտպանված գործողություն կամ գրանցելի ընտրություն, այն փոխանցում է [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md)-ին։
+Այս փաստաթուղթը **Projects** և **Tasks** աշխատանքային տարածքների մանրամասն UX պայմանագիրն է ([WORKSPACES.md](WORKSPACES.md), [NAVIGATION.md](NAVIGATION.md))։ Կատարման, delegation-ի, evidence-ի և approval-ի բոլոր կանոնները ենթարկվում են [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ին. այստեղ ոչ մի հոսք չի կարող թուլացնել դրանք։ Երբ հոսքը պատրաստում է պաշտպանված գործողություն կամ գրանցելի ընտրություն, այն փոխանցում է [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md)-ին։
 
 ## 1. Կանոնական բառապաշար
 
@@ -237,7 +237,7 @@ Task-երը նույն տվյալի վրա երկու տեսքով՝
 
 **Task card-ի դաշտերը՝** վերնագիր, owner avatar (մարդ կամ agent badge), status chip, priority (Low/Med/High/Urgent), deadline (overdue styling-ով), dependency count, evidence indicator, blocker flag, agent-run indicator։
 
-**Վիճակների մոդել** (կանոնական, համընկնում է AI_RUNTIME-ի Project Execution-ին)՝
+**Վիճակների մոդել** (կանոնական, համընկնում է [USER_FLOWS.md](USER_FLOWS.md) §3 Project Execution-ին — AI_RUNTIME-ում այդ անունով բաժին չկա)՝
 
 `planned → active → blocked → review → done`, իսկ `cancelled`-ը հասանելի է ցանկացած ոչ-terminal վիճակից։
 
@@ -303,7 +303,7 @@ Run-ի ընթացքում task-ը հեռարձակում է agent-ի live status
 
 Done-ն անհնար է առանց այս gate-ի։ Bro-ն task-ը ավարտված է հայտարարում միայն, երբ և՛ execution evidence-ը, և՛ verification-ը կան։
 
-Վիճակներ ըստ հոսքի՝ **loading** (agent-ի կապ / evidence render skeleton). **empty** (evidence դեռ չկա — review-ը անջատված «awaiting evidence»-ով). **error** (agent/tool ձախողումը ցուցադրվում է verbatim, task → blocked, retry/reassign). **offline** (run չի սկսվում. հերթ. ընթացիկ run-ի վերջին known state-ը՝ stale). **permission-denied** (user-ը չի կարող delegate անել կամ review անել — գործողությունը թաքցվում է պատճառով). **blocked** (blocker reason պարտադիր, unblock owner առաջարկվում է). **awaiting-approval** (run-ը դադարած approval chip-ի վրա. DECISION_APPROVAL_FLOWS.md-ում լուծելը վերսկսում կամ չեղարկում է run-ը)։
+Վիճակներ ըստ հոսքի՝ **loading** (agent-ի կապ / evidence render skeleton). **empty** (evidence դեռ չկա — review-ը անջատված «awaiting evidence»-ով). **error** (agent/tool ձախողումը ցուցադրվում է verbatim, task → blocked, retry/reassign). **offline** (run չի սկսվում. հերթ. ընթացիկ run-ի վերջին known state-ը՝ stale). **permission-denied** (user-ը չի կարող delegate անել կամ review անել — գործողությունը տեսանելի է, բայց անջատված՝ պատճառով. STATES.md §6). **blocked** (blocker reason պարտադիր, unblock owner առաջարկվում է). **awaiting-approval** (run-ը դադարած approval chip-ի վրա. DECISION_APPROVAL_FLOWS.md-ում լուծելը վերսկսում կամ չեղարկում է run-ը)։
 
 ## 7. Նախագծի փակման հոսք
 
@@ -324,12 +324,12 @@ Done-ն անհնար է առանց այս gate-ի։ Bro-ն task-ը ավարտվ�
 
 ## 8. Գլոբալ վիճակների պայմանագիր
 
-Վերևի ամեն հոսք պետք է ազնվորեն ցուցադրի յոթ վիճակ. ոչ մեկը չի կարող թաքցնել կատարումը, approval-ը, ownership-ը, ձախողումը կամ անորոշությունը (Գլոբալ կանոն, USER_FLOWS.md)՝
+Վերևի ամեն հոսք պետք է ազնվորեն ցուցադրի հետևյալ յոթ վիճակը — [STATES.md](STATES.md)-ի տասը կանոնական վիճակից յոթը (այնտեղ սահմանված են նաև `populated`, `destructive-confirmation`, `success`). ոչ մեկը չի կարող թաքցնել կատարումը, approval-ը, ownership-ը, ձախողումը կամ անորոշությունը (Գլոբալ կանոն, USER_FLOWS.md)՝
 
 - **loading** — skeleton, ոչ դատարկ. shell-ը interactive և cancelable։
 - **empty** — նպատակային first-run ուղղորդում primary CTA-ով, երբեք փակուղի։
 - **error** — ճշգրիտ, verbatim երբ անվտանգ է. պահել user input-ը. առաջարկել retry. երբեք չհորինել success։
 - **offline** — վերջին sync snapshot՝ staleness badge-ով. գրառումները հերթ և idempotent replay։
-- **permission-denied** — read-only կամ թաքցված ըստ role-ի, request-access ուղիով. երբեք լուռ ձախողում։
+- **permission-denied** — read-only, կամ տեսանելի բայց անջատված ըստ role-ի (STATES.md §6՝ մերժված գործողությունը երբեք չի թաքցվում), request-access ուղիով. երբեք լուռ ձախողում։
 - **blocked** — տեսանելի պատճառ և, հնարավոր դեպքում, unblock owner ու ուղի։
 - **awaiting-approval** — pending գործողությունը, նրա scope-ը, impact-ը և expiry-ն ցուցադրվում են. կատարումը պահվում է, մինչ approval-ի լուծումը։

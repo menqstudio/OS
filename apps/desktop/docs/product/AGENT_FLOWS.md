@@ -1,14 +1,14 @@
 - **Purpose:** Define the canonical detailed UX flows for the Agents workspace — agent profile, team grouping, permissions, configuration, assignment, delegation, and the live execution lifecycle — completing the agent surface of Roadmap Phase 1.
-- **Scope:** Agent gallery and profile, create/configure, assign to task or room, the delegation contract, the live-status lifecycle, pause/resume, escalation, and team grouping (Product / Architecture / Engineering / Security / Operations / Review). Grounded in [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md). Trilingual product surface (HY/EN/RU).
+- **Scope:** Agent gallery and profile, create/configure, assign to task or room, the delegation contract, the live-status lifecycle, pause/resume, escalation, and team grouping (Product / Architecture / Engineering / Security / Operations / Review). Grounded in [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md). Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [WORKSPACES.md](WORKSPACES.md), [USER_FLOWS.md](USER_FLOWS.md), [STATES.md](STATES.md), [WORKSPACE_FLOWS.md](WORKSPACE_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md), [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md).
+- **Related:** [WORKSPACES.md](WORKSPACES.md), [USER_FLOWS.md](USER_FLOWS.md), [STATES.md](STATES.md), [WORKSPACE_FLOWS.md](WORKSPACE_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [DECISION_APPROVAL_FLOWS.md](DECISION_APPROVAL_FLOWS.md), [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Agent Flows
 
 Status: Draft canonical
 
-This document specifies what Gev actually sees and does when working with specialist agents. It is the UX projection of the runtime; it never redefines the runtime. Every agent status, contract field, execution transition, and law used here is the one in [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md) and MUST NOT drift. Every UI state (`loading`, `empty`, `populated`, `error`, `offline`, `permission-denied`, `blocked`, `awaiting-approval`, `destructive-confirmation`, `success`) is the canonical pattern in [STATES.md](STATES.md) and is referenced, not restated. Permissions and approval gates follow [../docs/architecture/NOTIFICATIONS_AND_PERMISSIONS.md](../architecture/NOTIFICATIONS_AND_PERMISSIONS.md).
+This document specifies what Gev actually sees and does when working with specialist agents. It is the UX projection of the runtime; it never redefines the runtime. Every agent status, contract field, execution transition, and law used here is the one in [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md) and MUST NOT drift. Every UI state (`loading`, `empty`, `populated`, `error`, `offline`, `permission-denied`, `blocked`, `awaiting-approval`, `destructive-confirmation`, `success`) is the canonical pattern in [STATES.md](STATES.md) and is referenced, not restated. Permissions and approval gates follow [../architecture/NOTIFICATIONS_AND_PERMISSIONS.md](../architecture/NOTIFICATIONS_AND_PERMISSIONS.md).
 
 Canonical vocabulary reused verbatim below:
 
@@ -33,7 +33,7 @@ Bro is the single top-level conductor and stays accountable for integration and 
 
 ## 2. Agent profile / Ագենտի պրոֆիլ
 
-Opening a card opens the profile — the full, honest picture of one specialist. It renders exactly the required agent profile from [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md):
+Opening a card opens the profile — the full, honest picture of one specialist. It renders the required agent profile from [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md) plus three fields that list does not carry — Provider / model, Budget and Run history:
 
 - **Identity & domain** — name, domain, mission.
 - **Capabilities** — what it can do.
@@ -105,7 +105,7 @@ Once a run is dispatched, its status is always visible on the task/room, on the 
 
 ## 7. Team grouping / Թիմային խմբավորում
 
-Agents may be grouped into persistent teams — **Product, Architecture, Engineering, Security, Operations, Review** — exactly as in [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md). Bro coordinates cross-team work and prevents conflicting execution.
+Agents may be grouped into persistent teams — **Product, Architecture, Engineering, Security, Operations, Review** — exactly as in [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md). Bro coordinates cross-team work and prevents conflicting execution.
 
 - **Entry point:** Agent gallery → group-by **Team**, or open a team room (see [CHAT_FLOWS.md](CHAT_FLOWS.md)).
 - **Primary action:** See a team's members, their combined live status, and the work in flight across the team.
@@ -127,7 +127,7 @@ Agent authority never comes from a mention, an assignment, or a chat agreement a
 
 Կարգավիճակ․ Draft canonical
 
-Այս փաստաթուղթը սահմանում է, թե իրականում ինչ է տեսնում և անում Gev-ը specialist agent-ների հետ աշխատելիս։ Այն runtime-ի UX projection-ն է; երբեք չի վերասահմանում runtime-ը։ Այստեղ օգտագործված յուրաքանչյուր ագենտի status, contract field, execution transition և law նույնն է, ինչ [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ում, և ՉՊԵՏՔ Է շեղվի։ Յուրաքանչյուր UI state (`loading`, `empty`, `populated`, `error`, `offline`, `permission-denied`, `blocked`, `awaiting-approval`, `destructive-confirmation`, `success`) կանոնական օրինաչափությունն է [STATES.md](STATES.md)-ում և հղվում է, ոչ վերասահմանվում։ Permission-ներն ու approval gate-երը հետևում են [../docs/architecture/NOTIFICATIONS_AND_PERMISSIONS.md](../architecture/NOTIFICATIONS_AND_PERMISSIONS.md)-ին։
+Այս փաստաթուղթը սահմանում է, թե իրականում ինչ է տեսնում և անում Gev-ը specialist agent-ների հետ աշխատելիս։ Այն runtime-ի UX projection-ն է; երբեք չի վերասահմանում runtime-ը։ Այստեղ օգտագործված յուրաքանչյուր ագենտի status, contract field, execution transition և law նույնն է, ինչ [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ում, և ՉՊԵՏՔ Է շեղվի։ Յուրաքանչյուր UI state (`loading`, `empty`, `populated`, `error`, `offline`, `permission-denied`, `blocked`, `awaiting-approval`, `destructive-confirmation`, `success`) կանոնական օրինաչափությունն է [STATES.md](STATES.md)-ում և հղվում է, ոչ վերասահմանվում։ Permission-ներն ու approval gate-երը հետևում են [../architecture/NOTIFICATIONS_AND_PERMISSIONS.md](../architecture/NOTIFICATIONS_AND_PERMISSIONS.md)-ին։
 
 Կանոնական բառապաշար՝ վերարտադրված ճշգրիտ․
 
@@ -152,7 +152,7 @@ Bro-ն միակ top-level conductor-ն է և մնում է պատասխանատ�
 
 ## 2. Ագենտի պրոֆիլ
 
-Card բացելը բացում է պրոֆիլը՝ մեկ specialist-ի ամբողջական, ազնիվ պատկերը։ Այն ցուցադրում է ճշգրիտ [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ի պարտադիր պրոֆիլը․
+Card բացելը բացում է պրոֆիլը՝ մեկ specialist-ի ամբողջական, ազնիվ պատկերը։ Այն ցուցադրում է [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ի պարտադիր պրոֆիլը՝ գումարած երեք դաշտ, որ այդ ցանկում չկան (Provider / model, Budget, Run history)․
 
 - **Identity & domain** — անուն, domain, mission։
 - **Capabilities** — ինչ կարող է անել։
@@ -224,7 +224,7 @@ Run-ը dispatch լինելուց հետո իր status-ը միշտ տեսանել
 
 ## 7. Թիմային խմբավորում
 
-Ագենտները կարող են խմբավորվել մշտական թիմերում — **Product, Architecture, Engineering, Security, Operations, Review** — ճշգրիտ ինչպես [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ում։ Bro-ն համակարգում է cross-team աշխատանքը և կանխում հակասող կատարումը։
+Ագենտները կարող են խմբավորվել մշտական թիմերում — **Product, Architecture, Engineering, Security, Operations, Review** — ճշգրիտ ինչպես [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md)-ում։ Bro-ն համակարգում է cross-team աշխատանքը և կանխում հակասող կատարումը։
 
 - **Մուտքի կետ․** Agent gallery → group-by **Team**, կամ բացել team room (տես [CHAT_FLOWS.md](CHAT_FLOWS.md))։
 - **Հիմնական գործողություն․** Տեսնել թիմի անդամներին, նրանց միացյալ live status-ը և թիմով ընթացող աշխատանքը։

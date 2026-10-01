@@ -31,7 +31,7 @@ OS is a **monorepo** that unifies a governance **engine** (`engine/`, from `menq
 
 That chain is real. It is machine-proven end to end on Linux (7 services, real uids, a setuid launcher) and on Windows (named pipes, cross-account, distinct service accounts), and CI runs both on every PR.
 
-**And it does not run in the shipped application.** Production `trusted_verified` is unreachable, so every governed turn is refused rather than faked. **`platform_governed_execution_supported()` is not the reason — no function of that name exists in the tree.** It is the specification symbol from [`WINDOWS_BROKER_DESIGN.md`](./design/WINDOWS_BROKER_DESIGN.md) §0.1, recorded as `partial` in `config/spec-conformance.json`. The gate is three real refusals, all in the tree: `governed_verification_unconfigured()` (`apps/desktop/src-tauri/src/commands.rs`) returns `Some(...)` unconditionally and fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns `UnsupportedPlatform` on every host but Linux; and the broker's `build_governed_executor` (`broker/src/main.rs`) serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — nothing in the shipped app sets that variable, so the fallback is what runs. Ordinary chat goes through the `claude` CLI in a private sandbox: contained, not governed, and labelled as such. Opening the gate needs an independent audit and the Owner's approval.
+**And it does not run in the shipped application.** Production `trusted_verified` is unreachable, so every governed turn is refused rather than faked. **`platform_governed_execution_supported()` is not the reason — no function of that name exists in the tree.** It is the specification symbol from [`WINDOWS_BROKER_DESIGN.md`](./design/WINDOWS_BROKER_DESIGN.md) §0.1, recorded as `partial` in `config/spec-conformance.json`. The gate is three real refusals, all in the tree: `governed_verification_unconfigured()` (`apps/desktop/src-tauri/src/commands.rs`) returns `Some(...)` while any of its five compile-time inputs is absent — all are — and fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns `UnsupportedPlatform` on every host but Linux; and the broker's `build_governed_executor` (`broker/src/main.rs`) serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — nothing in the shipped app sets that variable, so the fallback is what runs. Ordinary chat goes through the `claude` CLI in a private sandbox: contained, not governed, and labelled as such. Opening the gate needs an independent audit and the Owner's approval.
 
 The distinction matters more than it looks. A proof kit that runs is not a shipped guarantee, and this repository keeps them apart on purpose — including in the words the UI is allowed to use.
 
@@ -43,7 +43,7 @@ The distinction matters more than it looks. A proof kit that runs is not a shipp
 | Language boundary | **Subprocess/sidecar** (CLI + hooks), not PyO3 embedding. |
 | Data ownership | Desktop SQLite = product/UI state (conversations, tasks, projects). Engine ledger + evidence = the security truth. IDs cross the bridge; no shared table. |
 | Git history | **`git subtree`** for both halves. |
-| CI | **8 workflows; 38 checks report on a pull request** (2 further jobs, in `release.yml`, run only on a version tag) — frontend, Rust workspace, engine, bridge, a11y, perf budget, design gates, supply chain, and **42** repository gates under `tools/`. *(This cell said 31 checks and 15 gates until 2026-08-14, then 18 gates against 19 files until 2026-08-29 — the ninth audit filed the stale counts as `I-10`, the second consecutive round in which they were wrong. Re-measured at `4b25650` on 2026-10-01, after T-130 added a gate: **43** `tools/check_*.py` files exist (`ls tools/check_*.py | wc -l`) and **42** are invoked by path across `.github/workflows/`; the one that is not is `check_prior_art.py`, session-side by design. The check count is measured, not carried: **38** contexts reported on `#284` — the 34 required plus four of the five excluded; the AI-surface gate's `paths:` filter keeps it silent on a pull request touching no Rust, which is why it is excluded. Gates added since run inside existing jobs rather than adding contexts.)* **35 of them are *required* checks.** `main` carries branch protection with `enforce_admins: true`, `strict: true`, linear history, no force pushes and no deletions; `gh api repos/menqstudio/OS/branches/main/protection` returns the context list (verified 2026-08-18). Four pull-request jobs are excluded, each for a measured reason, and a fifth never reports on a pull request at all: `AI-surface inventory gate` (it carries a `paths:` filter, so it does not report on unrelated pull requests, and GitHub treats a skipped required context as pending — requiring it as-is would block every merge that does not touch Rust) and `Trust provisioning (windows-latest)` (`T-023`, three recorded occurrences of an intermittent custody refusal). *(**This cell was false for nine days and stated a command, an output and a verification date while being so.** It said protection was off; it was turned on 2026-08-17 after the seventh audit's `G-01`, and no document was updated. The eighth audit's `H-04` found seven places saying it, this among them, and observed that a contributor reading the file that describes CI would conclude enforcement is convention. The count went 12 → 33 on 2026-08-18 after `H-01` found the whole of `supply-chain.yml` outside the wall.)* |
+| CI | **8 workflow files; 35 contexts are *required* on `main` and 5 jobs are deliberately excluded** — both lists are in `config/required-checks.json`, which `tools/check_repo_state.py` compares against live branch protection. They cover frontend, Rust workspace, engine, bridge, a11y, perf budget, design gates, supply chain, and the repository gates under `tools/`: **43** `tools/check_*.py` files exist and **42** are invoked by path across `.github/workflows/`; the one that is not is `check_prior_art.py`, session-side by design. `main` carries branch protection with `enforce_admins: true`, `strict: true`, linear history, no force pushes and no deletions. Of the five excluded, four are pull-request jobs, each excluded for a measured reason — `AI-surface inventory gate` (its `paths:` filter keeps it silent on a pull request touching no Rust, and GitHub treats a skipped required context as pending), `Trust provisioning + audit signer (windows-latest)` (`T-023`, an intermittent custody refusal), the Windows §0.W broker syscall proof (`T-039`) and the Windows gate self-tests (`T-072`, not required until one green run on `main`) — and the fifth, the release preflight, never reports on a pull request at all. *(This cell said "38 checks report", "the 34 required", "35 required" and "four excluded" while naming two, in one paragraph; its Armenian twin said 37 and "exactly two". It also said protection was off for nine days after it was turned on — eighth audit `H-04`. How many contexts report on a given pull request is not restated: it was measured once, on `#284`.)* |
 | The wall | **Two files, and which one runs is decided by the SESSION's project root, not by the directory being edited.** `engine/.claude/settings.json` is the enforcement wall (nine events, `PreToolUse` matcher `*`, so it sees every Bash call) and its hook commands are addressed `$CLAUDE_PROJECT_DIR/runtime/bro_hook.py` — a path that does not exist at the repository root, so **a session opened at the root is not running it**. `.claude/settings.json` at the root is the COORDINATION gate: six events, `canonical_law_gate.py`, enforcing read receipt, phase order, meta scope, prior art and the shrink-only canon budget. *(This cell said the root `.claude/` is "NOT the wall" and holds "one `Stop` guard"; it wires six events and has since the canonical-law gate landed.)* The root refuses **`Edit|Write|MultiEdit|NotebookEdit`** before the fact and settles **`Bash|PowerShell|Shell`** after it, against what changed on disk — because deciding which paths a shell command writes is undecidable, and a classifier good enough to catch `sh -c "$(printf ...)"` would also have to wave through the read-only greps agents live on. **The after-the-fact half is detection plus halting the turn, not containment: the write has already landed and nothing undoes it** — the engine's own `PostToolUse` path has the same limit (`bro_hook.py:148-177` settles a lease and emits `{"decision":"block"}`; no revert, no unlink, no restore). `T-053`. |
 
 ### The governance surfaces — what the cockpit mirrors, and where the mirror stops
@@ -52,10 +52,11 @@ Phase 2 gives the cockpit four read-only windows onto engine governance truth. T
 because that phase's own Documentation row names it and it had never been written; the honesty
 constraints below are the load-bearing part, and they are enforced in code, not by this paragraph.
 
-**One channel, four surfaces, one direction.** `apps/desktop/src-tauri/src/governance.rs` registers
-exactly four Tauri commands — `read_decision_ledger`, `read_evidence_chain`, `read_verifier_verdicts`,
-`read_engine_approval_queue` — each of which sends one `brops.governance-read.v1` frame through the
-same governed sidecar the AI turn uses. The engine answers from its own stores
+**One channel, four read surfaces, one ask.** `apps/desktop/src-tauri/src/governance.rs` registers
+five Tauri commands. Four are reads — `read_decision_ledger`, `read_evidence_chain`,
+`read_verifier_verdicts`, `read_engine_approval_queue` — each sending one `brops.governance-read.v1`
+frame through the same governed sidecar the AI turn uses; the fifth, `request_engine_approval`, is
+below. The engine answers from its own stores
 (`bro_control_room_api.governance_read`), and `bridge/engine_sidecar.py` relays that reply
 **verbatim**, so the three-valued shape survives the hop.
 
@@ -79,20 +80,20 @@ belongs to the supervisor on both platforms (`governed_supervisor_ledger.py`,
 head do not match. A desktop that re-derived a head from records it cannot authenticate would be
 running a check that cannot fail.
 
-**And the desktop still cannot ask the engine for a verdict.** Phase 2's design has the desktop POST
-an approval **request** the engine's Ed25519 system adjudicates. That path does not exist on either
-side — no `approval-request` schema in `engine/schemas/`, no desktop→engine command — and the
-`approvals` page's grant/deny/escalate drive the **desktop's own** approval system (T-010/T-011,
-behind a native confirmation the webview cannot forge). That is a real authority, correctly gated,
-but it is the desktop's own and not a request across the wall. Building the missing half needs an
-engine schema, which Phase 2 itself classifies as an audited engine task.
+**The desktop can ask; it cannot decide, and cannot be told it decided.** The approval-**request**
+path exists on both sides since `T-021a`…`T-021d`: `contracts/approval-request.schema.json` (vendored
+in `engine/schemas/`), `request_engine_approval`, the sidecar's `approval.request` op, and
+`engine/runtime/bro_approval_requests.py`, which appends the ask to a log and adjudicates nothing — the
+desktop refuses a reply that claims a decision. The `approvals` page's grant/deny/escalate still drive
+the **desktop's own** approval system (T-010/T-011, behind a native confirmation the webview cannot
+forge): a real authority, correctly gated, and not a verdict from across the wall.
 
 ### What is NOT done yet
 
-- **`contracts/` is still a placeholder** — a README describing intent, no extracted schemas. The
-  canonical definitions live in `engine/schemas/` and are mirrored informally in the desktop's Rust
-  domain. Principle 2 says the engine is authoritative, and today that is true by convention rather
-  than by a shared file.
+- **`contracts/` is the source, not yet the only copy.** Six cross-half schemas live there;
+  `engine/schemas/` keeps a byte-identical vendored copy the engine still loads, and
+  `tools/check_contracts_single_source.py` turns drift RED. Pointing the engine's loaders at
+  `contracts/` is the remaining step and needs its own audited engine branch.
 - **The production gate is closed** — see above. This is the single most important "not done" in
   the repository and the one every phase percentage is subordinate to.
 - **Path scope is not enforced on the desktop route.** A task's `scope` / `prohibited_scope` travel
@@ -143,7 +144,7 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 
 Այդ շղթան իրական ա ու մեքենայորեն ապացուցված ծայրից ծայր՝ Linux-ի (7 ծառայություն, իրական uid-եր, setuid launcher) ու Windows-ի (named pipe, cross-account) վրա, ու CI-ը երկուսն էլ վազեցնում ա ամեն PR-ի վրա։
 
-**Ու այն shipped հավելվածում չի աշխատում։** production `trusted_verified`-ը անհասանելի ա, ուստի ամեն կառավարվող turn մերժվում ա, ոչ թե կեղծվում։ **`platform_governed_execution_supported()` անունով ֆունկցիա ծառում չկա։** Դա spec-ի սիմվոլն ա (`docs/design/WINDOWS_BROKER_DESIGN.md` §0.1), ու `config/spec-conformance.json`-ը գրանցում ա որպես `partial`։ Դարպասը երեք իրական մերժումն են՝ `governed_verification_unconfigured()`-ը անպայման `Some(...)` ա վերադարձնում մոդելին կանչելուց առաջ, `connect_broker()`-ը Linux-ից դուրս վերադարձնում ա `UnsupportedPlatform`, ու broker-ի `build_governed_executor`-ը տալիս ա `UpstreamBlockedExecutor` **քանի դեռ `$BROPS_BROKER_CONFIG`-ը չի ցույց տալիս TCB-root-ով ստորագրված manifest-ով config** — shipped հավելվածում ոչինչ այդ փոփոխականը չի դնում։ Սովորական չատը անցնում ա `claude` CLI-ով private sandbox-ում՝ զսպված, ոչ կառավարվող, ու հենց այդպես էլ պիտակավորված։ Դարպասը բացելու համար պետք ա անկախ աուդիտ ու Տիրոջ հաստատումը։
+**Ու այն shipped հավելվածում չի աշխատում։** production `trusted_verified`-ը անհասանելի ա, ուստի ամեն կառավարվող turn մերժվում ա, ոչ թե կեղծվում։ **`platform_governed_execution_supported()` անունով ֆունկցիա ծառում չկա։** Դա spec-ի սիմվոլն ա (`docs/design/WINDOWS_BROKER_DESIGN.md` §0.1), ու `config/spec-conformance.json`-ը գրանցում ա որպես `partial`։ Դարպասը երեք իրական մերժումն են՝ `governed_verification_unconfigured()`-ը `Some(...)` ա վերադարձնում, քանի դեռ իր հինգ compile-time input-ից որևէ մեկը բացակայում ա (բոլորն էլ բացակայում են), ու մոդելին կանչելուց առաջ, `connect_broker()`-ը Linux-ից դուրս վերադարձնում ա `UnsupportedPlatform`, ու broker-ի `build_governed_executor`-ը տալիս ա `UpstreamBlockedExecutor` **քանի դեռ `$BROPS_BROKER_CONFIG`-ը չի ցույց տալիս TCB-root-ով ստորագրված manifest-ով config** — shipped հավելվածում ոչինչ այդ փոփոխականը չի դնում։ Սովորական չատը անցնում ա `claude` CLI-ով private sandbox-ում՝ զսպված, ոչ կառավարվող, ու հենց այդպես էլ պիտակավորված։ Դարպասը բացելու համար պետք ա անկախ աուդիտ ու Տիրոջ հաստատումը։
 
 ### Լուծված որոշումներ
 
@@ -153,14 +154,15 @@ OS-ը **monorepo** ա, որ միավորում ա governance **engine**-ը (`eng
 | Language boundary | **Subprocess/sidecar** (CLI + hooks), ոչ PyO3 |
 | Data ownership | Desktop SQLite = product/UI state; Engine ledger + evidence = security truth; ID-երն են անցնում bridge-ով |
 | Git history | **`git subtree`** երկու կեսի համար |
-| CI | **8 workflow; 37 ստուգում ա հաշվետվում pull request-ի վրա** (ևս 2 job `release.yml`-ում՝ միայն տագի վրա) + **42** gate `tools/`-ում։ *(Այս վանդակը գրում էր 31 ու 15 մինչև 2026-08-14, հետո 18/19 մինչև 2026-08-29 — իններորդ աուդիտը դա գրանցեց որպես `I-10`։ Վերաչափված այս head-ի վրա՝ **43** ֆայլ, **42**-ը կանչված ուղիով; wire չարվածը `check_prior_art.py`-ն ա, որ դիզայնով session-side ա։)* **35-ը *պարտադիր* են։** `main`-ը կրում ա branch protection՝ `enforce_admins`, `strict`, գծային պատմություն, ոչ force-push, ոչ ջնջում (ստուգված 2026-08-18)։ Բացառված են ուղիղ երկուսը, ամեն մեկը չափված պատճառով՝ `AI-surface` (`paths:` ֆիլտրի պատճառով չի հաշվետվում անկախ PR-երի վրա) և `Trust provisioning (windows-latest)` (`T-023`, երեք գրանցված դեպք)։ *(Այս վանդակը ինն օր կեղծ էր և նշում էր ստուգման ամսաթիվը՝ ութերորդ աուդիտի `H-04`։)* |
+| CI | **8 workflow ֆայլ; 35 context *պարտադիր* ա `main`-ի վրա, ու 5 job միտումնավոր բացառված ա** — երկու ցանկն էլ `config/required-checks.json`-ում են, որ `tools/check_repo_state.py`-ն համեմատում ա կենդանի branch protection-ի հետ։ `tools/`-ում **43** `check_*.py` ֆայլ կա, **42**-ը կանչված ա ուղիով. չկանչվածը `check_prior_art.py`-ն ա (դիզայնով session-side)։ `main`-ը կրում ա branch protection՝ `enforce_admins`, `strict`, գծային պատմություն, ոչ force-push, ոչ ջնջում։ Հինգ բացառվածից չորսը pull-request job են, ամեն մեկը չափված պատճառով՝ `AI-surface inventory gate` (`paths:` ֆիլտր), `Trust provisioning + audit signer (windows-latest)` (`T-023`), Windows §0.W broker syscall proof (`T-039`), Windows gate self-test-երը (`T-072`), իսկ հինգերորդը՝ release preflight-ը, pull request-ի վրա ընդհանրապես չի հաշվետվում։ *(Այս վանդակը գրում էր 37 ստուգում ու «ուղիղ երկուսը», անգլերենը՝ 38, 34, 35 ու «չորս»՝ նույն պարբերությունում։)* |
 | Wall | **Երկու ֆայլ, ու որը վազի՝ որոշում ա SESSION-ի project root-ը։** `engine/.claude/settings.json`-ը enforcement wall-ն ա (ինը event, `PreToolUse` matcher `*`, ուրեմն տեսնում ա ամեն Bash), բայց իր hook-երը հասցեագրված են `$CLAUDE_PROJECT_DIR/runtime/bro_hook.py`-ին, որ root-ում **գոյություն չունի** — ուրեմն root-ից բացված session-ը դա չի վազեցնում։ Root-ի `.claude/settings.json`-ը coordination gate-ն ա՝ վեց event, `canonical_law_gate.py`։ *(Այս վանդակը գրում էր որ root-ի `.claude`-ը wall-ը «չի» ու մեկ `Stop` guard ա — վեց event ա։)* Root-ը մերժում ա **`Edit|Write|MultiEdit|NotebookEdit`**-ը նախապես, ու **`Bash|PowerShell|Shell`**-ը settle ա անում հետո՝ ըստ նրա թե ինչ փոխվեց սկավառակի վրա, որովհետև shell-ի գրած ուղին նախապես որոշելը **անորոշելի ա**։ **Հետո-ստուգումը detection ա ու turn-ի կանգնեցում, ոչ containment** — գրվածը մնում ա։ `T-053`. |
 
 ### Ինչ դեռ արված չէ
 
-- **`contracts/`-ը դեռ placeholder ա** — README, ոչ հանված schema։ Կանոնական սահմանումները
-  `engine/schemas/`-ում են։ 2-րդ սկզբունքը ասում ա engine-ն ա authoritative, ու այսօր դա ճիշտ ա
-  պայմանավորվածությամբ, ոչ թե ընդհանուր ֆայլով։
+- **`contracts/`-ը աղբյուրն ա, բայց դեռ միակ օրինակը չի։** Պատով անցնող վեց schema-ն այնտեղ են.
+  `engine/schemas/`-ը պահում ա բայթ առ բայթ նույն պատճենը, որ engine-ը դեռ բեռնում ա, ու
+  `tools/check_contracts_single_source.py`-ն շեղումը RED ա դարձնում։ Engine-ի loader-ները
+  `contracts/`-ին ուղղելը մնացած քայլն ա ու պահանջում ա առանձին audited engine branch։
 - **Production դարպասը փակ ա** — տես վերևը։ Սա ռեպոյի ամենակարևոր «արված չէ»-ն ա, ու ամեն phase-ի
   տոկոս ստորադաս ա դրան։
 - **Ուղու scope-ը desktop-ի ճանապարհին չի պարտադրվում։** Տասկի `scope`/`prohibited_scope`-ը գնում ա

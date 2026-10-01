@@ -17,14 +17,14 @@ Answer this before anything else, because the preflight in §0.1 checks a config
 different deployments produce in two very different ways.
 
 **A. The desktop product (BroPS).** `apps/desktop/src-tauri/provision/` mints the whole set on the
-user's machine at first launch and there is **no operator ceremony at all** — no USB, no key to
+user's machine — at first launch on Windows, **at install time on POSIX** (below) — and there is **no operator ceremony at all** — no USB, no key to
 carry, nothing to renew. It mints one keypair per authority, signs the `trusted-key-registry` and a
 `conductor-session`, and then **destroys the operator-root private half before it returns**. The
 pin (`operator-root.pub`), the anti-rollback floor (`registry-min`), the registry itself
 (`registry/config/trusted-keys.json`) and the provisioning manifest live under a machine-wide
 **trust anchor** the application's own account cannot write:
 
-| | Windows | POSIX (specified, never executed) |
+| | Windows | POSIX (minted by the root installer) |
 | --- | --- | --- |
 | Trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (read `anchor::POSIX_MACHINE_ROOT`) |
 | App-side store (private keys, artifacts) | `%APPDATA%\studio.menq.brops\trust\` | `~/.local/share/studio.menq.brops/trust/` |
@@ -33,16 +33,21 @@ pin (`operator-root.pub`), the anti-rollback floor (`registry-min`), the registr
 Provisioning runs **before the database is opened and aborts startup if it fails**, so an install
 that could not establish its anchor does not run at all. On Windows the anchor is sealed with a
 PROTECTED DACL whose OWNER RIGHTS (`S-1-3-4`) ACE grants read+execute only, applied up to the
-machine root and re-measured against the OS on every launch. **On POSIX `anchor::seal` returns
-`Unsupported`** — an owner may always `chmod` a directory it owns — so a POSIX deployment must have
-the anchor directory created by a **different uid** (root, or a dedicated `brops-anchor` account),
-mode `0755`, ancestors likewise, with provisioning run once as that account by the installer. That
-branch has never executed.
+machine root and re-measured against the OS on every launch. **On POSIX the application never creates the anchor** — an owner may always `chmod` a directory it
+owns, so `anchor::preprovision_refusal` refuses before anything is minted, and an anchor already in
+place is verified and used. The anchor directory is created by a **different uid**: root runs
+`brops_install_anchor` (`apps/desktop/src-tauri/provision/src/posix_install.rs`) once, at install
+time — the `.deb`'s `postinst` calls `/usr/lib/brops/brops-install`, which is
+`engine/install/brops_install.sh` — mode `0755`, ancestors likewise, and it does not report success
+until the application's own launch-time check passes for the desktop account. CI runs that
+installer's end-to-end test as root. *(This paragraph said "`anchor::seal` returns `Unsupported` …
+That branch has never executed"; the refusal moved earlier and the installer exists.)*
 
 > **Install ordering, and it is not recoverable.** The registry seals when provisioning returns —
 > the operator root is destroyed at that moment — so the audit signer's published key must be
 > admitted *while the registry is being signed*. **Register the signer service before the app's
-> first launch**, or that machine can never have an audit-head anchor without being re-provisioned.
+> first launch** — on POSIX, **before the install step runs**, because that is where the registry is
+> signed and sealed — or that machine can never have an audit-head anchor without being re-provisioned.
 > Nothing automates this today: the signer's binaries ship in no installer.
 
 **B. An engine-only deployment.** You provide the environment yourself, per §0.1 — and note up

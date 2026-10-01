@@ -4,7 +4,9 @@
 > dated snapshot: *"3b-1B is design-lock RED … the addendum is now **rev 26** … not yet
 > Architect-GREEN, **no code**"*, dated **2026-07-25** and still saying it three weeks later. Every
 > clause had stopped being true: the candidate is **rev-30**, the implementation landed, and the
-> pull request this file names four times — **#31** — was superseded and closed. A snapshot in a
+> pull request this file names four times — **#31** — **merged** on 2026-07-27 as `9c1b901`. (This
+> block said #31 "was superseded and closed" from 2026-08-14 to 2026-10-01; `gh pr view 31` reports
+> `MERGED`, and its squash commit is an ancestor of `main`. What was closed unmerged is #32 and #46.) A snapshot in a
 > file nothing checks is a snapshot that will be wrong again by the time it is read.
 >
 > **Read the state from the two sources that cannot quietly drift:**
@@ -31,9 +33,10 @@
 
 After the 2nd code-audit RED (on the then-active PR #31), 3b-1 was split into **3b-1A** (isolated
 signing-boundary completion — ✅ Architect Code GREEN) + **3b-1B** (authoritative
-execution→receipt binding). *(This paragraph said "Both on PR #31"; that pull request was
-superseded and the consolidated work landed via PR #48 and the pull requests after it. The split
-itself is the durable fact — the carrier is not, and is in `config/current_state.json`.)*
+execution→receipt binding). *(This paragraph said "Both on PR #31". #31 merged on
+2026-07-27 (`9c1b901`) carrying 3b-1A and the rev-30 design; the consolidated 3b-1B implementation
+landed via PR #48 and the pull requests after it. The split itself is the durable fact — the carrier
+is not, and is in `config/current_state.json`.)*
 **3b-2 does not start** until 3b-1 is exact-head zero-trust GREEN and merged.
 
 ## 2. Existing engine primitives 3b-1B REUSES (no parallel executor)
@@ -49,7 +52,16 @@ that wrap them (the base functions below are NOT used verbatim for the governed 
 - `engine/tools/brops_live_runstate.py::LiveRunStateProvider` — the verifier; in 3b-1B it
   verifies the **signed** `brops.governed-turn-record.v1` and all cross-bindings (addendum §7).
 
-**Governed-turn-specific contracts (NOT the base functions) — see the addendum:**
+**Governed-turn-specific contracts (NOT the base functions) — see the addendum.** *These are the
+addendum's SPEC names, and most of them are not in the code: no file defines
+`issue_governed_turn_lease`, `validate_governed_turn_lease` or `verify_governed_turn_receipt`, and
+the strings `brops.governed-turn-lease.v1` and `brops.governed-turn-execution-receipt.v1` appear only
+in `config/negative-matrix.json`, whose own `blocked_on` text says the `governed-turn-recorder`
+authority does not exist as code. What implements the lease and the terminal record is
+`engine/runtime/governed_supervisor.py`, `governed_supervisor_ledger.py` and `isolated_signer.py`;
+`brops.governed-turn-record.v1` is real and is built there, and the receipt the code publishes is
+`brops.execution-receipt.v1`. `engine/tools/brops_live_runstate.py` does not verify the governed-turn
+record, despite the bullet above.*
 - **Lease:** `issue_governed_turn_lease` / `validate_governed_turn_lease` (addendum §4.3, §8)
   — a **dedicated** `brops.governed-turn-lease.v1` with the closed `governed-model-turn-v1`
   capability profile; **NOT** the base `issue_lease` / `validate_execution_lease`.
@@ -77,7 +89,7 @@ that wrap them (the base functions below are NOT used verbatim for the governed 
 ## 4. Order + non-goals
 
 3b-1A (CI GREEN, done) → 3b-1B (design-GREEN → implement) → then 3b-2/3b-3. *(This line said "All
-on PR #31" and gated on that pull request not being merged; #31 was superseded and closed long
+on PR #31" and gated on that pull request not being merged; #31 merged on 2026-07-27, long
 before this was read. The ORDER is the durable content; the carrier is in
 `config/current_state.json`.)*
 **STOP, and this part has not moved:** `NoTrustedManifest` unchanged, **no production "Verified"**,

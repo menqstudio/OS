@@ -42,7 +42,7 @@
 - ActivityEvent
 - EvidenceRecord
 
-These entities define the conceptual data model. The concrete persisted schema (tables, keys, indexes, migrations) is intentionally not specified yet; it is a Phase 3–4 deliverable (see [MASTER_EXECUTION_ROADMAP.md](../../../../MASTER_EXECUTION_ROADMAP.md)) and will be recorded in a dedicated `DATA_MODEL.md` when the application foundation begins.
+These entities define the conceptual data model. The concrete persisted schema exists: the entities and enums are in [DATA_MODEL.md](DATA_MODEL.md), the table contract in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md), and the schema itself is the ordered migrations under `src-tauri/core/schema/`, which are the authority when a document disagrees with them.
 
 ## Execution model
 
@@ -74,4 +74,4 @@ The first build is a product prototype and application foundation. Debian deploy
 
 # Ճարտարապետություն
 
-BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։ AI runtime-ի մեխանիկան canonical է [AI_RUNTIME.md](AI_RUNTIME.md)-ում, իսկ UI մակերեսները՝ [product/](../product/)-ում։ Կոնկրետ տվյալների սխեման (`DATA_MODEL.md`) կսահմանվի Phase 3–4-ում, երբ սկսվի application-ի հիմքը։
+BroPS-ը կառուցվում է առանձին domain-ներով, բայց օգտագործողի համար գործում է որպես մեկ միասնական AI Operating System։ Conversation-ը, canonical state-ը, evidence-ը և memory-ն տարբեր շերտեր են և չեն կարող խառնվել։ AI runtime-ի մեխանիկան canonical է [AI_RUNTIME.md](AI_RUNTIME.md)-ում, իսկ UI մակերեսները՝ [product/](../product/)-ում։ Կոնկրետ տվյալների սխեման արդեն կա՝ entity-ները ու enum-ները [DATA_MODEL.md](DATA_MODEL.md)-ում են, աղյուսակների contract-ը՝ [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)-ում, իսկ բուն սխեման `src-tauri/core/schema/`-ի migration-ներն են, որոնք էլ աղբյուրն են, երբ փաստաթուղթը չի համընկնում։

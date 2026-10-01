@@ -88,20 +88,23 @@ sandbox → signed receipt.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/gate-dark.svg">
   <img src="docs/brand/readme/gate-light.svg" width="100%"
-       alt="Three trust states. contained is REACHED — ordinary chat runs through the Claude CLI provider, contained but not governed. governed is PROVEN IN THE KITS — the chain is proven end to end on Linux and Windows, not in the desktop app. trusted_verified is SHUT — unreachable in the shipped app, and the step to it is barred. Opening it needs an independent audit and the Owner's approval; a green CI run is neither. · Երեք վստահության վիճակ․ contained-ը հասանելի ա, governed-ը ապացուցված ա kit-երում, trusted_verified-ը ՓԱԿ ա։">
+       alt="Three trust states. contained is REACHED — ordinary chat runs through the Claude CLI provider, contained but not governed. governed is PROVEN IN THE KITS — the chain is proven end to end on Linux and Windows, not in the desktop app, and the step it executes there is a fixture that hashes its inputs: no model is called. trusted_verified is SHUT — unreachable in the shipped app, and the step to it is barred. Opening it needs an independent audit and the Owner's approval; a green CI run is neither. · Երեք վստահության վիճակ․ contained-ը հասանելի ա, governed-ը ապացուցված ա kit-երում, trusted_verified-ը ՓԱԿ ա։">
 </picture>
 
 </div>
 
 > [!WARNING]
 > **HY: Դա նախագիծն ա։ Դեռ ոչ shipped վարքագիծը։**
-> Կառավարվող շղթան ապացուցված ա ծայրից ծայր՝ Linux-ի ու Windows-ի վրա, բայց desktop
-> հավելվածում **production `trusted_verified`-ը անհասանելի ա**։ Ամեն կառավարվող turn
+> Կառավարվող շղթան ապացուցված ա ծայրից ծայր՝ Linux-ի ու Windows-ի վրա — **kit-երում, որտեղ
+> կատարվող քայլը `proof_executor`-ն ա՝ իր մուտքերը hash անող fixture. model չի կանչվում**, ու իրական
+> կատարող ծառում չկա։ Desktop հավելվածում **production `trusted_verified`-ը անհասանելի ա**։ Ամեն կառավարվող turn
 > մերժում ա, ոչ թե ձևացնում։ Սովորական չատը այսօր անցնում ա Claude CLI provider-ով՝
 > զսպված, բայց ոչ կառավարվող, ու UI-ը հենց դա էլ ասում ա, փոխ չառնելով կառավարվողի բառերը։
 >
 > **EN: That is the design. It is not yet the shipped behaviour.**
-> The governed chain is proven end to end on Linux and on Windows, but in the desktop
+> The governed chain is proven end to end on Linux and on Windows — **in the kits, where the
+> step it executes is `proof_executor`, a fixture that hashes its inputs: no model is called**, and
+> no real-execution executor exists in the tree. In the desktop
 > application **production `trusted_verified` is unreachable**. Every governed turn refuses
 > rather than pretending. Ordinary chat today runs through the Claude CLI provider —
 > contained, but not governed — and the UI says exactly that instead of borrowing governed
@@ -175,13 +178,13 @@ OS/
 │   └── desktop/        Cockpit — Tauri 2: React/TS frontend + Rust workspace + SQLite core
 ├── engine/             Governance engine — Python: runtime, tools, schemas, laws
 │   └── .claude/        The enforcement wall — 9 hook events, fail-closed
-├── bridge/             Desktop backend → engine, one op dispatch (governed turn · governance.read)
-├── contracts/          5 extracted shared schemas — lease · evidence · receipt · grant · contract
+├── bridge/             Desktop backend → engine, one op dispatch (governed turn · governance.read · approval.request)
+├── contracts/          6 extracted shared schemas — lease · evidence · receipt · grant · contract · approval-request
 ├── config/             The machine-checkable state — required checks, budgets, the negative matrix
 ├── docs/               Architecture, security model, guides, evidence, brand (bilingual)
-├── tools/              40 check_*.py gate scripts — capabilities · reachability · release signing · …
+├── tools/              43 check_*.py gate scripts — capabilities · reachability · release signing · …
 ├── .claude/            262 generated specialist definitions + 6 coordination hook events
-└── .github/workflows/  8 workflow files · ci.yml alone defines 21 jobs · 35 contexts required on main
+└── .github/workflows/  8 workflow files · ci.yml alone defines 22 jobs · 35 contexts required on main
 ```
 
 > **HY: Root-ի `.claude/`-ը wall-ը չի։** Այնտեղ մասնագետ ագենտների սահմանումներն են՝
@@ -269,7 +272,7 @@ enforced from the app.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/readme/verification-dark.svg">
   <img src="docs/brand/readme/verification-light.svg" width="100%"
-       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Measured beside it: 2315 engine tests, 228 bridge tests, 10 Rust crates, 43 gate scripts, 35 required contexts. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
+       alt="config/negative-matrix.json declares 242 security negatives, every ID bound to one of three: 155 implemented — a test exists and carries the case ID; 52 blocked — each names what must exist first; 35 unreviewed — nobody has checked, frozen as a baseline while the gate refuses new debt. The unreviewed band is hatched and labelled: unreviewed is not a pass. Beside it, five counts as a command printed them on 2026-09-19 — engine tests, bridge tests, Rust crates, gate scripts, required contexts; the table below carries today's figures. · 242 հայտարարված security negative՝ 155 իրագործված, 52 խցանված, 35 չստուգված։ Չստուգվածը անցում չի։">
 </picture>
 
 </div>
@@ -288,10 +291,10 @@ fast, so run the command rather than trusting the number.
 | Bridge test suite | **228** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **43** | `ls tools/check_*.py \| wc -l` |
-| Declared controls | **62** — 48 check · 14 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`; the split is `ls tools/check_*.py \| wc -l` and `ls engine/tools/*.py \| wc -l`, each set-equal to its half of that file |
+| Declared controls | **63** — 49 check · 14 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`, which prints that split by KIND; by PATH the same 63 are `ls tools/check_*.py \| wc -l` (43) plus `ls engine/tools/*.py \| wc -l` (20), each set-equal to its half of that file |
 | Workflow files | **8** | `ls .github/workflows/*.yml \| wc -l` |
 | Jobs in `ci.yml` | **22** | the `jobs` KEY of `.github/workflows/ci.yml`, parsed as YAML — a 2-space-indent regex also catches `push:` under `on:` and answers 23 |
-| Required contexts on `main` | **34** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'` |
+| Required contexts on `main` | **35** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'`; the same list is `contexts` in `config/required-checks.json`, which `tools/check_repo_state.py` compares against live protection |
 | Specialist definitions | **262** | `ls .claude/agents/*.md \| wc -l` |
 | Cockpit frontend (jsdom) | **801** թեստ · tests, 85 file | `cd apps/desktop && npm ci && npm test` |
 | Cockpit accessibility (axe) | **59** թեստ · tests | `cd apps/desktop && npm ci && npm run test:a11y` |
@@ -324,9 +327,9 @@ fast, so run the command rather than trusting the number.
 
 | Կարգավիճակ · Status | Քանակ · Count | Իմաստ · Meaning |
 | :--- | ---: | :--- |
-| `implemented` | 150 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
-| `blocked` | 54 | Ամեն մեկը նշում ա՝ ինչ պիտի նախ գոյություն ունենա։ · Each names what must exist first. |
-| `unreviewed` | 38 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
+| `implemented` | 155 | Թեստ կա ու կրում ա case-ի ID-ն։ · A test exists and carries the case ID. |
+| `blocked` | 52 | Ամեն մեկը նշում ա՝ ինչ պիտի նախ գոյություն ունենա։ · Each names what must exist first. |
+| `unreviewed` | 35 | **Ոչ ոք չի ստուգել։** Սառեցված որպես baseline — գեյթը մերժում ա *նոր* պարտք։ · **Nobody has checked.** Frozen as a baseline — the gate refuses *new* debt. |
 | **Ընդամենը · Total** | **242** | Matrix-ի ամեն ID կապված ա երեքից մեկին։ · Every ID in the matrix is bound to one of the three. |
 
 **HY:** `unreviewed`-ը անցում չի։ Դա ազնիվ ելակետն ա գեյթի համար, որ retrofit ա արվել
@@ -338,19 +341,21 @@ onto existing code.
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
 **HY:** Գործող անկախ վճիռը **RED** ա — տասներորդ ռաունդը, `main` @ `75fca65`, P0 չկա։
-Այդ ծայրից ի վեր **31 pull request**, **121 ֆայլ** ու **10 599 ավելացված տող** են merge
-եղել, ու դրանցից **ոչ մեկը անկախ հաստատված չի**։ Արձակի ամեն ✅ ստուգիր
+Այդ ծայրից ի վեր, չափված 2026-10-01-ին `main` @ `73e5ccb`-ի վրա, **60 pull request**,
+**172 ֆայլ** ու **21 997 ավելացված տող** են merge եղել, ու դրանցից **ոչ մեկը անկախ հաստատված
+չի**։ Թիվը աճում ա ամեն merge-ի հետ — վազեցրու ներքևի հրամանները։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
 **EN:** The standing independent verdict is **RED** — the TENTH round, `main` @ `75fca65`,
-no P0. Since that head, **31 pull requests**, **121 files** and **10,599 inserted lines**
-have merged, and **none of it is independently confirmed**. Check any tick in prose against
+no P0. Since that head — measured on 2026-10-01 at `main` @ `73e5ccb` — **60 pull requests**,
+**172 files** and **21,997 inserted lines** have merged, and **none of it is independently
+confirmed**. The figure grows with every merge; the two commands below print today's. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 75fca65..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 31
-    git diff --shortstat 75fca65..HEAD    # 121 files changed, 10599 insertions(+), 1156 deletions(-)
+    git log --format=%s 75fca65..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 60 at 73e5ccb
+    git diff --shortstat 75fca65..HEAD    # at 73e5ccb: 172 files changed, 21997 insertions(+), 2109 deletions(-)
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա

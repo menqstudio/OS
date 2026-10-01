@@ -282,7 +282,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 >
 > | Where | What it does |
 > |---|---|
-> | `governed_verification_unconfigured()` — `apps/desktop/src-tauri/src/commands.rs` | returns `Some(...)` **unconditionally**, before the model is invoked |
+> | `governed_verification_unconfigured()` — `apps/desktop/src-tauri/src/commands.rs` | returns `Some(...)` while any of its five compile-time inputs is absent (all are), before the model is invoked — a measurement since `T-048`, not the hardcoded `Some` this row described |
 > | `UpstreamBlockedExecutor` — `apps/desktop/src-tauri/broker/src/main.rs` | a real type; every turn returns `Err(TurnReason::UpstreamBlocked)` |
 > | `connect_broker()` | refuses with `UnsupportedPlatform` off Linux |
 >
@@ -348,9 +348,17 @@ always `External` kills both the provenance test and
 `a_demo_anchored_turn_commits_as_demonstration_and_never_as_production`; and having `BrokerCustody` build
 `TrustState::Production` by hand kills that same load-bearing one.
 
-**What still gates Phase 1's two rows:** the other 26 prerequisites in `broker/src/preflight.rs` — 13
-installer, 11 machine-admin, 1 platform, and the custody row, which an install-minted root now meets (`T-140`, `docs/design/DEBIAN_INSTALL_PROVISIONING.md`). None of them is a decision. The table
-now marks the custody row `met-by-build`.
+**What still gates Phase 1's two rows:** the other 26 prerequisites in `broker/src/preflight.rs`. Today's
+split of all 27, held by a test in that file, is five-way: **13 installer · 11 machine-admin · 1
+install-minted-root** (the custody row, `custody.tcb_root_manifest_signature`, which an install-minted
+root now meets — `T-140`, `docs/design/DEBIAN_INSTALL_PROVISIONING.md`) **· 1 not-provisionable** (the
+Linux platform fact) **· 1 met-by-build** (the resolver row this section decided). None of them is a
+decision. *(The as-posed record below is NOT verbatim in one place, and says so here rather than pretending: its
+custody row originally named a person-held root custodian, a label `T-130` removed and
+`tools/check_no_owner_key_ceremony.py` refuses outside history, so it reads `1 custody row`. `#303` and
+`#309` had gone further and written `(T-131)` and then `1 install-minted-root (T-140)` beside the
+record's own "Measured at `a94513e`" — tasks that did not exist at that head. Those are removed; the
+counts 13 / 11 / 1 / 2 are the as-posed ones, and today's five-way count lives here, above it.)*
 
 ---
 
@@ -362,7 +370,7 @@ Phase 1 has two open Definition-of-Done rows — *"One governed round-trip prove
 That account is true and **incomplete**. Measured at `a94513e`:
 
 `apps/desktop/src-tauri/broker/src/preflight.rs` lists **27** prerequisites for a governed round trip,
-each with the party that can create it: **13 installer · 11 machine-admin · 1 install-minted-root (T-140) ·
+each with the party that can create it: **13 installer · 11 machine-admin · 1 custody row ·
 2 not-provisionable-on-a-machine**. The interesting number is the last one. Of those two:
 
 | Requirement | Why no machine can provide it |
@@ -442,7 +450,8 @@ cannot be replayed. Nothing expires — `not_after_epoch` is 9999-12-31 — so n
 a renewal.
 
 It is proven byte-compatible with the engine by a test that runs the **real** Python verifiers
-against **real** Rust output: 29 checks through `load_trusted_keys`, `verify_conductor_session_token`
+against **real** Rust output: 64 checks (`cargo test -p brops-provision --test python_verifier` prints
+`GREEN: 64 checks passed against the real engine verifiers`; this said 29) through `load_trusted_keys`, `verify_conductor_session_token`
 and `bro_deploy_preflight`. Not a Rust test asserting that its own encoding round-trips — the thing
 that has to accept it, accepting it.
 
@@ -512,10 +521,13 @@ why the trusted-key registry moved out of the app's reach too.
 
 ### What is not done
 
-- **POSIX is specified and refuses rather than pretending.** `seal` returns `Unsupported`, naming
-  what a POSIX deployment must provide: the directory created by another uid, provisioning run once
-  as that uid. An owner may always `chmod` a directory it owns, and POSIX has no OWNER RIGHTS
-  equivalent. That branch has never executed.
+- **On POSIX the application refuses to create the anchor, and a root installer creates it.** An
+  owner may always `chmod` a directory it owns, and POSIX has no OWNER RIGHTS equivalent, so
+  `anchor::preprovision_refusal` refuses before anything is minted — it no longer fails late, at
+  `seal` — and an anchor already in place IS used. What puts one there is `brops_install_anchor`
+  (`provision/src/posix_install.rs`, `T-137`), run once as root by the `.deb`'s `postinst` (`T-138`)
+  and exercised as root in CI. *(This bullet said "`seal` returns `Unsupported` … that branch has never
+  executed".)* A machine whose install step did not run still refuses first launch.
 - **`bro_custody`'s Windows rule still reads one descriptor** and cannot see an ancestor. The
   property holds because *provisioning* walks the chain; the engine alone would accept a sealed leaf
   under a renameable parent. It is a shared rule across the pin, the registry root, the evidence
@@ -738,7 +750,7 @@ than either implementation.
 
 **What this decision does NOT authorise.** The shipped gate stays shut. `main()` keeps
 `UpstreamBlockedExecutor`, `governed_verification_unconfigured` keeps returning `Some(...)`
-unconditionally, and no production `trusted_verified` becomes producible. Building the broker's new path
+(it measures five compile-time inputs, and all five are absent), and no production `trusted_verified` becomes producible. Building the broker's new path
 and *serving* it are separate steps: the second still requires every blocker closed, a **separate**
 independent audit, and the Owner's approval. That constraint is unchanged by this decision and is not
 implied by it.
@@ -933,38 +945,36 @@ what a design PR is allowed to touch is itself §I.
 
 ---
 
-## 2c. O-1 … O-5 — all five are waiting on you, and this page said four of them were not
+## 2c. O-1 … O-5 — what each is blocked on (corrected 2026-10-01: not on a credential you hold)
 
-You gave the go on `T-004` (2026-08-16). Working it turned out to mean **reading what each item is
-actually blocked on** — and the answer is the same five times: **the code half is built and the
-remaining half is a deployment act only you can perform.** Not one of them needs a Builder change.
-
-**And §3 below listed four of them under *"Open, and not waiting on you."*** That heading was false
-for O-1, O-3, O-4 and O-5. It is the same failure this page has now been corrected for three times:
-the one page that answers *"what is waiting on me"* answering **no** when the answer was **yes**.
-Corrected here; §3 keeps only what genuinely is not yours.
+**This section used to say "all five are waiting on you"**, that each remaining half was *"a deployment
+act only you can perform"*, and that *"every remaining half is an act on a machine you control, with
+credentials you hold"*. Its O-5 row told you to *"mint the evidence-floor anchor offline"*, and its O-4
+row said *"the shipped registry grants the type to nobody"*. That contradicted the first paragraph of
+this page — **custody needs nothing from you, ever** — and the inventory. The table is rewritten from
+[`PHASE_10_PRODUCTION_ITEMS.md`](./PHASE_10_PRODUCTION_ITEMS.md) §0, which
+`tools/check_residual_items.py` holds; where this page and that one differ, that one is right.
 
 Phase 10's exit criterion is *"O-1..O-5 **closed or owner-signed-deferred** (each audited)"*, and
-the mechanism for the second half already exists: `tools/check_residual_items.py` accepts
-`OWNER-DEFERRED` and **refuses any status change without a `Sign-off:` line**. So each of these is
-one decision with two legal answers — **do the act**, or **defer it by name**. Leaving it OPEN is
-the only answer that is not a decision.
+the mechanism for the second half exists: `tools/check_residual_items.py` accepts `OWNER-DEFERRED`
+and **refuses any status change without a `Sign-off:` line**.
 
-| item | sev | the one act that closes it |
+| item | sev | what it is blocked on |
 |---|---|---|
-| **O-1** | **HIGH** | Make the control-plane tree **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
-| **O-2** | MEDIUM | **Provision the anchor signer's custody.** The signer mints its own Ed25519 key — no offline root artefact is needed — but until custody is configured `append()` writes a plaintext head and **no deployment is anchored**. **30 tests in [`engine/tests/test_audit_head_anchor.py`](../engine/tests/test_audit_head_anchor.py)** already prove the refusal works, including a ledger whose head was rewritten over dropped records. *(This row said "26 tests" and named no file. The sixth audit reports the auditor running `cargo test -p brops-audit-signer` — 2 passed across three targets — and being unable to locate the 26 anywhere he looked. The count was right when written; the tests live in the engine's **Python** suite, not in the Rust crate whose name matches. Counted again: 30 today. A number with no home is a number nobody can check.)* |
-| **O-3** | MEDIUM | A **deploy step** that mints and rotates the operator-root-signed `conductor-session` artifact and exports `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. The code fails closed and the shipped policy already requires it. |
-| **O-4** | LOW | **Pin `control-room-command` in the operator-signed registry.** Both actors are signature-verified today; the shipped registry grants the type to nobody, so the check can never pass on a real install. |
-| **O-5** | LOW | **Mint the evidence-floor anchor offline**, grant its type to that key in the operator-signed registry, and present the file **under a principal the policed account cannot write**. The manifest binding is built and enforced; this is the credential half. |
+| **O-1** | **HIGH** | The *read* half: CPython imports an existing `.pyc` before any Python check can run, so the control-plane tree has to be **unwritable by the account that runs the engine** — on Debian a bind mount ([`DEBIAN_DEPLOYMENT.md`](./DEBIAN_DEPLOYMENT.md)). A deployment posture, not a key. A box that will not do this may **accept the residual risk by name**: `BRO_CONTROL_PLANE_WRITABLE_ACKNOWLEDGED=accepted-o1-residual-risk`. The item's own words: *"that is an owner/deployment decision."* |
+| **O-2** | MEDIUM | **An elevated install step that registers the audit-signer service.** The signer mints its own Ed25519 key, so there is no secret to supply; `register::apply` has no binary entry point, no installer ships it, and nothing in the shipped product sets `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID`, so `append()` writes a plaintext head and **no deployment is anchored**. Packaging work. **30 tests in [`engine/tests/test_audit_head_anchor.py`](../engine/tests/test_audit_head_anchor.py)** prove the refusal works, including a ledger whose head was rewritten over dropped records. |
+| **O-3** | MEDIUM | **The desktop's engine entry point.** First-launch provisioning mints the `conductor-session` artifact itself, the export to the engine child landed 2026-08-09, the code fails closed and the shipped policy requires the token. It stays open because the bridge sidecar's real mode is fail-closed (Wave 3b), so no desktop turn reaches `authorize_conductor_stop`. |
+| **O-4** | LOW | **A shipped caller.** Both actors are signature-verified, the type is bound to the delegated `control-room` authority whose key provisioning retains, and the engine reads the provisioned registry — the registry half is done. Nothing outside tests calls `mint_control_room_command`, so no shipped path mints or presents the artifact `_prove_command_actor` would verify. |
+| **O-5** | LOW | **A design decision: *when* an evidence-floor anchor may honestly be minted.** It must not be minted at install. The delegated `evidence-floor` key is retained on the machine and `mint_floor_anchor` signs one — nothing is minted offline and no person's key is involved. The manifest binding is built and enforced. |
 
-**None of the five needs an offline-root-signed Owner secret** — the `Owner secret needed: no` in
-the inventory is accurate. What they need is a deployment posture and two provisioning steps.
-O-1 is the only **HIGH**, and it is also the only one with a written, named way to accept the risk
-instead of fixing it.
+**None of the five needs an Owner-minted artifact or a credential you hold** — the `Owner secret needed:
+no` in the inventory is accurate, for all five. What is left is wiring, packaging and one design
+question, each an audited engine change on its own branch.
 
-**What a Builder can still do here is nothing**, and saying so is the point of writing it down:
-every remaining half is an act on a machine you control, with credentials you hold.
+**What is yours here** is narrower than this section claimed: the approval each of those audited
+changes needs, and — only if you choose it — a signed deferral of an item, or the O-1 risk acceptance
+named in its row. O-1 is the only **HIGH**, and the only one with a written, named way to accept the
+risk instead of fixing it.
 
 ---
 

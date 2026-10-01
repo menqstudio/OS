@@ -294,7 +294,7 @@ signer-side anti-rollback are stated as requirements rather than assumed. The in
 `_check_anchor_monotonic` is defence in depth only — a writer who drops a `.head.sig` in directly bypasses it.
 
 **Status stays OPEN** because no install provisions the signer's custody, so no deployment is anchored yet.
-Tests: `engine/tests/test_audit_head_anchor.py` (26 cases, including a ledger that is appended to, has its
+Tests: `engine/tests/test_audit_head_anchor.py` (30 cases, including a ledger that is appended to, has its
 plaintext head rewritten over dropped records, and must be REFUSED — the exact forgery that previously
 verified green).
 
@@ -320,7 +320,9 @@ verified green).
 - **Engine ticket:** `engine/AUDIT/tickets/MEDIUM-findings.md` § M-4
 - **Engine code:** `engine/runtime/bro_policy.py` — `CONDUCTOR_SESSION_TOKEN_ENV =
   "BRO_CONDUCTOR_SESSION_TOKEN"` (a *path* to a signed artifact), `verify_conductor_session_token`, and the
-  `require_conductor_session_token` flag read from `engine/.bro/policy.json` with default **`False`**;
+  `require_conductor_session_token` flag read from `engine/.bro/policy.json` — an **undeclared** flag is
+  REQUIRED, not waived (`conductor_session_token_required`; this line said "default `False`", which is
+  what the code did before the change recorded below);
   consumed by `authorize_conductor_stop` in `engine/runtime/bro_completion.py`
 - **Closure requires:** ~~setting `"require_conductor_session_token": true` in `engine/.bro/policy.json`~~
   **(done)**; ~~tests for the required-and-absent, mismatched-binding and expired branches~~ **(done —
@@ -403,9 +405,8 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
   repeated act; the trust root is not a routine key"), that key is in
   `provision::RETAINED_AUTHORITIES`, and `provision::mint_control_room_command` signs one. The
   install mints a registry that grants the type, which the committed engine registry grants to
-  nobody — so pointing the engine at the provisioned store is what closes this. That is a consequence
-  to decide on, not a side effect to inherit; see
-  [`OWNER_ACTION_REQUIRED.md`](./OWNER_ACTION_REQUIRED.md).
+  nobody — and the engine has been pointed at the provisioned store since the 2026-08-09 export
+  (§0). That closed the registry half; it did not close the item, which now waits on a shipped caller.
 - **Engine ticket:** `engine/AUDIT/tickets/LOW-findings.md` § L-8
 - **Engine code:** `engine/runtime/bro_control_room_api.py` — `validate_command_intent`, which reads
   `requested_by_type` / `requested_by` straight out of the caller's JSON and compares them against the
@@ -418,9 +419,12 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
   `key_id` / `signature` in `control-room-command.schema.json` (**done**); (c) ✅ verify it before
   `validate_command_intent` can stamp `"valid": true` (**done** — `_prove_command_actor` raises on
   every failure, so there is no return path for an unproven actor). *(a)–(c) were shown here as two
-  ❌ until 2026-08-09; the code had moved and this line had not.* **What is actually left** is that
-  the *committed* registry pins no key for the type, so a flawless artifact signed by an ungranted
-  key still refuses — the same unexported-registry-root decision as O-3.
+  ❌ until 2026-08-09; the code had moved and this line had not.* **What is actually left** is the §0 reason and only that: nothing outside tests calls
+  `mint_control_room_command`, so no shipped path mints or presents the artifact. *(This line said
+  what was left was that the committed registry pins no key for the type — "the same
+  unexported-registry-root decision as O-3". That export landed 2026-08-09; the committed development
+  registry still pins no key for the type, and it is no longer the registry a provisioned install
+  reads.)*
 
 **The defect in full.** The check is a string comparison on data the caller supplied. Anyone who can reach the
 control-room API can claim to be `owner-gev`, and the API then echoes the claimed identity back inside a
@@ -513,8 +517,9 @@ proven by a separate credential and carries none.
 Four checks were deleted one at a time to confirm their tests go red. One — the guard that
 refuses to prove an owner without the command to bind to — **stayed green**, because every caller
 passes the command and nothing reached it directly. It was untested, not merely redundant, and it
-has its own test now. **Status stays OPEN:** the shipped registry pins no key for the type, and a
-test holds that even a flawless artifact signed by an ungranted key still refuses.
+has its own test now. **Status stays OPEN** for the §0 reason: no shipped path mints or presents the
+artifact. (A test still holds that a flawless artifact signed by an ungranted key refuses; the
+committed development registry grants the type to nobody, a provisioned install's registry does.)
 ### O-5 · evidence high-water not bound into the signed manifest
 
 - **Severity:** LOW
@@ -653,8 +658,12 @@ those four to land together. Step-by-step: `docs/RELEASE_SETUP.md` §3.
 ## 3. What still blocks Phase 10 after this pass
 
 1. **O-1 … O-5** — all five OPEN; all five are `engine/` changes (§1). O-1 is a HIGH.
-2. **T-005** — the root-model native fix that retires the option-C CI skips.
-3. **`contracts/` dedupe** — `contracts/` is still a placeholder README.
+2. **T-005** — Option-2 feasibility (audited): the engine as a submodule plus a worktree-check fix,
+   which is what would retire the option-C CI skips. `TASKS.md` has it as Todo.
+3. **`contracts/` dedupe** — `contracts/` is the drift-gated source of six cross-half schemas
+   (`tools/check_contracts_single_source.py`); what remains is relocating the engine's loaders off
+   the byte-identical vendored copy in `engine/schemas/`, on an audited engine branch. *(This said
+   "`contracts/` is still a placeholder README".)*
 4. **The updater's provisioned half** — the Owner's keypair and the four config/dependency changes (§2.2).
 5. **The `docs/RELEASE_SETUP.md` §5 release gate** — Architect CODE-audit GREEN, the governed chain wired
    into the shipped runtime, and 3b-2/3b-3, before any `v*` tag is created.

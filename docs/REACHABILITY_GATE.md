@@ -93,35 +93,34 @@ Full text and observed state live in `config/reachability-declarations.json`. Su
 | `set_run_step_status` | superseded | Steps transition through `stream_run_step` / `advance_run`; a renderer that could stamp a step status could claim work it never did. |
 | **`create_decision`** | **not-yet-wired (OPEN)** | **Tracked here.** The Decisions page is a read-only mirror and offers no create control, yet the command is registered and `allow`-granted. Closes either by wiring a create control on the Decisions page, **or** by flipping the grant to `deny` because authoring governance decisions from the webview is not wanted. Until one is chosen this is invokable surface with no user. |
 
-**Rust symbols — declared 2026-08-09, the first three the gate has ever seen.**
+**Rust symbols — the five in `config/reachability-declarations.json` (`rust_symbols`), re-read 2026-10-01.**
+The gate re-derives the callers on every run; this table is what one run printed, and the `reason`
+and `observed` fields of each declaration are the full account.
 
-| Rust symbol | Expectation | Why |
+| Rust symbol | Expectation | Caller this run saw |
 |---|---|---|
-| `governed_output_stream::mint` | declared_unreachable | The rev-30 §4.10(f) output-stream ladder, implemented ahead of the transport that would use it. |
-| `governed_output_stream::resolve` | declared_unreachable | Same module. **Zero production callers, confirmed by this run**; every reference is inside its own `#[cfg(test)] mod tests`. |
-| `governed_output_stream::sweep` | declared_unreachable | Same module. |
+| `governed_output_pull::pull_output` | must_have_caller | `broker/src/ladder_executor.rs` — the §4.10(f) desktop pull loop: the chunked read of an already-completed output, checked against the signed envelope's whole-output length and digest |
+| `governed_prepare::prepare_governed_turn_v1b` | must_have_caller | `broker/src/ladder_executor.rs` — the §4.10(g) single-pass preparation |
+| `governed_prepare::resolve_governed_generation_config_v1b` | must_have_caller | `broker/src/ladder_executor.rs`, once per turn |
+| `governed_submit::governed_turn_submit_prepared` | must_have_caller | `broker/src/ladder_executor.rs` — the §4.10(g) submit hop |
+| `credentials::reference_of` | declared_unreachable | none, on purpose: it returns a stored `auth_ref`, and the `call`-step transport that would carry one across the boundary does not exist (tracked by `docs/design/PRODUCTION_HALF_DESIGN.md`) |
 
-Three things about that entry are worth reading before anyone wires a caller, because two of them
-were being confused with each other for weeks:
+Read the four flips precisely. They were `declared_unreachable` until 2026-08-12 and say the broker's
+ladder calls these functions; they do **not** say a user can reach a governed turn. That is held by
+the three refusals in `CLAUDE.md` §6, which the flips did not touch.
 
-- **It is not the roadmap's "governed streaming".** MASTER_EXECUTION_ROADMAP Phase 1 descopes
-  delta-streaming — a governed turn is buffered by construction, since the desktop's authority is a
-  signature over the *whole* output. §4.10(f) is the other end of that: a chunked **pull** of an
-  already-completed output, checked against the same whole-output digest.
-- **Nothing pulls yet.** The shipped broker runs the turn in-process and returns the output inline
-  in its single-request/single-response reply, so no `output_stream_id` is ever minted. Only
-  `create_schema` has callers (four of them), which is why the table exists and stays empty.
-- **The shipped table diverges from the design it cites**, so wiring a caller is a rewrite, not a
-  hookup: design §4.10(f) is INSERT-ONCE with `receipt_id`/`execution_attempt_id`/`output_handle`/
-  `output_bytes`/`output_sha256`/`retained_until_ms` and a per-install quota of 64; this one has a
-  mutable `state` column, a `broker_turn_id` instead of those bindings, and a quota of 8 — and the
-  design's server-side `stream_binding_mismatch` cannot be produced at all, because the columns it
-  compares do not exist.
+*(Until 2026-10-01 this section documented three declarations — `governed_output_stream::mint`,
+`::resolve` and `::sweep` — for a module that was deleted on 2026-08-10, said "Nothing pulls yet",
+and explained why that module's table diverged from the design. None of the three symbols exists;
+`core/src/` holds `governed_output_pull.rs`. One sentence of it still applies: §4.10(f) is not the
+roadmap's "governed streaming", which is descoped — it is a chunked **pull** of a completed output.)*
 
-`create_schema` is deliberately **not** declared: three sibling modules in `brops-core`
-(`broker_turns`, `governed_message_store`, `supervisor_ledger`) export a function of the same
-name, and its four call sites qualify it by module, so declaring it would test the module path
-rather than the symbol and report a green it has not earned.
+**Gates under `tools/` that no workflow runs (`tools_gates`).** One entry, with its reason:
+`tools/check_prior_art.py`. It answers a per-session question against a receipt that lives in the OS
+temp directory and never exists on a CI runner, so running it in CI could only pass vacuously; its
+caller is `.claude/hooks/canonical_law_gate.py` at `PreToolUse`, and its self-tests do run in CI. If a
+workflow later starts running a gate listed there, this gate turns RED and asks for the entry to be
+deleted.
 
 **Engine symbols — state re-observed 2026-08-09 by running the gate.** Two of the five changed
 state *while the gate was being written* (2026-08-07), by concurrent agents closing O-1 and O-3 in

@@ -68,11 +68,20 @@ sudo -u signer rm /var/lib/brops-signer/.probe
 ## Steps 1–5 — deleted, the install does them
 
 They minted an operator root by hand, on removable media, and signed three artifacts with it. The
-app now provisions its own trust material on first launch: `apps/desktop/src-tauri/provision/`
-generates one Ed25519 key per authority the engine knows, signs a `trusted-key-registry` in the
-exact form `bro_signature.load_trusted_keys` accepts, and writes it under the app data directory
-with the operator-root pin outside the registry root, where the anchor rule requires it. Nothing is
-carried, nothing expires, nothing is ever asked of the person who installed it.
+install now mints that material, and **on this platform the install is not the app**. On Debian the
+application never creates its own trust anchor: `anchor::preprovision_refusal` refuses before
+anything is minted, because an anchor the app's own uid built is one that uid could rewrite. A root
+installer does it instead — `brops_install_anchor` (`provision/src/posix_install.rs`), which the
+`.deb` runs from its `postinst` through `/usr/lib/brops/brops-install`. As root it generates one
+Ed25519 key per authority the engine knows, signs a `trusted-key-registry` in the exact form
+`bro_signature.load_trusted_keys` accepts, destroys the operator-root private half, writes the
+anchor (pin, floor, registry, manifest) under `/var/lib/brops-trust-anchor`, has a child running
+**as the desktop account** copy the app-side store into that account's data directory, and does
+not report success until the application's own launch-time check passes for that account. The app
+then only finds and verifies the anchor; on a machine where that install step did not run, first
+launch refuses. Nothing is carried, nothing expires, nothing is ever asked of the person who
+installed it. *(This paragraph said "the app now provisions its own trust material on first
+launch", which is the Windows behaviour and is false on the platform this page is written for.)*
 
 What that posture claims is written into the code and worth repeating here, because it is smaller
 than the ceremony's claim: locally-minted trust material defends against an attacker who arrives

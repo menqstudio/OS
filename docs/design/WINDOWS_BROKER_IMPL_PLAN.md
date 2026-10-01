@@ -1,6 +1,22 @@
 # docs/design/WINDOWS_BROKER_IMPL_PLAN.md
 
 > **STATUS: NORMATIVE TARGET — UNAUDITED. This is an implementation plan, not evidence of a working broker.**
+>
+> **Corrections, 2026-10-01 — each checked against the tree; the body below is the rev-28-era text.**
+> (1) `platform_governed_execution_supported()` is a SPEC symbol: no function or probe of that name
+> exists, on any platform, and `engine/ci/platform_gate_windows.py` was never created (`engine/ci/`
+> holds `floor_writer_boundary_proof.sh`, `gen_isolation_fixture.py`, `isolation_proof.sh` and
+> `live/`). So §0.W.1's "the enforced gate returns `false`", §0.W.10's "every probe is a stub … the
+> correct, tested refusal", §0.W.12's P-W0 and Appendix W-A's run of that script describe drafts that
+> were not placed in the tree — only §0.W.9 had been corrected. What refuses on Windows is
+> `connect_broker()` returning `UnsupportedPlatform`, on top of `governed_verification_unconfigured()`.
+> (2) `WINDOWS_BROKER_DESIGN.md` IS on this tree, at `docs/design/`, beside this file.
+> (3) `windows_production_isolation` is no longer `not_done`: `config/current_state.json` records it
+> "Machine-PROVEN in the live kit; the SHIPPED gate is still false and remains a release blocker".
+> (4) The closed renderer command in §0.W.4's pipe matrix is `{conversation_id, agent?,
+> client_request_id}` plus `protocol` — `RendererGovernedTurnRequest` in `core/src/governed_turn_ipc.rs`
+> refuses unknown fields — not the two-field form printed there. (5) `ci.yml` has 22 jobs, not the 9
+> Appendix W-A counted.
 > The `platform_governed_execution_supported()` gate (addendum §0.1) **stays `false` on Windows** — governed turns are fail-closed (dev/blocked, never `trusted_verified`) — **until** the Windows broker is (a) Architect design-audited, (b) implemented, (c) code-audited, and (d) proven by its own Windows CI machine-proof at exact head. This plan builds on the **rev-28** addendum §0.W (Windows normative stance) + §2 topology and the queued `docs/design/WINDOWS_BROKER_DESIGN.md` (branch `docs/windows-broker-design`; relied on here via §0.W + §2 since it is not on this working tree). **CI-green ≠ design/audit-green; a passing unit test ≠ a working install; a Linux isolation proof ≠ a Windows production proof** (addendum stop-gates; `config/current_state.json.product_roadmap.windows_production_isolation = not_done`).
 >
 > _Review-mode note (menqstudio/Bro contract): the OS tree is READ-ONLY context, so this is the **proposed file content + a build/test plan**, not a filesystem mutation. Draft artifact paths below (`engine/ci/…`, a `windows-broker-*` CI job) are targets to be created on an implementation branch after design-GREEN, not files placed by this pass._

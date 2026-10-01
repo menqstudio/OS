@@ -20,17 +20,17 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
 ## What's here now — governed-turn transport + infrastructure (opt-in, default OFF)
 
 > **This is the transport + plumbing, not a completed end-to-end feature.** Real governed turns are
-> pending operator provisioning **and** the verify-seam audit (see below); until then every path is
-> **fail-closed** — no result is ever returned without a verified receipt.
+> pending operator provisioning **and** the Wave 3b-1B execution-attempt binding (see below); until
+> then every path is **fail-closed** — real mode returns no result at all.
 
 - **`contracts/`** — the request/response contract: `task-request.schema.json` (desktop → sidecar)
   and `bridge-result.schema.json` (`{ ok, result, receipt, error }`, **VERIFIED-receipt-mandatory**).
-- **`engine_adapter.py`** (adapter) — `run_governed_turn(request, *, run_task, verify_receipt,
-  read_result)`. **Fail-closed** (any error / non-`completed` run → NO result) and **signed-receipt
+- **`engine_adapter.py`** (adapter) — `run_governed_turn(request, *, run_task, read_result)`. **Fail-closed** (any error / non-`completed` run → NO result) and **signed-receipt
   mandatory** (a result only with a signed receipt — `envelope_jcs_b64` + `signature_b64` — that the
   DESKTOP verifies; there is deliberately **no** wire `verified` boolean the sidecar could self-assert,
-  per `bridge-result.schema.json`). Holds no keys — verification is an injected callback; engine core
-  untouched (the adapter only *calls* `run_task`).
+  per `bridge-result.schema.json`). Holds no keys and makes no trust decision — there is no
+  `verify_receipt` callable; an unsigned or missing receipt is carried through and the desktop Blocks
+  it. Engine core untouched (the adapter only *calls* `run_task`).
 - **`engine_sidecar.py`** (sidecar transport) — the process the desktop shells out to: reads one
   request on **stdin**, writes one reply on **stdout**. Always exits 0 (the verdict travels in `ok`);
   every error path is fail-closed. The request now carries an optional top-level **`op`**:
@@ -38,15 +38,18 @@ Webview → Tauri cmd (Rust) → localhost auth IPC → engine sidecar (Python)
   `op: "governance.read"` routes to the engine's `bro_control_room_api.governance_read` and relays its
   `brops.governance-read.v1` reply **verbatim**, so the three-valued shape survives the hop
   (`ok:true`+records / `ok:true`+`empty:true` / `ok:false`+error — a refusal never carries a `records`
-  key). An op this build does not implement is refused **by name**, never silently ignored. No op
-  reaches the execution path — `_real_callables`, the supervisor socket, the signer or the builder.
-  All are reads except `approval.request`, the one append-only WRITE, to its own provisioned log.
+  key). `op: "approval.request"` (`T-021b`) is the one WRITE: it appends one ask to the operator-provisioned
+  log named by `BROPS_APPROVAL_REQUEST_LOG_DIR` and can decide nothing. An op this build does not
+  implement is refused **by name**, never silently ignored. No op reaches `_real_callables`, the
+  supervisor socket, the signer or the builder; the two `protocol`-keyed governed-turn frames
+  (submit, output read) are not ops and do reach the supervisor socket.
   Protocol note: [`docs/BRIDGE_SIDECAR_OP_PROTOCOL.md`](../docs/BRIDGE_SIDECAR_OP_PROTOCOL.md).
 - **`apps/desktop` `Provider::GovernedEngine`** (desktop provider, `src-tauri/src/ai.rs`) — **opt-in,
   default OFF**; spawns the sidecar (task-request via stdin, bounded reads, deadline, kill-on-drop) and
   **re-enforces** `ok` **and a desktop-verified signature** (recompute JCS + Ed25519 `verify_strict` over
-  `envelope_jcs_b64` against a pinned key — never a wire `verified` flag), else fail-closed. Existing `claude-cli` /
-  `anthropic` / `ollama` paths are byte-for-byte unchanged.
+  `envelope_jcs_b64` against a pinned key — never a wire `verified` flag), else fail-closed. The `claude-cli` /
+  `anthropic` / `ollama` paths are no longer "byte-for-byte unchanged", as this line said: each now
+  refuses unless `BROPS_ALLOW_UNGOVERNED=1` is set.
 - **`tests/`** — unit tests (adapter + sidecar + op dispatch). `cd bridge && python -m unittest discover -s tests`.
   The governance route's engine-to-stdout join is covered by `engine/tests/test_governance_sidecar_route.py`.
   Plus 4 Rust tests for the desktop verify-gate + lease-free request shape.
@@ -57,21 +60,30 @@ The governed provider is reached only with **both**:
 BROPS_AI_PROVIDER=governed-engine
 BROPS_ALLOW_GOVERNED_ENGINE=1
 ```
-Without the allow flag the desktop falls back to its default provider. Override the interpreter / sidecar
+Without the allow flag the desktop does **not** fall back to anything: `resolve_provider`
+(`apps/desktop/src-tauri/src/ai.rs`) returns the error `BROPS_AI_PROVIDER=governed-engine requires
+BROPS_ALLOW_GOVERNED_ENGINE=1`. With the allow flag and no provider forced, the governed engine is
+selected. An ungoverned provider is never a default — each needs `BROPS_ALLOW_UNGOVERNED=1`, and with
+neither flag the resolver refuses (`no AI provider configured`). Override the interpreter / sidecar
 path with `BROPS_GOVERNED_PYTHON` / `BROPS_GOVERNED_SIDECAR`.
 
 ## Manual smoke (no provisioning needed)
-Prove the transport + the verified-receipt invariant with canned callables (self-test only):
+Prove the transport with canned callables (self-test only). The request must carry every field
+`contracts/task-request.schema.json` requires — `system`, `history` and `request` as well as the
+three this example used to send alone, which the sidecar refuses with `invalid task request: 'system'
+is a required property`:
 ```
-echo '{"task_id":"t-smoke","task_class":"standard-builder","rationale":"say hi"}' \
-  | python bridge/engine_sidecar.py --self-test
-# → {"ok": true, "result": "SELF-TEST OK …", "receipt": {…, "envelope_jcs_b64": "…", "signature_b64": "…"}, "error": null}
-#   (the desktop VERIFIES that signature; the sidecar never asserts a `verified` boolean)
+REQ='{"task_id":"t-smoke","task_class":"standard-builder","rationale":"say hi","system":"You are Bro.","history":[{"role":"user","content":"say hi"}],"request":{"protocol":"brops.governed-turn.v1","workspace_id":"w","install_id":"i","request_nonce":"n","system_sha256":"","history_sha256":"","generation_config_sha256":"","requested_at":"2026-10-01T00:00:00Z"}}'
+echo "$REQ" | python3 bridge/engine_sidecar.py --self-test
+# → {"ok": true, "result": "SELF-TEST OK — governed round-trip plumbing verified. rationale=say hi",
+#    "receipt": {"task_id": "t-smoke", "status": "completed", …, "envelope_jcs_b64": null, "signature_b64": null, …}, "error": null}
+#   The plain self-test produces NO signature: both fields are null, which a desktop Blocks.
+#   `--self-test-signed` is the flag that exercises the signer chain.
 ```
 Unprovisioned **real** mode is fail-closed (no result):
 ```
-echo '{"task_id":"t","task_class":"standard-builder","rationale":"hi"}' | python bridge/engine_sidecar.py
-# → {"ok": false, "result": null, "receipt": null, "error": "governed engine not provisioned: …"}
+echo "$REQ" | python3 bridge/engine_sidecar.py
+# → {"ok": false, "result": null, "receipt": null, "error": "governed engine not provisioned: missing BRO_KEYDIR, BRO_REGISTRY_ROOT, BRO_BINDING, BRO_REPOSITORY_ROOT, BRO_BUILDER_COMMAND"}
 ```
 
 The governance mirror (read-only, no execution reachable). Unprovisioned it refuses, and says so:
@@ -85,15 +97,20 @@ With `BROPS_GOVERNANCE_STATE_DIR` pointing at the engine's runtime state directo
 returns `ok:true` with `records` (or `records: []` + `empty: true` + an `empty_reason`).
 
 ## Real end-to-end (owner-provisioned) — pending
-A real governed turn needs operator-provisioned state on disk (none may come from the desktop), via env:
-`BRO_KEYDIR` (issuer key) · `BRO_REGISTRY_ROOT` (trusted-key registry) · `BRO_BINDING` (signed workspace
-binding) · `BRO_REPOSITORY_ROOT` · `BRO_BUILDER_COMMAND` (the AI-under-the-wall). See `DESIGN.md` §4 Q2.
+The sidecar refuses real mode while any of five variables is empty: `BRO_KEYDIR` · `BRO_REGISTRY_ROOT` ·
+`BRO_BINDING` · `BRO_REPOSITORY_ROOT` · `BRO_BUILDER_COMMAND`. **That is a presence check and nothing
+else** — no value of the five is read by anything. In particular `BRO_REGISTRY_ROOT` is **not** the
+engine's trusted-key registry root: nothing consumes it, and setting it moves no verification anywhere.
+The engine resolves its registry through `bro_signature.resolve_registry_root`, governed by
+`BRO_TRUSTED_REGISTRY_ROOT` under custody rules this check does not apply. It also needs
+`BROPS_SUPERVISOR_SOCKET`. See `DESIGN.md` §4 Q2.
 
-## ⛔ Security seam — pending Architect audit (🛑)
-Real mode deliberately **fails closed even when provisioned**: deciding that a `SupervisorResult` carries
-a genuine *verified* signed receipt — the `verify_receipt` wiring to the engine's signature/evidence
-verification, and `read_result` extraction — is security-critical and is an **Architect-audited
-follow-up** (roadmap §G/§I). Until it lands the sidecar never emits an unverified result. The desktop
+## ⛔ Security seam — real mode still refuses (🛑)
+Real mode deliberately **fails closed even when provisioned**: `_real_callables` raises on every path.
+What it waits for is no longer a `verify_receipt` wiring — that callable was removed, and the desktop
+is the party that verifies a signature. The blocker its own error names is the Wave 3b-1B
+**supervisor-reserved execution attempt** and the authoritative execution→receipt binding. Until that
+lands the sidecar never emits a result on the task-request path. The desktop
 chat **receipt badge** lights up once the backend populates `message.receipt` (receipt-plumbing, same
 follow-up); today the field is absent so the badge stays hidden (no false "verified").
 

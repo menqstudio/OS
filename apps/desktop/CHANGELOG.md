@@ -3,7 +3,7 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [MASTER_EXECUTION_ROADMAP.md](../../MASTER_EXECUTION_ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-08-04. Entries below are dated records; read none of them as the current state.
+- **Last updated:** 2026-08-04 (newest entry; the standing corrections below were added 2026-08-09 and amended 2026-10-01). Entries below are dated records; read none of them as the current state.
 
 > **Three standing corrections that apply to every entry below (two added 2026-08-09, the third 2026-10-01).**
 > 1. Entries name `platform_governed_execution_supported()` as the gate that “stays false”. **No function
@@ -13,7 +13,8 @@
 >    broker's `UpstreamBlockedExecutor` fallback when `$BROPS_BROKER_CONFIG` is unset. The posture those
 >    entries describe is real; the name is not.
 > 2. The audit verdicts quoted in these entries are **Builder-side**. The standing INDEPENDENT verdict is
->    **RED** — `AUDIT/2026-08-06-remediation-audit.md`, never re-run. See `AUDIT/AUDIT_LEDGER.md`.
+>    **RED**. Which round is current is in `AUDIT/AUDIT_LEDGER.md` and only there — this line named the
+>    2026-08-06 report as "never re-run" while eight later rounds were filed beside it.
 > 3. Entries record an **offline-root ceremony** run by the Owner, the `win_gen_root` tool and a
 >    `CUSTODY_CEREMONY.md` runbook. **All of it is retired.** The Owner decided on 2026-08-09 (#78) that
 >    the install mints trust and no person holds, carries or signs with a key; `T-130` deleted the

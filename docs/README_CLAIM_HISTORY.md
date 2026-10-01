@@ -120,6 +120,16 @@ Stated so that a reader does not mistake the tables above for completeness.
   them"), so the canon disagrees with itself in fourteen places and with the source in one. The
   README is corrected; those are not, and correcting them was outside the change that produced
   this file.
+  **Re-measured 2026-10-01 by the same scan, after `T-145` corrected the documents it could
+  reach: 14 hits, of which eight are records (four in `docs/archive/`, the fixture, a dated audit
+  report, the whole-repository read and this file) and SIX are still live statements —
+  `MASTER_EXECUTION_ROADMAP.md` (frozen line-by-line by `tools/test_roadmap_split.py`, so an edit
+  needs an entry there), `config/current_state.json`, `config/spec-conformance.json`,
+  `config/reachability-declarations.json`, and one code comment in
+  `engine/ci/live/write_broker_config.py`; the sixth, `docs/design/PRODUCTION_HALF_DESIGN.md`, was
+  corrected in the same change that wrote this line. `commands.rs` no longer says it. The scan
+  only finds the word: `docs/SECURITY_MODEL.md`'s "a hardcoded `Some`" said the same thing
+  without it, and was found by reading.**
 - **`tools/check_doc_claims.py` is RED when run from inside `.claude/worktrees/<agent>/`** and
   GREEN on the same tree from the main checkout — verified by calling its `main()` with each
   root. The subtree-relative fallback near `:254` keeps a candidate only when
@@ -792,3 +802,19 @@ recorded here as a pass — they are recorded as measurements whose conditions a
 | :--- | :--- | :--- |
 | `engine_tests` **2314** | **2315** | `BRO_ENV=ci python3 -m unittest discover -s engine/tests -t engine/tests -q` at `b80e572` → `Ran 2315 tests` · `OK (skipped=14)` on Debian 13 (trixie), native, non-root. The added test is `test_the_ladder_broker_manifest_config_is_the_document_the_driver_reads`. The Windows row in `PROJECT_STATE.md` is marked not re-measured rather than given a number nobody ran |
 | **34** required contexts (README, both verification sheets, `PROJECT_STATE.md`) | **35** | `gh api repos/menqstudio/OS/branches/main/protection/required_status_checks --jq '.contexts\|length'` → `35`, after the Owner's item 3 added `Trust anchor · no production root private in this tree` |
+
+## 13. Corrected on 2026-10-01, at `main` @ `73e5ccb` (T-145, the whole-repository read)
+
+The read found the front page stating the same count twice with different values, and one figure
+that was about half of what its own printed command returns.
+
+| Claim | Measured | Command |
+| :--- | :--- | :--- |
+| Negative-matrix table **150 / 54 / 38** (the sheet's alt text beside it already said 155 / 52 / 35) | **155 / 52 / 35** | `python3 tools/check_negative_matrix.py` → `242 matrix cases, all bound -- 155 implemented ..., 52 blocked ..., 35 unreviewed` |
+| Repository map: **40** `check_*.py` (the table said 43) | **43** | `ls tools/check_*.py \| wc -l` |
+| Repository map: `ci.yml` defines **21** jobs (the table said 22) | **22** | the `jobs` key of `.github/workflows/ci.yml`, parsed as YAML |
+| Required contexts **34** in the table (the map said 35; §12 above had already measured 35) | **35** | `len(contexts)` in `config/required-checks.json`. NOT re-measured against live protection here: `gh api .../branches/main/protection` answered 404 for the account this session ran as |
+| Declared controls **62 — 48 check · 14 tool** | **63 — 49 check · 14 tool** by kind; **43 + 20** by path | `python3 tools/check_control_invocation.py` → `63 controls derived from the filesystem (49 checks, 14 tools)`; `ls tools/check_*.py \| wc -l` → 43, `ls engine/tools/*.py \| wc -l` → 20. The old row gave a by-kind split and described it as the by-path one |
+| Verification-sheet alt text: **2315** engine tests, **43** gate scripts | removed from the alt text | the sheet itself (`docs/brand/readme/verification-light.svg`) prints 2205 and 42, as of 2026-09-19; the alt text now says the sheet is dated and points at the table. **The sheet was not redrawn** |
+| **31** pull requests, **121** files, **10,599** inserted lines since the audited head, undated | **60 / 172 / 21,997**, dated | `git log --format=%s 75fca65..73e5ccb \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` → 60; `git diff --shortstat 75fca65..73e5ccb` → `172 files changed, 21997 insertions(+), 2109 deletions(-)`. Nothing recomputes this figure, so it is stale again after the next merge; the page now says so and dates it |
+| "The governed chain is proven end to end" with no word about what executes | qualified | `engine/ci/live/run_live_turn.sh` and `run_ladder_turn.sh` install `proof_executor`, which hashes its inputs; `docs/design/DEBIAN_INSTALL_PROVISIONING.md` §10: "no model is called, and no real-execution executor exists in the tree" |

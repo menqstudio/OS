@@ -1,7 +1,7 @@
 # Bridge sidecar op protocol
 
 **Scope:** `bridge/engine_sidecar.py` — the one process the desktop shells out to.
-**Status:** implemented; `governance.read` is the first registered op.
+**Status:** implemented. Two ops are registered: `governance.read` (the first, a read) and `approval.request` (`T-021b`, the one write). Two further request shapes are keyed on a top-level `protocol` rather than an `op` and are not ops.
 
 ## The problem this records
 
@@ -21,12 +21,15 @@ sides:
 
 ## The envelope
 
-The request document now carries an optional top-level `op`.
+The request document now carries an optional top-level `op`. `_dispatch` recognises three disjoint shapes, in this order: a top-level `protocol` naming one of the two governed-turn frames, an `op`, and — with neither — the original task-request.
 
 | request | goes to | reply document |
 | --- | --- | --- |
-| no `op` key | the governed turn, unchanged | `bridge.result` (`bridge/contracts/bridge-result.schema.json`) |
+| `"protocol": "bridge.governed-turn-output-read.v1"` | the §4.10(f) output pull, over the supervisor socket | `bridge.governed-turn-output-read-result.v1`; a LOCAL failure emits no 4.10(f) frame at all, only a `bridge.op.v1` refusal |
+| `"protocol": "bridge.governed-turn-submit.v1"` | the §4.10(g) submit ladder (`governed_turn_submit.drive_governed_turn`), over the supervisor socket | that ladder's own frame; a local failure is a `bridge.op.v1` refusal |
+| no `op` key, no such `protocol` | the governed turn, unchanged | `bridge.result` (`bridge/contracts/bridge-result.schema.json`) |
 | `"op": "governance.read"` | `bro_control_room_api.ControlRoomAPIV1.governance_read` | `brops.governance-read.v1`, relayed verbatim |
+| `"op": "approval.request"` | `bro_approval_requests.ApprovalRequestLog.record` — one line appended to one append-only log | `brops.approval-request-reply.v1`; a refusal carries no `recorded`, `sequence` or `entry_sha256` key |
 | any other `op` | nothing | `bridge.op.v1` refusal, naming the op |
 
 A `bridge.task-request` can never grow an `op` by accident: its schema is
@@ -123,6 +126,8 @@ the ENGINE verified, and that is still not a signature the DESKTOP verified.
 
 ## Provisioning (operator, not desktop)
 
+The write has its own variable, disjoint from the three below and from the execution path's: `BROPS_APPROVAL_REQUEST_LOG_DIR` must name an **existing** directory the engine appends asks to. Unset, or naming a directory that does not exist, is a refusal — the sidecar will not create one, because a store this process invented is not one an operator chose. Provisioning the mirror grants no write, and provisioning the write grants no read. (`approval.request` also reads the task states and, when the ask cites evidence, the `evidenceChain` surface, so it needs the mirror's state directory as well.)
+
 Read provisioning is deliberately disjoint from the governed turn's `_PROVISION_ENV`:
 a half-provisioned builder can neither enable nor disable the mirror, and
 provisioning the mirror grants no step toward running anything.
@@ -137,10 +142,15 @@ Without `BROPS_GOVERNANCE_STATE_DIR` the mirror refuses and names the variable. 
 desktop passes none of these and cannot: it inherits the sidecar's environment and
 strips fake-mode flags before spawning.
 
-## A read never executes
+## An op never executes
 
-Ops are reads. Nothing dispatched here reaches `_real_callables`, the supervisor
-socket, the isolated signer, or the builder. `_real_callables` still raises
+Every op but `approval.request` is a read, and `approval.request` writes one line to an
+append-only log: it records an ask and cannot decide one, and it cannot move a task. No op
+reaches `_real_callables`, the supervisor socket, the isolated signer, or the builder. (The two
+`protocol`-keyed governed-turn frames in the table above are not ops, and they DO reach the
+supervisor socket — that is their whole job.) This section said "Ops are reads" until 2026-10-01,
+and `bridge/engine_sidecar.py` still says "Every op here is a READ" in two comments above the
+table that registers the write. `_real_callables` still raises
 unconditionally, pending the Wave 3b-1B supervisor-reserved execution attempt and the
 authoritative execution→receipt binding; that is correct and unchanged. A read must
 not even be able to knock on it — being refused by the execution path is precisely

@@ -1,16 +1,20 @@
 - **Purpose:** Define the user-facing sidebar and navigation projection of the BroPS system.
 - **Scope:** Primary navigation groups, Home, Chat, project workspace, and task views. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [STATES.md](STATES.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
+- **Related:** [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [STATES.md](STATES.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Navigation
 
 ## Primary sidebar
 
+This is the shipped sidebar, read off `NAV` in `src/app/nav.ts` — 23 items in four groups. The other documents that print a navigation list (INFORMATION_ARCHITECTURE §7, `architecture/UX_UI_SPEC.md`, the handoff's §2) defer to this one.
+
 ### Core
 - Home
+- Command
 - Chat
+- Group Chat
 - Projects
 - Tasks
 - Agents
@@ -19,6 +23,7 @@
 - Knowledge
 - Memory
 - Decisions
+- Bridge
 - Research
 - Library
 
@@ -82,4 +87,4 @@ Every project contains:
 
 # Նավիգացիա
 
-Sidebar-ը բաժանվում է չորս հիմնական խմբի՝ Core, Intelligence, Operations և System։ Chat-ը Home-ից հետո երկրորդ հիմնական բաժինն է։ Յուրաքանչյուր project ունի իր Group Chat-ը, task-երը, file-երը, knowledge-ը, decision-ները, agent-ները և activity timeline-ը։
+Sidebar-ը բաժանվում է չորս հիմնական խմբի՝ Core, Intelligence, Operations և System։ Shipped sidebar-ը 23 item ունի (`src/app/nav.ts`)՝ Core-ում Home, Command, Chat, Group Chat, Projects, Tasks, Agents, իսկ Intelligence-ում Decisions-ից հետո՝ Bridge։ Յուրաքանչյուր project ունի իր Group Chat-ը, task-երը, file-երը, knowledge-ը, decision-ները, agent-ները և activity timeline-ը։

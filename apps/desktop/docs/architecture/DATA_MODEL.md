@@ -30,7 +30,7 @@ A Project has many Tasks, Conversations, Decisions, Files and Runs. A Task may d
 
 ## State rules
 
-- IDs are UUIDv7 strings.
+- IDs are UUID **v4** strings (`brops_core::id()` calls `Uuid::new_v4`); they are opaque text everywhere in the schema, and nothing relies on their ordering. This line said UUIDv7.
 - Timestamps are UTC ISO-8601.
 - User-authored records are never silently overwritten.
 - Message, Decision and AuditEvent records are append-only; corrections create superseding records.
@@ -41,9 +41,9 @@ A Project has many Tasks, Conversations, Decisions, Files and Runs. A Task may d
 ## Canonical enums
 
 TaskStatus: inbox, planned, active, blocked, review, done, cancelled.
-RunStatus: queued, planning, awaiting_approval, running, paused, succeeded, failed, cancelled.
-ApprovalStatus: pending, approved, rejected, expired, revoked.
-AgentStatus: offline, idle, thinking, working, blocked, error.
+RunStatus: drafted, queued, planning, awaiting_approval, running, paused, succeeded, failed, cancelled.
+ApprovalStatus: pending, approved, rejected, consumed, escalated — the set the database trigger admits (migrations `0011` and `0019`). This line said `expired, revoked`, which the trigger refuses; `ApprovalStatus` in `src/domain/enums.ts` still says `expired | cancelled` and is wrong in the same way.
+AgentStatus: offline, idle, observing, thinking, working, blocked, review, failed, completed — as in `src/domain/enums.ts`; there is no `error` status and no database guard on this column.
 RiskLevel: low, medium, high, critical.
 
 ---

@@ -1,7 +1,7 @@
-- **Purpose:** Specify the responsibility and content of every BroPS workspace surface.
+- **Purpose:** Specify the responsibility and content of every BroPS workspace surface in the sidebar (`src/app/nav.ts`, 23 routes).
 - **Scope:** Per-workspace definitions from Home through Settings. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Workspaces Specification / Աշխատանքային տարածքների սպեցիֆիկացիա
@@ -37,6 +37,9 @@ Inspectable persistent personal and operational memory. No hidden memory is perm
 
 ## Decisions / Որոշումներ
 Accepted choices with context, alternatives, rationale, owner, effective date, consequences, and supersession history.
+
+## Bridge / Կամուրջ
+The governed bridge panel — the only screen from which the engine's decision ledger, the independent-verifier verdicts and a governed turn are reachable. The two mirrors are read-only; the governed turn is sent only on an explicit click. It shows only what the desktop actually received: a verdict appears only when the broker or the engine issued one, "the broker refused" and "no broker was reached" are different outcomes, and an empty mirror reads as nothing to mirror. Added after this specification was drafted (`src/features/Bridge.tsx`); no flow document covers it yet.
 
 ## Research / Հետազոտություն
 Evidence-first investigations with questions, sources, findings, contradictions, confidence, and unresolved gaps.

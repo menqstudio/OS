@@ -2,6 +2,13 @@
 
 **PR #32 → rev-28 rebase/adapt MAP · DEPENDENCY-SAFE ANALYSIS · NON-NORMATIVE**
 
+> **SUPERSEDED — by this map's own rule, and kept only as a record.** §4 says: *"If rev-28 is revised
+> or REDed again, this map is superseded."* The addendum records rev-28 as RED and is at **rev 30**,
+> and PR #32 was **closed unmerged**. No other file references this one. Two of its own statements
+> are also false as it stands here: §4 says it "was **not** written into the read-only OS repository"
+> (it is a tracked file in it), and its verification receipt cites `C:\Users\Admin\Desktop\OS`, a
+> path on a machine this repository is no longer driven from. Nothing below is a plan.
+
 > This is a preparation map only. It changes **no** code, **no** architecture, and **no** design
 > text. It does **not** amend the rev-28 addendum (§0–§9 remain the sole normative source), does
 > **not** touch the PR #31 audit candidate, and does **not** prejudge the Architect verdict. See §4.

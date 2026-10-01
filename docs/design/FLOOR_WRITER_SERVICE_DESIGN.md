@@ -1,6 +1,14 @@
 # Floor-writer service — the principal that owns the anti-rollback marks · DESIGN PROPOSAL (rev 1)
 
-> **Status: PROPOSAL. Not Architect-audited. No product code lands under this document.**
+> **Status, corrected 2026-10-01: FW-1 is BUILT AND MERGED (`#219`, `2a50081`) — and still NOT
+> Architect-approved.** `engine/runtime/floor_writer.py` (`brops.floor-writer.v1`, a 4096-byte frame
+> cap), `run_floor_writer.py` and `provision_floor_writer.py` are in the tree; its boundary proof is
+> `engine/ci/floor_writer_boundary_proof.sh`. What is still a proposal: **FW-2** (Windows — the service
+> says its claim is "Linux only") and **FW-3** (the scope pin, which the service refuses as
+> `unknown_op`), plus a second Architect pass on FW-1 that has not happened. The status line below is
+> what this document said when it was a proposal; it stopped being true when `#219` merged.
+>
+> **Status as first written: PROPOSAL. Not Architect-audited. No product code lands under this document.**
 > This is **roadmap §I step 1** ("Propose — open a PR describing the change and its blast radius;
 > do **not** implement yet") for the Owner decision recorded in
 > [`docs/OWNER_ACTION_REQUIRED.md`](../OWNER_ACTION_REQUIRED.md) §1b, **taken 2026-08-14**: *option 1,
@@ -45,6 +53,8 @@
 >   The `B-02` row that points here by path moved to
 >   [`AUDIT_LEDGER_ARCHIVE.md`](../../apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md); the pointer survived the move.
 >   Still **PROPOSAL**, still waiting on §I step 2 — the Architect audit. Nothing here was implemented.
+>   *(True on 2026-08-31. FW-1 was implemented and merged as `#219` afterwards — see the corrected
+>   status at the top.)*
 
 ---
 

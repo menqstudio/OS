@@ -40,9 +40,11 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
   **shipped application**, on purpose. Opening that gate needs an independent audit and the Owner's
   approval, so it will not change by itself. Nothing is broken.
 
-- **What to do:** use an **ungoverned** provider for normal replies — the local `claude` CLI, the
-  Anthropic API, or Ollama. Check the resolved provider in **Settings**; `governed` should read
-  *false* for a working ungoverned reply.
+- **What to do:** nothing will make a governed reply appear. For an ordinary reply the app needs an
+  **ungoverned** provider — the local `claude` CLI, the Anthropic API, or Ollama — and every one of
+  them is refused unless `BROPS_ALLOW_UNGOVERNED=1` is set in the environment BroPS was launched
+  from (development only; the `dev-ungoverned` build sets it). Check the resolved provider in
+  **Settings**; `governed` should read *false* for a working ungoverned reply.
 
 ### No reply at all / provider not ready
 - Open **Settings** (or the `ai_status` surface) and read `ready` and `detail`.
@@ -50,9 +52,13 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
   its absolute path, then restart BroPS (env vars are read at launch).
 - **Anthropic selected but failing:** confirm `ANTHROPIC_API_KEY` is set in the environment BroPS
   was launched from (not just a different shell). Optionally set `BROPS_ANTHROPIC_MODEL`.
+- **"no AI provider configured":** nothing is allowed. Set `BROPS_ALLOW_UNGOVERNED=1` (development
+  only) to use the local `claude` CLI, or see the governed section above.
 - **Unknown / misconfigured provider:** provider resolution is **fail-closed** — a bad
-  `BROPS_AI_PROVIDER` is a hard error rather than a silent fallback. Fix it to `claude` /
-  `anthropic` / `ollama`.
+  `BROPS_AI_PROVIDER` is a hard error rather than a silent fallback. The accepted values are
+  `governed-engine` (needs `BROPS_ALLOW_GOVERNED_ENGINE=1`) and `claude-cli` / `anthropic` /
+  `ollama` (each needs `BROPS_ALLOW_UNGOVERNED=1`). The value is `claude-cli`, **not** `claude`:
+  `claude` is refused as unknown.
 
 ### Ollama replies fail or are refused
 - **Loopback-only by default.** `BROPS_OLLAMA_URL` must resolve to `localhost` / `127.0.0.0/8` /
@@ -131,9 +137,10 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
 
 ## 6. "This screen is empty / says Not yet connected"
 
-- **Research** and **Library** are **Not yet connected to the backend** — an honest placeholder,
-  **not** a load error (Roadmap Phase 4). Every other sidebar screen is backed by real data; if one
-  of *those* is empty, it's genuinely empty (create the first item).
+- No sidebar screen is a "Not yet connected" placeholder any more — **Research** and **Library**
+  were, and both now read your local database. An empty screen is genuinely empty (create the
+  first item). The **Bridge** panel is the exception in kind: it mirrors the engine, so with no
+  engine provisioned it says *blocked* or *unreachable*, which is not the same as empty.
 
 ---
 
@@ -144,12 +151,17 @@ is **expected current behaviour** (not a bug), it is labelled **By design**.
   exists in the tree**. It is the specification symbol from `WINDOWS_BROKER_DESIGN.md` §0.1, recorded
   as `partial` in `config/spec-conformance.json`. What actually refuses on Windows is
   `connect_broker()` returning `UnsupportedPlatform`, on top of
-  `governed_verification_unconfigured()` returning `Some(…)` unconditionally on every platform.
-  The Windows governed-execution **broker** (services, per-service SIDs,
-  NTFS/CNG DACLs, AppContainer executor, WDAC) is a **PLANNED, unaudited design** — not implemented
-  — so no lease is issued and governed "Verified" mode stays fail-closed. See
-  [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md). There is nothing to
-  "turn on" yet.
+  `governed_verification_unconfigured()` returning `Some(…)` on every platform while any of its five
+  compile-time inputs is absent — and all are.
+  The Windows governed-execution **broker** is **built and exercised in CI, and neither shipped nor
+  wired**: the `brops-win-broker` and `brops-win-live` crates exist, and CI runs their tests and both
+  proof harnesses' self-tests on `windows-latest`. They are a proof kit. No installer carries them,
+  the desktop app never connects to their pipes, and parts of the design (WDAC, the AppContainer
+  executor) are not built — so no lease is issued and governed "Verified" mode stays fail-closed.
+  *(This said the broker was "PLANNED … not implemented" three sections below a paragraph calling the
+  chain machine-proven on Windows.)* See
+  [`docs/design/WINDOWS_BROKER_DESIGN.md`](design/WINDOWS_BROKER_DESIGN.md), a normative **unaudited**
+  target that the implementation plan beside it supersedes in places. There is nothing to "turn on".
 
 ---
 
@@ -168,8 +180,11 @@ npm run build                                                 # tsc --noEmit + v
 cargo test -p brops-core --manifest-path src-tauri/Cargo.toml  # data-core tests
 ```
 
-CI (`.github/workflows/ci.yml`) additionally runs `clippy -D warnings` and a release build on every
-push. If your local build passes but CI fails, check clippy warnings and the release-build step.
+CI (the repository-root `.github/workflows/ci.yml`) runs neither `clippy` nor a release build —
+the workflow that names them is the vendored `apps/desktop/.github/workflows/ci.yml`, which GitHub
+never executes from that path. What CI does run, and what to run locally before a pull request, is
+in the root `CLAUDE.md` §4: the engine suite (`BRO_ENV=ci`), `cargo test --workspace`,
+`npm run typecheck && npm test`, and the `tools/check_*.py` gates.
 
 ---
 

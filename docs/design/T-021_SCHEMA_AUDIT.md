@@ -92,6 +92,13 @@ A schema states what a document may contain. Four of the guarantees this path ne
 **engine does on receipt**, and they are listed here so the next step is not designed by whoever is
 trying to pass it either.
 
+> **A label collision, named so nobody reads one set as the other.** `O-1`…`O-5` below are THIS
+> audit's five obligations on `T-021b`. They are **not** the five Phase-10 residual engine items that
+> `CLAUDE.md` §6 and `docs/PHASE_10_PRODUCTION_ITEMS.md` also call `O-1`…`O-5` (bytecode-shadow,
+> audit-head anchor, conductor session token, control-room actor, evidence high-water), all of which
+> are OPEN. "O-1..O-5 discharged" on the `T-021b` row means these; code comments in
+> `bridge/engine_sidecar.py` that cite `O-2` and `O-4` beside the approval path mean these too.
+
 | # | Obligation on the engine endpoint (`T-021b`) | Why the schema cannot hold it |
 |---|---|---|
 | `O-1` | A repeated `request_id` is recorded as a **duplicate ask**, never as a second decision, and the reply says which. | `request_id` is a correlation id the caller generates; nothing in a document can stop it arriving twice. |

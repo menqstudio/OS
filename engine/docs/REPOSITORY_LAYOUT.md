@@ -1,16 +1,23 @@
 # Repository Layout
 
 ```text
-Bro/
+engine/                   (`Bro/` upstream; vendored here as a git subtree of menqstudio/Bro)
 ├── .bro/                 runtime policy; generated state is ignored
 ├── .claude/              committed Claude Code hooks
-├── .github/workflows/    CI verification
+├── .github/workflows/    CI verification upstream; GitHub does not run this copy inside the monorepo
+├── AUDIT/                the 2026-07-19 read-only security audit and its tickets
 ├── agents/               specialist identity registry and profiles
+├── analytics/            analytics SST: registry, metrics and dashboards
+├── ci/                   isolation proofs and the live governed-turn kits the monorepo CI runs
 ├── config/               canonical startup and documentation manifests
+├── contracts/            the signer wire-protocol schemas (brops-*.v1)
 ├── docs/                 active architecture, phase, and operating documentation
+├── install/              the privileged installer (brops_install.sh)
 ├── laws/                 canonical laws
+├── learning/             learning SST registry
 ├── orchestration/        canonical lifecycle, queue, checkpoint, budget, and command SST
 ├── packs/                pack registry and pack manifests
+├── release/              release SST registry
 ├── runtime/              fail-closed policy, orchestration runtime, and read-only Control Room API code
 ├── schemas/              strict machine-readable schemas
 ├── skills/               Anthropic-compatible skill library

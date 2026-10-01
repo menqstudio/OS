@@ -1,4 +1,12 @@
-# Debian/Linux continuation — Wave 3b-1B end-to-end (paste this as your first message)
+# Debian/Linux continuation — Wave 3b-1B end-to-end (HISTORICAL — do NOT paste this)
+
+> **SUPERSEDED. This is a dated handoff prompt, kept as a record; it must not be pasted into a session.**
+> It sends the reader to `impl/wave-3b1b-core` (PR #46), a branch that is not in this repository — #46
+> was closed unmerged and the work landed through PR #48 and after. It calls the chain "never run
+> end-to-end"; `docs/ARCHITECTURE.md` records it machine-proven on Linux, and the `live-governed-turn`
+> CI job runs it on every pipeline. And it calls the rev-30 design "Architect DESIGN GREEN", which the
+> addendum's own status line denies: rev-30 was **Owner-approved, not Architect-audited**.
+> A new session starts from [`START_HERE.md`](../START_HERE.md) and the read manifest, not from here.
 
 > Paste the block below into a fresh Claude Code session on the Debian box. It is self-contained: it points
 > at the repo, the exact branch, what is already built + verified, and the LINUX-ONLY work that could not be

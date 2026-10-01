@@ -1,6 +1,15 @@
 # The Production Half — what the factory delivers · DESIGN
 
-> **Status: DESIGN-ONLY.** No product code and no schema migration is authored under this
+> **Status, corrected 2026-10-01: no longer design-only — a first slice is built.** Migration
+> `core/schema/0025_agent_bundles.sql` creates `agent_bundles`, `agent_bundle_active`, `flow_runs`,
+> `scheduler_ticks` and `flow_receipts`; `0026` adds `credential_bindings`; `core/src/agent_bundle.rs`
+> builds and verifies bundles, and `run_due` enqueues **and dispatches** (`claim_and_run`). What the
+> code itself lists as not built is in `agent_bundle::NOT_IMPLEMENTED`: `model` steps are refused,
+> `call` steps have no transport, no credential value exists on this side, and the bundle approval
+> writes no confirmation digest. §6's roll-up is corrected to match; the body below is the design as
+> written, and none of it has been independently audited (◑).
+>
+> **Status as first written: DESIGN-ONLY.** No product code and no schema migration is authored under this
 > document. Every schema block below is a normative *shape*, not a migration. Implementation
 > begins only after Architect review and Owner approval, and — for §5 — only after `T-022`
 > unblocks (see §5.5).
@@ -184,8 +193,11 @@ Four properties are deliberate and each is a refusal if violated:
 * **`files` is total.** Every regular file under the bundle directory except `manifest.json` must
   appear exactly once; a file on disk with no entry is a refusal, and an entry with no file is a
   refusal. A partial file table is how an unreviewed prompt rides into an approved bundle.
-* **`grant_ref` and `credentials_ref` are required**, even when the grant is empty and the slot
-  list is empty. "This agent needs nothing" is a statement someone made; "there is no file" is not.
+* **`grant_ref` and `credentials_ref` are required** *(the shipped first slice differs: in
+  `core/schema/agent-bundle-manifest.schema.json` and the `Manifest` struct, `flow_ref` and `grant_ref`
+  are bare path strings with no `sha256`, there is no `credentials_ref`, `eval_ref` or `built_by`,
+  and `built_at_epoch` is in seconds, not the milliseconds of the example above)*, even when the
+  grant is empty and the slot list is empty. "This agent needs nothing" is a statement someone made; "there is no file" is not.
 * **No approval state appears anywhere in the manifest.** Approving must not change the bytes —
   see §1.6.
 * **No secret, no locator, no host, no URL appears anywhere in the bundle.** `grant.json` carries
@@ -568,7 +580,7 @@ All four must be satisfied; none substitutes for another. A `reader` tier with `
 
 `required`, always present, **no `minItems`** — `[]` is the only way to say "no network", and an *absent* field must be a `LeaseError`, never a permissive default. That single decision is the difference between this axis and `USE_NETWORK`: `USE_NETWORK` is absent-by-default and therefore silently satisfiable everywhere it is not checked.
 
-In `engine/agents/authority-policy.json`, a fourth field on `default`, `designated_verifier` and each `exact_overrides` entry: `"egress_class": "none"`. `none` is the default for every role, including the builder default and the designated verifier. A class name resolves to a host set in one place the lease issuer reads; a role file never carries a hostname. *(status: `not_implemented` — this is design.)*
+In `engine/agents/authority-policy.json`, a fourth field on `default`, `designated_verifier` and each `exact_overrides` entry: `"egress_class": "none"`. `none` is the default for every role, including the builder default and the designated verifier. A class name resolves to a host set in one place the lease issuer reads; a role file never carries a hostname. *(status, split 2026-10-01: the lease field above — `allowed_egress`, required, no `minItems` — is **implemented**: `contracts/execution-lease.schema.json` is at `schema` const 2 with it in `required`, and `bro_execution_lease.py` says "Bumped 1 -> 2 when allowed_egress became a required field". The `egress_class` field in `authority-policy.json` described in this paragraph is `not_implemented`.)*
 
 ### 3.2 How the allowlist is expressed
 
@@ -846,14 +858,14 @@ There is no mutate path. Changing any byte changes the signature; a re-signature
 - **`credential_ref_sha256`** — SHA-256 of the canonical `scheme:locator`. Distinguishes `engine:acme/test` from `engine:acme/prod`.
 - **`credential_epoch`** — an integer the custodian increments on every rotation at the same locator. **This is the field that does the real work.** Without it, a customer who rotates the key behind `engine:acme/api` — the ordinary test→production promotion, where the *name* does not change — would have a live lease that silently covers the new key. The epoch makes rotation a payload change, and a payload change is a new signature, a new `lease_id`/`nonce`, a new ledger digest, and a fresh approval.
 
-Both are `schema: 2` fields on `contracts/execution-lease.schema.json` (`additionalProperties: false`, so this is a genuine forward migration) plus the same two keys in `required` and in the Python required set. *(status: `not_implemented`.)*
+Both are `schema: 2` fields on `contracts/execution-lease.schema.json` (`additionalProperties: false`, so this is a genuine forward migration) plus the same two keys in `required` and in the Python required set. *(status: `not_implemented`. The version number is stale: schema 2 has since been taken by `allowed_egress`, so adding these two required fields is the NEXT bump, not this one.)*
 
 The blast radius is then bounded by fields already enforced: `expires_at_epoch`, the `max_tool_calls` slot files, and single use.
 
 ### 4.5 Where this conflicts with an existing control
 
-1. **`set_integration_auth_ref` is tier X / `allow` with no approval gate** and zero UI callers. Anything that can reach the Tauri surface can repoint a connector's credential reference silently. Once the reference *selects a spendable key*, that repoint is a capability change and must become approval-gated. **Direct conflict with the shipped policy file.**
-2. **The desktop's audit trail of that repoint is neither tamper-evident nor attributable.** `repo::audit::record` is a plain `INSERT` into the same SQLite the writer owns — no chain, no head, no signature — and `set_auth_ref` hardcodes the actor as `("user", "gev")`, despite the same file stating that `actor_id` must be derived from trusted context and never hardcoded. An agent-driven repoint records as the human. **This is strictly weaker than the engine ledger, before O-2 is even considered.**
+1. *(CLOSED since this was written: `command-policy.json` now gives `set_integration_auth_ref` protection `native-confirm`. The conflict as posed:)* **`set_integration_auth_ref` is tier X / `allow` with no approval gate** and zero UI callers. Anything that can reach the Tauri surface can repoint a connector's credential reference silently. Once the reference *selects a spendable key*, that repoint is a capability change and must become approval-gated. **Direct conflict with the shipped policy file.**
+2. **The desktop's audit trail of that repoint is neither tamper-evident nor attributable.** `repo::audit::record` is a plain `INSERT` into the same SQLite the writer owns — no chain, no head, no signature — and `set_auth_ref` hardcodes the actor as `("user", "gev")`, despite the same file stating that `actor_id` must be derived from trusted context and never hardcoded. An agent-driven repoint records as the human. *(The attribution half is CLOSED: `T-052` removed that literal and `repo::integrations::set_auth_ref` takes `actor: audit::Actor`. The tamper-evidence half stands. The `repo.rs` line numbers cited in this section have all moved — find `execute_action`, `run_due` and `normalize_auth_ref` by name.)* **This is strictly weaker than the engine ledger, before O-2 is even considered.**
 3. **O-2 bears directly on custody.** The audit ledger is not tamper-evident against its own writer on any real deployment: custody comes from `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID`, nothing in the shipped product sets either, `append()` rewrites a plaintext `.head` with no `.head.sig`, and an unkeyed `verify()` reports a truncated chain as intact. The credential path *adds the highest-value events the product will ever have* to a ledger with that property. **O-2 must close before this path is treated as auditable.**
 4. **The launcher's env-clean refusal forbids the obvious implementation.** Read as a feature, not an obstacle — but it means "just export the key for the child" is a TCB change and must be refused by name.
 5. **`generation_config` is a closed 5-field set.** Binding credential identity there changes the canonical byte formula on both halves. Bind it in the lease.
@@ -1035,13 +1047,13 @@ The tick refuses, with a typed reason from a closed set and never free text, whe
 Four reasons it is safe, one risk that is not designed away, and one question this document cannot
 settle.
 
-1. **The tick's own authority shrinks.** It gains the ability to write a queue row and **loses** the
+1. **The tick's own authority shrinks.** *(Not what was built — see the 2026-08-30 correction in §5.2: since `T-058` the tick enqueues AND dispatches, up to `MAX_DISPATCH_PER_TICK` runs, and the automation half of the same tick still calls `execute_action`. The ceiling the code states is that dispatch adds no class of capability — local `store` steps only; `model` and `call` steps are refused.)* It gains the ability to write a queue row and **loses** the
    ability to perform an action. `run_due` today calls `execute_action`, which writes to
    `notifications`, `tasks` and `knowledge_notes`. After this change the tick writes to `flow_runs`
    and `scheduler_ticks` and nothing else. Strictly less, not more.
 2. **Everything that could leave the box is Blocked at this head, by refusals this design does not
    touch.** A `model` step is a governed turn, and `governed_verification_unconfigured()` returns
-   `Some(...)` unconditionally *before the model is invoked*; `connect_broker()` refuses off Linux;
+   `Some(...)` while any of its five compile-time inputs is absent (all are) *before the model is invoked*; `connect_broker()` refuses off Linux;
    the broker serves `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a TCB-root-signed
    deployment config, which nothing in the shipped app sets. So the first end-to-end slice's correct
    result is `state='blocked'`, and a slice that returned `done` would be reporting a defect. When
@@ -1088,7 +1100,11 @@ rather than decided quietly, and until it is answered the safe default is that a
 > does not cross the wall … Same sequencing as `T-021`"* — and `T-021`'s sequencing is *"a new input
 > to the engine's trust boundary is not added while the independent verdict is RED"*. The standing
 > verdict is RED (ninth round, `apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md`). **§5 may
-> therefore be designed now and may not be implemented until that sequencing releases it.** Saying
+> therefore be designed now and may not be implemented until that sequencing releases it.** *(Read
+> 2026-10-01: the LOCAL half of §5 was built anyway, in `T-058` — the `flow_runs` queue, the claim and
+> the dispatch of local steps. `T-022` is still `Blocked` on the board, and what it blocks is still
+> refused in code: nothing a produced agent runs crosses the wall. The standing verdict is still RED,
+> now at the tenth round.)* Saying
 > otherwise would route around the Owner's own ordering, which is a stop condition rather than a
 > judgement call.
 
@@ -1144,13 +1160,13 @@ One approved bundle — the invoice chaser — with `trigger = every: 5m`. This 
 | Durable execution claim with fail-closed crash reconciliation | `implemented` ◑ (`0013`) |
 | Content-addressed artifact store with an atomic publish algorithm | `partial` ◑ — normative in `WAVE_3B` §4.0, not in the shipped app |
 | Renderer-side automation run contract | `partial` ◑ — implemented and tested; the scheduler does not call it |
-| Agent bundle: manifest, file table, digest, on-disk layout | `not_implemented` |
-| `agent_bundles` / `agent_bundle_states` / `agent_bundle_active` | `not_implemented` |
-| Bundle approval reusing `approvals` with `entity_type='agent_bundle'` | `not_implemented` |
-| `brops.agent-flow.v1`: typed steps, closed condition grammar, DAG, bounds | `not_implemented` |
-| Load-time subset check of step `requires` against the grant | `not_implemented` |
-| `flow_runs` queue, executor claim, `scheduler_ticks` | `not_implemented` |
-| Bundle re-verification on every tick, refusal rather than skip | `not_implemented` |
+| Agent bundle: manifest, file table, digest, on-disk layout | `partial` ◑ — `core/src/agent_bundle.rs` (`build`, `verify`); the shipped manifest is not §1.4's (string refs, no `credentials_ref` / `eval_ref` / `built_by`) |
+| `agent_bundles` / `agent_bundle_states` / `agent_bundle_active` | `partial` ◑ — migration `0025` creates `agent_bundles` and `agent_bundle_active`; no `agent_bundle_states` table exists |
+| Bundle approval reusing `approvals` with `entity_type='agent_bundle'` | `partial` ◑ — the entity type exists in `repo.rs`; `NOT_IMPLEMENTED` says the native confirmation writes no `approvals.confirmation_digest` for a bundle |
+| `brops.agent-flow.v1`: typed steps, closed condition grammar, DAG, bounds | `partial` ◑ — the artifact type and a closed `StepKind` exist; `model` steps are refused and `call` steps have no transport. The condition grammar, DAG and bounds were not re-read on 2026-10-01 |
+| Load-time subset check of step `requires` against the grant | `partial` ◑ — `agent_bundle.rs` checks a step's capabilities and credential slots against the grant; not re-read in full on 2026-10-01 |
+| `flow_runs` queue, executor claim, `scheduler_ticks` | `implemented` ◑ — migration `0025`; `agent_runs::claim_and_run`; `run_due` enqueues and dispatches |
+| Bundle re-verification on every tick, refusal rather than skip | `partial` ◑ — `claim_and_run` and the enqueue path both call `agent_bundle::verify`; the refusal-rather-than-skip half was not re-read on 2026-10-01 |
 | The network axis and its enforcement point | §3 — owned by the audit pack |
 | Credential entry, custody, use, and rebind-requires-a-new-lease | §4 — owned by the audit pack |
 

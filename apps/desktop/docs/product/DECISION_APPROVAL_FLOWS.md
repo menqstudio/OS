@@ -1,7 +1,7 @@
 - **Purpose:** Canonical, detailed UX flows for Decisions, Approvals, and Agent runs in BroPS (Phase 1 UX). This file makes the AI_RUNTIME decision states, approval levels, and agent statuses concrete and implementable at the screen level.
 - **Scope:** The Decision lifecycle UX, the Approval queue and approval-gate UX (levels A0–A3), and the Agent profile / delegation / live-run UX, including per-flow loading, empty, error, offline, expired, and blocked states. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [../AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [../DECISIONS.md](../DECISIONS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [USER_FLOWS.md](USER_FLOWS.md), [GROUP_CHAT.md](GROUP_CHAT.md).
+- **Related:** [../architecture/AI_RUNTIME.md](../architecture/AI_RUNTIME.md), [../DECISIONS.md](../DECISIONS.md), [PROJECT_TASK_FLOWS.md](PROJECT_TASK_FLOWS.md), [CHAT_FLOWS.md](CHAT_FLOWS.md), [USER_FLOWS.md](USER_FLOWS.md), [GROUP_CHAT.md](GROUP_CHAT.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Decision, Approval & Agent Flows
@@ -117,6 +117,8 @@ Additional shown context: risk class, the approval **level** (A0–A3), and, whe
 
 ## 3. Agent run flow UX
 
+> [AGENT_FLOWS.md](AGENT_FLOWS.md) §2–§6 specifies the same profile, delegation, live-run and escalation flows in more detail, and the two copies are **not reconciled**: §3.1 below says only the owner (or an approved decision) may widen an agent's scope, while AGENT_FLOWS says Owner/Admin may. Who may widen is an authority decision that has not been made; until it is, read the stricter sentence.
+
 ### 3.1 Agent profile view
 Each agent has a profile rendering the AI_RUNTIME **Required agent profile**:
 - Name and domain
@@ -142,7 +144,7 @@ Starting a run opens a **delegation form** enforcing the AI_RUNTIME **Delegation
 5. **Completion evidence** — what evidence proves done (commit SHA, file checksum, test output, screenshot, verified readback).
 6. **Deadline or stop condition** — when to stop.
 7. **Approval boundary** — which sub-actions the agent may take autonomously (A0/A1) vs. which must return to Gev (A2/A3).
-The form refuses to start if any field is missing (AI_RUNTIME: refuse execution when scope/approval/contract is missing).
+The form refuses to start if any field is missing. (The refusal is this flow's own rule: AI_RUNTIME's Delegation contract lists what every delegated run must contain and states no refusal.)
 
 ### 3.3 Live run view and statuses
 A **run timeline** streams events (assigned, started, tool requested/executed, paused, completed/failed) and shows the agent's current status. The only valid statuses (AI_RUNTIME Core statuses), with their UX meaning:
@@ -286,6 +288,8 @@ Runtime-ի **որոշման վիճակները** վարում են կենդան�
 
 ## 3. Ագենտի run-ի հոսքի UX
 
+> [AGENT_FLOWS.md](AGENT_FLOWS.md) §2–§6-ը նույն պրոֆիլի, delegation-ի, live-run-ի ու escalation-ի հոսքերն ավելի մանրամասն ա սահմանում, ու երկու օրինակները **համաձայնեցված չեն**. ներքևի §3.1-ն ասում ա որ միայն owner-ը (կամ հաստատված որոշումը) կարող ա ընդլայնել ագենտի scope-ը, իսկ AGENT_FLOWS-ը՝ Owner/Admin-ը։ Ով կարող ա ընդլայնել՝ լիազորության որոշում ա, որ դեռ չի կայացվել. մինչ այդ կարդա խիստ տարբերակը։
+
 ### 3.1 Ագենտի պրոֆիլի տեսք
 Յուրաքանչյուր ագենտ ունի պրոֆիլ, որ ցուցադրում է AI_RUNTIME **Required agent profile**-ը.
 - Անուն և domain
@@ -311,7 +315,7 @@ Run-ը սկսելը բացում է **delegation form**, որը կիրառում
 5. **Completion evidence** — ինչ ապացույց է հաստատում ավարտը (commit SHA, file checksum, test output, screenshot, verified readback)։
 6. **Deadline or stop condition** — երբ կանգնել։
 7. **Approval boundary** — որ ենթա-գործողությունները կարող է ագենտն ինքնուրույն կատարել (A0/A1) և որոնք պետք է վերադառնան Gev (A2/A3)։
-Form-ը հրաժարվում է start անել, եթե որևէ դաշտ բացակայում է (AI_RUNTIME. հրաժարվել կատարումից, երբ scope/approval/contract բացակայում է)։
+Form-ը հրաժարվում է start անել, եթե որևէ դաշտ բացակայում է։ (Մերժումը այս հոսքի սեփական կանոնն ա. AI_RUNTIME-ի Delegation contract-ը թվարկում ա թե ինչ պիտի պարունակի ամեն delegated run ու մերժման մասին ոչինչ չի ասում։)
 
 ### 3.3 Կենդանի run-ի տեսք և կարգավիճակներ
 **Run timeline**-ը հոսքով ցույց է տալիս events (assigned, started, tool requested/executed, paused, completed/failed) և ագենտի ընթացիկ status-ը։ Միակ վավեր կարգավիճակները (AI_RUNTIME Core statuses)՝ իրենց UX իմաստով.

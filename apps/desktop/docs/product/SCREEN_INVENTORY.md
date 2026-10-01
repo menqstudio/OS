@@ -1,7 +1,7 @@
 - **Purpose:** Enumerate every primary workspace, global surface, and required screen state in BroPS.
 - **Scope:** Canonical screen and surface inventory plus mandatory state coverage. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [NAVIGATION.md](NAVIGATION.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [USER_FLOWS.md](USER_FLOWS.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Screen Inventory / Էկրանների ամբողջական ցանկ
@@ -32,6 +32,7 @@ Status: Draft canonical
 20. Analytics / Վերլուծություն
 21. Security / Անվտանգություն
 22. Settings / Կարգավորումներ
+23. Bridge / Կամուրջ — in the sidebar's Intelligence group, after Decisions; routed (`bridge` in `src/app/nav.ts`) after this inventory was drafted, so the 22-screen counts in the sibling documents predate it · sidebar-ի Intelligence խմբում՝ Decisions-ից հետո. ավելացվել ա այս ցանկը գրելուց հետո
 
 ## Global Surfaces / Համընդհանուր մակերեսներ
 
@@ -49,6 +50,6 @@ Status: Draft canonical
 
 ## Required State Coverage / Պարտադիր վիճակներ
 
-Every screen MUST define loading, empty, populated, error, offline, permission-denied, destructive-confirmation, and success states.
+Every screen MUST define the ten canonical states in [STATES.md](STATES.md) — loading, empty, populated, error, offline, permission-denied, blocked, awaiting-approval, destructive-confirmation and success — each wherever its "When it applies" condition there can occur. A read-only screen (Activity, Analytics) has no destructive action and therefore no destructive-confirmation. This section listed eight and omitted blocked and awaiting-approval.
 
-Յուրաքանչյուր էկրան ՊԵՏՔ Է ունենա loading, empty, populated, error, offline, permission-denied, destructive-confirmation և success վիճակներ։
+Յուրաքանչյուր էկրան ՊԵՏՔ Է ունենա [STATES.md](STATES.md)-ի տասը կանոնական վիճակները՝ loading, empty, populated, error, offline, permission-denied, blocked, awaiting-approval, destructive-confirmation և success՝ ամեն մեկն այնտեղ, որտեղ նրա «When it applies» պայմանը կարող է առաջանալ։ Միայն կարդացվող էկրանը (Activity, Analytics) destructive գործողություն չունի, ուրեմն նաև destructive-confirmation չունի։ Այս բաժինը թվարկում էր ութը՝ առանց blocked-ի ու awaiting-approval-ի։

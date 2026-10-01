@@ -8,6 +8,28 @@
 > never `trusted_verified`), and no governed-turn lease is issued. Flipping the gate true on
 > Windows is gated on this document's §10 machine-proof passing on a Windows CI runner, exactly
 > as `engine/ci/isolation_proof.sh` gates Linux.
+>
+> **Superseded in part — read [`WINDOWS_BROKER_IMPL_PLAN.md`](./WINDOWS_BROKER_IMPL_PLAN.md) and
+> `core/src/windows_broker.rs` first (noted 2026-10-01).** Where they differ from this page, the code
+> follows the plan, not this design:
+>
+> - **Topology.** §1 maps "eight Linux principals"; the addendum and the plan have **nine roles and
+>   seven runtime service SIDs**, and `windows_broker.rs` enforces seven
+>   (`verify_distinct_principals`). The broker role is missing from §1's table altogether.
+> - **The launcher.** §1 lists it as the service `NT SERVICE\BropsLauncher`; §1.2 of this same page
+>   says the launcher is "spawned per turn, not run as" a service; the plan makes it a **TCB-owned
+>   binary, NOT a runtime SID**, invoked only by the recorder. §4.1's "supervisor→launcher channel"
+>   has no pipe in §2.1's table, and §8.1 registers "the six services" where §1 lists seven
+>   `NT SERVICE` identities.
+> - **Pipe allowlists.** §2.1 admits `BropsDesktopUI` to the challenge pipe and only `BropsSidecar`
+>   to the supervisor pipe. The plan and the code admit **the broker only** to the challenge
+>   authority (`Pipe::ChallengeAuthority => [broker]`) and **sidecar and broker** to the supervisor.
+> - **The gate's name.** `platform_governed_execution_supported()` is this document's SPEC symbol;
+>   no function of that name exists in the tree. What refuses on Windows today is `connect_broker()`
+>   returning `UnsupportedPlatform`, on top of `governed_verification_unconfigured()`.
+>
+> These are recorded, not reconciled: rewriting §1, §2.1, §4.1 and §8.1 to the plan's topology is a
+> design edit for whoever owns this target.
 
 This design maps each §0.1 isolation primitive to a concrete Win32/.NET mechanism enforced by
 the OS reference monitor — **SIDs, tokens, NTFS/registry/CNG-key DACLs, named-pipe peer-SID

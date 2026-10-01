@@ -220,4 +220,4 @@ Design compliance is GREEN only when:
 - accessibility checks pass
 - visual regression evidence exists for critical screens
 
-This file is mandatory reading together with `DESIGN_SYSTEM.md`, `DETAILED_UX_UI_SPEC.md`, `LOCALIZATION_AND_THEMES.md`, and `IMPLEMENTATION_EXECUTION_HANDOFF.md`.
+This file is mandatory reading together with `DESIGN_SYSTEM.md` (which absorbed `LOCALIZATION_AND_THEMES.md`; that file no longer exists), `DETAILED_UX_UI_SPEC.md`, and `IMPLEMENTATION_EXECUTION_HANDOFF.md`.

@@ -8,7 +8,9 @@ Desktop-first application shell with collapsible navigation, top context bar, ce
 
 ## Mandatory states for every screen
 
-Loading, empty, ready, filtered-empty, offline, degraded, permission-denied, error, destructive-confirmation and success-feedback. Async actions expose queued, running, awaiting-approval, paused, succeeded, failed and cancelled states.
+The canonical set is the ten states in [STATES.md](STATES.md). This line's own list — loading, empty, ready, filtered-empty, offline, degraded, permission-denied, error, destructive-confirmation and success-feedback — names `ready` for `populated` and `success-feedback` for `success`; `filtered-empty` is a sub-pattern of `empty` there, and `degraded` is defined nowhere in STATES.md. Async actions expose queued, running, awaiting-approval, paused, succeeded, failed and cancelled states.
+
+> **Breakpoints are not reconciled:** three breakpoint tables exist and disagree — [INFORMATION_ARCHITECTURE.md §3](INFORMATION_ARCHITECTURE.md) (1440 / 1200 / 1024 / 768), [UX_UI_SPEC.md](../architecture/UX_UI_SPEC.md) (1280 / 900 / 640) and [DETAILED_UX_UI_SPEC.md](DETAILED_UX_UI_SPEC.md) (900 and 800) — and the stylesheet follows none of them: its `@media` queries use literal widths (560, 1080, 720, 820, 1040, 900, 860 and others), not tokens. Which table is the target has not been decided.
 
 ## Workspace contracts
 

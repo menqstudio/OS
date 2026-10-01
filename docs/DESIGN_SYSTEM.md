@@ -46,15 +46,25 @@ type (`enums.ts`) is `'dark' | 'light'`.
 | `--menq-color-text` | Primary ink | `#10131a` | `#eef1f6` |
 | `--menq-color-muted` | Secondary / muted ink | `#5b6473` | `#98a2b3` |
 | `--menq-color-border` | Borders / dividers | `#e2e5ea` | `#262b37` |
-| `--menq-color-accent` | Brand accent | `#3d5afe` | `#7c8dff` |
+| `--menq-color-accent` | Brand accent | `#3856fe` | `#7c8dff` |
 | `--menq-color-accent-text` | Ink on accent fill | `#ffffff` | `#0c0e13` |
-| `--menq-color-success` | Success tone | `#1f9d55` | `#4ade80` |
-| `--menq-color-warning` | Warning tone | `#c77700` | `#f0b23a` |
-| `--menq-color-danger` | Danger / error tone | `#d1435b` | `#f2708a` |
-| `--menq-color-info` | Info tone | `#2a7de1` | `#6cb2ff` |
-| `--menq-color-focus` | Focus ring color | `#3d5afe` | `#7c8dff` |
-| `--menq-color-hover` | Hover wash | `rgba(61,90,254,0.08)` | `rgba(124,141,255,0.12)` |
-| `--menq-color-selected` | Selected wash | `rgba(61,90,254,0.12)` | `rgba(124,141,255,0.18)` |
+| `--menq-color-success` | Success tone | `#156c3a` | `#4ade80` |
+| `--menq-color-warning` | Warning tone | `#885000` | `#f0b23a` |
+| `--menq-color-danger` | Danger / error tone | `#ac2b40` | `#f4869c` |
+| `--menq-color-info` | Info tone | `#205ea8` | `#6cb2ff` |
+| `--menq-color-success-tint` | Opaque badge fill behind success ink | `#deeae3` | `#1c332d` |
+| `--menq-color-warning-tint` | Opaque badge fill behind warning ink | `#eee6db` | `#332d23` |
+| `--menq-color-danger-tint` | Opaque badge fill behind danger ink | `#f3e1e4` | `#332730` |
+| `--menq-color-info-tint` | Opaque badge fill behind info ink | `#e0e8f3` | `#202d3e` |
+| `--menq-color-focus` | Focus ring color | `#3856fe` | `#7c8dff` |
+| `--menq-color-hover` | Hover wash | `rgba(56,86,254,0.08)` | `rgba(124,141,255,0.12)` |
+| `--menq-color-selected` | Selected wash | `rgba(56,86,254,0.12)` | `rgba(124,141,255,0.18)` |
+
+*This table is a copy; `tokens.css` is the source, and when the two differ the file is right. It was
+re-read from the file on 2026-10-01 after drifting on eight values — the light accent, success,
+warning, danger, info and focus colours, both light washes, and the dark danger — while
+`tokens.css`'s own header comment still says the tokens "mirror DESIGN_SYSTEM.md". Nothing gates the
+copy against the file.*
 
 BroPS aliases: `--brops-bg`, `--brops-surface`, `--brops-elevated`,
 `--brops-text`, `--brops-muted`, `--brops-border`, `--brops-accent`,
@@ -181,7 +191,9 @@ keeps the shared, testable part in the library without forcing a bad abstraction
 
 ### `usePrefersReducedMotion()` — the one export this page had not documented
 
-The library ships 28 exports and this catalogue described 27. The missing one was the hook that
+The library ships 30 exported functions (`grep -c '^export function' apps/desktop/src/components/ui.tsx`);
+when this section was written it shipped 28 and this catalogue described 27. `useCountUp` appears
+only in the example below and `useEasedCountUp` not at all; neither has a catalogue entry. The missing one was the hook that
 implements §C.1's *"every component honors `prefers-reduced-motion`"* — which is the wrong export
 to leave undocumented, because a component author who does not know it exists writes the media
 query again, or, more often, does not.
@@ -211,8 +223,9 @@ move to say so.
 `Tone` (`enums.ts`) = `'neutral' | 'accent' | 'success' | 'warning' | 'danger' | 'info'`.
 Each maps to a `.badge--<tone>` rule: `neutral` uses muted ink on a hover wash,
 `accent` uses the accent color on the selected wash, and `success` / `warning` /
-`danger` / `info` use their semantic color over a 14% `color-mix` tint of that
-same color.
+`danger` / `info` use their semantic color over that color's opaque `-tint` token
+(`--menq-color-<tone>-tint`: the color at 14% over the surface, precomputed). It was a
+`color-mix(… 14%, transparent)` until that made a badge's contrast depend on whatever was behind it.
 
 `StatusPill` never picks a color directly — it looks the raw domain status up in
 `statusTone` (falling back to `neutral`) and hands the resulting tone to `Badge`.

@@ -1,7 +1,7 @@
 - **Purpose:** Describe the primary end-to-end user flows through BroPS.
 - **Scope:** Command-to-outcome, group collaboration, project execution, approval, memory/knowledge, and the global flow rule. Trilingual product surface (HY/EN/RU).
 - **Owner:** Gev.
-- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
+- **Related:** [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [WORKSPACES.md](WORKSPACES.md), [GROUP_CHAT.md](GROUP_CHAT.md), [SEARCH_AND_COMMAND_PALETTE.md](SEARCH_AND_COMMAND_PALETTE.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS User Flows / Օգտագործողի հոսքեր
@@ -54,4 +54,4 @@ Status: Draft canonical
 
 No flow may hide execution state, approval state, ownership, failure, or uncertainty.
 
-Ոչ մի հոսք չի կարող թաքցնել կատարման վիճակը, հաստատման վիճակը, պատասխանատուին, ձախողումը կամ անորոշությունը։
+Ոչ մի հոսք չի կարող թաքցնել կատարման վիճակը, հաստատման վիճակը, սեփականությունը (ով է պատասխանատուն), ձախողումը կամ անորոշությունը։
