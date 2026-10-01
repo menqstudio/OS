@@ -66,6 +66,12 @@ class GateTests(unittest.TestCase):
         problems, _ = gate.check(self.t.root)
         self.assertEqual(problems, [])
 
+    def test_a_file_with_no_suffix_is_swept(self):
+        # `deb/postinst` has no extension; an installer script is exactly where it would return.
+        self.t.write("apps/desktop/src-tauri/deb/postinst", "#!/bin/sh\nwin_gen_root --out x\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(any("deb/postinst names win_gen_root" in p for p in problems), problems)
+
     def test_history_is_exempt(self):
         self.t.write("docs/archive/OLD.md", "win_gen_root --out root.private.seed\n")
         self.t.write("apps/desktop/AUDIT/2026-08-06-x.md", "sign_manifest.py\n")

@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `20b9e63`.** The only thing open is PR #304 on `t134/settled-at-20b9e63`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #305 · branch `t135/deb-postinst`** (base `main`, tip `a705778`, task T-135).
 >
-> **Next:** Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D in parallel.
+> T-135: slice A of the approved install design; the .deb runs the installer
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,11 +18,12 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-131** | **Broker pin: no holder** — design proposed | Bro | Review | — |
+| **T-135** | **Slice A: `.deb` `postinst`** ◑ | Bro | In-Progress | `t135/deb-postinst` |
+| **T-131** | **Install-minted root** — A–D | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
-| **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths; five obligations recorded on T-021b ◑ | Bro | Review | `#254` |
+| **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths ◑ | Bro | Review | `#254` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |

@@ -91,7 +91,11 @@ EXEMPT_PREFIXES = (
 #: The control: a file that is exempt AND must contain a forbidden token.
 CONTROL = "tools/test_check_no_owner_key_ceremony.py"
 
+#: Includes "" — a file with NO suffix. Maintainer scripts (`deb/postinst`) and git hooks have none,
+#: and until T-135 the sweep skipped them: an installer script was the one place a ceremony
+#: instruction could have returned unseen.
 TEXT_EXT = {
+    "",
     ".rs", ".py", ".ts", ".tsx", ".js", ".json", ".md", ".yml", ".yaml", ".toml", ".sql", ".sh",
     ".ps1", ".txt", ".html", ".css",
 }

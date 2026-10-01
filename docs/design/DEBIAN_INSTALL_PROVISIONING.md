@@ -7,7 +7,8 @@
 > ու այն ամենը, ինչ CI-ի ladder kit-ն այսօր անում է։ Քեզանից key կամ քայլ պետք չէ (#78)։ Քո հաստատումն է
 > պետք միայն այս դիզայնի համար։
 
-Status: **PROPOSED, not approved.** Task `T-131`. Written 2026-10-01. Nothing here is built.
+Status: **APPROVED by the Owner on 2026-10-01** («այո»). Task `T-131`. Slice A landed in `T-135`;
+B, C, D are in progress. Approval is of the design, not of any slice's code — every slice is ◑.
 Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / proposal.
 
 ## 1 · The decision this serves
@@ -111,9 +112,19 @@ no prompt and no key, and its prototype (the CI kit) is already green on every r
   states for the Windows trust store.
 * A per-user product: `--user` binds the trust store to one desktop account. A second user means a
   second install. Acceptable for a one-user product; stated so it is not discovered.
-* `tauri.conf.json` must carry a `postinst` script and bundle `brops-install` plus the service
-  binaries. ◑ Whether Tauri 2's deb bundler exposes a post-install hook in our version is **not yet
-  verified** — first task of slice A.
+* `tauri.conf.json` carries the `postinst` script ✅ (`T-135`): `bundle.linux.deb.postInstallScript`
+  exists in `tauri-utils` 2.9.3 `src/config.rs:372` (`DebConfig`, `deny_unknown_fields`), and
+  `tauri-build` accepted the config here. ◑ NOT verified: that the bundler installs the script 0755
+  and where `deb.files` lands — only a real `tauri build --bundles deb` + `dpkg-deb -e` settles it.
+
+### 7.1 Open questions slice A found (2026-10-01), none decided yet
+
+* **No user to bind to under a GUI install.** `postinst` passes `--user "$SUDO_USER"`; under a
+  graphical or `pkexec` install that is empty. `brops-install` must refuse an empty or root user, so
+  such an install fails until debconf (or a first-launch prompt) supplies the name.
+* **rpm and AppImage do not provision.** `bundle.targets` is `"all"`; rpm has its own
+  `postInstallScript` key, unwired, and AppImage has no install step at all.
+* **Purge removes nothing.** No `postrm` deletes the anchor or the accounts.
 
 ## 8 · Slices (they parallelise once this is approved)
 
