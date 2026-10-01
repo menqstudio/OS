@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t149/review-wave2` — `main` @ `6b5604c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `8a042eb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
+> **✅ SETTLED — `main` is at `8a042eb`.** The only thing open is PR #318 on `t151/settled-at-8a042eb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1; the Approvals route ceiling is 11.5 KB with its reason
+> **Next:** T-150 (merge and push gates), then the uncapped second read.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
