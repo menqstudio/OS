@@ -33,8 +33,19 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
-/// Lock the manifest down to the TCB principals only. Mirrors `win_provision`'s seed ACL: `icacls` is
-/// the same command an operator would run and is auditable in the provisioning log.
+/// Lock the manifest down to the TCB principals only, by spawning `icacls` — the same command an
+/// operator would run, auditable in the provisioning log.
+///
+/// This does NOT mirror `win_provision` any more (it said it did). `win_provision` stopped spawning
+/// `icacls` in remediation round 3: it creates each custody file through
+/// `provision_custody::create_locked_file`, with the finished protected descriptor attached at
+/// `CreateFileW`. This tool still does what that round removed there — `fs::write` under the
+/// inherited DACL, THEN two `icacls` child processes — so for as long as those spawns take the pin
+/// manifest carries whatever DACL its directory hands down, and a handle opened in that interval
+/// keeps its access. What bounds it: the manifest holds digests, not secrets; `--out` is normally a
+/// path under the deployment root `win_provision` measured TCB-only (this tool does not require
+/// that); and `main` re-runs the floor against the file after this returns. OPEN: create it through
+/// `create_locked_file` with the TCB-only descriptor and owner.
 #[cfg(windows)]
 fn restrict_to_tcb(path: &Path) -> Result<(), String> {
     let out = std::process::Command::new("icacls")

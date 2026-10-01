@@ -6,8 +6,30 @@
 //! `LogonUserW(account, ".", password, LOGON32_LOGON_BATCH)` mints a primary token for the dedicated service
 //! principal; `CreateProcessWithTokenW` (which requires `SeImpersonatePrivilege` — held by the elevated
 //! broker) launches the target under that token, so it runs as a genuinely distinct OS principal with that
-//! account's SID. Waits for the child and propagates its exit code. This is the mechanism the real broker
-//! uses to run the isolated servers / executor as their own principals. cfg(windows) only.
+//! account's SID. Waits up to 30 s for the child and returns whatever `GetExitCodeProcess` then reports.
+//! cfg(windows) only.
+//!
+//! # What this is not (each line below corrects a claim this doc used to make, or omitted)
+//!
+//! * **Nothing calls it.** This doc said it "is the mechanism the real broker uses to run the isolated
+//!   servers / executor as their own principals". No code, script or workflow in the tree invokes
+//!   `spawn_as`: `win-live/proof/win_live_proof.ps1` starts the kit's servers with `Start-Process` as the
+//!   invoking user, and `proof/isolation_proof.ps1` launches its client through a scheduled task in
+//!   session 0. The tests at the bottom of this file cover argument parsing and buffer zeroing; the
+//!   launch path has no test. It is an unwired proof primitive, and so is
+//!   `restricted_launch` beside it.
+//! * **It does not "propagate the child's exit code" on a timeout.** The `WaitForSingleObject` result is
+//!   printed and otherwise ignored, so after 30 s this returns `259` (`STILL_ACTIVE`) as though the child
+//!   had exited with it, and leaves the child running.
+//! * **It grants the service SID the caller's window station and desktop, and never takes it back.**
+//!   `grant_winsta_desktop` merges allow-ACEs for `WINSTA_ALL` / `DESKTOP_ALL` into the process window
+//!   station and the thread desktop and pins `lpDesktop = WinSta0\Default`; no code revokes them, so the
+//!   grant outlives the child for as long as those objects do. That is the opposite of the model
+//!   `isolation_proof.ps1` records as approved — principals in session 0 with no interactive window
+//!   station or desktop.
+//! * **The child command line is not quoted.** It is `"<exe>"` followed by the child arguments joined
+//!   with single spaces, with no escaping; an argument containing a space or a quote reaches the child
+//!   re-split.
 //!
 //! # The password never travels on the command line
 //!
@@ -210,6 +232,10 @@ mod win {
     }
 
     /// Grant the service principal access to the current process window station + thread desktop.
+    ///
+    /// Full access (`WINSTA_ALL`, `DESKTOP_ALL`), merged into the live objects' DACLs, and NEVER
+    /// revoked — there is no matching removal anywhere in this file, so the ACEs stay on the
+    /// caller's window station and desktop after the child exits. See the module docs.
     unsafe fn grant_winsta_desktop(sid: *mut std::ffi::c_void) -> Result<(), Error> {
         let hwinsta = GetProcessWindowStation()?;
         // Two ACEs: one inheritable to desktops, one applying to the window station itself.
@@ -240,7 +266,8 @@ mod win {
         };
         let account = inv.account;
         let exe = inv.exe;
-        // Build the child command line: "exe" arg1 arg2 ...
+        // Build the child command line: "exe" arg1 arg2 ... — joined with single spaces and NOT
+        // quoted or escaped, so an argument containing a space or a quote is re-split by the child.
         let mut cmd = format!("\"{exe}\"");
         for a in inv.child_args {
             cmd.push(' ');
@@ -317,7 +344,9 @@ mod win {
                 return 4;
             }
 
-            // 3) Wait for the child + propagate its exit code.
+            // 3) Wait for the child (30 s) and return what GetExitCodeProcess reports. The wait
+            // result is printed and not acted on: on a timeout `code` is 259 (STILL_ACTIVE), which is
+            // returned as if it were the child's exit code, and the child is left running.
             eprintln!("spawn_as: launched pid={}", pi.dwProcessId);
             let mut code = 0u32;
             let w = WaitForSingleObject(pi.hProcess, 30_000);

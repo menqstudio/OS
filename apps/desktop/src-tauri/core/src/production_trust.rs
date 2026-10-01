@@ -559,9 +559,14 @@ mod tests {
         let t = ext_token(&m);
         let vk = verifying_key();
         assert!(!resolve_trust_state(Some(&m), Some(&t), "unknown", PROTO, 5000, &vk).is_production_verified());
-        // NOTE (F-29 / R-39): there is deliberately no "mismatched verifying key" case here any
-        // more. It asserted a state no call site can reach, which is exactly how a guard that
-        // could not fail was mistaken twice for a guard that was working.
+        // NOTE (F-29 / R-39): the "mismatched verifying key" case is not in THIS list, and it
+        // is not gone either — it is its own test directly below
+        // (`manifest_key_not_matching_verifying_key_denies_production`). This note used to say
+        // the case had been deliberately removed; it never was. It is kept apart because it is
+        // a different kind of claim: every row here is a state a call site can reach, and that
+        // one is not — it exercises the defence-in-depth comparison in `resolve_trust_state_when`
+        // that no caller can trip today. It proves the guard works if a future caller breaks
+        // the contract; it is not evidence that anything binds the verdict to the key now.
         assert!(!resolve_trust_state(Some(&m), Some(&t), "signer-prod", PROTO, 500, &vk).is_production_verified()); // out of window
         assert!(!resolve_trust_state(Some(&m), Some(&t), "signer-prod", "other", 5000, &vk).is_production_verified()); // protocol
         let mut dev = manifest(); dev.keys[0].trust_class = TrustClass::Development;

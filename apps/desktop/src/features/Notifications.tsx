@@ -15,6 +15,7 @@ import type { Notification } from '../domain/entities';
 import { statusTone } from '../domain/enums';
 import { severityLabel } from '../domain/statusLabels';
 import { STR } from './Notifications.strings';
+import { parseTimestamp } from './timestamps';
 
 // Fixed priority order for the severity filter chips (most severe first).
 const SEVERITY_ORDER = ['critical', 'error', 'warning', 'success', 'info'];
@@ -64,8 +65,8 @@ export function Notifications() {
   const fmtDate = (raw: string): string => {
     const s = raw.trim();
     if (!s) return '';
-    const d = new Date(isNaN(Number(s)) ? s : Number(s));
-    return isNaN(d.getTime()) ? raw : dateFmt.format(d);
+    const d = parseTimestamp(s);
+    return d === null ? s : dateFmt.format(d);
   };
 
   const items = useMemo(() => state.data ?? [], [state.data]);
@@ -111,14 +112,29 @@ export function Notifications() {
     itemRefs.current.get(selectedId)?.focus();
   }, [selectedId]);
 
+  // A REFUSED mark-as-read is said. It used to end `.catch(() => state.reload())`: the reason was
+  // discarded, the row came back unread, and the owner was told nothing — the same defect the
+  // Memory and Library pages were fixed for.
+  const [writeError, setWriteError] = useState<string | null>(null);
   const markRead = (id: string) => {
-    desktop.markNotificationRead(id).then(() => state.reload()).catch(() => state.reload());
+    setWriteError(null);
+    desktop.markNotificationRead(id)
+      .then(() => state.reload())
+      .catch((e: unknown) => {
+        setWriteError(e instanceof Error ? e.message : String(e));
+        // Re-read so the feed provably shows the row the store still holds as unread.
+        state.reload();
+      });
   };
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
   const onFeedKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (visible.length === 0) return;
+    // A key pressed ON a row's own button belongs to that button. This handler sits on the feed,
+    // so Enter on a row's Open/Dismiss button was prevented and toggled the SELECTED row instead,
+    // and `x` there marked the selected row read rather than typing into nothing.
+    const onInnerControl = (e.target as HTMLElement).closest('button') !== null;
     const idx = visible.findIndex((n) => n.id === currentId);
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -129,12 +145,12 @@ export function Notifications() {
       const ni = idx <= 0 ? 0 : idx - 1;
       setSelectedId(visible[ni].id);
     } else if (e.key === 'Enter') {
-      if (idx >= 0) {
+      if (idx >= 0 && !onInnerControl) {
         e.preventDefault();
         toggleExpand(visible[idx].id);
       }
     } else if (e.key === 'x' || e.key === 'X') {
-      if (idx >= 0 && visible[idx].readAt === null) {
+      if (idx >= 0 && !onInnerControl && visible[idx].readAt === null) {
         e.preventDefault();
         markRead(visible[idx].id);
       }
@@ -170,6 +186,20 @@ export function Notifications() {
 
   const loading = state.loading && state.data === null;
   const flowLive = unreadCount > 0;
+
+  // The gate panel's title AND accessible name, from the read's real state — one of five, the
+  // same ones the chain strip below draws. It used to be "Governance stream sealed" for
+  // everything but a read with records: while the read was still in flight, when nothing was
+  // reached, and over an `ok` read whose body said "the engine chain answered with no events".
+  const gateTitle = gov.data === null
+    ? L('gateTitleReading')
+    : gov.data.state === 'blocked'
+      ? L('gateTitleBlocked')
+      : gov.data.state === 'unreachable'
+        ? L('gateTitleUnreachable')
+        : hasRecords(gov.data)
+          ? L('gateTitleOk')
+          : L('gateTitleEmpty');
 
   return (
     <div className="v-notifications">
@@ -337,6 +367,15 @@ export function Notifications() {
         </div>
       )}
 
+      {writeError && (
+        <div className="nsig-write-error" role="alert">
+          <b>{L('markReadRefusedTitle')}</b>
+          <span>{L('markReadRefusedBody')}</span>
+          <span className="mono">{writeError}</span>
+          <Button small variant="ghost" onClick={() => setWriteError(null)}>{L('dismissNotice')}</Button>
+        </div>
+      )}
+
       {/* ── governance stream (§D) ────────────────────────────────────────────
           Driven by the real READ-ONLY engine governance IPC (`read_evidence_chain`).
           Until the engine read endpoint answers, the honest state is blocked/
@@ -347,7 +386,7 @@ export function Notifications() {
         <span className="note">{L('readOnlyMirror')}</span>
       </div>
 
-      <section className="nsig-gate surface soft cut" role="status" aria-label={L('gateTitle')}>
+      <section className="nsig-gate surface soft cut" role="status" aria-label={gateTitle}>
         {/* Mark posture: idle while reading/mirrored, alert when the chain is
             sealed/unreachable — an honest "not connected" cue, never a green seal. */}
         <Mark
@@ -359,13 +398,13 @@ export function Notifications() {
           <div className="nsig-gate-title">
             {/* "mirrored" is claimed only when events ACTUALLY arrived. An `ok` read
                 carrying zero records is the absence of a stream, not a mirrored one. */}
-            {gov.data && hasRecords(gov.data) ? L('gateTitleOk') : L('gateTitle')}
+            {gateTitle}
           </div>
           <div className="muted nsig-gate-body">
             {gov.data === null
               ? L('gateReading')
               : gov.data.state !== 'ok'
-                ? L('gateBody')
+                ? L(gov.data.state === 'blocked' ? 'gateBodyBlocked' : 'gateBodyUnreachable')
                 : hasRecords(gov.data)
                   ? `${recordCount(gov.data)} ${L('gateMirrored')}`
                   : L('gateEmpty')}
@@ -517,6 +556,10 @@ const CSS = `
 .nsig-gate-title { font-family: var(--f-display); font-weight: 700; }
 .nsig-gate-body { max-width: 62ch; font-size: 13px; }
 .nsig-gate-reason { letter-spacing: .06em; color: var(--ink-muted); }
+.nsig-write-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin: 14px 0; padding: 10px 12px; border: 1px solid rgb(var(--danger-rgb)/.34);
+  border-radius: var(--r-sm, 8px); word-break: break-word; }
+.nsig-write-error b { color: var(--danger); }
 .nsig-gate-chain { margin-top: 8px; }
 
 @media (max-width: 640px) {

@@ -342,9 +342,13 @@ export function WriteRecordPanel(
  * (`role="status"`): it reports a standing condition, it does not interrupt.
  */
 export function WriteRecordNotice(
-  { reads, lang }: { reads: Iterable<WriteRecordRead>; lang: Lang },
+  { reads, lang }: { reads: ReadonlyMap<string, WriteRecordRead>; lang: Lang },
 ) {
-  const counts = useMemo(() => writeRecordCounts(reads), [reads]);
+  // The prop is the MAP the hook returns, whose identity changes only when a read lands. Both
+  // callers used to pass `byId.values()`: a new iterator object on every render, so this memo
+  // could never hit — and a ONE-SHOT one, so anything that consumed it twice would have counted
+  // zero rows and hidden the notice. Iterating inside the memo makes both impossible.
+  const counts = useMemo(() => writeRecordCounts(reads.values()), [reads]);
   const lines: { key: string; text: string; tone: string }[] = [];
   if (counts.diverged > 0) {
     lines.push({ key: 'diverged', text: divergedNotice(lang, counts.diverged), tone: 'diverged' });

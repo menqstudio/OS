@@ -1,5 +1,9 @@
 <!doctype html>
-<html lang="en">
+<!-- data-theme is set HERE, not only by AppProvider's effect. The two stylesheet layers default the
+     opposite way round with no attribute (tokens.css light, aios.css dark), so until the effect ran
+     the page was painted from both. "dark" is app/store.tsx's default; a stored "light" still
+     replaces it on mount. src/test/debPackage.wiring.test.ts holds the two to each other. -->
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

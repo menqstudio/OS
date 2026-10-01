@@ -15,11 +15,13 @@ import type { Decision } from '../domain/entities';
 // `app/routes.tsx` types a page module as Record<string, ComponentType>, so it cannot live here.
 import { statusMeta, decisionStatusFamily } from './Decisions.status';
 import { STR } from './Decisions.strings';
+import { parseTimestamp } from './timestamps';
 import { BridgePanel } from './Bridge';
 
 // Scoped supplements to the global `aios.css` decision-chamber design. The page is
 // re-skinned to the "VERDICT CHAMBER" mockup, but every value it shows is REAL:
-// the append-only engine ledger (`list_decisions`) and the read-only engine
+// the desktop's own decision table (`list_decisions`, local SQLite — NOT the engine's
+// decision ledger, which only the bridge panel below reads) and the read-only engine
 // evidence-chain mirror. The mockup's fabricated instruments — the weighted balance
 // beam, the A/B option pans, the confidence %, the winner/margin — have NO backing
 // in the `Decision` entity and are therefore OMITTED, never faked. Motion is
@@ -64,8 +66,9 @@ const styles = `
 
 export function Decisions() {
   const { t, lang, focus, clearFocus } = useApp();
-  // Data source: the engine decision ledger, read-only, via the real
-  // `list_decisions` Tauri command. No decision is minted or altered here.
+  // Data source: the desktop's LOCAL decision table, read-only, via the real
+  // `list_decisions` Tauri command (`repo::decisions::list` on SQLite). It is not the
+  // engine's decision ledger. No decision is minted or altered here.
   const s = useAsync<Decision[]>(() => desktop.listDecisions());
 
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -91,8 +94,8 @@ export function Decisions() {
   const fmtDate = (raw: string): string => {
     const v = raw?.trim();
     if (!v) return '—';
-    const d = new Date(isNaN(Number(v)) ? v : Number(v));
-    return isNaN(d.getTime()) ? v : dateFmt.format(d);
+    const d = parseTimestamp(v);
+    return d === null ? v : dateFmt.format(d);
   };
 
   // Append-only ledger order: oldest → newest (new decisions land at the end,
@@ -213,7 +216,7 @@ export function Decisions() {
     if (loading) return <Skeleton rows={6} />;
     if (s.error) {
       // ErrorState renders the calm offline state when there is no backend at
-      // all, and the engine-unreachable error otherwise.
+      // all, and the local read's own error otherwise.
       return <ErrorState message={s.error} onRetry={s.reload} />;
     }
     if (ledger.length === 0) {
@@ -479,7 +482,7 @@ export function Decisions() {
           <div className="ch-title">
             <span className="eyebrow">{L('deliberationEyebrow')}</span>
             <h2>{selected.title}</h2>
-            {/* The rationale is the real "why" the engine recorded — shown verbatim,
+            {/* The rationale is the real "why" stored on the row — shown verbatim,
                 in place of the mockup's fabricated weighted-criteria instrument. */}
             <p className="ch-q">{selected.rationale || '—'}</p>
           </div>
@@ -512,8 +515,8 @@ export function Decisions() {
             <Button small onClick={() => openEvidence(selected)}>
               {L('openEvidence')}
             </Button>
-            {/* chReweigh — disabled by design: reweighing is adjudicated by the engine
-                (mirror, never decide); the desktop holds no decision authority. */}
+            {/* chReweigh — disabled by design: nothing reweighs a recorded decision. No
+                such command exists on the desktop, so the control states that and stops. */}
             <Button
               small
               disabled
@@ -555,8 +558,8 @@ export function Decisions() {
           <p className="sub">{t('decisions.subtitle')}</p>
         </div>
         <div className="right">
-          {/* Honest posture: the desktop only MIRRORS the engine ledger, read-only. */}
-          <span className="pill info">{L('readOnlyMirror')}</span>
+          {/* Honest posture: this page READS the local decision table and writes nothing. */}
+          <span className="pill info">{L('readOnlyLocal')}</span>
         </div>
       </header>
 

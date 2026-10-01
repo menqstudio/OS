@@ -230,8 +230,13 @@ pub fn verify_deployment_tcb(
         // Read it through its own `O_NOFOLLOW` descriptor with its custody checked on that descriptor:
         // the manifest decides what the floor measures, so believing it before checking who owns it
         // would make the whole floor circular.
-        let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)
-            .map_err(|why| format!("TCB pin manifest unreadable or malformed: {why}"))?;
+        //
+        // The reader's own reason is passed through AS IT IS. It used to be wrapped in "TCB pin
+        // manifest unreadable or malformed: ...", which is false for the refusal that matters most
+        // — a manifest a measured party OWNS is perfectly readable and well-formed — and which let
+        // two tests "prove" the parser and the coverage floor while a custody refusal was what
+        // actually answered.
+        let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)?;
         let probe = LinuxFsProbe { login_and_runtime_uids: login_and_runtime_uids.to_vec() };
         brops_core::tcb_integrity::verify_tcb_integrity(
             &manifest,
@@ -335,8 +340,7 @@ pub fn verify_broker_tcb(
     })?;
     #[cfg(target_os = "linux")]
     {
-        let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)
-            .map_err(|why| format!("TCB pin manifest unreadable or malformed: {why}"))?;
+        let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)?;
         // `/proc/self/exe` on Linux: the kernel's own record of the image this process was exec'd from.
         // A binary replaced or deleted after exec no longer canonicalizes to a pinned path, and refuses.
         let exe = std::env::current_exe()
@@ -519,8 +523,7 @@ pub fn anchor_bytes_are_floor_pinned(
     let path = manifest_path.ok_or_else(|| {
         format!("no TCB pin manifest configured ({TCB_PIN_MANIFEST_ENV} unset)")
     })?;
-    let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)
-        .map_err(|why| format!("TCB pin manifest unreadable or malformed: {why}"))?;
+    let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)?;
     let probe = LinuxFsProbe { login_and_runtime_uids: login_and_runtime_uids.to_vec() };
     anchor_bytes_match_the_pinned_role(
         &manifest,
@@ -806,32 +809,95 @@ mod tests {
     #[test]
     fn an_absent_manifest_file_refuses() {
         let e = verify_deployment_tcb(Some("/nonexistent/tcb-pin.json"), &[1000], 1000).unwrap_err();
-        assert!(e.contains("unreadable or malformed"), "{e}");
+        // Linux names what happened to the open; every other host refuses on the platform after
+        // failing to parse it.
+        if cfg!(target_os = "linux") {
+            assert!(e.contains("cannot be opened"), "{e}");
+        } else {
+            assert!(e.contains("unreadable or malformed"), "{e}");
+        }
     }
 
+    /// A pin manifest this test wrote, mode 0644, and the principal set to judge it against: a
+    /// login/runtime uid that is NOT the uid running the test.
+    ///
+    /// That last part is the whole repair. The two tests below used to write the file as the
+    /// test's own uid and pass `login_uid = 1000` — and on a machine where the test runs as uid
+    /// 1000 the manifest's CUSTODY refused first ("owned by ... a login or runtime principal"), so
+    /// neither the parser nor the coverage floor was ever reached while both tests stayed green on
+    /// a message that wrapped every refusal alike.
+    #[cfg(target_os = "linux")]
+    fn manifest_not_owned_by_a_measured_party(tag: &str, body: &[u8]) -> (std::path::PathBuf, u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("brops-tcb-probe-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("tcb-pin.json");
+        std::fs::write(&p, body).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // SAFETY: getuid never fails and touches no memory.
+        let me = unsafe { libc::getuid() };
+        (p, me.wrapping_add(1))
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_malformed_manifest_refuses() {
+        let (p, other) = manifest_not_owned_by_a_measured_party("malformed", b"{ not json");
+        let e = verify_deployment_tcb(Some(p.to_str().unwrap()), &[other], other).unwrap_err();
+        // The PARSER's refusal, by name — and not the custody check's.
+        assert!(e.contains("malformed"), "{e}");
+        assert!(!e.contains("login or runtime principal"), "custody answered instead: {e}");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_manifest_missing_required_artifacts_refuses() {
+        // A syntactically valid but UNDER-SPECIFIED manifest must not pass by omission: an artifact
+        // that is not listed is never integrity-checked, which is exactly the hole the coverage floor
+        // exists to close.
+        let (p, other) =
+            manifest_not_owned_by_a_measured_party("min", br#"{"artifacts":[],"owner_uids":{}}"#);
+        let e = verify_deployment_tcb(Some(p.to_str().unwrap()), &[other], other).unwrap_err();
+        // The COVERAGE FLOOR's refusal, by name: the file parsed, passed custody, and pins nothing.
+        assert!(e.contains("MissingRequired"), "{e}");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    /// ...and the refusal those two used to pass on is its own test, with its own name on it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_manifest_owned_by_a_measured_party_is_refused_as_custody_and_not_as_malformed() {
+        let (p, _) = manifest_not_owned_by_a_measured_party(
+            "custody",
+            br#"{"artifacts":[],"owner_uids":{}}"#,
+        );
+        // SAFETY: getuid never fails and touches no memory.
+        let me = unsafe { libc::getuid() };
+        let e = verify_deployment_tcb(Some(p.to_str().unwrap()), &[me], me).unwrap_err();
+        assert!(e.contains("login or runtime principal"), "{e}");
+        assert!(
+            !e.contains("unreadable") && !e.contains("malformed"),
+            "a custody refusal must not be reported as an unreadable or malformed file: {e}"
+        );
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    /// Off Linux the floor refuses on the platform whatever the file holds; a broken file is still
+    /// reported as broken rather than as a platform problem.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn off_linux_a_broken_or_under_covering_manifest_still_refuses() {
         let dir = std::env::temp_dir().join(format!("brops-tcb-probe-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("tcb-pin.json");
         std::fs::write(&p, b"{ not json").unwrap();
         let e = verify_deployment_tcb(Some(p.to_str().unwrap()), &[1000], 1000).unwrap_err();
         assert!(e.contains("unreadable or malformed"), "{e}");
-        let _ = std::fs::remove_file(&p);
-    }
-
-    #[test]
-    fn a_manifest_missing_required_artifacts_refuses() {
-        // A syntactically valid but UNDER-SPECIFIED manifest must not pass by omission: an artifact
-        // that is not listed is never integrity-checked, which is exactly the hole the coverage floor
-        // exists to close. (On a non-Linux host the caller refuses earlier, for the stated reason —
-        // either way the outcome is a refusal, which is the property under test.)
-        let dir = std::env::temp_dir().join(format!("brops-tcb-probe-min-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("tcb-pin-min.json");
         std::fs::write(&p, br#"{"artifacts":[],"owner_uids":{}}"#).unwrap();
-        assert!(verify_deployment_tcb(Some(p.to_str().unwrap()), &[1000], 1000).is_err());
-        let _ = std::fs::remove_file(&p);
+        let e = verify_deployment_tcb(Some(p.to_str().unwrap()), &[1000], 1000).unwrap_err();
+        assert!(e.contains("requires Linux"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- the manifest must name THIS broker -------------------------------------------------
@@ -949,7 +1015,7 @@ mod tests {
         assert!(e.contains("no TCB pin manifest configured"), "{e}");
         let e = verify_broker_tcb(Some("/nonexistent/tcb-pin.json"), &[1000], 1000, "/nonexistent")
             .unwrap_err();
-        assert!(e.contains("unreadable or malformed") || e.contains("requires Linux"), "{e}");
+        assert!(e.contains("cannot be opened") || e.contains("requires Linux"), "{e}");
     }
 
     // ---- what the floor hands out: the pinned path, and bytes bound to the pinned digest --------

@@ -21,9 +21,12 @@
 //! ## Shape, deliberately mirroring the Linux side
 //!
 //! * [`verify_win_tcb_integrity`] is **pure**: every filesystem fact arrives through [`WinFsProbe`], so
-//!   the whole decision is unit-testable on the Linux CI runner (this kit's Windows-only code is
-//!   covered by no CI, which is itself an audit finding — keeping the decision host-independent is the
-//!   only way any of it is guarded).
+//!   the whole decision is unit-testable on the Linux CI runner. (This used to add that the kit's
+//!   Windows-only code "is covered by no CI". That was the audit finding, and it was acted on: the
+//!   `windows-broker` job in `.github/workflows/ci.yml` runs `cargo test -p brops-win-live` on
+//!   `windows-latest`, which is where the `real_probe` tests at the bottom of this file execute. The
+//!   Linux runner still compiles past them, so the host-independent decision remains the only part
+//!   guarded on both.)
 //! * [`WindowsFsProbe`] is the real `GetNamedSecurityInfoW` + DACL-walk + SHA-256 probe.
 //! * `win_tcb_pin` (the bin) is the twin of `build_tcb_pin_manifest.py`.
 //! * Callers map any `Err` to "do not serve" — never a partial pass.
@@ -48,9 +51,37 @@
 //!   and (unless that group SID is a [`crate::pipe_acl::WORLD_SIDS`] entry) counted as untrusted —
 //!   again the safe direction, but it means the floor cannot be satisfied by a deployment that grants
 //!   write to any non-TCB group, deliberately.
-//! * **The key seed files are not content-pinned.** They are DPAPI-sealed in place on first read
-//!   (`config::read_seed`), so their bytes legitimately change; a digest pin would be a false check.
-//!   Their custody is the ACL `win_provision` applies. They are therefore outside this floor.
+//! * **The key seed files are not content-pinned.** `config::read_seed` ATTEMPTS to DPAPI-seal a
+//!   plaintext seed in place on first read, so their bytes may change and a digest pin would be a false
+//!   check. (This used to state the seal as fact. For a provisioned service account it cannot succeed —
+//!   see `seedstore`'s module docs — so in that deployment the seeds stay plaintext hex.) Their custody
+//!   is the ACL `win_provision` creates them with, and nothing else. They are outside this floor.
+//! * **`floor.json` is pinned here AND rewritten by the broker — the two rules contradict, and that is
+//!   unresolved.** [`WIN_TCB_REQUIRED_ARTIFACTS`] lists `anti-rollback-floor`, so this floor demands a
+//!   TCB owner, no non-TCB writer on the file or on any ancestor directory, and a fixed digest. But
+//!   `resolver::persist_floor` rewrites `floor.json` by tmp + rename in the deployment directory on
+//!   every resolve, and `win_provision` / `provision_custody` leave it out of TCB-only custody for
+//!   exactly that reason ("would break any deployment whose broker is not itself a TCB principal").
+//!   Read together: a deployment whose broker is NOT a TCB principal either fails this floor (the
+//!   broker can write the directory) or cannot persist its anti-rollback floor (it cannot), and any
+//!   epoch advance changes the pinned digest until someone re-pins. Only a broker running as
+//!   SYSTEM/Administrators satisfies both, which is the same-account shape, not the cross-account one
+//!   the kit targets. The audit ledger records the two mechanisms as mutually exclusive as designed;
+//!   which rule gives way is a custody decision that has not been made.
+//! * **The ancestor rule has never been shown satisfiable on a real volume.** `verify_artifact` walks
+//!   every ancestor up to and including the drive root and requires each to be owned by SYSTEM or
+//!   Administrators ([`TCB_OWNER_SIDS`] — `TrustedInstaller`, which `WINDOWS_BROKER_DESIGN.md` names
+//!   as the TCB owner, is not in it) and to carry no ACE at all for a [`crate::pipe_acl::WORLD_SIDS`]
+//!   entry, read-only included (see [`untrusted_write_grantees`]). That is stricter than the
+//!   implementation plan's ancestor rule, which is about WRITE ("non-writable by runtime/login
+//!   SIDs", `WINDOWS_BROKER_IMPL_PLAN.md`). The `real_probe` tests are all refusals or
+//!   fact read-backs; none shows a deployment that PASSES, and `win_tcb_pin`'s self-verify is the only
+//!   thing that would. Whether a stock `C:\` meets the rule has not been measured from this repository.
+//! * **The real probe can under-report writers.** [`WindowsFsProbe`] keeps `dacl_present = true` and
+//!   an empty or shortened ACE list when `GetAclInformation`, `GetAce` or the SID-to-string conversion
+//!   fails, and it reads `ACCESS_ALLOWED_ACE_TYPE` only — callback and object allow-ACEs are skipped
+//!   along with the denies. Each of those yields FEWER reported writers, which is the fail-open
+//!   direction; only the skipped denies err the safe way. See the note on `security_facts`.
 //! * **No service/unit definition is pinned.** The Linux manifest pins the orchestrator; the Windows
 //!   servers are started by scheduled tasks whose XML lives in the Task Scheduler store, which this
 //!   floor does not read.
@@ -84,6 +115,10 @@ pub const TCB_OWNER_SIDS: &[&str] = &[SID_LOCAL_SYSTEM, SID_ADMINISTRATORS];
 /// files that steer them. It is smaller than the Linux `TCB_REQUIRED_ARTIFACTS` because this kit has no
 /// privileged setuid launcher and no separate evidence-recorder binary; naming roles that do not exist
 /// here would make the manifest describe a deployment that isn't this one.
+///
+/// One entry is not like the others: `anti-rollback-floor` (`floor.json`) is the only file here that
+/// a running principal REWRITES (`resolver::persist_floor`, every resolve). Pinning it conflicts with
+/// that — see the module docs, "What this floor does NOT cover" — and the conflict is open.
 pub const WIN_TCB_REQUIRED_ARTIFACTS: &[&str] = &[
     // ---- the processes ----
     "challenge-authority.bin",     // win_authority.exe
@@ -437,6 +472,15 @@ mod winfs {
     }
 
     /// Owner SID + whether a DACL is present + its ACCESS_ALLOWED ACEs.
+    ///
+    /// Fails OPEN in three places, and that is a defect, not a design: a `GetAclInformation` failure
+    /// leaves `aces` empty with `dacl_present == true` (there is no `else`), a `GetAce` failure and a
+    /// failed `sid_string` each drop that one ACE and carry on, and any allow-ACE whose type is not
+    /// `ACCESS_ALLOWED_ACE_TYPE` (callback, object) is skipped by the same test that skips the denies.
+    /// Every one of those makes `untrusted_write_grantees` report FEWER writers than the object has.
+    /// The fix is to return `None` — "could not measure", which every caller already refuses — on
+    /// any of the three failures and on an allow-ACE type this walk cannot read. Not made here: this
+    /// is Windows-only code and the change has to be built and run on Windows before it is believed.
     fn security_facts(path: &str) -> Option<(String, bool, Vec<PipeAce>)> {
         let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
@@ -775,8 +819,9 @@ mod tests {
     }
 
     // The real probe. Windows-only, so NOT covered by the Linux CI runner — the pure tests above are
-    // what CI guards. These exist because the `GetNamedSecurityInfoW` + ACE-walk is unsafe code that
-    // would otherwise never execute until a deployment depended on it.
+    // what that runner guards. These run in the `windows-broker` CI job (`windows-latest`,
+    // `cargo test -p brops-win-live`). They exist because the `GetNamedSecurityInfoW` + ACE-walk is
+    // unsafe code that would otherwise never execute until a deployment depended on it.
     #[cfg(windows)]
     mod real_probe {
         use super::super::*;
@@ -812,6 +857,15 @@ mod tests {
         fn a_real_deployment_that_is_user_writable_is_refused_by_the_floor() {
             // End-to-end through the REAL probe: a manifest pinning a genuinely user-writable file must
             // be refused. This is the whole floor, exercised against the live filesystem.
+            //
+            // What it does NOT pin: WHY the floor refused. The only assertion is `is_err()`, and
+            // `verify_artifact` checks owner, then writers, then digest, then ancestors. Which of
+            // those fires depends on the token the test runs under (a file created by a plain user
+            // is user-owned and is refused `WrongOwner` before the writability check is reached),
+            // and an ancestor refusal would satisfy the assertion too — so this test can stay green
+            // with the writability check deleted. The writability check's real read-back is
+            // `the_probe_reads_a_real_files_owner_dacl_and_digest` above; this one should match on
+            // the variant instead of on any refusal.
             let dir = std::env::temp_dir().join(format!("brops-tcbfloor-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             let f = dir.join("kit.config");

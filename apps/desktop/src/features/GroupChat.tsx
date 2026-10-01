@@ -423,11 +423,20 @@ function ConsensusDeck() {
   // Who the form offers to ask: the room's own roster when it has one, otherwise the
   // known agents. Whoever is actually asked is written into the opening message, so
   // this is only a starting selection — never the record of what was asked.
+  //
+  // From the ESTABLISHED roster, for the same reason the messages above are. `useAsync` keeps the
+  // previous room's `data` across a room switch and across an error, so `roster.data` offered —
+  // and `openRound` then ASKED — the last room's participants under the new room's id, until the
+  // new read landed and for good if it failed. Until this room's own roster read has answered,
+  // nobody is offered and no round can be opened: who gets asked is not something to guess.
   const agentNames = (agents.data ?? []).map((a) => a.displayName);
+  const establishedRoster = established(roster);
+  const rosterEstablished = establishedRoster !== null;
   const candidates = useMemo(() => {
-    const base = (roster.data ?? []).length > 0 ? (roster.data ?? []) : agentNames;
+    if (establishedRoster === null) return [];
+    const base = establishedRoster.length > 0 ? establishedRoster : agentNames;
     return base.filter(isAskableName);
-  }, [roster.data, agents.data]);
+  }, [establishedRoster, agents.data]);
 
   const [question, setQuestion] = useState('');
   const [rule, setRule] = useState<ConsensusRule>(DEFAULT_CONSENSUS_RULE);
@@ -505,7 +514,7 @@ function ConsensusDeck() {
   };
 
   const openRound = async () => {
-    if (!roomId || busy) return;
+    if (!roomId || busy || !rosterEstablished) return;
     const q = question.trim();
     if (!q) { setFormError(L('needQuestion')); return; }
     const asked = chosen.filter(isAskableName);
@@ -591,7 +600,7 @@ function ConsensusDeck() {
 
           <RoomReadout
             room={room}
-            participants={established(roster)?.length ?? null}
+            participants={establishedRoster?.length ?? null}
             messageCount={establishedMessages === null ? null : establishedMessages.length}
             rounds={establishedMessages === null ? null : rounds.length}
             handoffs={askTrail(delegations).length}
@@ -669,7 +678,7 @@ function ConsensusDeck() {
               </FormRow>
             )}
             <div className="cs-actions">
-              <Button variant="primary" onClick={() => void openRound()} disabled={busy}>
+              <Button variant="primary" onClick={() => void openRound()} disabled={busy || !rosterEstablished}>
                 {busy ? L('opening') : L('openRound')}
               </Button>
               {latestVerdict && latestVerdict.tally.missing.length > 0 && (
@@ -678,6 +687,9 @@ function ConsensusDeck() {
                 </Button>
               )}
             </div>
+            {roster.error && (
+              <p className="cs-error" role="alert">⚠ {L('rosterUnreadable')} <span className="mono">{roster.error}</span></p>
+            )}
             {formError && <p className="cs-error" role="alert">⚠ {formError}</p>}
             {askErrors.length > 0 && (
               <div className="cs-error" role="status">

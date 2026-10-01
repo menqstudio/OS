@@ -370,6 +370,12 @@ fn main() {
             system_sha256,
             history_sha256,
             generation_config_sha256,
+            // KNOWN DEFECT, not fixed here: these are TWO clock reads, and they are supposed to be
+            // one instant in two spellings. The authority hashes `requested_at_ms.to_string()` and
+            // the broker's expectation uses the `requested_at` string, so a millisecond tick
+            // between the two calls provisions a deployment whose every turn is refused until it
+            // is re-provisioned. `Config::load` does not check that they agree. `proof.rs` derives
+            // both from one value; this should too (`let requested = now_ms();`).
             requested_at: now_ms().to_string(),
             requested_at_ms: now_ms(),
             run_id: "run-live-1".to_string(),

@@ -413,6 +413,7 @@ fn every_refusal_says_what_failed_and_that_the_ledger_stays_unanchored() {
         AnchorRefusal::NullDacl { path: "x".into() },
         AnchorRefusal::DaclNotProtected { path: "x".into() },
         AnchorRefusal::KeyActuallyReadable { path: "x".into() },
+        AnchorRefusal::AclNotEnumerable { path: "x".into(), why: "GetAce(2) of 4 failed".into() },
         AnchorRefusal::ElevationRequired { step: "creating the service".into() },
         AnchorRefusal::SignerSidSubstituted {
             name: "X".into(),
@@ -428,6 +429,242 @@ fn every_refusal_says_what_failed_and_that_the_ledger_stays_unanchored() {
         // Never suggests a degraded mode.
         assert!(!text.to_lowercase().contains("proceeding anyway"), "{text}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The three measurements that used to default to the answer nobody had measured
+// ---------------------------------------------------------------------------------------------
+//
+// Each of these decisions lived inside a Windows syscall wrapper, where the failing case is one a
+// real machine practically never produces — so nothing could exercise it and each had quietly
+// taken the permissive answer. They are pure functions now, and these run on every host.
+
+/// Only an access denial is evidence that this account cannot read the signer's key.
+///
+/// `ERROR_SHARING_VIOLATION` (32) was counted as a denial too. It means another process has the
+/// file open — the signer mid-read, an antivirus scan — and an account with full read access gets
+/// exactly the same error. `verify_installed` then accepts an unreadable descriptor as "which is
+/// the property", so a busy file was enough to pass the behavioural half of the key proof.
+#[test]
+fn only_an_access_denial_counts_as_the_key_being_unreadable() {
+    use anc::ReadProbe;
+    assert_eq!(anc::ERROR_ACCESS_DENIED, 5);
+    assert_eq!(anc::ERROR_SHARING_VIOLATION, 32);
+    assert_eq!(anc::classify_failed_key_open(Some(anc::ERROR_ACCESS_DENIED)), ReadProbe::Denied);
+    assert_eq!(
+        anc::classify_failed_key_open(Some(anc::ERROR_SHARING_VIOLATION)),
+        ReadProbe::Unmeasured,
+        "a sharing violation is another process holding the file, not this account being \
+         refused it — it must never count as proof the key is unreadable"
+    );
+    // Absent, path-not-found, lock violation, invalid handle, no OS code at all: none is a denial.
+    for other in [None, Some(0), Some(2), Some(3), Some(6), Some(33), Some(1314), Some(-1)] {
+        assert_eq!(
+            anc::classify_failed_key_open(other),
+            ReadProbe::Unmeasured,
+            "OS error {other:?} was read as proof that the key cannot be read"
+        );
+    }
+}
+
+/// `StandardUser` is the STRONGEST claim — "its account holds no administrative membership" —
+/// so it may only be the answer when the whole group list was read and Administrators is not in
+/// it. It used to be the default returned when the list could not be read at all.
+#[test]
+fn a_token_whose_groups_could_not_be_read_is_never_reported_as_a_standard_user() {
+    const USERS: &str = "S-1-5-32-545";
+    let group = |sid: &str, attributes: u32| (Some(sid.to_string()), attributes);
+
+    // The list could not be read: unmeasurable, never StandardUser.
+    match anc::posture_from_token_groups(Err("GetTokenInformation(TokenGroups): denied".into())) {
+        Err(AnchorRefusal::Unmeasurable { path, why }) => {
+            assert_eq!(path, "<own token>");
+            assert!(why.contains("GetTokenInformation(TokenGroups)"), "{why}");
+        }
+        other => panic!("an unread group list produced {other:?}"),
+    }
+    // One group could not be named, so it cannot be shown NOT to be Administrators.
+    match anc::posture_from_token_groups(Ok(vec![
+        group(USERS, anc::SE_GROUP_ENABLED),
+        (None, anc::SE_GROUP_USE_FOR_DENY_ONLY),
+    ])) {
+        Err(AnchorRefusal::Unmeasurable { why, .. }) => assert!(why.contains("group 1 of 2"), "{why}"),
+        other => panic!("a group with an unconvertible SID was skipped: {other:?}"),
+    }
+
+    // A list read to the end with no Administrators entry is the one way to be a standard user.
+    assert_eq!(
+        anc::posture_from_token_groups(Ok(vec![group(USERS, anc::SE_GROUP_ENABLED)])),
+        Ok(AppTokenPosture::StandardUser)
+    );
+    assert_eq!(anc::posture_from_token_groups(Ok(vec![])), Ok(AppTokenPosture::StandardUser));
+    // And the three shapes an Administrators entry takes are unchanged.
+    for (attributes, expected) in [
+        (anc::SE_GROUP_USE_FOR_DENY_ONLY, AppTokenPosture::FilteredAdministrator),
+        (anc::SE_GROUP_ENABLED, AppTokenPosture::ElevatedAdministrator),
+        (
+            anc::SE_GROUP_ENABLED | anc::SE_GROUP_USE_FOR_DENY_ONLY,
+            AppTokenPosture::FilteredAdministrator,
+        ),
+        (0, AppTokenPosture::FilteredAdministrator),
+    ] {
+        let posture = anc::posture_from_token_groups(Ok(vec![
+            group(USERS, anc::SE_GROUP_ENABLED),
+            group(ADMINS, attributes),
+        ]))
+        .expect("a fully read list");
+        assert_eq!(posture, expected, "Administrators with attributes {attributes:#x}");
+        assert_ne!(Separation::from_posture(posture), Separation::Separated);
+    }
+}
+
+/// A descriptor that was READ, with an ACL that could not be enumerated to the end, is a refusal —
+/// and it must not be mistaken for the one read-back failure that is the healthy case.
+///
+/// `dacl_facts` dropped whatever it could not read: a `GetAce` that failed was a `continue`, a
+/// grantee SID that would not convert was skipped, a failed `GetAclInformation` left the list
+/// empty. A dropped allow ACE under-reports access, and the key proof passes on "the app's mask
+/// is 0". It refuses now, with a refusal of its own, because `Unmeasurable` on the key is
+/// ACCEPTED: that one means this account was denied the descriptor itself.
+#[test]
+fn an_acl_that_could_not_be_enumerated_is_a_refusal_and_never_the_property() {
+    let plan = key_plan();
+    let key = "C:\\ProgramData\\BroPS\\audit-signer\\anchor.key";
+
+    // The healthy case: denied the descriptor outright. Accepted, and recorded as NOT a read-back.
+    let denied = anc::key_readback_proof(
+        Err(AnchorRefusal::Unmeasurable { path: key.into(), why: "GetNamedSecurityInfoW: 5".into() }),
+        &plan,
+        APP,
+        SIGNER,
+    )
+    .expect("a descriptor this account is denied is the property");
+    assert_eq!(denied.owner_sid, "<unreadable>");
+    assert!(denied.path.contains("descriptor unreadable by this account"), "{}", denied.path);
+    assert_eq!(denied.excluded_sid, APP);
+    assert_eq!(denied.required_sid, SIGNER);
+
+    // The descriptor WAS read and its ACL was not: refused, by its own name.
+    let partial = AnchorRefusal::AclNotEnumerable {
+        path: key.into(),
+        why: "GetAce(2) of 4 failed".into(),
+    };
+    assert_eq!(
+        anc::key_readback_proof(Err(partial.clone()), &plan, APP, SIGNER),
+        Err(partial.clone()),
+        "a partly-read ACL was accepted as proof that the app is absent from it"
+    );
+    let text = partial.explain();
+    assert!(text.contains("could not be enumerated to the end"), "{text}");
+    assert!(text.contains("GetAce(2) of 4 failed"), "{text}");
+    assert!(text.contains("NOTHING is concluded"), "{text}");
+
+    // Every other refusal passes through untouched as well.
+    let absent = AnchorRefusal::SignerAbsent { why: "not installed".into() };
+    assert_eq!(anc::key_readback_proof(Err(absent.clone()), &plan, APP, SIGNER), Err(absent));
+
+    // And a descriptor that was read in full still goes through the real proof, both ways.
+    assert!(anc::key_readback_proof(Ok(healthy_key_facts()), &plan, APP, SIGNER).is_ok());
+    let mut reachable = healthy_key_facts();
+    reachable.allow_aces.push(ace(APP, anc::FILE_READ_DATA));
+    assert!(matches!(
+        anc::key_readback_proof(Ok(reachable), &plan, APP, SIGNER),
+        Err(AnchorRefusal::KeyReachableByApp { .. })
+    ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// "No signer" must mean the operating system said NOT FOUND
+// ---------------------------------------------------------------------------------------------
+
+/// A custody record this account cannot read is an ERROR. Only "not found" is absence.
+///
+/// `published_anchor_custody` decides whether the trusted-key registry is sealed WITH the audit
+/// signer's key or without one, and that seal is permanent: the operator root is destroyed
+/// before provisioning returns. It used to ask `Path::exists()`, which answers `false` for
+/// every error, so a record that was there and could not be stat-ed — the signer's directory
+/// carries a protected DACL naming the application nowhere — read as "this machine has no
+/// signer", and the registry was sealed with no audit-anchor key in it. Its own documentation
+/// forbade exactly that.
+///
+/// The decision is taken as a pure function of the read's result, so it is exercised on every
+/// machine; the real filesystem then confirms it wherever a directory can be made untraversable
+/// and put back.
+#[test]
+fn an_unreadable_custody_record_is_an_error_and_only_not_found_is_absence() {
+    use std::io::{Error, ErrorKind};
+    const NAME: &str = "an_unreadable_custody_record_is_an_error_and_only_not_found_is_absence";
+    let record = Path::new("machine-root").join(anc::SIGNER_DIR_NAME).join(anc::CUSTODY_FILE_NAME);
+
+    // Absent: the one answer that may mean "no signer".
+    assert!(matches!(
+        brops_provision::custody_record_from_read(&record, Err(Error::from(ErrorKind::NotFound))),
+        Ok(None)
+    ));
+    // Everything else leaves open that a signer IS installed, and is refused.
+    for kind in [
+        ErrorKind::PermissionDenied,
+        ErrorKind::Other,
+        ErrorKind::Interrupted,
+        ErrorKind::InvalidInput,
+        ErrorKind::TimedOut,
+    ] {
+        match brops_provision::custody_record_from_read(&record, Err(Error::from(kind))) {
+            Err(brops_provision::ProvisionError::Io { what, path, .. }) => {
+                assert!(what.contains("custody record"), "{what}");
+                assert_eq!(path, record);
+            }
+            other => panic!("a {kind:?} read of the custody record was treated as {other:?}"),
+        }
+    }
+    // Present and readable still works, and present-but-not-JSON is still corrupt.
+    let good = brops_provision::custody_record_from_read(&record, Ok(br#"{"key_id":"k"}"#.to_vec()));
+    assert_eq!(good.expect("a readable record").expect("present")["key_id"], "k");
+    assert!(matches!(
+        brops_provision::custody_record_from_read(&record, Ok(b"not json".to_vec())),
+        Err(brops_provision::ProvisionError::Corrupt { .. })
+    ));
+
+    // The same three answers from a real filesystem, through the real entry point.
+    let temp = tempfile::tempdir().unwrap();
+    assert!(matches!(brops_provision::published_anchor_custody(temp.path()), Ok(None)));
+    let signer_dir = temp.path().join(anc::SIGNER_DIR_NAME);
+    std::fs::create_dir_all(&signer_dir).unwrap();
+    assert!(matches!(brops_provision::published_anchor_custody(temp.path()), Ok(None)));
+    std::fs::write(signer_dir.join(anc::CUSTODY_FILE_NAME), br#"{"key_id":"k"}"#).unwrap();
+    assert!(matches!(brops_provision::published_anchor_custody(temp.path()), Ok(Some(_))));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if prerequisites::running_as_root() {
+            prerequisites::skip(
+                NAME,
+                prerequisites::TAG_NOT_ROOT,
+                "root ignores mode bits, so a 0000 directory denies it nothing and the \
+                 unreadable-record case cannot be staged",
+            );
+            return;
+        }
+        // The record is there; this account may not even stat it. `Path::exists()` says false.
+        std::fs::set_permissions(&signer_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let answer = brops_provision::published_anchor_custody(temp.path());
+        // Put it back BEFORE asserting, so a failure does not leave a directory the TempDir
+        // cannot remove.
+        std::fs::set_permissions(&signer_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        match answer {
+            Err(brops_provision::ProvisionError::Io { source, .. }) => {
+                assert_eq!(source.kind(), ErrorKind::PermissionDenied, "{source}");
+            }
+            other => panic!(
+                "an installed signer's custody record that could not be read was downgraded to \
+                 {other:?} — the registry would be sealed with no audit-anchor key"
+            ),
+        }
+    }
+    // On Windows the un-stat-able record is the signer directory's protected DACL, which only an
+    // elevated installer can stamp; the decision above is the same code on both platforms.
+    let _ = NAME;
 }
 
 // ---------------------------------------------------------------------------------------------

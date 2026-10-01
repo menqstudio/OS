@@ -412,11 +412,13 @@ impl SidecarPrincipal {
             ));
         }
         let last = invoker.len() - 1;
-        let ends_in_env = std::path::Path::new(invoker[last].as_str())
-            .file_name()
-            .map(|f| f == std::ffi::OsStr::new(ENV_PROGRAM))
-            .unwrap_or(false)
-            || invoker[last].rsplit('/').next() == Some(ENV_PROGRAM);
+        // The text after the last `/`, compared as text — the rule the live kit's Python config
+        // writer applies (its `validate_sidecar`), and ONLY that. This used to accept
+        // `Path::file_name() == "env"` as well, and `file_name` drops a trailing separator: so
+        // `/usr/bin/env/` passed here, was refused by the writer, and would have failed at spawn
+        // with a "not a directory" about the interpreter. The shared case table below is what
+        // found it; a rule the two sides state differently is two rules.
+        let ends_in_env = invoker[last].rsplit('/').next() == Some(ENV_PROGRAM);
         if !ends_in_env {
             return Err(format!(
                 "`sidecar.{INVOKER_KEY}` ends in `{}` rather than `{ENV_PROGRAM}`: changing principal \
@@ -470,12 +472,70 @@ fn read_stdout_capped<R: Read>(reader: R) -> std::io::Result<Vec<u8>> {
 /// This is the `kill_on_drop(true)` the tokio version set, kept for the scope of the round trip: a
 /// read error, a deadline, or a panic must not leave the sidecar running. `std::process::Child`'s
 /// own `Drop` does neither — it leaves a zombie on Unix and a live process everywhere.
+///
+/// WHAT IT CANNOT DO, under a §2.6 principal switch. There the child is the invoker
+/// (`sudo -u <sidecar account> ...`), which is not this process's uid, and `kill(2)` answers `EPERM`.
+/// See [`reap`]: the drop then gives up within [`REAP_GRACE`] instead of blocking, and the child is
+/// left running and unreaped. Terminating it is not something this process has the authority to do;
+/// a deployment that wants the bound enforced on the CHILD, not only on the broker's wait, has to
+/// grant that separately.
 struct Reaped(std::process::Child);
 
 impl Drop for Reaped {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        reap(&mut self.0, REAP_GRACE);
+    }
+}
+
+/// How long a drop waits for a child it could NOT signal to exit by itself.
+///
+/// Short on purpose. It is paid on top of [`SIDECAR_DEADLINE`] by a caller that has already been
+/// told the round trip timed out, and the broker serves its connections one at a time.
+pub const REAP_GRACE: Duration = Duration::from_millis(250);
+
+/// The three things [`reap`] does to a child. A trait so the refused-signal path — unreachable in a
+/// test without a second OS account — can be driven by a double; `std::process::Child` is the only
+/// production implementation.
+trait Reapable {
+    fn kill(&mut self) -> std::io::Result<()>;
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus>;
+}
+
+impl Reapable for std::process::Child {
+    fn kill(&mut self) -> std::io::Result<()> {
+        std::process::Child::kill(self)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        std::process::Child::try_wait(self)
+    }
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        std::process::Child::wait(self)
+    }
+}
+
+/// Kill, then reap — and never block on a child the kill did not reach.
+///
+/// `kill(); wait()` is correct only while the kill is DELIVERED: `wait()` then returns as soon as
+/// the kernel has torn the process down. When the kill is refused the child is still running, and
+/// an unconditional `wait()` blocks for as long as it does. That is the case under a §2.6
+/// principal switch, where the child belongs to another account and `kill(2)` is `EPERM` — so the
+/// "120 s absolute deadline" ended in a wait with no deadline at all, on exactly the timeout path
+/// that exists because the sidecar hung, in a broker that serves serially.
+///
+/// So a refused kill polls `try_wait` up to `grace` and returns. Returns `true` when the child was
+/// reaped and `false` when it was left behind.
+fn reap<C: Reapable>(child: &mut C, grace: Duration) -> bool {
+    if child.kill().is_ok() {
+        return child.wait().is_ok();
+    }
+    let until = Instant::now() + grace;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) | Err(_) => return false,
+        }
     }
 }
 
@@ -815,6 +875,162 @@ fn hide_console(cmd: &mut std::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE SHARED CASE TABLE for `sidecar` blocks: one list of accept/refuse verdicts that BOTH
+    /// validators are driven from — [`SidecarPrincipal::from_config`] here, and `validate_sidecar`
+    /// in the live kit's Python config writer under `engine/ci/live/`, which re-implements it rule
+    /// for rule so an operator reads which key is wrong at WRITE time. (The writer's file name is
+    /// deliberately not spelled in this crate: an engine test refuses any desktop source that
+    /// names it, as its measurement that nothing shipped reaches the writer.)
+    ///
+    /// `engine/tests/test_live_broker_config.py` extracts this literal from this file and runs the
+    /// Python validator over the same cases, the way it already extracts the four constants. Before
+    /// the table, only those four constants were pinned: each side had its own hand-written cases,
+    /// and a rule changed on one side changed nothing on the other. They had in fact already
+    /// drifted (`trailing-slash-env`).
+    ///
+    /// JSON, in a raw string, so that neither language has to parse the other. To add a rule on
+    /// either side, add the case here first: it fails whichever side does not have the rule yet.
+    const SIDECAR_PRINCIPAL_CASES: &str = r#"[
+      {"name": "reference-shape", "accept": true,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "bare-env", "accept": true,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "env"]}},
+      {"name": "padded-account-is-trimmed", "accept": true,
+       "block": {"principal": "  brops-sidecar  ",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "longer-prefix", "accept": true,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "--", "/usr/bin/env"]}},
+
+      {"name": "no-principal", "accept": false,
+       "block": {"invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "blank-principal", "accept": false,
+       "block": {"principal": "   ",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "principal-not-a-string", "accept": false,
+       "block": {"principal": 7,
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "7", "/usr/bin/env"]}},
+      {"name": "no-invoker", "accept": false,
+       "block": {"principal": "brops-sidecar"}},
+      {"name": "invoker-not-an-array", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": "/usr/bin/sudo -n -u brops-sidecar /usr/bin/env"}},
+      {"name": "invoker-too-short", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "token-not-a-string", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", 5, "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "empty-token", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "nul-in-a-token", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n\u0000", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "relative-program", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]}},
+      {"name": "does-not-end-in-env", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/python3"]}},
+      {"name": "trailing-slash-env", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env/"]}},
+      {"name": "env-as-a-prefix-of-the-name", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/envy"]}},
+      {"name": "env-with-a-trailing-space", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env "]}},
+      {"name": "never-names-the-account", "accept": false,
+       "block": {"principal": "brops-sidecar",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "root", "/usr/bin/env"]}},
+      {"name": "account-only-where-env-stands", "accept": false,
+       "block": {"principal": "/usr/bin/env",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "someone", "/usr/bin/env"]}},
+      {"name": "account-only-as-the-program", "accept": false,
+       "block": {"principal": "/usr/bin/sudo",
+                 "invoker": ["/usr/bin/sudo", "-n", "-u", "someone", "/usr/bin/env"]}}
+    ]"#;
+
+    #[test]
+    fn the_shared_case_table_is_judged_here_exactly_as_it_says() {
+        let cases: Vec<Value> =
+            serde_json::from_str(SIDECAR_PRINCIPAL_CASES).expect("the shared table is JSON");
+        let mut verdicts = (0, 0);
+        let mut names = std::collections::BTreeSet::new();
+        for case in &cases {
+            let name = case["name"].as_str().expect("every case is named");
+            assert!(names.insert(name), "the case `{name}` appears twice");
+            let accept = case["accept"].as_bool().expect("every case states its verdict");
+            let got = SidecarPrincipal::from_config(Some(&case["block"]));
+            assert_eq!(
+                got.is_ok(), accept,
+                "`{name}`: the table says accept={accept}, from_config said {got:?}"
+            );
+            if accept { verdicts.0 += 1 } else { verdicts.1 += 1 }
+        }
+        // A table of one verdict proves nothing about the other, and an empty one proves nothing.
+        assert!(verdicts.0 >= 4 && verdicts.1 >= 15, "the table lost cases: {verdicts:?}");
+    }
+
+    /// A child this process may not signal and that never exits: what `sudo -u <other account>`
+    /// is to the broker when the sidecar hangs. `wait()` on the real thing would block for ever;
+    /// here it records that it was called, which is the defect.
+    struct Unsignalable {
+        blocking_waits: u32,
+        polls: u32,
+        exits_after_polls: Option<u32>,
+    }
+
+    impl Reapable for Unsignalable {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        }
+        fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+            self.polls += 1;
+            match self.exits_after_polls {
+                Some(n) if self.polls > n => Ok(Some(std::process::ExitStatus::default())),
+                _ => Ok(None),
+            }
+        }
+        fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+            self.blocking_waits += 1;
+            Ok(std::process::ExitStatus::default())
+        }
+    }
+
+    #[test]
+    fn a_child_that_cannot_be_signalled_is_never_waited_on_without_a_bound() {
+        let mut hung = Unsignalable { blocking_waits: 0, polls: 0, exits_after_polls: None };
+        let started = Instant::now();
+        let reaped = reap(&mut hung, Duration::from_millis(40));
+        assert!(!reaped, "a child that never exited was not reaped, and must not be reported as reaped");
+        assert_eq!(hung.blocking_waits, 0, "wait() on a child the kill did not reach has no deadline");
+        assert!(hung.polls > 1, "the grace is spent polling, not skipped");
+        assert!(started.elapsed() < Duration::from_secs(5), "the bound is the grace, not the child");
+
+        // A child that was refused the signal but exits by itself inside the grace IS reaped.
+        let mut slow = Unsignalable { blocking_waits: 0, polls: 0, exits_after_polls: Some(2) };
+        assert!(reap(&mut slow, Duration::from_secs(5)));
+        assert_eq!(slow.blocking_waits, 0);
+    }
+
+    /// The other arm, on a real process: a delivered kill is followed by a real reap, so the
+    /// ordinary (same-uid) path still leaves neither a live child nor a zombie.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_can_be_signalled_is_killed_and_reaped() {
+        let mut child = std::process::Command::new("sleep").arg("600").spawn().expect("spawn sleep");
+        let started = Instant::now();
+        assert!(reap(&mut child, REAP_GRACE));
+        assert!(started.elapsed() < Duration::from_secs(30), "the kill was delivered, so wait() returns");
+        // Already reaped: a second try_wait reports the stored status rather than a running child.
+        assert!(matches!(child.try_wait(), Ok(Some(_))));
+    }
     use std::ffi::OsStr;
 
     /// The PROVISIONED arm for tests. The inner `TrustEnvironment` has its own constructor in

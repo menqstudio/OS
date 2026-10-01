@@ -54,25 +54,16 @@ export const STR = {
     hy: 'Այս օրվա համար պլանավորված գործողություն չկա։',
     ru: 'На этот день не запланировано ни одной операции.',
   },
-  // `delete_event` is denied by the window capability set today; the refusal used to be
-  // swallowed and the event simply reappeared on the next read with nothing said.
-  deleteRefusedTitle: {
-    en: 'Delete refused — nothing was removed',
-    hy: 'Ջնջումը մերժվեց — ոչինչ չհեռացվեց',
-    ru: 'Удаление отклонено — ничего не удалено',
-  },
-  deleteRefusedBody: {
-    en: 'The backend rejected this delete, so the event is still on the calendar.',
-    hy: 'Backend-ը մերժեց այս ջնջումը, ուստի իրադարձությունը դեռ օրացույցում է։',
-    ru: 'Бэкенд отклонил это удаление, поэтому событие всё ещё в календаре.',
-  },
-  deleting: {
-    en: 'Deleting…',
-    hy: 'Ջնջվում է…',
-    ru: 'Удаление…',
-  },
   // -- Phase 8: run history, and the receipt this build cannot produce ----------
-  runHistory: { en: 'RUN HISTORY', hy: 'SԿՍԱԾՆԵՐ', ru: 'ИСТОРИЯ' },
+  // The Armenian value was `SԿՍԱԾՆԵՐ` — a LATIN capital S followed by Armenian letters, and not
+  // a word. It is the heading and the section's accessible name.
+  runHistory: { en: 'RUN HISTORY', hy: 'ԳՈՐԾԱՐԿՈՒՄՆԵՐԻ ՊԱՏՄՈՒԹՅՈՒՆ', ru: 'ИСТОРИЯ ЗАПУСКОВ' },
+  // A read failed. Not "nothing ran": the page does not know what ran.
+  runHistoryUnreadable: {
+    en: 'The run history could not be read in full, so this is not a statement that nothing ran. Reason:',
+    hy: 'Գործարկումների պատմությունը ամբողջությամբ չհաջողվեց կարդալ, ուստի սա պնդում չէ, թե ոչինչ չի աշխատել։ Պատճառ՝',
+    ru: 'Историю запусков не удалось прочитать полностью, поэтому это не утверждение, что ничего не запускалось. Причина:',
+  },
   runHistoryEmpty: {
     en: 'No automation has run yet.',
     hy: 'Ոչ մի ավտոմատ դեռ չի աշխատել։',

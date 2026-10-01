@@ -307,11 +307,17 @@ impl Config {
     }
 }
 
-/// Load a principal's 32-byte seed. On Windows the seed is under DPAPI custody: a sealed blob is unsealed
-/// with the CURRENT account's master key (so only the owning service account can recover it); a legacy
-/// plaintext-hex file is parsed AND immediately re-sealed in place (trust-on-first-use), so after the first
-/// server start the seed is never plaintext at rest again. On non-Windows (Linux CI / in-process proof) only
-/// the hex form is used.
+/// Load a principal's 32-byte seed. On Windows a sealed blob is unsealed with the CURRENT account's master
+/// key (so only the account that sealed it can recover it); a plaintext-hex file is parsed and a re-seal in
+/// place is ATTEMPTED. On non-Windows (Linux CI / in-process proof) only the hex form is used.
+///
+/// **Seed custody is the ACL, not DPAPI.** This used to say that "after the first server start the seed is
+/// never plaintext at rest again". The re-seal is best-effort in three places — the seal, the write of
+/// `{path}.sealing`, the rename — and every one of them falls through to `Ok(seed)` with the file as it was
+/// found and nothing logged. In a provisioned deployment it falls through every time: the service account
+/// holds `FILE_GENERIC_READ` on the seed and no write on `keys\`, so it cannot create the temp file (see
+/// `seedstore`'s module docs; read from the code, not observed on a Windows host). What `win_provision`
+/// writes is plaintext hex and plaintext hex is what stays.
 pub fn read_seed(path: &str) -> Result<[u8; 32], String> {
     let bytes = std::fs::read(path).map_err(|e| format!("seed read {path}: {e}"))?;
 
@@ -320,13 +326,18 @@ pub fn read_seed(path: &str) -> Result<[u8; 32], String> {
         if crate::seedstore::looks_sealed(&bytes) {
             return crate::seedstore::dpapi_unseal(&bytes);
         }
-        // Legacy plaintext hex on first run: parse, then seal to THIS account + atomically replace.
+        // Plaintext hex: parse, then TRY to seal to THIS account and replace. Every failure below is
+        // swallowed — the seed is returned either way — so a caller cannot tell a sealed file from one
+        // left as plaintext, and nothing is logged.
         let hex = String::from_utf8_lossy(&bytes);
         let seed = crate::crypto::hex32(hex.trim()).ok_or_else(|| format!("seed malformed: {path}"))?;
         if let Ok(blob) = crate::seedstore::dpapi_seal(&seed) {
             let tmp = format!("{path}.sealing");
             if std::fs::write(&tmp, &blob).is_ok() {
-                let _ = std::fs::rename(&tmp, path); // same dir -> atomic replace, ACL preserved
+                // Same dir -> atomic replace. The ACL is NOT preserved (this said it was): a rename
+                // carries the temp file's own descriptor, which `fs::write` created under the
+                // directory's inherited DACL, not the explicit protected one provisioning stamped.
+                let _ = std::fs::rename(&tmp, path);
             }
         }
         return Ok(seed);

@@ -228,7 +228,10 @@ export function Analytics() {
   const total = metrics.reduce((sum, m) => sum + m.value, 0);
   const reduced = usePrefersReducedMotion();
   const totalShown = useEasedCountUp(total, !reduced);
-  const denied = s.error ? /denied|not permitted|permission|blocked|forbidden/i.test(s.error) : false;
+  // A REFUSED read, kept apart from a broken one. `get_analytics` is a local SQLite count with
+  // nothing governing it, so this is what a window-capability denial looks like — the copy says
+  // "refused" and shows the reason, and no longer calls it the governed wall.
+  const denied = s.error ? /denied|not permitted|not allowed|permission|blocked|forbidden/i.test(s.error) : false;
 
   // Header posture from the REAL read state. `live`/green is unreachable: the page has
   // one aggregate read and no stream, so the best it can ever claim is "snapshot".
@@ -261,7 +264,7 @@ export function Analytics() {
       );
     }
 
-    // error (governed blocked vs generic failure)
+    // error (a refused read vs a generic failure)
     if (s.error) {
       if (denied) {
         return (
@@ -273,6 +276,7 @@ export function Analytics() {
               <p className="muted" style={{ maxWidth: 460, margin: '4px auto 0' }}>
                 {Lz('governedBlocked')}
               </p>
+              <p className="micro mono an-blocked-reason">{s.error}</p>
               <div style={{ marginTop: 12 }}>
                 <Button small onClick={s.reload}>{t('action.retry')}</Button>
               </div>
@@ -390,8 +394,8 @@ export function Analytics() {
         </div>
         <div className="right">
           {/* Bound to the REAL `get_analytics` read. It used to render "STREAM · LIVE"
-              green even while the read was in flight, had failed, or was refused at the
-              governed wall — a live indicator that is always on is not telemetry. */}
+              green even while the read was in flight, had failed, or was refused — a
+              live indicator that is always on is not telemetry. */}
           <span className={`pill ${readPill.tone}`}>{Lz(readPill.key)}</span>
           <Mark state={readPill.mark} size={30} />
         </div>
@@ -445,4 +449,5 @@ const ANALYTICS_CSS = `
 /* governed-wall block (denied) */
 .v-analytics .an-blocked { text-align: center; padding: 34px 18px; }
 .v-analytics .an-blocked-glyph { font-size: 30px; color: var(--warning); }
+.v-analytics .an-blocked-reason { margin-top: 8px; color: var(--ink-muted); word-break: break-word; }
 `;

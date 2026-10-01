@@ -208,7 +208,8 @@ impl<'a> ResolvedManifestKey<'a> {
     /// guarantee holds (no external code can pair an arbitrary `public_key`/`trust_class` with a chosen
     /// `key_id`). It is called ONLY by [`crate::manifest_authority::ManifestReceiptKeyAuthority`], which has
     /// already verified the manifest against the pinned root + anti-rollback + resolved the key as a
-    /// production-class, in-window, non-revoked key before minting.
+    /// production-class, in-window, non-revoked key before minting. Nothing constructs that
+    /// authority outside its own tests, so today this mint is reached by no product path at all.
     pub(crate) fn manifest_resolved(key_id: &'a str, public_key: &'a [u8], trust_class: TrustClass) -> Self {
         Self { key_id, public_key, trust_class }
     }
@@ -229,6 +230,9 @@ impl<'a> ResolvedManifestKey<'a> {
 
 /// SHA-256 of arbitrary bytes as a lowercase 64-hex string. The input is treated as
 /// opaque bytes — no normalization (design §2.1).
+///
+/// THE crate's one implementation. `governed_message_store::sha256_hex` re-exports it and
+/// `repo::approvals::sha256_hex` is its `&str` face; both used to be separate bodies.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity(64);
@@ -1325,7 +1329,7 @@ mod tests {
     #[test]
     fn nm_parity_the_same_fixtures_hash_the_same() {
         // NM-PARITY-01, NM-PARITY-02, NM-PARITY-09 — the Rust half. The Python half is
-        // `engine/tests/test_negative_matrix.py::NegativeMatrixParityTests`, which pins the SAME
+        // `engine/tests/test_brops_parity.py::NegativeMatrixParityTests`, which pins the SAME
         // literals to the SAME hex. Both sides write the fixture and the digest out in full
         // rather than one deriving it and the other importing: two sides drifting TOGETHER would
         // keep either test green on its own, and that is the failure a parity row is about.
@@ -1417,16 +1421,40 @@ mod tests {
             .expect("NM-SCOPE-06: could not find the end of the `impl Parsed` block");
         let block = &body[..end];
 
+        // EVERY `fn` in the block, whatever its visibility. This used to keep only lines starting
+        // `pub fn `, so `pub(crate) fn fields(&self)` — which hands the unsigned fields to every
+        // consumer there is, all of them being in this crate — was not seen at all.
         let exposed: Vec<&str> = block
             .lines()
-            .filter_map(|l| l.trim().strip_prefix("pub fn "))
+            .map(str::trim)
+            .filter(|l| !l.starts_with("//"))
+            .filter_map(|l| {
+                let at = l.find("fn ")?;
+                // `fn` as a token: at the start of the line or after a space (`pub(crate) fn`,
+                // `const fn`), never the tail of an identifier.
+                (at == 0 || l.as_bytes()[at - 1] == b' ').then(|| &l[at + 3..])
+            })
             .map(|l| l.split(['(', '<', ' ']).next().unwrap_or(""))
             .collect();
         assert_eq!(
             exposed,
             vec!["key_id", "verify"],
-            "NM-SCOPE-06: `impl Parsed` must expose ONLY key_id and verify before verification; \
+            "NM-SCOPE-06: `impl Parsed` must define ONLY key_id and verify before verification; \
              found {exposed:?}. An accessor here hands a caller an unsigned field as if it were a fact."
+        );
+        // ...and there is exactly ONE such block to slice. A second inherent `impl Parsed`, or a
+        // generic one, would carry its accessors past a test that reads only the first.
+        let inherent_blocks = src
+            .lines()
+            .filter(|l| {
+                let l = l.trim_start();
+                (l.starts_with("impl Parsed") || l.starts_with("impl<")) && l.contains(" Parsed")
+                    && !l.contains(" for ")
+            })
+            .count();
+        assert_eq!(
+            inherent_blocks, 1,
+            "NM-SCOPE-06: there must be exactly one inherent `impl Parsed` block"
         );
         // The block really was sliced -- otherwise an empty slice would satisfy an empty expectation.
         assert!(block.contains("fn verify("), "NM-SCOPE-06: the sliced block is not the impl");

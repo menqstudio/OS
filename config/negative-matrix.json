@@ -443,7 +443,7 @@
       "status": "implemented",
       "under_test": "Protocol out-of-scope",
       "section": "§1.7",
-      "test": "apps/desktop/src-tauri/core/src/manifest_authority.rs::nm_scope_04_a_key_out_of_protocol_scope_is_unavailable_with_everything_else_right"
+      "test": "apps/desktop/src-tauri/core/src/key_manifest.rs::nm_scope_04_a_key_out_of_protocol_scope_does_not_resolve_with_everything_else_right"
     },
     "NM-SCOPE-05": {
       "status": "blocked",
@@ -1019,7 +1019,7 @@
       "status": "blocked",
       "under_test": "Login/sidecar → evidence-head floor DB",
       "section": "§2.3, §7",
-      "blocked_on": "A `brops-signer`-owned evidence-head floor DB does not exist. MEASURED 2026-09-19: `grep -nE 'evidence_head_floor|open_ledger|sqlite3|LiveRunStateProvider' engine/runtime/isolated_signer.py` -> the only hit is a comment at :130 — the isolated signer opens no floor. The floor this tree has is (a) the SUPERVISOR ledger table `governed_evidence_head_floor` (engine/runtime/supervisor_ledger.sql:168-177), written by `governed_supervisor_ledger._evidence_floor_cas` (:774) inside the supervisor's own `open_ledger` file (dir `0700`/file `0600`, :194-200) and its Rust twin `supervisor_ledger.rs::evidence_floor_cas` (:900); and (b) the Floor Writer service's `floor-state.json` (engine/runtime/floor_writer.py:437) owned by that service's account. Neither is owned by `brops-signer` (isolation_proof.sh gives brops-signer only `signerkeys` and `signer-sock`, :48/:53), so a login/sidecar denial against 'the brops-signer floor' cannot be measured, and measuring it against the supervisor ledger would bind this row to NM-ACL-14's control. What must exist first: the §7 signer-side floor (`LiveRunStateProvider` in `isolated_signer.py` opening a `brops-signer`-owned `0700`/`0600` SQLite with the same DDL) and a fifth prover attack in engine/tools/brops_isolation_prover.py (`attack_read_file`/`_probe_write` against that DB path, provisioned `brops-signer:brops-signer 0700` by engine/ci/isolation_proof.sh)."
+      "blocked_on": "A test, and the accounts to run it under. REWRITTEN 2026-10-02 by addendum Amendment A1 (an Owner decision, not an Architect audit): this row now names the floor that exists — the SUPERVISOR ledger table `governed_evidence_head_floor` (engine/runtime/supervisor_ledger.sql), in the database `governed_supervisor_ledger.open_ledger` creates with a `0700` directory and a `0600` file — and no longer the `brops-signer`-owned floor DB this field said, from 2026-09-19, does not exist. The status is unchanged because nothing in the tree carries this ID, and a login/sidecar DENY is a cross-account fact a single-uid unit test cannot measure. What must exist first: an attack in engine/tools/brops_isolation_prover.py that tries to read and to write the supervisor's ledger path as the login uid and as the sidecar service uid, and a supervisor ledger for it to attack — engine/ci/isolation_proof.sh provisions none (`grep -c ledger engine/ci/isolation_proof.sh` -> 0, measured 2026-10-02). The file is the one NM-ACL-14 covers, so the two rows now test ONE control and a single prover attack can carry both IDs; the earlier text of this field warned that measuring against the supervisor ledger 'would bind this row to NM-ACL-14's control', and the ruling accepts exactly that."
     },
     "NM-ACL-14": {
       "status": "unreviewed",

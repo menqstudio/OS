@@ -200,6 +200,44 @@ fn the_exit_codes_distinguish_unreachable_from_refused_from_malformed() {
     assert_eq!(relay::run_with(&args(&[]), b"{", |_, _| unreachable!()).0, relay::EXIT_BAD_STDIN);
 }
 
+/// The exit code is chosen by WHAT the reply is, never by words the peer put in it.
+///
+/// `run_with` used to pick "refused" by searching the refusal message for `REFUSED`, and the
+/// malformed-reply message quotes the reply's own field names. So a reply that is neither a
+/// refusal (`ok` is not `false`) nor a document, but happens to carry a field spelled that way,
+/// exited 5 — telling the operator the signer had declined, when in fact it had answered with
+/// something that is not a document at all. The one malformed case tested before this used the
+/// key `nonsense`, which is the only reason it passed.
+#[test]
+fn a_malformed_reply_cannot_choose_the_refused_exit_code_by_naming_a_field() {
+    let good = shim::canonical_request_bytes(&payload(1, H1, None, "k")).unwrap();
+    for reply in [
+        json!({"REFUSED": 1}),
+        json!({"REFUSED": "the audit-anchor signer REFUSED to sign"}),
+        json!({"payload": {}, "signature": "ab", "REFUSED": true}),
+        // `ok` present but not `false`: still not a refusal.
+        json!({"ok": true, "reason": "REFUSED"}),
+    ] {
+        assert!(!shim::is_refusal(&reply), "{reply} is a refusal after all");
+        let answer = reply.clone();
+        let (code, stdout, message) =
+            relay::run_with(&args(&[]), &good, move |_, _| Ok(answer.clone()));
+        assert_eq!(
+            code,
+            relay::EXIT_BAD_REPLY,
+            "{reply} is not a document and not a refusal, and exited {code}: {message}"
+        );
+        assert!(stdout.is_empty(), "{reply} put {} bytes on stdout", stdout.len());
+        assert!(matches!(shim::interpret_reply(&reply), Err(shim::ReplyRefusal::Malformed(_))));
+    }
+    // And a real refusal is still a refusal whatever its reason says or does not say.
+    for reason in ["no", "", "ANTI-ROLLBACK: count went backwards"] {
+        let (code, _, message) =
+            relay::run_with(&args(&[]), &good, move |_, _| Ok(shim::refusal(reason)));
+        assert_eq!(code, relay::EXIT_REFUSED, "{reason:?}: {message}");
+    }
+}
+
 #[test]
 fn a_successful_relay_prints_exactly_the_document_and_exits_zero() {
     let good = shim::canonical_request_bytes(&payload(1, H1, None, "k")).unwrap();
@@ -213,18 +251,169 @@ fn a_successful_relay_prints_exactly_the_document_and_exits_zero() {
     assert_eq!(printed, document);
 }
 
+/// `<repo>/apps/desktop/src-tauri/audit-signer` -> `<repo>`.
+fn repo_root() -> std::path::PathBuf {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for _ in 0..4 {
+        path = path
+            .parent()
+            .expect("CARGO_MANIFEST_DIR is four levels below the repo root")
+            .to_path_buf();
+    }
+    path
+}
+
+/// `bro_audit_log._SIGNER_TIMEOUT`, read out of the engine's own source.
+///
+/// A text scan, as the other engine-facing checks here are, so it runs on every host with no
+/// Python. It refuses to guess: the assignment must appear exactly once, at module level, as a
+/// plain number.
+fn engine_signer_timeout_seconds() -> f64 {
+    let source = repo_root().join("engine").join("runtime").join("bro_audit_log.py");
+    let text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", source.display()));
+    let assignments: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("_SIGNER_TIMEOUT"))
+        .filter_map(|rest| rest.trim_start().strip_prefix('='))
+        .collect();
+    assert_eq!(
+        assignments.len(),
+        1,
+        "{} assigns _SIGNER_TIMEOUT at module level {} times; this test reads exactly one",
+        source.display(),
+        assignments.len()
+    );
+    let value = assignments[0].split('#').next().unwrap_or("").trim();
+    value.parse::<f64>().unwrap_or_else(|_| {
+        panic!("_SIGNER_TIMEOUT = {value:?} in {} is not a plain number", source.display())
+    })
+}
+
 #[test]
-fn the_shim_gives_up_well_inside_the_engines_ten_second_budget() {
-    // `_SIGNER_TIMEOUT` is 10s AND the ledger's exclusive append lock is held throughout. Being
+fn the_shim_gives_up_well_inside_the_engines_signer_budget() {
+    // `_SIGNER_TIMEOUT` is spent with the ledger's exclusive append lock held throughout. Being
     // killed at the timeout leaves the record written and the anchor stale.
+    //
+    // The budget is the ENGINE's number, read from the engine. This test used to compare the
+    // deadline to the literals 10 and 7 — a copy of the Python constant — so lowering the
+    // engine's timeout left it green while the shim overran; the only comparison against the
+    // live value sat in `anchor_end_to_end.py`, reachable solely from a `#![cfg(windows)]` file.
+    let budget = engine_signer_timeout_seconds();
+    let deadline = relay::CONNECT_DEADLINE.as_secs_f64();
+    assert!(budget.is_finite() && budget > 0.0, "the engine's signer budget is {budget}");
     assert!(
-        relay::CONNECT_DEADLINE < std::time::Duration::from_secs(10),
-        "the shim's deadline must be strictly inside bro_audit_log._SIGNER_TIMEOUT"
+        deadline < budget,
+        "the shim's deadline ({deadline}s) must be strictly inside \
+         bro_audit_log._SIGNER_TIMEOUT ({budget}s)"
     );
     assert!(
-        relay::CONNECT_DEADLINE <= std::time::Duration::from_secs(7),
-        "leave the engine room to report the refusal rather than time out on us"
+        deadline + 3.0 <= budget,
+        "the shim gives up at {deadline}s of the engine's {budget}s: leave the engine three \
+         seconds to report the refusal rather than time out on us"
     );
+}
+
+// =================================================================================================
+// The shim holds no key — what can actually be checked about that
+// =================================================================================================
+
+/// The non-comment lines of one of the shim's sources.
+fn code_lines(source: &str) -> Vec<&str> {
+    source.lines().filter(|line| !line.trim_start().starts_with("//")).collect()
+}
+
+/// Nothing the relay shim is written from names a key type, a seed, or the custody module.
+///
+/// What this is NOT: a statement about what the binary links. Both executables link the one
+/// library crate, which depends on `ed25519-dalek` for the service's sake, so "the relay binary
+/// links no signing key" is not checkable here — and `Cargo.toml` used to credit a test of
+/// exactly that name, which never existed. What IS checkable is that the shim's own code cannot
+/// reach a key: its `main` and the module it drives mention none of the names a key would have
+/// to arrive through, and the one thing it takes from the Windows half is the client call.
+#[test]
+fn the_relay_sources_name_no_key_and_no_custody() {
+    const SOURCES: [(&str, &str); 2] = [
+        ("src/bin/relay.rs", include_str!("../src/bin/relay.rs")),
+        ("src/relay.rs", include_str!("../src/relay.rs")),
+    ];
+    const FORBIDDEN: [&str; 9] = [
+        "SigningKey",
+        "ed25519",
+        "custody",
+        "AnchorCore",
+        "load_or_mint",
+        "mint_anchor_key",
+        "sign_anchor",
+        "KEY_FILE_NAME",
+        "from_bytes",
+    ];
+    for (name, source) in SOURCES {
+        let code = code_lines(source);
+        assert!(code.len() > 10, "{name} has almost no code in it; the scan read the wrong thing");
+        for line in &code {
+            for token in FORBIDDEN {
+                assert!(
+                    !line.contains(token),
+                    "{name} names `{token}`, which is how a key would reach the shim: {line}"
+                );
+            }
+        }
+    }
+    // The only item the shim's `main` takes from the Windows half is the pipe CLIENT. `win.rs`
+    // also holds the server, which does own the key, so anything else from it is the service's.
+    let main = code_lines(SOURCES[0].1);
+    let from_win: Vec<&&str> = main.iter().filter(|line| line.contains("win::")).collect();
+    assert!(!from_win.is_empty(), "the shim no longer calls the Windows client at all");
+    for line in from_win {
+        assert!(
+            line.contains("win::roundtrip"),
+            "the shim takes something other than the pipe client from the Windows half: {line}"
+        );
+    }
+}
+
+/// The COMPILED shim, run for real against a pipe nobody serves: no document, and a refusal.
+///
+/// `src/bin/relay.rs` has long said this file "asserts that the compiled binary produces no
+/// signature when nothing answers the pipe". Until this test, `CARGO_BIN_EXE_brops-anchor-relay`
+/// was used here only to compare file NAMES; the binary was never executed. Off Windows there is
+/// no pipe at all and the shim says so; on Windows the name below is one no service owns, and
+/// the shim gives up at `CONNECT_DEADLINE`. Either way the contract is the same one
+/// `_sign_anchor` relies on: nothing on stdout, a non-zero exit, and the reason on stderr.
+#[test]
+fn the_compiled_relay_prints_no_document_when_nothing_answers_the_pipe() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let pipe = format!("brops-anchor-relay-contract-nobody-{}", std::process::id());
+    let request = shim::canonical_request_bytes(&payload(1, H1, None, "k")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brops-anchor-relay"))
+        .args([relay::PIPE_ARG, pipe.as_str()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the compiled relay could not be started");
+    child.stdin.take().expect("stdin").write_all(&request).expect("write the payload");
+    let output = child.wait_with_output().expect("the relay did not exit");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.stdout.is_empty(),
+        "with nothing answering the pipe the shim wrote {} bytes to stdout, which \
+         bro_audit_log would json.loads() as a signed document: {:?}",
+        output.stdout.len(),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(relay::EXIT_UNREACHABLE),
+        "an unanswered pipe must exit {} (unreachable); stderr: {stderr}",
+        relay::EXIT_UNREACHABLE
+    );
+    assert!(stderr.contains("brops-anchor-relay:"), "the refusal carried no reason: {stderr:?}");
+    assert!(stderr.contains(&pipe), "the refusal does not name the pipe it tried: {stderr}");
 }
 
 // =================================================================================================
@@ -491,6 +680,14 @@ fn a_peer_allowlist_that_is_not_a_sid_is_refused_rather_than_treated_as_a_name()
 /// the anchor key buys and names the route that is STILL open, rather than reading as a closure
 /// notice. The route moved — it is no longer a key at all, it is the PIN — so that is what is
 /// asserted, and a caveat that stopped naming it fails here.
+///
+/// **Re-aimed a third time (T-145).** The pin moved too: out of the app's trust directory and
+/// into the machine-wide anchor the app's account cannot write, with
+/// `anchor_end_to_end.py::case_pin_rewrite` asserting the rewrite now FAILS. The caveat went on
+/// saying the pin "is a file in the app's own trust directory", and this test asserted the words
+/// `trust directory` — it was holding the stale sentence in place. It is printed in every
+/// refusal and in the install plan, so it has to say where the pin is, and what still stands
+/// above that: an administrator.
 #[test]
 fn the_registry_caveat_states_the_residual_route_rather_than_implying_it_is_closed() {
     let caveat = register::REGISTRY_CAVEAT;
@@ -499,12 +696,41 @@ fn the_registry_caveat_states_the_residual_route_rather_than_implying_it_is_clos
     // What destroying the root DID buy: a registry nobody can amend.
     assert!(caveat.contains("destroyed before"), "{caveat}");
     assert!(caveat.contains("sealed"), "{caveat}");
-    // And the honest remainder, which is now the pin rather than a key.
+    // And the honest remainder, which is the pin rather than a key.
     assert!(caveat.contains("residual"), "{caveat}");
     assert!(caveat.contains("not a key at all"), "{caveat}");
     assert!(caveat.contains("PIN"), "{caveat}");
-    assert!(caveat.contains("trust directory"), "{caveat}");
-    assert!(caveat.contains("second principal"), "{caveat}");
+    // WHERE the pin is. Not in the app's own directory any more, and not described as if it were.
+    assert!(caveat.contains("trust anchor directory"), "{caveat}");
+    assert!(!caveat.contains("the app's own trust"), "{caveat}");
+    assert!(!caveat.contains("is a file in the app"), "{caveat}");
+    // Who mints the anchor key: the service, not "this crate never".
+    assert!(caveat.contains("minted by the signer service"), "{caveat}");
+    assert!(!caveat.contains("this crate never mints"), "{caveat}");
+    // What is still above it, named rather than implied away.
+    assert!(caveat.contains("administrator"), "{caveat}");
+    assert!(caveat.contains("no second principal"), "{caveat}");
     // It must not claim the item is finished.
     assert!(!caveat.to_lowercase().contains("o-2 is closed"), "{caveat}");
+}
+
+/// The refusal that tells an operator how to adopt a later signer must prescribe something that
+/// works: moving the trust directory aside does not re-mint a store an anchor still records.
+#[test]
+fn the_missing_anchor_key_refusal_does_not_prescribe_moving_the_trust_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = dir.path().join(brops_provision::REGISTRY_ROOT_DIR).join("config");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(registry.join("trusted-keys.json"), br#"{"payload":{"keys":[]}}"#).unwrap();
+    let custody = json!({
+        "key_id": "audit-anchor-0000000000000000",
+        "public_key": "ab".repeat(32),
+        "authority": spec::ANCHOR_AUTHORITY,
+    });
+    let text = register::register_anchor_key(dir.path(), &custody)
+        .expect_err("a registry without the key must be refused")
+        .to_string();
+    assert!(text.contains("does not carry the audit signer's key"), "{text}");
+    assert!(!text.contains("let the next launch mint"), "{text}");
+    assert!(text.contains("administrator removes the anchor directory first"), "{text}");
 }

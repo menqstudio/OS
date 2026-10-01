@@ -14,6 +14,16 @@
 //! > a test gives the SAME verdict everywhere, or it SKIPS with a reason that names the
 //! > missing prerequisite exactly. Never compiled out, and never a silent pass.
 //!
+//! **"Never compiled out" has exceptions, and they are a table rather than a habit.** For as
+//! long as that sentence stood alone it was false: `posix_install.rs` is `#![cfg(unix)]`
+//! whole, `audit_signer.rs` carries seven `#[cfg(windows)]` tests and one
+//! `#[cfg(not(windows))]`, and `provision.rs` one `#[cfg(unix)]` — ten items the compiler
+//! removes on one leg, declared nowhere. A test whose BODY cannot be compiled on a platform
+//! (it names `uid`, `chown`, a Win32 binding) cannot be made to return early there; it can
+//! only be absent. So each one is listed in [`COMPILED_OUT`] with the leg that does run it,
+//! and `prerequisites_guard.rs` reads this directory's sources and fails when a test is
+//! `cfg`-gated and not in the table, or in the table and no longer gated.
+//!
 //! # The version of this module that came before, and why it did not hold
 //!
 //! It tried to keep that rule with two mechanisms, and a real Debian run refuted both.
@@ -188,6 +198,93 @@ pub const PLATFORM_EXEMPTIONS: [(&str, &str, &str); 2] = [
     ),
 ];
 
+/// Every test in this directory that the COMPILER removes on one leg of the matrix — the stated
+/// exceptions to "never compiled out", complete, and held complete by
+/// `prerequisites_guard.rs::every_compiled_out_test_is_declared_and_nothing_else_is`.
+///
+/// Different in kind from [`PLATFORM_EXEMPTIONS`]: those tests exist on both legs and return
+/// early on one; these do not exist on one leg at all, because their bodies name things that
+/// leg cannot compile. `"*"` as the test means the whole file is gated.
+///
+/// `(file, test or "*", the cfg it is under, why it cannot be compiled on the other leg and which
+/// leg runs it)`.
+pub const COMPILED_OUT: [(&str, &str, &str, &str); 10] = [
+    (
+        "posix_install.rs",
+        "*",
+        "unix",
+        "`brops_provision::posix_install` is itself `#[cfg(unix)]` — uids, gids, mode bits and \
+         chown — so nothing in this file can be compiled for Windows, where the application \
+         builds its own anchor and there is no installer half. The ubuntu-latest leg runs it.",
+    ),
+    (
+        "provision.rs",
+        "private_key_material_is_owner_only_on_posix",
+        "unix",
+        "it reads `PermissionsExt::mode()`, which does not exist on Windows. What Windows does \
+         instead is asserted on both legs by \
+         `the_manifest_records_what_the_platform_actually_did_about_permissions`. The \
+         ubuntu-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "win_live_constants_have_not_drifted",
+        "windows",
+        "it compares against `brops_win_live`, which is not in the dependency graph off \
+         Windows. The windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "this_process_token_is_measured_and_the_verdict_is_reported_not_assumed",
+        "windows",
+        "it measures a Windows access token. The decision it feeds is tested on both legs by \
+         `a_token_whose_groups_could_not_be_read_is_never_reported_as_a_standard_user`. The \
+         windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "resolve_service_sid_agrees_with_the_derived_sid",
+        "windows",
+        "it asks the LSA to resolve `NT SERVICE\\TrustedInstaller`. The derivation it checks is \
+         tested on both legs against published vectors. The windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "the_behavioural_probe_reports_real_denial_and_real_access",
+        "windows",
+        "it stamps a real DACL and opens the file. The classification of the open's failure is \
+         tested on both legs by `only_an_access_denial_counts_as_the_key_being_unreadable`. The \
+         windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "an_absent_key_is_unmeasurable_and_never_counts_as_denied",
+        "windows",
+        "it calls the Windows open probe on a missing file. The windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "the_ledger_directory_really_excludes_the_signer_when_locked",
+        "windows",
+        "it stamps and reads back a real DACL. The proof arithmetic over the read-back is \
+         tested on both legs. The windows-latest leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "without_the_installed_service_the_whole_thing_refuses",
+        "windows",
+        "it runs `verify_installed` against the Service Control Manager. The windows-latest \
+         leg runs it.",
+    ),
+    (
+        "audit_signer.rs",
+        "off_windows_every_syscall_entry_point_refuses_rather_than_pretending",
+        "not(windows)",
+        "it asserts the stub `winimpl` refuses, and on Windows there is no stub — the real \
+         entry points are what the seven tests above measure. The ubuntu-latest leg runs it.",
+    ),
+];
+
 /// Return early because this platform has no such concept. Never fails, never needs declaring —
 /// and refuses outright if `test` is not in the reviewed [`PLATFORM_EXEMPTIONS`] table.
 pub fn not_applicable(test: &str) {
@@ -211,14 +308,36 @@ pub fn not_applicable(test: &str) {
 /// name "not running as root" as its prerequisite rather than quietly fail there.
 #[cfg(unix)]
 pub fn running_as_root() -> bool {
-    // `/proc/self` is owned by the process's effective uid on Linux; elsewhere fall back to
-    // the same probe-file mechanism the product uses, through the product's own function so a
-    // divergence would show up as a test failure rather than be papered over here.
-    brops_provision::anchor::posix_euid().map(|uid| uid == 0).unwrap_or(false)
+    // The product's own probe-file mechanism (`anchor::posix_euid` creates a file in the
+    // temporary directory and reads its owner), on every unix alike, through the product's own
+    // function so a divergence would show up as a test failure rather than be papered over
+    // here. It does NOT read `/proc/self` — this comment used to say it did; that independent
+    // oracle is [`procfs_euid`], which exists so a test of `posix_euid` is not a function
+    // compared with itself.
+    root_from_euid_probe(brops_provision::anchor::posix_euid().map_err(|e| e.to_string()))
 }
 #[cfg(not(unix))]
 pub fn running_as_root() -> bool {
     false
+}
+
+/// What a measurement of the effective uid says about "is this root" — pure, so the failing
+/// case can be tested.
+///
+/// A probe that FAILED is not an answer. This used to be `.unwrap_or(false)`: a uid that could
+/// not be measured read as "not root", so every test that asks the question in order to skip
+/// would have gone on to assert, as root, that a directory is out of reach — or, as an ordinary
+/// account, simply carried a guess. A guard whose own measurement failed has nothing to say,
+/// and says so.
+pub fn root_from_euid_probe(probe: Result<u32, String>) -> bool {
+    match probe {
+        Ok(uid) => uid == 0,
+        Err(why) => panic!(
+            "this process's effective uid could not be measured ({why}), so whether the suite \
+             is running as root is UNKNOWN. That is not `false`: every test that asks would \
+             otherwise assert a custody property under a guess"
+        ),
+    }
 }
 
 /// The tag for "the suite is running as root, where no location is out of reach".
@@ -271,6 +390,95 @@ pub const TAG_INSTALLED_SIGNER_SERVICE: &str = "installed-signer-service";
 /// token WITHOUT administrator rights, this one says a test needs a token WITH them. No single
 /// process can satisfy both, which is why they are two tags and not one.
 pub const TAG_ELEVATED_REGISTRATION: &str = "windows-elevated-registration";
+
+/// EVERY prerequisite tag, in one place.
+///
+/// The guard's own test (`the_prerequisite_tags_are_distinct_and_declarable`) iterates this, so
+/// a tag is checked for being distinct and declarable by being a tag at all. It used to check a
+/// list copied by hand into the test — nine entries when there were eleven — so the two newest
+/// tags could have collided with another, or carried a comma, and nothing would have said so.
+/// `every_prerequisite_tag_constant_is_in_all_tags` reads this file's source and fails when a
+/// `TAG_` constant is declared here and left out of this table.
+pub const ALL_TAGS: [&str; 11] = [
+    TAG_NOT_ROOT,
+    TAG_ROOT_INSTALLER,
+    TAG_ENGINE_AS_DESKTOP_UID,
+    TAG_POSIX_FOREIGN_ANCHOR,
+    TAG_PROCFS,
+    TAG_UNELEVATED_TOKEN,
+    TAG_WINDOWS_SYMLINK,
+    TAG_OWNER_ASSIGNMENT,
+    TAG_DACL_APPLICATION,
+    TAG_INSTALLED_SIGNER_SERVICE,
+    TAG_ELEVATED_REGISTRATION,
+];
+
+// =================================================================================================
+// The interpreter the cross-language proofs run
+// =================================================================================================
+
+/// The variable that names the Python interpreter the cross-language proofs use.
+pub const PYTHON_ENV: &str = "BROPS_TEST_PYTHON";
+
+/// Which interpreters to try, as a pure function of [`PYTHON_ENV`]'s value: ONE rule.
+///
+/// **A named interpreter is exclusive.** When the variable names one, that one is tried and
+/// nothing else; `python3` and `python` are the candidates only when it is unset or blank.
+///
+/// This function existed four times — in `python_verifier.rs`, `anchor_file_encoding.rs`,
+/// `audit-signer/tests/anchor_end_to_end.rs` and the application's `o3_conductor_session.rs` —
+/// and the copies had drifted into two rules: two of them fell back to `python3`/`python` when
+/// the named interpreter failed its probe, and two did not. Falling back is the wrong one. An
+/// operator who names a venv and has a typo in the path, or names an interpreter without
+/// `cryptography`, was silently given a proof run under a DIFFERENT interpreter than the one
+/// they asked about, and the suite reported green for it.
+pub fn python_candidates(explicit: Option<&str>) -> Vec<String> {
+    match explicit {
+        Some(named) if !named.trim().is_empty() => vec![named.to_string()],
+        _ => vec!["python3".to_string(), "python".to_string()],
+    }
+}
+
+/// Can `python` import `modules` (a comma-separated `import` list)?
+fn probe_python(python: &str, modules: &str) -> Result<(), String> {
+    let out = std::process::Command::new(python)
+        .args(["-c", &format!("import {modules}, sys; print(sys.version)")])
+        .output()
+        .map_err(|e| format!("could not run `{python}`: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{python}` cannot `import {modules}`: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// An interpreter that can import `modules`, or a failure naming what each candidate failed on.
+///
+/// **It never skips, and it is not a [`skip`].** A cross-language proof that quietly disables
+/// itself on the machine with no usable Python is disabled exactly where the drift would go
+/// unnoticed, so there is no tag that declares an interpreter away. `proof` is the sentence the
+/// panic uses to say what goes unchecked without one.
+pub fn resolve_python(modules: &str, proof: &str) -> String {
+    let explicit = std::env::var(PYTHON_ENV).ok();
+    let candidates = python_candidates(explicit.as_deref());
+    let mut reasons = Vec::new();
+    for candidate in &candidates {
+        match probe_python(candidate, modules) {
+            Ok(()) => return candidate.clone(),
+            Err(reason) => reasons.push(reason),
+        }
+    }
+    panic!(
+        "no usable Python for {proof}. This test does NOT skip: without it, that is checked by \
+         nothing. Set {PYTHON_ENV} to an interpreter that can `import {modules}` — and note that \
+         a named interpreter is the ONLY one tried, so a {PYTHON_ENV} that fails is fatal rather \
+         than a reason to fall back to another.\n  tried: {candidates:?}\n  {}",
+        reasons.join("\n  ")
+    );
+}
 
 /// Is this Windows token an elevated administrator — the posture on which no custody claim in
 /// this suite is measurable?
@@ -327,9 +535,22 @@ pub struct SealedAnchor {
 /// through to the skip, which is how a Debian run found this paragraph missing:
 ///
 /// ```text
-/// sudo install -d -o root -g root -m 0755 /var/lib/brops-trust-anchor/trust-anchor
+/// sudo install -d -o root -g root -m 0755 /var/lib/brops-test-foreign-anchor/trust-anchor
 /// printf '%064d\n' 0 | sudo install -o root -g root -m 0644 /dev/stdin \
-///     /var/lib/brops-trust-anchor/trust-anchor/operator-root.pub
+///     /var/lib/brops-test-foreign-anchor/trust-anchor/operator-root.pub
+/// export BROPS_TEST_FOREIGN_ANCHOR=/var/lib/brops-test-foreign-anchor/trust-anchor
+/// ```
+///
+/// **Never at the production path.** This recipe used to create the stand-in at
+/// `/var/lib/brops-trust-anchor/trust-anchor` — [`brops_provision::anchor::POSIX_MACHINE_ROOT`]
+/// itself, which the CI job deliberately avoids (`/var/lib/brops-ci-foreign-anchor`). A
+/// directory there holding a pin and no manifest is not a fixture to the product: it is "a
+/// half-removed anchor", and the real installer (`posix_install::settle_existing`) refuses the
+/// machine as corrupt rather than mint over it. A box prepared by the old recipe is in exactly
+/// that state until an administrator removes the stand-in:
+///
+/// ```text
+/// sudo rm -r /var/lib/brops-trust-anchor      # ONLY if it holds nothing but the fake pin
 /// ```
 ///
 /// Reading it here is not a way for the product to redirect its own anchor:
@@ -406,10 +627,12 @@ pub fn sealed_anchor(test: &str) -> Option<SealedAnchor> {
 /// So the fixture has to come from outside the process, from one of two places:
 ///
 /// 1. `$BROPS_TEST_FOREIGN_ANCHOR`, which a CI job or an operator points at a directory made
-///    with e.g. `sudo install -d -o root -g root -m 0755 /var/lib/brops-test-anchor`, **with a
-///    regular file inside it**;
+///    with the recipe on [`POSIX_FIXTURE_ENV`] — under `/var/lib/brops-test-foreign-anchor`,
+///    never the production path — **with a regular file inside it**;
 /// 2. the real anchor at [`brops_provision::anchor::POSIX_MACHINE_ROOT`], if this box has been
-///    provisioned — measuring the production article is better than measuring a stand-in.
+///    provisioned BY THE INSTALLER — measuring the production article is better than measuring
+///    a stand-in. It is found there, never put there: a hand-made directory at that path makes
+///    the installer refuse the machine.
 ///
 /// Absent both, this fails naming exactly what is missing, unless the tag is declared.
 #[cfg(not(windows))]

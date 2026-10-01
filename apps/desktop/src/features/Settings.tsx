@@ -80,6 +80,10 @@ export function Settings() {
   const identityReason = identity.data?.state === 'unreported'
     ? identity.data.reason
     : identity.error ?? null;
+  // What the two identity rows show when the build has not (yet) said: "reading" while the
+  // ask is in flight, "not reported" once it settled without an answer. Never a fixed name.
+  const identityPending = identity.loading && identity.data === null;
+  const identityAbsent = identityPending ? L('identityChecking') : L('identityUnreported');
 
   // Does a preference written here actually survive? Probed once, for real, on mount —
   // the store swallows a failed write, so without this the page cannot tell "saved" from
@@ -430,6 +434,17 @@ export function Settings() {
           </div>
           <span id="settings-language-desc" className="set-note">{L('languageDesc')}</span>
 
+          {/* Whether what is picked above is actually KEPT — probed on mount with a real
+              write → read-back → delete. The probe and both sentences existed; the sentence
+              was never rendered, so the page said nothing either way. `role="alert"` only on
+              the bad outcome: a setting that will silently revert is something to be told. */}
+          <p className="set-note" role={prefsPersisted ? undefined : 'alert'}>
+            {prefsPersisted ? L('prefsPersistedNote') : L('prefsNotPersistedNote')}
+          </p>
+          {prefStorage.state === 'not_persisted' && (
+            <p className="set-note">{L('reasonPrefix')}<span className="mono">{prefStorage.reason}</span></p>
+          )}
+
           {/* Fixed brand accent — decorative, not a user control. */}
           <div className="accent-rail" aria-hidden="true">
             <span className="micro">{L('accentLabel')}</span>
@@ -442,17 +457,24 @@ export function Settings() {
         <section className="surface soft set-panel set-sys reveal" aria-label={t('nav.settings')}>
           <div className="sec-head">
             <h2>{L('systemHeading')}</h2>
-            <span className={`pill ${data?.ready ? 'live' : 'off'}`}>
-              {data?.ready ? t('settings.aiProviderReady') : t('settings.aiProviderNotReady')}
-            </span>
+            {/* `sysPill`, not `data?.ready ? 'live' : 'off'`: readiness that is UNKNOWN (still
+                loading, a failed read, no backend) is not "Not ready". */}
+            <span className={`pill ${sysPill.tone}`}>{sysPill.label}</span>
           </div>
+          {/* Name and version as the RUNNING BUILD reports them (settingsIdentity.ts) — or the
+              statement that it did not. The probe, the strings and the comments all said the
+              literals were gone; the JSX below still printed a fixed product name and a fixed
+              version, for a build that reports a different name and a different version. */}
           <div className="sys-id">
             <span className="seal" aria-hidden="true">◈</span>
-            <div className="sys-idt"><b>MENQ OS</b><span className="micro mono">v0.9 · MenQ Studio</span></div>
+            <div className="sys-idt">
+              <b>{reported ? reported.name : identityAbsent}</b>
+              {reported && <span className="micro mono">{reported.version}</span>}
+            </div>
           </div>
           <div className="sys-rows">
-            <div className="sys-row"><span className="sys-k">{L('aboutProductLabel')}</span><b>MENQ OS</b></div>
-            <div className="sys-row"><span className="sys-k">{L('aboutVersionLabel')}</span><b className="mono">v0.9</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutProductLabel')}</span><b>{reported ? reported.name : identityAbsent}</b></div>
+            <div className="sys-row"><span className="sys-k">{L('aboutVersionLabel')}</span><b className="mono">{reported ? reported.version : identityAbsent}</b></div>
             {/* Governance: the ACTUAL resolved runtime posture, never a product claim. */}
             <div className="sys-row">
               <span className="sys-k">{L('aboutGovernanceLabel')}</span>
@@ -462,6 +484,14 @@ export function Settings() {
             </div>
           </div>
           <p className="set-note sys-gov-note">{governance.note}</p>
+          {!identityPending && (
+            <p className="set-note">
+              {reported ? L('identityNote') : L('identityUnreportedNote')}
+            </p>
+          )}
+          {!identityPending && !reported && identityReason && (
+            <p className="set-note">{L('reasonPrefix')}<span className="mono">{identityReason}</span></p>
+          )}
         </section>
 
       </div>

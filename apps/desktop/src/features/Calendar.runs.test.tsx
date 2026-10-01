@@ -82,13 +82,45 @@ describe('Calendar — run history, and the receipt this build cannot produce', 
     mount();
     await historyWithRuns(2);
     const text = history().textContent ?? '';
-    const receiptIdx = text.search(/receipt/i);
-    if (receiptIdx >= 0) {
-      // The word may appear only in the note that says there is none.
-      expect(text.slice(receiptIdx, receiptIdx + 40)).toMatch(/receipt/i);
+    // The word may appear ONLY in the note that says there is none — never on a run row. This
+    // used to slice the text from the index where /receipt/ matched and assert the slice
+    // matched /receipt/: a tautology inside an `if`, which no rendering could fail.
+    for (const row of within(history()).getAllByRole('listitem')) {
+      expect(row.textContent ?? '').not.toMatch(/receipt|անդորրագիր|квитанц/i);
     }
+    const note = history().querySelector('.cal-run-note');
+    expect(note?.textContent ?? '').toMatch(/No engine receipt exists/);
+    // Exactly one mention, and it is the note's.
+    expect(text.match(/receipt/gi)).toHaveLength(1);
     expect(text).not.toContain('run-2');
     expect(text).not.toContain('run-1');
+  });
+
+  it('never says "No automation has run yet" before the runs have been read', async () => {
+    // The first runs read is made against an EMPTY automation list (the automations are still
+    // loading), and `useAsync` keeps that answer until the next read lands. For one committed
+    // frame after the automations arrived, the section printed the empty-history sentence over
+    // an automation whose runs nobody had asked for yet.
+    //
+    // One frame is gone before any query can look, so the DOM is WATCHED instead: every node
+    // ever added is recorded, including one removed again in the next commit.
+    const everAdded: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const r of records) {
+        r.addedNodes.forEach((n) => everAdded.push(n.textContent ?? ''));
+        if (r.type === 'characterData') everAdded.push(r.target.textContent ?? '');
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    try {
+      mount();
+      await historyWithRuns(2);
+      await new Promise((r) => setTimeout(r, 0));
+    } finally {
+      observer.disconnect();
+    }
+    expect(everAdded.length).toBeGreaterThan(0);
+    expect(everAdded.some((t) => /No automation has run yet/.test(t))).toBe(false);
   });
 
   it('an automation that has never run says so instead of showing an empty list', async () => {
@@ -108,7 +140,52 @@ describe('Calendar — run history, and the receipt this build cannot produce', 
       return Promise.resolve([]);
     });
     render(<AppProvider><ToastProvider><Calendar /></ToastProvider></AppProvider>);
-    await waitFor(() => expect(history()).toBeInTheDocument());
+    await waitFor(() => expect(within(history()).getByRole('alert')).toBeInTheDocument());
     expect(within(history()).queryAllByRole('listitem')).toHaveLength(0);
+    // …and "no history" is not "nothing ran". The failed read used to print the empty-history
+    // sentence, which is a claim about the world made from a read that did not answer.
+    expect(history().textContent).not.toMatch(/No automation has run yet/);
+    expect(within(history()).getByRole('alert')).toHaveTextContent(/could not be read in full/);
+    expect(within(history()).getByRole('alert')).toHaveTextContent('boom');
+  });
+
+  it('a failing automations read is not "nothing ran" either', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_events') return Promise.resolve([]);
+      if (cmd === 'list_automations') return Promise.reject(new Error('database is locked'));
+      return Promise.resolve([]);
+    });
+    render(<AppProvider><ToastProvider><Calendar /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(within(history()).getByRole('alert')).toHaveTextContent('database is locked'));
+    expect(history().textContent).not.toMatch(/No automation has run yet/);
+  });
+
+  it('the section is named by a real heading in every language', async () => {
+    // The Armenian heading began with a Latin "S" and matched nothing this file looks for, so
+    // the `պատմություն` branch of the locator above was dead.
+    const { STR } = await import('./Calendar.strings');
+    for (const lang of ['en', 'hy', 'ru'] as const) {
+      expect(STR.runHistory[lang]).toMatch(/run history|պատմություն|история/i);
+    }
+    expect(STR.runHistory.hy).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('delete stays parked: disabled, with its reason, and wired to nothing', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_events') {
+        const today = new Date();
+        today.setHours(12, 0, 0, 0);
+        return Promise.resolve([{
+          id: 'ev-1', title: 'Standup', kind: 'meeting', location: '',
+          startsAt: today.toISOString(), endsAt: null, createdAt: '1700000000000', updatedAt: '1700000000000',
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<AppProvider><ToastProvider><Calendar /></ToastProvider></AppProvider>);
+    const del = await screen.findByRole('button', { name: 'Delete' });
+    expect(del).toBeDisabled();
+    expect(del).toHaveAttribute('title', expect.stringMatching(/disabled for safety/));
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'delete_event')).toBe(false);
   });
 });

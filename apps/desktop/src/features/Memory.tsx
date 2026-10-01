@@ -13,6 +13,8 @@ import type { MemoryEntry } from '../domain/entities';
 import {
   STR, liveCount, refCount, deleteRefusedLive, pinRefusedLive,
 } from './Memory.strings';
+import { STR as RECORD_STR } from './writeRecord.strings';
+import { parseTimestamp } from './timestamps';
 import {
   WRITE_RECORD_CSS, WriteRecordBadge, WriteRecordNotice, WriteRecordPanel,
   useWriteRecordStates, type WriteRecordRead,
@@ -64,21 +66,39 @@ function extractLinks(text: string): string[] {
 interface ResolvedLink {
   name: string;
   targetId: string | null; // a memory this reference resolves to, else null
-  sealed: boolean; // true → references sealed / unavailable evidence
+  /** true ONLY for a reference its author wrote as `[[sealed:…]]`. A reference that merely
+   *  resolves to nothing is `targetId: null, sealed: false` — unresolved, which is all the
+   *  page knows about it. */
+  sealed: boolean;
 }
 
-// Resolve one `[[name]]` against the loaded memories. A reference is honoured
-// when another memory's scope matches it or its content mentions it. An
-// explicit `sealed:` prefix, or a reference that resolves to nothing local, is
-// treated as pointing at sealed / unavailable evidence.
+/** A memory's content with its own `[[…]]` spans removed — the text another memory's link
+ *  may be matched against. */
+function proseOf(content: string): string {
+  return content.replace(/\[\[[^\]\n]+\]\]/g, ' ');
+}
+
+// Resolve one `[[name]]` against the loaded memories. A reference is honoured when
+// another memory's scope matches it or that memory's PROSE mentions it.
+//
+// Two things this used to get wrong, both of which put the word "sealed" on screen with
+// nothing behind it:
+//
+//   * every reference that resolved to nothing was returned `sealed: true` and rendered
+//     under "References sealed evidence … The referenced material stays sealed". There is no
+//     sealed-evidence store for a memory entry; a dangling link is a dangling link. Only a
+//     reference written with the explicit `sealed:` prefix is called sealed now.
+//   * the match ran over raw content, so two memories that both contained `[[x]]` resolved
+//     to EACH OTHER — the link's own text was the match — and "sealed" flipped off the
+//     moment the same link was mentioned twice. Link spans are excluded from the haystack.
 function resolveLink(name: string, selfId: string, all: MemoryEntry[]): ResolvedLink {
   if (/^sealed:/i.test(name)) return { name, targetId: null, sealed: true };
   const needle = name.toLowerCase();
   const hit = all.find(
     (o) => o.id !== selfId &&
-      (o.scope.toLowerCase() === needle || o.content.toLowerCase().includes(needle)),
+      (o.scope.toLowerCase() === needle || proseOf(o.content).toLowerCase().includes(needle)),
   );
-  return { name, targetId: hit ? hit.id : null, sealed: !hit };
+  return { name, targetId: hit ? hit.id : null, sealed: false };
 }
 
 function contentPreview(text: string): string {
@@ -267,8 +287,12 @@ function MemoryDetail(
                   >
                     [[{l.name}]]
                   </button>
-                ) : (
+                ) : l.sealed ? (
                   <span className="mem-link mem-link--sealed">⬡ [[{l.name}]]</span>
+                ) : (
+                  <span className="mem-link mem-link--unresolved" title={L('unresolvedTitle')}>
+                    [[{l.name}]] · {L('unresolvedLower')}
+                  </span>
                 )}
               </li>
             ))}
@@ -323,8 +347,8 @@ export function Memory() {
   const fmtDate = (raw: string): string => {
     const v = raw?.trim();
     if (!v) return '—';
-    const d = new Date(isNaN(Number(v)) ? v : Number(v));
-    return isNaN(d.getTime()) ? v : dateFmt.format(d);
+    const d = parseTimestamp(v);
+    return d === null ? v : dateFmt.format(d);
   };
 
   // Resolve every `[[name]]` reference across the loaded memories once.
@@ -524,7 +548,9 @@ export function Memory() {
       {pendingDelete && (
         <ConfirmDialog
           title={t('confirm.deleteTitle')}
-          message={t('confirm.deleteBody')}
+          // `delete_memory` cannot delete: the capability set denies it and the handler holds
+          // no database handle. The confirmation says so instead of "cannot be undone".
+          message={t('confirm.deleteDeniedBody')}
           confirmLabel={writeBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={() => remove(pendingDelete)}
@@ -551,7 +577,7 @@ export function Memory() {
       {/* Standing record conditions across the loaded rows: rows edited out of band,
           rows present under a deleted id, and — kept separate — records this page
           FAILED to read. A read fault must never be mistaken for an empty ledger. */}
-      <WriteRecordNotice reads={records.byId.values()} lang={lang} />
+      <WriteRecordNotice reads={records.byId} lang={lang} />
 
       <div className="mem-sr-only" aria-live="polite" role="status">{liveMessage}</div>
 
@@ -698,13 +724,19 @@ export function Memory() {
                       >
                         [[{g.name}]]
                       </button>
-                    ) : (
+                    ) : g.sealed ? (
                       <span className="mem-link mem-link--sealed">⬡ [[{g.name}]]</span>
+                    ) : (
+                      <span className="mem-link mem-link--unresolved" title={L('unresolvedTitle')}>
+                        [[{g.name}]]
+                      </span>
                     )}
                     <span className="micro mem-graph-meta">
                       {g.sealed
                         ? L('sealedLower')
-                        : refCount(lang, g.sources)}
+                        : g.targetId
+                          ? refCount(lang, g.sources)
+                          : `${L('unresolvedLower')} · ${refCount(lang, g.sources)}`}
                     </span>
                   </li>
                 ))}
@@ -719,7 +751,7 @@ export function Memory() {
         <section className="surface soft mem-metrics">
           <div className="sec-head">
             <h2>{L('memoryState')}</h2>
-            <span className="note">{L('countedStore')} · {L('provenance')}</span>
+            <span className="note">{L('countedStore')} · {RECORD_STR.provenance[lang]}</span>
           </div>
           <div className="mstats">
             {metrics.map((x, i) => (
@@ -791,6 +823,7 @@ const MEMORY_CSS = `
 .v-memory .mem-link--resolved { background: rgb(var(--cyan-rgb)/.09); color: var(--cyan);
   border-color: rgb(var(--cyan-rgb)/.3); cursor: pointer; }
 .v-memory .mem-link--resolved:hover { border-color: rgb(var(--cyan-rgb)/.5); box-shadow: 0 0 14px rgb(var(--cyan-rgb)/.12); }
+.v-memory .mem-link--unresolved { color: var(--ink-muted); border: 1px dashed rgb(var(--line-rgb)/.9); }
 .v-memory .mem-link--sealed { color: var(--warning); background: rgb(var(--warning-rgb)/.08);
   border-color: rgb(var(--warning-rgb)/.28); }
 

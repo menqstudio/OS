@@ -10,28 +10,32 @@
 # ---------------------------------------------------------------------------------------------------
 # WHAT THIS SCRIPT NEEDS, AND WHY IT CANNOT BE SELF-CONTAINED  (remediation audit, R1)
 # ---------------------------------------------------------------------------------------------------
-# Until this fix, line 30 of this file passed `win_provision` a hardcoded 32-byte seed described as "the
-# operator's OFFLINE root private key (proof constant)". It was in fact the DEMONSTRATION root seed from
+# Until this fix, line 30 of this file passed `win_provision` a hardcoded 32-byte seed described as an
+# operator-held root private key ("proof constant"). It was in fact the DEMONSTRATION root seed from
 # win-live/src/proof.rs, whose public half is `tcb::DEMO_ROOT_PUBLIC_KEY_HEX`. `win_provision` compares
 # the supplied private against the TCB-pinned PRODUCTION public (`tcb::ROOT_PUBLIC_KEY_HEX`) and exits 3
 # when they differ -- so this script could not complete a single run, while it and CROSS_ACCOUNT_PROOF.md
 # were both cited as reproducible evidence of a production `trusted_verified`.
 #
 # It cannot be fixed by embedding a working key: the whole point of the production anchor is that its
-# private half lives OFFLINE and never reaches a serving box or a source tree. A checked-in key that
+# private half never reaches a serving box or a source tree. A checked-in key that
 # `win_provision` accepted would BE the compiled-in-demo posture the pinning was introduced to escape.
 #
-# So this script now REQUIRES the operator to supply the offline material, and FAILS LOUDLY without it.
-# It never fabricates a pass. What you must provide:
+# So this script REQUIRES that key as a parameter, and FAILS LOUDLY without it. It never fabricates a
+# pass. Since Owner decision #78 no person holds the key either -- the install mints trust -- so the
+# production case of this harness cannot be run by anyone today; `-SelfTest` below needs no key.
+# What a real run must be given:
 #
 #   -RootKey <path>       A file containing the 64-hex-char ed25519 seed of the root private key whose
 #                         public half is pinned in src-tauri/win-live/src/tcb.rs::ROOT_PUBLIC_KEY_HEX.
-#                         Nobody holds it today (Owner decision #78: no person carries a key; T-131)
-#                         and normally carried on removable media. Any other key -> win_provision exits 3.
+#                         Nobody holds it (Owner decision #78: no person carries a key; T-131).
+#                         Any other key -> win_provision exits 3.
 #   -RootProvenance       The custody declaration for that anchor: external | kit_generated |
 #                         demonstration. Only `external` can render a production verdict; anything else
 #                         completes the chain and reports demonstration custody, honestly.
-#   elevated PowerShell   `win_provision` and `win_tcb_pin` set ACLs/owners with icacls.
+#   elevated PowerShell   `win_provision` creates its custody files with an Administrators owner and a
+#                         protected DACL (CreateFileW, no icacls); `win_tcb_pin` still sets the pin
+#                         manifest's ACL and owner by spawning icacls. Both need elevation.
 #
 # What this proof does and does NOT establish:
 #   * It DOES exercise the real named-pipe transport, the real peer-SID gate (both directions), the real
@@ -54,7 +58,7 @@
 # not a proof.
 #
 # `Test-TurnResult` below now DECIDES, and the script exits 1 on any failing case. The decision is a
-# pure function of the driver's output + exit code, so it is testable without the offline root key:
+# pure function of the driver's output + exit code, so it is testable without any root key:
 #
 #     .\win_live_proof.ps1 -SelfTest
 #
@@ -110,7 +114,7 @@ function Test-TurnResult {
     if ($isBlocked)      { $problems.Add("chain was BLOCKED but this case requires it to complete: $result") }
     elseif (-not $isTrusted -and $result) { $problems.Add("RESULT is neither trusted_verified nor blocked: $result") }
     if ($result -and -not $boundTrue) { $problems.Add("bound=false — the committed row does not match the envelope") }
-    # Only an `external` (offline) anchor can render a PRODUCTION verdict. Under any other custody the
+    # Only an `external` anchor can render a PRODUCTION verdict. Under any other custody the
     # honest outcome is a completed chain with production_verified=false and a non-zero exit, so this
     # case must NOT demand exit 0 there — nor accept production_verified=true, which would mean the
     # custody classification is lying.
@@ -344,7 +348,8 @@ function Invoke-Turn([string]$brokerSid, [string]$prefix, [string]$label, [strin
     3 { Fail-Loudly @(
           "win_provision rejected -RootKey: it does not match the TCB-pinned root public key",
           "(src-tauri/win-live/src/tcb.rs::ROOT_PUBLIC_KEY_HEX).",
-          "Supply the offline private half of THAT key -- no other key can sign a manifest this driver accepts."
+          "Only the private half of THAT key can sign a manifest this driver accepts, and no person holds it",
+          "(Owner decision #78: the install mints trust). There is no key to go and fetch."
         ) }
     4 { Fail-Loudly @("win_provision could not apply the seed ACLs. Run this from an ELEVATED PowerShell.") }
     default { Fail-Loudly @("win_provision failed with exit code $LASTEXITCODE.") }

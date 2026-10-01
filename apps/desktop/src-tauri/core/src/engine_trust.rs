@@ -14,7 +14,8 @@
 //! # The defect this closes (O-3)
 //!
 //! `brops_provision` mints, on first launch, everything the engine's governance chain
-//! needs: the seven authority keypairs, the operator-signed `trusted-key-registry`, the
+//! needs: one keypair for every authority in `brops_provision::MINTED_AUTHORITIES` (this said
+//! "the seven"; the list is the count), the operator-signed `trusted-key-registry`, the
 //! out-of-registry operator-root pin in a machine-wide anchor this account cannot write,
 //! an anti-rollback floor, and the operator-signed `conductor-session` artifact. All of
 //! it is proven byte-compatible against the REAL Python verifiers by

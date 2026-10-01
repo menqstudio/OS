@@ -146,8 +146,16 @@ function ProjectDetail({
   const [tab, setTab] = useState<'overview' | 'tasks'>('overview');
   const [editing, setEditing] = useState(false);
 
+  const toast = useToast();
   const changeStatus = (status: string) => {
-    desktop.setProjectStatus(project.id, status).then(() => onSaved()).catch(() => onSaved());
+    // A rejected status change says why. It used to end `.catch(() => onSaved())`: the select
+    // snapped back on the reload and nothing told the owner the store had refused.
+    desktop.setProjectStatus(project.id, status)
+      .then(() => onSaved())
+      .catch((e: unknown) => {
+        toast(`${L('statusNotChanged')}: ${e instanceof Error ? e.message : String(e)}`, 'error');
+        onSaved();
+      });
   };
 
   const tasks: Task[] = s.data ?? [];
@@ -248,10 +256,12 @@ export function Projects() {
   const { t, lang, focus, clearFocus } = useApp();
   const toast = useToast();
   const L = (k: StrKey) => STR[k][lang] ?? STR[k].en;
-  const statusLabels: Record<string, string> = {
-    planned: L('st_planned'), active: L('st_active'), blocked: L('st_blocked'),
-    completed: L('st_completed'), archived: L('st_archived'),
-  };
+  // Project statuses are labelled by the SAME table every other status on this page uses
+  // (`domain/statusLabels.ts`). They had their own five strings here, already drifted from it:
+  // the Armenian for `completed` was `Թողարկված` ("released") beside `Ավարտված` for a task.
+  const statusLabels: Record<string, string> = Object.fromEntries(
+    PROJECT_STATUSES.map((st) => [st, statusLabel(st, lang)]),
+  );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);

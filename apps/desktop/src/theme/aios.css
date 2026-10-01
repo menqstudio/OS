@@ -270,9 +270,19 @@ body.ignited .shimmer{opacity:1}
 
    Promoting them to their own compositor layer, and telling the compositor which property actually
    animates, keeps the ambient stack off the scroll path. Purely a rendering hint: nothing about how
-   any of it LOOKS changes. */
-.aurora,#mesh,.gridlay,.horizon,.scanline,.vignette,#cursorlight,#ember,.shimmer{
+   any of it LOOKS changes.
+
+   That last sentence was false for two of them. `.horizon` and `#cursorlight` were in this list,
+   and `transform:translateZ(0)` here — later in the file, at the same specificity — REPLACED the
+   transform each of them is made of: the horizon's `perspective(340px) rotateX(62deg)` (the floor
+   lay flat against the screen) and the cursor light's `translate3d(var(--cx)…)` (it sat in the
+   top-left corner while Ambient.tsx went on writing --cx/--cy to nothing). `transform` is one
+   property, not a list that merges. Both already carry a 3D transform, which is what promotes a
+   layer, so they take the hint without the transform. `test/debPackage.wiring.test.ts` holds this. */
+.aurora,#mesh,.gridlay,.scanline,.vignette,#ember,.shimmer{
   will-change:opacity;transform:translateZ(0);backface-visibility:hidden}
+.horizon{will-change:opacity;backface-visibility:hidden}
+#cursorlight{will-change:transform,opacity;backface-visibility:hidden}
 
 .ctx-scrim{position:fixed;inset:0;z-index:900}
 /* The "could not open a window" notice: a refusal the owner can read. The previous behaviour was a
@@ -332,7 +342,9 @@ body.ignited .shimmer{opacity:1}
 .surface:hover{transform:translateY(-3px);border-color:rgb(var(--cyan-rgb)/.3);
   box-shadow:var(--shadow-2),0 0 34px -6px rgb(var(--cyan-rgb)/.16),inset 0 1px 0 rgb(var(--ink-rgb)/.07)}
 .surface:hover::before{opacity:1}
-.surface:hover::after{animation:sheen .85s var(--enter)}
+/* `--enter` is a duration AND an easing (640ms cubic-bezier…). After `.85s` its time parsed as a
+   640ms DELAY on every card hover, so the easing is written out. */
+.surface:hover::after{animation:sheen .85s cubic-bezier(.4,0,.2,1)}
 @keyframes sheen{0%{opacity:0;transform:translateX(0) skewX(-16deg)}18%{opacity:1}100%{opacity:0;transform:translateX(360%) skewX(-16deg)}}
 
 /* radius family: soft vs cut (chamfered instrument look) */
@@ -418,7 +430,6 @@ body.ignited .shimmer{opacity:1}
 .stamp{display:inline-block;padding:3px 9px;border:1.5px solid var(--success);border-radius:8px;color:var(--success);
   font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;transform:rotate(-8deg);animation:stamp .45s var(--spring) .9s both}
 @keyframes stamp{from{transform:rotate(-8deg) scale(2.1);opacity:0}}
-@keyframes strike{from{transform:scaleX(0)}}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    AVATARS — .sigil (monogram) · .face (portrait) · .stack
@@ -702,7 +713,6 @@ body.ignited .shimmer{opacity:1}
   background:rgb(var(--warning-rgb)/.08)}
 .v-activity .mon-freeze.on .fz-ico{background:var(--warning);border-radius:50%;
   box-shadow:0 0 9px rgb(var(--warning-rgb)/.7)}
-@keyframes pa-draw{to{stroke-dashoffset:0}}
 
 /* beat markers — one per real event, sit on each R spike */
 .v-activity .blip{position:absolute;width:26px;height:26px;transform:translate(-50%,-50%);z-index:3;
@@ -872,8 +882,6 @@ body.ignited .shimmer{opacity:1}
   box-shadow:0 0 20px -5px rgb(var(--st-rgb)/.45),inset 0 0 18px rgb(var(--st-rgb)/.08)}
 .v-agents .lattice{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;
   width:max-content;margin:0 auto}
-@keyframes hxglow{0%,100%{filter:drop-shadow(0 0 7px rgb(var(--st-rgb)/.24))}
-  50%{filter:drop-shadow(0 0 15px rgb(var(--st-rgb)/.5))}}
 /* guild network highlight — azure = collaboration tone */
 .v-agents .hx.linked .hx-bg{background:rgb(var(--azure-rgb)/.7);
   filter:drop-shadow(0 0 12px rgb(var(--azure-rgb)/.45));animation:none}
@@ -911,10 +919,6 @@ body.ignited .shimmer{opacity:1}
 .v-agents .dos-block{display:grid;gap:8px;padding-top:var(--s3);border-top:1px solid rgb(var(--line-rgb)/.7)}
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   local pill variant (blocked = danger; foundation has no danger pill)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ═══════════════════════════════════════════════════════════════════════════
    RESPONSIVE
    ═══════════════════════════════════════════════════════════════════════════ */
 @media (max-width:980px){
@@ -947,10 +951,6 @@ body.ignited .shimmer{opacity:1}
 
 .v-analytics .an-deck-top{display:flex;align-items:center;justify-content:space-between;
   gap:14px;flex-wrap:wrap;margin-bottom:14px}
-@keyframes anFade{to{opacity:1}}
-@keyframes anDraw{to{stroke-dashoffset:0}}
-@keyframes anDrawE{from{opacity:0}to{opacity:.9}}
-@keyframes anEmit{to{box-shadow:0 0 0 15px rgb(var(--cyan-rgb)/0)}}
 
 /* ── the live instrument · scrubber ────────────────────────────────────────── */
 .v-analytics .an-scrub{position:absolute;top:0;bottom:26px;width:0;left:100%;z-index:4;
@@ -967,7 +967,6 @@ body.ignited .shimmer{opacity:1}
 .v-analytics .an-lower{display:grid;grid-template-columns:1.55fr 1fr;gap:20px;align-items:start}
 .v-analytics .an-districts{padding:18px 20px 20px}
 .v-analytics .an-side{display:grid;gap:20px}
-@keyframes anGrowX{to{transform:scaleX(1)}}
 
 /* autonomy card */
 .v-analytics .an-auto{padding:18px 20px 20px;display:grid;justify-items:center;gap:14px}
@@ -1416,7 +1415,6 @@ body.ignited .shimmer{opacity:1}
   line-height:1; letter-spacing:-.02em; color:var(--ink);
 }
 .v-automations .mh-press span { display:block; margin-top:4px; }
-@keyframes au-flame { 0%,100%{ transform:scaleY(.45); } 50%{ transform:scaleY(1); } }
 
 /* ── the conduit lanes ────────────────────────────────────────────────────*/
 .v-automations .manifold { display:grid; gap:10px; }
@@ -1617,7 +1615,6 @@ body.ignited .shimmer{opacity:1}
   color:var(--st); border-color:var(--st); background:rgb(var(--st-rgb)/.14);
   box-shadow:0 0 13px -2px rgb(var(--st-rgb)/.6);
 }
-@keyframes au-node { 50%{ box-shadow:0 0 20px rgb(var(--st-rgb)/.7); } }
 .v-automations .sc-node.is-sealed .sc-g {
   color:var(--danger); border-color:var(--danger); background:rgb(var(--danger-rgb)/.14);
   box-shadow:0 0 14px -2px rgb(var(--danger-rgb)/.7);
@@ -1789,7 +1786,6 @@ body.ignited .shimmer{opacity:1}
 /* working — the block the playhead is crossing: brighter + running stream */
 .v-calendar .ev.st-working{border-color:rgb(var(--cyan-rgb)/.6);
   box-shadow:0 4px 20px -8px rgb(var(--cyan-rgb)/.55),inset 0 0 22px rgb(var(--cyan-rgb)/.08)}
-@keyframes cal-stream{to{transform:translateX(320%)}}
 
 /* thinking — autopilot deliberating: a scanning shimmer sweeps the block */
 .v-calendar .ev.st-thinking::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
@@ -1881,7 +1877,6 @@ body.ignited .shimmer{opacity:1}
 .v-calendar .ag-side{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto}
 .v-calendar .ag-side .face,.v-calendar .ag-side .sigil{width:28px;height:28px;font-size:11px}
 .v-calendar .ag-side .face{border-width:2px}
-@keyframes cal-swap{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* ─── responsive ───────────────────────────────────────────────────────── */
 @media (max-width:900px){
@@ -2371,7 +2366,6 @@ body.ignited .shimmer{opacity:1}
   border-color:rgb(var(--ot)/.7);
   box-shadow:var(--shadow-2), 0 0 34px -6px rgb(var(--ot)/.4), inset 0 1px 0 rgb(var(--ink-rgb)/.07);
 }
-@keyframes dbSway { 0%,100%{ transform:rotate(-1.5deg); } 50%{ transform:rotate(1.5deg); } }
 /* decided / waiting: settle once with a spring when loaded */
 .v-decisions .scale.settle:not(.st-deliberating):not(.reweighing) .osc { animation:dbSettle .95s var(--spring); }
 @keyframes dbSettle { 0%{ transform:rotate(-3.4deg); } 60%{ transform:rotate(1.2deg); } 100%{ transform:rotate(0); } }
@@ -2584,13 +2578,6 @@ body.ignited .shimmer{opacity:1}
   box-shadow:0 0 14px rgb(var(--cyan-rgb)/.9);
 }
 @keyframes fl-sweep { 0%{ transform:translateX(-120%); } 100%{ transform:translateX(430%); } }
-@keyframes fl-land { from{ opacity:0; transform:translate(-50%,-40%) scale(.9); } to{ opacity:1; } }
-@keyframes fl-lockpulse { 0%,100%{ opacity:.7; } 50%{ opacity:1; text-shadow:0 0 10px rgb(var(--warning-rgb)/.8); } }
-@keyframes fl-index {
-  0%{ box-shadow:0 8px 18px -14px rgb(var(--bg-rgb)/.8); }
-  40%{ box-shadow:0 10px 22px -12px rgb(var(--bg-rgb)/.8), 0 0 26px -4px rgb(var(--gt)/.7); transform:translate(-50%,-50%) scale(1.04); }
-}
-@keyframes fl-index-open { 0%,100%{ transform:translate(-50%, calc(-50% - 4px)); } 45%{ transform:translate(-50%, calc(-50% - 8px)); } }
 .v-files .slab.hit { border-color:rgb(var(--gt)/.85); box-shadow:0 14px 30px -16px rgb(var(--bg-rgb)/.9), 0 0 30px -6px rgb(var(--gt)/.6); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2602,7 +2589,6 @@ body.ignited .shimmer{opacity:1}
   border:1px solid rgb(var(--line-rgb)/.7);
   background:linear-gradient(180deg, rgb(var(--bg-rgb)/.4), rgb(var(--surface-rgb)/.3));
 }
-@keyframes fl-swap { from{ opacity:0; transform:translateY(8px); } }
 .v-files .gate {
   display:flex; gap:6px; padding:5px; border-radius:var(--r-pill);
   border:1px solid rgb(var(--line-rgb)/.9); background:rgb(var(--bg-rgb)/.4); width:fit-content;
@@ -2725,8 +2711,6 @@ body.ignited .shimmer{opacity:1}
   background-image:repeating-linear-gradient(90deg,rgb(var(--warning-rgb)/.32) 0 4px,transparent 4px 9px)}
 @keyframes grp-seg{from{transform:translateY(-50%) scaleX(0)}}
 .v-group .wv-base.out{stroke:rgb(var(--cyan-rgb)/.24);stroke-dasharray:2 4}
-@keyframes grp-flow{to{stroke-dashoffset:-66}}
-@keyframes grp-front{from{transform:translateX(-2px)}to{transform:translateX(100%)}}
 .v-group .d-node{position:relative;width:46px;height:46px;border-radius:14px;display:grid;place-items:center;
   color:var(--cyan-soft);font-size:17px;
   background:linear-gradient(155deg,rgb(var(--cyan-rgb)/.18),rgb(var(--raised-rgb)/.92));
@@ -2737,7 +2721,6 @@ body.ignited .shimmer{opacity:1}
   animation:spin 15s linear infinite}
 .v-group .d-cap .micro{display:block;color:var(--ink-muted)}
 .v-group .d-cap b{font-family:var(--f-mono);font-size:12px;color:var(--cyan-soft)}
-@keyframes grp-emit{to{box-shadow:0 0 0 16px rgb(var(--success-rgb)/0)}}
 
 /* chamber foot readouts */
 .v-group .ch-foot{display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap}
@@ -2879,7 +2862,8 @@ body.ignited .shimmer{opacity:1}
 .v-integrations .st-error    { --stc:var(--danger-rgb); }
 .v-integrations .st-paused   { --stc:var(--muted-rgb); }
 
-/* danger-toned pill (error) — foundation has no .warn=danger, so recolour */
+/* danger-toned pill (error). The foundation DOES have one — `.pill.bad`, with these exact values —
+   so this is a second copy of it, kept only because Integrations.tsx still applies `cst-err`. */
 .v-integrations .pill.cst-err {
   color:var(--danger); border-color:rgb(var(--danger-rgb)/.32); background:rgb(var(--danger-rgb)/.09);
 }
@@ -2898,22 +2882,15 @@ body.ignited .shimmer{opacity:1}
   filter:drop-shadow(0 0 3px rgb(var(--gtc)/.5));
 }
 .v-integrations .clink.filtered { opacity:0; }
-@keyframes cstrecv {
-  0% { transform:scale(1); opacity:.75; }
-  40% { transform:scale(1.22); opacity:1; }
-  100% { transform:scale(1); opacity:.75; }
-}.v-integrations .s-lbl {
+.v-integrations .s-lbl {
   font-family:var(--f-mono); font-size:var(--t-micro); letter-spacing:.02em;
   color:var(--ink-muted); white-space:nowrap; text-shadow:0 1px 5px rgb(var(--bg-rgb)/.85);
   transition:color var(--slow);
-}@keyframes cstsync { 0%,100% { box-shadow:0 0 10px rgb(var(--stc)/.5), inset 0 0 6px rgb(var(--stc)/.4); }
-  50% { box-shadow:0 0 20px rgb(var(--stc)/.85), inset 0 0 7px rgb(var(--stc)/.55); } }@keyframes cstsusp { 0%,100% { opacity:1; } 50% { opacity:.55; } }@keyframes cstalert { 0%,100% { box-shadow:0 0 8px rgb(var(--stc)/.6); } 50% { box-shadow:0 0 20px rgb(var(--stc)/1); } }
-@keyframes cstemit { to { box-shadow:0 0 0 13px rgb(var(--stc)/0); } }
+}
 .v-integrations .star.filtered { opacity:0; pointer-events:none; }
 .v-integrations .cst-detail, .v-integrations .cd-core {
   display:flex; flex-direction:column; gap:var(--s4); padding:var(--s5); height:100%;
 }
-@keyframes cstswap { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
 
 .v-integrations .cd-head { display:flex; align-items:center; gap:var(--s3); flex-wrap:wrap; }
 .v-integrations .cd-badge {
@@ -3031,12 +3008,11 @@ body.ignited .shimmer{opacity:1}
   filter:drop-shadow(0 0 4px rgb(var(--cyan-rgb)/.6));
 }
 .v-knowledge .edge.faded { opacity:.28; }
-@keyframes kflow { to { stroke-dashoffset:-18; } }@keyframes kemit { to { box-shadow:0 0 0 16px rgb(var(--nt)/0); } }
+@keyframes kflow { to { stroke-dashoffset:-18; } }
 
 /* search: matched vs missed */
 .v-knowledge .knode.hit { opacity:1; z-index:3; }.v-knowledge .knode.hit .klabel { color:var(--ink); font-weight:600; }
 .v-knowledge .knode.miss { opacity:.14; }
-@keyframes kswap { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
 .v-knowledge .krow.hit { border-left-color:rgb(var(--nt)/1); box-shadow:var(--shadow-1), -6px 0 22px -14px rgb(var(--nt)/.8); }
 .v-knowledge .kstats {
   display:grid; grid-template-columns:repeat(4, 1fr); gap:var(--s5);
@@ -3076,10 +3052,6 @@ body.ignited .shimmer{opacity:1}
 
 .v-library .pageHead .eyebrow { margin-bottom:6px; }
 
-/* tier tone token (spine / eyebrow / row) */
-.v-library .tier-proven  { --tt:var(--mint-rgb); }
-.v-library .tier-drafted { --tt:var(--warning-rgb); }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    HERO · the archive
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -3093,15 +3065,6 @@ body.ignited .shimmer{opacity:1}
   animation:lib-scan 9s cubic-bezier(.45,0,.55,1) infinite;
 }
 @keyframes lib-scan { 0%{ transform:translateX(-140px); } 100%{ transform:translateX(calc(100% + 20px)); } }
-@keyframes lib-breathe {
-  0%,100%{ box-shadow:inset 0 1px 0 rgb(var(--ink-rgb)/.05), 0 0 0 rgb(var(--tt)/0), 0 8px 22px -12px rgb(var(--bg-rgb)/.8); }
-  50%    { box-shadow:inset 0 1px 0 rgb(var(--ink-rgb)/.06), 0 0 22px -4px rgb(var(--tt)/.4), 0 8px 22px -12px rgb(var(--bg-rgb)/.8); }
-}
-@keyframes lib-climb { from{ transform:translateY(120%); } to{ transform:translateY(-140%); } }
-@keyframes lib-promo {
-  0%,100%{ box-shadow:inset 0 0 10px rgb(var(--tt)/.14), 0 0 0 rgb(var(--tt)/0); }
-  50%    { box-shadow:inset 0 0 12px rgb(var(--tt)/.22), 0 0 14px rgb(var(--tt)/.6); }
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CODEX — the opened skill
@@ -3110,13 +3073,11 @@ body.ignited .shimmer{opacity:1}
   border-top:1px solid rgb(var(--line-rgb)/.8);
   padding-top:var(--s5); margin-top:var(--s2);
 }
-@keyframes lib-swap { from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
 .v-library .eyebrow.tier-proven  { color:var(--mint); }
 .v-library .eyebrow.tier-proven::before  { background:var(--mint); box-shadow:0 0 12px rgb(var(--mint-rgb)/.8); }
 .v-library .eyebrow.tier-drafted { color:var(--warning); }
 .v-library .eyebrow.tier-drafted::before { background:var(--warning); box-shadow:0 0 12px rgb(var(--warning-rgb)/.7); }
 .v-library .proof-track.proven .pt-fill { background:linear-gradient(90deg, var(--cyan-deep), var(--mint)); box-shadow:0 0 14px rgb(var(--mint-rgb)/.5); }
-@keyframes lib-edge { 50%{ box-shadow:0 0 20px rgb(var(--warning-rgb)/.75); } }
 
 @media (max-width:720px){
 }
@@ -3139,16 +3100,7 @@ body.ignited .shimmer{opacity:1}
   transform:translate(-50%,-50%) scale(calc(.72 + var(--sal,60)*.0032));
   opacity:calc(.34 + var(--sal,60)*.0064);
   filter:blur(calc((100 - var(--sal,60))*.026px));
-  transition:transform var(--slow),opacity var(--slow),filter var(--slow);
-  --mtone-rgb:var(--azure-rgb)}
-.v-memory .m-pin{--mtone-rgb:var(--cyan-rgb)}
-.v-memory .m-seal{--mtone-rgb:var(--mint-rgb)}
-.v-memory .m-vol{--mtone-rgb:var(--azure-rgb)}
-@keyframes mDecay{0%,100%{opacity:1}50%{opacity:.62}}
-@keyframes mRecall{0%{box-shadow:0 0 0 0 rgb(var(--mtone-rgb)/.55)}100%{box-shadow:0 0 0 20px rgb(var(--mtone-rgb)/0)}}
-@keyframes mRecallCore{0%,100%{transform:scale(1)}35%{transform:scale(1.35)}}
-@keyframes mSeal{0%{box-shadow:0 0 0 10px rgb(var(--mint-rgb)/.4)}100%{box-shadow:0 0 12px rgb(var(--mint-rgb)/.32),inset 0 0 10px rgb(var(--mint-rgb)/.2)}}
-@keyframes mForget{to{opacity:0;filter:blur(6px);transform:translate(-50%,-40%) scale(.5)}}
+  transition:transform var(--slow),opacity var(--slow),filter var(--slow)}
 
 /* FILTERED out by kind chip */
 .v-memory .mote.filtered{opacity:.07;filter:blur(2px);pointer-events:none}
@@ -3215,12 +3167,11 @@ body.ignited .shimmer{opacity:1}
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── tier tone tokens (crit=danger · urg=warning · att=cyan · amb=handled/mint) */
-.v-notifications .tier-crit{--tt:var(--danger); --tt-rgb:var(--danger-rgb)}
-.v-notifications .tier-urg { --tt:var(--warning);--tt-rgb:var(--warning-rgb)}
-.v-notifications .tier-att { --tt:var(--cyan);   --tt-rgb:var(--cyan-rgb)}
-.v-notifications .tier-amb { --tt:var(--mint);   --tt-rgb:var(--mint-rgb)}
+.v-notifications .tier-crit{--tt-rgb:var(--danger-rgb)}
+.v-notifications .tier-urg {--tt-rgb:var(--warning-rgb)}
+.v-notifications .tier-att {--tt-rgb:var(--cyan-rgb)}
+.v-notifications .tier-amb {--tt-rgb:var(--mint-rgb)}
 .v-notifications .ps-top{display:flex;align-items:center;gap:var(--s4)}
-@keyframes np-draw{to{stroke-dashoffset:0}}
 
 /* ── the four band plates (refraction outputs) ──────────────────────────── */
 .v-notifications .bands{position:absolute;inset:0;z-index:2}
@@ -3272,7 +3223,6 @@ body.ignited .shimmer{opacity:1}
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .v-projects{max-width:1160px;margin:0 auto}
-@keyframes pfBlink{0%,100%{opacity:.4}50%{opacity:1}}
 
 /* ─── HERO · WORKSTREAM FIELD ─────────────────────────────────────────────── */
 .v-projects .field{padding:22px 22px 24px}
@@ -3309,24 +3259,15 @@ body.ignited .shimmer{opacity:1}
 .v-projects .lane-track{min-width:0;display:grid;gap:9px}
 .v-projects .rail{position:absolute;left:0;right:0;top:50%;height:3px;transform:translateY(-50%);
   border-radius:99px;background:rgb(var(--line-rgb)/1)}
-@keyframes pfGrow{to{transform:scaleX(1)}}
-@keyframes pfBand{to{transform:translateX(440%)}}
-@keyframes pfNow{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.28)}}
 
 /* sub-line under the spine */
 .v-projects .lane-sub{display:flex;align-items:center;gap:12px}
-/* danger pill variant (foundation has no danger pill) */
-.v-projects .pill.stop{color:var(--danger);border-color:rgb(var(--danger-rgb)/.32);
-  background:rgb(var(--danger-rgb)/.08)}
 
 /* energy / momentum column */
 .v-projects .energy{display:grid;justify-items:end;gap:3px;text-align:right}
 .v-projects .energy .num{font-family:var(--f-mono);font-size:26px;font-weight:700;
   line-height:1;letter-spacing:-.03em}
 .v-projects .energy .micro{color:var(--ink-muted)}
-@keyframes pfJam{0%,62%,100%{transform:translate(50%,-50%)}72%{transform:translate(30%,-50%)}
-  82%{transform:translate(70%,-50%)}92%{transform:translate(45%,-50%)}}
-@keyframes pfSuspend{0%,100%{opacity:1}50%{opacity:.55}}
 
 /* ─── LANE DETAIL (opens on focus) ────────────────────────────────────────── */
 .v-projects .lane-detail{grid-column:1/-1;display:grid;
@@ -3381,9 +3322,6 @@ body.ignited .shimmer{opacity:1}
 /* ── HERO SHELL ──────────────────────────────────────────────────────────── */
 .v-research .rc-hero{padding:var(--s5) var(--s5) var(--s4);margin-bottom:var(--s6);
   }
-@keyframes rc-core{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.09);opacity:1}}
-@keyframes rc-reforge{0%{transform:translate(-50%,-50%) scale(.9);opacity:.4}
-  100%{transform:translate(-50%,-50%) scale(1);opacity:1}}
 
 /* source nodes */
 .v-research .rc-source{position:absolute;transform:translate(-50%,-50%);z-index:3;
@@ -3396,9 +3334,7 @@ body.ignited .shimmer{opacity:1}
 .v-research .rc-source.probing .rc-sdot{transform:scale(1.22);
   box-shadow:0 0 16px rgb(var(--sc-rgb)/.9),0 0 0 3px rgb(var(--sc-rgb)/.28)}
 .v-research .rc-source.probing .rc-slab b{color:var(--sc)}
-@keyframes rc-emit{0%{transform:translate(-50%,-50%) scale(.6);opacity:1}100%{transform:translate(-50%,-50%) scale(1.5);opacity:0}}
 .v-research .rc-pb.st-none{--sc:var(--ink-muted);--sc-rgb:var(--muted-rgb)}
-@keyframes rc-swap{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* ── observatory telemetry ───────────────────────────────────────────────── */
 .v-research .rc-metrics{margin-top:var(--s6);padding:var(--s5)}
@@ -3442,10 +3378,6 @@ body.ignited .shimmer{opacity:1}
   0%{box-shadow:inset 0 0 24px rgb(var(--cyan-rgb)/.03)}
   22%{box-shadow:0 0 34px -2px rgb(var(--mint-rgb)/.6),inset 0 0 40px rgb(var(--mint-rgb)/.22);transform:translate(-50%,-50%) scale(1.015)}
   100%{box-shadow:inset 0 0 24px rgb(var(--cyan-rgb)/.03);transform:translate(-50%,-50%) scale(1)}}
-@keyframes v-sec-flare-w{
-  0%{box-shadow:inset 0 0 24px rgb(var(--cyan-rgb)/.03)}
-  22%{box-shadow:0 0 34px -2px rgb(var(--warning-rgb)/.6),inset 0 0 40px rgb(var(--warning-rgb)/.22)}
-  100%{box-shadow:inset 0 0 24px rgb(var(--cyan-rgb)/.03)}}
 .v-security .origin{position:absolute;left:50%;top:50%;width:0;height:0}
 .v-security .origin::before{content:"";position:absolute;left:0;top:0;width:7px;height:7px;border-radius:50%;
   transform:translate(-50%,-50%);background:rgb(var(--muted-rgb)/.5);
@@ -3456,7 +3388,6 @@ body.ignited .shimmer{opacity:1}
   width:26%;height:26%;z-index:3;display:grid;place-items:center}
 .v-security .s-core .core-name{position:absolute;bottom:-26px;left:50%;transform:translateX(-50%);white-space:nowrap;
   font-family:var(--f-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-muted)}
-@keyframes v-sec-absorb{to{transform:translate(-50%,-50%) scale(.2);opacity:0}}
 .v-security .verdict-chip.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 .v-security .lg-item{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);
   font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);
@@ -3606,7 +3537,6 @@ body.ignited .shimmer{opacity:1}
   border:1px solid rgb(var(--cyan-rgb)/.26); background:rgb(var(--cyan-rgb)/.05);
   box-shadow:inset 0 0 24px rgb(var(--cyan-rgb)/.05); transition:opacity var(--slow);
 }
-@keyframes setSwap{ from{ opacity:0; transform:translateY(6px) } to{ opacity:1; transform:none } }
 .v-settings .mc-top{ display:flex; align-items:center; justify-content:space-between; gap:var(--s2); margin-bottom:10px; }
 .v-settings .mc-name{ font-size:15px; font-weight:700; color:var(--ink);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -3640,7 +3570,6 @@ body.ignited .shimmer{opacity:1}
   margin-top:var(--s5); padding-top:var(--s4); border-top:1px solid rgb(var(--line-rgb)/.7);
 }
 .v-settings .bay-note{ color:var(--ink-muted); letter-spacing:.04em; text-transform:none; max-width:62ch; line-height:1.5; }
-@keyframes setBrace{ 0%,100%{ opacity:1 } 40%{ opacity:.72 } }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    QUIET TIER · control panels
@@ -3661,7 +3590,13 @@ body.ignited .shimmer{opacity:1}
 .v-settings .ttile.on{ border-color:rgb(var(--cyan-rgb)/.5);
   box-shadow:0 0 26px -10px rgb(var(--cyan-rgb)/.5), inset 0 0 22px rgb(var(--cyan-rgb)/.05); }
 
-/* the mini preview — a fake app frame per mode */
+/* the mini preview — a fake app frame per mode.
+   The one exception to "MenQ tokens only" in this section's header: a tile shows a theme that is
+   usually NOT the active one, and the palettes hang off `:root[data-theme]`, so `var(--cyan)` here
+   would paint both tiles in the current theme. The literals below are therefore copies — dark
+   --surface/--bg/--cyan-rgb/--ink-rgb, light --surface/--hi/--cyan-rgb/--ink-rgb — and a copy
+   drifts: the light tile kept 14,165,233 (#0EA5E9) after the 2026-08-29 retune moved light --cyan
+   to #0A71A0. `test/debPackage.wiring.test.ts` now holds each accent literal to its palette's triplet. */
 .v-settings .tt-prev{
   position:relative; height:58px; border-radius:var(--r-sm); overflow:hidden;
   border:1px solid rgb(var(--line-rgb)/.8); display:block;
@@ -3671,14 +3606,14 @@ body.ignited .shimmer{opacity:1}
 .v-settings .tt-bar{ position:absolute; left:0; top:0; width:34%; height:100%;
   background:rgb(var(--cyan-rgb)/.14); border-right:1px solid rgb(var(--cyan-rgb)/.3); }
 .v-settings .tt-dark .tt-bar{ background:rgba(56,189,248,.12); border-color:rgba(56,189,248,.28); }
-.v-settings .tt-light .tt-bar{ background:rgba(14,165,233,.12); border-color:rgba(14,165,233,.28); }
+.v-settings .tt-light .tt-bar{ background:rgba(10,113,160,.12); border-color:rgba(10,113,160,.28); }
 .v-settings .tt-line{ position:absolute; left:42%; right:14%; top:16px; height:6px; border-radius:99px; }
 .v-settings .tt-line.s{ top:30px; right:34%; }
 .v-settings .tt-dark .tt-line{ background:rgba(234,240,248,.24); }
 .v-settings .tt-light .tt-line{ background:rgba(12,18,32,.18); }
 .v-settings .tt-glow{ position:absolute; right:-8px; bottom:-14px; width:44px; height:44px; border-radius:50%;
   background:radial-gradient(circle,rgba(56,189,248,.5),transparent 70%); filter:blur(6px); }
-.v-settings .tt-light .tt-glow{ background:radial-gradient(circle,rgba(14,165,233,.4),transparent 70%); }
+.v-settings .tt-light .tt-glow{ background:radial-gradient(circle,rgba(10,113,160,.4),transparent 70%); }
 
 .v-settings .tt-meta{ display:flex; align-items:baseline; gap:8px; }
 .v-settings .tt-meta b{ font-family:var(--f-display); font-size:15px; }
@@ -3687,7 +3622,8 @@ body.ignited .shimmer{opacity:1}
   position:absolute; top:10px; right:10px; width:20px; height:20px; border-radius:50%;
   display:grid; place-items:center; font-size:11px; color:var(--bg);
   background:var(--cyan); box-shadow:0 0 12px rgb(var(--cyan-rgb)/.7);
-  opacity:0; transform:scale(.4); transition:opacity var(--fast),transform var(--spring);
+  /* --spring is an easing only: without a time of its own the scale snapped instead of springing */
+  opacity:0; transform:scale(.4); transition:opacity var(--fast),transform .3s var(--spring);
 }
 .v-settings .ttile.on .tt-check{ opacity:1; transform:scale(1); }
 
@@ -3798,8 +3734,6 @@ body.ignited .shimmer{opacity:1}
 .v-tasks .m-prog .micro b{color:var(--ink)}
 .v-tasks .seg{flex:1 1 0;min-width:118px;position:relative;display:grid;gap:8px;justify-items:center;text-align:center;padding:0 4px}
 
-@keyframes t-interrupt{0%,58%,100%{transform:translateX(0)}66%{transform:translateX(-2px)}
-  74%{transform:translateX(2px)}82%{transform:translateX(-1px)}}
 
 /* ─── mission ledger ───────────────────────────────────────────────────── */
 .v-tasks .m-foot{display:flex;align-items:center;justify-content:space-between;gap:var(--s5);flex-wrap:wrap}
@@ -3923,7 +3857,8 @@ body.ignited .shimmer{opacity:1}
 
 
 /* ============ RESPONSIVE SWEEP (all views) ============ */
-/* Appended last on purpose: every selector below already exists in aios.css.
+/* Appended last on purpose: every selector below is one an earlier rule or the app's markup uses
+   (fourteen that matched nothing anywhere were removed; `test/debPackage.wiring.test.ts` holds that).
    Because this block is last in the file, its rules win over earlier per-view
    media queries at equal specificity, so no !important is needed. Tier 1
    guarantees single-column by 900px; Tier 2 stacks the remaining inline rows
@@ -3978,25 +3913,17 @@ body.ignited .shimmer{opacity:1}
   .pageHead{ flex-direction:column; align-items:flex-start; gap:10px; margin-bottom:16px }
   .pageHead .right{ margin-left:0; width:100%; flex-wrap:wrap }
 
-  .v-analytics .an-kpis,
   .v-approvals .astats,
   .v-automations .astats,
   .v-decisions .dstats,
   .v-files .fstats,
   .v-home .ledger,
-  .v-integrations .cst-stats,
-  .v-integrations .cst-summary,
   .v-knowledge .kstats,
-  .v-library .lstats,
   .v-memory .mr-meta,
   .v-memory .mstats,
   .v-memory .mr-core-grid,
   .v-projects .kpis,
   .v-research .rc-stats,
-  .v-files .tr-meta,
-  .v-library .cx-stats,
-  .v-notifications .tr-hud,
-  .v-settings .mc-specs,
   .v-settings .theme-tiles{ grid-template-columns:1fr }
 
   .v-tasks .board{ grid-template-columns:1fr }
@@ -4009,16 +3936,10 @@ body.ignited .shimmer{opacity:1}
   .v-integrations .creg-row{ grid-template-columns:auto minmax(0,1fr) auto }
   .v-projects .lane{ grid-template-columns:auto minmax(0,1fr); gap:10px 14px }
 
-  .v-calendar .cal-wds,
-  .v-calendar .cal-grid{ gap:4px }
+  .v-calendar .cal-wds{ gap:4px }
 
   .v-tasks .board-bar{ flex-wrap:wrap }
 
-  .v-files .fl-mono,
   .v-library .codex,
-  .v-security .deny-scroll,
-  .v-agents .lattice-stage,
-  .v-calendar .rib-scroll,
-  .v-tasks .crit-rail,
-  .v-automations .sc-tabs{ max-width:100%; overflow-x:auto }
+  .v-calendar .rib-scroll{ max-width:100%; overflow-x:auto }
 }

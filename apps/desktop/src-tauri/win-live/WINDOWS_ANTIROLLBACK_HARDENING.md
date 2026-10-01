@@ -29,6 +29,11 @@ access to the deployment directory.
   accidental-tamper check only**, and the **real anti-rollback boundary is the OS write-protection on the
   deployment directory**. No fake verification was added (a signature under a public key would be security
   theatre).
+- **One site was missed by that sweep.** `src/bin/win_live_turn.rs` — the driver, the caller of
+  `load_verified_floor` — kept the comment "a reset/tampered floor.json is rejected because floor.sig will
+  not verify under the TCB floor key" until 2026-10-02 (T-145). It now carries the same correction. That
+  comment was also wrong about the file: there is no separate `floor.sig`; the signature is the `sig` field
+  of `floor.json`.
 
 ## The real boundary (what actually protects anti-rollback)
 
@@ -46,7 +51,11 @@ the whole broker rests on, and it is the honest place the guarantee lives.
    `0700`/`0600`. This makes the OS boundary explicit rather than an operator convention.
 2. **Defense-in-depth: per-deployment sealed floor key (recommended).** Replace the public `FLOOR_SEED_HEX`
    with a **random per-deployment floor key** generated at provision and sealed at rest exactly like the
-   serving seeds (`seedstore::dpapi_seal` + the `read_seed` TOFU path; Linux: file-perm-protected). Store the
+   serving seeds (`seedstore::dpapi_seal` + the `read_seed` TOFU path; Linux: file-perm-protected).
+   *(Read "exactly like the serving seeds" with care: that TOFU seal does not succeed for a provisioned
+   service account — it holds read on the seed and no write on `keys\`, and `read_seed` swallows the
+   failure — so the serving seeds are plaintext hex under an ACL today. A floor key sealed "the same way"
+   would need the seal done at provisioning time, under the owning account.)* Store the
    floor **public** key in the root-signed manifest (or config bound to it) so the signature also resists a
    *source-reading* attacker. Residual: a **same-principal** compromise can still DPAPI-unseal it — which is
    why (3) exists. (This changes the deployment format and requires re-provisioning + re-running the

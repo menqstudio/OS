@@ -26,8 +26,11 @@ path = "src/bin/relay.rs"
 # derivation — is `brops_provision::audit_signer`. Nothing here re-decides any of it.
 brops-provision = { path = "../provision" }
 serde_json = "1"
-# Held only by the SERVICE process. The relay never constructs a key type; that is enforced by
-# `tests/relay_contract.rs::the_relay_binary_links_no_signing_key`.
+# Used only on the SERVICE's path. Nothing the relay shim compiles from names a key type, a
+# seed or the custody module: `tests/relay_contract.rs::the_relay_sources_name_no_key_and_no_custody`
+# scans the two files the shim is written from for exactly that. It is a SOURCE check and says so — both binaries link
+# the one library crate, so "the relay binary links no signing key" is not a claim a test here
+# could make, and until T-145 this comment credited a test of that name that never existed.
 ed25519-dalek = "2"
 
 # The transport is the EXISTING one: `brops_win_live::pipe::run_server` (restrictive DACL from

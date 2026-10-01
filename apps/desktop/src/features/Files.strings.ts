@@ -13,11 +13,6 @@ export const STR = {
     hy: 'Այս պանակն ավելի շատ ֆայլ ունի, քան ցուցադրված է — ցանկը սահմանափակվել է։',
     ru: 'В этой папке больше файлов, чем показано — список ограничен.',
   },
-  clearFilter: {
-    en: 'Clear filter',
-    hy: 'Մաքրել զտիչը',
-    ru: 'Очистить фильтр',
-  },
   all: {
     en: 'All',
     hy: 'Բոլորը',
@@ -72,6 +67,13 @@ export const STR = {
     en: 'open',
     hy: 'բաց',
     ru: 'открыт',
+  },
+  // A file this page has not read yet. Its guard is not established, so the row says that
+  // instead of borrowing "open".
+  guardUnknown: {
+    en: 'not opened yet',
+    hy: 'դեռ չի բացվել',
+    ru: 'ещё не открыт',
   },
   guardRead: {
     en: 'read-only',

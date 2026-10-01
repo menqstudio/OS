@@ -139,7 +139,9 @@ where
     };
     match crate::interpret_reply(&reply) {
         Ok(document) => (EXIT_OK, crate::document_stdout_bytes(&document), String::new()),
-        Err(why) if why.contains("REFUSED") => (EXIT_REFUSED, Vec::new(), why),
-        Err(why) => (EXIT_BAD_REPLY, Vec::new(), why),
+        // By VARIANT, never by searching the message: the malformed-reply text quotes field
+        // names the peer chose, and a field called `REFUSED` must not turn exit 6 into exit 5.
+        Err(crate::ReplyRefusal::Refused(why)) => (EXIT_REFUSED, Vec::new(), why),
+        Err(crate::ReplyRefusal::Malformed(why)) => (EXIT_BAD_REPLY, Vec::new(), why),
     }
 }

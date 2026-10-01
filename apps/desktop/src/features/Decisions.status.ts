@@ -9,9 +9,10 @@ import type { DecisionStatusFamily } from '../domain/enums';
  * the fixture in `pages.browser.spec.tsx` came to assert a rendered state using a word the
  * classifier does not recognise.
  *
- * The rules themselves are unchanged and deliberately tolerant. The status is READ from a ledger
- * this app does not own, `Decision.status` is `string` on the entity and `TEXT` with no CHECK in
- * `0002_decisions.sql`, and narrowing either would claim an engine contract nobody has written.
+ * The rules themselves are unchanged and deliberately tolerant. The status is READ from the
+ * desktop's local `decisions` table (`list_decisions`), `Decision.status` is `string` on the
+ * entity and `TEXT` with no CHECK in `0002_decisions.sql`, and narrowing either would claim a
+ * vocabulary no schema enforces.
  */
 
 /**

@@ -18,25 +18,36 @@ import { statusMeta, decisionStatusFamily, isRecognisedDecisionStatus } from './
  *     identically and only one of them is a status.
  *
  * What is deliberately NOT done: narrowing `Decision.status` to this union, or adding a CHECK to
- * the table. The value is read from a ledger this app does not own, so a narrow type would be a
- * claim about the engine that no contract backs — and a SQLite CHECK cannot be added to an
+ * the table. The value is read from the desktop's own `decisions` table, whose `status` column is
+ * free TEXT that any writer may fill, so a narrow type would be a claim no schema backs — and a
+ * SQLite CHECK cannot be added to an
  * existing table without rebuilding it, which is the shape of the one High the cockpit audit
  * found (a non-atomic migration that could brick the database). The enforcement is placed where
  * this repository actually decides something: its own fixtures.
  */
+/** The comparison itself: every status whose mapped family disagrees with the page's classifier. */
+function disagreements(map: Readonly<Record<string, string>>): string[] {
+  return DECISION_STATUSES
+    .filter((status) => decisionStatusFamily(status) !== map[status])
+    .map((status) => `${status}: map says ${map[status]}, the page reads ${decisionStatusFamily(status)}`);
+}
+
 describe('decision status vocabulary', () => {
   it('every declared status classifies into the family the map claims', () => {
-    for (const status of DECISION_STATUSES) {
-      expect(decisionStatusFamily(status), `${status} must read as ${DECISION_STATUS_FAMILY[status]}`)
-        .toBe(DECISION_STATUS_FAMILY[status]);
-    }
+    expect(disagreements(DECISION_STATUS_FAMILY)).toEqual([]);
   });
 
   it('the map and the classifier are two surfaces, not one — a wrong entry is caught', () => {
-    // The check earns its place only if the two can disagree. `rejected` reads `blocked`; assert
-    // it reads `waiting` and the comparison above is what fails.
-    const wrong: Record<string, string> = { ...DECISION_STATUS_FAMILY, rejected: 'waiting' };
-    expect(decisionStatusFamily('rejected')).not.toBe(wrong.rejected);
+    // The check earns its place only if the two can disagree, so the SAME comparison is run on a
+    // map with one wrong entry and must report exactly that entry. This used to assert
+    // `decisionStatusFamily('rejected') !== 'waiting'` against a literal the test had just
+    // written — which restates one classification and never runs the comparison at all.
+    const wrong = { ...DECISION_STATUS_FAMILY, rejected: 'waiting' };
+    expect(disagreements(wrong)).toEqual(['rejected: map says waiting, the page reads blocked']);
+    // A status the map does not carry at all is a disagreement too, not a silent pass.
+    const missing: Record<string, string> = { ...DECISION_STATUS_FAMILY };
+    delete missing.proposed;
+    expect(disagreements(missing)).toHaveLength(1);
   });
 
   it('every declared status is RECOGNISED, not merely landing in the fallback', () => {

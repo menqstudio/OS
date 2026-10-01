@@ -33,6 +33,12 @@ export const STR = {
   // Card blocker strip
   blocking: { en: 'Blocking', hy: 'Արգելափակում', ru: 'Блокировка' },
   release: { en: 'Release', hy: 'Ազատել', ru: 'Освободить' },
+  // A status change the backend rejected: the task is still where it was.
+  moveFailed: {
+    en: 'Status not changed',
+    hy: 'Կարգավիճակը չի փոխվել',
+    ru: 'Статус не изменён',
+  },
 
   // ── Governed dispatch (Phase 6) ────────────────────────────────────────────
   // Every string below describes a REAL state of the dispatch attempt. None of

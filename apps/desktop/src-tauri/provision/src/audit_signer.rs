@@ -865,6 +865,103 @@ pub enum AppTokenPosture {
     ElevatedAdministrator,
 }
 
+/// `SE_GROUP_ENABLED`.
+pub const SE_GROUP_ENABLED: u32 = 0x0000_0004;
+/// `SE_GROUP_USE_FOR_DENY_ONLY` — the bit a filtered admin token carries on
+/// `BUILTIN\Administrators`.
+pub const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x0000_0010;
+
+/// One entry of this process's token group list, as the Windows half read it: the group's SID as
+/// a string — `None` when `ConvertSidToStringSidW` could not produce one — and its attributes.
+pub type TokenGroup = (Option<String>, u32);
+
+/// The posture a token's group list supports — the DECISION half of
+/// `winimpl::app_token_posture`, pure so that the two answers a real machine practically never
+/// gives can still be tested.
+///
+/// [`AppTokenPosture::StandardUser`] is the STRONGEST claim this module makes:
+/// [`Separation::from_posture`] turns it into `Separated`, "its account holds no administrative
+/// membership". So it may only be the answer when the whole list was read and
+/// `BUILTIN\Administrators` is not in it. It used to be the DEFAULT — the value returned,
+/// unchanged, when `GetTokenInformation(TokenGroups)` failed, and when a group's SID could not be
+/// converted and was skipped. A list that was not read cannot show that Administrators is absent
+/// from it, and a group that could not be named cannot be shown not to be Administrators; both
+/// are [`AnchorRefusal::Unmeasurable`] now.
+pub fn posture_from_token_groups(
+    groups: Result<Vec<TokenGroup>, String>,
+) -> Result<AppTokenPosture, AnchorRefusal> {
+    let groups = match groups {
+        Ok(groups) => groups,
+        Err(why) => {
+            return Err(AnchorRefusal::Unmeasurable {
+                path: "<own token>".to_string(),
+                why: format!("the token's group list could not be read ({why}), so nothing \
+                              shows that BUILTIN\\Administrators is absent from it"),
+            })
+        }
+    };
+    for (index, (sid, attributes)) in groups.iter().enumerate() {
+        let Some(sid) = sid else {
+            return Err(AnchorRefusal::Unmeasurable {
+                path: "<own token>".to_string(),
+                why: format!(
+                    "group {index} of {} in the token's group list has a SID that could not be \
+                     converted to a string, so it cannot be shown not to be \
+                     BUILTIN\\Administrators",
+                    groups.len()
+                ),
+            });
+        };
+        if sid == SID_ADMINISTRATORS {
+            // Deny-only, or present without being enabled: the process is denied today and the
+            // human behind it can elevate without a credential. Enabled: already elevated.
+            return Ok(if attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
+                AppTokenPosture::FilteredAdministrator
+            } else if attributes & SE_GROUP_ENABLED != 0 {
+                AppTokenPosture::ElevatedAdministrator
+            } else {
+                AppTokenPosture::FilteredAdministrator
+            });
+        }
+    }
+    Ok(AppTokenPosture::StandardUser)
+}
+
+// =================================================================================================
+// What a failed open() of the key demonstrates
+// =================================================================================================
+
+/// `ERROR_ACCESS_DENIED`.
+pub const ERROR_ACCESS_DENIED: i32 = 5;
+/// `ERROR_SHARING_VIOLATION`.
+pub const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// What a FAILED `open()` of the signer's key showed about this account's access to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadProbe {
+    /// The operating system refused the open because this account may not read the file.
+    Denied,
+    /// The open failed for a reason that says nothing about this account's access.
+    Unmeasured,
+}
+
+/// Classify the OS error of a failed `open()` — the decision half of `winimpl::app_can_read`.
+///
+/// Only `ERROR_ACCESS_DENIED` is a denial. `ERROR_SHARING_VIOLATION` used to be counted as one
+/// as well, under a comment that called it "denied". It is not: it means ANOTHER PROCESS has
+/// the file open with a share mode that excludes this open — the signer mid-read, an on-access
+/// antivirus scan — and the very same error is returned to an account that has every right to
+/// read the key. Counting it as a denial let the behavioural proof pass on a key this account
+/// can read, and `verify_installed` then accepts an unreadable descriptor as "which is the
+/// property". Everything that is not an access denial is [`ReadProbe::Unmeasured`], including
+/// "not found": an absent key is not a key this account cannot read.
+pub fn classify_failed_key_open(raw_os_error: Option<i32>) -> ReadProbe {
+    match raw_os_error {
+        Some(ERROR_ACCESS_DENIED) => ReadProbe::Denied,
+        _ => ReadProbe::Unmeasured,
+    }
+}
+
 /// What the anchor may honestly be said to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Separation {
@@ -944,6 +1041,15 @@ pub enum AnchorRefusal {
     KeyActuallyReadable { path: String },
     /// The security descriptor could not be read back at all, so nothing was proved.
     Unmeasurable { path: String, why: String },
+    /// The descriptor WAS read, and its ACL could not be enumerated to the end — a count that
+    /// would not come back, an ACE that would not, a grantee whose SID could not be named.
+    ///
+    /// Deliberately not [`AnchorRefusal::Unmeasurable`]. That one means "this account was denied
+    /// the descriptor", which for the signer's key is the healthy case and is accepted as such
+    /// by [`key_readback_proof`]. This one means the read-back saw PART of the grants: a proof
+    /// computed over the part would under-report whoever was in the rest, and "the app's mask
+    /// is 0" over a list with an entry missing is not a proof that the app is absent.
+    AclNotEnumerable { path: String, why: String },
     /// The service is not registered / not running / the pipe is absent.
     SignerAbsent { why: String },
     /// Off Windows, or the platform refused to answer.
@@ -1056,6 +1162,12 @@ impl AnchorRefusal {
                  was proved about it. Note that a process denied all access to a file is also \
                  denied READ_CONTROL on it: the read-back proof must be run by the installer \
                  (elevated) or by the signer, not by the app"
+            ),
+            AnchorRefusal::AclNotEnumerable { path, why } => format!(
+                "the security descriptor of {path} was read, but its access-control list could \
+                 not be enumerated to the end ({why}). The entries that were read are not the \
+                 DACL: a grant in the part that was not read would be invisible to every mask \
+                 computed here, so NOTHING is concluded from the part that was"
             ),
             AnchorRefusal::SignerAbsent { why } => {
                 format!("the signer service is not usable: {why}")
@@ -1464,9 +1576,18 @@ fn write_python_json(value: &Value, out: &mut Vec<u8>) -> Result<(), ProvisionEr
             out.push(b']');
         }
         Value::Object(map) => {
-            // `serde_json::Map` is a `BTreeMap` here, so iteration is already `sort_keys=True`.
+            // `sort_keys=True`, done HERE rather than inherited. `serde_json::Map` is a `BTreeMap`
+            // only while the `preserve_order` feature is off, and features are additive across a
+            // workspace: any crate in the graph turning it on would switch this to insertion
+            // order, the digest would stop matching the engine's file, and every anchor after
+            // the first would be refused as AnchorChainBroken. `canonical.rs` says exactly this
+            // about itself and sorts; this function said "already sorted" and relied on it.
+            // Python compares `str` keys by code point and Rust compares `String`s by UTF-8
+            // bytes, which is the same order.
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
             out.push(b'{');
-            for (i, (k, v)) in map.iter().enumerate() {
+            for (i, (k, v)) in entries.iter().enumerate() {
                 if i > 0 {
                     out.extend_from_slice(b", ");
                 }
@@ -1616,8 +1737,8 @@ pub fn mint_anchor_key() -> Result<(SigningKey, String, String), ProvisionError>
 #[cfg(windows)]
 pub mod winimpl {
     use super::{
-        Ace, AnchorRefusal, AppTokenPosture, DaclFacts, DaclPlan, SID_ADMINISTRATORS,
-        SIGNER_SERVICE_NAME,
+        Ace, AnchorRefusal, AppTokenPosture, DaclFacts, DaclPlan, ReadProbe, TokenGroup,
+        SID_ADMINISTRATORS, SIGNER_SERVICE_NAME,
     };
     use std::ffi::c_void;
     use std::path::Path;
@@ -1642,11 +1763,6 @@ pub mod winimpl {
 
     /// `SE_DACL_PROTECTED`.
     const SE_DACL_PROTECTED_BIT: u16 = 0x1000;
-    /// `SE_GROUP_USE_FOR_DENY_ONLY` — the bit a filtered admin token carries on
-    /// `BUILTIN\Administrators`.
-    const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x0000_0010;
-    /// `SE_GROUP_ENABLED`.
-    const SE_GROUP_ENABLED: u32 = 0x0000_0004;
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -1744,28 +1860,26 @@ pub mod winimpl {
                 len,
                 &mut len,
             );
-            let mut posture = AppTokenPosture::StandardUser;
-            if res.is_ok() {
-                let groups = &*(buf.as_ptr() as *const TOKEN_GROUPS);
-                let slice =
-                    std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize);
-                for g in slice {
-                    if let Some(s) = sid_string(g.Sid) {
-                        if s == SID_ADMINISTRATORS {
-                            posture = if g.Attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
-                                AppTokenPosture::FilteredAdministrator
-                            } else if g.Attributes & SE_GROUP_ENABLED != 0 {
-                                AppTokenPosture::ElevatedAdministrator
-                            } else {
-                                AppTokenPosture::FilteredAdministrator
-                            };
-                            break;
-                        }
+            // Read the list and hand it to the pure decision. A list that could not be read, or
+            // a group whose SID could not be named, is NOT "no administrator here": see
+            // `posture_from_token_groups`, which is where StandardUser stopped being the default.
+            let groups: Result<Vec<TokenGroup>, String> = match res {
+                Ok(()) => {
+                    let groups = &*(buf.as_ptr() as *const TOKEN_GROUPS);
+                    let slice = std::slice::from_raw_parts(
+                        groups.Groups.as_ptr(),
+                        groups.GroupCount as usize,
+                    );
+                    let mut read: Vec<TokenGroup> = Vec::with_capacity(slice.len());
+                    for g in slice {
+                        read.push((sid_string(g.Sid), g.Attributes));
                     }
+                    Ok(read)
                 }
-            }
+                Err(e) => Err(format!("GetTokenInformation(TokenGroups): {e:?}")),
+            };
             let _ = CloseHandle(token);
-            Ok(posture)
+            super::posture_from_token_groups(groups)
         }
     }
 
@@ -1810,6 +1924,11 @@ pub mod winimpl {
                 && (control & SE_DACL_PROTECTED_BIT) != 0;
 
             let mut allow_aces: Vec<Ace> = Vec::new();
+            // Why the ACL could not be read to its end, if it could not. Each of the three
+            // failures below used to be a silent `continue` or a missing `else`, which DROPPED
+            // the entry: a dropped allow ACE under-reports access, so `verify_key_custody` could
+            // pass on "the app's mask is 0" over a list with the app's grant missing from it.
+            let mut enumeration_failure: Option<String> = None;
             if dacl_present {
                 let mut info = ACL_SIZE_INFORMATION::default();
                 if GetAclInformation(
@@ -1823,7 +1942,9 @@ pub mod winimpl {
                     for i in 0..info.AceCount {
                         let mut pace: *mut c_void = std::ptr::null_mut();
                         if GetAce(dacl, i, &mut pace).is_err() || pace.is_null() {
-                            continue;
+                            enumeration_failure =
+                                Some(format!("GetAce({i}) of {} failed", info.AceCount));
+                            break;
                         }
                         let hdr = &*(pace as *const ACE_HEADER);
                         // Deny ACEs are skipped, exactly as `tcb_floor` does: ignoring them can
@@ -1835,14 +1956,28 @@ pub mod winimpl {
                         let inheritable = hdr.AceFlags as u32 & 0x03 != 0;
                         let ace = &*(pace as *const ACCESS_ALLOWED_ACE);
                         let psid = PSID(&ace.SidStart as *const u32 as *mut c_void);
-                        if let Some(sid) = sid_string(psid) {
-                            allow_aces.push(Ace { sid, mask: ace.Mask, inheritable });
+                        match sid_string(psid) {
+                            Some(sid) => {
+                                allow_aces.push(Ace { sid, mask: ace.Mask, inheritable });
+                            }
+                            None => {
+                                enumeration_failure = Some(format!(
+                                    "the grantee SID of allow ACE {i} could not be converted to \
+                                     a string"
+                                ));
+                                break;
+                            }
                         }
                     }
+                } else {
+                    enumeration_failure = Some("GetAclInformation failed".to_string());
                 }
             }
             if !psd.is_invalid() {
                 let _ = LocalFree(HLOCAL(psd.0));
+            }
+            if let Some(why) = enumeration_failure {
+                return Err(AnchorRefusal::AclNotEnumerable { path: p, why });
             }
             Ok(DaclFacts { path: p, owner_sid, dacl_present, dacl_protected, allow_aces })
         }
@@ -1857,11 +1992,12 @@ pub mod winimpl {
     pub fn app_can_read(path: &Path) -> Result<bool, AnchorRefusal> {
         match std::fs::File::open(path) {
             Ok(_) => Ok(true),
-            Err(e) => match e.raw_os_error() {
-                // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION: denied.
-                Some(5) | Some(32) => Ok(false),
-                // Absent is NOT proof of anything.
-                _ => Err(AnchorRefusal::Unmeasurable {
+            Err(e) => match super::classify_failed_key_open(e.raw_os_error()) {
+                // ERROR_ACCESS_DENIED and nothing else. A sharing violation is another process
+                // holding the file, not this account being refused it.
+                ReadProbe::Denied => Ok(false),
+                // Absent is NOT proof of anything, and neither is "busy".
+                ReadProbe::Unmeasured => Err(AnchorRefusal::Unmeasurable {
                     path: path.display().to_string(),
                     why: format!(
                         "open() failed with {e} — neither access nor denial was demonstrated"
@@ -2085,6 +2221,44 @@ pub struct AnchorStatus {
     pub env: AnchorEnv,
 }
 
+/// Step 5 of [`verify_installed`]: what the result of reading the KEY's descriptor back proves.
+///
+/// Three answers, and only one of them is quiet:
+///
+/// * the descriptor was read → the full read-back proof, [`verify_key_custody`];
+/// * [`AnchorRefusal::Unmeasurable`] → this account was denied the descriptor itself. Denied
+///   `READ_CONTROL` means denied everything measured here, the behavioural probe in step 3 is
+///   what established it, and the proof records that rather than a read-back that did not
+///   happen. This is the expected, healthy case;
+/// * anything else → a refusal. In particular [`AnchorRefusal::AclNotEnumerable`], a descriptor
+///   that WAS read and whose ACL could not be listed to the end, is not "the property": this
+///   account read the descriptor, and what it read is incomplete.
+pub fn key_readback_proof(
+    readback: Result<DaclFacts, AnchorRefusal>,
+    key_plan: &DaclPlan,
+    app_sid: &str,
+    signer_sid: &str,
+) -> Result<ReadbackProof, AnchorRefusal> {
+    match readback {
+        Ok(facts) => verify_key_custody(key_plan, &facts),
+        Err(AnchorRefusal::Unmeasurable { path, .. }) => Ok(ReadbackProof {
+            path: format!("{path} (descriptor unreadable by this account — which is the property)"),
+            excluded_sid: app_sid.to_string(),
+            forbidden_mask: READ_ACCESS_BITS | WRITE_ACCESS_BITS | READ_CONTROL,
+            // Denied READ_CONTROL means denied everything measured here; the behavioural probe
+            // is what established it, and this records that rather than claiming a read-back
+            // that did not happen.
+            observed_mask: 0,
+            required_mask: 0,
+            required_sid: signer_sid.to_string(),
+            observed_required_mask: 0,
+            owner_sid: "<unreadable>".to_string(),
+            dacl_protected: false,
+        }),
+        Err(other) => Err(other),
+    }
+}
+
 /// Verify an installed second principal and, only if every proof holds, produce the
 /// environment that turns anchoring on.
 ///
@@ -2099,6 +2273,9 @@ pub struct AnchorStatus {
 ///    recorded as "proved behaviourally instead", and anything else is a refusal.
 ///
 /// Any failure returns [`AnchorRefusal`] and the caller must leave the ledger unanchored.
+///
+/// Step 5 is [`key_readback_proof`], pure, so which read-back failures are "the property" and
+/// which are refusals is decided where a test on any host can hold it.
 pub fn verify_installed(
     paths: &SignerPaths,
     key_id: &str,
@@ -2133,24 +2310,8 @@ pub fn verify_installed(
     let ledger_proof = verify_ledger_custody(&ledger_plan, &ledger_facts)?;
 
     // 5. Key read-back, when available. Being denied here is the expected, healthy case.
-    let key_proof = match winimpl::dacl_facts(&paths.key_file) {
-        Ok(facts) => verify_key_custody(&key_plan, &facts)?,
-        Err(AnchorRefusal::Unmeasurable { path, .. }) => ReadbackProof {
-            path: format!("{path} (descriptor unreadable by this account — which is the property)"),
-            excluded_sid: app_sid.clone(),
-            forbidden_mask: READ_ACCESS_BITS | WRITE_ACCESS_BITS | READ_CONTROL,
-            // Denied READ_CONTROL means denied everything measured here; the behavioural probe
-            // above is what established it, and this records that rather than claiming a
-            // read-back that did not happen.
-            observed_mask: 0,
-            required_mask: 0,
-            required_sid: signer_sid.clone(),
-            observed_required_mask: 0,
-            owner_sid: "<unreadable>".to_string(),
-            dacl_protected: false,
-        },
-        Err(other) => return Err(other),
-    };
+    let key_proof =
+        key_readback_proof(winimpl::dacl_facts(&paths.key_file), &key_plan, &app_sid, &signer_sid)?;
 
     let env = AnchorEnv::from_proofs(
         &paths.shim_path,

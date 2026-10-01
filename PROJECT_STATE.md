@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-02 — 96 pull requests merged (`#219`–`#315`), `main` at
-`c6bdb77`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-02 — 97 pull requests merged (`#219`–`#316`), `main` at
+`6b5604c`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c6bdb77`.** The only thing open is PR #316 on `t148/settled-at-c6bdb77`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
 >
-> **Next:** T-145 wave 2 (Rust, frontend), then the documents second pass.
+> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1; the Approvals route ceiling is 11.5 KB with its reason
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,11 +44,11 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-01 | 1491 OK |
-| frontend · 2026-10-01 | typecheck clean, 801 / 85 files |
+| `tools/` self-tests · 2026-10-02 | 1495 OK |
+| frontend · 2026-10-02 | typecheck clean, 984 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-10-01 | 2617 OK, 13 skipped |
-| Rust, 10 crates · 2026-10-01 | 1288 passed, 1 ignored (needs root; CI runs it) |
+| engine (Python), non-root, Debian 13 · 2026-10-02 | 2620 OK, 13 skipped |
+| Rust, 10 crates · 2026-10-02 | 1408 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 

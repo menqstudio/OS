@@ -63,7 +63,6 @@ export const OBJECT_SHAPED: Record<string, unknown> = {
   get_security_summary: { pendingApprovals: 0, decidedApprovals: 0, auditEvents: 0, sensitiveEvents: [] },
   list_dir: { path: '/', parent: null, entries: [] },
   read_file: { path: '/', content: '', readonly: true },
-  get_ai_status: { provider: 'not-configured', governed: false, reason: '' },
 };
 
 /**
@@ -119,8 +118,16 @@ const memoryKind = (v: MemoryKind) => v;
 // word nobody has seen also reaches, so the fixture proved nothing about a recognised state.
 const decisionState = (v: DecisionStatus) => v;
 
-const T0 = '2026-08-19T09:00:00Z';
-const T1 = '2026-08-19T10:30:00Z';
+// Row timestamps are what `brops_core::now()` writes: MILLISECONDS SINCE THE EPOCH, AS TEXT.
+// They were ISO strings here, which every page's parser happens to accept — so the populated
+// sweeps could never notice a page that cannot read the shape the backend really sends (two
+// could not: Integrations and Automations rendered a dash for every date).
+const T0 = String(Date.UTC(2026, 7, 19, 9, 0, 0));
+const T1 = String(Date.UTC(2026, 7, 19, 10, 30, 0));
+// The two fields the app itself writes as ISO: a calendar event's start/end
+// (`new Date(when).toISOString()` in Calendar) and a task's due date.
+const ISO0 = '2026-08-19T09:00:00Z';
+const ISO1 = '2026-08-19T10:30:00Z';
 
 const PROJECTS: Project[] = [
   { id: 'pr-1', workspaceId: null, name: 'Bridge hardening', description: 'Close the receipt seam.',
@@ -133,7 +140,7 @@ const PROJECTS: Project[] = [
 
 const TASKS: Task[] = [
   { id: 'tk-1', projectId: 'pr-1', title: 'Pin the manifest epoch', description: 'Anti-rollback.',
-    status: taskState('active'), priority: prio('high'), assignedAgentId: 'ag-1', dueAt: T1, position: 1,
+    status: taskState('active'), priority: prio('high'), assignedAgentId: 'ag-1', dueAt: ISO1, position: 1,
     createdAt: T0, updatedAt: T1, completedAt: null },
   { id: 'tk-2', projectId: 'pr-1', title: 'Write the negative matrix', description: 'Every binding.',
     status: taskState('planned'), priority: prio('normal'), assignedAgentId: null, dueAt: null, position: 2,
@@ -155,8 +162,12 @@ const APPROVALS: Approval[] = [
   { id: 'ap-2', actionType: 'run_step', target: 'cargo test -p brops-core', level: lvl('A1'),
     riskLevel: risk('low'), status: approvalState('approved'), requestedBy: 'ledger-reader',
     decisionNote: 'Read-only suite.', entityType: 'run', entityId: 'rn-1', requestedAt: T0,
+    // `'native'` is the ONLY value `approve_confirmed` writes, and the one
+    // `approvalsAuthority.classifyApproval` requires. This said `'native-dialog'`, which no
+    // backend emits — so the one approved fixture classified as `unconfirmed` and the populated
+    // sweeps never mounted a granted approval at all.
     decidedAt: T1, originPrincipal: 'owner', confirmedAt: T1, confirmedBy: 'owner',
-    confirmationMethod: 'native-dialog' },
+    confirmationMethod: 'native' },
 ];
 
 const NOTIFICATIONS: Notification[] = [
@@ -181,7 +192,8 @@ const ACTIVITY: ActivityEvent[] = [
 ];
 
 const CONVERSATIONS: Conversation[] = [
-  { id: 'cv-1', kind: 'chat', title: 'Receipt seam', messageCount: 2, lastMessageAt: T1,
+  // `direct`, not `chat`: the store's conversation kinds are direct / group / ask (domain.rs).
+  { id: 'cv-1', kind: 'direct', title: 'Receipt seam', messageCount: 2, lastMessageAt: T1,
     createdAt: T0, updatedAt: T1 },
   { id: 'cv-2', kind: 'group', title: 'Design review', messageCount: 1, lastMessageAt: T1,
     createdAt: T0, updatedAt: T1 },
@@ -236,19 +248,22 @@ const RUNS: Run[] = [
  *
  * `read_file` is out for the same reason, and `get_ai_status` for a different one: **no command of
  * that name exists.** `services/desktop.ts` invokes `ai_status`. The liveness test found it in the
- * first draft of this table -- and the four-entry `OBJECT_SHAPED` table above has carried the same
- * phantom key since it was written, answering a command nothing calls. It is left there rather than
- * quietly deleted, because it is a finding about that table and not about this one.
+ * first draft of this table. `OBJECT_SHAPED` above carried the same phantom key from the day it
+ * was written — answering a command nothing calls — and so did the jsdom a11y spec's private copy
+ * of that table; the key is gone from the one table that is left.
  */
 
 const EVENTS: CalendarEvent[] = [
   { id: 'cal-1', title: 'Audit window', kind: 'review', location: 'remote',
-    startsAt: T0, endsAt: T1, createdAt: T0, updatedAt: T1 },
+    startsAt: ISO0, endsAt: ISO1, createdAt: T0, updatedAt: T1 },
 ];
 
 const AUTOMATIONS: Automation[] = [
-  { id: 'au-1', name: 'Nightly ledger read', trigger: 'schedule:daily',
-    action: 'read_decision_ledger', enabled: true, createdAt: T0, updatedAt: T1 },
+  // A trigger the scheduler parses (`every: <N>{m|h|d}`) and an action verb the store runs
+  // (`notify` / `task` / `note`). `schedule:daily` + `read_decision_ledger` were neither, so the
+  // populated Automations page was always the sealed, cannot-run conduit.
+  { id: 'au-1', name: 'Nightly ledger note', trigger: 'every: 1d',
+    action: 'notify: nightly ledger read is due', enabled: true, createdAt: T0, updatedAt: T1 },
 ];
 
 const AUTOMATION_RUNS: AutomationRun[] = [

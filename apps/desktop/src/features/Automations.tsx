@@ -11,6 +11,7 @@ import { riskLabel } from '../domain/statusLabels';
 import type { Lang } from '../domain/enums';
 import type { Automation } from '../domain/entities';
 import { STR } from './Automations.strings';
+import { parseTimestamp } from './timestamps';
 import {
   assessAction, assessRun, bindReceipt, buildLedger, isContractEnforced, isEngineVerified,
   parseTrigger, summarise,
@@ -361,12 +362,6 @@ export function Automations() {
 
   const s = useAsync(() => desktop.listAutomations(), []);
   const items = useMemo(() => s.data ?? [], [s.data]);
-  // The selected conduit's real run history (Phase 8). Refetches when the selection changes and is
-  // reloaded after a "Run now"; empty for a never-run automation.
-  const runs = useAsync(
-    () => (selectedId ? desktop.listAutomationRuns(selectedId) : Promise.resolve([])),
-    [selectedId],
-  );
 
   const stateLabel = (st: RuntimeState): string => ({
     idle: L('armedState'),
@@ -393,9 +388,12 @@ export function Automations() {
     return a.enabled ? 'idle' : 'off';
   };
 
-  const fmtDate = (iso: string): string => {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '—';
+  // The backend's timestamps are epoch-milliseconds AS TEXT (`brops_core::now()`), not ISO. This
+  // was `new Date(iso)`, Invalid Date for a digit string, so Created, Updated and every run time
+  // rendered as a dash.
+  const fmtDate = (raw: string): string => {
+    const d = parseTimestamp(raw);
+    if (d === null) return '—';
     try {
       return d.toLocaleDateString(lang === 'hy' ? 'hy-AM' : 'en-US', {
         year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -422,15 +420,35 @@ export function Automations() {
   const selected = items.find((a) => a.id === selectedId)
     ?? filtered[0] ?? items[0] ?? null;
 
+  // The run history of the conduit ON SCREEN (Phase 8). Reloaded after a "Run now"; empty for a
+  // never-run automation.
+  //
+  // It was keyed on `selectedId`, while the page shows `selected` — which falls back to the first
+  // filtered row when `selectedId` matches nothing — and its rows were used unfiltered. `useAsync`
+  // deliberately keeps the previous `data` across a dependency change and across an error, so the
+  // PREVIOUS automation's runs sat under the new one's name until the new read landed, and for
+  // good if that read failed. Two things hold it now: the read is keyed on the automation
+  // actually shown, and every row is held to that automation's id, so a row that belongs to
+  // another conduit cannot be drawn here whatever the read state is.
+  const shownId = selected?.id ?? null;
+  const runs = useAsync(
+    () => (shownId ? desktop.listAutomationRuns(shownId) : Promise.resolve([])),
+    [shownId],
+  );
+  const runRows = useMemo(
+    () => (runs.data ?? []).filter((r) => r.automationId === shownId),
+    [runs.data, shownId],
+  );
+
   // The selected conduit's governed history: the durable run log merged with this session's
   // refusals for THIS automation, each row carrying only the authority that is genuinely known.
   const ledger = useMemo(
     () => buildLedger(
-      runs.data ?? [],
+      runRows,
       refusals.filter((r) => r.contract.automationId === selected?.id),
       receipts,
     ),
-    [runs.data, refusals, receipts, selected?.id],
+    [runRows, refusals, receipts, selected?.id],
   );
   const ledgerSummary = useMemo(() => summarise(ledger), [ledger]);
 
@@ -665,11 +683,11 @@ export function Automations() {
   );
 
   // ── the blocked (wall/guard denial) panel ────────────────────────────────────
-  const renderBlocked = (reason: string, fix: string) => (
+  const renderBlocked = (reason: string, fix: string, title: string = L('blockedByWall')) => (
     <div className="au-blocked" role="alert">
       <div className="au-blocked-title">
         <span aria-hidden="true">⛔</span>
-        {L('blockedByWall')}
+        {title}
       </div>
       <div className="au-blocked-reason">{reason}</div>
       <div className="au-blocked-fix">{fix}</div>
@@ -904,8 +922,12 @@ export function Automations() {
                 {' · '}<b className="mono">{ledgerSummary.unattributed}</b> {L('ledgerUnattributed')}
               </p>
             </>
-          ) : (
+          ) : runs.error ? null : (
             <p className="au-note muted">{L('noRuns')}</p>
+          )}
+          {/* A failed history read is said, never shown as "No runs yet". */}
+          {runs.error && (
+            <p className="au-note" role="alert">{L('runsUnreadable')}: {runs.error}</p>
           )}
         </div>
       </div>
@@ -968,9 +990,12 @@ export function Automations() {
     body = (
       <section className="mani surface soft lg hud" role="alert" aria-label={L('manifold')}>
         <span className="bracket tl" /><span className="bracket tr" />
+        {/* `list_automations` is a local SQLite read. A refusal of it is a refused read — not
+            the wall, and not something a mode, scope or approval would open. */}
         {renderBlocked(
           `${t('state.permissionDenied')}: ${s.error}`,
           L('storeDenied'),
+          L('readRefused'),
         )}
       </section>
     );

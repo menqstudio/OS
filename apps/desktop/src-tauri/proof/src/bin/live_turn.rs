@@ -2,9 +2,17 @@
 //!
 //! This is the entry point that assembles ONE real governed turn end-to-end and prints a single
 //! `RESULT: <trust_state> production_verified=<bool> bound=<bool>` line (or a closed `blocked` reason). It
-//! wires the SAME [`brops_broker::chain_executor::linux::LinuxGovernedTurnChain`] the broker binary would
-//! use — the real AF_UNIX challenge-authority / supervisor / isolated-signer hops + the real privileged
-//! recorder → setuid launcher → executor spawn — over the deployment's `/opt/brops-live` provisioning.
+//! wires [`brops_broker::chain_executor::linux::LinuxGovernedTurnChain`] — the DIRECT chain: the real
+//! AF_UNIX challenge-authority / supervisor / isolated-signer hops + the real privileged recorder →
+//! setuid launcher → executor spawn — over the deployment's `/opt/brops-live` provisioning.
+//!
+//! **No shipped binary builds that chain, and this driver is its only constructor.** This header
+//! used to say it was the chain "the broker binary would use". `brops-broker` serves the §4.10(g)
+//! sidecar ladder (`LadderChain`) and nothing else since 2026-08-12 — its `build_governed_executor`
+//! says so — because the direct chain takes its three request digests from `[resolved]` in the
+//! deployment config, the same on every turn. What this driver proves is the §2.5 TCB floor and the
+//! §5 five-op lifecycle (`engine/ci/live/run_live_turn.sh`); the product's turn is proved by that
+//! kit's sibling, `run_ladder_turn.sh`.
 //!
 //! It NEVER fabricates a `trusted_verified`: the only path to a committed message is
 //! `governed_verification::verify_and_accept` (driven inside `run_governed_turn`), and the production trust
@@ -60,13 +68,14 @@ mod linux {
     };
     use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, ResolvedTurn, TurnResolver};
 
-    use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
+    use brops_core::broker_orchestrator::run_governed_turn;
     use brops_core::governed_message_store::verify_committed_binding;
     use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL};
     use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
+    use brops_broker::manifest_resolver::resolve_production_key_pair;
     use brops_core::key_manifest::{
-        check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor,
-        KeyManifest, PinnedRoot, RootAnchor, RootProvenance,
+        check_and_advance, parse_floor_json, verify_manifest_anchored, KeyManifest, PinnedRoot,
+        RootAnchor, RootProvenance,
     };
     use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
 
@@ -80,30 +89,6 @@ mod linux {
     fn blocked(reason: &str) -> i32 {
         println!("RESULT: blocked reason={reason} production_verified=false bound=false");
         1
-    }
-
-    /// The §2.5 owner/mode floor for the root trust anchor file (audit **F-17**): a regular, root-owned
-    /// file with no group/other write bit. The anchor is the one input whose forgery makes every
-    /// downstream signature meaningless, so it gets the same treatment as the executor image and the
-    /// lease — and it is checked on the OPENED fd, never by a `metadata(path)` re-lookup.
-    fn anchor_file_is_tcb_owned(path: &str) -> Result<(), &'static str> {
-        use std::os::unix::io::AsRawFd;
-        let f = std::fs::File::open(path).map_err(|_| "unopenable")?;
-        // SAFETY: `f` owns a live descriptor for the whole call; fstat gets a valid out-pointer.
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(f.as_raw_fd(), &mut st) } != 0 {
-            return Err("unstatable");
-        }
-        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
-            return Err("not_regular");
-        }
-        if st.st_uid != 0 {
-            return Err("not_root_owned");
-        }
-        if st.st_mode & 0o022 != 0 {
-            return Err("writable");
-        }
-        Ok(())
     }
 
     /// This deployment's answer to "whose keys were these?", wired INTO the broker rather than
@@ -151,20 +136,6 @@ mod linux {
         }
     }
 
-    fn hex32(s: &str) -> Option<[u8; 32]> {
-        if s.len() != 64 {
-            return None;
-        }
-        let b = s.as_bytes();
-        let mut out = [0u8; 32];
-        for i in 0..32 {
-            let hi = (b[2 * i] as char).to_digit(16)?;
-            let lo = (b[2 * i + 1] as char).to_digit(16)?;
-            out[i] = (hi * 16 + lo) as u8;
-        }
-        Some(out)
-    }
-
     fn s(v: &Value, path: &[&str]) -> Option<String> {
         let mut cur = v;
         for k in path {
@@ -199,15 +170,7 @@ mod linux {
     }
 
     // Production broker-minted ids (fresh UUID v4 broker_turn_id + one-time request_nonce).
-    struct UuidIds;
-    impl BrokerIds for UuidIds {
-        fn new_broker_turn_id(&self) -> String {
-            brops_core::id()
-        }
-        fn new_request_nonce(&self) -> String {
-            brops_core::id()
-        }
-    }
+    use brops_core::real_ids::RealBrokerIds as UuidIds;
 
     fn init_schema(conn: &Connection) -> Result<(), String> {
         brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;
@@ -267,15 +230,21 @@ mod linux {
             Some(p) => p,
             None => return blocked("config_missing_root_anchor_path"),
         };
-        if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
-            return blocked(&format!("root_anchor_{why}"));
-        }
-        // The raw text is kept: an `install_minted` anchor is compared, byte for byte, against the
-        // file the §2.5 pin manifest pins (below).
-        let anchor_raw = std::fs::read_to_string(&anchor_path).ok();
-        let anchor: Value = match anchor_raw.as_deref().and_then(|b| serde_json::from_str(b).ok()) {
-            Some(v) => v,
-            None => return blocked("root_anchor_unreadable"),
+        // The §2.5 owner/mode floor for the anchor file (audit F-17) — regular, root-owned, no
+        // group/other write bit — and its bytes, taken from the ONE descriptor that floor was
+        // checked on. The anchor is the one input whose forgery makes every downstream signature
+        // meaningless. It used to be checked on a descriptor that was then dropped and read again
+        // by path; `tcb_verify::read_root_anchor` is the one reader both drivers now share.
+        //
+        // The raw bytes are kept: an `install_minted` anchor is compared, byte for byte, against
+        // the file the §2.5 pin manifest pins (below).
+        let anchor_raw = match crate::tcb_verify::read_root_anchor(&anchor_path) {
+            Ok(bytes) => bytes,
+            Err(why) => return blocked(&format!("root_anchor_{why}")),
+        };
+        let anchor: Value = match serde_json::from_slice(&anchor_raw) {
+            Ok(v) => v,
+            Err(_) => return blocked("root_anchor_unreadable"),
         };
         // Provenance is now a TYPED, closed value, not a string the driver compares late. An unknown,
         // misspelled or absent `provenance` is refused outright rather than defaulting to "not
@@ -321,11 +290,7 @@ mod linux {
         // per-artifact check. What the label then buys is `resolve_trust_state` and the constant.
         if let Err(why) =
             brops_broker::tcb::check_declared_install_minted_anchor(root_anchor.provenance, || {
-                crate::tcb_verify::anchor_is_floor_pinned(
-                    &cfg,
-                    anchor_raw.as_deref().unwrap_or_default().as_bytes(),
-                )
-                .map_err(|detail| {
+                crate::tcb_verify::anchor_is_floor_pinned(&cfg, &anchor_raw).map_err(|detail| {
                     eprintln!("live_turn: the install_minted anchor is not the floor-pinned one: {detail}");
                     detail
                 })
@@ -341,17 +306,27 @@ mod linux {
             Err(_) => return blocked("manifest_root_signature_invalid"),
         };
 
-        // Anti-rollback: accept only an epoch at/above the durable floor (same-epoch requires the same hash).
+        // Anti-rollback — as a COMPARISON ONLY, and that is a known gap rather than the control.
+        //
+        // The epoch is refused if it is below the floor this run READ (same epoch requires the same
+        // hash), and then the advanced floor `check_and_advance` returns is dropped: nothing in this
+        // driver writes `floor_path`. So across runs the highest accepted epoch never rises above
+        // what the provisioner wrote, which is exactly the defect `key_manifest::check_and_persist`
+        // was written to remove ("its result was dropped ... the highest accepted epoch never
+        // actually rose"). The broker's resolver and `ladder_turn` both persist; this driver is the
+        // remaining call site that does not, and the comment here used to call the floor "durable".
+        //
+        // It is NOT fixed here because it cannot be fixed here alone: `run_live_turn.sh` leaves
+        // `trust.floor_path` root-owned 0644 inside a root-owned 0755 directory and runs this binary
+        // as the broker account, so a persisting driver would refuse every turn of that kit with
+        // `floor_not_persisted`. `run_ladder_turn.sh` met the same thing and moved its floor into the
+        // broker's own 0700 state directory. The fix is both halves in one change — the live kit's
+        // floor into `$BROKERSTATE`, then `check_and_persist(&floor, &manifest, floor_path)` here
+        // with a refusal on `NotPersisted` — and until then this line bounds a rollback only against
+        // the provisioned floor.
         let floor_path = s(&cfg, &["trust", "floor_path"]).unwrap_or_default();
-        let floor: AntiRollbackFloor = match std::fs::read_to_string(&floor_path)
-            .ok()
-            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-            .and_then(|v| {
-                Some(AntiRollbackFloor {
-                    highest_epoch: v.get("highest_epoch")?.as_u64()?,
-                    highest_hash: v.get("highest_hash")?.as_str()?.to_string(),
-                })
-            }) {
+        // The one on-disk floor parser (`parse_floor_json`); absent or malformed fails closed.
+        let floor = match std::fs::read(&floor_path).ok().as_deref().and_then(parse_floor_json) {
             Some(f) => f,
             None => return blocked("floor_unreadable"),
         };
@@ -359,25 +334,19 @@ mod linux {
             return blocked("anti_rollback");
         }
 
+        // Both pinned keys through the ONE resolution the broker and `ladder_turn` use: trust class,
+        // revocation, validity window and allowed protocol on EACH, and the two required to be
+        // different keys. The supervisor attestation key used to be taken here by a bare lookup of
+        // its id in the manifest — present was enough — so a revoked, expired or development-class
+        // key verified an attestation in this driver and nowhere else.
         let signer_key_id = s(&cfg, &["trust", "signer_key_id"]).unwrap_or_default();
         let sup_attest_key_id = s(&cfg, &["trust", "supervisor_attestation_key_id"]).unwrap_or_default();
-        let iso = match resolve_production_key(&manifest, &signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)
-        {
-            Ok(k) => k,
-            Err(_) => return blocked("key_resolution"),
-        };
-        let sup_hex = match manifest.keys.iter().find(|k| k.key_id == sup_attest_key_id) {
-            Some(k) => k.public_key_hex.clone(),
-            None => return blocked("supervisor_attestation_key_missing"),
-        };
-        let iso_pub = match hex32(&iso.public_key_hex) {
-            Some(b) => b,
-            None => return blocked("signer_pubkey_malformed"),
-        };
-        let sup_pub = match hex32(&sup_hex) {
-            Some(b) => b,
-            None => return blocked("supervisor_pubkey_malformed"),
-        };
+        let pair =
+            match resolve_production_key_pair(&manifest, &signer_key_id, &sup_attest_key_id, now) {
+                Ok(pair) => pair,
+                Err(refusal) => return blocked(refusal.as_str()),
+            };
+        let (iso_pub, sup_pub) = (pair.signer_public_key, pair.supervisor_attestation_public_key);
 
         // ---- (B) the broker's OWN trusted Expected + create-pending facts ----
         let resolved = ResolvedTurn {

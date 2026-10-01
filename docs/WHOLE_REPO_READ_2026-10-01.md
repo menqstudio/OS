@@ -41,42 +41,10 @@ All open. Grouped by kind; within a kind, by path.
 
 ### security (26)
 
-- **`apps/desktop/src-tauri/core/src/agent_bundle.rs:453`** — Bundle loader reads grant/flow from outside the digest-named directory: grant_ref/flow_ref are joined with no containment check
-  - `dir.join(&manifest.grant_ref)` with no check. Scratch probe run against the real crate: manifest with grant_ref="../../outside/grant.json" verifies; widening that outside grant (added USE_NETWORK, expiry i64::MAX) left the SAME digest and verify() returned Ok long past the original expiry.
-  - also: `apps/desktop/src-tauri/core/src/agent_bundle.rs:475 (flow_ref, same join); tools/check_produced_artifact.py:249-253 has the containment guard the Rust loader lacks`
-  - fix: In verify(), refuse unless grant_ref and flow_ref are each exactly a path present in manifest.files (which also rules out `..` and absolute paths), and add a test with a valid grant outside the bundle.
-- **`apps/desktop/src-tauri/launcher/src/main.rs:554`** — Setuid-root launcher trusts hardcoded uid 500 as a TCB owner, and nothing provisions or reserves that uid
-  - `const TCB_OWNER_BROPS_ADMIN_UID: u32 = 500;` with "TODO: bind from the root-owned TcbPinManifest". Accepted as owner of lease, executor image and attested-request config (:605, :715, :806, :1111). brops_install.sh:102-109 creates only uids 5001-5007; no brops-admin account is created anywhere.
-  - also: `engine/install/brops_install.sh:102`
-  - fix: Accept root only until a brops-admin uid is read from the root-owned pin manifest, or have the installer create and reserve that account.
-- **`apps/desktop/src-tauri/proof/src/bin/live_turn.rs:369`** — live_turn takes the supervisor attestation key by raw manifest lookup: no trust-class, revocation or validity check
-  - `manifest.keys.iter().find(\|k\| k.key_id == sup_attest_key_id)` then uses its public_key_hex. The signer key two lines above goes through resolve_production_key (NotProduction/Revoked/window). broker/src/manifest_resolver.rs:304 and ladder_turn.rs:393 resolve the supervisor key that way too.
-  - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:304`
-  - fix: Resolve the supervisor attestation key with resolve_production_key exactly as the signer key is, and block on error.
-- **`apps/desktop/src-tauri/proof/src/bin/live_turn.rs:369`** — live_turn resolves the supervisor-attestation key by bare key_id lookup, bypassing revocation / validity window / trust class that every other copy enforces
-  - `let sup_hex = match manifest.keys.iter().find(\|k\| k.key_id == sup_attest_key_id)` - no resolve_production_key. win-live/resolver.rs:238-240 calls this 'audit R2 - no bare key_id lookup that bypasses revocation'; broker/manifest_resolver.rs:303 and ladder_turn.rs:393 resolve both keys properly.
-  - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:301-304 ; apps/desktop/src-tauri/win-live/src/resolver.rs:238-250 ; apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:386-399`
-  - fix: Resolve the supervisor key through resolve_production_key(&manifest, &sup_attest_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now) exactly as the signer key is two lines above.
-- **`apps/desktop/src-tauri/src/ai.rs:1315`** — Guard's residual-risk argument rests on 'pushing is not a capability this app has', which is false since BRO_BASH_DENY was emptied
-  - 1315: "`.github/workflows` is the one exception ... covered by the fact that pushing is not a capability this app has." But 1150: `const BRO_BASH_DENY: &[&str] = &[];` and the prompt (1051) grants `git ... commit`. `.git` is in SNAPSHOT_SKIP_DIRS (1280), so a committed/pushed protected change is not undone.
-  - also: `apps/desktop/src-tauri/src/ai.rs:1150`
-  - fix: Either restore a non-empty deny for `git push`/`git commit` on protected paths, or rewrite the guarantee to say it covers working-tree bytes only and that new workflow files plus commits/pushes are NOT covered.
-- **`apps/desktop/src-tauri/src/ai.rs:1346`** — TrustSurfaceGuard.settle follows symlinks that the snapshot refuses to follow: silent two-turn bypass, and restore writes outside the tree
-  - collect_snapshot returns on md.is_symlink() (1456-1459), but settle uses std::fs::read(path) (1346) and std::fs::write(path, original) (1366), both following links. Swap a protected file for a symlink to an identical copy: digest matches, no notice; next turn's snapshot skips it. Not executed; read from code.
-  - also: `apps/desktop/src-tauri/src/ai.rs:1456`
-  - fix: In settle, symlink_metadata each snapshotted path first and treat 'is now a symlink / not a regular file' as a change: remove the link and recreate the regular file, never write through it.
 - **`apps/desktop/src-tauri/win-live/src/bin/win_supervisor.rs:52`** — Supervisor evidence floor is placed inside the shared store the comment says it avoids, and a deleted floor is silently recreated
   - Comment: "It lives in a supervisor state directory rather than in the shared store, because the store is written by the execution". Code: PathBuf::from(&cfg.store_dir).join("supervisor-state").join("evidence-floor.db"). Supervisor::new does create_dir_all + Connection::open, so an absent db becomes an empty floor.
   - also: `apps/desktop/src-tauri/win-live/src/servers.rs:686-697`
   - fix: Put the floor db outside store_dir under a supervisor-only ACL that provisioning creates, and refuse to start when a previously initialised floor is missing.
-- **`apps/desktop/src-tauri/win-live/src/servers.rs:380`** — The evidence chain the supervisor 'derives' from is written by the same broker process that sends complete-run
-  - servers.rs:382-383 'this directory belongs to the executor principal, so the broker cannot write what the supervisor is about to attest'. But execution.rs:326-336 (run inside win_live_turn, the driver/broker) writes {attempt}.evidence.json itself; win_executor.rs only prints to stdout.
-  - also: `apps/desktop/src-tauri/win-live/src/execution.rs:321-336 ; src/bin/win_live_turn.rs:264`
-  - fix: Either have a separate executor/recorder principal write the chain into a directory the broker cannot write, or correct the SupervisorConfig/execution.rs comments to say F-01 derivation is a shape check on the live Windows kit too.
-- **`apps/desktop/vite.config.ts:13`** — envPrefix "TAURI_" makes the updater signing key eligible for the client bundle (CVE-2023-46115 pattern)
-  - `envPrefix: ["VITE_", "TAURI_"]`. release.yml:162-163 puts TAURI_SIGNING_PRIVATE_KEY and its password in the env of the step that runs `npm run build` (tauri.conf.json:10). Latent, not leaking today: no file under src reads import.meta.env; one wholesale reference would inline both.
-  - also: `.github/workflows/release.yml:162`
-  - fix: Narrow the prefix to ["VITE_", "TAURI_ENV_"] so no TAURI_SIGNING_* variable can reach import.meta.env.
 - **`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md:272`** — Design's key_usage type separation (receipt-signing vs supervisor-attestation keys) does not exist in the implemented manifest
   - Doc: 'receipt-key resolver rejects any key whose key_usage != receipt_signing ... disjoint key sets by construction'. Code: ManifestKey has no key_usage/supervisor_id/expires_at; manifest_resolver.rs:302 and :304 resolve BOTH keys via resolve_production_key(.., RECEIPT_ENVELOPE_ARTIFACT_TYPE, ..).
   - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:302-304; apps/desktop/src-tauri/core/src/key_manifest.rs:26-37`
@@ -88,26 +56,6 @@ All open. Grouped by kind; within a kind, by path.
 
 ### bug (58)
 
-- **`apps/desktop/src-tauri/broker/src/chain_executor.rs:647`** — Three copies of the AF_UNIX one-frame exchange have drifted: the broker's outbound hop connection has no I/O deadline while its inbound side and the desktop client do
-  - UnixHopConn (647-679): `UnixStream::connect(path)` then `read_exact` with no set_read_timeout. main.rs:216-218 arms a deadline on accepted peers (audit F-31: 'loop is strictly serial'); src/governed_turn.rs:284-310 bounds the client (R-38). A stalled principal hangs the serial broker forever. read_one_reply at :682 is a second copy of the same reader.
-  - also: `apps/desktop/src-tauri/broker/src/main.rs:216 ; apps/desktop/src-tauri/src/governed_turn.rs:284 ; apps/desktop/src-tauri/broker/src/chain_executor.rs:682`
-  - fix: Set read/write timeouts in LinuxHopConnector::connect and fold UnixHopConn::recv_all and read_one_reply into one bounded reader.
-- **`apps/desktop/src-tauri/core/src/governed_message_store.rs:216`** — verify_committed_binding never compares the projection's trust_state with the row's
-  - Lines 232-248 compare body, digest, author, created_at_ms; trust_state is only checked for membership (:243 `COMMITTABLE_TRUST_STATES.contains(&trust_state...)`). `message.trust_state` is never read, so a projection saying trusted_verified over a demonstration_custody row passes. Found by reading, not run. Callers are proof drivers only.
-  - also: `apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:1046`
-  - fix: Add `trust_state != message.trust_state => CommitReadbackMismatch` and a test that raises the projection's label over a demonstration_custody row.
-- **`apps/desktop/src-tauri/core/src/governed_sidecar.rs:475`** — The 120 s absolute deadline cannot be enforced on the broker's distinct-principal spawn: kill() gets EPERM, then wait() blocks unbounded
-  - L475-479 Reaped::drop: `let _ = self.0.kill(); let _ = self.0.wait();`. On the timeout return (L754) the child is `sudo -u brops-sidecar ...`, which the broker uid may not signal (kill(2)), so wait() blocks while the sidecar hangs. broker/src/main.rs:208 serves connections serially. Reasoned from code; not executed (no sudo).
-  - also: `apps/desktop/src-tauri/core/src/governed_sidecar.rs:751-755`
-  - fix: On the timeout path do not block in wait() when kill() fails: poll try_wait to a short bound and return, or give the deployment a way to terminate the sidecar-principal child.
-- **`apps/desktop/src-tauri/core/src/repo.rs:2271`** — A failed run step can never be retried, although three comments promise 'a retry needs a fresh approval'
-  - fail_step_execution sets status='failed' but never clears execution_attempt_id (grep: no 'execution_attempt_id = NULL' anywhere). set_step_status refuses any step where execution_attempt_id.is_some() with 'step is executing (claimed)', and claim requires 'execution_attempt_id IS NULL'. Docs at 2108, 2174, 2194 promise a retry.
-  - also: `apps/desktop/src-tauri/core/src/repo.rs:2174`
-  - fix: Either guard on (attempt set AND status IN active/pending) and clear the attempt id when resetting a failed step, or delete the retry promise and say a failed step is terminal.
-- **`apps/desktop/src-tauri/core/src/repo.rs:3055`** — A flow run whose step errors (or whose process dies) stays 'running' forever with no receipt; nothing reconciles flow_runs
-  - claim_and_run: try_claim sets state='running' (2996), then `knowledge::create(...)?` (3055-3067) and `authorize_call(...)?` (3076) return Err without calling finish(). The only writer of state='running' is try_claim; reconcile_abandoned_executions covers run_steps only. 0025 lists a 'failed' state nothing writes.
-  - also: `apps/desktop/src-tauri/core/schema/0025_agent_bundles.sql:46`
-  - fix: On any Err after the claim, finish the run as 'failed' with a receipt, and add a startup reconcile for flow_runs claimed by a dead session, mirroring run_steps.
 - **`apps/desktop/src-tauri/proof/src/bin/live_turn.rs:358`** — live_turn discards the advanced anti-rollback floor, the exact defect check_and_persist was written to remove
   - `if check_and_advance(&floor, &manifest).is_err() { return blocked("anti_rollback"); }` - result dropped, floor file never rewritten. core/src/key_manifest.rs:399-402: "its result was dropped ... the highest accepted epoch never actually rose". ladder_turn.rs:376 uses check_and_persist.
   - also: `apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:376`
@@ -116,25 +64,6 @@ All open. Grouped by kind; within a kind, by path.
   - `if check_and_advance(&floor, &manifest).is_err() { return blocked("anti_rollback") }` - result discarded, no write. core/key_manifest.rs:334-340 names exactly this as the audited defect ('its result was dropped'). broker/manifest_resolver.rs:296 and ladder_turn.rs:376 use check_and_persist.
   - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:296 ; apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:376 ; apps/desktop/src-tauri/win-live/src/resolver.rs:233-237`
   - fix: Replace the inline block with check_and_persist(&floor, &manifest, floor_path) (or reuse the KeyResolver ladder_turn already has) and refuse on NotPersisted.
-- **`apps/desktop/src-tauri/provision/src/lib.rs:349`** — The stated recovery (move or remove the trust directory and it is re-minted) cannot work once an anchor exists
-  - Corrupt Display: "Move or remove the `trust` directory ... to have it re-minted from scratch"; same at l.1376, l.1825, l.1859. But l.1390 goes to verify_existing whenever <anchor>/PROVISIONING.json exists, which then fails re-hashing missing files. The anchor is sealed against this account.
-  - also: `apps/desktop/src-tauri/src/lib.rs:158 (retire_orphaned_anchor renames the anchor that anchor.rs prove_unwritable guarantees this account cannot rename; anchor.rs:1239 says removal needs an administrator)`
-  - fix: Make every message say that re-minting needs an administrator (or root) to remove the anchor directory first, as custody_text already does.
-- **`apps/desktop/src-tauri/provision/src/lib.rs:1326`** — published_anchor_custody treats an unreadable custody record as absent, against its own contract
-  - Doc l.1318: "present but unreadable ... -> Err: a signer that IS installed ... must not be silently downgraded to 'no signer'". Code: `if !path.exists() { return Ok(None); }`. Path::exists() is false on permission errors too, so the registry is sealed with no audit-anchor key.
-  - also: `apps/desktop/src-tauri/audit-signer/src/register.rs:319 (signer dir gets key_dacl_plan, app absent; write_at's mode is a no-op off unix, so on Windows custody.json may be unreadable to the app - not run here)`
-  - fix: Use fs::metadata or try_exists and return Ok(None) only for NotFound; any other error must be an Err.
-- **`apps/desktop/src-tauri/src/lib.rs:288`** — dev build: blanking project-dir.txt does not turn the agent off; the file is rewritten with ~/BroPS
-  - The written file says 'Blank it to turn the agent off and leave chat working.' (:288), but lines 263-271 only return when a non-comment line is an existing dir; otherwise control falls to :276-292, which creates ~/BroPS, overwrites the record and returns Some(dir). A mistyped path is silently replaced the same way.
-  - fix: If the record file exists, honour it: return None when it has no valid directory line (and never overwrite an existing record).
-- **`apps/desktop/src-tauri/src/lib.rs:344`** — Provisioning and orphan-retirement run before the single-instance lock, so a second launch can move the first's fresh store aside
-  - lib.rs:344 `provision_local_trust(&dir)?` precedes :348 `acquire_instance_lock`. Mint renames staging->trust (provision lib.rs:1445) and writes the manifest LAST (:1485). In that window a 2nd instance sees has_store && !has_anchor (lib.rs:134) and renames `trust` to trust.orphaned-N; the 1st then seals an anchor for a missing store.
-  - also: `apps/desktop/src-tauri/provision/src/lib.rs:1445-1461`
-  - fix: Take the instance lock before provision_local_trust (it only needs the already-secured data dir), so retirement and minting are single-instance too.
-- **`apps/desktop/src-tauri/src/lib.rs:378`** — Scheduler tick discards run_due's error, and run_due aborts the whole tick on the first failure
-  - lib.rs:378 `let _ = brops_core::repo::automations::run_due(&conn, now_ms);`. core/src/repo.rs:2722-2740 uses `?` inside the loop (`list_runs(..)?`, `run(..)?`) and again at :2764 for agent enqueue, so one failing automation silently starves every later automation and all agent dispatch, every minute, with nothing logged.
-  - also: `apps/desktop/src-tauri/core/src/repo.rs:2720-2770`
-  - fix: Log the Err from run_due (eprintln or an audit event) and make run_due continue past a single failing automation instead of returning on it.
 - **`apps/desktop/src-tauri/win-live/src/config.rs:310`** — read_seed's DPAPI seal-on-first-use cannot succeed for the service account it is meant for, and the doc says the seed is never plaintext afterwards
   - Doc: "after the first server start the seed is never plaintext at rest again". The seal needs fs::write("{path}.sealing") + rename in keys/, but win_provision grants the account FILE_GENERIC_READ on the seed only and keys/ inherits a TCB-only DACL; failure is swallowed (if let Ok / .is_ok() / let _ =).
   - also: `apps/desktop/src-tauri/win-live/src/bin/win_provision.rs:210-230 (provision_custody.rs:166 reader mask; config.rs:329 "ACL preserved" is also false: a rename carries the tmp file's descriptor)`
@@ -143,83 +72,10 @@ All open. Grouped by kind; within a kind, by path.
   - Every ancestor to C:\ (line 345) must be owned by SYSTEM/Administrators (303) and carry no world-SID ACE even read-only (199-207; WORLD_SIDS has S-1-5-32-545, S-1-5-11). Design doc names TrustedInstaller as TCB owner (WINDOWS_BROKER_DESIGN.md:91); not in TCB_OWNER_SIDS. Read from code, not run on Windows.
   - also: `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:82 ; docs/design/WINDOWS_BROKER_DESIGN.md:91`
   - fix: For ancestors, check only write authority by non-TCB principals (as IMPL_PLAN:82 specifies) and accept TrustedInstaller as an owner, then prove it with win_tcb_pin's self-check on a real box.
-- **`apps/desktop/src/components/Shell.tsx:58`** — Nav badge counts are loaded once at mount and never refreshed
-  - `useAsync(() => desktop.listApprovals(), [])` and `listNotifications()` with empty deps; `reload` is never called and Shell is never remounted (only the inner div is keyed). The comment says 'Real badge counts from the backend', but approving or reading leaves the badge at its startup value.
-  - also: `apps/desktop/src/hooks/useAsync.ts:16-45`
-  - fix: Reload both reads on route change (add `route` to the deps) or on a backend change event.
-- **`apps/desktop/src/components/Shell.tsx:129`** — Context-menu Paste never reaches a React-controlled field
-  - `el.value = ...; el.dispatchEvent(new Event('input',{bubbles:true}))`. Probed with the repo's React 19.2.7 + jsdom: onChange calls = [] (the value tracker swallows an instance-setter write), so state is unchanged and the next render wipes it. Line 121 also blurs to <body> first, so activeElement has no `value`.
-  - fix: Remember the target field when the menu opens, refocus it, and write through the native HTMLInputElement/HTMLTextAreaElement prototype value setter before dispatching input; add a test with a controlled input.
-- **`apps/desktop/src/components/Shell.tsx:293`** — key={route} on the stage wrapper remounts RouteView, so route-change focus never fires in the real app
-  - `<div key={route} className="stage-enter">{children}</div>` remounts RouteView each navigation; its refs reset, so `enabled={navigations.current > 0}` is always false. Scratch vitest probe on real <App/>: after clicking #settings, activeElement stays the sidebar <a>; without the key it is the H1.
-  - also: `apps/desktop/src/app/routes.tsx:210-220 (and CommandPalette.tsx:77 relies on it; routes.test.tsx:232-264 renders RouteView outside Shell)`
-  - fix: Move the navigation counter above the keyed wrapper (or put the key on an inner element below RouteView) and add a test that renders App/Shell, navigates, and asserts focus lands in #main-content.
 - **`apps/desktop/src/components/TrustSelftest.tsx:38`** — A trust self-test that ran but did not verify renders nothing at all
   - `passed = available && bound && production_verified`; branches exist only for idle, error, `!result.available`, and `passed`. governed_selftest.rs:159-164 can return available:true with bound:false (trust_state empty). Then state==='done' shows an empty .ts-out and an idle mark: no verdict.
   - also: `apps/desktop/src-tauri/src/governed_selftest.rs:159-165`
   - fix: Add an explicit `state === 'done' && result.available && !passed` branch that states NOT VERIFIED and prints result.detail.
-- **`apps/desktop/src/components/ui.tsx:162`** — Modal promises aria-modal but has no name, no Escape, no focus move or trap; the complete implementation is the unused Drawer
-  - Modal is `<div className="modal" role="dialog" aria-modal="true">` with only a scrim onClick: no aria-label/labelledby, no key handler, no focus management. ConfirmDialog (destructive confirms) is built on it; grep finds 26 non-test <Modal/<ConfirmDialog uses. Drawer (lines 430-497) has all four and zero callers.
-  - also: `apps/desktop/src/components/ui.tsx:430-497`
-  - fix: Move Drawer's effect (initial focus, Tab trap, Escape, opener restore) and aria-labelledby into Modal, guarding restore with isConnected.
-- **`apps/desktop/src/features/Activity.tsx:22`** — Activity plots seed-fabricated rows as real beats; it never reads the `source` mark that exists for exactly this surface
-  - Comment: 'Every beat is a REAL system event'. ActivityEvent.source is 'seed' when repo::seed FABRICATED the row (entities.ts:95-100: 'the one surface those rows exist to animate was the surface being lied to'). Activity.tsx has no reference to `source`; Home.tsx:184 does. seed runs at startup (src-tauri/src/lib.rs:351).
-  - also: `apps/desktop/src/domain/entities.ts:95; apps/desktop/src/features/Home.tsx:184`
-  - fix: Exclude or visibly mark rows with source === 'seed' in the strip, counts, rate and tallies, and add a test with a seeded fixture row.
-- **`apps/desktop/src/features/Agents.tsx:267`** — Esc cannot close the dossier: clearing the selection is immediately undone, and the 'Select an agent' branch is unreachable
-  - Escape does setSelectedId(null) (line 376), but the effect `if (selectedId === null && agents.length > 0) setSelectedId(agents[0].id)` re-selects the first agent on the next render. So the `ag-pick` branch (582-586, pickTitle/pickHint) never shows while agents exist, and keysHint 'Esc closes' is false.
-  - also: `apps/desktop/src/features/Agents.tsx:373-377,582-586; apps/desktop/src/features/Agents.strings.ts:19-23`
-  - fix: Default-select only once (a ref flag for the first load) so a deliberate Esc leaves the selection empty.
-- **`apps/desktop/src/features/Approvals.tsx:42`** — statusMeta has no case for 'consumed' or 'cancelled', so a spent or cancelled approval is shown as 'Awaiting decision'
-  - statusMeta matches approved\|granted\|confirmed, rejected\|denied, escalated, expired, reviewing; everything else falls to 'pending / unknown -> awaiting a human decision'. The backend writes status='consumed' (repo.rs:965) and enums.ts:9 lists 'cancelled'. 'granted','confirmed','denied','reviewing' are written by nothing.
-  - also: `apps/desktop/src-tauri/core/src/repo.rs:965; apps/desktop/src/domain/enums.ts:9; same regexes repeated at Approvals.tsx:305-306,389-390`
-  - fix: Map the statuses the backend really writes (pending, approved, consumed, rejected, escalated, expired, cancelled) in one table used by statusMeta and the counters, and render an unknown status as unknown rather than as pending.
-- **`apps/desktop/src/features/Approvals.tsx:293`** — While the confirm dialog is open, Enter anywhere commits — including Enter on the focused Cancel button
-  - window keydown: `if (e.key === 'Enter') { e.preventDefault(); commit(); }` with no check of e.target. Modal/ConfirmDialog (ui.tsx:162-194) have no key handling or focus management, so tabbing to Cancel and pressing Enter runs commit() and preventDefault suppresses the button's own click. Reasoned from the code, not run in a browser.
-  - also: `apps/desktop/src/components/ui.tsx:162-194`
-  - fix: Ignore Enter when the event target is a button (or move the Enter/Esc handling into ConfirmDialog with focus on Cancel by default).
-- **`apps/desktop/src/features/Automations.tsx:396`** — fmtDate cannot parse the backend's timestamps, so Created, Updated and every run time always render as a dash
-  - fmtDate does `new Date(iso)`; brops_core::now() returns epoch-millis as a string (core/src/lib.rs:62-69) and ran_at is parsed as i64. `node -e "new Date('1700000000000').getTime()"` printed NaN, so the isNaN guard returns '—'. Activity.parseTime and Approvals.parseWhen handle this; this does not.
-  - also: `apps/desktop/src-tauri/core/src/lib.rs:62; used at Automations.tsx:846,850,898`
-  - fix: Parse with the same epoch-or-ISO logic as Activity.parseTime/Approvals.parseWhen (ideally one shared helper) and add a test asserting a real date is rendered.
-- **`apps/desktop/src/features/Command.tsx:190`** — Dispatch classifier calls 'Connection refused' a governed-wall refusal
-  - /denied\|not permitted\|permission\|blocked\|forbidden\|refus\|unauthori\|governed/i. Ran it in node: true for 'Connection refused (os error 111)', 'Permission denied (os error 13)', 'governed sidecar crashed: exit 1'. Screen then says 'The engine refused this step. Nothing ran.' Command.test.tsx only tries 'connection reset by peer'.
-  - also: `apps/desktop/src/features/Command.test.tsx:105`
-  - fix: Classify from a typed refusal the backend emits (e.g. the 'blocked' stream event) rather than substring-matching free text, and add 'connection refused' to the must-be-failure test cases.
-- **`apps/desktop/src/features/Files.tsx:506`** — Row aria-label still announces 'open' for a file whose guard is unknown
-  - `const guardWord = g === 'read' ? L('guardRead') : g === 'sealed' ? L('guardSealed') : L('guardOpen');` so 'unknown' reads as open. Lines 266-269 and filesModel.ts:16-19 say this exact announcement was the defect 'unknown' was added to fix. Files.strings.ts has no unknown-guard string.
-  - also: `apps/desktop/src/features/filesModel.ts:16-20`
-  - fix: Add a 'not yet read' string and map 'unknown' to it (or omit the guard word) in the aria-label, with a test on an unread row.
-- **`apps/desktop/src/features/Integrations.tsx:158`** — fmtDate cannot parse the backend's epoch-ms timestamps, so Declared / Record last written always show a dash
-  - `const d = new Date(raw); return isNaN(d.getTime()) ? '—' : ...`. core/src/lib.rs:62 now() returns 13-digit ms text; node: new Date('1700000000000') -> Invalid Date. Knowledge.tsx:197 does `new Date(isNaN(Number(v)) ? v : Number(v))`. The same parse is re-written in 7 feature files.
-  - also: `apps/desktop/src/features/Knowledge.tsx:194-199 (also Home.tsx:41, Activity.tsx:43, Approvals.tsx:59, Decisions.tsx:91, Calendar.tsx:20)`
-  - fix: Extract one shared epoch-or-ISO parser and use it in Integrations.fmtDate (Automations.tsx:396 has the same defect).
-- **`apps/desktop/src/features/Knowledge.tsx:188`** — A failed list_knowledge read is never surfaced and renders as a zero count
-  - `const all = useAsync(() => desktop.listKnowledge(), [])`; only all.data and all.reload are used, all.error never. `const notes = all.data ?? []` gives header `{articles.length} / {notes.length} nodes` = 'N / 0', collections vanish, and the metric strip hides (line 653). No test fails list_knowledge alone.
-  - also: `apps/desktop/src/features/Knowledge.tsx:251,608-609,653`
-  - fix: Render the total as not-established (and show an error) when all.error is set, as Home does through homeMetrics.readList.
-- **`apps/desktop/src/features/Library.tsx:241`** — List-level keydown handlers swallow Enter on inner buttons (delete / dismiss)
-  - Library <ul onKeyDown>: `else if (e.key === 'Enter' && filtered.length) { e.preventDefault(); previewRef.current?.focus(); }` also fires for the ✕ .lib-del button (:361) so Enter never opens the delete dialog. Notifications.tsx:131-141: Enter/x on a row's Dismiss button toggles/dismisses the SELECTED row instead.
-  - also: `apps/desktop/src/features/Notifications.tsx:120-142, 309-320`
-  - fix: Ignore the key in the container handler unless e.target is the row element itself (not a nested button).
-- **`apps/desktop/src/features/Research.tsx:127`** — Enter on the focused 'Save to knowledge' button re-runs the question instead of saving
-  - Section onKeyDown skips only INPUT/TEXTAREA/SELECT: `if (e.key === 'Enter' && run.k !== 'running') { e.preventDefault(); start(); }`. With run.k==='held' and focus on the Save <button> (:155), Enter is prevented, start() sets 'running', the held resultId is dropped and a new model call is issued. Read from code, not executed.
-  - fix: Return early when the event target is a BUTTON (or bind Enter to the run button only).
-- **`apps/desktop/src/features/Tasks.tsx:492`** — Enter on a card's Dispatch or Release button opens the edit modal instead (found by reading, not executed)
-  - article: `onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task); } }}`. The nested buttons (L522, L549) stop propagation only on click; the select (L540) stops keydown. A bubbled Enter is preventDefault-ed, so the button never activates.
-  - fix: Act only when `e.target === e.currentTarget`, or stop keydown propagation on the two buttons as the select already does.
-- **`apps/desktop/src/features/Tasks.tsx:601`** — A failed status change is swallowed and the move is still announced to screen readers
-  - `setAnnounce(`${task.title} → ...`)` runs first, then `desktop.setTaskStatus(task.id, status).then(() => s.reload()).catch(() => s.reload());`. No toast or error. This is the pattern deleteRefusals.guard.test.ts forbids, but that guard matches only `.delete*` calls.
-  - also: `apps/desktop/src/features/deleteRefusals.guard.test.ts:24`
-  - fix: Announce after the promise resolves, and surface the rejection message in the catch before reloading.
-- **`apps/desktop/src/theme/aios.css:274`** — The compositor-hint rule overwrites the transforms of #cursorlight and .horizon
-  - L274-275 `.aurora,#mesh,.gridlay,.horizon,…,#cursorlight,#ember,.shimmer{will-change:opacity;transform:translateZ(0)…}` comes after, at equal specificity, L160 `.horizon{transform:perspective(340px) rotateX(62deg)}` and L180 `#cursorlight{transform:translate3d(calc(var(--cx…` . Comment says nothing about the look changes.
-  - also: `apps/desktop/src/theme/aios.css:180 (and :160); Ambient.tsx:208 writes --cx/--cy that no longer move anything`
-  - fix: Drop .horizon and #cursorlight from the L274 list (or drop the transform declaration and keep only will-change) so their own transforms survive.
-- **`apps/desktop/src/theme/global.css:33`** — Two @keyframes named `shimmer`; the later one replaces the skeleton shimmer with a translate/scale
-  - global.css:33 `@keyframes shimmer { to { background-position: -200% 0; } }` drives `.skeleton` (L30). aios.css:205 `@keyframes shimmer{to{transform:translate3d(3vw,-2vh,0) scale(1.06)}}` loads later (styles.css:6) and wins. Only duplicate among 163 names; check_c1_tokens only checks keyword names.
-  - also: `apps/desktop/src/theme/aios.css:205`
-  - fix: Rename one of the two keyframes (e.g. `skeleton-shimmer`) and make the keyframe gate refuse a name defined twice.
 - **`tools/generate_agent_definitions.py:117`** — Generator skips the mandatory sixth role: 52 of the engine's 311 identities have no agent definition
   - Generator reads json.load(f)["packs"] and loops pack["roles"] (l.117, 211): 259 roles + 3 tiers = 262 files. registry.json mandatory_roles appends 'Automation & Flow Engineer' to every pack; agents/registry.json agent_count=311. Docstring l.11 says '311 roles'. No *--automation-flow-engineer.md exists.
   - also: `engine/runtime/bro_identity.py:46 (pack_roles docstring: reading packs[*].roles directly is 'one short in each of the 52 packs ... ask for it here rather than re-deriving it')`
@@ -247,54 +103,6 @@ All open. Grouped by kind; within a kind, by path.
   - AUDIT_LEDGER.md:101 'the open ones stay here' lists only A-06, A-09 (G-05 struck). Archive still says: :112 B-02 '🔴 OPEN, and deliberately still open'; :180 Windows machine-proof script '⚠️ OPEN'; :183 F-29 '⚠️ OPEN'; :250-252 H-4/H-5/H-6 '⚠️ OPEN'; :917 T-023 '◑ held'.
   - also: `apps/desktop/AUDIT/AUDIT_LEDGER.md:99-107`
   - fix: Either carry every archive row whose mark is OPEN/held into the live table or record in the archive row what closed it, so the two files stop disagreeing about what is open.
-- **`apps/desktop/src-tauri/Cargo.toml:61`** — win-live is declared self-test-only and 'never touches live AI turns', but a window-granted command uses it to run a model and post the reply; that command is absent from the AI-surface inventory
-  - Cargo.toml:61-65 'Used solely to run the in-process trust-chain self-test ... It never touches live AI turns'. src/commands.rs:2767 demonstration_verified_reply calls brops_win_live::proof::in_process_turn_produce, spawning `cmd /C $BROPS_SELFTEST_MODEL_CMD` (2641) and posting a Message; Conversations.tsx:461 wires a button.
-  - also: `apps/desktop/src-tauri/ai-surface-policy.json:11 (surfaces lists 4 commands; demonstration_verified_reply is not one, because the gate only tracks ai::generate*/governed_turn)`
-  - fix: Correct the Cargo.toml comment and add demonstration_verified_reply to ai-surface-policy.json (e.g. as 'excluded' with tracking), teaching check_ai_surfaces.py about the subprocess model path.
-- **`apps/desktop/src-tauri/core/src/manifest_authority.rs:64`** — ManifestReceiptKeyAuthority mints Production keys via the unanchored verify and a discarded in-memory floor, is constructed nowhere, and can only ever yield Blocked
-  - new(): `verify_manifest(manifest, root_sig_b64, pinned)` then `check_and_advance(floor, manifest).is_err()` (result dropped), then mints TrustClass::Production. key_manifest.rs:266 says a production verdict 'must use verify_manifest_anchored'; :336 says check_and_advance 'alone is not the anti-rollback control'.
-  - also: `apps/desktop/src-tauri/core/src/key_manifest.rs:262-270,336-341; core/src/receipt_store.rs:363 (Production => Blocked); docs/SECURITY_MODEL.md:418 ('select GovernedEngine with a real ManifestReceiptKeyAuthority'). grep: no constructor call outside this file's tests.`
-  - fix: Either rebuild it on verify_manifest_anchored + check_and_persist with provenance carried into the verdict, or delete it and correct SECURITY_MODEL.md §5 and receipt.rs:209 which name it as the production authority.
-- **`apps/desktop/src-tauri/core/src/repo.rs:1039`** — Escalating a run-step approval to A3 is silently undone: the next run attempt mints a fresh A2 approval
-  - escalate() sets status='escalated', level='A3'; nothing in the tree ever moves an 'escalated' row. In commands.rs:1897-1936 the gate finds approved_for=false, rejected_for=false, pending_for=None (all key on other statuses) and calls approvals::create(... "A2", "medium" ...) for the same step.
-  - also: `apps/desktop/src-tauri/src/commands.rs:1922`
-  - fix: Make the run-step gate treat an 'escalated' approval for the step as blocking (and give 'escalated' a decide path), instead of falling through to creating a new A2 request.
-- **`apps/desktop/src-tauri/core/src/repo.rs:2793`** — scheduler_ticks cannot do what its doc says: the result is still discarded, and no row is written on failure or in the shipped app
-  - Doc: 'scheduler_ticks exists because lib.rs discarded run_due's result with let _ ='. src/lib.rs:378 is still `let _ = ...run_due(&conn, now_ms);`. The row is written only inside enqueue_due, reached only if BROPS_AGENT_STORE is a dir (repo.rs:2763), always with error NULL (2968); any earlier `?` writes none.
-  - also: `apps/desktop/src-tauri/src/lib.rs:378`
-  - fix: Write the tick row in run_due itself (before/around both halves, with the error text on Err and regardless of the store root) and stop discarding the result in lib.rs.
-- **`apps/desktop/src-tauri/core/src/windows_broker.rs:272`** — The 'mandatory, non-negotiable' Windows image/Authenticode floor has no caller, and the Windows TCB floor says it does not require Authenticode
-  - Doc l.126-128: 'a valid Authenticode signature is a non-negotiable floor — verify_image always enforces it'. Repo-wide grep: verify_image/ImageFacts/ImageVerificationSpec are used only in this file's tests; restricted_launch.rs imports only the token and handle checks. tcb_floor.rs:41: 'No Authenticode requirement.'
-  - also: `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:41`
-  - fix: Either call verify_image from the Windows launch path, or rewrite the module and struct docs to say the predicate is unwired and Authenticode is not enforced.
-- **`apps/desktop/src-tauri/provision/src/lib.rs:1798`** — The manifest carries two custody statements that contradict each other
-  - OPERATOR_ROOT_CUSTODY: "This does NOT make the trust root external: pin/operator-root.pub still lives in this directory". ANCHOR_CUSTODY (l.1786): pin, floor and manifest "live OUTSIDE the application's data directory". Both are written into PROVISIONING.json at l.1583-1584.
-  - also: `apps/desktop/src-tauri/provision/tests/provision.rs:789 (asserts custody contains "does NOT make the trust root external")`
-  - fix: Cut OPERATOR_ROOT_CUSTODY down to the key-destruction claim only and update the test that pins the old sentence.
-- **`apps/desktop/src-tauri/provision/tests/prerequisites/mod.rs:329`** — Fixture recipe builds a fake pin at the PRODUCTION anchor path, which CI avoids and which makes the real installer refuse; this box is in that state
-  - mod.rs:330-332: 'sudo install -d ... /var/lib/brops-trust-anchor/trust-anchor' + operator-root.pub. ci.yml:580: 'Deliberately NOT the production path'. On this box: /var/lib/brops-trust-anchor/trust-anchor holds only operator-root.pub (Aug 9), so settle_existing returns Corrupt.
-  - also: `.github/workflows/ci.yml:579-583; apps/desktop/src-tauri/provision/src/posix_install.rs:576-586`
-  - fix: Change the documented recipe to a non-production directory passed through BROPS_TEST_FOREIGN_ANCHOR (as CI does), and have an administrator remove the stand-in at /var/lib/brops-trust-anchor on this box.
-- **`apps/desktop/src-tauri/provision/tests/provision.rs:782`** — Shipped POSTURE.txt and manifest custody string still say the pin is self-owned and SELF_OWNED must be set; a test pins that text
-  - provision.rs:790-793 asserts 'does NOT make the trust root external' / 'did NOT move the trust anchor'. lib.rs:1849-1851 POSTURE: 'unless the deployment sets BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged ... that is what it must set'. lib.rs:1795 ANCHOR_CUSTODY, same manifest: 'is NOT set'.
-  - also: `apps/desktop/src-tauri/provision/src/lib.rs:1798-1858 (OPERATOR_ROOT_CUSTODY, posture_text) vs lib.rs:1786-1796 (ANCHOR_CUSTODY), lib.rs:1290-1298 (engine_env), tests/anchor_custody.rs:430-445; POSTURE 'Deleting this directory makes BroPS mint a new one' vs docs/design/DEBIAN_INSTALL_PROVISIONING.md:207`
-  - fix: Rewrite OPERATOR_ROOT_CUSTODY and posture_text to describe the anchor as it is now (outside the store, SELF_OWNED unset, deleting the store strands the anchor on POSIX) and change provision.rs:790-793 to assert the new wording.
-- **`apps/desktop/src-tauri/src/ai.rs:1051`** — System prompt tells Bro he CANNOT delete/push/install/nest a shell, contradicting the recorded Owner decision that lifted all four
-  - 1051-1052: "You CANNOT delete files, git push, install dependencies, or open a nested shell — for those, give Gev the exact command." vs 1125-1127: "EMPTY BY OWNER DECISION ... 'ջնջում … push … փաթեթի տեղադրում … ներդրված shell — սրան էլ թող անի'". Nothing in argv enforces the sentence.
-  - also: `apps/desktop/src-tauri/src/ai.rs:1125`
-  - fix: Make the prompt match the decision (or the decision match the prompt): one of the two must change, and the prompt must not present an unenforced request as a capability limit.
-- **`apps/desktop/src-tauri/src/governance.rs:77`** — Module doc says no approval-request path or schema exists; the same file implements one
-  - L81-83: "No such path exists, on either side. There is no `approval-request` schema in `engine/schemas/` (21 schemas; none is one), no desktop→engine command". L9-12: every command "is READ-ONLY". But L655 defines `request_engine_approval`, and engine/schemas/approval-request.schema.json exists.
-  - also: `apps/desktop/src-tauri/src/governance.rs:655 ; engine/schemas/approval-request.schema.json ; bridge/engine_sidecar.py:860`
-  - fix: Rewrite the module header (L9-14 and L77-92) to describe four reads plus the one T-021c request command, and drop the 'no schema / no command' paragraph.
-- **`apps/desktop/src-tauri/src/governed_selftest.rs:55`** — User-visible CUSTODY_NOTE says production needs offline-root / offline-HSM custody, against Owner decision #78
-  - L57-59: "NOT a secret offline-HSM key ... production offline-root custody + a live supervisor/signer sidecar remain pending before real turns can reach trusted_verified". CLAUDE.md §6: "No person holds a key — Owner decision #78"; MEMORY: "no USB, no offline root, ever".
-  - also: `CLAUDE.md §6 (decision #78) ; apps/desktop/src/components/TrustSelftest.tsx:13 ; apps/desktop/src/services/desktop.ts:63`
-  - fix: Reword the note (and the two frontend copies) to name the install-minted, floor-pinned anchor as the missing production root instead of an offline root or HSM.
-- **`apps/desktop/src-tauri/src/governed_selftest.rs:58`** — On-screen text and the Owner decision table still name an offline root as the route to production trust
-  - CUSTODY_NOTE: "production offline-root custody ... remain pending". OWNER_ACTION_REQUIRED.md:411: "trusted_verified only under [the root phrase gate-refused since #314]"; line 404 of the same file: "Only an install-minted root can produce trusted_verified". Decision #78: no offline root. check_no_owner_key_ceremony.py prints GREEN.
-  - also: `docs/OWNER_ACTION_REQUIRED.md:411`
-  - fix: Reword both to install-minted custody and add "offline root"/"offline-root" to the gate's phrase list outside history.
 - **`apps/desktop/src-tauri/src/lib.rs:157`** — retire_orphaned_anchor renames an anchor the seal says the app account can never rename
   - lib.rs:157 `std::fs::rename(&from,&to)` moves `<machine_root>/trust-anchor` as the app account. anchor.rs:73-75: a user 'can never afterwards delete or rename it once sealed'; anchor.rs:1107-1108 'removing the anchor afterwards needs an administrator'. Tests (lib.rs:534) use unsealed temp dirs only. Not run on Windows.
   - also: `apps/desktop/src-tauri/provision/src/anchor.rs:73 and :1105-1108; apps/desktop/src-tauri/provision/src/lib.rs:1387-1389`
@@ -307,46 +115,10 @@ All open. Grouped by kind; within a kind, by path.
   - win_supervisor.rs:58-61: 'It lives in a supervisor state directory rather than in the shared store, because the store is written by the execution' followed by `PathBuf::from(&cfg.store_dir).join("supervisor-state").join("evidence-floor.db")`. Supervisor::new (servers.rs:686-691) create_dir_all's it there.
   - also: `apps/desktop/src-tauri/win-live/src/servers.rs:386-389`
   - fix: Give the supervisor its own configured state directory outside store_dir (a Config field), with an ACL only the supervisor account can write.
-- **`apps/desktop/src-tauri/win-live/src/execution.rs:42`** — Evidence chain and head-sequence counter are said to belong to the executor principal; the broker process writes both
-  - execution.rs:42 "this directory belongs to the executor principal and the broker cannot write it"; head_sequence.rs:30 same, :142 "The directory's ACL is win_provision's job". win_live_turn (the broker) calls next_head_sequence and execute() writes run-evidence; win_executor only writes stdout; win_provision creates neither dir.
-  - also: `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:264-274 (also head_sequence.rs:28-30,141-143; proof.rs:355-356)`
-  - fix: State that the broker authors the evidence chain and counter on this platform, or move their writing into a separately-principalled executor/recorder and have provisioning create and ACL the directories.
 - **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs:98`** — floor.json is digest-pinned and must be TCB-only-writable, yet the broker rewrites it every turn
   - tcb_floor.rs:98 pins "anti-rollback-floor" (sha256 + no non-TCB writer, file and ancestors). resolver.rs:164-168/236 persist_floor does tmp+rename in that dir on every resolve. provision_custody.rs:59-61: locking it to TCB 'would break any deployment whose broker is not itself a TCB principal'.
   - also: `apps/desktop/src-tauri/win-live/src/resolver.rs:164 ; src/provision_custody.rs:59 ; src/tcb.rs:58-61 ; AUDIT_LEDGER_ARCHIVE.md:460-465`
   - fix: Remove floor.json from WIN_TCB_REQUIRED_ARTIFACTS (as the seeds are excluded) and give it its own custody rule, or stop rewriting it when the epoch is unchanged and re-pin on advance; decide one.
-- **`apps/desktop/src/features/Approvals.strings.ts:153`** — Escalate claims to route to A3 review and decide nothing; in the code it makes the approval permanently undecidable
-  - String: 'It routes to A3 review and notifies the owner — it neither grants nor denies.' repo escalate sets status='escalated' (repo.rs:1042); confirm_approval returns 'approval is not pending' and decide is pending-only. grep of src-tauri finds no reader of 'escalated', and the page disables all actions when status !== 'pending'.
-  - also: `apps/desktop/src/features/Approvals.tsx:217-222,511-521; apps/desktop/src-tauri/core/src/repo.rs:1039-1059; apps/desktop/src-tauri/src/commands.rs:536`
-  - fix: Either give an escalated approval a real decision path (confirm/reject accepting 'escalated') or state in the dialog that escalation parks the request with no way to decide it from this app.
-- **`apps/desktop/src/features/Approvals.tsx:14`** — Approvals page says the engine adjudicates grant/deny; the code is a local SQLite ledger with no engine and no owner authentication
-  - Header: 'request a verdict ... which the engine's Ed25519 system adjudicates', 'Owner-not-authenticated -> blocked'. Strings: 'locked until the owner authenticates with the engine', 'Engine unreachable.'. But askNote says 'this app's own, over its local ledger'; list_approvals = repo::approvals::list on SQLite.
-  - also: `apps/desktop/src/features/Approvals.strings.ts:17 (askNote) and :67-83; apps/desktop/src-tauri/src/commands.rs:354,522-600`
-  - fix: Rewrite the header comment and the engineUnreachable/ownerNotAuthenticated/gateLockedBody/newRequestsHint strings to describe the local approval ledger and native confirmation, and drop the isAuthError 'owner not authenticated' branch.
-- **`apps/desktop/src/features/Bridge.tsx:133`** — A broker-committed demonstration_custody turn renders as 'No verdict exists / no broker allowed or refused'
-  - production_trust.rs:80 commits label 'demonstration_custody' and governed_turn_ipc.rs:236 projects the stored label on the wire; governedTurn.ts:95 throws 'committed message is not trusted_verified' -> malformed_broker_reply; Bridge.strings.ts:145 then says 'No broker allowed or refused this turn'. Conversations.tsx:89 gives the same label its own badge.
-  - also: `apps/desktop/src/services/governedTurn.ts:95 ; apps/desktop/src/features/Bridge.strings.ts:143-150,178 ; apps/desktop/src/features/Conversations.tsx:89`
-  - fix: Give a committed non-trusted_verified frame its own outcome (committed under demonstration custody, never Verified) instead of the non-decision wording, which is false when a row was durably committed.
-- **`apps/desktop/src/features/Decisions.tsx:67`** — Decisions page tells the owner a local SQLite table is the engine ledger
-  - Decisions.tsx:67 'Data source: the engine decision ledger'; Decisions.strings.ts:52 'The engine ledger is empty', :176 'could not be read from the engine', :208 'Read-only mirror'. But commands.rs:619 list_decisions = repo::decisions::list(&conn), and Bridge.strings.ts:45 says 'Not the local decision table shown above'.
-  - also: `apps/desktop/src/features/Bridge.strings.ts:45 ; apps/desktop/src/services/desktop.ts:355 ; apps/desktop/src/features/Decisions.strings.ts:52,176,187,196,208`
-  - fix: Reword the Decisions copy and comments to say 'local decision table' and reserve 'engine ledger' for the BridgePanel mirror that actually reads read_decision_ledger.
-- **`apps/desktop/src/features/Library.tsx:274`** — Delete flows promise a permanent delete that the backend unconditionally refuses
-  - Library.tsx:273 '── REAL hard-delete (delete_library_item)'; Library.strings:164 'This can’t be undone'; Research.strings:167 'This permanently removes the record.'; Research.tsx:250 'wired to the REAL delete_research_item'. commands.rs:932,953,980 return Err(forbidden_hard_delete(..)) and take no AppState; default.json denies all three.
-  - also: `apps/desktop/src/features/Research.tsx:250-284; Research.strings.ts:166; Memory.tsx:445-465; src-tauri/src/commands.rs:928-980`
-  - fix: Remove or disable the delete controls (with the reason) until soft-delete exists, and drop the 'REAL hard-delete' comments and the 'ACCEPTED delete' tests that mock an impossible outcome.
-- **`apps/desktop/src/features/Memory.tsx:74`** — Any unresolved [[link]] is shown as 'sealed evidence', and resolution matches the link's own text
-  - :81 `sealed: !hit` -> danger panel 'References sealed evidence … The referenced material stays sealed' (Memory.strings:25-34), though no sealed-evidence store exists for MemoryEntry. :79 `o.content.toLowerCase().includes(needle)`: two memories both containing [[x]] resolve to each other, so 'sealed' flips on a second mention.
-  - also: `apps/desktop/src/features/Memory.strings.ts:24-35`
-  - fix: Label a non-resolving link 'unresolved' (keep 'sealed' for the explicit sealed: prefix) and exclude [[...]] spans from the content match.
-- **`apps/desktop/src/features/Research.strings.ts:209`** — Run hint asserts the governed path unconditionally; comments disagree on what a shipped install does, and none matches the code
-  - runHint: 'The question goes through the governed turn'. Research.tsx:64 'In the shipped app this will render `blocked`'. Research.provenance.ts:8 'the only path a shipped install can reach, has no governed turn'. Code: nothing set -> resolve Err -> StreamEvent::Error (ai.rs:456, lib.rs:299-302); ungoverned needs BROPS_ALLOW_UNGOVERNED.
-  - also: `apps/desktop/src/features/Research.tsx:64-66; Research.provenance.ts:8-9; Research.provenance.test.ts:10,31; commands.rs:2234-2236,2391-2417`
-  - fix: Make the hint conditional on the resolved provider (as Settings does) and correct the three comments to the real default: no provider, run fails with an error.
-- **`apps/desktop/src/features/writeRecord.strings.ts:97`** — UI states an unrecorded row "was written before the record existed"; the backend says it may equally be an out-of-band insert
-  - strings.ts:56 'NOT a failure and NOT tampering: the row simply predates the record'; :97 'it was written before the record existed'. local_write_record.rs:156 'written before migration 0021, or written by a path that does not record'. The Rust test (:160) gets Unrecorded from a raw INSERT made AFTER 0021.
-  - also: `apps/desktop/src-tauri/core/src/local_write_record.rs:156 ; apps/desktop/src-tauri/core/tests/memory_knowledge_write_records.rs:160`
-  - fix: Reword badge comment and detailUnrecorded (en/hy/ru) to say the row has no record - either it predates the ledger or it was inserted outside the app - and stop asserting which; consider counting unrecorded rows in WriteRecordNotice.
 - **`bridge/contracts/renderer-governed-turn-result.schema.json:53`** — Schema pins committed trust_state to trusted_verified; the broker now commits demonstration_custody
   - Schema: `"trust_state": {"const": "trusted_verified"}`. governed_turn_ipc.rs:232-236: trust_state "used to be the constant TRUSTED_VERIFIED... now the label the committing transaction actually stored"; governed_message_store.rs:19 allows [TRUSTED_VERIFIED, "demonstration_custody"].
   - also: `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:226-252; tools/test_renderer_broker_schemas.py:148-150 (locks the old const)`
@@ -426,78 +198,10 @@ All open. Grouped by kind; within a kind, by path.
   - TASKS.md:34 'the request half exists nowhere ... \| Blocked'. TASKS.md:22 'T-021d PHASE 2 CLOSED, 11/11', :25 'T-021a The approval-request contract' (#254-#257). contracts/approval-request.schema.json, engine/schemas/approval-request.schema.json and core/src/approval_request.rs exist.
   - also: `docs/archive/TASKS_ARCHIVE_2026-08.md:2646`
   - fix: Rewrite or retire the T-021 row so it says what is still open after #254-#257, instead of the 2026-08-15 wording.
-- **`apps/desktop/src-tauri/audit-signer/Cargo.toml:30`** — Cargo.toml says a test enforces that the relay holds no key; that test does not exist
-  - Cargo.toml:29-30 'The relay never constructs a key type; that is enforced by tests/relay_contract.rs::the_relay_binary_links_no_signing_key'. grep over the repo finds that name only in this comment. src/bin/relay.rs:9-10 likewise credits relay_contract.rs with running the compiled binary; it never does.
-  - also: `apps/desktop/src-tauri/audit-signer/src/bin/relay.rs:9`
-  - fix: Either write the test (the relay binary links the lib that depends on ed25519-dalek, so decide what is actually checkable) or delete the 'enforced by' claim and point relay.rs at anchor_end_to_end's unreachable case.
-- **`apps/desktop/src-tauri/audit-signer/src/register.rs:73`** — REGISTRY_CAVEAT still says the operator pin is in the app's own trust directory and that case_pin_rewrite proves the route open; a test pins the stale text
-  - register.rs:73-89 'PIN ... is a file in the app's own trust directory ... proved open ... (case_pin_rewrite)'. But register.rs:178 says the registry 'moved there with the pin', the .py case prints O2-PIN-CUSTODY-CLOSED, and provision/src/lib.rs:140 'Corrected' the same sentence. Also 'this crate never mints' (custody.rs mints it).
-  - also: `apps/desktop/src-tauri/audit-signer/tests/relay_contract.rs:495-509 (asserts caveat contains 'PIN', 'trust directory', 'residual'); provision/src/lib.rs:1803 OPERATOR_ROOT_CUSTODY carries the same sentence`
-  - fix: Rewrite REGISTRY_CAVEAT (it is printed in every refusal and in install_plan) to match the anchor-directory custody that provision/src/lib.rs:140-150 already describes, and re-aim the relay_contract test at the new text.
-- **`apps/desktop/src-tauri/broker/src/lib.rs:4`** — Docs say live_turn drives 'the SAME LinuxGovernedTurnChain the broker uses' and that there is 'exactly one implementation'; the broker binary no longer builds that chain
-  - lib.rs:4-8 'the SAME LinuxGovernedTurnChain ... the broker uses. There is exactly one implementation'. main.rs:32-37,246: 'TWO consumers ... LadderChain ... the only thing this binary can build'; 'deliberately no longer builds ... LinuxGovernedTurnChain'. START_HERE.md:48-49 and live_turn.rs:4-5 repeat the old claim.
-  - also: `apps/desktop/src-tauri/broker/src/main.rs:32-37 ; apps/desktop/src-tauri/proof/src/bin/live_turn.rs:4-5 ; START_HERE.md:48-49`
-  - fix: Rewrite the three stale passages to say the shipped broker serves only LadderChain and that run_live_turn.sh proves the direct chain, which no shipped binary constructs.
-- **`apps/desktop/src-tauri/core/src/governed_message_store.rs:8`** — Module and function docs still say every committed row is trusted_verified
-  - :8 'trusted_verified ... enforced by a table CHECK constraint (no other value is representable)'; :204 'a hardcoded constant in CommittedMessage::new'. But :63 is `CHECK (trust_state IN ('trusted_verified','demonstration_custody'))` and CommittedMessage::new takes trust_state (governed_turn_ipc.rs:239-245).
-  - also: `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:225`
-  - fix: Rewrite the module header, the persist_committed and verify_committed_binding docs, and the 'Always TRUSTED_VERIFIED' field comment to name both committable states.
-- **`apps/desktop/src-tauri/core/src/governed_submit.rs:45`** — Module doc still says nothing calls governed_turn_submit_prepared and that its declared_unreachable entry stands
-  - L45-48: "nothing CALLS [`governed_turn_submit_prepared`] ... Its `declared_unreachable` entry ... stands." But broker/src/ladder_executor.rs:389 calls it, config/reachability-declarations.json:203 says "must_have_caller", and governed_sidecar.rs:781 retracts the same sentence (2026-09-20).
-  - also: `apps/desktop/src-tauri/core/src/governed_sidecar.rs:781-787`
-  - fix: Replace L45-48 with the retracted wording already used in governed_sidecar.rs: the writer is wired from LadderChain, and what keeps it unreachable is the absent $BROPS_BROKER_CONFIG.
-- **`apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:34`** — Wire contract says a committed message has exactly one trust_state; the code commits demonstration_custody too, and the test is a tautology
-  - L34-35 "There is exactly one value"; L225 "Always [`TRUSTED_VERIFIED`]". But L232-236: "It is now the label the committing transaction actually stored", and governed_message_store.rs:19 COMMITTABLE_TRUST_STATES = [TRUSTED_VERIFIED, "demonstration_custody"]. Test L414-417 asserts the value it passed in.
-  - also: `apps/desktop/src-tauri/core/src/governed_message_store.rs:19`
-  - fix: Rewrite the three doc statements to name both committable states, and make the test project a demonstration_custody row and assert it is not reported as trusted_verified.
-- **`apps/desktop/src-tauri/deb/postinst:22`** — CLAUDE.md says the root installer is "Not packaged yet"; the .deb config ships both installer files and postinst runs them
-  - CLAUDE.md:128 "a root installer does (`brops_install_anchor`, T-137). Not packaged yet" (Armenian copy :179). tauri.conf.json:51-52 maps /usr/lib/brops/brops-install and /usr/lib/brops/brops_install_anchor into the .deb; postinst:50 runs it; stage-installer.mjs stages the binary. HEAD log: "T-138: ... the .deb carries it (#308)".
-  - also: `CLAUDE.md:128`
-  - fix: Change both language halves of CLAUDE.md to say the .deb carries the installer (T-138) and state what is actually still missing.
-- **`apps/desktop/src-tauri/provision/src/lib.rs:1807`** — POSTURE.txt, written to disk on every mint, describes the pre-anchor layout and tells the reader BRO_OPERATOR_ROOT_PIN_SELF_OWNED must be set
-  - posture_text(): "pin/{OPERATOR_PIN_FILE} is a file in this directory", "registry under registry/config/", "a single-user desktop ... that is what it must set". But engine_env (l.1290) says the variable is "deliberately ABSENT" and pin, floor and registry live in the anchor dir (l.1543-1557).
-  - also: `apps/desktop/src-tauri/provision/tests/provision.rs:792 (asserts posture contains "did NOT move the trust anchor", pinning the stale text)`
-  - fix: Rewrite posture_text to describe the anchor directory and the absence of SELF_OWNED, and change the test to assert the current posture.
-- **`apps/desktop/src-tauri/src/ai.rs:615`** — Governed-engine status text (shown in the UI) says receipt verification is still PENDING; it is implemented and the real blocker is provisioning
-  - 615: "Real signed-receipt verification is still PENDING (Receipt Protocol v1) — the governed path is fail-closed until it lands"; same at 35-36. commands.rs:1657 calls `brops_core::receipt_store::verify_and_record_receipt`; commands.rs:1293 names the actual refusal: "this install provisions NONE of the inputs".
-  - also: `apps/desktop/src-tauri/src/commands.rs:1293`
-  - fix: Replace the 'PENDING' wording at lines 35-36 and 615 with the governed_verification_unconfigured reason (verification exists; its inputs are unprovisioned).
-- **`apps/desktop/src-tauri/src/ai.rs:1684`** — tool_args doc says BRO_BASH_DENY still bounds the shell; the constant is empty
-  - 1684: "`BRO_BASH_DENY` still bounds the shell: no delete, no push, no dependency install, no nested shell". 1150: `const BRO_BASH_DENY: &[&str] = &[];` ("EMPTY BY OWNER DECISION, 2026-08-20"). Same const's own doc opens (1115) "Commands the in-app Bro coding agent may NEVER run".
-  - also: `apps/desktop/src-tauri/src/ai.rs:1115`
-  - fix: Delete the 'still bounds the shell' paragraph and the 'may NEVER run' opener; state that the shell is unbounded and only the agent-type and protected-path denies remain.
-- **`apps/desktop/src-tauri/src/lib.rs:119`** — retire_orphaned_anchor's doc says a present store is always left alone; the code moves it aside when the anchor manifest is missing
-  - Doc :119-122: 'An anchor is retired only when the trust directory is entirely absent ... A store that is PRESENT ... is left exactly as it was, and provisioning still refuses it by name'. Code :150-155 renames `trust` to trust.orphaned-N when PROVISIONING.json is absent, bypassing refuse_occupied_trust_path (provision lib.rs:1432).
-  - also: `apps/desktop/src-tauri/provision/src/lib.rs:1612-1625`
-  - fix: Rewrite the safety paragraph to describe both directions, and say explicitly that it pre-empts the provision crate's occupied-trust-path refusal.
 - **`apps/desktop/src-tauri/win-live/WIRING_LIVE_TRUST.md:38`** — Runbook claims the executor runs under the supervisor's restricted token and that the supervisor refuses an unpinned image; neither is in the code
   - Doc :38 "The executor runs under the supervisor's restricted token / session-0 containment", :94-96 "the supervisor refuses to launch it. That refusal is the guarantee". Code: the driver spawns it with plain Command::new(&executor_path).output(); CreateRestrictedToken appears nowhere in win-live.
   - also: `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:234-246 (execution.rs:92-97 itself calls this sentence a missing comparison stated as a guarantee)`
   - fix: Rewrite both passages to say the driver measures and spawns the executor uncontained, and correct the uncorrected "Restricted-token executor launch: real" row in proof/WINDOWS_BROKER_AUDIT_VERDICT.md:103.
-- **`apps/desktop/src-tauri/win-live/src/seedstore.rs:1`** — DPAPI seal-on-first-read is described as live custody but can never succeed
-  - seedstore.rs:1 'closes the "seeds are plaintext hex at rest" audit note'; tcb_floor.rs:51-52 'DPAPI-sealed in place on first read, so their bytes legitimately change'. Readers get FILE_GENERIC_READ only (provision_custody.rs:166); config.rs:326-331 swallows the failed write of {path}.sealing and returns Ok.
-  - also: `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:51 ; src/config.rs:310-333 ; AUDIT_LEDGER_ARCHIVE.md:451-459`
-  - fix: State in seedstore.rs/tcb_floor.rs/config.rs that seeds stay plaintext hex under ACL custody only (the ledger already withdrew the claim), or seal at provisioning time and drop the dead reseal path.
-- **`apps/desktop/src/features/GroupChat.strings.ts:304`** — User-visible scope note says room-chat delegations are drawn nowhere; Conversations draws them
-  - delegationScopeNote (en/hy/ru): 'reported to that workspace, which draws it nowhere'. Conversations.tsx:1114 renders <DelegationSurface> 'for BOTH kinds'; lines 11-13 of this same file say 'The room shows TWO delegation panels'. GroupChat.delegation.test.tsx:240 pins the false sentence.
-  - also: `apps/desktop/src/features/Conversations.tsx:1107-1114; apps/desktop/src/features/GroupChat.strings.ts:293-298; apps/desktop/src/features/GroupChat.delegation.test.tsx:240`
-  - fix: Rewrite delegationScopeNote and the 293-298 comment in all three languages to say the thread's own panel covers chat turns and this one covers only the deck's asks.
-- **`apps/desktop/src/features/Integrations.strings.ts:300`** — Capability banner says the desktop exposes exactly two integration commands; four are granted
-  - capBody: 'The desktop exposes exactly two integration commands — list and set-status'. capabilities/default.json:83-86 grants list, create, set-status and set-auth-ref; declareUnsupportedBody (line 331, same file) says 'This build DOES expose `create_integration`'.
-  - also: `apps/desktop/src-tauri/capabilities/default.json:83-86; apps/desktop/src/features/Integrations.honesty.test.tsx:10`
-  - fix: Reword capBody in all three languages to say only that no reachability command exists, and fix the 'grants exactly two' header in Integrations.honesty.test.tsx.
-- **`apps/desktop/src/features/Security.strings.ts:31`** — Security page tells the user the evidence-chain read command is not wired, while the page calls it
-  - integrityDetailBlocked: 'The read-only evidence-chain command is not wired into the desktop yet'. Security.tsx:97 calls desktop.readEvidenceChain(); command registered at src-tauri/src/lib.rs:392, wrapped at services/desktop.ts:352. Security.tsx:13-20 and :47-48 repeat the 'NO read-only IPC command' claim.
-  - also: `apps/desktop/src/features/Security.tsx:13-20, 47-48, 97`
-  - fix: Reword the blocked detail and digestBlockedNote from the actual GovernanceRead state (blocked / unreachable / ok-unauthenticated) and fix the header comments.
-- **`apps/desktop/src/features/Settings.strings.ts:7`** — Strings file says name/version are read from the build; Settings.tsx still prints the literals and six strings are dead
-  - Strings :7-8,:148-151 say 'MENQ OS'/'v0.9' literals were replaced. Settings.tsx:451,454,455 still render <b>MENQ OS</b> and v0.9 (build is BroPS 0.1.0). `reported`, `identityReason`, `prefsPersisted`, `sysPill` are computed and never rendered; :446 still uses data?.ready ? 'live' : 'off'.
-  - also: `apps/desktop/src/features/Settings.tsx:446-455 (also :79-88, :155)`
-  - fix: Render `reported`/identity*, prefs*Note and `sysPill` in Settings.tsx JSX (the logic half landed, the JSX half did not) and delete the literals.
-- **`apps/desktop/src/features/Settings.tsx:451`** — Settings still prints the literals "MENQ OS" / "v0.9"; the identity, persistence and readiness fixes are computed and never rendered
-  - L78-88 and L155 compute `reported`, `identityReason`, `prefsPersisted`, `sysPill`; none is used in the JSX. L451/454/455 render `<b>MENQ OS</b>` and `v0.9`; L445 still uses `data?.ready ? 'live' : 'off'`. tauri.conf.json says BroPS 0.1.0. No test imports settingsIdentity.
-  - also: `apps/desktop/src/features/settingsIdentity.ts:4 and Settings.strings.ts:148 (both say the literals were replaced)`
-  - fix: Render `reported.name`/`reported.version` (or the unreported note), `sysPill` and the persistence note in the System and Appearance panels, and add a test that fails if the literals come back.
 - **`config/current_state.json:107`** — next_action describes PR #219 as frozen and unapproved and the matrix baseline as 182; #219 merged and the baseline is 35
   - "T-020 (#219) is measured and frozen ... NOT approved ... the B/C list lives only in #219's body"; "unreviewed baseline is 182, down from 189". gh: #219 MERGED 2026-09-18 (2a50081). negative-matrix.json unreviewed_baseline has 35 entries. Line 124 gives a different next action (Owner reads design §10).
   - also: `config/current_state.json:124`
@@ -517,29 +221,10 @@ All open. Grouped by kind; within a kind, by path.
 
 ### test-defect (38)
 
-- **`apps/desktop/src-tauri/broker/src/manifest_resolver.rs:850`** — an_unwritable_floor_blocks_the_turn cannot fail: its manifest has no keys, so the turn blocks either way
-  - L864-866 builds the manifest with `"keys": []` while the resolver asks for "signer-1". If the persist-failure refusal at L296-297 were removed, `resolve_production_key` (L302) returns KeyNotFound and the same UpstreamBlocked is asserted at L879. Established by reading; not mutated (read-only).
-  - fix: Give the manifest the two valid production keys (as resolver_at_epoch does) so the unwritable floor path is the only reason left to block.
 - **`apps/desktop/src-tauri/core/src/ipc_framing.rs:199`** — NM-IPC-06 is marked implemented on a deny-list branch that no shipped caller populates
   - Test L199-209 passes `denied = [RENDERER, SIDECAR]` with made-up UIDs and claims "no trusted-principal channel can be reached from the window". The only caller of authorize_peer in the tree is broker/src/main.rs:658: `authorize_peer(&peer, allowed_uid, &[])`. config/negative-matrix.json:1067: "status": "implemented".
   - also: `apps/desktop/src-tauri/broker/src/main.rs:658`
   - fix: Either bind NM-IPC-06 to a test that drives a real service door with the renderer uid, or pass the real deny list at the production call site.
-- **`apps/desktop/src-tauri/src/ai.rs:3986`** — `arbitrary roles rejected` passes with the role check deleted (displaced refusal)
-  - Test sends a single message `role: "system"` / `"agent"` and asserts only `.is_err()`. validate_input (ai.rs:158) refuses the role, but with that check removed the same input still errs at `if !has_user` ("conversation has no user message"). The role rule is not isolated.
-  - also: `apps/desktop/src-tauri/src/ai.rs:158`
-  - fix: Send [user, system] so a user turn exists, and assert the error text contains "invalid message role".
-- **`apps/desktop/src/components/CommandPalette.test.tsx:184`** — The A-03 'detached opener' test cannot fail, and the entity-search path it claims to keep real never runs
-  - It asserts only `survivor` is not focused. CommandPalette.tsx:75 itself says focus() on a detached node is 'a silent no-op', so deleting the `opener.isConnected` guard leaves it green. Lines 5-6 say debounce + stale guard 'are the real ones'; lines 28-29 say hasBackend() is false so they never execute.
-  - also: `apps/desktop/src/components/CommandPalette.tsx:73-79,113-130`
-  - fix: Spy on the detached opener's focus() and assert it is not called, and add a case with window.__TAURI_INTERNALS__ set that drives searchAll, a stale response and openEntity.
-- **`apps/desktop/src/features/Automations.governance.test.ts:322`** — 'the page never invokes a denied hard-delete' cannot fail: it searches for a spelling the service API does not use
-  - `expect(pageSource).not.toContain(`desktop.${denied}`)` with denied = 'delete_conversation', 'delete_knowledge', ... The service methods are camelCase (desktop.ts:237 `deleteConversation: ... invoke('delete_conversation')`), so 'desktop.delete_conversation' can never appear even if the page called every hard-delete.
-  - also: `apps/desktop/src/services/desktop.ts:237-303`
-  - fix: Assert against the camelCase method names (desktop.deleteConversation etc.), then confirm the test goes red when one such call is added to the page.
-- **`apps/desktop/src/features/Integrations.nosecret.test.tsx:114`** — Phase 9 'no desktop secret' sweep never exercises the write path it claims to
-  - `const toggle = screen.queryByRole('button', { name: /disable\|disconnect\|.../i }); if (toggle) await user.click(toggle);` No row is selected, and Disable renders only in renderDetail (Integrations.tsx:428), so toggle is null and skipped; only list_integrations is ever swept. Established by reading, not by running.
-  - also: `apps/desktop/src/features/Integrations.tsx:426-435`
-  - fix: Click the connector row first, use getByRole so a missing button fails, and assert set_integration_status (and a probe/declare) was actually called before sweeping.
 - **`apps/desktop/src/theme/contrast-pairs.json:119`** — `primary-button-label` measures a colour pair no button paints; the real pair is undeclared
   - Pair is fg `accent-text` on bg `accent` (--menq-*). ui.css:27 paints `.btn--primary { background: var(--brops-accent); color: var(--brops-accent-text) }` = #fff/#04121b on aios --cyan. check_dead_tokens.py:61 lists --menq-color-accent-text as read by nothing. tokens.css:87 records this pair once fell to 3.5:1.
   - also: `apps/desktop/src/components/ui.css:27; apps/desktop/src/theme/tokens.css:86-99`
@@ -551,22 +236,6 @@ All open. Grouped by kind; within a kind, by path.
   - GitHub dispatches only root .github/workflows (ci.yml:825-826, check_action_pins.py:41 'GitHub never runs those'). docs/OPERATOR_GUIDE.md:47: 'The release workflow (apps/desktop/.github/workflows/release.yml) builds...'. The nested one builds unsigned win+linux installers; the root one refuses unsigned.
   - also: `docs/OPERATOR_GUIDE.md:47 (also dead: apps/desktop/.github/workflows/ci.yml)`
   - fix: Delete the two nested workflow files (or mark them inert at the top) and point OPERATOR_GUIDE §2.1 at .github/workflows/release.yml.
-- **`apps/desktop/src-tauri/broker/src/ladder_executor.rs:255`** — LadderChain::with_clock has no caller; the freshness test its doc cites does not exist, and rungs 4-7 have no unit test
-  - L235 'only with_clock can replace it, and only a freshness test does'. grep with_clock outside chain_executor.rs: only this definition. LadderChain::new is built at main.rs:583, proof/src/bin/ladder_turn.rs:956 and test L736, where transport=NeverCalled and ledger=NoLedger both panic if reached.
-  - also: `apps/desktop/src-tauri/broker/src/ladder_executor.rs:731`
-  - fix: Add a ladder happy-path test plus stale-receipt and unreadable-clock tests with a fake SubmitTransport, mirroring chain_executor's freshness tests.
-- **`apps/desktop/src-tauri/core/src/local_write_record.rs:428`** — check_chain is never called by the product, so the 'ledger itself is unbroken' property is asserted by docs but checked only in tests
-  - grep for check_chain( outside this file: only core/tests/memory_knowledge_write_records.rs:47. repo.rs:1676/1792 call only lwr::state_of, which returns Recorded when latest.content_sha256 == current digest without recomputing record_sha256 or the prev link; src/commands.rs imports only SubjectState, WriteRecord.
-  - also: `apps/desktop/src-tauri/core/src/repo.rs:1676,1792; apps/desktop/src-tauri/core/src/local_write_record.rs:18-21,402-422`
-  - fix: Run check_chain (or at least recompute the latest record's hash and link) before state_of may answer Recorded, and surface Broken to the UI.
-- **`apps/desktop/src-tauri/core/src/supervisor_ledger.rs:257`** — Rust acceptance state machine and outbox have only test callers; the live one is a Python twin
-  - accept_prepare:257, advance:522, lease_launch_gate:619, gate_and_start:636, current_state:658, lease_payload_bytes:679, enqueue_terminal:723, pending_outbox:780, mark_published:802 have no caller outside the file's own tests (from :1052). Only create_schema and evidence_floor_cas are used. No Python touches the outbox table.
-  - also: `engine/runtime/governed_supervisor_ledger.py:356`
-  - fix: Delete the nine unreached Rust functions (and the never-drained governed_turn_outbox table) or declare them in config/reachability-declarations.json, which lists only five Rust symbols.
-- **`apps/desktop/src-tauri/core/src/windows_broker.rs:225`** — verify_distinct_principals is never called at runtime, though a CI gate and SECURITY_MODEL treat it as the enforcing check
-  - Repo-wide grep: outside this file the only code reference is the re-export at win-broker/src/lib.rs:20; no call site. docs/SECURITY_MODEL.md:204 says it 'requires those seven pairwise-distinct', and tools/check_principal_model.py guards the array it iterates.
-  - also: `docs/SECURITY_MODEL.md:204`
-  - fix: Call it where ServiceSids is loaded on the Windows start path, or state in SECURITY_MODEL that the predicate exists and is tested but is not wired.
 - **`engine/runtime/bro_skill_evolution.py:17`** — Law L13's primary enforcement surface validate_skill_evolution has no caller and no test
   - Repo-wide grep for validate_skill_evolution / bro_skill_evolution finds only the definition, a py_compile list in bro_validate.py and laws/registry.json:260, which names it the `primary` validator with failure mode `fail-closed`/`MUST` and `writer: runtime/bro_skill_evolution.py`. The module writes nothing.
   - also: `engine/laws/registry.json:260-267; engine/schemas/skill-evolution-proposal.schema.json (no instance in the tree, validated by nothing)`
@@ -574,10 +243,6 @@ All open. Grouped by kind; within a kind, by path.
 
 ### duplicate (2)
 
-- **`apps/desktop/src-tauri/src/commands.rs:2039`** — Governed challenge→pre-flight→turn→verify pipeline is written three times despite a 'single source' helper
-  - run_governed_conversation_turn (L1570-1663) says it is "the single source of the challenge→turn→verify wiring ... (was copy-pasted; audit)". stream_run_step L2039-2150 and stream_ask L2238-2362 repeat it (IssuedRequest, Expected, GovernedTurn, NoTrustedManifest, the hidden "ask" conversation lookup).
-  - also: `apps/desktop/src-tauri/src/commands.rs:2238 (stream_ask) and :1576 (run_governed_conversation_turn)`
-  - fix: Extract one held-answer helper (shared with the conversation helper, parameterised on the verify function) so the Expected bindings and the hidden-conversation lookup exist once.
 - **`engine/runtime/isolated_signer.py:753`** — The chain-agreement table exists in Python and in the Rust Windows signer, the Rust copy says 'field-for-field', and the two have drifted
   - Python record entry includes challenge_accepted_at_ms, (requested_at_ms, requested_at), (completed_at_ms, completed_at), 'added 2026-09-20 ... measured forging through to a signed envelope'. Rust CHAIN_AGREEMENT record list ends at "decision" with no time fields, and has a 4th entry Python lacks.
   - also: `apps/desktop/src-tauri/win-live/src/servers.rs:1266 (table), :1252 ('the Rust twin of ... _CHAIN_AGREEMENT, field-for-field')`
@@ -591,16 +256,8 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 
 - `.github/workflows/release.yml:157` — Signature verification runs after tauri-action has already uploaded the installers to the draft release
 - `apps/desktop/src-tauri/audit-signer/src/register.rs:315` — apply() accepts a pre-existing signer directory and the service loads any anchor.key already in it (read from code; not run, Windows-only)
-- `apps/desktop/src-tauri/broker/src/chain_executor.rs:647` — Outbound hop sockets have no deadline, so one hung principal wedges the broker's serial accept loop forever
-- `apps/desktop/src-tauri/broker/src/main.rs:170` — An unparsable allowed-uid argument silently becomes the broker's own uid
-- `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:304` — Signer and supervisor-attestation keys are resolved under the same protocol and never required to be distinct
 - `apps/desktop/src-tauri/command-policy.json:317` — Four registered, allow-granted commands have no caller; one is documented as an honesty hazard
 - `apps/desktop/src-tauri/core/schema/supervisor_ledger.sql:26` — Acceptance row can be INSERTed directly in a terminal state; the 'closed lifecycle' is enforced on UPDATE only
-- `apps/desktop/src-tauri/core/src/privilege_drop.rs:229` — verify_performed_drop does not require the post-drop final-state verification (or the entry gate) to have run
-- `apps/desktop/src-tauri/core/src/tcb_integrity.rs:331` — An empty expected_sha256 pin passes the TCB floor for any artifact the probe could not hash
-- `apps/desktop/src-tauri/launcher/src/main.rs:554` — Setuid launcher trusts hardcoded uid 500 as a TCB owner, but nothing provisions a brops-admin account and the kit pin manifest maps brops_admin to 0
-- `apps/desktop/src-tauri/proof/src/tcb_verify.rs:66` — The TCB floor's principal set silently drops malformed uids and accepts an empty set
-- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1862` — The behavioural key-unreadable proof counts a sharing violation as an access denial
 - `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:98` — Privilege enumeration fails OPEN in two places, against its own stated fail-closed rule
 - `apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs:290` — spawn_as permanently grants the service SID full access to the caller's window station and desktop
 - `apps/desktop/src-tauri/win-live/src/bin/win_tcb_pin.rs:139` — The pin manifest is written with the inherited DACL and restricted afterwards by icacls, the pattern provision_custody was written to remove; its doc also cites a win_provision icacls path that no longer exists
@@ -615,49 +272,15 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 
 - `MASTER_EXECUTION_ROADMAP.md:463` — The evidence move cut five glossary entries in the live roadmap off mid-sentence
 - `apps/desktop/docs/architecture/DATABASE_SCHEMA.md:25` — Schema contract says startup MUST refuse a newer database; migrate() has no such check
-- `apps/desktop/src-tauri/audit-signer/src/relay.rs:142` — Exit code is chosen by substring-matching the error text, which includes server-supplied field names
-- `apps/desktop/src-tauri/broker/src/ladder_executor.rs:204` — The read-only conversation source opens the desktop's messages DB read-write-create
-- `apps/desktop/src-tauri/broker/src/main.rs:175` — DB path from `socket_path.replace(".sock", ".db")`: a path without `.sock` makes the DB and the socket the same file, which is then unlinked
-- `apps/desktop/src-tauri/broker/src/preflight.rs:453` — Off-unix `stat` returns None and three callers are not platform-gated, so existing files are reported NOT MET instead of UNMEASURABLE
-- `apps/desktop/src-tauri/broker/src/preflight.rs:693` — principals.seven_distinct_accounts never checks that six of the seven accounts exist
-- `apps/desktop/src-tauri/broker/src/preflight.rs:1216` — db.durable_acceptance_ledger reports MET on parent-directory existence alone, and says the broker 'serves fail-closed' where it actually exits
-- `apps/desktop/src-tauri/core/src/agent_bundle.rs:435` — An unparseable manifest is reported as flow_unparseable
-- `apps/desktop/src-tauri/core/src/approval_request.rs:236` — classify() never correlates the reply to the request it answers; Recorded.request_id is whatever the reply says, or empty
 - `apps/desktop/src-tauri/core/src/key_manifest.rs:340` — The self-derived floor check that key_manifest's own doc calls 'a predicate that cannot fail' is still in the tree, and #[must_use] does not stop a discarded advance
-- `apps/desktop/src-tauri/core/src/key_manifest.rs:419` — write_floor_atomically claims crash safety but never fsyncs; its failure test exercises only the write branch
-- `apps/desktop/src-tauri/core/src/repo.rs:2825` — Flow receipts record enforcement regime 'enforce' from an ABSENT env var that nothing in the desktop honours
 - `apps/desktop/src-tauri/core/src/repo.rs:4437` — All six seeded automations use triggers and actions outside the vocabulary the runner accepts
-- `apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:865` — Containment report and evidence chain hash launcher/executor/lease by re-reading the paths after the run, and a failed read becomes an empty digest
-- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:270` — Anchor ownership is checked on one fd, then the anchor bytes are re-read BY PATH - the fstat discipline the comment claims buys nothing (same in ladder_turn)
-- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:275` — Root-anchor custody is fstat'ed on one descriptor and the bytes are then read through a second open by path (both drivers)
 - `apps/desktop/src-tauri/proof/src/bin/proof_executor.rs:62` — proof_executor says it proves the fd set is exactly {3,4,5,6} and caps are zero, but it enforces nothing and no code in the tree reads its report
-- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1747` — app_token_posture reports StandardUser, the strongest claim, when the token groups cannot be read
-- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1815` — dacl_facts silently drops ACEs it cannot read, so the read-back proof can pass on an incomplete DACL
-- `apps/desktop/src-tauri/src/ai.rs:3066` — Anthropic provider hard-codes max_tokens 1024 and never reads stop_reason, so a truncated reply is returned as a complete one
-- `apps/desktop/src-tauri/src/governance.rs:428` — Evidence-event mirror accepts records the engine schema rejects, while the docs claim fail-closed schema conformance
-- `apps/desktop/src-tauri/src/governed_selftest.rs:156` — Windows proof store temp dir is leaked whenever the chain errors
 - `apps/desktop/src-tauri/win-broker/proof/isolation_proof.ps1:78` — `[int]$TaskRc` throws on the very NTSTATUS the script documents; the self-test vector uses a different type (read, not run: no pwsh here)
 - `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:217` — Token integrity is hardcoded, not observed, so the integrity gate can never fail
 - `apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs:247` — Child command line is built by joining argv with spaces and no quoting
 - `apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs:323` — A 30 s wait timeout is reported as the child's exit code; restricted_launch returns 0 whatever the child did
 - `apps/desktop/src-tauri/win-live/src/bin/win_provision.rs:372` — requested_at and requested_at_ms are taken from two separate clock reads and can differ
-- `apps/desktop/src/components/CommandPalette.tsx:156` — ArrowDown on an empty result list sets the active index to -1
-- `apps/desktop/src/components/markdown.tsx:36` — A link inside a code span renders as a NUL-delimited placeholder index
 - `apps/desktop/src/features/Analytics.tsx:228` — 'Total across nodes' and the share percentages add counts that overlap and are unrelated
-- `apps/desktop/src/features/Approvals.tsx:370` — The engine REQUEST section and the engine-queue notice disappear whenever the local approval list is empty or failed
-- `apps/desktop/src/features/Automations.tsx:366` — Run history can be shown under the wrong automation: runs are keyed on selectedId, never cleared, and never filtered by automation
-- `apps/desktop/src/features/Calendar.strings.ts:75` — Armenian run-history heading starts with a Latin 'S' and is not the word the test expects
-- `apps/desktop/src/features/Calendar.tsx:164` — A failed automation/run read is displayed as 'No automation has run yet.'
-- `apps/desktop/src/features/Command.tsx:150` — Advance, add-step, set-status and quick-create swallow every backend error
-- `apps/desktop/src/features/Conversations.tsx:349` — Stop followed by a new send re-arms the stopped turn (shared cancelledRef is reset while the old stream is still pending)
-- `apps/desktop/src/features/GroupChat.tsx:428` — Ask candidates come from stale roster.data on a room switch, though the same defect was fixed for messages
-- `apps/desktop/src/features/Notifications.tsx:115` — Refused writes are swallowed into a silent reload — the defect Memory and Library were fixed for
-- `apps/desktop/src/features/Notifications.tsx:362` — Gate panel title says 'Governance stream sealed' while reading, on unreachable, and on an ok-but-empty read
-- `apps/desktop/src/features/Tasks.tsx:525` — The Release button, which sets a blocked task to active, is announced as "Open: <title>"
-- `apps/desktop/src/features/filesModel.ts:83` — An over-cap file is shown as "2.0 MB" whatever its real size; the comment says the backend returns the real size
-- `apps/desktop/src/features/groupChatConsensus.ts:76` — A lower- or mixed-case echo of the stance menu is counted as a YES vote
-- `apps/desktop/src/features/writeRecord.tsx:347` — useMemo in WriteRecordNotice can never hit: both callers pass a fresh one-shot iterator every render
-- `apps/desktop/src/theme/aios.css:335` — A token holding duration+easing is used where only an easing fits, and an easing token is used as a whole transition
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:3784` — All 20 relative markdown links are broken since the text moved from the repository root to docs/archive/
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:2624` — All seven relative links are dead since the board was moved from the repo root to docs/archive/
 - `docs/archive/roadmap-evidence.md:553` — Glossary definitions are filed as "Phase 10 — Task checklist" evidence
@@ -697,34 +320,15 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:864` — The record says the third audit's promotions are 'not applied in this file yet' while the same file carries them applied
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:872` — The third audit's A-01 headline sits under the SECOND audit's 'Prior assessment', followed by 'That audit's target ... 219c763'
 - `apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md:95` — Three incompatible responsive breakpoint tables
-- `apps/desktop/src-tauri/broker/src/chain_executor.rs:771` — supervisor_op is a second, weaker reply parser although two docs say there is exactly one
 - `apps/desktop/src-tauri/capabilities/default.json:7` — The capability covers 'bro-win-*' windows, while its own description, command-policy.json and the design doc say it is the single 'main' window
 - `apps/desktop/src-tauri/capabilities/default.json:80` — delete_automation is an irreversible hard delete that is granted, by classifying it X instead of L2
 - `apps/desktop/src-tauri/command-policy.json:77` — delete_automation is a hard delete granted to the window with protection 'none', escaping the L2 rule every other delete is held to
 - `apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json:5` — Schema says no host and no URL appears anywhere in a bundle and claims agent_bundle.rs implements it; grant.json carries https destinations and the loader enforces none of the schema
 - `apps/desktop/src-tauri/core/src/governed_prepare.rs:660` — Two request_nonce mints per turn; the durable broker_turns nonce is not the one that is signed
-- `apps/desktop/src-tauri/core/src/governed_verification.rs:647` — The spec letters for the two replay defences are swapped inside the same file
-- `apps/desktop/src-tauri/core/src/key_manifest.rs:50` — canonical_bytes is documented as sorted-key JSON but is struct-declaration order, which the root signature depends on
-- `apps/desktop/src-tauri/core/src/privilege_drop.rs:46` — CANONICAL_SEQUENCE ('the one canonical, correct sequence') is an order the module's own final-state check would refuse, and differs from what perform_drop does
-- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:636` — Rust gate_and_start still judges a caller-supplied lease window, the F-01/F-23 defect its Python twin removed
-- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1467` — installed_anchor_bytes relies on the serde_json map ordering that canonical.rs says must not be relied on
-- `apps/desktop/src-tauri/provision/src/lib.rs:1588` — The manifest and NEVER_EXPIRES_EPOCH promise revocation by registry_version rise, which this crate cannot perform
-- `apps/desktop/src-tauri/provision/src/posix_install.rs:111` — Every Custody refusal carries a remedy the code itself refuses: 'run provisioning once as that account'
 - `apps/desktop/src-tauri/provision/src/posix_install.rs:198` — The install script resolves the desktop account through getent; the tool it then runs reads only /etc/passwd and refuses it
-- `apps/desktop/src-tauri/provision/tests/posix_install.rs:29` — The suite's own 'never compiled out' rule is broken by posix_install (whole file cfg(unix)) and by eight cfg-gated tests in audit_signer.rs
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:72` — Two adjacent comments disagree on whether the provisioned posture depends on the self-owned acknowledgement
 - `apps/desktop/src-tauri/src/files.rs:136` — is_sensitive doc assumes BROPS_FILES_ROOT may be $HOME, which reject_unsafe_root refuses; denylist also matches components above the root
-- `apps/desktop/src-tauri/src/lib.rs:306` — dev-ungoverned is described as the 'LOCAL sandboxed CLI' while the same block switches agent mode (Bash/Write in ~/BroPS) on by default
-- `apps/desktop/src-tauri/win-broker/src/lib.rs:10` — Crate doc names a function that does not exist and calls Authenticode 'unbuilt' in the file that builds it
 - `apps/desktop/src-tauri/win-live/WIRING_LIVE_TRUST.md:83` — Runbook step 5 says BROPS_ALLOW_GOVERNED_ENGINE makes each message run this kit's chain; that flag selects the Python sidecar provider and nothing in the desktop connects to the win-live pipes
-- `apps/desktop/src/App.tsx:17` — Two different no-backend banners render together, and one contradicts what panels actually show
-- `apps/desktop/src/features/Activity.tsx:234` — Three pages turn any error whose text matches a regex into a 'governance wall' refusal, on commands that are plain local SQLite reads
-- `apps/desktop/src/features/Knowledge.tsx:174` — Delete is offered with a confirm dialog although the backend handler can never delete
-- `apps/desktop/src/features/integrationsModel.ts:76` — The module contradicts itself and the backend about auth_ref, and the TS Integration type omits the field
-- `apps/desktop/src/i18n/hy.ts:95` — Armenian and Russian Memory subtitle still say 'verifiable memory', the wording desktop.ts says was removed
-- `apps/desktop/src/services/agentsDispatch.ts:176` — pathCovers treats '.' as covering the whole repo; the engine says '.' matches only the root itself
-- `apps/desktop/src/theme/tokens.css:6` — The two stylesheet layers have opposite defaults when data-theme is absent
-- `apps/desktop/src/theme/tokens.ts:231` — tokens.ts says ThemeProvider makes it authoritative at runtime; ThemeProvider says it is intentionally not mounted, and nothing imports either
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:45` — Armenian audit banner contradicts itself: nine audits ran, yet the second was 'never repeated'
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:52` — Armenian audit banner gives a finding total its own breakdown does not add up to
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:104` — Repository map calls contracts/ and bridge/ placeholder READMEs while the roadmap table in the same file says they hold real content
@@ -770,58 +374,14 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:884` — The archive cites a 'Staleness sweep' section and a 'sweep table below' that exist in neither ledger file
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:938` — The file tells the reader to use a legend 'above' / 'at the top of this file' that is not in this file
 - `apps/desktop/src-tauri/README.md:20` — src-tauri README describes a tree that no longer exists: 69 tests, schema path, 'host never compiled', two-crate layout
-- `apps/desktop/src-tauri/audit-signer/src/register.rs:7` — Module doc headed 'The order matters' gives the install order the code deliberately does not use
 - `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.py:571` — The pin-rewrite and registry-resign narratives say the registry is app-writable and really is re-signed; the code asserts the OS refuses the write
-- `apps/desktop/src-tauri/broker/src/chain_executor.rs:25` — Module docs still mark LinuxGovernedExecution `LINUX-RUN-PENDING, failing closed until provisioned`
-- `apps/desktop/src-tauri/broker/src/chain_executor.rs:1416` — Test says the real execution verifies the pinned launcher/executor hashes and budget; it reads none of those Lease fields
-- `apps/desktop/src-tauri/broker/src/main.rs:18` — main.rs header still says the real executor is a follow-up slice and every request gets `blocked`; also 'four schemas' where there are three
-- `apps/desktop/src-tauri/broker/src/preflight.rs:5` — Module doc says build_governed_executor has 15 `return fail_closed()` branches; it has 16
-- `apps/desktop/src-tauri/broker/src/preflight.rs:256` — The floor row cites a refusal reason the broker never emits (`blocked:keys:floor_not_persisted`)
-- `apps/desktop/src-tauri/broker/src/preflight.rs:1737` — Fixture comment refers to `broker_config_keys`, a name that exists nowhere in the repository
 - `apps/desktop/src-tauri/capabilities/default.json:4` — The description says 'Every app IPC command is declared in the app manifest (build.rs)'; 6 of the 94 registered commands are not
 - `apps/desktop/src-tauri/core/schema/0022_integration_auth_ref.sql:12` — The documented example reference `vault:kv/data/brops/smtp#password` is refused by the CHECK it documents
 - `apps/desktop/src-tauri/core/schema/supervisor_ledger.sql:4` — The mirror's header calls itself the single normative source and says to edit THIS file; it also cites a CLAUDE.md §4 that says nothing of the kind
-- `apps/desktop/src-tauri/core/src/engine_trust.rs:17` — "the seven authority keypairs" — provisioning mints nine
-- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:121` — "NOT WIRED" section says check_echoes and governed_turn_submit_prepared have no caller; the broker ladder calls both
-- `apps/desktop/src-tauri/core/src/governed_output_pull.rs:100` — Module doc keeps superseded text beside its own retraction, and still describes an async adapter that was deleted
-- `apps/desktop/src-tauri/core/src/governed_prepare.rs:655` — prepare_governed_turn_v1b doc says its caller does not exist yet; it has a production caller
-- `apps/desktop/src-tauri/core/src/local_write_record.rs:213` — record_sha256 is documented as covering 'every stored field except the hash itself' but omits the stored `id` column
-- `apps/desktop/src-tauri/core/src/production_trust.rs:562` — Comment says the mismatched-verifying-key test was deliberately removed; the test is still in the same module 14 lines below
-- `apps/desktop/src-tauri/core/src/receipt.rs:1328` — Parity test names the wrong Python file for its counterpart
-- `apps/desktop/src-tauri/core/src/receipt_store.rs:67` — GovernedTurn's doc says it has no Debug and carries a ResolvedManifestKey; neither is true
-- `apps/desktop/src-tauri/core/src/repo.rs:2096` — Two doc comments are attached to the wrong item (leftovers of removed/moved functions)
-- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:20` — Module header still describes the floor as per (install_id, task_id) and the CAS as three UNIQUEs; the body says otherwise
-- `apps/desktop/src-tauri/core/tests/schema_migrations.rs:513` — The list of non-idempotent ALTER TABLE migrations omits 0022
-- `apps/desktop/src-tauri/provision/src/anchor.rs:311` — CUSTODY_REMEDY, appended to every custody refusal, prescribes a POSIX procedure the code refuses
-- `apps/desktop/src-tauri/provision/src/lib.rs:22` — The crate's opening posture section still says the operator-root private key is on disk and SELF_OWNED must be set
-- `apps/desktop/src-tauri/provision/tests/prerequisites/mod.rs:213` — running_as_root's comment describes a /proc/self path the code does not take, and a failed probe is read as 'not root'
-- `apps/desktop/src-tauri/provision/tests/provision.rs:35` — Doc cites a test that does not exist, and describes the pin at a path and custody it no longer has
-- `apps/desktop/src-tauri/provision/tests/python_verifier.rs:6` — File header says the floor anchor is minted 'with the real operator key'; the body says that key no longer exists
-- `apps/desktop/src-tauri/provision/tests/python_verifier.rs:6` — Harness module doc says the floor anchor is minted "with the real operator key"; same file and the verifier say the operator root is destroyed
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:11` — Docstring usage names two arguments; the script requires three and prints that docstring as its usage error
-- `apps/desktop/src-tauri/src/ai.rs:3` — Module header describes a provider policy the code no longer has (default claude CLI, ambient API key selects Anthropic)
-- `apps/desktop/src-tauri/src/ai.rs:1034` — '262 pack-role files' is wrong: 262 is the total, of which 259 are pack roles and 3 are the tiers
-- `apps/desktop/src-tauri/src/ai.rs:3845` — '262 pack roles' counts the three tiers as pack roles
-- `apps/desktop/src-tauri/src/commands.rs:394` — decide_approval still says native confirmation (T-011) is 'not available yet' while confirm_approval implements it
-- `apps/desktop/src-tauri/src/governance.rs:65` — Line references into the engine and the sidecar have drifted
-- `apps/desktop/src-tauri/src/governed_turn.rs:63` — Doc says no production code implements SubmitTransport and nothing calls governed_turn_submit_prepared; the broker does both
-- `apps/desktop/src-tauri/src/lib.rs:104` — provision_local_trust's doc comment is fused onto retire_orphaned_anchor
-- `apps/desktop/src-tauri/src/lib.rs:318` — Comment says the dev build ASKS for the project folder in `setup`; nothing asks
-- `apps/desktop/src-tauri/src/lib.rs:387` — 'READ-ONLY ... only READ engine governance surfaces' block includes request_engine_approval, which asks the engine to record a request
-- `apps/desktop/src-tauri/src/lib.rs:484` — Comment says the filesystem commands are manifest-declared 'unlike the commands above'; the 85 above them are declared and granted too
-- `apps/desktop/src-tauri/src/lib.rs:484` — Files-surface comment claims only those three commands are declared in the app manifest
 - `apps/desktop/src-tauri/tests/o3_conductor_session.py:35` — Docstring says the harness sets the raw acknowledgement variable; the code sets the _FILE form
-- `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:13` — Doc and comment say CreateProcessWithTokenW / SeImpersonate; the code calls CreateProcessAsUserW with SeIncreaseQuota
 - `apps/desktop/src-tauri/win-live/proof/CROSS_ACCOUNT_PROOF.md:31` — "cargo test -p brops-win-live runs in no CI workflow" is false today
-- `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:181` — Driver comment still makes the floor-signature claim the hardening note says was removed everywhere
-- `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:24` — Module docs say the Windows-only code is covered by no CI; CI runs it on windows-latest
-- `apps/desktop/src/components/Shell.tsx:282` — Sidebar footer hardcodes 'MENQ OS · v0.9'; the build is BroPS 0.1.0
-- `apps/desktop/src/features/Knowledge.honesty.test.tsx:10` — Test header says the knowledge write record is "not readable from this page yet — no command is registered for it"
-- `apps/desktop/src/features/Security.strings.ts:64` — Posture strip is attributed to the engine but is counted from the desktop's local SQLite
-- `apps/desktop/src/i18n/en.ts:108` — User-visible tooltip promises safe-delete 'arrives in T-011', but T-011 shipped as the native approve confirmation
-- `apps/desktop/src/services/agentsDispatch.ts:16` — 'The 262 pack-role definitions' counts the three tier files as pack roles
 - `apps/desktop/src/services/desktop.ts:367` — Comment points at `grantApproval`/`denyApproval` 'below'; neither exists
-- `apps/desktop/src/theme/aios.css:3926` — "every selector below already exists in aios.css" is false for 14 selectors, which match no markup either
 - `apps/desktop/vitest.browser.config.ts:15` — "28 of this app's pages carry their CSS in a template literal" does not match the tree
 - `config/counted-claims.json:118` — engine_tests provenance dates the measurement a day before the head it names existed
 - `config/current_state.json:89` — Three state fields in the machine mirror describe pull requests as open or in progress after they merged
@@ -837,77 +397,23 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 
 ### test-defect (90)
 
-- `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:599` — Registration test still skips with a captured println and a bare return, the pattern its own comment says was removed
-- `apps/desktop/src-tauri/audit-signer/tests/relay_contract.rs:217` — The 'inside the engine's ten second budget' test compares a Rust constant to literals, not to the engine's value
-- `apps/desktop/src-tauri/broker/src/preflight.rs:1607` — the_tcb_roster_is_the_real_constant_not_a_copy cannot detect a copy
-- `apps/desktop/src-tauri/broker/src/tcb_probe.rs:813` — a_malformed_manifest_refuses and a_manifest_missing_required_artifacts_refuses pass without reaching the parser or the coverage floor when run as uid 1000
-- `apps/desktop/src-tauri/broker/tests/broker_binary_e2e.rs:78` — Readiness is judged by the socket file existing, and the DB test asserts something that readiness wait already implies only by code order
-- `apps/desktop/src-tauri/core/src/agent_bundle.rs:927` — refusal_reasons_are_distinct checks 12 of the 18 Refusal variants
-- `apps/desktop/src-tauri/core/src/approval_request.rs:376` — Two of the eight DECISION_WORDS are tested by nothing
-- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:1150` — NM-OUTPUT-06 absence check is keyed on a trailing comma and misses an existing pub fn taking a bare length
-- `apps/desktop/src-tauri/core/src/lib.rs:938` — Comment claims `refused before the gate, so it spends no grant`; the test has no grant left to spend and checks no reason
-- `apps/desktop/src-tauri/core/src/lib.rs:1181` — memory_pin_orders_and_delete_works pins the NEWER entry, so it cannot detect loss of pin ordering
-- `apps/desktop/src-tauri/core/src/receipt.rs:1422` — NM-SCOPE-06 source-reading test only sees `pub fn`; a `pub(crate) fn` accessor or a second impl block on Parsed passes it
-- `apps/desktop/src-tauri/core/src/receipt_store.rs:1884` — bounded_reason's char-boundary test never reaches a char boundary
-- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:1367` — The 'tripwire' for a new NewAcceptance field compares a hand-written table to a hand-written 23
-- `apps/desktop/src-tauri/core/tests/integration_auth_ref.rs:223` — The 400-character blob assertion cannot fail for the reason it states
-- `apps/desktop/src-tauri/core/tests/integration_auth_ref.rs:266` — The 'no audit column may contain the reference text' test never looks at payload_json
-- `apps/desktop/src-tauri/launcher/src/main.rs:1820` — the_attested_config_is_read_from_a_compile_time_path does not test what its name and comment claim
-- `apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:1354` — Tests described as "the exact bytes run_live_turn.sh writes" and "the exact argv chain_executor.rs builds" assert on hand-typed copies
-- `apps/desktop/src-tauri/provision/tests/prerequisites_guard.rs:194` — The tag-uniqueness test checks 9 of the 11 prerequisite tags; the two newest are not covered
-- `apps/desktop/src-tauri/provision/tests/provision.rs:369` — repair_digest is a no-op for the registry, but two tests still describe a repaired digest
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:121` — Header claims the root private half is "nowhere on disk"; the search covers only the trust directory
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:166` — The "registry still NAMES the operator root" check is a verbatim repeat of line 118 and cannot fail once that passed
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:384` — Section "the canonical bytes themselves, compared directly" compares nothing; its first check cannot fail
-- `apps/desktop/src-tauri/src/ai.rs:3659` — every_protected_path_is_denied_to_every_write_tool re-implements the file-vs-subtree rule instead of testing it
-- `apps/desktop/src-tauri/src/ai.rs:3862` — Lockstep test returns green when the agent file is unreadable, and compares only the tools line
-- `apps/desktop/src-tauri/src/ai.rs:3862` — tier_definitions_match_the_generated_agent_files passes silently when a tier file is missing
-- `apps/desktop/src-tauri/src/governed_turn.rs:483` — Linux connect-failure test returns silently (a PASS) when the broker socket exists
-- `apps/desktop/src-tauri/src/governed_turn.rs:483` — Linux connect-failure test returns silently when the broker socket exists; ingress-cap test does not pin its boundary
 - `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:232` — STARTUPINFOEX handle-list gate is a tautology and its DENY does not stop the launch
 - `apps/desktop/src-tauri/win-live/src/provision_custody.rs:228` — 'Provisioning agrees with the runtime floor' is claimed but tested against a copy, and is false for ancestors
 - `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:812` — The end-to-end real-probe floor test passes on any refusal at all
-- `apps/desktop/src/features/Calendar.runs.test.tsx:85` — The 'receipt appears only in the note' assertion can never fail
-- `apps/desktop/src/features/Decisions.status.test.ts:35` — 'A wrong entry is caught' asserts on a local literal, not on the map-vs-classifier comparison
-- `apps/desktop/src/features/Integrations.nosecret.test.tsx:134` — Argument whitelist is wrong for create_integration and skips set_integration_auth_ref
-- `apps/desktop/src/features/Tasks.test.tsx:81` — "an empty lane says so in words, not with a dash" passes whatever the empty lanes render
-- `apps/desktop/src/features/pages.fixtures.tsx:159` — The "typed, real-shape" fixtures carry values the backend never emits, so the populated sweeps never mount a granted approval
-- `apps/desktop/src/features/writeRecord.test.tsx:65` — 'never turns an uninterpretable reply into "unrecorded"' asserts on a literal the test built itself
-- `apps/desktop/src/features/writeRecord.test.tsx:146` — hy/ru half of the vocabulary guard covers two stems each; trusted/receipt/custody/verified have no hy/ru pattern
-- `apps/desktop/src/features/writeRecord.test.tsx:152` — Vocabulary guard scans only STR lang-maps; the parameterised copy that reaches the screen is never checked
-- `apps/desktop/src/i18n/strings.parity.test.ts:13` — Per-page parity guard misses a production catalog and silently skips any entry without `en`
-- `apps/desktop/src/services/desktop.writeRecords.test.ts:89` — Two tests assert on the mock's own return value and cannot fail
 
 ### dead-code (47)
 
-- `apps/desktop/src-tauri/core/src/broker_client.rs:48` — transport_failure_reason has no caller outside its own test and ignores its argument
-- `apps/desktop/src-tauri/core/src/egress_proxy.rs:306` — Half of the egress authorizer's public API has no non-test caller and is not declared to the reachability gate
-- `apps/desktop/src-tauri/core/src/manifest_authority.rs:26` — ManifestReceiptKeyAuthority is constructed only in tests, yet the negative matrix counts its test as an implemented control
-- `apps/desktop/src-tauri/core/src/manifest_authority.rs:56` — ManifestReceiptKeyAuthority has no caller in the workspace and is a fourth, drifted copy of the manifest-verify / anti-rollback / key-resolve sequence
-- `apps/desktop/src-tauri/core/src/real_ids.rs:8` — RealBrokerIds claims to be 'the production BrokerIds impl' but nothing uses it; the broker ships its own UuidBrokerIds
-- `apps/desktop/src-tauri/core/src/repo.rs:3568` — The produced-agent dispatch half is still unreachable from the shipped product, contrary to the T-058 test comment
-- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:257` — The Rust acceptance state machine and outbox have no caller outside this file's own tests
 - `apps/desktop/src-tauri/executor/src/main.rs:1` — The brops-executor binary is exec'd by nothing and duplicates proof_executor's hashing stand-in
-- `apps/desktop/src-tauri/executor/src/main.rs:75` — brops-executor, described as "the tiny pinned image the launcher fexecve's", is installed by no kit or bundle; both kits install proof_executor, which re-implements its binding
 - `apps/desktop/src-tauri/launcher/src/main.rs:572` — Remaining stubs: launcher containment not performed, egress transport missing, composed launch gate test-only
-- `apps/desktop/src-tauri/provision/src/posix_install.rs:142` — DesktopUser.home is parsed and carried but nothing reads it
 - `apps/desktop/src-tauri/provision/tests/verify_provisioning.py:326` — Unused `_API` class, and an unreachable None-guard on the floor-anchor sample
-- `apps/desktop/src-tauri/src/commands.rs:1110` — set_run_step_status is registered and capability-allowed but nothing in the frontend calls it
-- `apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs:9` — spawn_as and restricted_launch are called by nothing; doc says the real broker uses spawn_as
 - `apps/desktop/src-tauri/win-live/src/servers.rs:975` — Leftovers from removed wire fields: a 4-slot int array for one field, and a write-only Signer counter
 - `apps/desktop/src/components/ui.tsx:430` — Six 'Phase-4' primitives have no caller outside their own tests
-- `apps/desktop/src/features/Calendar.tsx:362` — Delete confirmation and 'delete refused' flows are unreachable behind a hard-disabled button, in two pages
-- `apps/desktop/src/features/Chat.strings.ts:52` — notEmittedTitle / notEmittedBody are rendered by nothing, and the one test naming them asserts an absence that cannot fail
-- `apps/desktop/src/features/Files.tsx:222` — Sort state and selection summary are wired to nothing
-- `apps/desktop/src/features/Home.strings.ts:52` — STR.tasksUnavailable has no reader
-- `apps/desktop/src/features/Integrations.tsx:581` — The 'Declaration refused' branch of the declare alert is unreachable
-- `apps/desktop/src/features/approvalsAuthority.ts:1` — Two frontend modules are imported by nothing, not even a test
-- `apps/desktop/src/features/consensus.ts:63` — REQUIRE_FULL_PARTICIPATION is described as an owner-gated default but nothing reads it
-- `apps/desktop/src/i18n/en.ts:160` — 24 of the 238 dictionary keys are referenced nowhere outside the three dictionaries (72 dead lines)
 - `apps/desktop/src/services/agentsDispatch.ts:522` — Frontend invokes two Tauri commands that no Rust code defines or registers
 - `apps/desktop/src/services/desktop.ts:275` — memoryWriteRecords / knowledgeWriteRecords (record history) are exposed end to end and nothing in the UI calls them
 - `apps/desktop/src/services/desktop.ts:498` — Renderer wrappers and exports that no production code calls
-- `apps/desktop/src/theme/aios.css:421` — 55 of the 132 @keyframes in aios.css are referenced by nothing
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:1` — The archived brain is named by no file in the repository
 - `docs/archive/roadmap-evidence.md:3` — Nothing in the tree links to roadmap-evidence.md, so the checkboxes cannot reach their own evidence
 - `engine/.bro/policy.json:10` — Mode permission blocks in the protected policy file are read by nothing
@@ -920,47 +426,17 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/2026-08-06-consolidated-index.md:19` — "Duplicates: 0" and the 122 total, while several rows restate another row in the same round
 - `apps/desktop/AUDIT/2026-08-06-independent-audit.md:26` — The "47 surviving findings" count includes the same defect filed two or three times, sometimes at different severities
 - `apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md:118` — Agent profile, delegation, live-run and escalation flows are specified twice, and the two copies already differ
-- `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:56` — resolve_python is copied into four test files, eleven lines below a comment saying a second copy is a second policy
-- `apps/desktop/src-tauri/broker/src/ladder_executor.rs:263` — hop() and the create-pending / issue request builders are written twice
 - `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:250` — now_ms() with unwrap_or(0) is copied nine times, contradicting the 'fail-closed, not zero' clock rule recorded in the same crate
 - `apps/desktop/src-tauri/core/schema/0026_credential_bindings.sql:48` — The auth_ref rule exists three times (0022 CHECK, 0026 CHECK, Rust normalize_auth_ref) with no parity test, and SQL and Rust already disagree
-- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:214` — MAX_OUTPUT_BYTES is defined twice in one crate with no equality test
-- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:253` — The 29-member GOVERNED_REFUSAL_REASONS union is hand-restated from Python with no parity gate
-- `apps/desktop/src-tauri/core/src/governed_message_store.rs:22` — sha256_hex is implemented twice in brops-core
-- `apps/desktop/src-tauri/core/src/governed_sidecar.rs:352` — SidecarPrincipal::from_config is re-implemented rule for rule in Python; only the four constants are pinned
-- `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:32` — Two unpinned 8192 frame caps and two unpinned 128 id caps; the request-size check is unreachable behind the transport and untested
-- `apps/desktop/src-tauri/core/src/ipc_framing.rs:85` — The length-prefixed stream reader is hand-rolled twice more in the broker with a different zero-length rule
-- `apps/desktop/src-tauri/core/src/key_manifest.rs:429` — decode_hex32 and sha256_hex each exist twice inside brops-core, with further copies in sibling crates
-- `apps/desktop/src-tauri/core/src/manifest_authority.rs:32` — hex32 is a byte-for-byte copy of key_manifest::decode_hex32, with four more copies in sibling crates
-- `apps/desktop/src-tauri/core/src/manifest_authority.rs:32` — hex32 decoder is byte-for-byte copied six times (plus four copies of the lowercase-hex64 validator and three sha256_hex in core); not yet drifted
-- `apps/desktop/src-tauri/core/src/real_ids.rs:8` — The "production BrokerIds impl" is unused; the broker and three drivers each carry their own copy
-- `apps/desktop/src-tauri/core/src/receipt.rs:232` — Three sha256_hex implementations inside brops-core alone
-- `apps/desktop/src-tauri/core/src/repo.rs:598` — Three sha256_hex implementations in one crate; repo.rs alone uses two of them
-- `apps/desktop/src-tauri/core/src/repo.rs:3955` — The auth_ref rule is stated twice (Rust and schema-0022 CHECK) and the two already disagree on PEM armor
-- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:619` — The step-8a launch gate is written a second time in win-live, and the copy has drifted
-- `apps/desktop/src-tauri/core/src/windows_broker.rs:206` — Two peer-auth predicates for the challenge-authority pipe from two policy sources; one is unused
 - `apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:238` — ladder_turn and live_turn carry copies of the anchor custody check, the anchor/provenance block and four helpers; the copies have already drifted
 - `apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs:238` — anchor_file_is_tcb_owned and the anchor-document parse are copied into both proof drivers; the stated reason for copying is false and the inline parser has drifted from parse_root_anchor
-- `apps/desktop/src-tauri/provision/tests/anchor_file_encoding.rs:26` — resolve_python is written four times and has already drifted: two copies fall back past a broken BROPS_TEST_PYTHON, two do not
-- `apps/desktop/src-tauri/src/ai.rs:1058` — Protected-surface list is written twice (prompt prose and BRO_PROTECTED_PATHS) and the prose copy is missing two entries
-- `apps/desktop/src-tauri/src/ai.rs:1542` — Tier specialist prompt is hand-copied from the generator and has already drifted; the 'lockstep' test compares only the tools line and passes silently if the file is missing
-- `apps/desktop/src-tauri/src/commands.rs:497` — confirm_rate_limit is a copy of reject_rate_limit, reuses its REJECT_* constants, and has no test
 - `apps/desktop/src-tauri/tests/o3_conductor_session.rs:37` — Python-discovery test helpers copied across four integration tests
 - `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:364` — Driver and in-process proof carry hand-copied twins of the custody resolver, RESULT string and deployment fixture, and the fixture has already drifted
 - `apps/desktop/src-tauri/win-live/src/provision_custody.rs:111` — looks_like_sid, the ACE struct and the SID-to-string helper each exist twice in the crate
-- `apps/desktop/src/components/ui.tsx:277` — The roving-tabindex keyboard handler is written twice
 - `apps/desktop/src/features/Command.tsx:185` — The 'is this a wall refusal' text classifier is restated with a different vocabulary on at least nine surfaces
-- `apps/desktop/src/features/Memory.strings.ts:76` — The provenance sentence about the write record is copied verbatim (en/hy/ru) into both page catalogs instead of the shared one
-- `apps/desktop/src/features/Projects.strings.ts:9` — Project status labels duplicated from domain/statusLabels.ts and already drifted
-- `apps/desktop/src/features/Security.tsx:350` — Epoch-millis date parser copy-pasted per page with drift; Security has none and prints the raw number
-- `apps/desktop/src/features/delegation.ts:59` — TIER_TOOLS, CapabilityTier and the task-contract path patterns exist twice; only one copy is checked against the real files
-- `apps/desktop/src/features/pages.a11y.spec.tsx:113` — The jsdom a11y spec keeps its own copies of the page list and OBJECT_SHAPED, and its "with data" tests mount the empty state
-- `apps/desktop/src/features/writeRecord.test.tsx:136` — FORBIDDEN vocabulary list written three times, and the copies already differ
-- `apps/desktop/src/services/agentsDispatch.nolease.test.ts:69` — The credential sweep (flatten, decodeCharCodeRuns, FORBIDDEN, BASE fixture) is copy-pasted into three test files
 - `apps/desktop/src/services/agentsDispatch.ts:86` — Two TIER_TOOLS tables in the desktop; the one the UI renders is not checked against the generated files
 - `apps/desktop/src/test/computedStyle.ts:294` — Two contrast measurers that disagree on the sRGB knee and on what they can parse
 - `apps/desktop/src/theme/aios.css:2883` — Two page-local danger pills re-implement `.pill.bad` under comments saying the foundation has none; one has drifted and is unused
-- `apps/desktop/src/theme/aios.css:3674` — The Settings theme-preview tile hard-codes palette values and still shows the pre-retune light cyan
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:71` — The 'single normative source' paragraph appears twice, verbatim, six lines apart
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:9` — Header says the archive keeps ONE copy of the three-file log, but TASKS_ARCHIVE_2026-08.md beside it repeats about 188 KB of it
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:7` — Archive described as 'closed rows' carries seven rows that are still open on the live board, with diverged text
@@ -977,7 +453,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:110` — About 27 working finding IDs are cited throughout but never defined or mapped to R-01..R-45
 - `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:1981` — R-35's key explanation was corrupted by an unescape: 'the SIX ASCII characters' is followed by one raw U+0080 byte pair
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:197` — Orphaned sentence fragment left by an edit in the keystone header, pointing at NEXT_CHAT.md for 'the full text'
-- `apps/desktop/src-tauri/src/ai.rs:966` — Four doc comments are attached to the wrong item because the item they describe was moved away from them
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:2625` — Mixed-script corruption in the bilingual text: an Armenian word spelled with Cyrillic letters, and a Russian word in the EN/HY heading
 - `docs/archive/current_state_snapshots_2026-08.json:37` — Two archived fields are truncated and the pointer to the full text is dead
 - `engine/requirements-ci.txt:7` — Lockfile header has a sentence cut in half by an inserted paragraph, and its interpreter range disagrees with the dependency SST
@@ -1141,7 +616,7 @@ The workflow journal is session-local and is **not** in the repository: this fil
 
 ## 8. Not the Builder's to decide
 
-Findings a fixing agent confirmed and did **not** change, because the fix widens what is accepted, changes who may do what, or rewrites normative design. Each names the choice and a recommendation. Nothing here is decided.
+Findings a fixing agent confirmed and did **not** change, because the fix widens what is accepted, changes who may do what, or rewrites normative design. Each names the choice and a recommendation. Nothing here is decided, except where §10 says the Owner decided it.
 
 - **`.claude/agents/research-analysis--source-verifier.md`** — A role named Verifier is granted build authority and Edit/Write
   - Confirmed, and it is the policy's stated derivation (only the final declared role is the designated verifier); the engine resolver gives the same answer, now held equal by a test. Changing it means exact_overrides in engine/agents/authority-policy.json — who may build and who may verify, in the engine. Recommend the Owner decide per pack; if the names are to stay, say in the policy's `derivation` that a role's name confers nothing.
@@ -1159,8 +634,24 @@ Findings a fixing agent confirmed and did **not** change, because the fix widens
   - Confirmed present for set_run_step_status. Not edited: outside scope, and flipping a grant changes what the webview may do. Recommend deny for set_run_step_status and post_message, as config/reachability-declarations.json itself suggests.
 - **`apps/desktop/src-tauri/command-policy.json`** — delete_automation is a hard delete granted with protection 'none'
   - Same issue as capabilities/default.json:80. Not edited: outside scope and a capability decision. Recommend native-confirm.
+- **`apps/desktop/src-tauri/core/src/governed_prepare.rs`** — Two request_nonce mints per turn; the durable broker_turns nonce is not the one that is signed
+  - Confirmed as fact, and confirmed it is a recorded open seam (config/spec-conformance.json 'A NONCE-AUTHORITY COLLISION'; ladder_executor drops the orchestrator's nonce). The doc now names where it is recorded instead of 'the report', and states plainly that the nonce in broker_turns is not the one signed. Choosing one mint is a design decision on a signed-chain field: (a) pass the orchestrator's nonce into prepare_governed_turn_v1b, against §4.10(g) step 1 which makes preparation the mint; or (b) record the prepared nonce in the broker_turns row, which is its durable key. Recommend (b): it follows the ratified design and changes a storage key, not what is signed.
+- **`apps/desktop/src-tauri/core/src/repo.rs`** — All six seeded automations use triggers and actions outside the vocabulary the runner accepts
+  - Confirmed. The seed comment now says all six are not runnable, armed or not, and why. What the starter workspace SHOWS is unchanged, and that is the choice: (a) reseed in the real vocabulary (`every: 1d` / `notify: ...`) — but an event trigger like 'run.status = failed' has no equivalent and four of the six are ISP-themed mock-up rows; (b) label them as examples in the UI; (c) drop them. The workspace's own seeded memory says the cockpit 'must look full and alive', so this is content the Owner chose. Recommend (a) for the two generic rows and (c) for the four mock-up rows.
+- **`apps/desktop/src-tauri/provision/src/posix_install.rs`** — The install script resolves the desktop account through getent; the tool it then runs reads only /etc/passwd and refuses it
+  - Confirmed, and docs/design/DEBIAN_INSTALL_PROVISIONING.md §7.1 already records it as still open under a Builder decision left for the Owner to veto. It fails closed. The choice: (a) brops_install.sh refuses, before its accounts step creates anything, a desktop account that getent resolves and /etc/passwd does not list; or (b) the script passes the uid, gid and home it resolved and the root tool trusts them. I recommend (a): it is a pure earlier refusal with one rule, while (b) widens what the root tool accepts. Not made here: the script is outside this batch and has its own suite.
+- **`apps/desktop/src-tauri/src/files.rs`** — is_sensitive doc assumes BROPS_FILES_ROOT may be $HOME, which reject_unsafe_root refuses; denylist also matches components above the root
+  - Confirmed. The doc is corrected: $HOME is refused before this runs, and the comment now states that the denylist matches components above the root, so a root under .config/.git is refused whole. The behaviour is NOT changed: matching only below the root would make such a root usable, which widens what this surface accepts. Choice: keep it strict, or match relative to the root. Recommendation: keep it strict unless a real deployment needs a root under a dot-directory.
+- **`apps/desktop/src-tauri/src/lib.rs`** — retire_orphaned_anchor renames an anchor the seal says the app account can never rename
+  - Confirmed as a contradiction between lib.rs and provision/src/anchor.rs; which side is false cannot be measured on this Debian box. Not changed. The contradiction is now written into retire_orphaned_anchor's doc as UNMEASURED. The choice: run it on a sealed Windows machine. If the rename is refused, the reinstall fix is dead and belongs in the elevated uninstaller; if it succeeds, the seal does not hold against the app account. Recommendation: order the run first, and move retirement into the elevated uninstaller, which is right under either answer.
 - **`apps/desktop/src-tauri/win-live/WINDOWS_ANTIROLLBACK_HARDENING.md`** — The stated anti-rollback boundary (broker-writable floor.json) is a state the §2.5 floor refuses
   - Not edited: the file is outside this batch's scope, and the fix is a design choice. Options: (a) move floor.json to a broker-owned state directory outside the pinned set, (b) stop pinning its owner/DACL. Recommend (a): it keeps the §2.5 floor strict and gives the per-turn writer its own directory. I did not re-open tcb_floor.rs myself.
+- **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs`** — floor.json is digest-pinned and must be TCB-only-writable, yet the broker rewrites it every turn
+  - Confirmed. Added a module-doc bullet and a note on WIN_TCB_REQUIRED_ARTIFACTS stating the contradiction and that it is unresolved. The choice is a custody decision: (A) remove floor.json from the pinned set and give it its own rule — this WIDENS what the floor accepts; (B) keep it pinned, stop rewriting it when the epoch is unchanged, and require a re-pin on advance — refuses more, but a non-TCB broker still cannot persist an advance. I recommend B, decided together with the hardening note's provisioning-enforced floor ACL.
+- **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs`** — Ancestor rule up to the drive root looks unsatisfiable on a stock Windows volume
+  - Code is as described (every ancestor to the drive root, owner in [SYSTEM, Administrators], no WORLD_SIDS ACE even read-only). Whether a stock C:\ fails it is NOT measured — no Windows host here. Added a module-doc bullet saying the rule has never been shown satisfiable, that it is stricter than the implementation plan's write-only ancestor rule, and that no positive real-probe test exists. The suggested fix (write-only ancestors, TrustedInstaller as owner) widens acceptance, so it is the Owner's. Recommendation: first run win_tcb_pin's self-check on a real box to measure it, then decide.
+- **`apps/desktop/src/components/ui.tsx`** — Six 'Phase-4' primitives have no caller outside their own tests
+  - Confirmed unused: Drawer, DataTable, LiveMark, RailSection, InlineAlert and ui.tsx's Mark. Not deleted, because docs/roadmap/phase-4.md has a CHECKED box naming them as the delivered component library and docs/DESIGN_SYSTEM.md documents each; removing them unchecks a recorded deliverable. The choice is delete (and reopen that box) or adopt. I recommend adopt-or-delete per primitive: keep Drawer and InlineAlert (Drawer now shares Modal's dialog hook), delete DataTable, LiveMark, RailSection and the second Mark unless a page is about to use them. The one live defect was fixed: Shell's window-error notice used `inline-alert--error`, a modifier ui.css never defines; it is `inline-alert--danger` now (no visual change, `.ctx-window-error` overrides both).
 - **`bridge/contracts/renderer-governed-turn-result.schema.json`** — Schema pins committed trust_state to trusted_verified; the broker now commits demonstration_custody
   - Confirmed, not changed. Widening the const to an enum would make the contract accept demonstration_custody, and the renderer rejecting every commit that is not trusted_verified is one of the three refusals holding the production gate. Choice: (a) widen to the two labels the broker can emit, or (b) keep the const and state in the schema that it is the renderer's acceptance contract, not the broker's emission set. Recommend (b). Either way the source is contracts/ (drift-gated) and tools/test_renderer_broker_schemas.py, both outside this batch.
 - **`config/required-checks.json`** — A temporary exclusion whose own condition is met sits in the permanent bucket
@@ -1211,6 +702,116 @@ Findings a fixing agent confirmed and did **not** change, because the fix widens
   - Confirmed by reading config/current_state.json. Not changed: requiring status_tokens.CURRENT_DESIGN_GATE == design_gate.current_candidate_gate turns the gate RED on the tree, and the fix is in config/current_state.json, which is the orchestrator's — and first someone has to say which statement is true. docs/OWNER_ACTION_REQUIRED.md:908 says the token exists because it is NOT Architect GREEN, so I recommend correcting design_gate.last_architect_verdict/current_candidate_gate and then adding the equality rule.
 - **`tools/test_renderer_broker_schemas.py`** — Test and wire schema lock committed trust_state to 'trusted_verified'; the broker now projects the stored label
   - Confirmed. The choice is what the window may be shown as committed: widen the schema to the labels the broker can commit, or have the broker decline to project anything but trusted_verified. Widening is a trust decision; recommend keeping the schema narrow and having the broker not project demonstration_custody over this channel. In this batch only the false 'kept in lock-step' claim in the test docstring and comment is corrected. Not fixed: governed_turn_ipc.rs:225 still says 'Always TRUSTED_VERIFIED'.
+
+## 9. Left open by wave 2 (Rust, frontend)
+
+Confirmed and not fixed. The Windows crates do not compile on the Linux box the work ran on, so every code change there is written out as a proposal; nothing in `win-live` or `win-broker` changed but comments and documents.
+
+- **`apps/desktop/src-tauri/audit-signer/src/register.rs`** — apply() accepts a pre-existing signer directory and the service loads any anchor.key already in it (read from code; not run, Windows-only)
+  - Confirmed by reading: create_dir_all then apply_dacl on the directory only, and custody.rs load_or_mint reads an existing anchor.key with no owner check. Not changed. It is Windows-only, elevated-only code that cannot be compiled or run here, and the fix has a behaviour choice in it: apply() is documented as safe to re-run, so 'refuse an existing directory' must become 'accept one only if it already passes verify_key_custody', and a run that failed between creating and stamping the directory would then need manual cleanup. Recommended shape: before create_dir_all, if the directory exists, read its descriptor and require verify_key_custody to pass; in load_or_mint, refuse an existing key whose owner is not a TCB SID.
+- **`apps/desktop/src-tauri/broker/src/manifest_resolver.rs`** — now_ms() with unwrap_or(0) is copied nine times, contradicting the 'fail-closed, not zero' clock rule
+  - Confirmed. Fixed one of the nine, the cited one: the broker's resolver now reads an injected WallClock (SystemWallClock in every construction, a test-only with_clock), resolve_keys refuses on None, and BrokerCustody returns NoTrustedManifest on None. The other eight are unchanged. In scope but not fixed, because each needs a clock seam before its refusal can be tested: chain_executor.rs LinuxGovernedExecution::now_ms, main.rs brops_core_now, live_turn.rs now_ms, ladder_turn.rs now_ms. Outside scope: the five win-live copies (resolver.rs, pipe.rs, config.rs, win_provision.rs, win_live_turn.rs).
+- **`apps/desktop/src-tauri/core/src/ipc_framing.rs`** — NM-IPC-06 is marked implemented on a deny-list branch that no shipped caller populates
+  - Confirmed: the only caller of authorize_peer is the broker's renderer door with an empty deny list. The test's doc comment no longer concludes that 'no trusted-principal channel can be reached from the window' and says what it does not establish. The MATRIX ROW is unchanged and still overstates it. Neither offered fix fits inside this batch: at the broker's door the renderer IS the allowed peer, so there is no real deny list to pass; and rebinding the row needs a new engine test that drives the three Python service doors (authority, supervisor, signer) with the renderer uid, plus the config/negative-matrix.json edit. Recommend exactly that for the Python batch.
+- **`apps/desktop/src-tauri/core/src/key_manifest.rs`** — The self-derived floor check that key_manifest's own doc calls 'a predicate that cannot fail' is still in the tree, and #[must_use] does not stop a discarded advance
+  - Confirmed at all three sites. Two are fixed: win-live/src/proof.rs no longer runs check_and_advance against a floor built from the same manifest (deleted, with a comment; the resolver persists inside the chain), and manifest_authority.rs uses check_and_persist (finding 15). NOT fixed: proof/src/bin/live_turn.rs still calls check_and_advance(..).is_err() and drops the advance. Moving it to check_and_persist would make that driver write trust.floor_path, which run_live_turn.sh provisions root-owned 0644 — the ladder kit had to move its floor for exactly this — so it needs a change to a CI live kit I may not run. Left as is rather than changed blind.
+- **`apps/desktop/src-tauri/executor/src/main.rs`** — The brops-executor binary is exec'd by nothing and duplicates proof_executor's hashing stand-in
+  - Confirmed: no kit, installer or bundle references the binary; both kits install proof_executor. The false claims are corrected under the sibling finding (executor/src/main.rs:75). The suggested fix here, removing one of the two, is not done: it needs ci.yml:102 and the workspace manifest, both outside this batch, and it decides which crate becomes the real model executor.
+- **`apps/desktop/src-tauri/launcher/src/main.rs`** — Remaining stubs: launcher containment not performed, egress transport missing, composed launch gate test-only
+  - Confirmed as an accurate inventory: main.rs:590-594 (cgroup placement, rlimits and args[2] validation not performed), the header's 'evaluate_launch is reachable only from tests', core/src/egress_proxy.rs:53 NOT_IMPLEMENTED. The fix is three rows in TASKS.md, which the orchestrator owns. T-058 already covers the egress transport; the launcher containment gap and the test-only composed gate are on no row.
+- **`apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs`** — ladder_turn and live_turn carry copies of the anchor custody check, the anchor/provenance block and four helpers
+  - Confirmed, partly fixed. Done: anchor_file_is_tcb_owned is one function in proof/src/tcb_verify.rs (read_root_anchor), hex32 is gone from both drivers, and the false 'no library here to hold one copy in' comment is removed. Left: UuidIds and init_schema are still copied; the anchor/provenance block stays in each driver because engine/tests/test_live_provisioning_anchor.py asserts on each driver's text (exactly one check_declared_install_minted_anchor call, the regex after it), and that test is outside scope; the RESULT label drift (live `trusted_verified(demonstration_custody ...` vs ladder `demonstration_custody(...`) is untouched because I did not check what run_live_turn.sh matches on that line.
+- **`apps/desktop/src-tauri/proof/src/bin/ladder_turn.rs`** — anchor_file_is_tcb_owned and the anchor-document parse are copied into both proof drivers; the inline parser has drifted from parse_root_anchor
+  - Confirmed, partly fixed. Done: one checked reader, the false comment removed, and the reader refuses an anchor over MAX_ROOT_ANCHOR_BYTES (one of parse_root_anchor's three extra refusals). Left: both drivers still build RootAnchor inline with unwrap_or_default, so an empty key id or bad hex is refused only later, at verify_manifest_anchored. Switching them to brops_broker::tcb::parse_root_anchor makes the explicit check_declared_external_anchor call dead, and engine/tests/test_live_provisioning_anchor.py requires that name in each driver's text. The choice is to change that engine test in the same commit as the parser switch; I recommend doing so, and it is outside this batch's scope.
+- **`apps/desktop/src-tauri/proof/src/bin/live_turn.rs`** — live_turn discards the advanced anti-rollback floor
+  - Confirmed, and it cannot be fixed inside this batch's scope. engine/ci/live/run_live_turn.sh leaves trust.floor_path at $LIVE/floor.json, root-owned 0644 in a root-owned 0755 directory (provision_keys.py:234, run_live_turn.sh:228), and runs live_turn as the broker account. check_and_persist would therefore refuse every turn of that kit with floor_not_persisted and turn the CI live-chain job red. run_ladder_turn.sh met the same thing and moved its floor into the broker's 0700 state directory (lines 594-609). The fix is two halves in one change: (1) in run_live_turn.sh copy the floor into $BROKERSTATE, chown it to the broker 0600 and repoint trust.floor_path before the pin manifest is built; (2) in live_turn replace check_and_advance with check_and_persist(&floor, &manifest, floor_path) and block on NotPersisted. I did not edit the kit (out of scope, and it needs root to run). What I did change: the floor is parsed with the shared parse_floor_json, and the comment that called the floor 'durable' now states the gap and this recipe.
+- **`apps/desktop/src-tauri/proof/src/bin/live_turn.rs`** — live_turn runs anti-rollback as a comparison only (duplicate of the floor finding)
+  - Same defect and same blocker as the other live_turn:358 item: persisting needs the live kit's floor moved into the broker's state directory in the same change, and the kit is outside this batch's scope. See that item for the recipe.
+- **`apps/desktop/src-tauri/proof/src/bin/proof_executor.rs`** — proof_executor says it proves the fd set is exactly {3,4,5,6} and caps are zero, but it enforces nothing and no code reads its report
+  - Confirmed: run() exits 0 whatever it saw, and a tree-wide grep finds no reader of observed_fds / caps_all_zero / no_new_privs / reply_binding. I corrected the header and the inline comment to say it only reports, that nothing reads the report, and that its /proc/ filter is the one the launcher removed. I did not turn the report into a refusal: nobody has ever looked at what the live kit actually observes (for instance whether the bounding set is zero), so enforcing it would make a CI job fail or pass on unmeasured values, and I cannot run the kit. Next step: read one live-kit run's fd-6 report, then enforce.
+- **`apps/desktop/src-tauri/tests/o3_conductor_session.rs`** — Python-discovery test helpers copied across four integration tests
+  - Confirmed by reading, not changed. The fix is one shared test-support file included from four tests in three crates (app, provision, audit-signer). Two of those crates are outside this batch and may be in another batch's hands, and a shared file is a new file that should have one owner. No security effect.
+- **`apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs`** — Privilege enumeration fails OPEN in two places, against its own stated fail-closed rule
+  - Confirmed; verify_restricted_token passes an empty set. Documented on token_privilege_names, at the call site and in the module doc. Change: `if needed == 0 { return Err(Error::from_win32()); }` and propagate the LookupPrivilegeNameW error with `?` instead of `if ..is_ok()`.
+- **`apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs`** — Token integrity is hardcoded, not observed, so the integrity gate can never fail
+  - Confirmed. Module doc and the comment at the ObservedToken literal now say it is a literal, not a read-back. Change: GetTokenInformation(TokenIntegrityLevel), take the last sub-authority RID of the label SID, map it to IntegrityLevel, and pass that.
+- **`apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs`** — STARTUPINFOEX handle-list gate is a tautology and its DENY does not stop the launch
+  - Confirmed. Module doc and the (3b) comment now say it prints a verdict and gates nothing. Change: either build a real STARTUPINFOEX attribute list, verify the handles actually supplied and return non-zero on DENY, or delete step 3b.
+- **`apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs`** — spawn_as permanently grants the service SID full access to the caller's window station and desktop
+  - Confirmed: no revoke exists. Stated in the module doc and on grant_winsta_desktop (worded as 'never revoked', not 'permanent'). Change: drop the grant and launch in session 0, or save the original DACLs and restore them after the wait.
+- **`apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs`** — Child command line is built by joining argv with spaces and no quoting
+  - Confirmed in both binaries; documented at both. Change: quote each argument with the CommandLineToArgvW rules (wrap in quotes, double backslashes before a quote, escape quotes) before appending.
+- **`apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs`** — A 30 s wait timeout is reported as the child's exit code; restricted_launch returns 0 whatever the child did
+  - Confirmed. 'propagates its exit code' removed from the spawn_as doc; both files now describe the real behaviour. Change: return a distinct code when the wait result is not WAIT_OBJECT_0, and have restricted_launch return `code as i32`.
+- **`apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs`** — Driver and in-process proof carry hand-copied twins of the custody resolver, RESULT string and deployment fixture, and the fixture has already drifted
+  - Confirmed: win_provision's manifest has three keys, proof.rs's two. Added a comment at the proof.rs fixture naming the drift and the twins. Change: one library function each for the custody resolver, the trust-state formatter and the manifest builder, called from both sites.
+- **`apps/desktop/src-tauri/win-live/src/bin/win_provision.rs`** — requested_at and requested_at_ms are taken from two separate clock reads and can differ
+  - Confirmed (servers.rs hashes requested_at_ms.to_string(); chain_executor.rs uses the requested_at string; Config::load has no consistency check). Marked KNOWN DEFECT at the site. Change: `let requested = now_ms();` then `requested_at: requested.to_string(), requested_at_ms: requested`.
+- **`apps/desktop/src-tauri/win-live/src/bin/win_supervisor.rs`** — The supervisor's evidence floor DB is placed inside the shared store the comment says it avoids
+  - Confirmed: the path is <store_dir>/supervisor-state/evidence-floor.db. Comment rewritten to say the floor is NOT outside the store, has no ACL of its own, and that an absent db is recreated empty. Code change left open: add a Config field (e.g. supervisor_state_dir) outside store_dir, have win_provision create it with a supervisor-only protected DACL via provision_custody, and point evidence_floor_db at it.
+- **`apps/desktop/src-tauri/win-live/src/bin/win_supervisor.rs`** — Supervisor evidence floor is placed inside the shared store the comment says it avoids, and a deleted floor is silently recreated
+  - Same site as the first item, plus Supervisor::new's doc (servers.rs:682) now says it does NOT refuse an absent floor. Code change left open: move the db as above, and in Supervisor::new refuse when the db is missing but an initialisation marker written by provisioning exists (or have provisioning create the db and make new() open it without create).
+- **`apps/desktop/src-tauri/win-live/src/bin/win_tcb_pin.rs`** — The pin manifest is written with the inherited DACL and restricted afterwards by icacls, the pattern provision_custody was written to remove; its doc also cites a win_provision icacls path that no longer exists
+  - Confirmed. restrict_to_tcb's doc no longer claims to mirror win_provision and states the write-then-ACL window; win_live_proof.ps1's header line corrected. Change: create the manifest with provision_custody::create_locked_file(custody_file_dacl(&[]), owner Administrators) and delete restrict_to_tcb.
+- **`apps/desktop/src-tauri/win-live/src/config.rs`** — read_seed's DPAPI seal-on-first-use cannot succeed for the service account it is meant for, and the doc says the seed is never plaintext afterwards
+  - Doc half done: read_seed's doc now says custody is the ACL and the seal is a best-effort attempt; the inline 'ACL preserved' comment is corrected (a rename carries the temp file's inherited descriptor). Code half left open: either seal at provisioning under the owning account and delete the reseal path, or make each of the three swallowed failures an eprintln so a failed seal is visible.
+- **`apps/desktop/src-tauri/win-live/src/execution.rs`** — Executor image is hashed by path and then spawned by path in a separate open, yet recorded as "measured:<digest>"
+  - Confirmed. measure_image's doc now says what 'measured' means here and what it does not. Change: open the image once without write/delete sharing, hash through that handle and hold it across the spawn; or rename the evidence value to say path-measured-before-spawn (a wire-visible change).
+- **`apps/desktop/src-tauri/win-live/src/pipe_acl.rs`** — WORLD_SIDS is copied in two crates and has ALREADY drifted: the pipe/TCB-floor copy lacks S-1-5-113 and S-1-5-114
+  - Confirmed: 10 entries here, 12 in provision/src/audit_signer.rs; pipe_dacl_plan would accept S-1-5-113 as the broker SID. Drift documented on the constant. Change: add "S-1-5-113" and "S-1-5-114" to pipe_acl::WORLD_SIDS and make provision/tests/audit_signer.rs assert set equality without cfg(windows). This one refuses MORE and pipe_acl.rs builds and tests on Linux, so it could have been done and mutation-proved here; I did not because the brief forbids editing Rust code in these crates and the test lives in the provision crate, outside scope. Worth dispatching first.
+- **`apps/desktop/src-tauri/win-live/src/provision_custody.rs`** — 'Provisioning agrees with the runtime floor' is claimed but tested against a copy, and is false for ancestors
+  - Confirmed. check_root_custody's doc now says the root check does not cover ancestors and that the agreement test compares against an inline copy; the test carries the same note. Code change left open: extract `pub fn ancestor_dir_ok(&WinFileFacts) -> Result<(), ..>` in tcb_floor, call it from verify_artifact and check_root_custody, make the test call it, and have verify_or_create_deployment_root walk ancestor_dirs_win(root).
+- **`apps/desktop/src-tauri/win-live/src/provision_custody.rs`** — looks_like_sid, the ACE struct and the SID-to-string helper each exist twice in the crate
+  - Confirmed. Replaced the stale 'another agent's file in this round' remark with a statement of the three duplicates. Code change left open: make pipe_acl::looks_like_sid pub(crate) and delete the copy, use PipeAce in CustodyDacl, share one sid_string helper.
+- **`apps/desktop/src-tauri/win-live/src/servers.rs`** — Leftovers from removed wire fields: a 4-slot int array for one field, and a write-only Signer counter
+  - Confirmed by reading; nothing edited. Change: replace `let mut ints = [0i64; 4]` and its loop with one `completed_at_ms` binding read via get_i64, and delete Signer.counter with its increment. servers.rs builds on Linux, so this is testable here by whoever is allowed to edit the code.
+- **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs`** — The real DACL probe fails open: a failed ACL read yields 'no writers'
+  - Confirmed. security_facts doc and a module-doc bullet now state the three fail-open paths and the unread allow-ACE types. Change: return None from security_facts when GetAclInformation, GetAce or sid_string fails, and when an ACE type is an allow type other than ACCESS_ALLOWED_ACE_TYPE. cfg(windows) code; must be built and run on Windows.
+- **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs`** — The end-to-end real-probe floor test passes on any refusal at all
+  - Confirmed: the only assertion is is_err(). Added a comment in the test saying what it does not pin. Change: `assert!(matches!(r, Err(WinTcbViolation::WritableByUntrusted { .. })))` after making the fixture reach that check (owner must match first). cfg(windows) test.
+- **`apps/desktop/src/components/TrustSelftest.tsx`** — A trust self-test that ran but did not verify renders nothing at all
+  - Not touched: the task assigns TrustSelftest.tsx to another batch. I did not re-confirm the finding.
+- **`apps/desktop/src/features/Analytics.tsx`** — 'Total across nodes' and the share percentages add counts that overlap and are unrelated
+  - Confirmed (repo.rs returns projects and projects_active, tasks and tasks_open, plus unrelated counts). Not fixed: the total and the per-bar share are rendered by BarChart in components/charts/Chart.tsx, which is outside this batch and not named by the finding, and Analytics.reducedmotion.test.tsx is built around the animated total. The fix is an optional BarChart prop to suppress total/share plus a rewrite of that test, or a real partition from the backend.
+- **`apps/desktop/src/features/Command.tsx`** — The 'is this a wall refusal' text classifier is restated with a different vocabulary on at least nine surfaces
+  - Confirmed. Done: the false comment in Command.tsx ('the same classification Analytics already uses') is gone, and three of the copies no longer claim a wall refusal at all (finding 44). NOT done: one shared classifier. One copy lives in components/ui.tsx, outside this batch, and the remaining regexes answer four different questions (capability denial, files guard denial, integration governance block, dispatch refusal) against different backend wordings, so merging them is a design task rather than a move.
+- **`apps/desktop/src/services/agentsDispatch.ts`** — Two TIER_TOOLS tables in the desktop; the one the UI renders is not checked against the generated files
+  - Confirmed. The duplicate remains: making it one export means editing features/delegation.ts (another batch) or having services import from features, which inverts the layering. What I closed is the unchecked half: agentsDispatch.test.ts now reads .claude/agents/{reader,runner,builder}.md and holds the rendered table to their `tools:` lines.
+- **`apps/desktop/src/services/agentsDispatch.ts`** — Frontend invokes two Tauri commands that no Rust code defines or registers
+  - Confirmed, and as the finding's own verify says it is disclosed in the code and its tests assert the 'not found' rendering. Not recorded in config/reachability-declarations.json: tools/check_reachability.py reads only tauri_commands, engine_symbols, rust_symbols and tools_gates, all in the backend-to-caller direction, so a frontend-only entry would be a declaration nothing checks. It needs the gate to learn the other direction first (tools/, another batch).
+- **`apps/desktop/src/services/desktop.ts`** — memoryWriteRecords / knowledgeWriteRecords (record history) are exposed end to end and nothing in the UI calls them
+  - Not touched: services/desktop.ts belongs to another batch, and the alternative is a Rust command removal.
+- **`apps/desktop/src/services/desktop.ts`** — Renderer wrappers and exports that no production code calls
+  - Half done. In agentsDispatch.ts (mine) isLocallyWellFormed and TIER_CAN_RUN are deleted; grep found no user and typecheck is clean. governedTurn(), setIntegrationAuthRef and the two write-record wrappers are in services/desktop.ts, which another batch owns, and are untouched.
+- **`apps/desktop/src/services/desktop.ts`** — Comment points at `grantApproval`/`denyApproval` 'below'; neither exists
+  - Not touched: services/desktop.ts belongs to another batch.
+- **`apps/desktop/src/services/governedTurn.ts`** — A governed-turn reply is never correlated with the request that produced it
+  - Confirmed, written, proven, then reverted. The check makes features/Bridge.test.tsx fail: two of its fixtures answer with client_request_id 'x', and that file is another batch's. One thing the next person must know: broker_orchestrator::run_governed_turn answers an undecodable request with blocked/malformed and BOTH ids empty, so a plain equality check would turn that real refusal into `unavailable`; my version let exactly that shape through. The working patch and its tests are in the session scratchpad under g2/finding28-not-applied/.
+- **`apps/desktop/src/test/computedStyle.ts`** — Two contrast measurers that disagree on the sRGB knee and on what they can parse
+  - Confirmed by reading. Not changed: the only consumer is CommandPalette.browser.spec.tsx, and the browser specs cannot run here (no Chromium installed, and I did not download one). Swapping to measuredContrast also folds in opacity and text alpha, so the measured ratio can genuinely change; I will not edit a spec whose result I cannot see.
+- **`apps/desktop/src/theme/aios.css`** — Two page-local danger pills re-implement `.pill.bad` under comments saying the foundation has none; one has drifted and is unused
+  - Two of three parts done: `.v-projects .pill.stop` (applied by nothing) and the empty section header are deleted. `.pill.cst-err` stays because features/Integrations.tsx still applies it and that file is another batch's; its comment now says it is a second copy of `.pill.bad`. No test: dead CSS.
+- **`apps/desktop/src/theme/contrast-pairs.json`** — `primary-button-label` measures a colour pair no button paints; the real pair is undeclared
+  - Confirmed, but the manifest cannot be fixed inside this scope: tools/check_contrast.py mirrors every non-`aios-` palette entry against tokens.ts, and --brops-accent-text exists only in tokens.css, so declaring it needs a third routing in the gate (tools/, another batch). What I did instead: a vitest check reads --brops-accent-text (tokens.css) and --cyan (aios.css) per theme and requires >= 4.5:1 with src/test/contrast.ts's ratio(). It passes in both themes today, so the real pair is now held in CI, but the manifest's misleading pair is unchanged.
+
+### What the independent checkers left standing
+
+Each of these is a checker's finding about a wave-2 fix that was NOT resolved by adding a test or changing the fix (the ones that were are in the pull request body).
+
+- **`commands.rs`** — The actual behaviour change for the escalated-approval finding is the one-line swap `pending_for` -> `undecided_for` in the stream_run_step gate (line ~1922). No test executes it (the builder says so itself): the proof is on the core predicate only, so reverting this line back to `pending_for` would leave every suite green and restore the defect. Also a consequence to carry forward, disclosed by the builder: an escalated run-step approval now holds the step permanently (approve_confirmed / decide / escalate all require status='pending', no A3 decide path exists) until the run is cancelled. That is stricter than before, not weaker, but it is an Owner decision left open.
+- **`repo.rs`** — enforcement_regime() now records `not_measured` when BRO_ENFORCEMENT is unset (was `enforce`). I confirmed in tools/check_produced_artifact.py (lines 558-577) that condition 5 accepts any non-empty string, so a receipt saying no regime was measured satisfies the gate whose condition is 'a receipt for that run carries enforcement_regime'. The Rust change is the honest one; the gate is now satisfied by a label that says nothing was established. The builder flagged this and did not re-run that gate; neither did I (needs the demo artifact). Someone has to decide whether c5 should refuse `not_measured` / `unrecognized`.
+- **`manifest_resolver.rs`** — The doc on `resolve_production_key_pair` calls it "the ONE implementation of that step". On the Linux side that is true. But win-live/src/resolver.rs:243-251 still resolves both keys with its own two `resolve_production_key` calls and has NO distinctness check, so one key named as both signer and supervisor attestation is still accepted on the Windows path. win_live_turn.rs:195-198 also keeps the old `key_resolution` / `supervisor_attestation_key_missing` names and a bare `.keys.iter().any(..)` presence check (an early check only; the resolver is the enforcement path). win-live is outside this batch's scope, but the sentence overstates and the gap should be tracked.
+- **`live_turn.rs`** — The anti-rollback floor in live_turn is still compared and never persisted (`check_and_advance`, result dropped). The builder left it open deliberately and the comment now says so. I confirmed the stated reason: run_live_turn.sh:228 chmods $LIVE/floor.json 0644 and provision_keys.py writes it in the root directory, so persisting would refuse every turn of that kit. It is an open finding, not a fix.
+- **`audit_signer.rs`** — The Windows half of three fixes (winimpl::app_token_posture, winimpl::dacl_facts, winimpl::app_can_read) has never been compiled: only x86_64-unknown-linux-gnu is installed here. I read the hunks and they look well-formed (imports used, AnchorRefusal has no exhaustive match elsewhere), but that is reading, not a build. The windows-latest CI leg is the first compile; do not merge before it is green on this exact head.
+- **`anchor_end_to_end.rs`** — File is #![cfg(windows)]; the new panic arm and the call to prerequisites::resolve_python were neither compiled nor run here. Same condition as above: first evidence is windows-latest CI.
+- **`lib.rs`** — The builder's stated consequence holds on reading the code: key_dacl_plan (audit_signer.rs:511-543) is documented as the DACL for the key AND its custody record with the app absent, while register.rs step 3 says the unelevated app reads custody.json on first launch. published_anchor_custody now returns Err on anything but NotFound, so on a Windows machine with the signer installed the app's first launch will probably refuse rather than seal the registry without the key. That is stricter and matches the documented contract, but it means the Windows install flow as designed cannot complete. Not reproducible here; the signer is in no installer today. Needs an Owner/design decision (how custody.json is published readable), not a revert.
+
+## 10. Decided by the Owner
+
+- **2026-10-02 — the design follows what is built and tested.** Recorded as Amendment A1 in `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`: five of seven items applied (the evidence-head floor is supervisor-owned; §4.4 carries `builder_id` and unsuffixed timestamps; the fourth bounded-reason prefix is removed; the launcher invoker is role #6; the renderer command carries `client_request_id`). Two were NOT applied because the code contradicted the work list: the request frame cap is 8192 in code, not 4096, and the two shipped artifact documents are not the §4.7/§4.7b schemas under another name. It is an Owner decision, not an Architect audit.
+- **2026-10-02 — finished worktrees may be deleted.** Done.
+- **Not decided:** the tightening list and the four risk items (audit-ledger lock, past-time verdict verification, the conductor token on the pre-tool path, the launcher's hard-coded uid).
+
 
 ## 7. Closed
 
@@ -1629,3 +1230,278 @@ Struck from the lists above by the pull request named. ◑ the Builder's claim; 
 - `tools/test_check_no_owner_key_ceremony.py:98` — fixed, #314
 - `engine/runtime/bro_orchestration_runtime_v1.py:119` — fixed, #314
 - `tools/check_root_anchor_custody.py:59` — fixed, #314
+- `apps/desktop/src-tauri/core/src/agent_bundle.rs:453` — fixed, #317
+- `apps/desktop/src-tauri/launcher/src/main.rs:554` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:369` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:369` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1315` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1346` — fixed, #317
+- `apps/desktop/src-tauri/win-live/src/servers.rs:380` — fixed, #317
+- `apps/desktop/vite.config.ts:13` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/chain_executor.rs:647` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_message_store.rs:216` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_sidecar.rs:475` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:2271` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:3055` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:349` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:1326` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:288` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:344` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:378` — fixed, #317
+- `apps/desktop/src/components/Shell.tsx:58` — fixed, #317
+- `apps/desktop/src/components/Shell.tsx:129` — fixed, #317
+- `apps/desktop/src/components/Shell.tsx:293` — fixed, #317
+- `apps/desktop/src/components/ui.tsx:162` — fixed, #317
+- `apps/desktop/src/features/Activity.tsx:22` — fixed, #317
+- `apps/desktop/src/features/Agents.tsx:267` — fixed, #317
+- `apps/desktop/src/features/Approvals.tsx:42` — fixed, #317
+- `apps/desktop/src/features/Approvals.tsx:293` — fixed, #317
+- `apps/desktop/src/features/Automations.tsx:396` — fixed, #317
+- `apps/desktop/src/features/Command.tsx:190` — fixed, #317
+- `apps/desktop/src/features/Files.tsx:506` — fixed, #317
+- `apps/desktop/src/features/Integrations.tsx:158` — fixed, #317
+- `apps/desktop/src/features/Knowledge.tsx:188` — fixed, #317
+- `apps/desktop/src/features/Library.tsx:241` — fixed, #317
+- `apps/desktop/src/features/Research.tsx:127` — fixed, #317
+- `apps/desktop/src/features/Tasks.tsx:492` — fixed, #317
+- `apps/desktop/src/features/Tasks.tsx:601` — fixed, #317
+- `apps/desktop/src/theme/aios.css:274` — fixed, #317
+- `apps/desktop/src/theme/global.css:33` — fixed, #317
+- `apps/desktop/src-tauri/Cargo.toml:61` — fixed, #317
+- `apps/desktop/src-tauri/core/src/manifest_authority.rs:64` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:1039` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:2793` — fixed, #317
+- `apps/desktop/src-tauri/core/src/windows_broker.rs:272` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:1798` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/prerequisites/mod.rs:329` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/provision.rs:782` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1051` — fixed, #317
+- `apps/desktop/src-tauri/src/governance.rs:77` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_selftest.rs:55` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_selftest.rs:58` — fixed, #317
+- `apps/desktop/src-tauri/win-live/src/execution.rs:42` — fixed, #317
+- `apps/desktop/src/features/Approvals.strings.ts:153` — fixed, #317
+- `apps/desktop/src/features/Approvals.tsx:14` — fixed, #317
+- `apps/desktop/src/features/Bridge.tsx:133` — fixed, #317
+- `apps/desktop/src/features/Decisions.tsx:67` — fixed, #317
+- `apps/desktop/src/features/Library.tsx:274` — fixed, #317
+- `apps/desktop/src/features/Memory.tsx:74` — fixed, #317
+- `apps/desktop/src/features/Research.strings.ts:209` — fixed, #317
+- `apps/desktop/src/features/writeRecord.strings.ts:97` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/Cargo.toml:30` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/src/register.rs:73` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/lib.rs:4` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_message_store.rs:8` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_submit.rs:45` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:34` — fixed, #317
+- `apps/desktop/src-tauri/deb/postinst:22` — not a defect on reading, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:1807` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:615` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1684` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:119` — fixed, #317
+- `apps/desktop/src-tauri/win-live/src/seedstore.rs:1` — fixed, #317
+- `apps/desktop/src/features/GroupChat.strings.ts:304` — fixed, #317
+- `apps/desktop/src/features/Integrations.strings.ts:300` — fixed, #317
+- `apps/desktop/src/features/Security.strings.ts:31` — fixed, #317
+- `apps/desktop/src/features/Settings.strings.ts:7` — fixed, #317
+- `apps/desktop/src/features/Settings.tsx:451` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:850` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3986` — fixed, #317
+- `apps/desktop/src/components/CommandPalette.test.tsx:184` — fixed, #317
+- `apps/desktop/src/features/Automations.governance.test.ts:322` — fixed, #317
+- `apps/desktop/src/features/Integrations.nosecret.test.tsx:114` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/ladder_executor.rs:255` — fixed, #317
+- `apps/desktop/src-tauri/core/src/local_write_record.rs:428` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:257` — fixed, #317
+- `apps/desktop/src-tauri/core/src/windows_broker.rs:225` — fixed, #317
+- `apps/desktop/src-tauri/src/commands.rs:2039` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/chain_executor.rs:647` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/main.rs:170` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:304` — fixed, #317
+- `apps/desktop/src-tauri/core/src/privilege_drop.rs:229` — fixed, #317
+- `apps/desktop/src-tauri/core/src/tcb_integrity.rs:331` — fixed, #317
+- `apps/desktop/src-tauri/launcher/src/main.rs:554` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/tcb_verify.rs:66` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1862` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/src/relay.rs:142` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/ladder_executor.rs:204` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/main.rs:175` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:453` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:693` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:1216` — fixed, #317
+- `apps/desktop/src-tauri/core/src/agent_bundle.rs:435` — fixed, #317
+- `apps/desktop/src-tauri/core/src/approval_request.rs:236` — fixed, #317
+- `apps/desktop/src-tauri/core/src/key_manifest.rs:419` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:2825` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:865` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:270` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/live_turn.rs:275` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1747` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1815` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3066` — fixed, #317
+- `apps/desktop/src-tauri/src/governance.rs:428` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_selftest.rs:156` — fixed, #317
+- `apps/desktop/src/components/CommandPalette.tsx:156` — fixed, #317
+- `apps/desktop/src/components/markdown.tsx:36` — fixed, #317
+- `apps/desktop/src/features/Approvals.tsx:370` — fixed, #317
+- `apps/desktop/src/features/Automations.tsx:366` — fixed, #317
+- `apps/desktop/src/features/Calendar.strings.ts:75` — fixed, #317
+- `apps/desktop/src/features/Calendar.tsx:164` — fixed, #317
+- `apps/desktop/src/features/Command.tsx:150` — fixed, #317
+- `apps/desktop/src/features/Conversations.tsx:349` — fixed, #317
+- `apps/desktop/src/features/GroupChat.tsx:428` — fixed, #317
+- `apps/desktop/src/features/Notifications.tsx:115` — fixed, #317
+- `apps/desktop/src/features/Notifications.tsx:362` — fixed, #317
+- `apps/desktop/src/features/Tasks.tsx:525` — fixed, #317
+- `apps/desktop/src/features/filesModel.ts:83` — fixed, #317
+- `apps/desktop/src/features/groupChatConsensus.ts:76` — fixed, #317
+- `apps/desktop/src/features/writeRecord.tsx:347` — fixed, #317
+- `apps/desktop/src/theme/aios.css:335` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/chain_executor.rs:771` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_verification.rs:647` — fixed, #317
+- `apps/desktop/src-tauri/core/src/key_manifest.rs:50` — fixed, #317
+- `apps/desktop/src-tauri/core/src/privilege_drop.rs:46` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:636` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/audit_signer.rs:1467` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:1588` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/posix_install.rs:111` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/posix_install.rs:29` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:306` — fixed, #317
+- `apps/desktop/src-tauri/win-broker/src/lib.rs:10` — fixed, #317
+- `apps/desktop/src/App.tsx:17` — fixed, #317
+- `apps/desktop/src/features/Activity.tsx:234` — fixed, #317
+- `apps/desktop/src/features/Knowledge.tsx:174` — fixed, #317
+- `apps/desktop/src/features/integrationsModel.ts:76` — fixed, #317
+- `apps/desktop/src/i18n/hy.ts:95` — fixed, #317
+- `apps/desktop/src/services/agentsDispatch.ts:176` — fixed, #317
+- `apps/desktop/src/theme/tokens.css:6` — fixed, #317
+- `apps/desktop/src/theme/tokens.ts:231` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/src/register.rs:7` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/chain_executor.rs:25` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/chain_executor.rs:1416` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/main.rs:18` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:5` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:256` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:1737` — fixed, #317
+- `apps/desktop/src-tauri/core/src/engine_trust.rs:17` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:121` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_output_pull.rs:100` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_prepare.rs:655` — fixed, #317
+- `apps/desktop/src-tauri/core/src/local_write_record.rs:213` — fixed, #317
+- `apps/desktop/src-tauri/core/src/production_trust.rs:562` — fixed, #317
+- `apps/desktop/src-tauri/core/src/receipt.rs:1328` — fixed, #317
+- `apps/desktop/src-tauri/core/src/receipt_store.rs:67` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:2096` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:20` — fixed, #317
+- `apps/desktop/src-tauri/core/tests/schema_migrations.rs:513` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/anchor.rs:311` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/lib.rs:22` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/prerequisites/mod.rs:213` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/provision.rs:35` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/python_verifier.rs:6` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/python_verifier.rs:6` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1034` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3845` — fixed, #317
+- `apps/desktop/src-tauri/src/commands.rs:394` — fixed, #317
+- `apps/desktop/src-tauri/src/governance.rs:65` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_turn.rs:63` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:104` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:318` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:387` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:484` — fixed, #317
+- `apps/desktop/src-tauri/src/lib.rs:484` — fixed, #317
+- `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:13` — fixed, #317
+- `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:181` — fixed, #317
+- `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:24` — fixed, #317
+- `apps/desktop/src/components/Shell.tsx:282` — fixed, #317
+- `apps/desktop/src/features/Knowledge.honesty.test.tsx:10` — fixed, #317
+- `apps/desktop/src/features/Security.strings.ts:64` — fixed, #317
+- `apps/desktop/src/i18n/en.ts:108` — fixed, #317
+- `apps/desktop/src/services/agentsDispatch.ts:16` — fixed, #317
+- `apps/desktop/src/theme/aios.css:3926` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:599` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/tests/relay_contract.rs:217` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/preflight.rs:1607` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/tcb_probe.rs:813` — fixed, #317
+- `apps/desktop/src-tauri/broker/tests/broker_binary_e2e.rs:78` — fixed, #317
+- `apps/desktop/src-tauri/core/src/agent_bundle.rs:927` — fixed, #317
+- `apps/desktop/src-tauri/core/src/approval_request.rs:376` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:1150` — fixed, #317
+- `apps/desktop/src-tauri/core/src/lib.rs:938` — fixed, #317
+- `apps/desktop/src-tauri/core/src/lib.rs:1181` — fixed, #317
+- `apps/desktop/src-tauri/core/src/receipt.rs:1422` — fixed, #317
+- `apps/desktop/src-tauri/core/src/receipt_store.rs:1884` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:1367` — fixed, #317
+- `apps/desktop/src-tauri/core/tests/integration_auth_ref.rs:223` — fixed, #317
+- `apps/desktop/src-tauri/core/tests/integration_auth_ref.rs:266` — fixed, #317
+- `apps/desktop/src-tauri/launcher/src/main.rs:1820` — fixed, #317
+- `apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:1354` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/prerequisites_guard.rs:194` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/provision.rs:369` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3659` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3862` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:3862` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_turn.rs:483` — fixed, #317
+- `apps/desktop/src-tauri/src/governed_turn.rs:483` — fixed, #317
+- `apps/desktop/src/features/Calendar.runs.test.tsx:85` — fixed, #317
+- `apps/desktop/src/features/Decisions.status.test.ts:35` — fixed, #317
+- `apps/desktop/src/features/Integrations.nosecret.test.tsx:134` — fixed, #317
+- `apps/desktop/src/features/Tasks.test.tsx:81` — fixed, #317
+- `apps/desktop/src/features/pages.fixtures.tsx:159` — fixed, #317
+- `apps/desktop/src/features/writeRecord.test.tsx:65` — fixed, #317
+- `apps/desktop/src/features/writeRecord.test.tsx:146` — fixed, #317
+- `apps/desktop/src/features/writeRecord.test.tsx:152` — fixed, #317
+- `apps/desktop/src/i18n/strings.parity.test.ts:13` — fixed, #317
+- `apps/desktop/src/services/desktop.writeRecords.test.ts:89` — fixed, #317
+- `apps/desktop/src-tauri/core/src/broker_client.rs:48` — fixed, #317
+- `apps/desktop/src-tauri/core/src/egress_proxy.rs:306` — fixed, #317
+- `apps/desktop/src-tauri/core/src/manifest_authority.rs:26` — fixed, #317
+- `apps/desktop/src-tauri/core/src/manifest_authority.rs:56` — fixed, #317
+- `apps/desktop/src-tauri/core/src/real_ids.rs:8` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:3568` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:257` — fixed, #317
+- `apps/desktop/src-tauri/executor/src/main.rs:75` — fixed, #317
+- `apps/desktop/src-tauri/provision/src/posix_install.rs:142` — fixed, #317
+- `apps/desktop/src-tauri/src/commands.rs:1110` — fixed, #317
+- `apps/desktop/src-tauri/win-broker/src/bin/spawn_as.rs:9` — fixed, #317
+- `apps/desktop/src/features/Calendar.tsx:362` — fixed, #317
+- `apps/desktop/src/features/Chat.strings.ts:52` — fixed, #317
+- `apps/desktop/src/features/Files.tsx:222` — fixed, #317
+- `apps/desktop/src/features/Home.strings.ts:52` — fixed, #317
+- `apps/desktop/src/features/Integrations.tsx:581` — fixed, #317
+- `apps/desktop/src/features/approvalsAuthority.ts:1` — fixed, #317
+- `apps/desktop/src/features/consensus.ts:63` — fixed, #317
+- `apps/desktop/src/i18n/en.ts:160` — fixed, #317
+- `apps/desktop/src/theme/aios.css:421` — fixed, #317
+- `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:56` — fixed, #317
+- `apps/desktop/src-tauri/broker/src/ladder_executor.rs:263` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:214` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_bridge_result.rs:253` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_message_store.rs:22` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_sidecar.rs:352` — fixed, #317
+- `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:32` — fixed, #317
+- `apps/desktop/src-tauri/core/src/ipc_framing.rs:85` — fixed, #317
+- `apps/desktop/src-tauri/core/src/key_manifest.rs:429` — fixed, #317
+- `apps/desktop/src-tauri/core/src/manifest_authority.rs:32` — fixed, #317
+- `apps/desktop/src-tauri/core/src/manifest_authority.rs:32` — fixed, #317
+- `apps/desktop/src-tauri/core/src/real_ids.rs:8` — fixed, #317
+- `apps/desktop/src-tauri/core/src/receipt.rs:232` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:598` — fixed, #317
+- `apps/desktop/src-tauri/core/src/repo.rs:3955` — fixed, #317
+- `apps/desktop/src-tauri/core/src/supervisor_ledger.rs:619` — fixed, #317
+- `apps/desktop/src-tauri/core/src/windows_broker.rs:206` — fixed, #317
+- `apps/desktop/src-tauri/provision/tests/anchor_file_encoding.rs:26` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1058` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:1542` — fixed, #317
+- `apps/desktop/src-tauri/src/commands.rs:497` — fixed, #317
+- `apps/desktop/src/components/ui.tsx:277` — fixed, #317
+- `apps/desktop/src/features/Memory.strings.ts:76` — fixed, #317
+- `apps/desktop/src/features/Projects.strings.ts:9` — fixed, #317
+- `apps/desktop/src/features/Security.tsx:350` — fixed, #317
+- `apps/desktop/src/features/delegation.ts:59` — fixed, #317
+- `apps/desktop/src/features/pages.a11y.spec.tsx:113` — fixed, #317
+- `apps/desktop/src/features/writeRecord.test.tsx:136` — fixed, #317
+- `apps/desktop/src/services/agentsDispatch.nolease.test.ts:69` — fixed, #317
+- `apps/desktop/src/theme/aios.css:3674` — fixed, #317
+- `apps/desktop/src-tauri/src/ai.rs:966` — fixed, #317

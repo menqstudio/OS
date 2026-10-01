@@ -644,9 +644,9 @@ pub struct BrokerContext<'a> {
 /// read as "probably fine": a replay defence that cannot answer must block, never accept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerRefusal {
-    /// §7.1(c): this `receipt_id` has already been accepted — a receipt replay.
+    /// §7.1(d): this `receipt_id` has already been accepted — a receipt replay.
     ReceiptReplay,
-    /// §7.1(d): this `request_nonce` has already been consumed — a nonce replay.
+    /// §7.1(c): this `request_nonce` has already been consumed — a nonce replay.
     NonceReplay,
     /// The ledger could not be read or written (I/O, lock timeout, corrupt/absent table, a caller that
     /// already held a transaction). NEVER reported as "fresh" — an unavailable replay defence refuses.
@@ -663,8 +663,10 @@ impl std::fmt::Display for LedgerRefusal {
     }
 }
 
-/// The injected acceptance-ledger port: §7.1(c) `receipt_id` global uniqueness AND §7.1(d) one-time
-/// `request_nonce` consume, claimed together in ONE atomic step.
+/// The injected acceptance-ledger port: §7.1(d) `receipt_id` global uniqueness AND §7.1(c) one-time
+/// `request_nonce` consume, claimed together in ONE atomic step. (The letters are the addendum's:
+/// "(c) `request_nonce` one-time consume; (d) `receipt_id` global uniqueness", as this module's own
+/// header has them. They were swapped here and in `broker_turns`.)
 ///
 /// The two defences are a single trait method on purpose. Split into `is_seen` / `consume` / `record`
 /// they were a read-then-write: two concurrent turns could both observe a fresh `receipt_id`, and a
@@ -1356,7 +1358,7 @@ mod tests {
         assert_eq!(accepted.conversation_id, "conv-1");
         assert_eq!(accepted.author, "Bro");
         assert_eq!(accepted.created_at_ms, T_COMPLETED_MS);
-        // The receipt_id is now recorded (§7.1(c)) and the nonce spent (§7.1(d)).
+        // The receipt_id is now recorded (§7.1(d)) and the nonce spent (§7.1(c)).
         assert_eq!(
             ledger.claim("receipt-abc", "nonce-fresh"),
             Err(LedgerRefusal::ReceiptReplay),

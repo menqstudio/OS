@@ -4,9 +4,14 @@
 //!
 //! # The order matters and it is not the obvious one
 //!
-//! 1. **Elevated installer**: create `%ProgramData%\BroPS\audit-signer` with the protected DACL
-//!    from `audit_signer::key_dacl_plan` (owner `BUILTIN\Administrators`, the app absent), write
-//!    `allowed-app.sid`, `sc.exe create` + `sc.exe sidtype … unrestricted`, `sc.exe start`.
+//! 1. **Elevated installer** ([`apply`]), and the order INSIDE this step is not the obvious one
+//!    either: `sc.exe create` + `sc.exe sidtype … unrestricted` come FIRST, because a virtual
+//!    account's SID does not resolve until the service exists and an ACE naming it earlier would
+//!    be written for an unresolvable trustee. Then the resolved SID is checked against the derived
+//!    one; then `%ProgramData%\BroPS\audit-signer` is created and stamped with the protected DACL
+//!    from `audit_signer::key_dacl_plan` (owner `BUILTIN\Administrators`, the app absent); then
+//!    `allowed-app.sid` is written inside it; then the descriptor is read back and proved; and
+//!    only then `sc.exe start`.
 //! 2. **The service, on first start, under its own account**: mints the seed, publishes
 //!    `custody.json`. The installer never sees the private half — the point of doing it in this
 //!    order rather than the convenient one.
@@ -70,23 +75,39 @@ pub const ALLOWED_APP_SID_FILE: &str = "allowed-app.sid";
 /// already there, admitted at mint time by a root that no longer exists
 /// (`brops_provision::provision_with_anchor`).
 ///
-/// **What is STILL open, stated plainly.** The operator-root PIN — `pin/operator-root.pub` — is a
-/// file in the app's own trust directory, honoured under
-/// `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`. An account that can rewrite it does not need
-/// the destroyed key at all: it generates an operator key of its own, pins it, re-signs the
-/// registry under it with an `audit-anchor` entry of its choosing, and raises the floor it also
-/// owns. That route is proved open, by running it against the real `bro_audit_log`, in
-/// `tests/anchor_end_to_end.py` (`case_pin_rewrite`). Destroying the key removed a key; it did not
-/// move the anchor out of the app's reach, and only a second principal holding the pin can.
+/// **What the pin route was, and where it stands now.** Destroying the key removed a key; it did
+/// not by itself put the anchor out of reach. An account that can rewrite the operator-root PIN
+/// does not need the destroyed key at all: it generates an operator key of its own, pins it,
+/// re-signs the registry under it with an `audit-anchor` entry of its choosing, and raises the
+/// floor it also owns. While the pin was `pin/operator-root.pub` in the app's own trust directory,
+/// honoured under `BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`, that route was open, and
+/// `tests/anchor_end_to_end.py` (`case_pin_rewrite`) proved it by running it.
+///
+/// It is no longer there. The pin, the floor, the registry and the provisioning manifest live in
+/// `brops_provision::anchor` — a machine-wide directory the app's account cannot write — the
+/// acknowledgement is set nowhere, and `case_pin_rewrite` now runs the same attack step for step
+/// and asserts that it FAILS (`O2-PIN-CUSTODY-CLOSED`). This comment and the constant below kept
+/// describing the old layout after that move; `brops_provision`'s own copy of the sentence was
+/// corrected on 2026-08-09 and this one was not.
+///
+/// **What is STILL open, stated plainly.** The boundary is the app's UNELEVATED token. A local
+/// administrator — one UAC consent on a machine whose user is one — can rewrite the anchor, the
+/// same residual `Separation::SeparatedUntilElevation` reports for the signer's key. And off
+/// Windows this crate has nothing to say at all: there is no service to register.
+///
+/// "This crate never mints" the audit-anchor key was also wrong: [`crate::custody`] mints it, in
+/// the SERVICE's process. What never holds the private half is the app.
 pub const REGISTRY_CAVEAT: &str = "\
 the anchor key makes the signer's anchors VERIFIABLE, and bro_audit_log accepts ONLY the \
-audit-anchor authority, whose private half this crate never mints. The key is admitted to the \
-registry at PROVISIONING time, by an operator-root private half that is destroyed before \
-provisioning returns, so the registry is sealed and no key can be added to it afterwards. The \
-residual route is not a key at all: the operator-root PIN is a file in the app's own trust \
-directory, so an account that can rewrite it can install a root of its own and re-sign \
-everything under it. That is closed only by a second principal holding the pin, which this \
-deployment does not have.";
+audit-anchor authority, whose private half is minted by the signer service under its own account \
+and never held by the app. The key is admitted to the registry at PROVISIONING time, by an \
+operator-root private half that is destroyed before provisioning returns, so the registry is \
+sealed and no key can be added to it afterwards. The residual route is not a key at all: it is \
+the operator-root PIN. An account that can rewrite the pin can install a root of its own and \
+re-sign everything under it, so the pin, the floor and the registry live in the machine-wide \
+trust anchor directory, which the app's unelevated account cannot write, and that is re-measured \
+on every launch. What that does not hold against is an administrator of this machine: one \
+elevation rewrites the anchor, and no second principal here stands above it.";
 
 /// The complete elevated plan: the specification's steps, then this crate's.
 pub fn install_plan(paths: &spec::SignerPaths, app_sid: &str) -> Vec<String> {
@@ -207,8 +228,10 @@ pub fn register_anchor_key(anchor_dir: &Path, custody: &Value) -> Result<String,
                     anchor key has to be admitted while the registry is being signed, which \
                     means the signer service must be installed and started BEFORE the app's \
                     first launch (see install_plan). To adopt a signer that arrived later, or \
-                    a rotated key, move the trust directory aside and let the next launch mint \
-                    a new store. {REGISTRY_CAVEAT}"
+                    a rotated key, the whole store has to be minted again, and moving the \
+                    trust directory aside does not do that: the trust anchor still records \
+                    the old store and the app's account cannot remove it, so an \
+                    administrator removes the anchor directory first. {REGISTRY_CAVEAT}"
                 ),
             });
         }

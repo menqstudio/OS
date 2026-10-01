@@ -49,9 +49,9 @@ export const STR = {
   },
   noDecisions: { en: 'No decisions yet', hy: 'Դեռ որոշումներ չկան', ru: 'Пока нет решений' },
   ledgerEmptyHint: {
-    en: 'The engine ledger is empty. Accepted decisions will appear here.',
-    hy: 'Շարժիչի մատյանը դատարկ է։ Ընդունված որոշումները կհայտնվեն այստեղ։',
-    ru: 'Журнал движка пуст. Принятые решения появятся здесь.',
+    en: 'The local decision table is empty. Recorded decisions will appear here.',
+    hy: 'Տեղային որոշումների աղյուսակը դատարկ է։ Գրանցված որոշումները կհայտնվեն այստեղ։',
+    ru: 'Локальная таблица решений пуста. Записанные решения появятся здесь.',
   },
 
   // --- Evidence readout ---
@@ -145,9 +145,9 @@ export const STR = {
   },
   evidenceSealed: { en: 'Evidence sealed', hy: 'Ապացույցները կնքված են', ru: 'Доказательства запечатаны' },
   sealedBody: {
-    en: 'The engine evidence chain is read-only and is not exposed to the desktop yet. The ledger mirrors the decision; it never holds or fabricates the sealed evidence.',
-    hy: 'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Մատյանն արտացոլում է որոշումը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
-    ru: 'Цепочка доказательств движка доступна только для чтения и пока не открыта для десктопа. Журнал отзеркаливает решение; он никогда не хранит и не фабрикует запечатанные доказательства.',
+    en: 'The engine evidence chain is read-only and is not exposed to the desktop yet. The local decision table holds the decision row; it never holds or fabricates the sealed evidence.',
+    hy: 'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Տեղային որոշումների աղյուսակը պահում է որոշման տողը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
+    ru: 'Цепочка доказательств движка доступна только для чтения и пока не открыта для десктопа. Локальная таблица решений хранит строку решения; она никогда не хранит и не фабрикует запечатанные доказательства.',
   },
   // Prefix before the engine-supplied reason: `${reasonPrefix}${reason}`
   reasonPrefix: { en: 'Reason: ', hy: 'Պատճառ՝ ', ru: 'Причина: ' },
@@ -173,9 +173,9 @@ export const STR = {
   // --- Chamber ---
   chamberUnavailable: { en: 'Chamber unavailable', hy: 'Պալատն անհասանելի է', ru: 'Палата недоступна' },
   chamberUnavailableHint: {
-    en: 'The decision ledger could not be read from the engine.',
-    hy: 'Որոշումների մատյանը չհաջողվեց կարդալ շարժիչից։',
-    ru: 'Не удалось прочитать журнал решений из движка.',
+    en: 'The local decision table could not be read.',
+    hy: 'Տեղային որոշումների աղյուսակը չհաջողվեց կարդալ։',
+    ru: 'Не удалось прочитать локальную таблицу решений.',
   },
   selectDecision: { en: 'Select a decision', hy: 'Ընտրիր որոշում', ru: 'Выберите решение' },
   selectDecisionHint: {
@@ -183,19 +183,22 @@ export const STR = {
     hy: 'Սլաքներով շրջիր մատյանում, Enter-ով բացիր ապացույցները։',
     ru: 'Перемещайтесь по журналу стрелками; нажмите Enter, чтобы открыть доказательства.',
   },
+  // The list on this page is `list_decisions` — the desktop's own SQLite table. It was labelled
+  // "ENGINE LEDGER" here and "Read-only mirror" in the header; the engine's decision ledger is a
+  // different read (`read_decision_ledger`), shown by the bridge panel below and nowhere else.
   deliberationEyebrow: {
-    en: 'DELIBERATION · ENGINE LEDGER',
-    hy: 'ՈՐՈՇՄԱՆ ԴԱՀԼԻՃ · DELIBERATION',
-    ru: 'ОБСУЖДЕНИЕ · ЖУРНАЛ ДВИЖКА',
+    en: 'DELIBERATION · LOCAL DECISION TABLE',
+    hy: 'ՈՐՈՇՄԱՆ ԴԱՀԼԻՃ · ՏԵՂԱՅԻՆ ԱՂՅՈՒՍԱԿ',
+    ru: 'ОБСУЖДЕНИЕ · ЛОКАЛЬНАЯ ТАБЛИЦА',
   },
   recordedField: { en: 'Recorded', hy: 'Գրանցված', ru: 'Записано' },
   updatedField: { en: 'Updated', hy: 'Թարմացված', ru: 'Обновлено' },
   evidenceChainSection: { en: 'Evidence chain', hy: 'Ապացույցների շղթա', ru: 'Цепочка доказательств' },
   openEvidence: { en: 'Open evidence', hy: 'Բացել ապացույցները', ru: 'Открыть доказательства' },
   reweighTitle: {
-    en: 'Reweigh is adjudicated by the engine — the desktop cannot alter the ledger.',
-    hy: 'Վերակշռումը որոշում է շարժիչը — desktop-ը չի կարող փոխել մատյանը։',
-    ru: 'Перевзвешивание решает движок — десктоп не может изменять журнал.',
+    en: 'Reweigh is not available — this page has no command that changes a recorded decision.',
+    hy: 'Վերակշռումը հասանելի չէ — այս էջը գրանցված որոշումը փոխող հրաման չունի։',
+    ru: 'Перевзвешивание недоступно — на этой странице нет команды, меняющей записанное решение.',
   },
   reweigh: { en: '↻ Reweigh', hy: '↻ Վերակշռել', ru: '↻ Перевзвесить' },
 
@@ -205,7 +208,11 @@ export const STR = {
     hy: 'ՈՐՈՇՄԱՆ ԻՆՏԵԼԵԿՏ · VERDICT CHAMBER',
     ru: 'ИНТЕЛЛЕКТ ВЕРДИКТА · ПАЛАТА РЕШЕНИЙ',
   },
-  readOnlyMirror: { en: 'Read-only mirror', hy: 'Միայն ընթերցում', ru: 'Зеркало только для чтения' },
+  readOnlyLocal: {
+    en: 'Read-only · local table',
+    hy: 'Միայն ընթերցում · տեղային աղյուսակ',
+    ru: 'Только чтение · локальная таблица',
+  },
   decisionLedger: { en: 'Decision ledger', hy: 'Որոշումների մատյան', ru: 'Журнал решений' },
   selectRowHint: {
     en: 'Select a row to open its chamber',

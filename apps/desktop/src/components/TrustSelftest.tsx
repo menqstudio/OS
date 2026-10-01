@@ -10,9 +10,13 @@ import { Mark } from './Ambient';
  *
  * It is deliberately HONEST about two things, shown prominently in the result:
  *  1. The crypto is real — a genuine trusted_verified receipt, never a faked boolean.
- *  2. The root of trust is the compiled-in demonstration anchor, not an offline-HSM
- *     key, and live AI turns still run fail-closed. So this PROVES the machinery; it
- *     does not claim production-grade custody or flip any real turn to "verified".
+ *  2. The root of trust is the compiled-in demonstration anchor — a public constant
+ *     whose private half is in the source tree — and live AI turns still run
+ *     fail-closed. So this PROVES the machinery; it does not claim production-grade
+ *     custody or flip any real turn to "verified". Production trust is not a key
+ *     somebody keeps: the install mints it (Owner decision #78), and an install-minted
+ *     root commits `demonstration_custody` until the Owner accepts that custody after
+ *     an independent audit. `custody_note` says so on screen.
  */
 export function TrustSelftestPanel() {
   const { lang } = useApp();

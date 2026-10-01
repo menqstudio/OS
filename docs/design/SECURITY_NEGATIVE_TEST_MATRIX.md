@@ -314,16 +314,29 @@ transport `output_stream_id` is never authority. Hash over **raw** bytes, no nor
 
 ## 10. Evidence fork / rollback — the A–E floor matrix (`NM-EVID-*`)
 
-Signer-owned durable `governed_evidence_head_floor` (`0700`/`0600`), keyed on `head_sequence`
-monotonicity + chain-content `(event_count, last_sequence, final_event_hash)`.
+Supervisor-owned durable `governed_evidence_head_floor` — a table in the supervisor's ledger,
+directory `0700` / file `0600` — keyed on `head_sequence` monotonicity + chain-content
+`(event_count, last_sequence, final_event_hash)`.
 
-> **Not what is built, and not ruled on.** `governed_evidence_head_floor` is a table in the
-> **supervisor's** ledger (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas`
-> in `governed_supervisor_ledger.py`; `engine/runtime/isolated_signer.py` opens no SQLite at all. So
-> NM-EVID-12 and NM-ACL-13 below deny access to a `brops-signer` floor DB that does not exist. Which
-> principal SHOULD own the floor is an open question for the Architect
-> ([`FLOOR_WRITER_SERVICE_DESIGN.md`](./FLOOR_WRITER_SERVICE_DESIGN.md) §0.3 and §9, raised
-> 2026-08-15); until it is answered these two rows cannot be written against a real database.
+> **Ruled 2026-10-02 — the floor is the supervisor's, as built (addendum Amendment A1: an Owner
+> decision, not an Architect audit).** This section said "signer-owned" until then.
+> `governed_evidence_head_floor` is a table in the **supervisor's** ledger
+> (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas` in
+> `governed_supervisor_ledger.py` inside the supervisor's completion transaction;
+> `engine/runtime/isolated_signer.py` opens no SQLite at all. NM-EVID-12 and NM-ACL-13 below were
+> written against a `brops-signer` floor DB that never existed, and are rewritten here against the
+> supervisor's ledger. **Rewriting a row does not establish it:** no test carries either ID, and
+> `config/negative-matrix.json` still has NM-EVID-12 `unreviewed` and NM-ACL-13 `blocked`.
+>
+> **What the ruling gives up.** A signer-owned floor was held by a principal other than the one
+> presenting the evidence head. The supervisor-owned floor is kept by the party it constrains: it
+> stops a stale or forked head reaching the supervisor, and it does not stop the supervisor UID —
+> or anyone else who can write that ledger file — lowering the row. The addendum's §7 states this
+> in full. The question [`FLOOR_WRITER_SERVICE_DESIGN.md`](./FLOOR_WRITER_SERVICE_DESIGN.md) §0.3
+> and §9 put to the Architect on 2026-08-15 was answered by the Owner, not by an Architect.
+>
+> **Not ruled.** NM-EVID-01…10 follow §7's A–E matrix, and the built comparison is not that matrix
+> (addendum, KNOWN DIVERGENCES item 7). Those rows are unchanged.
 
 | Test ID | Case | Fault injected | Expected fail-closed outcome | § ref |
 |---|---|---|---|---|
@@ -338,7 +351,7 @@ monotonicity + chain-content `(event_count, last_sequence, final_event_hash)`.
 | NM-EVID-09 | E (length/seq disagree) | Higher head, content differs, counts not increased | **`evidence_fork`** | §7 case E |
 | NM-EVID-10 | Bootstrap | No floor row (first turn) | INSERT from the validated head (no A-branch) | §7 bootstrap |
 | NM-EVID-11 | Startup integrity | Corrupt/malformed floor row (`final_event_hash` not 64-hex, `event_count < 1`, etc.) | Refuse malformed DB at open, fail-closed | §7 startup integrity |
-| NM-EVID-12 | Sidecar cannot reach floor | In-scope sidecar attempts to read/write the `brops-signer` `0700`/`0600` floor DB | DENIED (ACL) — the fork/rollback defense holds against the in-scope actor | §7, §2.3 |
+| NM-EVID-12 | Sidecar cannot reach floor | In-scope sidecar service UID attempts to read/write the supervisor's ledger database — the file that holds `governed_evidence_head_floor` (supervisor-owned, directory `0700` / file `0600`) | DENIED (owner-only modes) — the fork/rollback defense holds against the in-scope actor. It does **not** hold against the supervisor UID, which owns the file (addendum §7, Amendment A1) | §7, §2.3 |
 | NM-EVID-13 | Out-of-scope honesty | Full-DB restore to an older self-consistent backup | Documented **NOT** defended (requires admin/root, OUT of §0 threat model); external anchoring DEFERRED to 3b-2 — test asserts the honest boundary, not a false claim | §7 |
 
 ---
@@ -380,7 +393,7 @@ Store at `2750` (owner-write / group read-traverse, **no group-w**); artifacts `
 | NM-ACL-10 | Mode-regression guard | Re-introduce `2770` (group-write) on store dirs | `stat` must equal `2750` (setgid set, group-w clear); `_harden_dir` refuses `S_IWGRP` at load ⇒ fail-closed | §2.3 |
 | NM-ACL-11 | Any non-owner → artifact | Overwrite an existing `0640` artifact | DENY (needs file `w`) | §2.3 |
 | NM-ACL-12 | Login/sidecar → private-key dir | Read the receipt-signing / attestation / recorder key `0700` dir | DENY (owner-only) | §2.3, §1.2 |
-| NM-ACL-13 | Login/sidecar → evidence-head floor DB | Read/write the `brops-signer` `0700`/`0600` floor | DENY | §2.3, §7 |
+| NM-ACL-13 | Login/sidecar → evidence-head floor DB | Read/write the supervisor's ledger database that holds `governed_evidence_head_floor` (supervisor-owned, directory `0700` / file `0600` — the same file as NM-ACL-14's acceptance ledger; addendum Amendment A1) | DENY | §2.3, §7 |
 | NM-ACL-14 | Login/sidecar → acceptance ledger / staging | Read/write the supervisor-only `0700` DB | DENY | §2.3, §5 |
 | NM-ACL-15 | 3-actor × 6-asset denial grid | Each of {login, renderer, sidecar-service-UID} × {auth key, pending store, receipt/attestation keys, protected store, verifier DB+manifest, TCB binaries} | Each cell **DENIED** with the stated enforcing mechanism (Linux; Windows SID equivalent §0.W) | §9(n) |
 

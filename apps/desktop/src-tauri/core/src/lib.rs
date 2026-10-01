@@ -433,6 +433,40 @@ mod tests {
     }
 
     #[test]
+    fn an_escalated_run_step_approval_still_holds_the_gate() {
+        // The run-step gate reads `undecided_for` before raising a request. An escalated row
+        // is not approved, not rejected and not `pending`, so a gate that read only
+        // `pending_for` found nothing and minted a second A2 request for the same step.
+        let c = conn();
+        let r = repo::runs::create(&c, "gated", "", crate::repo::audit::Actor::local_operator()).unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "risky", "").unwrap();
+        let ap = repo::approvals::create(&c, "Execute run step", "x", "A2", "medium", Some("run_step"), Some(&step.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        // Positive control: while it is pending, both readers see it.
+        assert_eq!(repo::approvals::undecided_for(&c, &step.id).unwrap().map(|a| a.id), Some(ap.id.clone()));
+        assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_some());
+
+        repo::approvals::escalate(&c, &ap.id, crate::repo::audit::Actor::local_operator()).unwrap();
+
+        // The three predicates the gate tried first all miss an escalated row...
+        assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
+        assert!(!repo::approvals::rejected_for(&c, &step.id, "run_step", "Execute run step").unwrap());
+        assert!(repo::approvals::pending_for(&c, &step.id).unwrap().is_none());
+        // ...and this one must not, or the gate creates a fresh request.
+        let held = repo::approvals::undecided_for(&c, &step.id).unwrap().expect("an escalated request is still open");
+        assert_eq!(held.id, ap.id);
+        assert_eq!((held.status.as_str(), held.level.as_str()), ("escalated", "A3"));
+
+        // A decided row is not undecided: rejecting a second, pending request leaves only the
+        // escalated one in view, never the rejected one.
+        let c2 = conn();
+        let r2 = repo::runs::create(&c2, "gated", "", crate::repo::audit::Actor::local_operator()).unwrap();
+        let s2 = repo::runs::add_step(&c2, &r2.id, "risky", "").unwrap();
+        let ap2 = repo::approvals::create(&c2, "Execute run step", "x", "A2", "medium", Some("run_step"), Some(&s2.id), "webview:test", "sess-test", &crate::id(), crate::repo::audit::Actor::local_operator()).unwrap();
+        repo::approvals::decide(&c2, &ap2.id, "rejected", None, crate::repo::audit::Actor::local_operator()).unwrap();
+        assert!(repo::approvals::undecided_for(&c2, &s2.id).unwrap().is_none());
+    }
+
+    #[test]
     fn set_step_status_cannot_bypass_the_approval_gate() {
         let c = conn();
         let r = repo::runs::create(&c, "gated", "", crate::repo::audit::Actor::local_operator()).unwrap();
@@ -522,6 +556,52 @@ mod tests {
         let log = repo::automations::list_runs(&c, &a.id).unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].outcome, "ok");
+    }
+
+    /// One automation whose run cannot be recorded must not starve the ones after it.
+    ///
+    /// `run_due` returned on the first `?`, so every automation listed after a failing one was
+    /// skipped on that tick and on every later one. The failure is induced the only way a local
+    /// action can produce one — at the database — with a trigger that aborts the run row of ONE
+    /// automation; both orders are driven, so the test does not depend on which is listed first.
+    #[test]
+    fn one_failing_automation_does_not_starve_the_rest_of_the_tick() {
+        for broken_first in [true, false] {
+            let c = conn();
+            let mk = |name: &str| {
+                let a = repo::automations::create(
+                    &c,
+                    NewAutomation { name: name.into(), trigger: "every: 1m".into(), action: "notify: tick".into() },
+                    crate::repo::audit::Actor::local_operator(),
+                )
+                .unwrap();
+                arm(&c, &a.id);
+                a
+            };
+            let (first, second) = (mk("first"), mk("second"));
+            let order: Vec<String> =
+                repo::automations::list(&c).unwrap().into_iter().map(|a| a.id).collect();
+            let pos = |id: &str| order.iter().position(|x| x == id).unwrap();
+            let (early, late) =
+                if pos(&first.id) < pos(&second.id) { (&first, &second) } else { (&second, &first) };
+            let (broken, healthy) = if broken_first { (early, late) } else { (late, early) };
+            c.execute_batch(&format!(
+                "CREATE TRIGGER break_one BEFORE INSERT ON automation_runs \
+                 WHEN NEW.automation_id = '{}' BEGIN SELECT RAISE(ABORT, 'induced'); END;",
+                broken.id
+            ))
+            .unwrap();
+
+            let tick = repo::automations::run_due(&c, i64::MAX);
+
+            assert!(tick.is_err(), "a tick in which a run failed must still report the failure");
+            assert_eq!(
+                repo::automations::list_runs(&c, &healthy.id).unwrap().len(),
+                1,
+                "the healthy automation must have run (broken listed first: {broken_first})"
+            );
+            assert_eq!(repo::automations::list_runs(&c, &broken.id).unwrap().len(), 0);
+        }
     }
 
     #[test]
@@ -934,8 +1014,20 @@ mod tests {
               repo::approvals::INTEGRATION_STATUS_ACTION_TYPE);
         let on = repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).unwrap();
         assert_eq!(on.status, "connected");
-        // An invalid status is refused before the gate, so it spends no grant.
-        assert!(repo::integrations::set_status(&c, &i.id, "bogus", crate::repo::audit::Actor::local_operator()).is_err());
+        // An invalid status is refused before the gate, so it spends no grant. The grant
+        // above is already spent, so this needs one of its own: without it the call fails at
+        // the gate whatever the status is, and `.is_err()` cannot tell the two refusals apart.
+        grant(&c, repo::approvals::INTEGRATION_ENTITY_TYPE, &i.id,
+              repo::approvals::INTEGRATION_STATUS_ACTION_TYPE);
+        assert!(matches!(
+            repo::integrations::set_status(&c, &i.id, "bogus", crate::repo::audit::Actor::local_operator()),
+            Err(CoreError::Invalid { field: "status", .. })
+        ));
+        // ...and the grant survived the refusal: the SAME grant still unlocks one valid change.
+        let err = repo::integrations::set_status(&c, &i.id, "error", crate::repo::audit::Actor::local_operator()).unwrap();
+        assert_eq!(err.status, "error");
+        // One grant, one change: it is spent now.
+        assert!(repo::integrations::set_status(&c, &i.id, "connected", crate::repo::audit::Actor::local_operator()).is_err());
     }
 
     // --- T-052: the three tier-X commands are gated at the authority layer -------
@@ -1176,13 +1268,24 @@ mod tests {
     #[test]
     fn memory_pin_orders_and_delete_works() {
         let c = conn();
-        repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "first".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        let first = repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "note".into(), content: "first".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
         let second = repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "fact".into(), content: "second".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
-        // pin the older one so it sorts to the top
-        repo::memory::set_pinned(&c, &second.id, true).unwrap();
+        // Pin the OLDER one, then make the unpinned one strictly newer. The list orders
+        // `pinned DESC, updated_at DESC`, and `set_pinned` bumps `updated_at` — so pinning
+        // the newer entry (which this test used to do, under a comment saying "older")
+        // sorts it first by recency alone, and the test passes with `pinned DESC` deleted.
+        repo::memory::set_pinned(&c, &first.id, true).unwrap();
+        c.execute(
+            "UPDATE memory_entries SET updated_at = '9999999999999' WHERE id = ?1",
+            [&second.id],
+        ).unwrap();
         let list = repo::memory::list(&c, None).unwrap();
         assert!(list[0].pinned);
-        assert_eq!(list[0].content, "second");
+        assert_eq!(list[0].content, "first", "a pinned entry outranks a newer unpinned one");
+        assert_eq!(list[1].content, "second");
+        // The scoped listing has its own ORDER BY; it must agree.
+        let scoped = repo::memory::list(&c, Some("global")).unwrap();
+        assert_eq!(scoped[0].content, "first");
         // bad kind rejected
         assert!(matches!(
             repo::memory::create(&c, NewMemoryEntry { scope: "global".into(), kind: "bogus".into(), content: "x".into() }, crate::repo::audit::Actor::local_operator()),

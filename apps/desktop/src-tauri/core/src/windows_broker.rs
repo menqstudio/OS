@@ -4,16 +4,37 @@
 //!
 //! - **Restricted executor token** — the executor's token MUST drop every forbidden privilege and run at a
 //!   low integrity level, mirroring the Linux dropped-caps + unprivileged executor UID.
-//! - **Named-pipe peer auth** — the challenge-authority pipe allowlists ONLY the broker's token SID and
-//!   DENIES the renderer/login SID and the sidecar SID (mirrors the Linux `SO_PEERCRED` broker-UID
-//!   allowlist, §2.1).
+//! - **Named-pipe peer auth** — each pipe allowlists the SIDs of its matrix row and nothing else, so
+//!   the challenge-authority pipe admits ONLY the broker's token SID and the renderer/login and
+//!   sidecar SIDs are refused there by not being on it (mirrors the Linux `SO_PEERCRED` broker-UID
+//!   allowlist, §2.1). One predicate, [`authorize_pipe_peer`].
 //! - **Image verification** — hash + Authenticode + NTFS ACL non-writable-by-login/runtime SIDs before
 //!   `CreateProcessAsUser` (mirrors the Linux TCB integrity floor + `O_NOFOLLOW`/re-hash, §2.5/§2.7).
+//!   **A predicate, not an enforced floor: nothing calls [`verify_image`].** See below.
 //! - **STARTUPINFOEX handle list** — the executor inherits EXACTLY the 3–6 data handles (mirrors the Linux
 //!   FD 3–6 survival contract, §2.7 P0-3).
 //!
 //! Every verifier fails closed on the first violation and returns a [`WindowsBrokerViolation`]. Fully
 //! unit-tested offline.
+//!
+//! # WHAT IS CALLED, AND WHAT IS ONLY TESTED
+//!
+//! This module is a set of pure predicates. Two of them describe themselves in the language of an
+//! enforced control, and neither is one:
+//!
+//! - [`verify_image`] / [`ImageFacts`] / [`ImageVerificationSpec`] have no caller outside this
+//!   file's tests. No Windows launch path verifies an image's Authenticode signature, and the Windows
+//!   TCB floor that DOES run says so in its own words (`win-live/src/tcb_floor.rs`: "No Authenticode
+//!   requirement"). "Mandatory" below means the predicate has no switch to turn the check off — not
+//!   that the check is applied to anything.
+//! - [`verify_distinct_principals`] has no call site either: `win-broker` re-exports it and nothing
+//!   invokes it, because nothing on a Windows start path loads a [`ServiceSids`] at all (the one
+//!   non-test constructor is the pipe proof binary's). `tools/check_principal_model.py` guards the
+//!   ARRAY it iterates, and `docs/SECURITY_MODEL.md` describes what it requires; neither makes it run.
+//!
+//! [`authorize_pipe_peer`], [`verify_restricted_token`] and [`verify_startupinfo_handle_list`] are
+//! reached from the `win-broker` kit. None of this changes what a user can do: `connect_broker`
+//! refuses off Linux, so no governed turn runs on Windows. It changes what may be SAID about Windows.
 
 use std::collections::BTreeSet;
 
@@ -22,7 +43,8 @@ pub type Sid = String;
 
 /// The seven runtime service principals (§0.W.2 / addendum §0). Each MUST run under its own dedicated,
 /// non-interactive service SID; all seven MUST be pairwise-distinct and distinct from the interactive login
-/// (renderer) SID, or `verify_distinct_principals()` Blocks ⇒ the Windows governed gate stays `false`. The
+/// (renderer) SID, or `verify_distinct_principals()` refuses. (That is the predicate's verdict; no
+/// start path asks it yet — see the module docs.) The
 /// launcher (§0.W role 7) is a TCB-owned FILE, not a runtime SID, so it is deliberately not in this set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Principal {
@@ -124,21 +146,12 @@ pub struct ImageFacts {
 /// The pinned expectation for the executor image (from the root-owned pin).
 ///
 /// NOTE: there is deliberately NO `require_authenticode` toggle. Design §2.7 Windows-equivalent mandates
-/// `hash + Authenticode + NTFS ACL` UNCONDITIONALLY before launch, so a valid Authenticode signature is a
-/// non-negotiable floor — [`verify_image`] always enforces it and cannot be configured off.
+/// `hash + Authenticode + NTFS ACL` UNCONDITIONALLY before launch, so [`verify_image`] requires a valid
+/// Authenticode signature whenever it is asked and cannot be configured off. It is not asked: no
+/// launch path calls it (module docs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageVerificationSpec {
     pub expected_sha256: String,
-}
-
-/// The named-pipe peer-auth policy for the challenge-authority pipe (§2.1 Windows mapping).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NamedPipePeerAuthPolicy {
-    /// The ONLY SID allowed to connect (the trusted broker's token SID).
-    pub allowed_broker_sid: Sid,
-    /// SIDs explicitly denied (the renderer/login SID and the sidecar SID) — belt-and-suspenders alongside
-    /// the single-allow rule.
-    pub denied_sids: BTreeSet<Sid>,
 }
 
 /// A single inherited handle in the STARTUPINFOEX explicit handle list (the Windows FD-3..6 equivalent).
@@ -166,8 +179,6 @@ pub enum WindowsBrokerViolation {
     ForbiddenPrivilege(String),
     TokenIntegrityTooHigh,
     TokenNotRestricted,
-    PeerNotBroker(Sid),
-    PeerExplicitlyDenied(Sid),
     PeerNotAllowedOnPipe(Pipe, Sid),
     PrincipalUnset(Principal),
     PrincipalIsLoginSid(Principal),
@@ -201,27 +212,15 @@ pub fn verify_restricted_token(t: &ObservedToken) -> Result<(), WindowsBrokerVio
     Ok(())
 }
 
-/// Authorize a connecting peer on the challenge-authority pipe: it MUST be exactly the broker SID and MUST
-/// NOT be in the denied set (renderer/login + sidecar).
-pub fn authorize_authority_peer(
-    policy: &NamedPipePeerAuthPolicy,
-    peer_sid: &str,
-) -> Result<(), WindowsBrokerViolation> {
-    if policy.denied_sids.contains(peer_sid) {
-        return Err(WindowsBrokerViolation::PeerExplicitlyDenied(peer_sid.to_string()));
-    }
-    if peer_sid != policy.allowed_broker_sid {
-        return Err(WindowsBrokerViolation::PeerNotBroker(peer_sid.to_string()));
-    }
-    Ok(())
-}
-
 /// §0.W.3 — the Windows realization of the `verify_distinct_principals()` §0.1 primitive. Every one of the
 /// seven runtime service SIDs MUST be set (non-empty), MUST NOT equal the interactive login (renderer) SID,
 /// and all seven MUST be pairwise-distinct. Any unset SID, any SID collapsed onto the login identity, or any
 /// two principals sharing a SID Blocks — so a renderer can never *become* the final verifier and the broker
 /// can never be the authority (§0.W.3 P0-1). Fail-closed on the first violation, in the fixed
 /// [`RUNTIME_PRINCIPALS`] order for a deterministic verdict.
+///
+/// NOT WIRED: no call site outside this file's tests (module docs). The sentence above is what a
+/// caller would get, not something that happens at start.
 pub fn verify_distinct_principals(sids: &ServiceSids) -> Result<(), WindowsBrokerViolation> {
     // (a) present + (b) not the login SID.
     for &p in RUNTIME_PRINCIPALS.iter() {
@@ -248,6 +247,12 @@ pub fn verify_distinct_principals(sids: &ServiceSids) -> Result<(), WindowsBroke
 /// §2.1/§2.3/§2.6 `SO_PEERCRED` UID allowlists). This is the peer-SID gate only; the broker-from-renderer
 /// pipe additionally rejects any authoritative field at the PARSE layer (closed `{conversation_id, agent?}`
 /// command), which is enforced separately. Fail-closed: any peer not on the pipe's allowlist Blocks.
+///
+/// This is the ONE peer rule. A second predicate for the challenge-authority pipe alone
+/// (`authorize_authority_peer`, over its own `NamedPipePeerAuthPolicy` with a deny set) decided the
+/// same pipe from a second policy source and had no caller; it was removed rather than left to
+/// drift. An allowlist needs no deny set: the renderer and the sidecar are refused on the
+/// challenge-authority pipe because they are not the broker.
 pub fn authorize_pipe_peer(
     pipe: Pipe,
     peer_sid: &str,
@@ -267,8 +272,11 @@ pub fn authorize_pipe_peer(
 }
 
 /// Verify the executor image before `CreateProcessAsUser`: exact hash, valid Authenticode (ALWAYS required,
-/// §2.7), and NOT writable by the login user or any runtime SID. Authenticode is a mandatory floor: an image
-/// without a valid Authenticode signature fails closed regardless of spec configuration — there is no opt-out.
+/// §2.7), and NOT writable by the login user or any runtime SID. Within this predicate Authenticode has
+/// no opt-out: an image without a valid signature fails closed regardless of spec configuration.
+///
+/// NOT WIRED: no launch path calls this (module docs), so on Windows today no image's Authenticode
+/// signature is checked before anything is started.
 pub fn verify_image(spec: &ImageVerificationSpec, facts: &ImageFacts) -> Result<(), WindowsBrokerViolation> {
     if facts.writable_by_login_or_runtime {
         return Err(WindowsBrokerViolation::ImageWritableByUntrusted);
@@ -321,12 +329,6 @@ mod tests {
     fn ok_token() -> ObservedToken {
         ObservedToken { privileges: BTreeSet::new(), integrity: IntegrityLevel::Low, is_restricted: true }
     }
-    fn policy() -> NamedPipePeerAuthPolicy {
-        NamedPipePeerAuthPolicy {
-            allowed_broker_sid: "S-1-5-broker".into(),
-            denied_sids: ["S-1-5-login".to_string(), "S-1-5-sidecar".to_string()].into_iter().collect(),
-        }
-    }
     fn handles() -> Vec<(i32, HandleRole)> {
         vec![(0, HandleRole::Inert), (1, HandleRole::Inert), (2, HandleRole::Inert),
              (3, HandleRole::StoreInput), (4, HandleRole::StoreInput), (5, HandleRole::StoreInput),
@@ -370,12 +372,19 @@ mod tests {
         assert_eq!(verify_restricted_token(&t), Err(WindowsBrokerViolation::TokenNotRestricted));
     }
 
+    /// What the removed `authorize_authority_peer` test asserted, against the predicate that is
+    /// actually used for that pipe: only the broker, and the renderer, the sidecar and a stranger
+    /// are each refused BY NAME on the challenge-authority pipe.
     #[test]
     fn authority_pipe_allows_only_broker_denies_renderer_and_sidecar() {
-        assert!(authorize_authority_peer(&policy(), "S-1-5-broker").is_ok());
-        assert_eq!(authorize_authority_peer(&policy(), "S-1-5-login"), Err(WindowsBrokerViolation::PeerExplicitlyDenied("S-1-5-login".into())));
-        assert_eq!(authorize_authority_peer(&policy(), "S-1-5-sidecar"), Err(WindowsBrokerViolation::PeerExplicitlyDenied("S-1-5-sidecar".into())));
-        assert_eq!(authorize_authority_peer(&policy(), "S-1-5-other"), Err(WindowsBrokerViolation::PeerNotBroker("S-1-5-other".into())));
+        let s = sids();
+        assert!(authorize_pipe_peer(Pipe::ChallengeAuthority, &s.broker, &s).is_ok());
+        for refused in [s.login.as_str(), s.sidecar.as_str(), "S-1-5-other"] {
+            assert_eq!(
+                authorize_pipe_peer(Pipe::ChallengeAuthority, refused, &s),
+                Err(WindowsBrokerViolation::PeerNotAllowedOnPipe(Pipe::ChallengeAuthority, refused.to_string()))
+            );
+        }
     }
 
     #[test]

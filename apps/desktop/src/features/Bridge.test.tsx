@@ -167,10 +167,38 @@ describe('BridgePanel — the governed turn, previously called by nothing', () =
     await waitFor(() => expect(screen.getByText('A real conversation')).toBeInTheDocument());
     fireEvent.click(screen.getByText('Send one governed turn'));
 
-    await outcome('No verdict exists');
+    await outcome('Reply not accepted by this app');
     expect(screen.queryByText('Verified by the broker')).not.toBeInTheDocument();
     // The forged body is never rendered — an illegal frame is refused, not displayed as an answer.
     expect(screen.queryByText('trust me')).not.toBeInTheDocument();
+  });
+
+  it('a broker commit under demonstration_custody is never Verified, and is not called "nobody decided"', async () => {
+    // What a configured deployment commits today: a real broker frame, durably committed, whose label
+    // is not `trusted_verified`. The renderer rejects it by design. It used to render "No verdict
+    // exists / No broker allowed or refused this turn" — false for a turn the broker DID commit.
+    mount({
+      list_conversations: [CONVERSATION],
+      governed_turn_execute: {
+        protocol: RESULT_PROTOCOL, status: 'committed', client_request_id: 'x',
+        broker_turn_id: 'bt-5', conversation_id: 'conv-1',
+        message: {
+          message_id: 'm', role: 'assistant', author: 'Bro', body: 'a demonstration answer',
+          created_at_ms: 1, trust_state: 'demonstration_custody',
+        },
+      },
+    });
+    await waitFor(() => expect(screen.getByText('A real conversation')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Send one governed turn'));
+
+    await outcome('Reply not accepted by this app');
+    // Still no Verified affordance and no body: the rejection itself is unchanged.
+    expect(screen.queryByText('Verified by the broker')).not.toBeInTheDocument();
+    expect(screen.queryByText('a demonstration answer')).not.toBeInTheDocument();
+    // And it does not deny a broker decision it cannot rule out.
+    expect(screen.queryByText('No verdict exists')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No broker allowed or refused/)).not.toBeInTheDocument();
+    expect(screen.getByText('committed message is not trusted_verified')).toBeInTheDocument();
   });
 
   it('a genuine broker committed frame IS shown as verified (the mapping the gate protects)', async () => {

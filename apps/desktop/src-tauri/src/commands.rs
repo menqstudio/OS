@@ -387,16 +387,13 @@ pub fn decide_approval(
         return Err(format!("unknown approval decision: {decision}"));
     }
     // T-010: generic `decide_approval` is DENIED to the `main` window at the
-    // capability layer, and per the Wave-2b design an *approve* now requires
-    // renderer-independent native confirmation — which lands in T-011. Until then
-    // the approve path fails closed here too (defense in depth, in case a capability
-    // misconfig ever exposed this command); *reject* goes through `reject_approval`.
+    // capability layer, and an *approve* requires renderer-independent native
+    // confirmation — which is `confirm_approval` (T-011), and has been since it landed.
+    // The approve verb fails closed HERE permanently, not "until then": this is defense
+    // in depth in case a capability misconfig ever exposed this command; *reject* goes
+    // through `reject_approval`.
     if decision == "approved" {
-        return Err(
-            "approve requires renderer-independent native confirmation (T-011); \
-             not available yet — use reject_approval to reject"
-                .to_string(),
-        );
+        return Err(GENERIC_APPROVE_REFUSED.to_string());
     }
     // Record a server-derived approver identity alongside any caller note.
     let approver = format!("webview:{}", window.label());
@@ -411,25 +408,50 @@ pub fn decide_approval(
     Ok(decided)
 }
 
-/// Fixed-window rate limit for reject spam: at most `MAX_REJECTS_PER_WINDOW` per
-/// `REJECT_WINDOW`, keyed by webview label. In-memory (a restart resets it) — this
-/// only bounds automated spam, it is not a security boundary.
+/// What the generic approve verb answers. It said "native confirmation (T-011); not available
+/// yet" for as long as `confirm_approval` has implemented exactly that — telling a caller the
+/// approve path did not exist, on the command sitting next to it.
+const GENERIC_APPROVE_REFUSED: &str = "approve is refused on decide_approval: approving requires \
+renderer-independent native confirmation, which is confirm_approval (T-011) — the only approve path. \
+Use reject_approval to reject";
+
+/// Per-label hit times for one fixed-window limiter.
+type RateWindow = OnceLock<Mutex<HashMap<String, Vec<std::time::Instant>>>>;
+
+/// One fixed-window rate limit: at most `max` hits per `window`, keyed by webview label.
+/// In-memory (a restart resets it) — this only bounds automated spam, it is not a security
+/// boundary. `what` names the request in the refusal.
+///
+/// The reject and confirm limiters were this body written twice, the second copy reusing the
+/// first's `REJECT_*` constants and tested by nothing. Each keeps its OWN map (a reject must not
+/// spend a confirmation's budget) and its own named limits; the arithmetic exists once.
+fn fixed_window_rate_limit(
+    hits: &'static RateWindow,
+    label: &str,
+    max: usize,
+    window: std::time::Duration,
+    what: &str,
+) -> Result<(), String> {
+    let map = hits.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = map.lock().unwrap_or_else(|p| p.into_inner());
+    let now = std::time::Instant::now();
+    let hits = map.entry(label.to_string()).or_default();
+    hits.retain(|t| now.duration_since(*t) < window);
+    if hits.len() >= max {
+        return Err(format!("too many {what} requests; slow down and retry shortly"));
+    }
+    hits.push(now);
+    Ok(())
+}
+
+/// Reject spam: at most `MAX_REJECTS_PER_WINDOW` per `REJECT_WINDOW` (see
+/// [`fixed_window_rate_limit`]).
 const MAX_REJECTS_PER_WINDOW: usize = 20;
 const REJECT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn reject_rate_limit(label: &str) -> Result<(), String> {
-    use std::time::Instant;
-    static HITS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
-    let map = HITS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = map.lock().unwrap_or_else(|p| p.into_inner());
-    let now = Instant::now();
-    let hits = map.entry(label.to_string()).or_default();
-    hits.retain(|t| now.duration_since(*t) < REJECT_WINDOW);
-    if hits.len() >= MAX_REJECTS_PER_WINDOW {
-        return Err("too many reject requests; slow down and retry shortly".to_string());
-    }
-    hits.push(now);
-    Ok(())
+    static HITS: RateWindow = OnceLock::new();
+    fixed_window_rate_limit(&HITS, label, MAX_REJECTS_PER_WINDOW, REJECT_WINDOW, "reject")
 }
 
 /// Fail-safe reject path (T-010, design §9.2). A **separate** command from
@@ -492,21 +514,16 @@ impl Drop for ConfirmationGuard {
     }
 }
 
-/// Fixed-window rate limit for confirmation prompts (per webview label), mirroring
-/// the reject limiter — bounds prompt spam beyond the single-active guard.
+/// Confirmation prompts: at most `MAX_CONFIRMS_PER_WINDOW` per `CONFIRM_WINDOW`, per webview
+/// label — bounds prompt spam beyond the single-active guard. The same numbers as the reject
+/// limiter, under their own names: this used to read `REJECT_WINDOW` and
+/// `MAX_REJECTS_PER_WINDOW`, so tuning the reject limit would have retuned the approve prompt.
+const MAX_CONFIRMS_PER_WINDOW: usize = 20;
+const CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn confirm_rate_limit(label: &str) -> Result<(), String> {
-    use std::time::Instant;
-    static HITS: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
-    let map = HITS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = map.lock().unwrap_or_else(|p| p.into_inner());
-    let now = Instant::now();
-    let hits = map.entry(label.to_string()).or_default();
-    hits.retain(|t| now.duration_since(*t) < REJECT_WINDOW);
-    if hits.len() >= MAX_REJECTS_PER_WINDOW {
-        return Err("too many confirmation requests; slow down and retry shortly".to_string());
-    }
-    hits.push(now);
-    Ok(())
+    static HITS: RateWindow = OnceLock::new();
+    fixed_window_rate_limit(&HITS, label, MAX_CONFIRMS_PER_WINDOW, CONFIRM_WINDOW, "confirmation")
 }
 
 /// T-011 approve path — renderer-independent native confirmation. The generic
@@ -1106,6 +1123,14 @@ pub fn add_run_step(
     Ok(step)
 }
 
+/// Stamp a run step's status directly. **DENIED to the window** (`deny-set-run-step-status`,
+/// `command-policy.json` grant `deny`), and not because it is dangerous in the usual sense: no
+/// surface calls it. Steps move through `stream_run_step`, which sets a status as the consequence
+/// of work that ran, and `advance_run`. This was registered, `allow`-granted and tier X with
+/// `protection: none` — a renderer could mark any ungated, unclaimed step `done` with no result
+/// behind it. `repo::runs::set_step_status` still refuses a claimed step and a gated step going to
+/// `done`; the deny is what stops the rest. It stays registered so the grant can be reviewed and
+/// flipped in one place if a surface ever needs it.
 #[tauri::command]
 pub fn set_run_step_status(state: State<AppState>, id: String, status: String) -> Result<RunStep, String> {
     let conn = locked(&state)?;
@@ -1302,7 +1327,7 @@ pub const GOVERNED_VERIFICATION_UNCONFIGURED: &str = concat!(
 
 /// Whether this build resolves receipt key ids against a real trusted manifest.
 ///
-/// It is `false`, and the four call sites that pass
+/// It is `false`, and the two call sites in [`run_governed_turn`] that pass
 /// [`brops_core::receipt_store::NoTrustedManifest`] to `verify_and_record_receipt` /
 /// `verify_and_record_held_answer` are why. This constant is not the authority — it NAMES the
 /// authority's state for [`governed_provisioning_missing`], so the pre-flight cannot answer
@@ -1555,21 +1580,76 @@ pub(crate) fn conversation_turn_context(
     Ok(ConversationTurnContext { author, system, history })
 }
 
-/// Run ONE governed conversation turn end-to-end and return its verified receipt outcome (or a
-/// fail-closed error string). This is the single source of the challenge→turn→verify wiring shared
-/// by the two conversation reply commands (`stream_reply` and `reply_in_conversation`) — it prepares
-/// the turn ONCE (one trim, one hash), issues the one-time nonce challenge, runs the turn behind the
-/// wall, and verifies+records the signed receipt (desktop authority; `verify_and_record_receipt`
-/// posts the accepted message itself, so the caller never double-posts). The caller delivers the
-/// returned `ReceiptOutcome` its own way — a stream event or a returned `Message`. Keeping this in one
-/// place means the verify wiring can only be changed for both callers at once (was copy-pasted; audit).
+/// Where a governed turn's verified reply goes — the ONE thing the three governed surfaces differ in.
+pub enum GovernedDelivery<'a> {
+    /// Posted to this conversation: `verify_and_record_receipt` writes the accepted message itself,
+    /// so the caller never double-posts. Chat (`stream_reply`, `reply_in_conversation`).
+    Conversation(&'a str),
+    /// Held, never posted: `verify_and_record_held_answer` returns the verified body and writes no
+    /// `messages` row. Ask Bro and a run step are conversation-less, so their one-time challenge is
+    /// filed under the hidden system "ask" conversation (see [`hidden_ask_conversation`]).
+    Held,
+}
+
+/// The hidden system conversation a HELD governed turn files its one-time challenge under. The
+/// challenge needs a conversation FK and Ask Bro / a run step have no conversation; this one is
+/// `kind = "ask"`, which the UI list excludes, and a held reply is never posted to it.
+fn hidden_ask_conversation(conn: &rusqlite::Connection) -> Result<String, String> {
+    let existing = brops_core::repo::chat::list_conversations(conn, Some("ask"))
+        .ok()
+        .and_then(|v| v.into_iter().next());
+    match existing {
+        Some(c) => Ok(c.id),
+        None => brops_core::repo::chat::create_conversation(
+            conn,
+            "ask",
+            "Ask Bro (governed)",
+            repo::audit::Actor::local_operator(),
+        )
+        .map(|c| c.id)
+        .map_err(|e| e.to_string()),
+    }
+}
+
+/// What the unconfigured pre-flight may hand back to a caller: its BLOCK, or an error.
+///
+/// The pre-flight records a block and nothing else. An accept coming back from it is not an answer
+/// to deliver as if a receipt had been verified — no model ran and no signature was examined. The
+/// two held surfaces each refused that case in their own copy of the pipeline; the conversation
+/// copy returned whatever came. There is one copy now and it refuses for all four commands.
+fn only_a_block(
+    outcome: Result<brops_core::receipt_store::ReceiptOutcome, String>,
+) -> Result<brops_core::receipt_store::ReceiptOutcome, String> {
+    match outcome {
+        Ok(blocked @ brops_core::receipt_store::ReceiptOutcome::Blocked { .. }) => Ok(blocked),
+        Ok(_) => Err("unconfigured governed pre-flight returned an accept; refusing".to_string()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Run ONE governed turn end-to-end and return its verified receipt outcome (or a fail-closed
+/// error string). This is the single source of the challenge→pre-flight→turn→verify wiring for
+/// EVERY governed surface: the two conversation reply commands (`stream_reply`,
+/// `reply_in_conversation`) and the two held ones (`stream_ask`, `stream_run_step`). It prepares
+/// the turn ONCE (one trim, one hash), issues the one-time nonce challenge, runs the pre-flight,
+/// runs the turn behind the wall, and verifies+records the signed receipt (desktop authority).
+/// The caller delivers the returned `ReceiptOutcome` its own way — a stream event, a returned
+/// `Message`, a failed step attempt.
+///
+/// It used to cover the conversation commands only, under a doc that already called itself "the
+/// single source … (was copy-pasted; audit)", while `stream_ask` and `stream_run_step` each
+/// carried the whole pipeline again: the `IssuedRequest`, the challenge, the pre-flight, the
+/// `Expected` bindings, the hidden-conversation lookup. Three copies of the security wiring can
+/// be changed one at a time. There is one now, and [`GovernedDelivery`] is the only parameter the
+/// copies ever differed in.
 ///
 /// `pub` (crate-internal) so the AI-surface inventory gate (tools/check_ai_surfaces.py) resolves the
-/// governed_turn call through this ONE helper-hop and correctly attributes it to the two calling
-/// commands, rather than mis-binding it to a neighbouring fn.
-pub async fn run_governed_conversation_turn(
+/// governed_turn call through this ONE helper-hop and correctly attributes it to the four calling
+/// commands, rather than mis-binding it to a neighbouring fn. It must stay ONE hop: a wrapper
+/// between a command and this function would put the provider call out of that gate's sight.
+pub async fn run_governed_turn(
     state: &State<'_, AppState>,
-    conversation_id: &str,
+    delivery: GovernedDelivery<'_>,
     system: &str,
     history: &[crate::ai::ChatMsg],
 ) -> Result<brops_core::receipt_store::ReceiptOutcome, String> {
@@ -1597,10 +1677,18 @@ pub async fn run_governed_conversation_turn(
         generation_config_sha256: &ctx.generation_config_sha256,
         requested_at: &ctx.requested_at,
     };
+    // The conversation the one-time challenge is filed under.
+    let challenge_conversation: String = match &delivery {
+        GovernedDelivery::Conversation(id) => (*id).to_string(),
+        GovernedDelivery::Held => {
+            let conn = locked(state)?;
+            hidden_ask_conversation(&conn)?
+        }
+    };
     // Issue the one-time challenge (at request-start time) BEFORE the turn.
     {
         let conn = locked(state)?;
-        brops_core::receipt_store::issue_challenge(&conn, conversation_id, &issued, started_ms)
+        brops_core::receipt_store::issue_challenge(&conn, &challenge_conversation, &issued, started_ms)
             .map_err(|e| e.to_string())?;
     }
     // Honest fail-closed pre-flight (audit): if this install provisions no trusted key, no policy
@@ -1612,7 +1700,7 @@ pub async fn run_governed_conversation_turn(
         governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
     };
     if let Some(outcome) = unconfigured {
-        return outcome;
+        return only_a_block(outcome);
     }
     // Run buffered (no DB lock held across the async sidecar call).
     let governed = crate::ai::governed_turn(&prepared).await;
@@ -1654,9 +1742,15 @@ pub async fn run_governed_conversation_turn(
                 freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
             };
             let conn = locked(state)?;
-            brops_core::receipt_store::verify_and_record_receipt(
-                &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-            )
+            // The same turn, the same authority; only where an ACCEPT is recorded differs.
+            match delivery {
+                GovernedDelivery::Conversation(_) => brops_core::receipt_store::verify_and_record_receipt(
+                    &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+                ),
+                GovernedDelivery::Held => brops_core::receipt_store::verify_and_record_held_answer(
+                    &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
+                ),
+            }
         }
     };
     outcome.map_err(|e| e.to_string())
@@ -1747,7 +1841,7 @@ pub async fn stream_reply(
         Ok(true) => {
             // The whole challenge -> turn -> verify pipeline lives in one shared helper (the
             // conversation reply commands must change it in lockstep); we only deliver the outcome.
-            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
+            let outcome = run_governed_turn(&state, GovernedDelivery::Conversation(&conversation_id), &system, &history).await;
 
             match outcome {
                 // Accepted (Wave 3b only): receipt_store ALREADY posted the message —
@@ -1919,7 +2013,10 @@ pub async fn stream_run_step(
                     }
                     Gate::Rejected
                 } else if let Some(pending) =
-                    repo::approvals::pending_for(&conn, &s.id).map_err(|e| e.to_string())?
+                    // `undecided_for`, not `pending_for`: a request that was ESCALATED to A3
+                    // is still open, and reading only `pending` made the gate raise a fresh
+                    // A2 request beside it — the escalation was undone by the next attempt.
+                    repo::approvals::undecided_for(&conn, &s.id).map_err(|e| e.to_string())?
                 {
                     Gate::Pending(pending.id)
                 } else {
@@ -2015,8 +2112,9 @@ pub async fn stream_run_step(
     );
     let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: user }];
 
-    // Helper: a governed/provider failure fails THIS claiming attempt (the grant is NOT restored —
-    // a retry needs a fresh approval) and reports the reason.
+    // Helper: a governed/provider failure fails THIS claiming attempt and reports the reason. The
+    // grant is NOT restored and the step is terminal — see `repo::runs::fail_step_execution`; no
+    // retry of a failed step exists.
     macro_rules! fail_attempt {
         ($msg:expr) => {{
             if let Ok(conn) = locked(&state) {
@@ -2036,109 +2134,9 @@ pub async fn stream_run_step(
     let full: String = match crate::ai::provider_is_governed() {
         Err(e) => fail_attempt!(e),
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let prepared = match crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            ) {
-                Ok(p) => p,
-                Err(e) => fail_attempt!(e),
-            };
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-            // The one-time challenge needs a conversation FK; a run step is conversation-less, so reuse the
-            // hidden system "ask" conversation (kind excluded from the UI list) — the held result is never
-            // posted there.
-            let gov_conv = {
-                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
-                let existing = brops_core::repo::chat::list_conversations(&conn, Some("ask"))
-                    .ok()
-                    .and_then(|v| v.into_iter().next());
-                match existing {
-                    Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
-                        Ok(c) => c.id,
-                        Err(e) => fail_attempt!(e.to_string()),
-                    },
-                }
-            };
-            {
-                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
-                if let Err(e) = brops_core::receipt_store::issue_challenge(&conn, &gov_conv, &issued, started_ms) {
-                    fail_attempt!(e.to_string());
-                }
-            }
-            // Honest fail-closed pre-flight (audit) — see `governed_unconfigured_block`. An install
-            // that provisions no verification inputs fails the attempt HERE, with a reason that says
-            // the check could not run, instead of burning a model turn to report a check that did.
-            let unconfigured = {
-                let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
-                governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
-            };
-            if let Some(outcome) = unconfigured {
-                match outcome {
-                    Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => fail_attempt!(error),
-                    Ok(_) => fail_attempt!(
-                        "unconfigured governed pre-flight returned an accept; refusing".to_string()
-                    ),
-                    Err(e) => fail_attempt!(e),
-                }
-            }
-            let governed = crate::ai::governed_turn(&prepared).await;
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-            let outcome = match &governed {
-                Err(transport) => {
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
-                    brops_core::receipt_store::record_pre_verification_block(&conn, &ctx.request_nonce, &reason, verify_ms)
-                }
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_POLICY_BUNDLE_ABSENT,
-                        containment_evidence_sha256: GOVERNED_CONTAINMENT_ABSENT,
-                        allowed_executors: GOVERNED_ALLOWED_EXECUTORS,
-                        allowed_builders: GOVERNED_ALLOWED_BUILDERS,
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = match locked(&state) { Ok(c) => c, Err(e) => fail_attempt!(e) };
-                    brops_core::receipt_store::verify_and_record_held_answer(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
-            match outcome {
+            // The whole challenge → pre-flight → turn → verify pipeline is `run_governed_turn`;
+            // this surface's own part is what a refusal MEANS here — the claiming attempt fails.
+            match run_governed_turn(&state, GovernedDelivery::Held, &system, &history).await {
                 // Accepted + held: the VERIFIED result is what we persist for the step.
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => body,
                 // Blocked (every Wave 3a governed step): fail the attempt with the durable reason.
@@ -2146,7 +2144,7 @@ pub async fn stream_run_step(
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { .. }) => {
                     fail_attempt!("unexpected conversation post on a held run-step turn".to_string())
                 }
-                Err(e) => fail_attempt!(e.to_string()),
+                Err(e) => fail_attempt!(e),
             }
         }
         Ok(false) => {
@@ -2168,7 +2166,7 @@ pub async fn stream_run_step(
 
     // Persist the result under THIS claiming attempt. First re-check the run is still alive (it may have
     // been cancelled/finished while the turn ran) — if so, fail the attempt (don't persist for a dead run;
-    // the grant stays consumed, a retry needs a fresh approval). A stale/duplicate dispatch (different
+    // the grant stays consumed and the failed step is terminal). A stale/duplicate dispatch (different
     // attempt) cannot persist. The gate was enforced + the grant consumed at claim time.
     let outcome = {
         let conn = match locked(&state) {
@@ -2235,131 +2233,9 @@ pub async fn stream_ask(
         Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
         Ok(false) => { /* fall through to the ungoverned streaming path below */ }
         Ok(true) => {
-            let started_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let prepared = match crate::ai::prepare_governed_turn(
-                &system,
-                &history,
-                started_ms,
-                GOVERNED_WORKSPACE_ID,
-                GOVERNED_INSTALL_ID,
-                GOVERNED_GENERATION_CONFIG,
-            ) {
-                Ok(p) => p,
-                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-            };
-            let ctx = &prepared.context;
-            let issued = brops_core::receipt::IssuedRequest {
-                workspace_id: &ctx.workspace_id,
-                install_id: &ctx.install_id,
-                request_nonce: &ctx.request_nonce,
-                system_sha256: &ctx.system_sha256,
-                history_sha256: &ctx.history_sha256,
-                generation_config_sha256: &ctx.generation_config_sha256,
-                requested_at: &ctx.requested_at,
-            };
-            // The one-time challenge needs a conversation FK; Ask Bro is conversation-less, so use a
-            // single hidden system "ask" conversation (kind excluded from the UI list) that the held
-            // answer never posts to.
-            let ask_conv = {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                };
-                let existing = brops_core::repo::chat::list_conversations(&conn, Some("ask"))
-                    .ok()
-                    .and_then(|v| v.into_iter().next());
-                match existing {
-                    Some(c) => c.id,
-                    None => match brops_core::repo::chat::create_conversation(&conn, "ask", "Ask Bro (governed)", repo::audit::Actor::local_operator()) {
-                        Ok(c) => c.id,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); return Ok(()); }
-                    },
-                }
-            };
-            {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                };
-                if let Err(e) = brops_core::receipt_store::issue_challenge(&conn, &ask_conv, &issued, started_ms) {
-                    let _ = on_event.send(StreamEvent::Error { message: e.to_string() });
-                    return Ok(());
-                }
-            }
-            // Honest fail-closed pre-flight (audit) — see `governed_unconfigured_block`. Blocked here,
-            // before the model runs, with a reason that says verification is unprovisioned rather than
-            // presenting an unrunnable check as one that ran and failed.
-            let unconfigured = {
-                let conn = match locked(&state) {
-                    Ok(c) => c,
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                };
-                governed_unconfigured_block(&conn, &ctx.request_nonce, started_ms)
-            };
-            if let Some(outcome) = unconfigured {
-                match outcome {
-                    Ok(brops_core::receipt_store::ReceiptOutcome::Blocked { error, .. }) => {
-                        let _ = on_event.send(StreamEvent::Blocked { reason: error });
-                    }
-                    Ok(_) => {
-                        let _ = on_event.send(StreamEvent::Error {
-                            message: "unconfigured governed pre-flight returned an accept; refusing".into(),
-                        });
-                    }
-                    Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); }
-                }
-                return Ok(());
-            }
-            let governed = crate::ai::governed_turn(&prepared).await;
-            let verify_ms: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(started_ms);
-            let outcome = match &governed {
-                Err(transport) => {
-                    let reason = brops_core::receipt_store::bounded_reason(transport);
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::record_pre_verification_block(
-                        &conn, &ctx.request_nonce, &reason, verify_ms,
-                    )
-                }
-                Ok(reply) => {
-                    let output = reply.reply.clone().into_bytes();
-                    let expected = brops_core::receipt::Expected {
-                        request: issued,
-                        supervisor_id: GOVERNED_SUPERVISOR_ID,
-                        policy_id: GOVERNED_POLICY_ID,
-                        policy_version: GOVERNED_POLICY_VERSION,
-                        policy_bundle_sha256: GOVERNED_POLICY_BUNDLE_ABSENT,
-                        containment_evidence_sha256: GOVERNED_CONTAINMENT_ABSENT,
-                        allowed_executors: GOVERNED_ALLOWED_EXECUTORS,
-                        allowed_builders: GOVERNED_ALLOWED_BUILDERS,
-                    };
-                    let turn = brops_core::receipt_store::GovernedTurn {
-                        wire: brops_core::receipt_store::ReceiptWire {
-                            envelope_jcs_b64: &reply.envelope_jcs_b64,
-                            signature_b64: &reply.signature_b64,
-                        },
-                        expected,
-                        output: &output,
-                        now_ms: verify_ms,
-                        freshness: brops_core::receipt_store::FreshnessWindow::DEFAULT,
-                    };
-                    let conn = match locked(&state) {
-                        Ok(c) => c,
-                        Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); return Ok(()); }
-                    };
-                    brops_core::receipt_store::verify_and_record_held_answer(
-                        &conn, &brops_core::receipt_store::NoTrustedManifest, &turn,
-                    )
-                }
-            };
+            // The whole challenge → pre-flight → turn → verify pipeline is `run_governed_turn`;
+            // this surface's own part is how the outcome is delivered — an event, never a post.
+            let outcome = run_governed_turn(&state, GovernedDelivery::Held, &system, &history).await;
             match outcome {
                 // Accepted + held: stash the VERIFIED body under a one-time id (never post it).
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrustedHeld { body, .. }) => {
@@ -2382,7 +2258,7 @@ pub async fn stream_ask(
                         message: "unexpected conversation post on a held ask".into(),
                     });
                 }
-                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e.to_string() }); }
+                Err(e) => { let _ = on_event.send(StreamEvent::Error { message: e }); }
             }
             return Ok(());
         }
@@ -2455,7 +2331,7 @@ pub async fn reply_in_conversation(
         Ok(false) => { /* fall through to the ungoverned path below */ }
         Ok(true) => {
             // Same shared challenge -> turn -> verify pipeline as stream_reply; only the delivery differs.
-            let outcome = run_governed_conversation_turn(&state, &conversation_id, &system, &history).await;
+            let outcome = run_governed_turn(&state, GovernedDelivery::Conversation(&conversation_id), &system, &history).await;
             return match outcome {
                 // Accepted: receipt_store ALREADY posted the message — read it back, do not double-post.
                 Ok(brops_core::receipt_store::ReceiptOutcome::DevelopmentUntrusted { message_id, .. }) => {
@@ -2764,9 +2640,12 @@ pub fn demonstration_verified_reply(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce)
-            .map_err(|e| format!("demonstration chain error: {e}"))?;
+        // Bind, clean up, THEN propagate. `…produce(..).map_err(..)?` followed by the removal
+        // returned before the removal on every error, and the kit creates the directory first —
+        // so each failed demonstration turn left its proof store in the temp directory.
+        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce);
         let _ = std::fs::remove_dir_all(&dir);
+        let outcome = outcome.map_err(|e| format!("demonstration chain error: {e}"))?;
         // The acceptance condition lives on `ProofOutcome` (win-live/src/proof.rs) so it sits beside
         // the fields it reads and is covered by a test that runs on BOTH CI platforms. This used to
         // read `outcome.bound && outcome.production_verified`, which no run reachable from here can
@@ -3185,6 +3064,118 @@ mod tests {
             reject_rate_limit(label).is_err(),
             "the {}-th reject in the window must be refused",
             MAX_REJECTS_PER_WINDOW + 1
+        );
+    }
+
+    // The confirm limiter had no test at all. It is its own budget: a window that has spent every
+    // reject it is allowed can still be asked to confirm, and the other way round.
+    #[test]
+    fn confirm_rate_limit_bounds_prompt_spam_on_its_own_budget() {
+        let label = "test-window-confirm-rate-limit";
+        for _ in 0..MAX_REJECTS_PER_WINDOW {
+            assert!(reject_rate_limit(label).is_ok());
+        }
+        assert!(reject_rate_limit(label).is_err(), "the reject budget for this label is spent");
+        for n in 0..MAX_CONFIRMS_PER_WINDOW {
+            assert!(confirm_rate_limit(label).is_ok(), "confirmation {n} must not be charged to rejects");
+        }
+        let err = confirm_rate_limit(label).expect_err("the next confirmation in the window is refused");
+        assert!(err.contains("confirmation"), "the refusal must name what was limited: {err}");
+        // Another window is not limited by this one.
+        assert!(confirm_rate_limit("test-window-confirm-rate-limit-other").is_ok());
+    }
+
+    // The unconfigured pre-flight can hand a caller a block or an error, never an accept.
+    #[test]
+    fn the_unconfigured_preflight_can_only_block() {
+        use brops_core::receipt_store::ReceiptOutcome;
+        let blocked = ReceiptOutcome::Blocked { attempt_id: "a".into(), error: "why".into() };
+        assert!(matches!(only_a_block(Ok(blocked)), Ok(ReceiptOutcome::Blocked { .. })));
+        for accept in [
+            ReceiptOutcome::DevelopmentUntrusted { message_id: "m".into(), attempt_id: "a".into() },
+            ReceiptOutcome::DevelopmentUntrustedHeld { attempt_id: "a".into(), body: "text".into() },
+        ] {
+            let err = only_a_block(Ok(accept)).expect_err("an accept from the pre-flight is refused");
+            assert!(err.contains("returned an accept"), "{err}");
+        }
+        assert_eq!(only_a_block(Err("db".into())).unwrap_err(), "db");
+    }
+
+    // ONE governed pipeline. It was written three times (conversation, Ask Bro, run step) under a
+    // helper whose doc already called itself "the single source"; a copy can be edited alone. A
+    // text check, and it says so: these are the four calls that make up the pipeline, and outside
+    // this test module each appears exactly once — inside `run_governed_turn`. The needles are
+    // assembled so the test's own text is not counted.
+    #[test]
+    fn the_governed_pipeline_exists_once() {
+        let src = include_str!("commands.rs");
+        let production = src.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        assert_ne!(production.len(), src.len(), "the test module marker moved");
+        for call in [
+            concat!("receipt_store::issue_", "challenge("),
+            concat!("crate::ai::governed_", "turn("),
+            concat!("receipt_store::verify_and_record_", "receipt("),
+            concat!("receipt_store::verify_and_record_held_", "answer("),
+            concat!("governed_unconfigured_", "block(&conn"),
+        ] {
+            assert_eq!(
+                production.matches(call).count(),
+                1,
+                "`{call}` must appear once, in run_governed_turn — a second copy of the pipeline is back"
+            );
+        }
+        // The unconfigured pre-flight leaves `run_governed_turn` THROUGH `only_a_block`, and by no
+        // other return. `the_unconfigured_preflight_can_only_block` tests the helper; this holds
+        // the call: with `return outcome;` put back, the helper stays tested and nothing calls it.
+        let preflight = production
+            .split("if let Some(outcome) = unconfigured {")
+            .nth(1)
+            .expect("the unconfigured pre-flight branch moved")
+            .split('}')
+            .next()
+            .unwrap();
+        assert_eq!(preflight.trim(), "return only_a_block(outcome);");
+    }
+
+    // The run-step gate asks `undecided_for`. The core test proves that predicate sees an
+    // escalated request; nothing executes the gate itself, so this holds the one line that
+    // matters — with `pending_for` put back, an escalated step is re-raised as a fresh A2 ask
+    // and every suite stayed green.
+    #[test]
+    fn the_run_step_gate_asks_for_any_undecided_request() {
+        let src = include_str!("commands.rs");
+        let production = src.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        assert_eq!(
+            production.matches(concat!("repo::approvals::undecided_", "for(&conn, &s.id)")).count(),
+            1
+        );
+        assert_eq!(production.matches(concat!("approvals::pending_", "for(")).count(), 0);
+    }
+
+    // The generic approve verb's refusal names the path that DOES approve. It used to say native
+    // confirmation was "not available yet", beside the command that implements it.
+    #[test]
+    fn the_generic_approve_refusal_points_at_confirm_approval() {
+        assert!(GENERIC_APPROVE_REFUSED.contains("confirm_approval"));
+        assert!(GENERIC_APPROVE_REFUSED.contains("reject_approval"));
+        assert!(!GENERIC_APPROVE_REFUSED.contains("not available yet"));
+    }
+
+    // `set_run_step_status` is denied to the window in BOTH files that say so. Nothing in the
+    // frontend calls it, and it let a renderer stamp a step `done` with no work behind it.
+    #[test]
+    fn set_run_step_status_is_denied_to_the_window() {
+        let caps: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let perms: Vec<&str> =
+            caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
+        assert!(perms.contains(&"deny-set-run-step-status"), "the capability must deny it");
+        assert!(!perms.contains(&"allow-set-run-step-status"), "…and must not also allow it");
+        let policy: serde_json::Value =
+            serde_json::from_str(include_str!("../command-policy.json")).unwrap();
+        assert_eq!(
+            policy["commands"]["set_run_step_status"]["grant"], "deny",
+            "command-policy.json must classify it, and as denied"
         );
     }
 

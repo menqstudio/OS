@@ -149,6 +149,26 @@ export const STR = {
     ru: 'Ни один брокер не разрешил и не отклонил этот ход. Не читайте это как отказ — это отсутствие '
       + 'ответа, а это другой факт.',
   },
+  // A reply ARRIVED and this app refused to read it. Not "no broker allowed or refused": the broker may
+  // have committed the turn under a label the renderer does not accept (anything but trusted_verified),
+  // so the words name the refusal as the app's and leave what the broker did unestablished.
+  outcomeReplyRejected: {
+    en: 'Reply not accepted by this app',
+    hy: 'Պատասխանն այս ծրագիրը չընդունեց',
+    ru: 'Ответ не принят этим приложением',
+  },
+  outcomeReplyRejectedBody: {
+    en: 'Something answered, and this app refused to read the answer as a verdict. The refusal is this '
+      + 'app’s, not the broker’s: a turn the broker committed under any label other than '
+      + 'trusted_verified is rejected here too, so this does not establish that nothing was committed.',
+    hy: 'Ինչ-որ բան պատասխանեց, ու այս ծրագիրը հրաժարվեց պատասխանը որպես վճիռ կարդալ։ Մերժումը այս '
+      + 'ծրագրինն ա, ոչ broker-ինը՝ trusted_verified-ից տարբեր նշանով broker-ի commit արած քայլն էլ ա '
+      + 'այստեղ մերժվում, ուստի սա չի հաստատում, որ ոչինչ commit չի արվել։',
+    ru: 'Что-то ответило, и это приложение отказалось читать ответ как вердикт. Отказ принадлежит '
+      + 'приложению, а не брокеру: ход, зафиксированный брокером под любой меткой, кроме '
+      + 'trusted_verified, здесь тоже отклоняется, поэтому это не устанавливает, что ничего не было '
+      + 'зафиксировано.',
+  },
   // Prefix before the closed broker reason / non-decision kind.
   reasonLabel: { en: 'broker reason: ', hy: 'broker-ի պատճառ՝ ', ru: 'причина брокера: ' },
   kindLabel: { en: 'kind: ', hy: 'տեսակ՝ ', ru: 'вид: ' },
@@ -176,11 +196,13 @@ export const STR = {
     ru: 'Кадр запроса не удалось построить, поэтому он не покинул эту машину.',
   },
   nd_malformed_broker_reply: {
-    en: 'Something answered, but the reply is not a well-formed result frame — so it is refused '
-      + 'rather than interpreted.',
-    hy: 'Ինչ-որ բան պատասխանեց, բայց պատասխանը վավեր result frame չի — ուստի մերժվում ա, ոչ մեկնաբանվում։',
-    ru: 'Что-то ответило, но ответ не является корректным кадром результата — поэтому он отклонён, '
-      + 'а не интерпретирован.',
+    en: 'Something answered, but the reply is not a result frame this app accepts — a committed frame '
+      + 'not marked trusted_verified included — so it is refused rather than interpreted.',
+    hy: 'Ինչ-որ բան պատասխանեց, բայց պատասխանը այս ծրագրի ընդունած result frame չի — ներառյալ '
+      + 'trusted_verified չնշված commit արած frame-ը — ուստի մերժվում ա, ոչ մեկնաբանվում։',
+    ru: 'Что-то ответило, но ответ не является кадром результата, который принимает это приложение, — '
+      + 'включая зафиксированный кадр без метки trusted_verified, — поэтому он отклонён, а не '
+      + 'интерпретирован.',
   },
   nd_no_desktop_backend: {
     en: 'There is no desktop backend here, so the governed proxy command does not exist at all.',

@@ -49,11 +49,29 @@ export const STR = {
   expiredHeld:       { en: 'Expired · held',  hy: 'Ժամկետանց · պահված', ru: 'Истекло · удержано' },
   broReviewing:      { en: 'Bro reviewing',   hy: 'Bro վերլուծում է',  ru: 'Bro проверяет' },
   awaitingDecision:  { en: 'Awaiting decision', hy: 'Սպասում է որոշման', ru: 'Ожидает решения' },
+  // `consumed` is a real backend status: a grant that has been spent against its action. It
+  // used to fall through to "Awaiting decision".
+  consumedSpent:     { en: 'Consumed · grant spent', hy: 'Օգտագործված · հաստատումը ծախսված է', ru: 'Использовано · одобрение израсходовано' },
+  // The row says `approved` but does not carry the native-confirmation provenance the backend
+  // writes with a real grant. It is not shown as granted.
+  approvedUnconfirmed: {
+    en: 'Marked approved · no native confirmation on record',
+    hy: 'Նշված է հաստատված · native հաստատման գրառում չկա',
+    ru: 'Помечено одобренным · записи о нативном подтверждении нет',
+  },
+  // Prefix before a status string this build does not know: `${unknownStatus}${raw}`.
+  unknownStatus:     { en: 'Unknown status · ', hy: 'Անհայտ կարգավիճակ · ', ru: 'Неизвестный статус · ' },
 
   // ── verdict announcements (interpolated with the item label) ───────────────
   grantedPrefix:            { en: 'Granted: ',  hy: 'Հաստատվեց՝ ', ru: 'Одобрено: ' },
   deniedPrefix:             { en: 'Denied: ',   hy: 'Մերժվեց՝ ',   ru: 'Отклонено: ' },
-  escalatedPrefix:          { en: 'Escalated to A3 review: ', hy: 'Փոխանցվեց A3 վերանայման՝ ', ru: 'Передано на рассмотрение A3: ' },
+  escalatedPrefix:          { en: 'Escalated to A3, not decided: ', hy: 'Բարձրացվեց A3, չի որոշվել՝ ', ru: 'Передано на A3, не решено: ' },
+  // The native confirmation dialog was dismissed. Nothing was decided; the row is still pending.
+  grantNotConfirmedPrefix:  { en: 'Not confirmed — nothing was decided: ', hy: 'Չհաստատվեց — ոչինչ չի որոշվել՝ ', ru: 'Не подтверждено — ничего не решено: ' },
+  // The command answered with a record that carries a different state from the one asked for.
+  outcomeOtherPrefix:       { en: 'The ledger now says: ', hy: 'Մատյանն այժմ ասում է՝ ', ru: 'В журнале теперь: ' },
+  // The command answered with something that is not an approval record: nothing is established.
+  outcomeUnreadablePrefix:  { en: 'No readable record came back, so no outcome is established for: ', hy: 'Ընթեռնելի գրառում չվերադարձավ, ուստի արդյունք հաստատված չէ՝ ', ru: 'Читаемая запись не вернулась, поэтому результат не установлен для: ' },
 
   // ── page header ────────────────────────────────────────────────────────────
   eyebrowHitl: {
@@ -64,12 +82,14 @@ export const STR = {
   pending: { en: 'pending', hy: 'սպասում է', ru: 'ожидает' },
 
   // ── error / blocked / empty states ─────────────────────────────────────────
-  engineUnreachable:     { en: 'Engine unreachable.', hy: 'Շարժիչն անհասանելի է։', ru: 'Движок недоступен.' },
-  ownerNotAuthenticated: { en: 'Owner not authenticated', hy: 'Տերը նույնականացված չէ', ru: 'Владелец не аутентифицирован' },
-  gateLockedBody: {
-    en: 'The approval gate is locked until the owner authenticates with the engine. Grant, deny and escalate stay disabled — the desktop never decides on its own.',
-    hy: 'Հաստատման դարպասը կողպված է, մինչև տերը նույնականացվի շարժիչի հետ։ Հաստատել, մերժել և բարձրացնել գործողություններն անջատված են — desktop-ը երբեք ինքնուրույն որոշում չի կայացնում։',
-    ru: 'Шлюз одобрения заблокирован, пока владелец не аутентифицируется в движке. Одобрение, отклонение и эскалация остаются отключёнными — десктоп никогда не принимает решение сам.',
+  // The list is `list_approvals`: the app's own approval table in local SQLite. Its failure used
+  // to be labelled "Engine unreachable." and, for any error mentioning `owner` or `denied`,
+  // "Owner not authenticated … until the owner authenticates with the engine". No engine is on
+  // that path and nothing on it authenticates an owner.
+  ledgerUnreadable: {
+    en: 'The local approval ledger could not be read.',
+    hy: 'Տեղական հաստատումների մատյանը չհաջողվեց կարդալ։',
+    ru: 'Не удалось прочитать локальный журнал одобрений.',
   },
   gateClear: {
     en: 'Gate clear — no pending approvals',
@@ -77,16 +97,21 @@ export const STR = {
     ru: 'Шлюз свободен — нет ожидающих одобрений',
   },
   newRequestsHint: {
-    en: 'New engine requests will appear here as they arrive.',
-    hy: 'Շարժիչի նոր հարցումները կհայտնվեն այստեղ, երբ ստացվեն։',
-    ru: 'Новые запросы движка появятся здесь по мере поступления.',
+    en: 'New approval requests in this app’s local ledger will appear here as they arrive.',
+    hy: 'Այս հավելվածի տեղական մատյանի նոր հաստատման հարցումները կհայտնվեն այստեղ, երբ ստացվեն։',
+    ru: 'Новые запросы на одобрение из локального журнала этого приложения появятся здесь по мере поступления.',
   },
 
   // ── stats tiles ────────────────────────────────────────────────────────────
   inQueue:      { en: 'in queue',    hy: 'հերթում',        ru: 'в очереди' },
   pendingNow:   { en: 'pending now', hy: 'սպասում է հիմա',  ru: 'сейчас ожидает' },
   approvedLower:{ en: 'approved',    hy: 'հաստատված',      ru: 'одобрено' },
-  deniedHeld:   { en: 'denied · held', hy: 'մերժված',      ru: 'отклонено · удержано' },
+  deniedHeld:   { en: 'denied', hy: 'մերժված',      ru: 'отклонено' },
+  // Shown only when the bucket has rows. Together with the four above they sum to `in queue`.
+  consumedLower:    { en: 'consumed', hy: 'օգտագործված', ru: 'использовано' },
+  escalatedTile:    { en: 'escalated · parked', hy: 'բարձրացված · կանգնեցված', ru: 'передано · отложено' },
+  unconfirmedLower: { en: 'approved · unconfirmed', hy: 'հաստատված · չհիմնավորված', ru: 'одобрено · без подтверждения' },
+  otherLower:       { en: 'expired · other', hy: 'ժամկետանց · այլ', ru: 'истекло · прочее' },
 
   // ── the gate (hero) ────────────────────────────────────────────────────────
   approvalGatePrefix: { en: 'Approval gate — ', hy: 'Հաստատման դարպաս — ', ru: 'Шлюз одобрения — ' },
@@ -105,7 +130,8 @@ export const STR = {
   levelSuffix:   { en: ' level', hy: ' մակարդակ', ru: ' уровень' },
   denyAria:      { en: 'Deny — reject this action', hy: 'Մերժել — մերժել գործողությունը', ru: 'Отклонить — отклонить это действие' },
   deny:          { en: 'Deny', hy: 'Մերժել', ru: 'Отклонить' },
-  escalateForReview: { en: 'Escalate for higher review', hy: 'Բարձրացնել՝ ավելի բարձր վերանայման', ru: 'Передать на вышестоящее рассмотрение' },
+  // No higher-review surface exists in this app: escalating sets the row to A3 and parks it.
+  escalateForReview: { en: 'Escalate — park at tier A3', hy: 'Բարձրացնել — կանգնեցնել A3 մակարդակում', ru: 'Эскалировать — оставить на уровне A3' },
   escalateA3:    { en: 'Escalate A3', hy: 'Փոխանցել A3', ru: 'Передать A3' },
   pressHoldAria: { en: 'Press and hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте для одобрения' },
   pressHoldGrant:{ en: 'Press & hold to grant', hy: 'Սեղմիր և պահիր՝ հաստատելու', ru: 'Нажмите и удерживайте' },
@@ -118,14 +144,14 @@ export const STR = {
 
   // ── engine queue mirror notice ─────────────────────────────────────────────
   queueUnreachable: {
-    en: 'Engine approval queue unreachable — showing the local mirror only.',
-    hy: 'Շարժիչի հաստատումների հերթն անհասանելի է — ցուցադրվում է միայն տեղական արտացոլումը։',
-    ru: 'Очередь одобрений движка недоступна — показано только локальное зеркало.',
+    en: 'The engine approval queue could not be reached. The list on this page is this app’s own local ledger, not a copy of that queue.',
+    hy: 'Շարժիչի հաստատումների հերթին հասնել չհաջողվեց։ Այս էջի ցուցակը այս հավելվածի սեփական տեղական մատյանն է, ոչ թե այդ հերթի պատճենը։',
+    ru: 'До очереди одобрений движка добраться не удалось. Список на этой странице — собственный локальный журнал приложения, а не копия этой очереди.',
   },
   queueSealed: {
-    en: 'Engine approval queue is sealed — showing the local mirror only.',
-    hy: 'Շարժիչի հաստատումների հերթը կնքված է — ցուցադրվում է միայն տեղական արտացոլումը։',
-    ru: 'Очередь одобрений движка запечатана — показано только локальное зеркало.',
+    en: 'The engine refused the approval-queue read. The list on this page is this app’s own local ledger, not a copy of that queue.',
+    hy: 'Շարժիչը մերժեց հաստատումների հերթի ընթերցումը։ Այս էջի ցուցակը այս հավելվածի սեփական տեղական մատյանն է, ոչ թե այդ հերթի պատճենը։',
+    ru: 'Движок отклонил чтение очереди одобрений. Список на этой странице — собственный локальный журнал приложения, а не копия этой очереди.',
   },
 
   // ── queue section ──────────────────────────────────────────────────────────
@@ -150,10 +176,14 @@ export const STR = {
   },
   escalateDialogA: { en: 'Escalate “', hy: 'Բարձրացնե՞լ «', ru: 'Передать «' },
   escalateDialogB: { en: '” on ', hy: '»՝ ', ru: '» на ' },
+  // What `escalate_approval` does, and what it leaves behind. It used to end "It routes to A3
+  // review and notifies the owner — it neither grants nor denies", which is true and omits the
+  // part that matters: `confirm_approval` and `reject_approval` are pending-only, nothing reads
+  // an `escalated` row, and no A3 review surface exists — so the request can never be decided.
   escalateDialogC: {
-    en: '? It routes to A3 review and notifies the owner — it neither grants nor denies.',
-    hy: '-ի վրա։ Կուղղորդվի A3 վերանայման և կծանուցի տիրոջը — ոչ հաստատում է, ոչ մերժում։',
-    ru: '? Направляется на рассмотрение A3 и уведомляет владельца — не одобряет и не отклоняет.',
+    en: '? It marks the request escalated at tier A3 and posts a notification. It neither grants nor denies — and afterwards nothing in this app can grant or deny it: the request stays parked.',
+    hy: '-ի վրա։ Հարցումը կնշվի բարձրացված՝ A3 մակարդակում, ու կհրապարակվի ծանուցում։ Դա ոչ հաստատում է, ոչ մերժում — ու դրանից հետո այս հավելվածում ոչինչ չի կարող այն հաստատել կամ մերժել. հարցումը մնում է կանգնեցված։',
+    ru: '? Запрос будет помечен как переданный на уровень A3, и появится уведомление. Это не одобряет и не отклоняет — и после этого ничто в приложении не сможет его одобрить или отклонить: запрос остаётся отложенным.',
   },
   escalate: { en: 'Escalate', hy: 'Բարձրացնել', ru: 'Передать' },
 

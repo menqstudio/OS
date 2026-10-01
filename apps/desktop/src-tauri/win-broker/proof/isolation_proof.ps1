@@ -8,9 +8,11 @@
 # (everyone may CONNECT, like the Linux 0777 socket), then reads the connecting client's KERNEL-ATTESTED SID
 # via ImpersonateNamedPipeClient and gates it with the pure brops_core::windows_broker::authorize_pipe_peer.
 #
-# Prereqs (provisioned once, elevated): the 7 brops-* service accounts + SeBatchLogonRight; pipe_proof.exe +
-# spawn_as.exe staged in a world-readable dir the service accounts can execute (e.g. C:\ProgramData\brops-proof
+# Prereqs (provisioned once, elevated): the 7 brops-* service accounts + SeBatchLogonRight; pipe_proof.exe
+# staged in a world-readable dir the service accounts can execute (e.g. C:\ProgramData\brops-proof
 # — service accounts cannot read a user profile). Run ELEVATED.
+# (spawn_as.exe used to be listed here. This script never runs it: the client is launched by a scheduled
+# task, below. Nothing in the tree invokes spawn_as.)
 #
 # Expected GREEN result:
 #   brops-broker  -> CLIENT_SID=<broker SID>  VERDICT=ALLOW   (broker is the only peer the challenge-authority pipe accepts)

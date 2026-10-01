@@ -21,8 +21,10 @@
 //!  3. **EXECUTION** — the privileged recorder → setuid launcher → executor chain, abstracted behind
 //!     [`GovernedExecution`]. It produces the raw output bytes, the `sign_request` to hand the signer, and
 //!     the supervisor attestation (the exact evidence bytes + detached signature). A unit test injects a
-//!     fake; the real Linux impl ([`linux::LinuxGovernedExecution`]) spawns the setuid chain and is marked
-//!     `LINUX-RUN-PENDING`, failing closed until that chain + protected store are provisioned.
+//!     fake; the real Linux impl ([`linux::LinuxGovernedExecution`]) is implemented — it spawns the
+//!     recorder → setuid launcher → executor chain and drives `execution-started` / `complete-run` /
+//!     `attest-run` — and is constructed only by the proof driver (`proof/src/bin/live_turn.rs`). No
+//!     shipped binary builds it: `brops-broker` serves the §4.10(g) ladder (`ladder_executor`).
 //!  4. **isolated-signer** (`sign-result {sign_request}`) over its socket ⇒ the flat 23-key
 //!     `brops.governed-receipt-envelope.v1` payload + its Ed25519 signature.
 //!  5. **final acceptance** — `governed_verification::verify_and_accept` over the broker's OWN pinned keys +
@@ -195,8 +197,17 @@ pub trait TurnResolver {
     ) -> Result<ResolvedTurn, TurnReason>;
 }
 
-/// A supervisor-minted lease (§5): the exhaustive fixed shape the supervisor returns from `accept-open` and
-/// the broker forwards verbatim to `launch-gate` + into the privileged execution.
+/// A supervisor-minted lease (§5): the exhaustive fixed shape the supervisor returns from `accept-open`.
+///
+/// **What the broker does with it is narrower than this struct suggests.** Every field is REQUIRED —
+/// [`parse_lease`] fails closed on a missing or mistyped one — but the production code reads exactly
+/// one of them back: `execution_attempt_id`, which names the attempt to `launch-gate`, to the
+/// recorder's report/evidence paths and to `execution-started` / `complete-run` / `attest-run`. The
+/// expiry and the two image digests are NOT checked here and are not forwarded anywhere: the
+/// supervisor judges the window it persisted itself (`launch-gate` is by attempt id only, F-01/F-23)
+/// and the recorder re-hashes the launcher and executor against its own root-owned policy. This
+/// comment used to say the lease was "forwarded verbatim to `launch-gate`"; it has not been since
+/// that hop stopped carrying one.
 #[derive(Debug, Clone)]
 pub struct Lease {
     pub lease_id: String,
@@ -204,7 +215,7 @@ pub struct Lease {
     pub lease_expires_at_ms: i64,
     pub launcher_executable_sha256: String,
     pub executor_executable_sha256: String,
-    /// The exact lease JSON the supervisor returned, forwarded byte-faithfully to `launch-gate`.
+    /// The exact lease JSON the supervisor returned. Retained, and sent nowhere.
     pub raw: Value,
 }
 
@@ -276,7 +287,7 @@ impl WallClock for SystemWallClock {
 /// The privileged recorder → setuid launcher → executor chain, abstracted (§6). Given the lease-authorized
 /// plan it runs the real execution and returns the output bytes + the attestation/evidence the broker
 /// forwards to the isolated signer. A unit test injects a fake; the real Linux impl spawns the setuid chain
-/// (see [`linux::LinuxGovernedExecution`], `LINUX-RUN-PENDING`).
+/// (see [`linux::LinuxGovernedExecution`] — implemented, and reached only from the proof driver).
 pub trait GovernedExecution {
     fn execute(&self, plan: &ExecutionPlan) -> Result<ExecutionArtifacts, TurnReason>;
 }
@@ -334,32 +345,91 @@ where
         self
     }
 
-    /// One framed request→reply roundtrip to `principal` over a fresh connection. Fails CLOSED on connect
-    /// failure, frame/transport error, malformed reply, or any principal refusal (`ok:false` / a `reason`).
-    /// Returns the parsed success reply object.
-    ///
-    /// The reply predicate itself lives in [`chain_hops::parse_reply`](crate::chain_hops::parse_reply) and
-    /// is NOT restated here. It used to be: this function open-coded the `ok` check while `chain_hops`
-    /// carried a second, DIFFERENT parser that read a `status` field no server has ever sent. Two parsers
-    /// for one hop is exactly the defect this chain has been bitten by; there is now one, and it is the
-    /// one the production path calls, so its tests cannot be green against a shape the deployment never
-    /// produces.
+    /// One framed request→reply roundtrip to `principal` over a fresh connection — [`hop_request`].
     fn hop(&self, principal: Principal, request: &Value) -> Result<Value, TurnReason> {
-        // The op is taken from the request we are about to send, so the echo check can never be
-        // satisfied by a constant that drifted away from the request builder.
-        let op = request
-            .get("op")
-            .and_then(Value::as_str)
-            .ok_or(TurnReason::UpstreamBlocked)?
-            .to_string();
-        let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
-        let mut conn = self
-            .connector
-            .connect(principal)
-            .map_err(|e| e.to_turn_reason())?;
-        let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
-        parse_reply(&op, &reply).map_err(|e| e.to_turn_reason())
+        hop_request(&self.connector, principal, request)
     }
+}
+
+/// One framed request→reply roundtrip to `principal` over a fresh connection. Fails CLOSED on connect
+/// failure, frame/transport error, malformed reply, or any principal refusal (`ok:false` / a `reason`).
+/// Returns the parsed success reply object.
+///
+/// The reply predicate itself lives in [`chain_hops::parse_reply`](crate::chain_hops::parse_reply) and
+/// is NOT restated here. It used to be: this function open-coded the `ok` check while `chain_hops`
+/// carried a second, DIFFERENT parser that read a `status` field no server has ever sent. Two parsers
+/// for one hop is exactly the defect this chain has been bitten by; there is now one, and it is the
+/// one the production path calls, so its tests cannot be green against a shape the deployment never
+/// produces.
+///
+/// And it is ONE function. It was a method on [`GovernedChain`], copied line for line into
+/// `LadderChain`, with a third, weaker version in the Linux execution's `supervisor_op` that checked
+/// `ok` and never the op echo. All three callers now come through here.
+pub(crate) fn hop_request<C: HopConnector + ?Sized>(
+    connector: &C,
+    principal: Principal,
+    request: &Value,
+) -> Result<Value, TurnReason> {
+    // The op is taken from the request we are about to send, so the echo check can never be
+    // satisfied by a constant that drifted away from the request builder.
+    let op = request
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or(TurnReason::UpstreamBlocked)?
+        .to_string();
+    let bytes = serde_json::to_vec(request).map_err(|_| TurnReason::UpstreamBlocked)?;
+    let mut conn = connector.connect(principal).map_err(|e| e.to_turn_reason())?;
+    let reply = hop_roundtrip(conn.as_mut(), &bytes).map_err(|e| e.to_turn_reason())?;
+    parse_reply(&op, &reply).map_err(|e| e.to_turn_reason())
+}
+
+/// The turn facts the challenge authority's `create-pending` requires (§2.1 fixed shape).
+pub(crate) struct PendingFacts<'a> {
+    pub run_id: &'a str,
+    pub task_id: &'a str,
+    pub workspace_id: &'a str,
+    pub install_id: &'a str,
+    pub request_nonce: &'a str,
+    pub system_sha256: &'a str,
+    pub history_sha256: &'a str,
+    pub generation_config_sha256: &'a str,
+    pub requested_at_ms: i64,
+}
+
+/// §2.1 → §4.1: `create-pending`, then `issue`, and return the signed
+/// `brops.governed-turn-challenge.v1` document exactly as the authority sent it.
+///
+/// The ONE place the ten-key `create-pending` object is written. The direct chain and the §4.10(g)
+/// ladder each carried their own copy of it and of the `issue` request, so a field added to §2.1 had
+/// to be added twice or one path stopped matching the authority. What differs between the two callers
+/// is where the facts COME from (deployment config there, the prepared conversation here), and that
+/// is the argument.
+pub(crate) fn request_challenge<C: HopConnector + ?Sized>(
+    connector: &C,
+    facts: &PendingFacts,
+) -> Result<Value, TurnReason> {
+    let create_pending = json!({
+        "op": "create-pending",
+        "run_id": facts.run_id,
+        "task_id": facts.task_id,
+        "workspace_id": facts.workspace_id,
+        "install_id": facts.install_id,
+        "request_nonce": facts.request_nonce,
+        "system_sha256": facts.system_sha256,
+        "history_sha256": facts.history_sha256,
+        "generation_config_sha256": facts.generation_config_sha256,
+        "requested_at_ms": facts.requested_at_ms,
+    });
+    let reply = hop_request(connector, Principal::ChallengeAuthority, &create_pending)?;
+    let pending_id = reply
+        .get("pending_challenge_id")
+        .and_then(Value::as_str)
+        .ok_or(TurnReason::UpstreamBlocked)?
+        .to_string();
+
+    let issue = json!({ "op": "issue", "pending_challenge_id": pending_id });
+    let reply = hop_request(connector, Principal::ChallengeAuthority, &issue)?;
+    reply.get("challenge").cloned().ok_or(TurnReason::UpstreamBlocked)
 }
 
 impl<C, R, E, L> GovernedTurnChain for GovernedChain<C, R, E, L>
@@ -379,33 +449,22 @@ where
         //     the trust anchors never depend on a principal reply.
         let resolved = self.resolver.resolve(req, broker_turn_id, request_nonce)?;
 
-        // (1) challenge-authority: create-pending. Turn facts are the broker's own (§2.1 fixed shape).
-        let create_pending = json!({
-            "op": "create-pending",
-            "run_id": resolved.run_id,
-            "task_id": resolved.task_id,
-            "workspace_id": resolved.workspace_id,
-            "install_id": resolved.install_id,
-            "request_nonce": request_nonce,
-            "system_sha256": resolved.system_sha256,
-            "history_sha256": resolved.history_sha256,
-            "generation_config_sha256": resolved.generation_config_sha256,
-            "requested_at_ms": resolved.requested_at_ms,
-        });
-        let reply = self.hop(Principal::ChallengeAuthority, &create_pending)?;
-        let pending_id = reply
-            .get("pending_challenge_id")
-            .and_then(Value::as_str)
-            .ok_or(TurnReason::UpstreamBlocked)?
-            .to_string();
-
-        // (2) challenge-authority: issue ⇒ the signed brops.governed-turn-challenge.v1 document.
-        let issue = json!({ "op": "issue", "pending_challenge_id": pending_id });
-        let reply = self.hop(Principal::ChallengeAuthority, &issue)?;
-        let challenge_doc = reply
-            .get("challenge")
-            .cloned()
-            .ok_or(TurnReason::UpstreamBlocked)?;
+        // (1)+(2) challenge-authority: create-pending, then issue ⇒ the signed
+        //     brops.governed-turn-challenge.v1 document. Turn facts are the broker's own (§2.1).
+        let challenge_doc = request_challenge(
+            &self.connector,
+            &PendingFacts {
+                run_id: &resolved.run_id,
+                task_id: &resolved.task_id,
+                workspace_id: &resolved.workspace_id,
+                install_id: &resolved.install_id,
+                request_nonce,
+                system_sha256: &resolved.system_sha256,
+                history_sha256: &resolved.history_sha256,
+                generation_config_sha256: &resolved.generation_config_sha256,
+                requested_at_ms: resolved.requested_at_ms,
+            },
+        )?;
 
         // (3) supervisor: accept-open ⇒ lease.
         let accept_open = json!({ "op": "accept-open", "challenge_doc": challenge_doc });
@@ -427,9 +486,9 @@ where
             return Err(TurnReason::UpstreamBlocked);
         }
 
-        // (5) EXECUTION — the privileged recorder → launcher → executor chain (abstracted; real Linux spawn
-        //     is LINUX-RUN-PENDING). Produces the output bytes + the sign_request + the supervisor
-        //     attestation the broker forwards + re-checks.
+        // (5) EXECUTION — the privileged recorder → launcher → executor chain (abstracted; the real
+        //     Linux spawn is `linux::LinuxGovernedExecution`). Produces the output bytes + the
+        //     sign_request + the supervisor attestation the broker forwards + re-checks.
         let plan = ExecutionPlan {
             req,
             broker_turn_id,
@@ -517,8 +576,9 @@ where
     }
 }
 
-/// Parse the supervisor lease object (§5 exhaustive shape) into a [`Lease`]; the raw JSON is retained for a
-/// byte-faithful `launch-gate` re-check. A missing/mistyped field fails closed.
+/// Parse the supervisor lease object (§5 exhaustive shape) into a [`Lease`]. A missing/mistyped field
+/// fails closed. The raw JSON is retained on the struct and is not sent back to the supervisor — see
+/// [`Lease`].
 fn parse_lease(v: &Value) -> Result<Lease, TurnReason> {
     let s = |k: &str| {
         v.get(k)
@@ -609,20 +669,97 @@ pub fn verify_resolved_matches_lease(
     Ok(())
 }
 
+/// The arguments the broker passes the recorder AFTER the invoker prefix (`recorder_command`), in
+/// the order it passes them.
+///
+/// A type outside `mod linux`, and public, so `governed_recorder`'s own tests — which run on every
+/// host — drive its argv guard with the vector the broker REALLY builds instead of a hand-typed
+/// copy of it. A flag added to the spawn that `governed_recorder`'s `plan` does not know is a
+/// refused turn on the live kit, and with two spellings of the argv that showed up only on the
+/// Linux runner.
+pub struct RecorderArgs<'a> {
+    /// The recorder's read-only store-INPUT directory (fd 3/4/5) — not the protected store.
+    pub recorder_store_dir: &'a str,
+    pub launcher_path: &'a str,
+    pub executor_path: &'a str,
+    pub lease_file: &'a str,
+    pub cgroup_arg: &'a str,
+    pub report_path: &'a str,
+    pub containment_path: &'a str,
+    pub evidence_path: &'a str,
+    pub evidence_state_dir: &'a str,
+}
+
+impl RecorderArgs<'_> {
+    pub fn to_argv(&self) -> Vec<String> {
+        [
+            "--store",
+            self.recorder_store_dir,
+            "--launcher",
+            self.launcher_path,
+            "--executor",
+            self.executor_path,
+            "--lease",
+            self.lease_file,
+            "--cgroup",
+            self.cgroup_arg,
+            "--out",
+            self.report_path,
+            // F-02: the recorder writes the containment evidence for THIS run here; the broker
+            // content-addresses it. It used to be a provisioner stub whose handle every receipt of
+            // the deployment named.
+            "--containment-out",
+            self.containment_path,
+            // F-02: the recorder builds the per-run evidence chain here, and advances its own
+            // durable head-sequence counter in `--evidence-state`. The four evidence values the
+            // supervisor's terminal record carries come from THIS file, not from config.
+            "--evidence-out",
+            self.evidence_path,
+            "--evidence-state",
+            self.evidence_state_dir,
+        ]
+        .iter()
+        .map(|a| a.to_string())
+        .collect()
+    }
+}
+
 /// The real Linux sub-chain: drives the AF_UNIX challenge-authority / supervisor / isolated-signer hops via
-/// a real socket [`HopConnector`], and (once provisioned) the privileged execution spawn. The pure
-/// orchestration above is host-independent; only the socket transport + the setuid spawn live here.
+/// a real socket [`HopConnector`], and the privileged execution spawn. The pure orchestration above is
+/// host-independent; only the socket transport + the setuid spawn live here. Of what is in this module
+/// the shipped broker uses [`linux::LinuxHopConnector`] alone (for the ladder's two authority hops);
+/// the execution and the direct chain are built only by `proof/src/bin/live_turn.rs`.
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
     use brops_core::governed_message_store::sha256_hex;
-    use brops_core::ipc_framing::{encode_frame, LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
+    use brops_core::ipc_framing::{LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    /// The whole-exchange budget for ONE outbound hop: connect is done, and the request must be
+    /// written and the single reply frame read back inside this, or the hop is a closed [`HopError`].
+    ///
+    /// The broker's accept loop is strictly serial (`main.rs`, audit F-31), and until this existed
+    /// only its INBOUND side had a deadline: an outbound hop was `UnixStream::connect` followed by a
+    /// blocking `read_exact`, so one principal that accepted and then said nothing held the only
+    /// thread forever — the same wedge F-31 closed for a silent renderer, reachable from the other
+    /// end. It is a budget over the exchange rather than a per-read timeout for the reason the
+    /// desktop's client records (remediation audit R-38): a per-read deadline is reset by every byte,
+    /// so a peer dribbling one byte at a time stays inside it for as long as it likes.
+    ///
+    /// Thirty seconds, because every op sent over these sockets is a ledger read or write and a
+    /// signature — none of them waits on the contained execution, which runs between hops — and
+    /// because the renderer's own budget for the whole turn is 120 s.
+    ///
+    /// NOT bounded here: `connect(2)` itself, which std offers no timeout for on `AF_UNIX` and which
+    /// blocks only while the listener's backlog is full; and, on the direct chain, the recorder
+    /// child's run time (`child.wait()`), which is the lease's and the supervisor's to bound.
+    pub const HOP_EXCHANGE_BUDGET: Duration = Duration::from_secs(30);
 
     /// Socket paths for the trusted principals (each owned by its own service UID; §2.6 provisioning).
     pub struct ChainSockets {
@@ -644,51 +781,86 @@ pub mod linux {
                 Principal::Supervisor => &self.sockets.supervisor,
                 Principal::IsolatedSigner => &self.sockets.signer,
             };
-            let stream = UnixStream::connect(path).map_err(|_| HopError::Unavailable)?;
-            Ok(Box::new(UnixHopConn { stream }))
+            Ok(Box::new(connect_hop(path, HOP_EXCHANGE_BUDGET)?))
         }
     }
 
+    /// Open ONE outbound hop connection whose whole exchange must finish inside `budget`.
+    ///
+    /// Every outbound AF_UNIX connection this crate makes is opened here — the three principals'
+    /// hops through [`LinuxHopConnector`] and the execution's supervisor lifecycle ops — so there is
+    /// no socket a later change can read from without the budget.
+    fn connect_hop(path: &str, budget: Duration) -> Result<UnixHopConn, HopError> {
+        let stream = UnixStream::connect(path).map_err(|_| HopError::Unavailable)?;
+        Ok(UnixHopConn { stream, opened: Instant::now(), budget })
+    }
+
     /// A live AF_UNIX peer as a [`HopConn`]: `send_all` writes the framed request; `recv_all` reads exactly
-    /// one length-prefixed reply frame (bounded) and returns it framed for `decode_one`.
+    /// one length-prefixed reply frame (bounded in size AND in time) and returns it framed for `decode_one`.
     struct UnixHopConn {
         stream: UnixStream,
+        opened: Instant,
+        budget: Duration,
+    }
+
+    impl UnixHopConn {
+        /// What is left of the exchange budget, or a closed error once it is spent. Never zero: a
+        /// zero `Duration` is an ERROR to `set_read_timeout`, and treating that as "no deadline"
+        /// would be the unbounded read coming back at exactly the moment the budget ran out.
+        fn remaining(&self) -> Result<Duration, HopError> {
+            self.budget
+                .checked_sub(self.opened.elapsed())
+                .filter(|left| !left.is_zero())
+                .ok_or(HopError::Io)
+        }
+
+        /// `read_exact`, with the deadline re-armed to the REMAINING budget before every read.
+        fn read_exact_within_budget(&mut self, buf: &mut [u8]) -> Result<(), HopError> {
+            let mut filled = 0;
+            while filled < buf.len() {
+                let remaining = self.remaining()?;
+                self.stream.set_read_timeout(Some(remaining)).map_err(|_| HopError::Io)?;
+                match self.stream.read(&mut buf[filled..]) {
+                    Ok(0) => return Err(HopError::Io), // the peer closed before a whole frame
+                    Ok(n) => filled += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return Err(HopError::Io), // includes the deadline expiring
+                }
+            }
+            Ok(())
+        }
     }
 
     impl HopConn for UnixHopConn {
         fn send_all(&mut self, frame: &[u8]) -> Result<(), HopError> {
-            self.stream.write_all(frame).map_err(|_| HopError::Io)?;
+            let mut written = 0;
+            while written < frame.len() {
+                let remaining = self.remaining()?;
+                self.stream.set_write_timeout(Some(remaining)).map_err(|_| HopError::Io)?;
+                match self.stream.write(&frame[written..]) {
+                    Ok(0) => return Err(HopError::Io),
+                    Ok(n) => written += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return Err(HopError::Io),
+                }
+            }
             self.stream.flush().map_err(|_| HopError::Io)
         }
 
         fn recv_all(&mut self) -> Result<Vec<u8>, HopError> {
             let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
-            self.stream.read_exact(&mut prefix).map_err(|_| HopError::Io)?;
+            self.read_exact_within_budget(&mut prefix)?;
             let declared = u32::from_be_bytes(prefix) as usize;
             if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
                 return Err(HopError::BadReply);
             }
             let mut body = vec![0u8; declared];
-            self.stream.read_exact(&mut body).map_err(|_| HopError::Io)?;
+            self.read_exact_within_budget(&mut body)?;
             let mut framed = Vec::with_capacity(LENGTH_PREFIX_BYTES + declared);
             framed.extend_from_slice(&prefix);
             framed.extend_from_slice(&body);
             Ok(framed)
         }
-    }
-
-    /// Read exactly one length-prefixed reply frame (bounded) from a live AF_UNIX peer; a short/oversize/lost
-    /// frame is a closed [`TurnReason`]. Mirrors the servers' 4-byte-big-endian one-frame-per-connection wire.
-    fn read_one_reply(stream: &mut UnixStream) -> Result<Vec<u8>, TurnReason> {
-        let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
-        stream.read_exact(&mut prefix).map_err(|_| TurnReason::UpstreamBlocked)?;
-        let declared = u32::from_be_bytes(prefix) as usize;
-        if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
-            return Err(TurnReason::UpstreamBlocked);
-        }
-        let mut body = vec![0u8; declared];
-        stream.read_exact(&mut body).map_err(|_| TurnReason::UpstreamBlocked)?;
-        Ok(body)
     }
 
     /// The deployment-static remainder the live privileged execution needs beyond the per-turn plan: the
@@ -768,19 +940,18 @@ pub mod linux {
         /// One framed request→reply roundtrip to the supervisor over a fresh AF_UNIX connection,
         /// for any of the §5 lifecycle ops. A lost/refusing hop is a closed reason — the broker
         /// never proceeds on an op the supervisor did not accept.
+        ///
+        /// It goes through [`hop_request`], the one hop every other op uses. It used to be a second
+        /// transport of its own — an unbounded read, and an open-coded `ok` check that never
+        /// compared the reply's `op` — while two doc comments in this crate said there was exactly
+        /// one reply parser. So `execution-started`, `complete-run` and `attest-run` are now held to
+        /// the same predicate (`chain_hops::parse_reply`) and the same exchange budget as the rest.
         fn supervisor_op(&self, req: &Value) -> Result<Value, TurnReason> {
-            let bytes = serde_json::to_vec(req).map_err(|_| TurnReason::UpstreamBlocked)?;
-            let frame = encode_frame(&bytes).map_err(|_| TurnReason::UpstreamBlocked)?;
-            let mut stream =
-                UnixStream::connect(&self.config.supervisor_sock).map_err(|_| TurnReason::UpstreamBlocked)?;
-            stream.write_all(&frame).map_err(|_| TurnReason::UpstreamBlocked)?;
-            stream.flush().map_err(|_| TurnReason::UpstreamBlocked)?;
-            let reply = read_one_reply(&mut stream)?;
-            let value: Value = serde_json::from_slice(&reply).map_err(|_| TurnReason::UpstreamBlocked)?;
-            if !value.get("ok").and_then(Value::as_bool).unwrap_or(false) {
-                return Err(TurnReason::UpstreamBlocked);
-            }
-            Ok(value)
+            let socket = self.config.supervisor_sock.as_str();
+            let connector = |_principal: Principal| -> Result<Box<dyn HopConn>, HopError> {
+                Ok(Box::new(connect_hop(socket, HOP_EXCHANGE_BUDGET)?))
+            };
+            hop_request(&connector, Principal::Supervisor, req)
         }
     }
 
@@ -830,32 +1001,20 @@ pub mod linux {
                 command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash on spawn
             }
             command.args(&cfg.recorder_command[1..]);
-            command.args([
-                "--store",
-                cfg.recorder_store_dir.as_str(),
-                "--launcher",
-                cfg.launcher_path.as_str(),
-                "--executor",
-                cfg.executor_path.as_str(),
-                "--lease",
-                cfg.lease_file.as_str(),
-                "--cgroup",
-                cfg.cgroup_arg.as_str(),
-                "--out",
-                report_path.as_str(),
-                // F-02: the recorder writes the containment evidence for THIS run here; the broker
-                // content-addresses it below. It used to be a provisioner stub whose handle every
-                // receipt of the deployment named.
-                "--containment-out",
-                containment_path.as_str(),
-                // F-02: the recorder builds the per-run evidence chain here, and advances its own
-                // durable head-sequence counter in `--evidence-state`. The four evidence values the
-                // supervisor's terminal record carries come from THIS file, not from config.
-                "--evidence-out",
-                evidence_path.as_str(),
-                "--evidence-state",
-                cfg.evidence_state_dir.as_str(),
-            ]);
+            command.args(
+                RecorderArgs {
+                    recorder_store_dir: &cfg.recorder_store_dir,
+                    launcher_path: &cfg.launcher_path,
+                    executor_path: &cfg.executor_path,
+                    lease_file: &cfg.lease_file,
+                    cgroup_arg: &cfg.cgroup_arg,
+                    report_path: &report_path,
+                    containment_path: &containment_path,
+                    evidence_path: &evidence_path,
+                    evidence_state_dir: &cfg.evidence_state_dir,
+                }
+                .to_argv(),
+            );
             // Spawn (not `status()`) so the child's real pid can be reported to the supervisor
             // BEFORE we block on it: the §5 state machine flips EXECUTION_STARTING → EXECUTING
             // only on confirmed-running process metadata, and the supervisor durably records it.
@@ -1000,10 +1159,14 @@ pub mod linux {
         }
     }
 
-    /// The production Linux sub-chain: the pure [`GovernedChain`] wired to the real AF_UNIX socket connector,
-    /// the REAL privileged [`LinuxGovernedExecution`], and the broker's injected resolver/ledger. Every hop +
+    /// The DIRECT Linux sub-chain: the pure [`GovernedChain`] wired to the real AF_UNIX socket connector,
+    /// the REAL privileged [`LinuxGovernedExecution`], and an injected resolver/ledger. Every hop +
     /// the final `verify_and_accept` are the real code; only a genuinely-verified chain yields an
     /// [`AcceptedOutput`], any refusal/loss/mismatch a closed [`TurnReason`].
+    ///
+    /// It was called "the production Linux sub-chain" here. No shipped binary constructs it: the
+    /// broker serves `ladder_executor::LadderChain`, and this type's one caller is the proof driver
+    /// `proof/src/bin/live_turn.rs`.
     pub struct LinuxGovernedTurnChain<R: TurnResolver, L: AcceptanceLedger> {
         inner: GovernedChain<LinuxHopConnector, R, LinuxGovernedExecution, L>,
     }
@@ -1029,6 +1192,165 @@ pub mod linux {
             request_nonce: &str,
         ) -> Result<AcceptedOutput, TurnReason> {
             self.inner.run_verified(req, broker_turn_id, request_nonce)
+        }
+    }
+
+    // The real socket transport, driven over real AF_UNIX sockets. It lives INSIDE `mod linux`
+    // because everything it exercises is private to it, and at the very end of it because the
+    // source-scan tests below treat everything above the first test attribute as production code.
+    #[cfg(test)]
+    mod transport_tests {
+        use super::*;
+        use crate::chain_hops::hop_roundtrip;
+        use brops_core::ipc_framing::encode_frame;
+        use std::os::unix::net::UnixListener;
+
+        /// A one-connection principal: `serve` is handed the accepted stream and decides what (if
+        /// anything) comes back. Returns the socket path; the directory guard keeps it alive.
+        fn principal(
+            serve: impl FnOnce(UnixStream) + Send + 'static,
+        ) -> (tempfile::TempDir, String) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("principal.sock").to_string_lossy().to_string();
+            let listener = UnixListener::bind(&path).unwrap();
+            std::thread::spawn(move || {
+                if let Ok((stream, _)) = listener.accept() {
+                    serve(stream);
+                }
+            });
+            (dir, path)
+        }
+
+        /// Read one framed request off `stream` and answer it with `reply`.
+        fn answer(mut stream: UnixStream, reply: &Value) {
+            let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
+            stream.read_exact(&mut prefix).unwrap();
+            let mut body = vec![0u8; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut body).unwrap();
+            let frame = encode_frame(&serde_json::to_vec(reply).unwrap()).unwrap();
+            stream.write_all(&frame).unwrap();
+        }
+
+        /// How long the fake principals below keep a connection open. Far longer than the budgets
+        /// the tests set and far shorter than a hung test run: with no deadline at all the hop
+        /// returns only when the principal finally closes, and the elapsed-time assertion fails.
+        const PRINCIPAL_HOLDS_FOR: Duration = Duration::from_secs(4);
+        const MUST_RETURN_WITHIN: Duration = Duration::from_secs(2);
+
+        /// A principal that accepts and then says NOTHING must not hold the hop — and with it the
+        /// broker's one serial thread — past the exchange budget.
+        #[test]
+        fn a_silent_principal_cannot_hold_a_hop_past_its_budget() {
+            let (_dir, path) = principal(|stream| {
+                std::thread::sleep(PRINCIPAL_HOLDS_FOR);
+                drop(stream);
+            });
+            let started = Instant::now();
+            let mut conn = connect_hop(&path, Duration::from_millis(300)).expect("it accepts");
+            assert_eq!(hop_roundtrip(&mut conn, br#"{"op":"issue"}"#), Err(HopError::Io));
+            assert!(
+                started.elapsed() < MUST_RETURN_WITHIN,
+                "the hop returned after {:?}: only when the principal let go, not at its deadline",
+                started.elapsed()
+            );
+        }
+
+        /// The budget is over the EXCHANGE, not per read: a principal dribbling one byte at a time
+        /// resets a per-read deadline with every byte and would be read for as long as it liked.
+        #[test]
+        fn a_dribbling_principal_cannot_stretch_the_budget_one_byte_at_a_time() {
+            let (_dir, path) = principal(|mut stream| {
+                // A length prefix promising 64 bytes, then one byte every 100 ms — each well inside
+                // a 300 ms per-read deadline, and 6.4 s in total.
+                let _ = stream.write_all(&64u32.to_be_bytes());
+                let until = Instant::now() + PRINCIPAL_HOLDS_FOR;
+                while Instant::now() < until {
+                    if stream.write_all(b"x").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+            let started = Instant::now();
+            let mut conn = connect_hop(&path, Duration::from_millis(300)).expect("it accepts");
+            assert_eq!(hop_roundtrip(&mut conn, br#"{"op":"issue"}"#), Err(HopError::Io));
+            assert!(
+                started.elapsed() < MUST_RETURN_WITHIN,
+                "the hop returned after {:?}: the dribble stretched the deadline",
+                started.elapsed()
+            );
+        }
+
+        /// The control for the two above: a principal that answers is read, whole, inside the budget.
+        #[test]
+        fn a_principal_that_answers_is_read_inside_the_budget() {
+            let (_dir, path) =
+                principal(|stream| answer(stream, &json!({"ok": true, "op": "issue", "challenge": {}})));
+            let mut conn = connect_hop(&path, Duration::from_secs(5)).expect("it accepts");
+            let reply = hop_roundtrip(&mut conn, br#"{"op":"issue"}"#).expect("a framed reply");
+            assert!(parse_reply("issue", &reply).is_ok());
+        }
+
+        #[test]
+        fn the_shipped_connector_opens_every_hop_with_the_exchange_budget() {
+            // The constant is what `LinuxHopConnector::connect` and `supervisor_op` pass; a budget
+            // nobody arms is the defect this replaced. Asserted on the connection it produces.
+            let (_dir, path) = principal(|stream| {
+                std::thread::sleep(Duration::from_millis(200));
+                drop(stream);
+            });
+            let mut conn = connect_hop(&path, HOP_EXCHANGE_BUDGET).expect("it accepts");
+            assert_eq!(conn.budget, Duration::from_secs(30));
+            let left = conn.remaining().expect("a fresh connection has budget left");
+            assert!(left <= HOP_EXCHANGE_BUDGET && left > Duration::from_secs(29), "{left:?}");
+            // And a spent budget is a closed error, never a zero (= no) timeout.
+            conn.budget = Duration::from_nanos(1);
+            assert_eq!(conn.remaining(), Err(HopError::Io));
+            assert_eq!(conn.recv_all(), Err(HopError::Io));
+        }
+
+        fn execution(supervisor_sock: &str) -> LinuxGovernedExecution {
+            LinuxGovernedExecution::new(ExecutionConfig {
+                recorder_command: vec!["/bin/false".into()],
+                recorder_store_dir: String::new(),
+                launcher_path: String::new(),
+                executor_path: String::new(),
+                lease_file: String::new(),
+                cgroup_arg: String::new(),
+                report_dir: String::new(),
+                supervisor_sock: supervisor_sock.to_string(),
+                evidence_state_dir: String::new(),
+            })
+        }
+
+        /// The §5 lifecycle ops are held to the ONE reply predicate. `supervisor_op` used to check
+        /// `ok` and nothing else, so a reply belonging to a different op — a broken or confused peer
+        /// on a single-request channel — read as the supervisor having accepted this one.
+        #[test]
+        fn a_supervisor_reply_for_another_op_is_not_an_acceptance() {
+            let started = json!({"op": "execution-started", "execution_attempt_id": "att-1"});
+
+            let (_dir, path) =
+                principal(|stream| answer(stream, &json!({"ok": true, "op": "launch-gate"})));
+            assert_eq!(execution(&path).supervisor_op(&started), Err(TurnReason::UpstreamBlocked));
+
+            // No `op` at all, and a typed refusal: both closed.
+            let (_dir, path) = principal(|stream| answer(stream, &json!({"ok": true})));
+            assert_eq!(execution(&path).supervisor_op(&started), Err(TurnReason::UpstreamBlocked));
+            let (_dir, path) = principal(|stream| {
+                answer(stream, &json!({"ok": false, "op": "execution-started", "reason": "wrong_state"}))
+            });
+            assert_eq!(execution(&path).supervisor_op(&started), Err(TurnReason::UpstreamBlocked));
+
+            // The control: the op echoed back is the acceptance, and its fields come through.
+            let (_dir, path) = principal(|stream| {
+                answer(
+                    stream,
+                    &json!({"ok": true, "op": "execution-started", "execution_attempt_id": "att-1"}),
+                )
+            });
+            let reply = execution(&path).supervisor_op(&started).expect("the op was accepted");
+            assert_eq!(reply["execution_attempt_id"], "att-1");
         }
     }
 }
@@ -1413,7 +1735,9 @@ mod tests {
             // (never fabricating them); asserting here proves the orchestration threads them through.
             assert_eq!(plan.lease.lease_id, "L1");
             assert_eq!(plan.lease.execution_attempt_id, "att-1");
-            // The real execution verifies the pinned launcher/executor hashes + budget before it spawns.
+            // These three are asserted to prove the orchestration PARSES and threads them through
+            // unchanged. The real execution does not read them: the recorder re-hashes both images
+            // against its own root-owned policy, and the supervisor judges the lease window itself.
             assert_eq!(plan.lease.launcher_executable_sha256, H64);
             assert_eq!(plan.lease.executor_executable_sha256, H64);
             assert_eq!(plan.lease.lease_expires_at_ms, 999_999);
@@ -1814,6 +2138,31 @@ mod tests {
 
     fn c_count(c: &Connection) -> i64 {
         c.query_row("SELECT COUNT(*) FROM governed_messages", [], |x| x.get(0)).unwrap()
+    }
+
+    /// The recorder is handed nine flags and their values, in this order. `governed_recorder`'s own
+    /// tests drive its argv guard through this type, so the two cannot drift apart.
+    #[test]
+    fn the_recorder_argv_is_the_nine_flags_in_order() {
+        let args = RecorderArgs {
+            recorder_store_dir: "/s",
+            launcher_path: "/l",
+            executor_path: "/e",
+            lease_file: "/lease",
+            cgroup_arg: "cg",
+            report_path: "/r/out",
+            containment_path: "/r/out.containment.json",
+            evidence_path: "/state/a.evidence.json",
+            evidence_state_dir: "/state",
+        };
+        assert_eq!(
+            args.to_argv(),
+            [
+                "--store", "/s", "--launcher", "/l", "--executor", "/e", "--lease", "/lease",
+                "--cgroup", "cg", "--out", "/r/out", "--containment-out", "/r/out.containment.json",
+                "--evidence-out", "/state/a.evidence.json", "--evidence-state", "/state",
+            ]
+        );
     }
 
     // =============================================================================================

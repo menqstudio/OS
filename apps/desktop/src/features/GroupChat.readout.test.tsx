@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -204,5 +204,67 @@ describe('GroupChat — the room readout counts only what it can establish', () 
     // Every figure is paired with its term, so a screen reader never reads a bare number.
     expect(within(dl).getAllByRole('term').length).toBe(within(dl).getAllByRole('definition').length);
     void readout;
+  });
+});
+
+// The ask candidates were built from `roster.data`. `useAsync` keeps the previous room's data
+// across a room switch and across an error, so the form offered — and `openRound` asked — the
+// last room's participants under the new room's id. The same defect had already been fixed for
+// messages (`A-07`) and for the participant count; the candidates were the third reader.
+describe('GroupChat — who gets asked is this room\'s roster, or nobody', () => {
+  const SECOND = { ...ROOM, id: 'g-2', title: 'Release review' };
+  const pick = () => document.querySelector('.cs-pick');
+  const openRound = () => screen.getByRole('button', { name: 'Open round' });
+
+  function mountTwo(second: () => Promise<unknown>) {
+    invokeMock.mockImplementation((cmd: string, args?: unknown) => {
+      const id = (args as { conversationId?: string } | undefined)?.conversationId;
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM, SECOND]);
+      if (cmd === 'list_conversation_participants') {
+        return id === 'g-2' ? second() : Promise.resolve(['Auditor', 'Builder']);
+      }
+      if (cmd === 'list_messages') return Promise.resolve([]);
+      if (cmd === 'list_agents') {
+        return Promise.resolve([{ id: 'a-1', slug: 'scout', displayName: 'Scout', role: 'r', status: 'active', model: null }]);
+      }
+      return Promise.resolve([]);
+    });
+    return render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+  }
+  const switchToSecond = () =>
+    fireEvent.change(screen.getByLabelText('Room'), { target: { value: 'g-2' } });
+
+  it('while the new room\'s roster is still being read, nobody is offered and no round can be opened', async () => {
+    mountTwo(() => new Promise(() => {}));
+    await waitFor(() => expect(pick()?.textContent).toContain('Auditor'));
+    expect(openRound()).not.toBeDisabled();
+
+    switchToSecond();
+    // The first room's participants are NOT carried over under the second room's name.
+    await waitFor(() => expect(pick()).toBeNull());
+    expect(openRound()).toBeDisabled();
+  });
+
+  it('a FAILED roster read offers nobody, says why, and does not fall back to the last room', async () => {
+    mountTwo(() => Promise.reject(new Error('database is locked')));
+    await waitFor(() => expect(pick()?.textContent).toContain('Auditor'));
+
+    switchToSecond();
+    await waitFor(() => expect(screen.getByText(/participant list could not be read/)).toBeInTheDocument());
+    expect(screen.getByText('database is locked')).toBeInTheDocument();
+    expect(pick()).toBeNull();
+    expect(openRound()).toBeDisabled();
+    // Nothing was sent for a room whose participants nobody established.
+    fireEvent.change(screen.getByLabelText('Question'), { target: { value: 'Ship it?' } });
+    fireEvent.click(openRound());
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'post_user_message')).toBe(false);
+  });
+
+  it('a room whose roster read answered is offered its own participants', async () => {
+    mountTwo(() => Promise.resolve(['Reviewer']));
+    await waitFor(() => expect(pick()?.textContent).toContain('Auditor'));
+    switchToSecond();
+    await waitFor(() => expect(pick()?.textContent).toBe('Reviewer'));
+    expect(openRound()).not.toBeDisabled();
   });
 });

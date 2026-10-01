@@ -5,8 +5,9 @@ import type { STR } from './Research.strings';
  *
  * The sixth independent audit's `A-05`. The Research panel rendered *"Verified · held"* and
  * *"Verified desktop-side and held by the backend"* for **every** held answer — for an outcome
- * that is `development_untrusted` at best and, on the only path a shipped install can reach, has
- * no governed turn, no challenge and no receipt at all. The renderer was not lying on purpose: the
+ * that is `development_untrusted` at best and, on the ungoverned development path
+ * (`BROPS_ALLOW_UNGOVERNED`), has no governed turn, no challenge and no receipt at all. (An
+ * install that configures no provider holds no answer of any kind: `stream_ask` sends `error`.) The renderer was not lying on purpose: the
  * `ready` event never said which path produced the answer, so the page described the one it
  * assumed it was on. The fix carries the fact (`StreamEvent::Ready.provenance`); this module is
  * where that fact becomes words.

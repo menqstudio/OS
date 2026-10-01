@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { AppProvider } from '../app/store';
-import { ToastProvider } from '../components/toast';
+import { ToastProvider, Toaster } from '../components/toast';
 import { Command } from './Command';
 
 const RUN = {
@@ -108,6 +108,31 @@ describe('Command — a refusal at the wall is not a failure', () => {
     expect(alert.textContent).toContain('connection reset by peer');
   });
 
+  // The operating system and the transport borrow the refusal vocabulary for things that are
+  // plainly broken. Each of these matched the old single regex and was announced as "the engine
+  // refused this step. Nothing ran."
+  it.each([
+    'Connection refused (os error 111)',
+    'Permission denied (os error 13)',
+    'governed sidecar crashed: exit 1',
+  ])('a breakdown that borrows refusal words is a FAILURE: %s', async (message) => {
+    const alert = await dispatchFailingWith(message);
+    expect(alert.className).not.toContain('cmd-outcome--blocked');
+    expect(alert.textContent).toContain(message);
+  });
+
+  it('the one refusal the desktop itself issues is recognised as one', async () => {
+    // `stream_run_step` sends exactly this when the step's approval was rejected.
+    const alert = await dispatchFailingWith('approval was rejected for this step');
+    expect(alert.className).toContain('cmd-outcome--blocked');
+  });
+
+  it('the refusal copy does not name a refuser or claim nothing ran', async () => {
+    // The page classifies by wording; it does not know WHO refused or whether a model ran first.
+    const alert = await dispatchFailingWith('permission denied: lease not granted for path /etc');
+    expect(alert.textContent).not.toMatch(/engine refused|governed wall|Nothing ran/i);
+  });
+
   it('an unrecognised error falls through to FAILED, not to blocked', async () => {
     // The fail-open direction would be calling an unknown error a governed refusal — that
     // claims the system is fine when nothing established it.
@@ -132,5 +157,36 @@ describe('Command — a refusal at the wall is not a failure', () => {
     // aria-live="polite" region would hold it until the stream went quiet.
     const alert = await dispatchFailingWith('permission denied');
     expect(alert).toHaveAttribute('role', 'alert');
+  });
+});
+
+// Advance, add-step, set-status and quick-create each ended `.catch(() => reload())`: the backend's
+// reason was discarded and a refused or failed action looked like a click that did nothing.
+describe('Command — a rejected write says why', () => {
+  function failing(cmd: string, message: string) {
+    invokeMock.mockImplementation((c: string) => {
+      if (c === 'list_runs') return Promise.resolve([RUN]);
+      if (c === 'list_run_steps') return Promise.resolve([STEP]);
+      if (c === cmd) return Promise.reject(new Error(message));
+      return Promise.resolve(null);
+    });
+    return render(<AppProvider><ToastProvider><Toaster /><Command /></ToastProvider></AppProvider>);
+  }
+
+  it('a failed advance surfaces the backend reason', async () => {
+    failing('advance_run', 'run r-1 has no runnable step');
+    fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+    await screen.findByText('Gather the source figures');
+    fireEvent.click(screen.getByRole('button', { name: 'Advance' }));
+    expect(await screen.findByText('run r-1 has no runnable step')).toBeInTheDocument();
+  });
+
+  it('a failed quick-create surfaces the backend reason', async () => {
+    failing('create_run', 'database is locked');
+    await screen.findByRole('button', { name: /Draft the quarterly report/ });
+    const dock = document.querySelector('.dock-input') as HTMLInputElement;
+    fireEvent.change(dock, { target: { value: 'ship it' } });
+    fireEvent.submit(dock.closest('form') as HTMLFormElement);
+    expect(await screen.findByText('database is locked')).toBeInTheDocument();
   });
 });

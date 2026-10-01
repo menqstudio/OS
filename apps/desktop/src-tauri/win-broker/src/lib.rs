@@ -7,11 +7,27 @@
 //! whole workspace still builds and tests on the Linux CI runner. The real winapi paths + their integration
 //! tests are `#[cfg(windows)]` and run on a Windows CI runner.
 //!
-//! **This does NOT flip the Windows governed gate.** `platform_governed_execution_supported()` stays `false`
-//! on Windows: only the peer-auth primitive has a real syscall implementation here; the remaining §0.1
-//! primitives (image Authenticode via `WinVerifyTrust`, `CreateProcessAsUser` with a restricted token +
-//! STARTUPINFOEX handle list, CNG key custody) and the full dedicated-service-SID machine-proof are still
-//! unbuilt. Governed turns remain fail-closed on Windows.
+//! **This does NOT flip the Windows governed gate, and the gate stays shut on Windows.** This paragraph used
+//! to say "`platform_governed_execution_supported()` stays `false`". No function of that name is defined
+//! anywhere in the tree — it is the §0.1 SPECIFICATION symbol. What actually refuses is three separate
+//! things: chat is refused by `governed_verification_unconfigured()` while any of its compile-time inputs
+//! is absent; `connect_broker()` returns `UnsupportedPlatform` off Linux; and the broker serves
+//! `UpstreamBlockedExecutor` unless a deployment config with a verifying manifest is named.
+//!
+//! What is and is not built here, as of this file rather than as of its first commit:
+//!
+//! * BUILT, in `syscall` (Windows only): named-pipe peer-SID authentication, and image Authenticode via
+//!   `WinVerifyTrust` (`image_authenticode_valid`, with tests below). The old text listed Authenticode
+//!   as unbuilt in the file that builds it. Nothing in the live kit requires it yet — `brops-win-live`'s
+//!   own bins are unsigned.
+//! * BUILT AS STANDALONE PROOF BINARIES, called by nothing: `restricted_launch` (`CreateProcessAsUserW`
+//!   under a restricted, low-integrity token) and `spawn_as` (batch-logon token +
+//!   `CreateProcessWithTokenW`). The live kit's executor spawn uses neither.
+//! * NOT BUILT: a real STARTUPINFOEX handle list (`restricted_launch` checks the expected role list
+//!   against itself and launches with plain `STARTUPINFOW`), CNG key custody, and the wiring of any of
+//!   the above into the dedicated-service-SID session-0 launch.
+//!
+//! Governed turns remain fail-closed on Windows.
 
 pub use brops_core::windows_broker;
 

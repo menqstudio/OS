@@ -1,16 +1,42 @@
 //! Wave 3b-1B — the §2.7 contained executor image (LINUX-RUN live governed turn).
 //!
-//! This is the tiny, pinned image the privileged launcher `fexecve`s at the second exec boundary. Per
-//! rev-30 §2.7 it, on entry:
-//!   (a) enumerates `/proc/self/fd` and reports the open descriptor set — which MUST be EXACTLY {3,4,5,6}
-//!       (0/1/2 neutralized by the launcher, every fd ≥ 7 closed), proving FD survival + stdio
-//!       neutralization actually worked;
-//!   (b) reports its post-drop identity — euid/egid, all five capability sets, and `no_new_privs` — proving
-//!       the launcher's privilege drop landed it on the executor UID with zero capabilities;
+//! This is the tiny, pinned image the privileged launcher `fexecve`s at the second exec boundary — and
+//! of the two files that say so, this is the one it is true of: both live kits install THIS binary as
+//! `contained-executor.bin`. `executor/` (the `brops-executor` crate) is the not-yet-deployed placeholder
+//! for the model image and is installed by nothing. Neither runs a model: this one reports what it
+//! observed about its own containment, which is what the live proof is about. On entry it:
+//!   (a) enumerates `/proc/self/fd` and REPORTS the descriptors it found. rev-30 §2.7 says that set is
+//!       exactly {3,4,5,6} by the time an executor runs (0/1/2 neutralized by the launcher, every fd ≥ 7
+//!       closed);
+//!   (b) REPORTS its post-drop identity — euid/egid, whether all five capability sets are zero, and
+//!       `no_new_privs`;
 //!   (c) reads the three read-only inputs (fd 3 `system`, 4 `history`, 5 `generation_config`) to EOF and
 //!       binds them deterministically (the same SHA-256 convention `executor/` uses), then
 //!   (d) writes ONE JSON report to the write-only output pipe (fd 6) — those exact bytes ARE the governed
 //!       turn's output, which the broker's `verify_and_accept` then binds by length+digest.
+//!
+//! **It reports; it enforces nothing, and nothing reads the report.** This header used to say the
+//! descriptor set "MUST be EXACTLY {3,4,5,6}" and that (a) and (b) were "proving" the launcher's work.
+//! Neither is checked anywhere:
+//!
+//!  * `run()` returns 0 whatever it observed. Its one non-zero exit is a failed write to fd 6. A
+//!    descriptor set that is not {3,4,5,6}, non-zero capabilities and an unset `no_new_privs` all
+//!    exit 0; an unreadable `/proc/self/status` is reported as euid/egid `4294967295`, and an input
+//!    that could not be read as `"reply_binding": null`.
+//!  * No code in this tree parses `observed_fds`, `caps_all_zero`, `no_new_privs` or `reply_binding`
+//!    out of the report — not the recorder, not the broker, not either proof driver, not the live
+//!    kits. The broker binds the report's BYTES (length and digest); what they say is read by nobody.
+//!  * The enumeration is not a complete account either: it skips every descriptor whose
+//!    `/proc/self/fd` link points under `/proc/` (to drop its own readdir handle) and every one whose
+//!    link it cannot read. `launcher/src/main.rs::collect_fd_facts` removed exactly that filter as a
+//!    §2.7 bypass and excludes only the enumeration handle, by number.
+//!
+//! The §2.7 enforcement that does exist is the LAUNCHER's, before it `fexecve`s this image: the
+//! descriptor contract, the privilege drop and the post-drop capability state are verified there and a
+//! failure means no exec. Turning this report into a refusal (non-zero unless the set is exactly
+//! {3,4,5,6}, the capabilities are zero, `no_new_privs` is set and all three inputs were read) is not
+//! done here because what the live kit actually observes has never been looked at by anything: it
+//! would make a CI job fail or pass on values nobody has measured.
 //!
 //! It holds no key, opens no socket, and touches nothing but the four inherited descriptors. On a non-Linux
 //! host it exits non-zero (the inherited-fd model does not exist there).
@@ -35,7 +61,8 @@ mod linux {
 
     pub fn run() -> i32 {
         // (a) Observed descriptor set — enumerate /proc/self/fd, skipping the transient readdir handle
-        // (its link points under /proc/). What remains MUST be exactly {3,4,5,6}.
+        // (its link points under /proc/) and, with it, any OTHER descriptor that links there. §2.7
+        // says what remains is exactly {3,4,5,6}; this only reports what it found (see the header).
         let observed = observed_fds();
 
         // (b) Post-drop identity + capabilities + no_new_privs from /proc/self/status.
@@ -121,7 +148,10 @@ mod linux {
         true
     }
 
-    /// Deterministic input→output binding (mirrors `executor::build_output`).
+    /// Deterministic input→output binding: the same formula as `executor::build_output`'s `binding=`
+    /// line. Two binaries, no shared function — what holds them together is
+    /// `executor/src/main.rs::the_deployed_proof_executor_binds_the_inputs_by_the_same_formula`, which
+    /// reads THIS function's source. Change it here and that test goes red.
     fn bind(system: &[u8], history: &[u8], generation_config: &[u8]) -> String {
         let sh = sha256_hex(system);
         let hh = sha256_hex(history);

@@ -14,9 +14,11 @@
 >    seed (the one embedded in `win-live/src/proof.rs`), which `win_provision` rejects with `exit 3`
 >    because it checks the supplied private against the TCB-pinned PRODUCTION public key. It also
 >    omitted the `--*-account` arguments the seed-ACL step requires (`exit 4`). The script now
->    **requires** `-RootKey <offline root private seed>` and **fails loudly** without it, because that
->    key is deliberately not in this repository and not on any serving box. Anyone who does not hold
->    the operator's offline root **cannot** reproduce a production `trusted_verified` from this tree.
+>    **requires** `-RootKey <root private seed>` and **fails loudly** without it, because that
+>    key is deliberately not in this repository and not on any serving box. Since Owner decision
+>    #78 (2026-08-09) no person holds it either — the install mints trust — so **nobody** can
+>    reproduce a production `trusted_verified` from this tree today, and the runs recorded below
+>    (2026-08-04, before that decision) are history, not a procedure to repeat.
 > 2. **A §2.5 TCB integrity floor now exists on Windows and is enforced.** The runs described below
 >    predate it — they measured nothing before serving. A current deployment additionally needs
 >    `win_tcb_pin` to have produced an Administrators-owned pin manifest, or every server exits 5 and
@@ -87,8 +89,9 @@ or DPAPI-sealed seed (which a `SYSTEM` broker could, defeating signer isolation)
 
 **Proven (session-0, cross-account):** the broker/driver running as **`brops-broker`** via a
 session-0 scheduled task, with the three servers as their distinct dedicated service accounts
-(peer allowlist = the broker account's exclusive SID), and the manifest signed by the operator's
-**offline** root key, completes the full governed turn →
+(peer allowlist = the broker account's exclusive SID), and the manifest signed by a root key the
+operator then kept off the machine (this run is 2026-08-04; since Owner decision #78 of 2026-08-09
+no person holds one), completes the full governed turn →
 
 ```
 RESULT: trusted_verified(production key=<signer-key-id> epoch=2) production_verified=true bound=true

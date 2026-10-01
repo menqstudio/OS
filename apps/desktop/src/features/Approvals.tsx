@@ -8,15 +8,38 @@ import { useAsync } from '../hooks/useAsync';
 import { useToast } from '../components/toast';
 import { desktop, hasBackend } from '../services/desktop';
 import { riskLabel } from '../domain/statusLabels';
+import type { Approval } from '../domain/entities';
 import { STR } from './Approvals.strings';
+import {
+  canAct, classifyApproval, countQueue, readRejection, readReply,
+  type ApprovalState, type Classification,
+} from './approvalsAuthority';
 
 // ── §D `approvals` — Հաստատումներ (Approval gate) ────────────────────────────
-// Mirror, never decide: the desktop READS the engine approval queue and can only
-// *request* a verdict — grant (native-confirmed) / deny (fail-safe) — which the
-// engine's Ed25519 system adjudicates. Escalate is a third, non-verdict action: it
-// decides nothing and authorizes nothing, it routes the pending request to higher
-// review (A3) via a real backend command and notifies the owner. Owner-not-authenticated
-// → `blocked`; engine-unreachable → `error`.
+// WHAT THIS PAGE IS. The gate and the queue are THIS APP'S OWN approval ledger: a table in
+// the desktop's local SQLite, read by `list_approvals` (`repo::approvals::list`). No engine
+// is asked, nothing is Ed25519-adjudicated, and there is no owner authentication step — this
+// header used to say all three, and the error states were labelled to match.
+//
+// What the three actions really are:
+//   * grant    → `confirm_approval`. The backend raises a NATIVE confirmation dialog from
+//                Rust, which the webview cannot forge; the press-and-hold here is only the
+//                in-app pre-commit gesture. That dialog is the whole of the authority.
+//   * deny     → `reject_approval`, the fail-safe path: it can only take privilege away.
+//   * escalate → `escalate_approval`. It sets the row to `escalated` / A3 and posts a local
+//                notification. It grants nothing and denies nothing — and NOTHING can decide
+//                an escalated row afterwards: confirm and reject are pending-only, so the
+//                request is parked. The dialog says so.
+//
+// What a row is allowed to claim is decided in ONE place, `approvalsAuthority.ts`: a row is
+// shown as granted only when it carries the native-confirmation provenance the backend
+// writes with a real grant, a spent grant reads as consumed, and an unrecognised status
+// reads as unknown — never as "awaiting decision".
+//
+// The ENGINE appears on this page twice, both clearly separate from the gate: a read-only
+// mirror of its approval queue (`readEngineApprovalQueue`) and the T-021 section that asks
+// it to RECORD a request. Neither depends on the local list, so both render whatever the
+// local list is doing.
 //
 // This view is re-skinned onto the design mockup's APPROVAL GATE (`.gate .surface`
 // with `st-*` status tones), a real-derived approval-stats strip (`.astats-wrap`),
@@ -36,24 +59,42 @@ type L = (k: keyof typeof STR) => string;
 const CIRC = 2 * Math.PI * 92; // SLA ring circumference (r=92, matches the mockup)
 const HOLD_MS = 1100;          // deliberate press-and-hold duration to grant
 
-/** Presentation for a REAL approval status — gate tone, pill, power-mark state and
- *  label. Green/`live` is reachable ONLY from a real `approved` status; pending is
- *  always amber + `idle`, never forced green. */
-function statusMeta(status: string, L: L) {
-  const s = (status || '').toLowerCase();
-  if (s === 'approved' || s === 'granted' || s === 'confirmed')
-    return { gate: 'st-approved', pill: 'live', mark: 'live', face: 'completed', lbl: L('approved') };
-  if (s === 'rejected' || s === 'denied')
-    return { gate: 'st-denied', pill: 'off', mark: 'alert', face: 'blocked', lbl: L('denied') };
-  if (s === 'escalated')
-    return { gate: 'st-escalated', pill: 'info', mark: 'thinking', face: 'collaborating', lbl: L('escalatedA3') };
-  if (s === 'expired')
-    return { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: L('expiredHeld') };
-  if (s === 'reviewing')
-    return { gate: 'st-reviewing', pill: 'info', mark: 'thinking', face: 'thinking', lbl: L('broReviewing') };
-  // pending / unknown → awaiting a human decision. Amber, idle — never green.
-  return { gate: 'st-waiting', pill: 'warn', mark: 'idle', face: 'waiting', lbl: L('awaitingDecision') };
+/** Presentation for a CLASSIFIED approval — gate tone, pill, power-mark state and label.
+ *
+ *  The classification is `approvalsAuthority.classifyApproval`'s, not a regex over the status
+ *  string. That module existed, named the defects below, and was imported by nothing:
+ *
+ *   * `consumed` — a real backend status, written when a grant is spent — had no arm here and
+ *     fell through to the default, so a spent approval was shown as "Awaiting decision";
+ *   * so did every status this build does not know: "unknown" and "pending" shared one arm;
+ *   * `granted` / `confirmed` were treated as approved although no backend writer produces
+ *     either string;
+ *   * `approved` alone lit the green tone, the live mark and the APPROVED seal. The backend
+ *     honours a grant only with its native-confirmation provenance, and this page now does
+ *     too: an `approved` row without it is `unconfirmed`, and says so.
+ *
+ *  Green/`live` is reachable ONLY from `granted`. */
+function statusMeta(c: Classification, L: L) {
+  const by: Record<ApprovalState, { gate: string; pill: string; mark: string; face: string; lbl: string }> = {
+    granted: { gate: 'st-approved', pill: 'live', mark: 'live', face: 'completed', lbl: L('approved') },
+    unconfirmed: { gate: 'st-expired', pill: 'warn', mark: 'alert', face: 'blocked', lbl: L('approvedUnconfirmed') },
+    denied: { gate: 'st-denied', pill: 'off', mark: 'alert', face: 'blocked', lbl: L('denied') },
+    escalated: { gate: 'st-escalated', pill: 'info', mark: 'thinking', face: 'collaborating', lbl: L('escalatedA3') },
+    consumed: { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'completed', lbl: L('consumedSpent') },
+    expired: { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: L('expiredHeld') },
+    reviewing: { gate: 'st-reviewing', pill: 'info', mark: 'thinking', face: 'thinking', lbl: L('broReviewing') },
+    // Awaiting a human decision. Amber, idle — never green.
+    pending: { gate: 'st-waiting', pill: 'warn', mark: 'idle', face: 'waiting', lbl: L('awaitingDecision') },
+    // A status this build cannot name is shown AS that: verbatim, toneless, not actionable.
+    unknown: { gate: 'st-expired', pill: 'off', mark: 'idle', face: 'blocked', lbl: `${L('unknownStatus')}${c.raw || '—'}` },
+  };
+  return by[c.state];
 }
+
+/** The row nothing is seated for — the same presentation a pending row gets. */
+const NO_ROW: Classification = {
+  state: 'pending', raw: 'pending', missing: [], authorized: false, actionable: false,
+};
 
 /** Parse a `requestedAt` that may be an epoch-millis string or an ISO instant. */
 function parseWhen(raw: string): Date | null {
@@ -74,19 +115,13 @@ function fmtElapsed(ms: number): string {
   return `${s}s`;
 }
 
-/** A real backend error that names an auth/permission failure is the honest
- *  signal for `blocked` (owner not authenticated); anything else is `error`. */
-function isAuthError(msg: string): boolean {
-  return /denied|not permitted|permission|unauthor|authenticat|not signed|sign in|login|forbidden|owner/i.test(msg);
-}
-
 export function Approvals() {
   const { t, lang } = useApp();
   const toast = useToast();
   const state = useAsync(() => desktop.listApprovals());
   const { data, error, reload } = state;
-  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide). Steady state in
-  // Phase-2 is blocked/unreachable — surfaced honestly below the gate, never fabricated.
+  // Real, READ-ONLY engine approval-QUEUE read (mirror, never decide) — a different system from
+  // the local ledger above. Blocked/unreachable is surfaced honestly, never fabricated.
   //
   // The approval-REQUEST post is `T-021` and now exists, in its own section below: it asks the
   // engine to RECORD an ask and cannot adjudicate one. This read stays exactly what it was.
@@ -201,24 +236,40 @@ export function Approvals() {
   // command the desktop cannot forge — there is no local-only, made-up outcome.
   const runAction = useCallback((id: string, kind: ActionKind) => {
     const item = (data ?? []).find((a) => a.id === id);
-    if (!item || item.status !== 'pending') return; // only pending items are actionable
+    if (!item || !canAct(kind, classifyApproval(item))) return; // only pending items are actionable
     const label = item.target;
+    // The announcement is read off the RECORD the command returned, never off the click. A
+    // `confirm_approval` that comes back without its native-confirmation provenance is not
+    // announced as "Granted", and a reply that is not an approval record establishes nothing.
+    const announce = (reply: unknown, expected: ApprovalState, prefix: keyof typeof STR) => {
+      const outcome = readReply(reply);
+      if (outcome.kind === 'recorded' && outcome.state === expected) setVerdict(`${L(prefix)}${label}`);
+      else if (outcome.kind === 'recorded') {
+        setVerdict(`${L('outcomeOtherPrefix')}${label} — ${statusMeta(classifyApproval(reply as Approval), L).lbl}`);
+      } else setVerdict(`${L('outcomeUnreadablePrefix')}${label}`);
+      reload();
+    };
     if (kind === 'grant') {
       // T-011: real commit is adjudicated behind a Rust-driven native dialog the
       // webview cannot forge; the press-and-hold here is only the in-app pre-commit gate.
       desktop.confirmApproval(id)
-        .then(() => { setVerdict(`${L('grantedPrefix')}${label}`); reload(); })
-        .catch(onError);
+        .then((reply) => announce(reply, 'granted', 'grantedPrefix'))
+        .catch((e: unknown) => {
+          // Dismissing the native dialog is a NON-decision, not a failure: nothing was decided
+          // and the row is still pending. Everything else is the backend's refusal, verbatim.
+          if (readRejection(e).kind === 'cancelled') setVerdict(`${L('grantNotConfirmedPrefix')}${label}`);
+          else onError(e);
+        });
     } else if (kind === 'deny') {
       // T-010: dedicated fail-safe reject path.
       desktop.rejectApproval(id)
-        .then(() => { setVerdict(`${L('deniedPrefix')}${label}`); reload(); })
+        .then((reply) => announce(reply, 'denied', 'deniedPrefix'))
         .catch(onError);
     } else {
-      // Non-verdict routing: escalate to higher review (A3). Decides nothing, authorizes
-      // nothing — the backend re-tiers the pending approval and notifies the owner.
+      // Not a verdict: the backend marks the pending row `escalated` / A3 and posts a local
+      // notification. It grants nothing and denies nothing — and leaves a row nothing decides.
       desktop.escalateApproval(id)
-        .then(() => { setVerdict(`${L('escalatedPrefix')}${label}`); reload(); })
+        .then((reply) => announce(reply, 'escalated', 'escalatedPrefix'))
         .catch(onError);
     }
   }, [data, L, reload]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,7 +291,7 @@ export function Approvals() {
   }, []);
 
   const startHold = useCallback(() => {
-    if (!seated || seated.status !== 'pending' || holdTimer.current) return;
+    if (!seated || !classifyApproval(seated).actionable || holdTimer.current) return;
     const id = seated.id;
     setHolding(true);
     holdTimer.current = window.setTimeout(() => {
@@ -269,7 +320,7 @@ export function Approvals() {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((i) => Math.min(i + 1, list.length - 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((i) => Math.max(i - 1, 0)); return; }
       const cur = list[Math.min(selectedRef.current, list.length - 1)];
-      if (!cur || cur.status !== 'pending') return;
+      if (!cur || !classifyApproval(cur).actionable) return;
       const k = e.key.toLowerCase();
       // §D binds `g` to grant. It was missing: grant was reachable only as the pointer
       // press-and-hold (or Space/Enter ON that button), so a keyboard owner driving the
@@ -290,20 +341,32 @@ export function Approvals() {
   }, [staged]);
 
   // While a confirm dialog is open: Enter commits, Esc cancels.
+  //
+  // EXCEPT on a button inside the dialog. This listener is on `window` and used to commit on
+  // every Enter whatever the target, with `preventDefault` — so tabbing to CANCEL and pressing
+  // Enter suppressed Cancel's own click and committed instead. For a deny that is immediate
+  // and irreversible. A focused dialog button now acts for itself: Enter on Cancel cancels,
+  // Enter on the confirm button confirms through its own click.
   useEffect(() => {
     if (!staged) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { e.preventDefault(); setStaged(null); }
+      if (e.key === 'Enter') {
+        const el = e.target as HTMLElement | null;
+        if (el?.tagName === 'BUTTON' && el.closest('[role="dialog"]')) return;
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') { e.preventDefault(); setStaged(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [staged, commit]);
 
   // ── real-derived counts (no fabricated numbers) ────────────────────────────
-  const pendingCount = items.filter((a) => a.status === 'pending').length;
-  const approvedCount = items.filter((a) => /^(approved|granted|confirmed)$/i.test(a.status)).length;
-  const deniedCount = items.filter((a) => /^(rejected|denied|expired)$/i.test(a.status)).length;
+  // Every row lands in exactly one bucket (`countQueue`), so the strip below cannot show a
+  // total with a silent remainder — which it did: consumed, escalated and unrecognised rows
+  // were counted in "in queue" and in no other tile.
+  const queue = useMemo(() => countQueue(items), [items]);
+  const pendingCount = queue.pending;
 
   const style = <ApprovalsStyle />;
 
@@ -333,61 +396,125 @@ export function Approvals() {
     <div className="v-approvals">{style}{header}{liveRegion}{children}</div>
   );
 
+  // ── the two ENGINE surfaces ────────────────────────────────────────────────
+  // Neither reads the local list, so neither may depend on it. Both used to be written inside
+  // the populated branch only, after the `error` and `empty` early returns — so the engine
+  // queue notice and the whole "ask the engine" section vanished whenever the local ledger was
+  // empty or unreadable, which is exactly when an owner has nothing else on this page.
+
+  // Engine approval-QUEUE mirror (read-only). Until the engine queue read answers, this reads
+  // honestly as blocked/unreachable. It is a DIFFERENT system from the list on this page, which
+  // is the app's own local ledger and not a copy of the engine's queue.
+  const engineQueueNotice = engineQueue.data && engineQueue.data.state !== 'ok' ? (
+    <div className="ap-blocked" role="note" style={{ padding: 'var(--s3) var(--s4)', textAlign: 'left' }}>
+      <span className="muted">
+        {engineQueue.data.state === 'unreachable'
+          ? L('queueUnreachable')
+          : L('queueSealed')}
+        {engineQueue.data.reason ? ` (${engineQueue.data.reason})` : ''}
+      </span>
+    </div>
+  ) : null;
+
+  // The engine REQUEST (T-021) — a different system from the gate. Enabled only when the
+  // engine's own queue read succeeded: an ask needs a task id and the state the engine holds
+  // it in, and inventing either would be asking about a task nobody has seen.
+  const askSection = (
+    <section className="surface soft rise" style={{ '--i': 3 } as CSSProperties}
+             aria-label={L('askSection')}>
+      {/* An h2: this section is a sibling of the gate and the queue, and in the empty and
+          error branches it follows the page's h1 directly — an h3 there skips a level. */}
+      <h2>{L('askSection')}</h2>
+      <p className="micro">{L('askNote')}</p>
+      {engineTasks.length === 0 ? (
+        <p className="micro" role="status">{L('askNeedsEngine')}</p>
+      ) : (
+        <div className="ask-engine">
+          <label htmlFor="ask-task">{L('askTaskLabel')}</label>
+          <select id="ask-task" value={askTask || engineTasks[0].id}
+                  onChange={(e) => setAskTask(e.target.value)}>
+            {engineTasks.map((x) => (
+              <option key={x.id} value={x.id}>{`${x.id} · ${x.state}`}</option>
+            ))}
+          </select>
+          <label htmlFor="ask-who">{L('askWhoLabel')}</label>
+          <input id="ask-who" className="dock-input" value={askWho} onChange={(e) => setAskWho(e.target.value)} />
+          <label htmlFor="ask-why">{L('askReasonLabel')}</label>
+          <input id="ask-why" className="dock-input" value={askWhy} onChange={(e) => setAskWhy(e.target.value)} />
+          <div className="ask-actions">
+            {([['approve', 'askApprove'], ['deny', 'askDeny'],
+               ['request-verification', 'askVerify']] as const).map(([cmd, key]) => (
+              <Button key={cmd} variant="ghost"
+                      disabled={asking || !askWho.trim() || !askWhy.trim()}
+                      onClick={() => void ask(cmd)}>{L(key)}</Button>
+            ))}
+          </div>
+        </div>
+      )}
+      {askOutcome && (
+        <p className="micro" role="status">
+          {askOutcome.state === 'recorded'
+            ? `${L('askRecorded')}${askOutcome.sequence} · ${askOutcome.entrySha256.slice(0, 12)}${askOutcome.duplicate ? L('askDuplicate') : ''}`
+            : askOutcome.state === 'refused'
+              ? `${L('askRefused')}${askOutcome.reason}`
+              : `${L('askBlocked')}${askOutcome.reason}`}
+        </p>
+      )}
+    </section>
+  );
+
   // ── loading: skeleton ──────────────────────────────────────────────────────
   if (state.loading && data === null) {
     return frame(<Card><Skeleton rows={5} /></Card>);
   }
 
-  // ── error / blocked ────────────────────────────────────────────────────────
+  // ── error — the local approval ledger could not be read ────────────────────
+  // There is no "owner not authenticated" state: nothing on this path authenticates an owner,
+  // and the branch that claimed one matched any error containing words like `owner` or
+  // `denied` and told the reader to authenticate with an engine this read never contacts.
   if (error) {
     if (!hasBackend()) {
-      return frame(<Card><ErrorState message={L('engineUnreachable')} /></Card>);
+      return frame(<><Card><ErrorState message={L('ledgerUnreadable')} /></Card>{engineQueueNotice}{askSection}</>);
     }
-    if (isAuthError(error)) {
-      // `blocked` — owner not authenticated: gate locked, all actions disabled.
-      return frame(
-        <Card>
-          <div className="ap-blocked" role="alert">
-            <div className="ap-blocked-glyph" aria-hidden="true">🔒</div>
-            <div className="empty-title">{L('ownerNotAuthenticated')}</div>
-            <div className="muted ap-blocked-body">
-              {L('gateLockedBody')}
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <Button small onClick={reload}>{t('action.retry')}</Button>
-            </div>
-          </div>
-        </Card>,
-      );
-    }
-    // `error` — engine unreachable.
-    const denied = /denied|not permitted|permission/i.test(error);
-    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${L('engineUnreachable')} ${error}`;
-    return frame(<Card><ErrorState message={msg} onRetry={reload} retryLabel={t('action.retry')} /></Card>);
+    const denied = /denied|not permitted|not allowed|permission/i.test(error);
+    const msg = denied ? `${t('state.permissionDenied')}: ${error}` : `${L('ledgerUnreadable')} ${error}`;
+    return frame(
+      <>
+        <Card><ErrorState message={msg} onRetry={reload} retryLabel={t('action.retry')} /></Card>
+        {engineQueueNotice}
+        {askSection}
+      </>,
+    );
   }
 
   // ── empty — gate clear, nothing awaiting authority ─────────────────────────
   if (items.length === 0) {
     return frame(
-      <section className="gate surface soft lg hud reveal st-approved" style={{ '--i': 1 } as CSSProperties} role="status" aria-live="polite">
-        <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
-        <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
-        <EmptyState
-          glyph="✅"
-          title={L('gateClear')}
-          hint={L('newRequestsHint')}
-        />
-      </section>,
+      <>
+        <section className="gate surface soft lg hud reveal st-approved" style={{ '--i': 1 } as CSSProperties} role="status" aria-live="polite">
+          <span className="bracket tl" aria-hidden="true" /><span className="bracket tr" aria-hidden="true" />
+          <span className="bracket bl" aria-hidden="true" /><span className="bracket br" aria-hidden="true" />
+          <EmptyState
+            glyph="✅"
+            title={L('gateClear')}
+            hint={L('newRequestsHint')}
+          />
+        </section>
+        {engineQueueNotice}
+        {askSection}
+      </>,
     );
   }
 
   // ── default: the seated gate + queue + real-derived stats strip ────────────
   const stagedItem = staged ? items.find((a) => a.id === staged.id) ?? null : null;
-  const meta = seated ? statusMeta(seated.status, L) : statusMeta('pending', L);
+  const seatedClass = seated ? classifyApproval(seated) : NO_ROW;
+  const meta = statusMeta(seatedClass, L);
   const when = seated ? parseWhen(seated.requestedAt) : null;
-  const isPending = !!seated && seated.status === 'pending';
-  const opened = !!seated && /^(approved|granted|confirmed)$/i.test(seated.status);
-  const pushed = !!seated && /^(rejected|denied|expired)$/i.test(seated.status);
+  const isPending = seatedClass.actionable;
+  // The seal opens — green ring, APPROVED stamp — only for a grant the page could corroborate.
+  const opened = seatedClass.authorized;
+  const pushed = seatedClass.state === 'denied' || seatedClass.state === 'expired';
 
   // Hold-fill ring (decorative, aria-hidden with the whole seal): a pending gate
   // shows an empty track that a deliberate press-and-hold sweeps full over HOLD_MS,
@@ -396,12 +523,18 @@ export function Approvals() {
   // while a real hold is in progress, and the seal/stamp still wait on real data.
   const ringOffset = opened ? 0 : pushed ? CIRC : isPending ? (holding ? 0 : CIRC) : 0;
 
+  // One tile per bucket that has rows, after the four that always show. `queue.total` is the
+  // sum of every tile, by construction.
   const tiles: Array<[number, string, string]> = [
-    [items.length, L('inQueue'), 'as-info'],
-    [pendingCount, L('pendingNow'), 'as-warn'],
-    [approvedCount, L('approvedLower'), 'as-mint'],
-    [deniedCount, L('deniedHeld'), ''],
+    [queue.total, L('inQueue'), 'as-info'],
+    [queue.pending, L('pendingNow'), 'as-warn'],
+    [queue.granted, L('approvedLower'), 'as-mint'],
+    [queue.denied, L('deniedHeld'), ''],
   ];
+  if (queue.consumed > 0) tiles.push([queue.consumed, L('consumedLower'), '']);
+  if (queue.escalated > 0) tiles.push([queue.escalated, L('escalatedTile'), 'as-info']);
+  if (queue.unconfirmed > 0) tiles.push([queue.unconfirmed, L('unconfirmedLower'), 'as-warn']);
+  if (queue.other > 0) tiles.push([queue.other, L('otherLower'), '']);
 
   return frame(
     <>
@@ -541,19 +674,7 @@ export function Approvals() {
         {`↑/↓ ${L('select')} · ${L('holdGrantConfirm')} · g ${L('grant').toLowerCase()} · d ${L('denyLower')} · e ${L('escalateLower')}`}
       </div>
 
-      {/* Engine approval-QUEUE mirror (read-only). Until the engine queue read answers,
-          this reads honestly as blocked/unreachable — the list is the local mirror;
-          the desktop never fabricates an engine queue and never decides on its own. */}
-      {engineQueue.data && engineQueue.data.state !== 'ok' && (
-        <div className="ap-blocked" role="note" style={{ padding: 'var(--s3) var(--s4)', textAlign: 'left' }}>
-          <span className="muted">
-            {engineQueue.data.state === 'unreachable'
-              ? L('queueUnreachable')
-              : L('queueSealed')}
-            {engineQueue.data.reason ? ` (${engineQueue.data.reason})` : ''}
-          </span>
-        </div>
-      )}
+      {engineQueueNotice}
 
       {/* ── PENDING QUEUE ── */}
       <div className="sec-head" style={{ marginTop: 26 }}>
@@ -573,10 +694,11 @@ export function Approvals() {
           individually focusable. */}
       <div className="queue" role="listbox" aria-label={L('approvalQueueAria')}>
         {items.map((a, i) => {
-          const m = statusMeta(a.status, L);
+          const rowClass = classifyApproval(a);
+          const m = statusMeta(rowClass, L);
           const rw = parseWhen(a.requestedAt);
           const isSel = i === sel;
-          const rowPending = a.status === 'pending';
+          const rowPending = rowClass.state === 'pending';
           return (
             <button
               type="button" role="option"
@@ -626,49 +748,7 @@ export function Approvals() {
       </section>
 
 
-      {/* ── the engine REQUEST (T-021) — a different system from the gate above ──
-          Enabled only when the engine's own queue read succeeded: an ask needs a task id and the
-          state the engine holds it in, and inventing either would be asking about a task nobody
-          has seen. */}
-      <section className="surface soft rise" style={{ '--i': 3 } as CSSProperties}
-               aria-label={L('askSection')}>
-        <h3>{L('askSection')}</h3>
-        <p className="micro">{L('askNote')}</p>
-        {engineTasks.length === 0 ? (
-          <p className="micro" role="status">{L('askNeedsEngine')}</p>
-        ) : (
-          <div className="ask-engine">
-            <label htmlFor="ask-task">{L('askTaskLabel')}</label>
-            <select id="ask-task" value={askTask || engineTasks[0].id}
-                    onChange={(e) => setAskTask(e.target.value)}>
-              {engineTasks.map((x) => (
-                <option key={x.id} value={x.id}>{`${x.id} · ${x.state}`}</option>
-              ))}
-            </select>
-            <label htmlFor="ask-who">{L('askWhoLabel')}</label>
-            <input id="ask-who" className="dock-input" value={askWho} onChange={(e) => setAskWho(e.target.value)} />
-            <label htmlFor="ask-why">{L('askReasonLabel')}</label>
-            <input id="ask-why" className="dock-input" value={askWhy} onChange={(e) => setAskWhy(e.target.value)} />
-            <div className="ask-actions">
-              {([['approve', 'askApprove'], ['deny', 'askDeny'],
-                 ['request-verification', 'askVerify']] as const).map(([cmd, key]) => (
-                <Button key={cmd} variant="ghost"
-                        disabled={asking || !askWho.trim() || !askWhy.trim()}
-                        onClick={() => void ask(cmd)}>{L(key)}</Button>
-              ))}
-            </div>
-          </div>
-        )}
-        {askOutcome && (
-          <p className="micro" role="status">
-            {askOutcome.state === 'recorded'
-              ? `${L('askRecorded')}${askOutcome.sequence} · ${askOutcome.entrySha256.slice(0, 12)}${askOutcome.duplicate ? L('askDuplicate') : ''}`
-              : askOutcome.state === 'refused'
-                ? `${L('askRefused')}${askOutcome.reason}`
-                : `${L('askBlocked')}${askOutcome.reason}`}
-          </p>
-        )}
-      </section>
+      {askSection}
 
       {/* All three actions confirm before committing (§D). `g`/`d`/`e` stage this dialog;
           the pointer press-and-hold on the grant key is the mouse-driven equivalent, not a

@@ -255,8 +255,32 @@ pub fn canonical_request_bytes(payload: &Value) -> Result<Vec<u8>, String> {
     brops_provision::canonical::canonical_bytes(payload).map_err(|e| e.to_string())
 }
 
-/// Turn a pipe reply into either the document to print or the message to refuse with.
-pub fn interpret_reply(reply: &Value) -> Result<Value, String> {
+/// Why a pipe reply is not a document to print — the two cases the shim's exit code tells apart.
+///
+/// A type, not a sentence. The exit code used to be chosen by searching the MESSAGE for the word
+/// `REFUSED`, and the malformed-reply message quotes the reply's own field names — so a reply of
+/// `{"REFUSED": 1}`, which is not a refusal and not a document, exited "the signer refused"
+/// instead of "the signer answered with something that is not a document". Text the peer
+/// supplies must never be what selects the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplyRefusal {
+    /// `{ok: false, …}` — the signer declined to sign. Exit [`relay::EXIT_REFUSED`].
+    Refused(String),
+    /// Neither a refusal nor a `{payload, signature}` document. Exit [`relay::EXIT_BAD_REPLY`].
+    Malformed(String),
+}
+
+impl ReplyRefusal {
+    /// The sentence for stderr.
+    pub fn message(&self) -> &str {
+        match self {
+            ReplyRefusal::Refused(why) | ReplyRefusal::Malformed(why) => why,
+        }
+    }
+}
+
+/// Turn a pipe reply into either the document to print or the refusal to exit with.
+pub fn interpret_reply(reply: &Value) -> Result<Value, ReplyRefusal> {
     if is_refusal(reply) {
         let reason =
             reply.get("reason").and_then(Value::as_str).unwrap_or("no reason given").to_string();
@@ -265,18 +289,20 @@ pub fn interpret_reply(reply: &Value) -> Result<Value, String> {
             .and_then(Value::as_str)
             .map(|s| format!(" (peer SID seen by the signer: {s})"))
             .unwrap_or_default();
-        return Err(format!("the audit-anchor signer REFUSED to sign: {reason}{peer}"));
+        return Err(ReplyRefusal::Refused(format!(
+            "the audit-anchor signer REFUSED to sign: {reason}{peer}"
+        )));
     }
     if !is_engine_shaped_document(reply) {
         let keys: Vec<&str> = reply
             .as_object()
             .map(|o| o.keys().map(String::as_str).collect())
             .unwrap_or_default();
-        return Err(format!(
+        return Err(ReplyRefusal::Malformed(format!(
             "the audit-anchor signer returned something that is not a {{payload, signature}} \
              document (fields: {keys:?}). bro_audit_log.verify_signed_payload refuses any other \
              key set, so returning it would be a signature the ledger could never install"
-        ));
+        )));
     }
     Ok(reply.clone())
 }

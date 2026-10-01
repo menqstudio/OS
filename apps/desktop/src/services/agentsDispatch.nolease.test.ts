@@ -11,6 +11,7 @@ import {
   DISPATCH_REQUEST_PROTOCOL, DISPATCH_RESULT_PROTOCOL,
   type Assignment, type AssignmentInput, type DispatchOutcome,
 } from './agentsDispatch';
+import { FORBIDDEN, decodeCharCodeRuns, flatten } from '../test/credentialSweep';
 
 /**
  * Phase 6's stop condition, as a test: **"If fan-out tempts the desktop to hold/relay a lease →
@@ -56,67 +57,8 @@ const BASE: AssignmentInput = {
 
 const assignment = (): Assignment => buildAssignment(BASE);
 
-/**
- * Every string that appears anywhere in a value, however deeply nested.
- *
- * **Non-string leaves are visited too** (sixth audit `A-09` route 3, reopened by the eighth).
- * The earlier version pushed only `typeof value === 'string'`, so a `number[]` whose elements
- * are character codes decoded to `"lease-7f2a91"` on the far side while being invisible here.
- * Numbers and booleans are now stringified, and an array's printable character codes are
- * additionally pushed in decoded form — the sweep sees the bytes as the text they would become,
- * not as digits. The decode survives one out-of-range byte (ninth audit `I-03`).
- */
-function flatten(value: unknown, out: string[] = []): string[] {
-  if (typeof value === 'string') out.push(value);
-  else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-    out.push(String(value));
-  } else if (Array.isArray(value)) {
-    out.push(...decodeCharCodeRuns(value));
-    value.forEach((v) => flatten(v, out));
-  } else if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
-  }
-  return out;
-}
-
-/**
- * The printable text a character-code array carries — ninth audit `I-03`.
- *
- * The superseded form returned `null` for the whole array the moment ONE element fell outside
- * `0x20`–`0x7e`, so a newline appended to the character-code array made it invisible again. Two
- * things are produced instead: every maximal printable RUN, so adjacency is preserved, and the
- * concatenation of all printable bytes with the non-printable ones removed, so a value interleaved
- * with separators cannot hide either. An array with no printable byte yields nothing at all, which
- * is what keeps the decode from becoming a wildcard that invents offenders.
- */
-function decodeCharCodeRuns(list: readonly unknown[]): string[] {
-  const out: string[] = [];
-  let run = '';
-  let all = '';
-  for (const v of list) {
-    if (typeof v === 'number' && Number.isInteger(v) && v >= 0x20 && v <= 0x7e) {
-      run += String.fromCharCode(v);
-      all += String.fromCharCode(v);
-    } else if (run) {
-      out.push(run);
-      run = '';
-    }
-  }
-  if (run) out.push(run);
-  if (all && !out.includes(all)) out.push(all);
-  return out;
-}
-
-/**
- * The credential-shaped vocabulary. `key` carries a **compound** family rather than the bare
- * word: `(?<![a-z])key(?![a-z])` matched none of `pubkey` / `apikey` / `keystore` / `sessionkey`
- * (sixth audit `A-09` route 2, reopened by the eighth), while still needing to leave `monkey`,
- * `turkey` and `keyboard` alone — a lookaround that admits every compound would fire on ordinary
- * prose, and a sweep that cries wolf gets deleted. The prefix and suffix groups are both optional,
- * so the bare-word behaviour this replaced is preserved exactly.
- */
-const FORBIDDEN =
-  /lease|secret|token|nonce|signature|private|(?<![a-z])(?:pub|api|access|secret|private|public|session|signing|host|ssh|gpg|master|root|enc|dec)?[-_ ]?keys?(?:tore|chain|file|pair|ring|id)?(?![a-z])/i;
+// `flatten`, `decodeCharCodeRuns` and `FORBIDDEN` live in ../test/credentialSweep.ts — one copy, where
+// this file used to carry its own.
 
 describe('dispatch — the desktop never serializes a lease or a key', () => {
   it('the request frame carries no lease, key, token, nonce or signature — at any depth', async () => {
@@ -207,9 +149,9 @@ describe('dispatch — the desktop never serializes a lease or a key', () => {
 
   it('`I-03`: one byte outside the printable range no longer defeats the decode', () => {
     // The ninth audit escaped route 3's fix by appending 0x0a: the all-or-nothing decode returned
-    // null for the whole array and the sweep went silent again. Both escapes are pinned here, in
-    // this copy of the sweep as well as in the boundary suite, because a fix applied to one of
-    // three copies is a fix in one of three places.
+    // null for the whole array and the sweep went silent again. Both escapes are pinned here as
+    // well as in the boundary suite. They were pinned twice because the sweep itself was pasted
+    // into three files; this suite and the boundary suite now share ../test/credentialSweep.ts.
     const codes = Array.from('lease-7f2a91').map((c) => c.charCodeAt(0));
     const trailing = [...codes, 0x0a];
     const interleaved = codes.flatMap((c) => [c, 0x0a]);

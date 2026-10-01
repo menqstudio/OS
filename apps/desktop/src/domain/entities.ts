@@ -291,6 +291,9 @@ export interface Integration {
   name: string;
   provider: string;
   status: string;
+  /** A `scheme:locator` REFERENCE to a credential the engine or the operator holds — never the
+   *  credential. `null`/absent means no reference is recorded (Rust `auth_ref`, schema 0022). */
+  authRef?: string | null;
   createdAt: string;
   updatedAt: string;
 }

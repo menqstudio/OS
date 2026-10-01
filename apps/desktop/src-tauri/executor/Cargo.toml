@@ -3,7 +3,7 @@ name = "brops-executor"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "BroPS contained model executor (rev-30 §2/§2.7): the tiny pinned image the launcher fexecve's. It reads its three read-only input FDs (3=system, 4=history, 5=generation_config) to EOF and writes its output to the write-only FD 6, then exits 0 — holding NO key/store/network and opening nothing else. Real FD I/O is Linux-only; the output-binding core is pure and unit-tested on any host."
+description = "BroPS contained model executor (rev-30 §2/§2.7) — a NOT-YET-DEPLOYED placeholder for the tiny pinned image the launcher fexecve's; the kits install proof/src/bin/proof_executor.rs instead. It reads its three read-only input FDs (3=system, 4=history, 5=generation_config) to EOF and writes its output to the write-only FD 6, then exits 0 — holding NO key/store/network and opening nothing else. Real FD I/O is Linux-only; the output-binding core is pure and unit-tested on any host."
 
 [[bin]]
 name = "brops-executor"

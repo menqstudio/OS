@@ -213,6 +213,87 @@
       "tracked_by": "docs/design/PRODUCTION_HALF_DESIGN.md",
       "reason": "Named `reference_of` and not `resolve`: it resolves nothing, and this gate matches a BARE name as well as `module::name(`, so a generic verb is a false-caller magnet -- `tools/test_check_reachability.py` blacklists `resolve` outright because a deleted ladder once declared one. It returns the stored `auth_ref`, which NAMES where a secret lives on the other side of the trust boundary; it is not a credential and this process holds none, per migration 0022. It has no production caller because the thing that would carry a reference across that boundary -- the transport of a `call` step -- does not exist: repo.rs's Call arm refuses with `call_transport_unimplemented` and uses `credentials::is_bound`, which answers the only question a receipt needs. Shipping the store without the reader would leave the round trip through `normalize_auth_ref` and the schema CHECK -- the part that makes this a reference store rather than a value store -- asserted by nothing. Flip this to must_have_caller in the same commit that adds the transport.",
       "observed": "2026-08-31 (§4 rewritten as a reference store): ZERO non-test callers. Exercised by credentials.rs tests only -- binding_with_a_confirmed_grant_stores_the_reference, a_grant_is_consumed_and_does_not_bind_twice, unbinding_needs_no_grant, a_binding_does_not_reach_a_different_build."
+    },
+    "accept_prepare": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "The create-if-absent CAS insert `absent -> ACCEPTED_PREPARED`. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "gate_and_start": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Runs the step-8a lease-expiry launch gate against the window the ledger persisted and CASes LEASE_READY forward. Until 2026-10-01 it took the lease window as ARGUMENTS, the F-01/F-23 defect its Python twin had already removed; the Rust copy kept it because nothing calls it. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "enqueue_terminal": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Writes the terminal-record row to governed_turn_outbox. No code in either language drains that table: the Python supervisor has no statement touching it. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "pending_outbox": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Lists unpublished governed_turn_outbox rows. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "mark_published": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Marks a governed_turn_outbox row published. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "advance": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Applies one section 5 transition to an acceptance row under a `WHERE state IN (<legal predecessors>)` guard. It is `pub`, so it moves a LEASE_READY row with no launch gate at all - which is why `gate_and_start` being 'the one place' is a convention of the file and not a property of it. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "current_state": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Reads an attempt's stored acceptance state, failing closed on an out-of-domain token. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "lease_payload_bytes": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/supervisor_ledger.rs",
+      "module": "supervisor_ledger",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/REACHABILITY_GATE.md",
+      "reason": "Returns the canonical lease payload persisted at acceptance, for a deterministic re-sign after a crash. It is part of the Rust copy of the section 5 acceptance state machine and outbox, which has no caller outside its own #[cfg(test)] module: the supervisor that runs is Python and its ledger is engine/runtime/governed_supervisor_ledger.py over the same supervisor_ledger.sql. Only create_schema and evidence_floor_cas are reached from other crates. Declared so that the day something calls it this gate says so, instead of a tested library reading as a control in service. Whether to delete the Rust half or to wire a Rust supervisor onto it is a decision about which implementation is the supervisor; it has not been made.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside supervisor_ledger.rs and its #[cfg(test)] module, derived by this gate in the same run."
+    },
+    "parse_connect_target": {
+      "kind": "function",
+      "defined_in": "apps/desktop/src-tauri/core/src/egress_proxy.rs",
+      "module": "egress_proxy",
+      "expectation": "declared_unreachable",
+      "tracked_by": "docs/design/PRODUCTION_HALF_DESIGN.md",
+      "reason": "Parses the target of an HTTP CONNECT request for the BUILD agent's egress listener. That listener does not exist: egress_proxy::NOT_IMPLEMENTED says so first, nothing in this tree accepts a CONNECT, and the produced-agent path that IS wired uses EgressGrant::parse_named and EgressGrant::authorize_ref only. The rest of the build-population surface (EgressGrant::parse, ::empty, ::authorize) is equally caller-less but is not declared here, because this gate matches `module::name(` and would never see an inherent call such as `EgressGrant::authorize(` - a declaration that could not turn RED is worse than none. The design says of this module 'Declare it, or CI goes RED'; this is the one function of it the gate can actually watch.",
+      "observed": "2026-10-01 (whole-repository read, T-145): ZERO callers outside egress_proxy.rs and its #[cfg(test)] module, derived by this gate in the same run."
     }
   },
   "tools_gates": {

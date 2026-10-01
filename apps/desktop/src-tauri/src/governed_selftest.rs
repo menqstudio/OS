@@ -10,9 +10,18 @@
 //! HONESTY — read carefully. This does NOT flip live AI turns to "verified": those
 //! still run under `NoTrustedManifest` and stay fail-closed (blocked / development-
 //! untrusted). And the root of trust here is the compiled-in TCB *demonstration*
-//! anchor (a public constant), not a secret offline-HSM key — so the crypto really
-//! verifies, but the custody posture is demonstration-grade. Both facts are carried
-//! back to the UI verbatim so nothing is overclaimed.
+//! anchor — a public constant whose private half is in this source tree — so the
+//! crypto really verifies, but the custody posture is demonstration-grade. Both facts
+//! are carried back to the UI verbatim so nothing is overclaimed.
+//!
+//! WHAT PRODUCTION TRUST IS NOT (T-145). This file, the note it shows on screen and its
+//! two frontend mirrors used to contrast the demonstration anchor with a secret key held
+//! off the machine, and to say production was waiting on custody of that kind. There is
+//! no such key and there will not be one: Owner decision #78 (2026-08-09) is that the
+//! INSTALL mints trust and no person holds, carries or signs with a root
+//! (`docs/OWNER_ACTION_REQUIRED.md` §0). What production is waiting on is stated in
+//! [`CUSTODY_NOTE`], and `tools/check_no_owner_key_ceremony.py` now refuses the old
+//! wording wherever it reappears.
 
 use serde::Serialize;
 
@@ -28,8 +37,8 @@ pub struct TrustSelftest {
     /// compiled-in DEMONSTRATION anchor, so this is Production-CLASS crypto at demonstration custody. A
     /// consumer MUST NOT render this as real production trust while `demonstration_custody` is true.
     pub production_verified: bool,
-    /// True when the root of trust is the compiled-in DEMONSTRATION anchor (a public constant), NOT a real
-    /// offline-root-verified production manifest. The in-process self-test always uses the demonstration
+    /// True when the root of trust is the compiled-in DEMONSTRATION anchor (a public constant), NOT a
+    /// manifest verified under an install-minted root. The in-process self-test always uses the demonstration
     /// anchor, so this is ALWAYS true for this command — it is the explicit, un-missable flag that pairs with
     /// `production_verified` so the boolean can never be read as production trust on its own.
     pub demonstration_custody: bool,
@@ -52,11 +61,20 @@ pub struct TrustSelftest {
     pub platform_note: String,
 }
 
+/// The custody posture, shown to the owner word for word beside every self-test result.
+///
+/// Three claims, each of which is checkable: the anchor is a compiled-in public constant whose
+/// private half is in the source tree; live turns are fail-closed; and the route to production is
+/// an INSTALL-minted root, which commits `demonstration_custody` until the Owner's
+/// `INSTALL_MINTED_CUSTODY_ACCEPTED` is flipped after an independent audit. It names no key a
+/// person holds, because there is none (#78).
 const CUSTODY_NOTE: &str = "The crypto is real: a full challenge→lease→attest→sign→verify chain with \
 ed25519 + JCS + SHA-256 that genuinely verifies. But the root of trust is the compiled-in TCB demonstration \
-anchor (a public constant), NOT a secret offline-HSM key — so this proves the machinery, at demonstration-grade \
-custody. Live AI turns still run fail-closed (NoTrustedManifest); production offline-root custody + a live \
-supervisor/signer sidecar remain pending before real turns can reach trusted_verified.";
+anchor — a public constant whose private half is in the source tree — so this proves the machinery, at \
+demonstration-grade custody. Live AI turns still run fail-closed (NoTrustedManifest). No person holds a \
+production key and none ever will: trust is minted by the install. A root minted that way commits \
+demonstration_custody, not trusted_verified, until the Owner accepts install-minted custody after an \
+independent audit — which has not happened — and real turns also need a live supervisor/signer sidecar.";
 
 /// Demonstration model seam (Windows). The chain's executor calls this DURING the governed execution step to
 /// produce the reply. If the operator points `BROPS_SELFTEST_MODEL_CMD` at a model CLI (e.g. `claude -p -`),
@@ -153,8 +171,11 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             *captured.borrow_mut() = out.clone();
             Ok(out)
         };
-        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce)?;
+        // Bind, clean up, THEN propagate: with `?` on the call itself an erroring chain returned
+        // before the removal and left its proof store behind (the kit creates the directory first).
+        let outcome = brops_win_live::proof::in_process_turn_produce(&dir, now_ms, produce);
         let _ = std::fs::remove_dir_all(&dir);
+        let outcome = outcome?;
         let answer = String::from_utf8_lossy(&captured.into_inner()).chars().take(4000).collect::<String>();
         Ok(TrustSelftest {
             available: true,
@@ -188,6 +209,47 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             custody_note: CUSTODY_NOTE.to_string(),
             platform_note: "non-windows".to_string(),
         })
+    }
+}
+
+/// What the owner is told about custody — on every platform, so on every CI runner.
+#[cfg(test)]
+mod custody_wording {
+    use super::*;
+
+    /// The note says what production waits on, and it is not a key somebody keeps.
+    ///
+    /// It contrasted the demonstration anchor with a secret key in an HSM kept off the machine,
+    /// and said production custody of that kind "remain[ed] pending" — on screen, seven weeks
+    /// after Owner decision #78 said no person holds a root. The gate that forbids that claim
+    /// (`tools/check_no_owner_key_ceremony.py`) passed, because it listed the ceremony's tool
+    /// names and not this wording. The phrases are assembled below rather than written out,
+    /// here and in this comment: the gate now sweeps for them, and it sweeps this file too.
+    #[test]
+    fn the_custody_note_names_install_minted_trust_and_no_person_held_key() {
+        let note = CUSTODY_NOTE.to_lowercase();
+        for gone in [["offline", "-hsm"], ["offline", "-root"], ["offline", " root"]] {
+            let phrase = gone.concat();
+            assert!(!note.contains(&phrase), "the note still names {phrase:?}");
+        }
+        assert!(note.contains("minted by the install"), "{CUSTODY_NOTE}");
+        assert!(note.contains("demonstration_custody"), "{CUSTODY_NOTE}");
+        assert!(note.contains("independent audit"), "{CUSTODY_NOTE}");
+        assert!(note.contains("no person holds"), "{CUSTODY_NOTE}");
+        // And what it always said, which stays true.
+        assert!(note.contains("demonstration anchor"), "{CUSTODY_NOTE}");
+        assert!(note.contains("fail-closed"), "{CUSTODY_NOTE}");
+    }
+
+    /// The note the command returns is that constant, on the platform this runs on.
+    #[test]
+    fn the_command_returns_the_custody_note_and_demonstration_custody() {
+        // Off Windows the kit is not compiled and the command reports that; on Windows it runs
+        // the real chain. Either way the custody fields are the same two facts — and an error is
+        // a failure here, not a reason to assert nothing.
+        let result = governed_trust_selftest().expect("the self-test command must answer");
+        assert_eq!(result.custody_note, CUSTODY_NOTE);
+        assert!(result.demonstration_custody, "this command never proves production trust");
     }
 }
 

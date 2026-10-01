@@ -594,12 +594,10 @@ pub mod approvals {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// SHA-256 of `s`, lowercase hex.
+    /// SHA-256 of `s`, lowercase hex. The `&str` face of [`crate::receipt::sha256_hex`],
+    /// which is the crate's one implementation.
     pub fn sha256_hex(s: &str) -> String {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(s.as_bytes());
-        format!("{:x}", h.finalize())
+        crate::receipt::sha256_hex(s.as_bytes())
     }
 
     /// The SINGLE canonical description of what a run step will execute. Every
@@ -1001,6 +999,23 @@ pub mod approvals {
             .optional()?)
     }
 
+    /// The most recent approval for an entity that is still UNDECIDED: `pending`, or
+    /// `escalated` (routed to A3 and never moved since — nothing in this tree decides an
+    /// escalated row). The run-step gate asks this, not [`pending_for`], before it raises a
+    /// new request: an escalated row matched none of `approved_for` / `rejected_for` /
+    /// `pending_for`, so the gate fell through to `create` and minted a fresh A2 request for
+    /// the same step, which undid the escalation without saying so.
+    pub fn undecided_for(conn: &Connection, entity_id: &str) -> CoreResult<Option<Approval>> {
+        Ok(conn
+            .query_row(
+                "SELECT * FROM approvals WHERE entity_id = ?1 AND status IN ('pending', 'escalated') \
+                 ORDER BY requested_at DESC LIMIT 1",
+                [entity_id],
+                map,
+            )
+            .optional()?)
+    }
+
     /// Reject-only decision path. **Approve does NOT go through here** (T-011): the
     /// only way to reach `status = 'approved'` is `approve_confirmed`, which records
     /// the native-confirmation markers that `approved_for` requires. `decide` refuses
@@ -1036,6 +1051,12 @@ pub mod approvals {
     /// it needs no engine adjudication, but it is still pending-only + atomic + audited, and the
     /// owner-facing notification makes the escalation visible. Re-escalating a non-pending row is
     /// a no-op error (NotFound), so an already-decided or already-escalated approval cannot move.
+    ///
+    /// **An escalated row has no way out.** `approve_confirmed`, `decide` and this function all
+    /// require `status = 'pending'`, and there is no A3 reviewer in the tree. So escalating a
+    /// run-step approval holds the step for good: [`undecided_for`] keeps the gate shut on it
+    /// and the run stays `awaiting_approval` until it is cancelled. Who may decide an A3 row is
+    /// an Owner decision that has not been made; until it is, held is the honest state.
     pub fn escalate(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<Approval> {
         super::atomic(conn, |tx| {
             let changed = tx.execute(
@@ -2093,11 +2114,6 @@ pub mod runs {
         Ok(pending)
     }
 
-    /// Record a produced result for a step and mark it done. Enforces the same
-    /// approval gate as `set_step_status` — a gated step can never be marked
-    /// done without a matching approval, whichever function sets it (M-3). The
-    /// gate read, the UPDATE, and the approval consumption run in one
-    /// transaction so the guarantee lives with the write.
     /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
     /// called, so one approval starts exactly one execution. In one transaction it
     /// refuses if the run already has a step mid-execution, then claims this step by
@@ -2105,8 +2121,9 @@ pub mod runs {
     /// under an `execution_attempt_id IS NULL` guard — the status is NOT changed, the
     /// attempt-id is the claim token, and a concurrent claim writes 0 rows and fails —
     /// and, for a gated step, verifies the native-confirmed grant and CONSUMES it now.
-    /// A provider failure therefore leaves no reusable grant; a retry needs a fresh
-    /// approval. Returns the attempt id the caller presents to complete/fail the step.
+    /// A provider failure therefore leaves no reusable grant — and no reusable step: see
+    /// [`fail_step_execution`]. Returns the attempt id the caller presents to complete/fail
+    /// the step.
     pub fn claim_step_for_execution(conn: &Connection, id: &str, session_id: &str) -> CoreResult<String> {
         let attempt = crate::id();
         super::atomic(conn, |tx| {
@@ -2171,8 +2188,12 @@ pub mod runs {
     }
 
     /// Fail a claimed execution -> `failed`. The grant consumed at claim is NOT
-    /// restored — a retry needs a fresh approval (safest v1). Only the claiming
-    /// attempt on a still-runnable step may fail it; a wrong/stale attempt is refused.
+    /// restored, and **a failed step is terminal**: nothing clears its
+    /// `execution_attempt_id`, so the claim's `IS NULL` guard never admits it again and
+    /// `set_step_status` refuses it as claimed. Three comments here used to promise that
+    /// "a retry needs a fresh approval"; no retry exists in this tree, in place or as a
+    /// command. Doing the work again means a new step. Only the claiming attempt on a
+    /// still-runnable step may fail it; a wrong/stale attempt is refused.
     pub fn fail_step_execution(conn: &Connection, id: &str, attempt: &str) -> CoreResult<RunStep> {
         super::atomic(conn, |tx| {
             let n = tx.execute(
@@ -2191,7 +2212,8 @@ pub mod runs {
     /// Startup reconciliation (T-011 crash recovery): a step claimed for execution by
     /// a PREVIOUS/dead session (owner session != the current one) is settled
     /// fail-closed — step -> `failed`, its run -> `failed`, `execution.abandoned`
-    /// audited. The consumed grant is NOT restored: a retry needs a fresh approval.
+    /// audited. The consumed grant is NOT restored, and the step is terminal like any
+    /// other failed one (see [`fail_step_execution`]).
     /// This unwedges a run whose process crashed mid-provider-call, where the durable
     /// claim would otherwise block every new claim and `advance` forever.
     ///
@@ -2717,8 +2739,42 @@ pub mod automations {
     /// run, or last run at least one interval ago), running its LOCAL action and logging the run.
     /// Returns the runs fired this tick. Only local, non-AI actions ever fire unattended here — an
     /// AI-reaching action would route through the governed, fail-closed chain, not this loop.
+    ///
+    /// **Every tick that reaches the database leaves a `scheduler_ticks` row, and a tick
+    /// that failed leaves its error in it.** The row used to be written inside
+    /// `agent_runs::enqueue_due`, which runs only when a produced-agent store exists — the
+    /// shipped app sets none — and only on success, with `error` hard-coded `NULL`. So the
+    /// table that exists because the caller threw this result away was itself empty in the
+    /// product and silent on every failure. What still leaves no row: a tick that never got
+    /// a connection (a poisoned mutex in `lib.rs`), and a database too broken to take the
+    /// INSERT. Both are reported by the caller, which no longer discards this result.
+    ///
+    /// **One failure does not end the tick either.** Every `?` in the halves used to return on
+    /// the spot, so an automation whose run could not be recorded stopped every automation
+    /// listed after it AND the whole produced-agent half — every minute, for as long as that one
+    /// row stayed broken. Each due automation and the agent half are now attempted regardless;
+    /// the FIRST error is returned once all of them have been, and it is the error the tick row
+    /// carries.
     pub fn run_due(conn: &Connection, now_ms: i64) -> CoreResult<Vec<AutomationRun>> {
+        let mut counts = (0u32, 0u32, 0u32);
+        let outcome = run_due_halves(conn, now_ms, &mut counts);
+        let error = outcome.as_ref().err().map(|e| e.to_string());
+        let recorded = super::agent_runs::record_tick(conn, now_ms, counts, error.as_deref());
+        let fired = outcome?;
+        recorded?;
+        Ok(fired)
+    }
+
+    /// Both halves of one tick. `counts` is `(due_found, enqueued, refused)` for the
+    /// produced-agent half and is written through a reference so that a tick which fails
+    /// AFTER enqueueing still records what it had enqueued.
+    fn run_due_halves(
+        conn: &Connection,
+        now_ms: i64,
+        counts: &mut (u32, u32, u32),
+    ) -> CoreResult<Vec<AutomationRun>> {
         let mut fired = Vec::new();
+        let mut first_error: Option<CoreError> = None;
         for a in list(conn)? {
             if !a.enabled {
                 continue;
@@ -2727,9 +2783,15 @@ pub mod automations {
                 Some(i) => i,
                 None => continue, // manual / unrecognized → not scheduled
             };
-            let last_ms = list_runs(conn, &a.id)?
-                .first()
-                .and_then(|r| r.ran_at.parse::<i64>().ok());
+            let last_ms = match list_runs(conn, &a.id) {
+                Ok(runs) => runs.first().and_then(|r| r.ran_at.parse::<i64>().ok()),
+                // Not knowing when it last ran is not a reason to fire it: skip this one, keep
+                // the error, go on to the next.
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                    continue;
+                }
+            };
             let due = match last_ms {
                 Some(t) => now_ms.saturating_sub(t) >= interval,
                 None => true,
@@ -2737,7 +2799,12 @@ pub mod automations {
             if due {
                 // Unattended: this loop runs on a 60s timer with nobody at the
                 // cockpit, so the run is the scheduler's, not a person's.
-                fired.push(run(conn, &a.id, audit::Actor::scheduler())?);
+                match run(conn, &a.id, audit::Actor::scheduler()) {
+                    Ok(r) => fired.push(r),
+                    Err(e) => {
+                        first_error.get_or_insert(e);
+                    }
+                }
             }
         }
         // The produced-agent half of the same tick. It enqueues AND dispatches.
@@ -2761,17 +2828,29 @@ pub mod automations {
         //
         // A store root that is absent is not an error: no agent has been built.
         if let Some(root) = super::agent_runs::default_store_root() {
-            super::agent_runs::enqueue_due(conn, now_ms, &root)?;
-            // Bounded, so one tick cannot become unbounded work: a backlog is
-            // drained across ticks rather than inside one. `claim_and_run`
-            // returns None when nothing is queued, which ends the loop early.
-            for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
-                if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
-                    break;
+            let mut agents = || -> CoreResult<()> {
+                *counts = super::agent_runs::enqueue_due(conn, now_ms, &root)?;
+                // Bounded, so one tick cannot become unbounded work: a backlog is
+                // drained across ticks rather than inside one. `claim_and_run`
+                // returns None when nothing is queued, which ends the loop early.
+                for _ in 0..super::agent_runs::MAX_DISPATCH_PER_TICK {
+                    if super::agent_runs::claim_and_run(conn, &root, "scheduler", now_ms)?.is_none() {
+                        break;
+                    }
                 }
+                Ok(())
+            };
+            // Inside this half the first error still ends it: a dispatch that failed is not
+            // retried within the tick. What changed is that it no longer depends on the
+            // automation half above having succeeded.
+            if let Err(e) = agents() {
+                first_error.get_or_insert(e);
             }
         }
-        Ok(fired)
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(fired),
+        }
     }
 
     pub fn delete(conn: &Connection, id: &str, actor: audit::Actor<'_>) -> CoreResult<()> {
@@ -2792,8 +2871,19 @@ pub mod automations {
 ///
 /// **A tick that finds nothing still writes a row.** `scheduler_ticks` exists
 /// because `lib.rs` discarded `run_due`'s result with `let _ =`, which made a
-/// poisoned mutex, a failed open and a quiet week look identical. A scheduler
-/// that cannot say what it did on a tick cannot be audited unattended.
+/// failed tick and a quiet week look identical. A scheduler that cannot say
+/// what it did on a tick cannot be audited unattended. The row is written by
+/// `automations::run_due` through [`agent_runs::record_tick`], on success and
+/// on failure, whether or not a store root is set; see `run_due` for the two
+/// cases that still leave none.
+///
+/// **Reachability, stated because the T-058 test comment below reads as if it
+/// were settled.** The tick dispatches only when `BROPS_AGENT_STORE` names a
+/// directory, and only bundles that were registered and armed. In this tree
+/// the one thing that sets that variable, registers a bundle or arms one is
+/// the CI demo binary `core/src/bin/produce_agent_artifact.rs`; the desktop
+/// app has no command for any of the three. So in the shipped product
+/// `default_store_root()` is `None` and the dispatch half below does not run.
 ///
 /// **A bad bundle is refused, not skipped.** A skipped fire leaves no row, and
 /// "nothing happened" is exactly what a log must not say when something was
@@ -2811,9 +2901,6 @@ pub mod agent_runs {
         std::env::var_os("BROPS_AGENT_STORE").map(PathBuf::from).filter(|p| p.is_dir())
     }
 
-    /// The regime a run executed under, recorded ON the receipt. Read once here
-    /// rather than at display time, because a receipt that cannot distinguish
-    /// "was blocked" from "would have been blocked" is not evidence.
     /// How many queued runs one 60s tick may dispatch.
     ///
     /// A bound, not a tuning knob: without it a backlog makes a single
@@ -2822,8 +2909,31 @@ pub mod agent_runs {
     /// cannot hold the scheduler. What does not fit waits for the next tick.
     pub const MAX_DISPATCH_PER_TICK: usize = 4;
 
+    /// The regime label recorded ON the receipt. Read once here rather than at
+    /// display time, because a receipt that cannot distinguish "was blocked"
+    /// from "would have been blocked" is not evidence.
+    ///
+    /// It is what `BRO_ENFORCEMENT` SAID, and no more. That variable configures
+    /// the engine's hook (`engine/runtime/bro_hook.py`); nothing in the desktop
+    /// reads it to decide anything, and a flow run does not pass through that
+    /// hook. So an absent variable is recorded as `not_measured` — it used to be
+    /// recorded as `enforce`, a regime nobody had established — and a value
+    /// outside the engine's two is `unrecognized` rather than stored verbatim.
     pub fn enforcement_regime() -> String {
-        std::env::var("BRO_ENFORCEMENT").unwrap_or_else(|_| "enforce".to_string())
+        regime_label(std::env::var("BRO_ENFORCEMENT").ok().as_deref()).to_string()
+    }
+
+    /// The closed set [`enforcement_regime`] writes. Normalised the way the
+    /// engine reads the same variable: trimmed, case-insensitive.
+    pub const REGIME_LABELS: &[&str] = &["enforce", "shadow", "not_measured", "unrecognized"];
+
+    fn regime_label(raw: Option<&str>) -> &'static str {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            None => "not_measured",
+            Some("enforce") => "enforce",
+            Some("shadow") => "shadow",
+            Some(_) => "unrecognized",
+        }
     }
 
     /// Record a built bundle. It is created **DISARMED**: no `agent_bundle_active`
@@ -2964,12 +3074,29 @@ pub mod agent_runs {
             })?;
             if state == "queued" { enqueued += 1 } else { refused += 1 }
         }
+        Ok((due_found, enqueued, refused))
+    }
+
+    /// How much of a failed tick's error text the row keeps.
+    const MAX_TICK_ERROR_CHARS: usize = 512;
+
+    /// The tick's own record: one row per tick, `error` NULL on success and the
+    /// failure's text otherwise. Called by `automations::run_due` and by nothing
+    /// else — [`enqueue_due`] used to write it, which tied the row to a store
+    /// root the shipped app never has and to the success path only.
+    pub fn record_tick(
+        conn: &Connection,
+        now_ms: i64,
+        (due_found, enqueued, refused): (u32, u32, u32),
+        error: Option<&str>,
+    ) -> CoreResult<()> {
+        let error = error.map(|e| e.chars().take(MAX_TICK_ERROR_CHARS).collect::<String>());
         conn.execute(
             "INSERT OR REPLACE INTO scheduler_ticks(at, due_found, enqueued, refused, error) \
-             VALUES (?1,?2,?3,?4,NULL)",
-            rusqlite::params![now_ms.to_string(), due_found, enqueued, refused],
+             VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![now_ms.to_string(), due_found, enqueued, refused, error],
         )?;
-        Ok((due_found, enqueued, refused))
+        Ok(())
     }
 
     /// The one-time claim, on its own so it can be tested on its own.
@@ -3039,9 +3166,41 @@ pub mod agent_runs {
         // both are refused rather than approximated.
         let mut touched: Vec<String> = Vec::new();
         let mut steps_run = 0u32;
+        match run_steps(conn, &run_id, &digest, &bundle, &mut steps_run, &mut touched) {
+            Ok((outcome, reason)) => {
+                finish(conn, &run_id, &digest, outcome, reason, steps_run, &touched)?;
+                Ok(Some(run_id))
+            }
+            // The claim above already wrote `state='running'`. Returning the
+            // error with `?` left the row there for good — no receipt, and no
+            // writer anywhere that moves a `running` flow run — so a step that
+            // errored looked exactly like one still in flight. The run is
+            // finished as `failed`, with a receipt for what it had done by
+            // then, and the error still reaches the caller (and, through
+            // `run_due`, the tick row). If the database cannot take the finish
+            // either, the original error is the one worth returning; the row
+            // is then settled by [`reconcile_abandoned`] at the next start.
+            Err(e) => {
+                let _ = finish(conn, &run_id, &digest, "failed", None, steps_run, &touched);
+                Err(e)
+            }
+        }
+    }
+
+    /// The step loop of one claimed run. Returns the `(outcome, refusal_reason)`
+    /// the run finishes with; `steps_run` and `touched` are written through
+    /// references so that an `Err` leaves behind what had already happened.
+    fn run_steps(
+        conn: &Connection,
+        run_id: &str,
+        digest: &str,
+        bundle: &agent_bundle::VerifiedBundle,
+        steps_run: &mut u32,
+        touched: &mut Vec<String>,
+    ) -> CoreResult<(&'static str, Option<&'static str>)> {
         for step in &bundle.flow.steps {
             match step.kind {
-                StepKind::Branch => { steps_run += 1; }
+                StepKind::Branch => { *steps_run += 1; }
                 StepKind::Store => {
                     let note = format!(
                         "{} · step {} · {}",
@@ -3066,27 +3225,58 @@ pub mod agent_runs {
                         audit::Actor::run_executor(),
                     )?;
                     touched.push(format!("knowledge_notes/{}", id.id));
-                    steps_run += 1;
+                    *steps_run += 1;
                 }
                 StepKind::Call => {
                     // THE ENFORCEMENT POINT for the produced agent (design SS3.3,
                     // as corrected: this population has no spawn and no `Bash`,
                     // so the kernel namespace built for the build agent is not
                     // the mechanism here — the closed step vocabulary is).
-                    let refusal = authorize_call(conn, &run_id, &bundle, step)?;
-                    finish(conn, &run_id, &digest, "refused",
-                           Some(refusal.as_str()), steps_run, &touched)?;
-                    return Ok(Some(run_id));
+                    let refusal = authorize_call(conn, run_id, bundle, step)?;
+                    return Ok(("refused", Some(refusal.as_str())));
                 }
                 _ => {
-                    finish(conn, &run_id, &digest, "refused",
-                           Some(Refusal::StepKindNotExecutable.as_str()), steps_run, &touched)?;
-                    return Ok(Some(run_id));
+                    return Ok(("refused", Some(Refusal::StepKindNotExecutable.as_str())));
                 }
             }
         }
-        finish(conn, &run_id, &digest, "done", None, steps_run, &touched)?;
-        Ok(Some(run_id))
+        Ok(("done", None))
+    }
+
+    /// Startup reconciliation for flow runs, the twin of
+    /// `runs::reconcile_abandoned_executions`: a run still `running` when the
+    /// app starts was claimed by a process that died before it could finish it,
+    /// and nothing else ever moves that row. Each is settled `failed`, with a
+    /// receipt and a `flow_run.abandoned` audit record.
+    ///
+    /// The receipt says only what the store can still show. `touched` is the
+    /// notes whose `source` names this run, and `steps_run` is their count: a
+    /// `branch` step leaves nothing behind to count, so that number is a floor,
+    /// not the tally the dead process held in memory.
+    ///
+    /// ASSUMES a single app instance, as its twin does, and for a stronger
+    /// reason: the tick's claim session is the constant `"scheduler"`, so a
+    /// claim cannot be told from a live one by its session. Call it only before
+    /// the scheduler loop starts, under the instance lock.
+    pub fn reconcile_abandoned(conn: &Connection) -> CoreResult<u32> {
+        let stale: Vec<(String, String)> = {
+            let mut st = conn.prepare("SELECT id, bundle_digest FROM flow_runs WHERE state = 'running'")?;
+            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (run_id, digest) in &stale {
+            let touched: Vec<String> = {
+                let mut st = conn.prepare(
+                    "SELECT id FROM knowledge_notes WHERE source = ?1 ORDER BY created_at, id",
+                )?;
+                let rows = st.query_map([format!("flow_run:{run_id}")], |r| r.get::<_, String>(0))?;
+                rows.map(|id| id.map(|id| format!("knowledge_notes/{id}")))
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            finish(conn, run_id, digest, "failed", None, touched.len() as u32, &touched)?;
+            super::audit::record(conn, "flow_run.abandoned", audit::Actor::system(), "flow_run", run_id)?;
+        }
+        Ok(stale.len() as u32)
     }
 
     /// Decide one `call` step's destination against the bundle's grant, record
@@ -3389,16 +3579,175 @@ pub mod agent_runs {
             assert_eq!(by, "run_due");
         }
 
+        /// `(at, due_found, enqueued, refused, error)` for every tick row.
+        fn tick_rows(conn: &Connection) -> Vec<(String, i64, i64, i64, Option<String>)> {
+            let mut st = conn
+                .prepare("SELECT at, due_found, enqueued, refused, error FROM scheduler_ticks ORDER BY at")
+                .unwrap();
+            let rows = st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        }
+
         /// A tick that found nothing still writes a row: "nothing was due" and
         /// "the tick did not run" must not look the same. This is the whole
         /// reason `scheduler_ticks` exists -- `lib.rs` discarded the result.
+        ///
+        /// Driven through `run_due`, the scheduler's entry point, WITH NO STORE
+        /// ROOT — the shipped app's situation. It used to call `enqueue_due`
+        /// directly with a store directory, which is the one arrangement in
+        /// which the row was ever written.
         #[test]
         fn a_tick_that_found_nothing_still_leaves_a_row() {
             let conn = crate::db::open(":memory:").unwrap();
-            let dir = tempfile::tempdir().unwrap();
-            enqueue_due(&conn, 42, dir.path()).unwrap();
-            let n: i64 = conn.query_row("SELECT count(*) FROM scheduler_ticks", [], |r| r.get(0)).unwrap();
-            assert_eq!(n, 1);
+            {
+                let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                std::env::remove_var("BROPS_AGENT_STORE");
+                assert!(default_store_root().is_none(), "this test is about the no-store case");
+                super::super::automations::run_due(&conn, 42).unwrap();
+            }
+            assert_eq!(tick_rows(&conn), vec![("42".to_string(), 0, 0, 0, None)]);
+        }
+
+        /// And with a store: the counts on the row are the ones `enqueue_due`
+        /// returned, not zeros written by a caller that forgot them.
+        #[test]
+        fn a_tick_that_enqueued_records_what_it_enqueued() {
+            let (conn, dir, _d) = fixture();
+            tick(&conn, dir.path(), 1_000_000_000);
+            assert_eq!(tick_rows(&conn), vec![("1000000000".to_string(), 1, 1, 0, None)]);
+        }
+
+        /// A tick that FAILED leaves a row with the error in it, and the error
+        /// still reaches the caller. Before, a failure anywhere in `run_due`
+        /// returned through `?` past the only INSERT, whose `error` column was
+        /// the literal NULL — so the table could not say what it exists to say.
+        #[test]
+        fn a_tick_that_failed_leaves_a_row_naming_the_error() {
+            let conn = crate::db::open(":memory:").unwrap();
+            // Break the automation half: `automations::list` cannot read a table
+            // that is not there. `scheduler_ticks` is untouched.
+            conn.execute_batch("ALTER TABLE automations RENAME TO automations_gone").unwrap();
+            let failed = {
+                let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                std::env::remove_var("BROPS_AGENT_STORE");
+                super::super::automations::run_due(&conn, 77)
+            };
+            assert!(failed.is_err(), "the failure must still reach the caller");
+            let rows = tick_rows(&conn);
+            assert_eq!(rows.len(), 1, "a failed tick still leaves its row");
+            let error = rows[0].4.as_deref().expect("a failed tick names its error");
+            assert!(error.contains("automations"), "the row must say what failed: {error}");
+            assert!(error.chars().count() <= MAX_TICK_ERROR_CHARS);
+        }
+
+        // ---- a run that errors, or whose process died (flow_runs is reconciled) ----
+
+        /// `(state, refusal_reason)` plus the receipt's `(outcome, steps_run, touched)`.
+        fn receipt_of(conn: &Connection, id: &str) -> Option<(String, i64, Vec<String>)> {
+            conn.query_row(
+                "SELECT outcome, steps_run, touched FROM flow_receipts WHERE run_id=?1", [id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
+            )
+            .optional()
+            .unwrap()
+            .map(|(o, s, t)| (o, s, serde_json::from_str(&t).unwrap()))
+        }
+
+        /// A step that ERRORS finishes the run `failed`, with a receipt. It used
+        /// to leave the row `running` for good: the claim had already been
+        /// written, the error left through `?`, and nothing anywhere moves a
+        /// `running` flow run.
+        #[test]
+        fn a_run_whose_step_errors_is_finished_failed_with_a_receipt() {
+            let (conn, dir, _d) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0)).unwrap();
+            // Make the SECOND store step fail and the first succeed: a trigger
+            // that aborts the insert of step `b`'s note only. So the receipt has
+            // something true to say about what happened before the error.
+            conn.execute_batch(
+                "CREATE TRIGGER fail_second_note BEFORE INSERT ON knowledge_notes
+                 WHEN NEW.title LIKE '%step b%'
+                 BEGIN SELECT RAISE(ABORT, 'induced store failure'); END;",
+            ).unwrap();
+
+            let outcome = claim_and_run(&conn, dir.path(), "s1", 1_000_000_000);
+            assert!(outcome.is_err(), "the step's error must still reach the caller");
+
+            assert_eq!(state_of(&conn, &id), ("failed".into(), None),
+                       "an errored run must not stay `running`");
+            let (receipt_outcome, steps, touched) =
+                receipt_of(&conn, &id).expect("a failed run is still described by a receipt");
+            assert_eq!(receipt_outcome, "failed");
+            assert_eq!(steps, 1, "step `a` ran before the error");
+            assert_eq!(touched.len(), 1);
+        }
+
+        /// A run left `running` by a process that died is settled at the next
+        /// start. Nothing else ever moves that row.
+        #[test]
+        fn a_run_abandoned_mid_flight_is_reconciled_failed_with_a_receipt() {
+            let (conn, dir, digest) = fixture();
+            enqueue_due(&conn, 1_000_000_000, dir.path()).unwrap();
+            let id: String = conn
+                .query_row("SELECT id FROM flow_runs WHERE state='queued'", [], |r| r.get(0)).unwrap();
+            // The dead process: it claimed the run, wrote one note, and stopped.
+            assert!(try_claim(&conn, &id, "scheduler", 1_000_000_000).unwrap());
+            let note = super::super::knowledge::create(
+                &conn,
+                crate::domain::NewKnowledgeNote {
+                    title: "T · step a · one".into(), body: String::new(),
+                    source: format!("flow_run:{id}"), tags: "produced-agent".into(),
+                },
+                audit::Actor::run_executor(),
+            ).unwrap();
+            assert_eq!(state_of(&conn, &id).0, "running");
+            assert!(receipt_of(&conn, &id).is_none());
+
+            assert_eq!(reconcile_abandoned(&conn).unwrap(), 1);
+
+            assert_eq!(state_of(&conn, &id), ("failed".into(), None));
+            let (outcome, steps, touched) = receipt_of(&conn, &id).expect("the receipt");
+            assert_eq!(outcome, "failed");
+            assert_eq!(touched, vec![format!("knowledge_notes/{}", note.id)],
+                       "the receipt names what the store can still show the run wrote");
+            assert_eq!(steps, 1);
+            let abandoned: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE event_type='flow_run.abandoned' AND entity_id=?1",
+                [&id], |r| r.get(0)).unwrap();
+            assert_eq!(abandoned, 1);
+            let bundle: String = conn.query_row(
+                "SELECT bundle_digest FROM flow_receipts WHERE run_id=?1", [&id], |r| r.get(0)).unwrap();
+            assert_eq!(bundle, digest);
+
+            // Idempotent, and it touches nothing that is not `running`: a second
+            // pass finds no work, and a finished run keeps its outcome.
+            assert_eq!(reconcile_abandoned(&conn).unwrap(), 0);
+            let (conn2, dir2, _d2) = fixture();
+            enqueue_due(&conn2, 1_000_000_000, dir2.path()).unwrap();
+            let done = claim_and_run(&conn2, dir2.path(), "s1", 1_000_000_000).unwrap().unwrap();
+            assert_eq!(reconcile_abandoned(&conn2).unwrap(), 0);
+            assert_eq!(state_of(&conn2, &done).0, "done");
+        }
+
+        // ---- the regime label (what the variable SAID, from a closed set) ----
+
+        #[test]
+        fn the_regime_label_is_a_closed_set_and_absent_is_not_enforce() {
+            assert_eq!(regime_label(None), "not_measured",
+                       "an unset variable must not be recorded as a regime nobody established");
+            assert_eq!(regime_label(Some("enforce")), "enforce");
+            assert_eq!(regime_label(Some("  Shadow\n")), "shadow", "normalised as the engine reads it");
+            assert_eq!(regime_label(Some("ENFORCE")), "enforce");
+            for junk in ["", "off", "enforce; drop table", "shadow-ish"] {
+                assert_eq!(regime_label(Some(junk)), "unrecognized", "{junk:?} is not stored verbatim");
+            }
+            for raw in [None, Some("enforce"), Some("shadow"), Some("anything else")] {
+                assert!(REGIME_LABELS.contains(&regime_label(raw)));
+            }
         }
 
         /// A tampered bundle is REFUSED with a reason, never skipped. A skipped
@@ -3468,7 +3817,7 @@ pub mod agent_runs {
                 .query_row("SELECT enforcement_regime, steps_run, touched FROM flow_receipts WHERE run_id=?1",
                            [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
                 .unwrap();
-            assert!(!regime.is_empty());
+            assert!(REGIME_LABELS.contains(&regime.as_str()), "regime {regime:?} is outside the closed set");
             assert_eq!(steps, 2);
             let touched: Vec<String> = serde_json::from_str(&touched).unwrap();
             assert_eq!(touched.len(), 2, "both store steps must be recorded");
@@ -3569,6 +3918,14 @@ pub mod agent_runs {
         /// enqueued and performed nothing, so `claim_and_run` had exactly one
         /// non-test caller -- a CI demo binary -- and every piece behind it was
         /// unreachable from the product.
+        ///
+        /// It still is, one step further out, and this test does not show
+        /// otherwise: `tick` below SETS `BROPS_AGENT_STORE` and the fixture
+        /// registers and arms the bundle, and in this tree only the CI demo
+        /// binary (`core/src/bin/produce_agent_artifact.rs`) does any of those
+        /// three. The app sets no store root and has no command that registers
+        /// or arms a bundle, so the shipped tick skips this half. T-058 gave
+        /// `claim_and_run` a caller; it did not give the product a way to it.
         #[test]
         fn the_tick_dispatches_an_armed_bundle_to_completion() {
             let conn = crate::db::open(":memory:").unwrap();
@@ -3601,7 +3958,7 @@ pub mod agent_runs {
                 .query_row("SELECT run_id, enforcement_regime, outcome FROM flow_receipts",
                            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
                 .unwrap();
-            assert!(!regime.is_empty());
+            assert!(REGIME_LABELS.contains(&regime.as_str()), "regime {regime:?} is outside the closed set");
             assert_eq!(outcome, "done");
             let runs: i64 = conn
                 .query_row("SELECT COUNT(*) FROM flow_runs WHERE id=?1", [&run_id], |r| r.get(0)).unwrap();
@@ -3902,6 +4259,10 @@ pub mod integrations {
         "-----BEGIN",                                           // PEM armor
     ];
 
+    /// The one marker the schema-0022 CHECK refuses anywhere in the value. It is also in
+    /// [`KEY_MATERIAL_PREFIXES`], which is the segment-start half of the same rule.
+    const PEM_ARMOR: &str = "-----BEGIN";
+
     /// A rejection that NEVER echoes what was rejected.
     ///
     /// `CoreError::Invalid` renders its `value` into the message, and that message travels
@@ -3917,7 +4278,8 @@ pub mod integrations {
     /// `None`, empty, or whitespace-only all mean CLEAR — the record goes back to holding
     /// no reference. Everything else must positively look like `scheme:locator` with a
     /// scheme from `AUTH_REF_SCHEMES`, within the length bound, in the reference alphabet,
-    /// and carrying no segment that begins with recognisable key material. This is the
+    /// carrying no segment that begins with recognisable key material and no PEM armor
+    /// anywhere. This is the
     /// same rule the schema-0022 CHECK states in SQL, stated a second time here so a
     /// refusal reaches the caller as an explanation rather than as a constraint violation.
     ///
@@ -3956,6 +4318,14 @@ pub mod integrations {
             if KEY_MATERIAL_PREFIXES.iter().any(|p| segment.starts_with(p)) {
                 return Err(refuse_auth_ref("looks like credential material, not a reference"));
             }
+        }
+        // PEM armor is refused WHEREVER it appears, not only at the start of a segment:
+        // that is what the schema-0022 CHECK says (`NOT GLOB '*-----BEGIN*'`), and the
+        // two copies of this rule disagreed on exactly this. `engine:x-----BEGINy` passed
+        // here and then failed the CHECK, reaching the caller as a constraint violation —
+        // the outcome this function exists to prevent.
+        if value.contains(PEM_ARMOR) {
+            return Err(refuse_auth_ref("looks like credential material, not a reference"));
         }
         Ok(Some(value.to_string()))
     }
@@ -4434,6 +4804,16 @@ pub fn seed(conn: &Connection) -> CoreResult<()> {
         // is gated on a natively confirmed approval the seed cannot produce -- which
         // is the point: a starter workspace must not ship an unattended executor the
         // operator never approved.
+        //
+        // THEY ARE ALSO NOT RUNNABLE, armed or not, and that is true of all six (these
+        // two and the four further down). The scheduler fires only `every: <N>{m|h|d}`
+        // triggers (`parse_interval_ms`), and `execute_action` accepts only
+        // `notify:` / `task:` / `note:`; an event trigger such as `run.status = failed`
+        // is never due, and an action such as `create notification` is recorded as
+        // `failed` ("unrecognized action") on a manual run. They are illustrations of
+        // the page, written in a vocabulary the runner does not have. Whether the
+        // starter workspace should show them at all is the Owner's call, not this
+        // file's.
         automations::create(conn, NewAutomation { name: "Notify on failed run".into(), trigger: "run.status = failed".into(), action: "create notification".into() }, audit::Actor::seed())?;
         automations::create(conn, NewAutomation { name: "Auto-archive done projects".into(), trigger: "project.status = completed".into(), action: "set archived".into() }, audit::Actor::seed())?;
 

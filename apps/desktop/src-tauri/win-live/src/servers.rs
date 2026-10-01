@@ -7,7 +7,7 @@
 
 use crate::crypto;
 use brops_core::supervisor_ledger::{
-    create_schema, evidence_floor_cas, EvidenceHead, LedgerError,
+    create_schema, evidence_floor_cas, lease_launch_gate, EvidenceHead, LaunchGate, LedgerError,
 };
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
@@ -378,10 +378,20 @@ pub struct SupervisorConfig {
     /// artifacts into (audit F-02) — the same store the isolated signer reads by handle.
     pub store_dir: PathBuf,
     /// Where the EXECUTION writes its per-run evidence chain (audit **F-01**). The supervisor
-    /// reads it here rather than accepting the evidence head on the wire: in the cross-account
-    /// deployment this directory belongs to the executor principal, so the broker cannot write
-    /// what the supervisor is about to attest. In the in-process proof both sides are one
-    /// process, which makes it a shape check there — said plainly rather than assumed.
+    /// reads it here rather than accepting the evidence head on the wire.
+    ///
+    /// **That is a SHAPE check in every deployment of this kit, not a containment one.** This
+    /// used to say that in the cross-account deployment the directory belongs to the executor
+    /// principal, "so the broker cannot write what the supervisor is about to attest". No
+    /// deployment of this kit has that property: the chain is written by
+    /// `GovernedExecutionCore::execute`, which runs inside `win_live_turn` — the driver/broker —
+    /// and that same process then sends `complete-run`. `win_executor` writes 32 bytes to stdout
+    /// and nothing else, and `win_provision` creates no `run-evidence` directory and puts no ACL
+    /// on one. So the party the supervisor "derives" the head from is the party it is checking.
+    /// What derivation does buy: the head describes THIS run instead of a deployment constant,
+    /// and a completion whose `output_handle` is not the digest the chain recorded is refused.
+    /// A separately-principalled recorder writing into a directory the broker cannot write is the
+    /// Linux kit's property and is not built here.
     pub evidence_dir: PathBuf,
     /// The supervisor's OWN durable anti-rollback/anti-fork floor over the shared supervisor DDL
     /// (audit **R-42**/**R-24**). REQUIRED, not optional: an unconfigured floor must refuse, never
@@ -679,6 +689,13 @@ impl Supervisor {
     /// degrade to "no floor configured" — the whole class of defect this repository keeps finding is
     /// a control that quietly stops applying. There is no `Option<PathBuf>` and no in-memory
     /// fallback: the only way to run without a floor is to not run.
+    ///
+    /// What this does NOT refuse: a floor that is simply ABSENT. `create_dir_all`, `Connection::open`
+    /// and `create_schema` below make a missing db into a new, empty one, and nothing records that a
+    /// floor was ever initialised here. So "cannot be opened" stops the supervisor; "was deleted"
+    /// does not — it restarts the floor from nothing. Custody of this path is therefore the whole
+    /// of the anti-rollback property, and `win_supervisor` currently puts it inside `store_dir`
+    /// (see the comment at its `evidence_floor_db`).
     pub fn new(cfg: SupervisorConfig) -> Result<Self, String> {
         if cfg.evidence_floor_db.as_os_str().is_empty() {
             return Err("supervisor: evidence_floor_db is required (the anti-rollback floor is not optional)".to_string());
@@ -891,9 +908,15 @@ impl Supervisor {
         if a.state != ST_LEASE_READY {
             return refuse("launch-gate", "illegal_state");
         }
-        if now_ms + MIN_LAUNCH_REMAINING_MS > a.lease_expires_at_ms {
+        // The step-8a gate is `brops_core::supervisor_ledger::lease_launch_gate`, CALLED — not the
+        // comparison restated. The restatement had already drifted: it had no not-yet-valid arm,
+        // so a clock behind the lease's issue time launched, and it reported an under-budget
+        // lease as `lease_expired`, a different fact.
+        if let LaunchGate::Expired(reason) =
+            lease_launch_gate(now_ms, a.lease_issued_at_ms, a.lease_expires_at_ms)
+        {
             a.state = ST_EXPIRED;
-            return refuse("launch-gate", "lease_expired");
+            return refuse("launch-gate", reason);
         }
         a.state = ST_EXECUTION_STARTING;
         json!({ "ok": true, "op": "launch-gate", "proceed": true, "execution_attempt_id": attempt })
@@ -1894,6 +1917,36 @@ mod terminal_artifact_tests {
         assert!(!store_holds(&kit.store, "brops.execution-receipt.v1"));
         let _ = std::fs::remove_dir_all(&kit.store);
         let _ = std::fs::remove_dir_all(&kit.evidence);
+    }
+
+    /// The launch gate is the ledger's, all three arms of it. The kit's own copy had one arm and
+    /// one reason; the not-yet-valid arm is the one it lacked, so that is the one that proves the
+    /// shared function is what runs.
+    #[test]
+    fn the_launch_gate_refuses_before_the_lease_is_valid_and_names_each_reason() {
+        let now = 1_700_000_000_000i64;
+        let gate = |at: i64| -> Value {
+            let kit = kit();
+            let attempt = lease(&kit, now);
+            let reply = kit
+                .supervisor
+                .dispatch(&json!({"op":"launch-gate","execution_attempt_id":attempt}), at);
+            let _ = std::fs::remove_dir_all(&kit.store);
+            let _ = std::fs::remove_dir_all(&kit.evidence);
+            reply
+        };
+        // Positive control: the instant it was issued, it launches.
+        assert_eq!(gate(now)["ok"], json!(true));
+        // A clock BEHIND the issue time: the lease is not valid yet.
+        let early = gate(now - 1);
+        assert_eq!(early["ok"], json!(false), "{early}");
+        assert_eq!(early["reason"], json!("lease_not_yet_valid"), "{early}");
+        // One millisecond short of the launch budget is not "expired".
+        let short = gate(now + LEASE_DURATION_MS - MIN_LAUNCH_REMAINING_MS + 1);
+        assert_eq!(short["reason"], json!("insufficient_remaining_budget"), "{short}");
+        // Past the end, it is.
+        let late = gate(now + LEASE_DURATION_MS + 1);
+        assert_eq!(late["reason"], json!("lease_expired"), "{late}");
     }
 
     #[test]

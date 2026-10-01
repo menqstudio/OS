@@ -27,8 +27,10 @@ name = "proof_executor"
 path = "src/bin/proof_executor.rs"
 
 [dependencies]
-# The driver wires the SAME real governed chain the broker uses (LinuxGovernedTurnChain / LinuxHopConnector /
-# LinuxGovernedExecution) and the SAME brops-core crypto/verification — it re-implements no hop and no check.
+# `ladder_turn` builds the SAME LadderChain the broker binary builds. `live_turn` builds the DIRECT chain
+# (LinuxGovernedTurnChain / LinuxGovernedExecution), which no shipped binary constructs — this crate is its
+# only caller. Both use the broker library's LinuxHopConnector and key resolution and brops-core's
+# crypto/verification; neither re-implements a hop or a check.
 brops-core = { path = "../core" }
 brops-broker = { path = "../broker" }
 serde_json = "1"

@@ -56,20 +56,9 @@ pub mod crypto {
         s
     }
 
-    /// Decode 64 hex chars into 32 bytes (public keys / seeds).
-    pub fn hex32(s: &str) -> Option<[u8; 32]> {
-        if s.len() != 64 {
-            return None;
-        }
-        let b = s.as_bytes();
-        let mut out = [0u8; 32];
-        for i in 0..32 {
-            let hi = (b[2 * i] as char).to_digit(16)?;
-            let lo = (b[2 * i + 1] as char).to_digit(16)?;
-            out[i] = (hi * 16 + lo) as u8;
-        }
-        Some(out)
-    }
+    /// Decode 64 hex chars into 32 bytes (public keys / seeds). The core's decoder, under the
+    /// name this kit's callers use; it was a copy of that body.
+    pub use brops_core::key_manifest::decode_hex32 as hex32;
 
     /// Verify a detached ed25519 signature: hex public key, base64url-nopad signature, over `msg`.
     /// `verify_strict` (rejects a non-canonical `s` and small-order keys) — the policy the whole

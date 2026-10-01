@@ -239,6 +239,21 @@ describe('Group room · delegations reported by the room’s asks', () => {
     expect(screen.getByText(STR.delegationLabel.en)).toBeInTheDocument();
     expect(screen.getByText(STR.delegationScopeNote.en)).toBeInTheDocument();
   });
+
+  it('does not say the room chat\'s delegations are drawn nowhere — the thread has its own panel', async () => {
+    // The note claimed the workspace above "draws it nowhere". `<Conversations kind="group">`
+    // renders `<DelegationSurface>` for both kinds, so the room shows TWO panels: prove the
+    // second one is on screen, then hold the sentence to it in every language.
+    framesByAgent = { Scout: [spawned('toolu_a', 'g-1')] };
+    const { container } = setup();
+    await askTheRoom();
+    await surface();
+    expect(container.querySelectorAll('section.v-deleg')).toHaveLength(2);
+    for (const lang of ['en', 'hy', 'ru'] as const) {
+      expect(STR.delegationScopeNote[lang]).not.toMatch(/nowhere|ոչ մի տեղ|нигде/);
+    }
+    expect(STR.delegationScopeNote.en).toMatch(/thread’s own panel/);
+  });
 });
 
 describe('Group room · what the delegation is and is not connected to', () => {

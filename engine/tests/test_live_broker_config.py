@@ -112,6 +112,42 @@ class BoundToTheRustTests(unittest.TestCase):
         self.assertEqual(string_const("ENV_PROGRAM"), module.ENV_PROGRAM)
         self.assertEqual(usize_const("MIN_INVOKER_TOKENS"), module.MIN_INVOKER_TOKENS)
 
+    def shared_sidecar_cases(self):
+        """The accept/refuse table, read out of the Rust test module that owns it.
+
+        `SIDECAR_PRINCIPAL_CASES` in `governed_sidecar.rs` is JSON in a raw string precisely so that
+        this side can take it without parsing Rust. It is the one list both validators are driven
+        from; the four constants above pin the vocabulary, this pins the RULES.
+        """
+        source = read(SIDECAR_RS)
+        match = re.search(
+            r'const SIDECAR_PRINCIPAL_CASES: &str = r#"(.*?)"#;', source, re.S)
+        self.assertIsNotNone(match, "no `SIDECAR_PRINCIPAL_CASES` raw string in governed_sidecar.rs")
+        cases = json.loads(match.group(1))
+        self.assertGreaterEqual(len(cases), 19, "the shared table lost cases")
+        return cases
+
+    def test_the_shared_case_table_is_judged_by_the_writer_exactly_as_it_says(self):
+        """`validate_sidecar` re-implements `SidecarPrincipal::from_config` rule for rule. The Rust
+        test `the_shared_case_table_is_judged_here_exactly_as_it_says` runs the SAME table through
+        the broker's validator, so a rule that exists on one side only fails on the other."""
+        module = writer_module()
+        verdicts = {True: 0, False: 0}
+        for case in self.shared_sidecar_cases():
+            with self.subTest(case=case["name"]):
+                try:
+                    module.validate_sidecar(case["block"])
+                    accepted = True
+                except module.Refused:
+                    accepted = False
+                self.assertEqual(
+                    accepted, case["accept"],
+                    "`%s`: the table says accept=%s and the writer said %s"
+                    % (case["name"], case["accept"], accepted))
+                verdicts[accepted] += 1
+        self.assertGreaterEqual(verdicts[True], 4)
+        self.assertGreaterEqual(verdicts[False], 15)
+
     def test_the_extractor_refuses_a_constant_that_is_not_there(self):
         """The binding is only as good as the extractor failing loudly. A silent empty list would
         make every comparison above pass against nothing."""

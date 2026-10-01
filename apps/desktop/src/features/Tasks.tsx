@@ -489,7 +489,12 @@ function TaskCard({
       tabIndex={0}
       aria-label={task.title}
       onClick={() => onOpen(task)}
-      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task); } }}
+      // Enter opens the card — when the CARD is what has focus. The Release and Dispatch buttons
+      // inside it stop propagation only on click, so a bubbled Enter keydown from either was
+      // prevented here and opened the edit modal instead of activating the button.
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.target === e.currentTarget) { e.preventDefault(); onOpen(task); }
+      }}
     >
       <span className="stream" aria-hidden="true" />
       <div className="mt-head">
@@ -522,7 +527,9 @@ function TaskCard({
             <button
               className="chip mt-unblock"
               type="button"
-              aria-label={`${t('action.open')}: ${task.title}`}
+              // Named for what it does. It was labelled "Open: <title>", a different action
+              // from the one performed and from the word on the button.
+              aria-label={`${L('release')}: ${task.title}`}
               onClick={(e) => { e.stopPropagation(); onMove(task, 'active'); }}
             >
               {L('release')}
@@ -597,8 +604,21 @@ export function Tasks() {
   const moveTo = (task: Task, status: string) => {
     if (status === task.status) return;
     const lane = laneOf(status);
-    setAnnounce(`${task.title} → ${lane ? L(lane.nmKey) : status}`);
-    desktop.setTaskStatus(task.id, status).then(() => s.reload()).catch(() => s.reload());
+    // The move is announced when it HAPPENED. It used to be announced first, and the rejection
+    // was then discarded with `.catch(() => s.reload())`: a screen-reader user was told the task
+    // had moved to a lane it never reached, and nobody was told why it had not.
+    desktop.setTaskStatus(task.id, status)
+      .then(() => {
+        setAnnounce(`${task.title} → ${lane ? L(lane.nmKey) : status}`);
+        s.reload();
+      })
+      .catch((e: unknown) => {
+        const reason = e instanceof Error ? e.message : String(e);
+        setAnnounce(`${task.title}: ${L('moveFailed')} — ${reason}`);
+        toast(`${L('moveFailed')}: ${reason}`, 'error');
+        // Re-read so the board provably shows the lane the task is still in.
+        s.reload();
+      });
   };
 
   return (

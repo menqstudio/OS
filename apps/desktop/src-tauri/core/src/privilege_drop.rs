@@ -42,7 +42,16 @@ impl Step {
     }
 }
 
-/// The one canonical, correct sequence (rev-30 §2.7 steps 1–11 collapsed to the security-relevant order).
+/// The canonical sequence (rev-30 §2.7 steps 1–11 collapsed to the security-relevant order), in the
+/// order [`perform_drop`] and the launcher actually perform it.
+///
+/// `SetNoNewPrivs` comes BEFORE `VerifyUnprivileged`. This constant used to have them the other
+/// way round while calling itself "the one canonical, correct sequence" — an order the module's own
+/// [`verify_final_state`] refuses, because that check returns `NoNewPrivsUnset` unless
+/// `no_new_privs` is already set, and one [`verify_performed_drop`] now refuses too. It is a
+/// reference for tests and for `verify_order`; no launch reads it. `CgroupSetup` is in it and is
+/// NOT performed: the launcher does not place the process in a cgroup yet, and its journal says so
+/// by not containing the step.
 pub const CANONICAL_SEQUENCE: &[Step] = &[
     Step::VerifyEntry,
     Step::CgroupSetup,
@@ -51,8 +60,8 @@ pub const CANONICAL_SEQUENCE: &[Step] = &[
     Step::DropBoundingAmbientCaps,
     Step::SetResUidExec,
     Step::ClearAllCapSets,
-    Step::VerifyUnprivileged,
     Step::SetNoNewPrivs,
+    Step::VerifyUnprivileged,
     Step::Fexecve,
 ];
 
@@ -70,6 +79,12 @@ pub enum OrderViolation {
     /// The same step appears twice in a RECORDED trace. A journal is a record of what happened;
     /// a step that happened twice means the trace is not a faithful record of the drop.
     DuplicateStep(&'static str),
+    /// In a RECORDED trace, the entry gate was not the first thing that happened.
+    EntryGateNotFirst,
+    /// In a RECORDED trace, the post-drop verification did not run AFTER the last step that changes
+    /// what it reads (`setresuid`, `capset`, `PR_SET_NO_NEW_PRIVS`) and before `fexecve`. A final
+    /// state verified before the drop finished is a verification of a different state.
+    FinalStateNotVerifiedAfterDrop,
 }
 
 fn pos(seq: &[Step], s: Step) -> Option<usize> {
@@ -212,8 +227,9 @@ pub fn perform_drop<S: DropSyscalls + ?Sized>(
     }
     journal.record(Step::ClearAllCapSets);
 
-    // Lock further privilege gain before the post-drop verification reads `no_new_privs`. Stricter
-    // than, and compatible with, CANONICAL_SEQUENCE: `no_new_privs` still precedes `fexecve`.
+    // Lock further privilege gain before the post-drop verification reads `no_new_privs`. This IS
+    // the order CANONICAL_SEQUENCE states (the constant used to put the verification first, which
+    // `verify_final_state` cannot pass).
     if !sys.set_no_new_privs() {
         return Err(Step::SetNoNewPrivs);
     }
@@ -226,6 +242,12 @@ pub fn perform_drop<S: DropSyscalls + ?Sized>(
 /// ABSENT: the launcher does not yet place the process into the lease-authorized leaf cgroup (it is an
 /// explicit TODO), and this list states what is required of a real trace — not what a wish list says.
 /// Adding the cgroup step to the launcher means adding it here, and the journal proves it ran.
+///
+/// The two GATES are in it. They were not: the list held the six syscalls and `fexecve`, so a
+/// journal with no `VerifyUnprivileged` entry verified, and deleting the launcher's
+/// `verify_final_state(..)?` — the one check that the process really is unprivileged before it
+/// execs — changed no checked value. They are listed last so that a drop which stopped part-way is
+/// still reported by the syscall it stopped at, not by the gate that never came.
 pub const MANDATORY_PERFORMED_STEPS: &[Step] = &[
     Step::SetGroupsEmpty,
     Step::SetResGidExec,
@@ -234,6 +256,8 @@ pub const MANDATORY_PERFORMED_STEPS: &[Step] = &[
     Step::ClearAllCapSets,
     Step::SetNoNewPrivs,
     Step::Fexecve,
+    Step::VerifyEntry,
+    Step::VerifyUnprivileged,
 ];
 
 /// Fail-closed verification of a RECORDED drop trace.
@@ -253,7 +277,22 @@ pub fn verify_performed_drop(performed: &[Step]) -> Result<(), OrderViolation> {
             return Err(OrderViolation::MissingStep(required.name()));
         }
     }
-    verify_order(performed)
+    verify_order(performed)?;
+
+    // The gates have PLACES, not just presence. Every lookup below succeeds: the loop above
+    // established that each of these steps is in the trace.
+    let at = |s: Step| pos(performed, s).expect("mandatory step is present");
+    if at(Step::VerifyEntry) != 0 {
+        return Err(OrderViolation::EntryGateNotFirst);
+    }
+    let verified = at(Step::VerifyUnprivileged);
+    let settled = [Step::SetResUidExec, Step::ClearAllCapSets, Step::SetNoNewPrivs]
+        .into_iter()
+        .all(|s| at(s) < verified);
+    if !(settled && verified < at(Step::Fexecve)) {
+        return Err(OrderViolation::FinalStateNotVerifiedAfterDrop);
+    }
+    Ok(())
 }
 
 /// The five Linux capability sets — all MUST be empty in the executor.
@@ -495,6 +534,8 @@ mod tests {
     #[test]
     fn a_recorded_trace_missing_any_mandatory_step_is_refused() {
         // Deleting a syscall from the drop deletes its journal entry — this is what that looks like.
+        // The order the launcher's journal really has: entry gate, the six recorded syscalls,
+        // the post-drop verification, `fexecve`.
         let full = vec![
             Step::VerifyEntry,
             Step::SetGroupsEmpty,
@@ -502,11 +543,14 @@ mod tests {
             Step::DropBoundingAmbientCaps,
             Step::SetResUidExec,
             Step::ClearAllCapSets,
-            Step::VerifyUnprivileged,
             Step::SetNoNewPrivs,
+            Step::VerifyUnprivileged,
             Step::Fexecve,
         ];
         assert_eq!(verify_performed_drop(&full), Ok(()));
+        // Both gates are in the list this loop thins by — the point of the finding it closes.
+        assert!(MANDATORY_PERFORMED_STEPS.contains(&Step::VerifyEntry));
+        assert!(MANDATORY_PERFORMED_STEPS.contains(&Step::VerifyUnprivileged));
         for dropped in MANDATORY_PERFORMED_STEPS {
             let thinned: Vec<Step> = full.iter().copied().filter(|s| s != dropped).collect();
             assert_eq!(
@@ -618,9 +662,49 @@ mod tests {
         let bad = vec![
             Step::VerifyEntry, Step::CgroupSetup, Step::SetGroupsEmpty, Step::SetResGidExec,
             Step::SetResUidExec, Step::DropBoundingAmbientCaps, // bounding too late (no longer root)
-            Step::ClearAllCapSets, Step::VerifyUnprivileged, Step::SetNoNewPrivs, Step::Fexecve,
+            Step::ClearAllCapSets, Step::SetNoNewPrivs, Step::VerifyUnprivileged, Step::Fexecve,
         ];
         assert_eq!(verify_order(&bad), Err(OrderViolation::BoundingDroppedAfterUidDrop));
+    }
+
+    /// The gates have places. A final-state verification recorded before the drop finished is not
+    /// a verification of the final state, and an entry gate that ran second ran too late.
+    #[test]
+    fn the_gates_must_sit_where_they_mean_something() {
+        let good = [
+            Step::VerifyEntry, Step::SetGroupsEmpty, Step::SetResGidExec,
+            Step::DropBoundingAmbientCaps, Step::SetResUidExec, Step::ClearAllCapSets,
+            Step::SetNoNewPrivs, Step::VerifyUnprivileged, Step::Fexecve,
+        ];
+        assert_eq!(verify_performed_drop(&good), Ok(()));
+        let moved = |step: Step, to: usize| -> Vec<Step> {
+            let mut v: Vec<Step> = good.iter().copied().filter(|s| *s != step).collect();
+            v.insert(to, step);
+            v
+        };
+        // The order the old CANONICAL_SEQUENCE stated: verified BEFORE no_new_privs was set.
+        assert_eq!(
+            verify_performed_drop(&moved(Step::VerifyUnprivileged, 6)),
+            Err(OrderViolation::FinalStateNotVerifiedAfterDrop)
+        );
+        // Verified before the capability sets were cleared, and before the UID was dropped.
+        for early in [5, 4, 1] {
+            assert_eq!(
+                verify_performed_drop(&moved(Step::VerifyUnprivileged, early)),
+                Err(OrderViolation::FinalStateNotVerifiedAfterDrop),
+                "VerifyUnprivileged at position {early}"
+            );
+        }
+        // The entry gate anywhere but first.
+        assert_eq!(
+            verify_performed_drop(&moved(Step::VerifyEntry, 1)),
+            Err(OrderViolation::EntryGateNotFirst)
+        );
+        // And the constant itself, minus the one step the launcher does not perform, is a trace
+        // this accepts — which it was not while it had the two steps the other way round.
+        let canonical: Vec<Step> =
+            CANONICAL_SEQUENCE.iter().copied().filter(|s| *s != Step::CgroupSetup).collect();
+        assert_eq!(canonical, good);
     }
 
     #[test]

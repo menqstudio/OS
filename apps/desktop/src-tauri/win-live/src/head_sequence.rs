@@ -27,8 +27,11 @@
 //!
 //! It does NOT establish **custody**. Nothing here stops a principal that can write the state
 //! directory from deleting the markers and re-allocating a number it already used. That is the
-//! deployment's job (in the cross-account kit the directory belongs to the executor principal), and
-//! it is why the supervisor keeps its OWN durable floor rather than believing this number: a replayed
+//! deployment's job, and no deployment of this kit does it today: the caller is `win_live_turn`, the
+//! driver/broker, which passes `<store_dir>\recorder-state` — a directory the broker itself creates
+//! and writes. (This used to say that in the cross-account kit the directory belongs to the executor
+//! principal. `win_executor` never touches it and `win_provision` neither creates nor ACLs it.)
+//! It is why the supervisor keeps its OWN durable floor rather than believing this number: a replayed
 //! sequence reaches `evidence_floor_cas` and is refused `evidence_fork`. Said plainly here rather
 //! than left to be assumed, because the last three audit rounds all punished the opposite.
 
@@ -139,8 +142,10 @@ fn write_hint(path: &Path, n: i64) -> Result<(), String> {
 /// (`evidence_floor_cas` refuses `head_sequence < 1`, so 0 is not a legal head).
 ///
 /// `create_dir_all` is deliberate: this function establishes allocation, not custody (see the module
-/// docs). The directory's ACL is `win_provision`'s job and the supervisor's floor is what makes a
-/// broken counter a refusal rather than a bypass.
+/// docs). The directory's ACL would be `win_provision`'s job, and `win_provision` does not do it —
+/// it creates `store\` and `keys\` only, so this call is what creates the directory, under whatever
+/// DACL the store hands down. The supervisor's floor is what makes a broken counter a refusal rather
+/// than a bypass.
 pub fn next_head_sequence(state_dir: &Path) -> Result<i64, String> {
     std::fs::create_dir_all(state_dir).map_err(|e| {
         format!("head-sequence state dir unusable at {}: {e}", state_dir.display())

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // Mock the Tauri IPC boundary. Library mirrors the real list_library store; it renders only
@@ -94,5 +94,33 @@ describe('Library — Enter opens the preview, Escape comes back', () => {
     // -1 keeps it reachable by the Enter handoff and by a screen reader, without making every
     // mouse user Tab past it on the way to anything else.
     expect(screen.getByRole('region', { name: /Item 0/ })).toHaveAttribute('tabindex', '-1');
+  });
+});
+
+// The Enter handler sits on the <ul>, and each row also holds its ✕ delete button. A bubbled
+// Enter from THAT button was prevented and turned into "focus the preview", so the delete
+// dialog could not be opened with Enter at all.
+describe('Library — Enter on a row\'s delete button is that button\'s own', () => {
+  it('does not swallow Enter on the ✕ button or move focus to the preview', async () => {
+    withItems(2);
+    await waitFor(() => expect(screen.getAllByText('Item 0').length).toBeGreaterThan(0));
+
+    const del = screen.getByRole('button', { name: 'Delete: Item 0' });
+    del.focus();
+    // `fireEvent` returns false when a handler called preventDefault — which is exactly what
+    // cancelled the button's native activation.
+    const notPrevented = fireEvent.keyDown(del, { key: 'Enter' });
+    expect(notPrevented).toBe(true);
+    expect(screen.getByRole('region', { name: /Item 0/ })).not.toHaveFocus();
+    expect(del).toHaveFocus();
+  });
+
+  it('Enter on the row itself still opens the preview', async () => {
+    withItems(2);
+    await waitFor(() => expect(screen.getAllByText('Item 0').length).toBeGreaterThan(0));
+    const row = document.querySelector('.lib-item') as HTMLElement;
+    row.focus();
+    expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(false);
+    expect(screen.getByRole('region', { name: /Item 0/ })).toHaveFocus();
   });
 });

@@ -82,16 +82,16 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2617 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2620 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1408 passed
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 984 tests / 85 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
 python3 tools/check_handoff_ready.py                             # a new session could take over
 for g in tools/check_*.py; do python3 "$g"; done                 # see §5 for the ones needing args
 ```
 
-Engine, Rust: 2026-10-01; frontend: 2026-10-01. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
+Engine, Rust, frontend: 2026-10-02. **Verify before claiming green** — never assume, and never take a number in a document on trust. Every audit round so far has found stale counts in these files.
 
 ## 5. Environment
 

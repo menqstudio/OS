@@ -90,6 +90,15 @@ pub const SID_ADMINISTRATORS: &str = "S-1-5-32-544";
 /// SIDs that stand for "essentially everyone on this box". None of these may appear in a live-kit
 /// pipe DACL, and none may be accepted as a broker SID — granting one is indistinguishable from the
 /// NULL DACL this module replaced.
+///
+/// **This list is one of two and the two have drifted.** `brops_provision::audit_signer::WORLD_SIDS`
+/// is a hand copy with twelve entries; this one has ten. Missing here: `S-1-5-113` (Local account)
+/// and `S-1-5-114` (Local account and member of Administrators group). So [`pipe_dacl_plan`] accepts
+/// `S-1-5-113` as `allowed_broker_sid` and grants every local account the pipe, and
+/// `tcb_floor::untrusted_write_grantees` does not treat a read-only ACE for either as an open
+/// descriptor. The only test that compares the lists (`provision/tests/audit_signer.rs`) checks that
+/// this set is a SUBSET of the other and is `cfg(windows)`, which is why it did not catch it. OPEN:
+/// add the two SIDs here and make that test assert set equality.
 pub const WORLD_SIDS: &[&str] = &[
     "S-1-1-0",      // Everyone
     "S-1-5-7",      // ANONYMOUS LOGON

@@ -128,3 +128,77 @@ describe('Research — the run goes through the governed wall', () => {
       expect(screen.queryByRole('button', { name: /Save to knowledge/ })).toBeNull());
   });
 });
+
+// The section's keymap skipped only INPUT/TEXTAREA/SELECT, so Enter on the focused "Save to
+// knowledge" button bubbled, was prevented, and ran `start()`: the held id was dropped and a NEW
+// model call was issued instead of the save.
+describe('Research — Enter on a button is that button\'s own', () => {
+  it('Enter on the focused Save button does not re-run the question', async () => {
+    fireEvent.click(await openRecord());
+    emit({ type: 'ready', resultId: 'one-time-42', provenance: 'development_untrusted' });
+    const save = await screen.findByRole('button', { name: /Save to knowledge/ });
+    const asks = () => invokeMock.mock.calls.filter((c) => c[0] === 'stream_ask').length;
+    expect(asks()).toBe(1);
+
+    save.focus();
+    const notPrevented = fireEvent.keyDown(save, { key: 'Enter' });
+
+    expect(notPrevented).toBe(true);
+    expect(asks()).toBe(1);
+    // The held answer is still there to be saved.
+    expect(screen.getByRole('button', { name: /Save to knowledge/ })).toBeInTheDocument();
+  });
+});
+
+// The panel was titled "GOVERNED RUN" and its hint said "The question goes through the governed
+// turn — the same path chat uses", unconditionally. `stream_ask` takes the governed path only
+// when the resolved provider is the governed engine; with no provider configured it sends
+// `error` before any turn exists.
+describe('Research — the run panel does not promise a governed path', () => {
+  it('names the action, and says the configured provider decides the path', async () => {
+    await openRecord();
+    const panel = screen.getByRole('region', { name: 'RUN THE QUESTION' });
+    expect(panel).toHaveTextContent(/The configured provider decides the path/);
+    expect(panel).not.toHaveTextContent(/goes through the governed turn/);
+    expect(screen.queryByText('GOVERNED RUN')).not.toBeInTheDocument();
+  });
+
+  it('no provider configured renders the failure with the backend message — not a refusal', async () => {
+    fireEvent.click(await openRecord());
+    emit({ type: 'error', message: 'no AI provider configured: set BROPS_AI_PROVIDER=governed-engine' });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The run failed');
+    expect(alert).toHaveTextContent(/no AI provider configured/);
+    expect(alert).not.toHaveTextContent(/Refused at the governed wall/);
+  });
+});
+
+// `delete_research_item` cannot delete: the capability set denies it and the handler returns
+// `forbidden_hard_delete` unconditionally. The dialog used to say "This permanently removes the
+// record."
+describe('Research — the delete dialog does not promise a delete', () => {
+  it('says nothing will be removed, and names a policy refusal as permanent', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_research') return Promise.resolve([ITEM]);
+      if (cmd === 'delete_research_item') {
+        return Promise.reject(new Error('delete_research_item not allowed. Permissions associated with this command: '));
+      }
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Research /></ToastProvider></AppProvider>);
+    fireEvent.click(await screen.findByRole('option', { name: new RegExp(ITEM.title) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/Nothing will be removed/);
+    expect(dialog).not.toHaveTextContent(/permanently removes/i);
+
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.className.includes('danger'));
+    fireEvent.click(confirm as HTMLButtonElement);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/standing policy refusal.*retrying cannot succeed/i);
+    expect(alert).toHaveTextContent(/delete_research_item not allowed/);
+    // The record is still listed.
+    expect(screen.getAllByText(ITEM.title).length).toBeGreaterThan(0);
+  });
+});

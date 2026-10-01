@@ -13,6 +13,29 @@
 > verdict the normative source denied. The disagreement is resolved by naming who decided, not by
 > letting a token stand in for a verdict that never happened.
 >
+> **Amendment A1 to rev-30 — 2026-10-02. Owner decision, not an Architect audit: where rev-30 and
+> the built, tested code differed on the items listed, the code is ratified and this text is amended
+> to it.** Gev decided this in session on 2026-10-02. No Architect reviewed or approved the
+> amendment; it moves no gate and leaves the standing independent verdict RED. The revision is still
+> rev-30 — A1 is a marker on it, not a new revision. Each ruling is marked "Amendment A1" or "A1"
+> where it stands and says what rev-30 said before; the two editorial corrections are made in place
+> with no inline mark, and this table is their record.
+>
+> Seven items were on A1's list. **Five were applied. Two were not, because the code does not say
+> what the list assumed** — a correction is a claim, and these two did not reproduce:
+>
+> | # | Item | Outcome | Sections touched |
+> |---|---|---|---|
+> | 1 | editorial — the launcher's invoking principal is the evidence-recorder runner, role **#6** (the text said #5) | **applied** | §2.7 |
+> | 2 | editorial — create-pending's frame cap, 8192 "each way" → request 4096 / reply 8192 | **NOT applied** — the built authority caps request and reply alike at 8192; no 4096 request cap exists in code | none (§2.1, §2.1.1 unchanged) |
+> | 3 | editorial — the closed renderer command is `{conversation_id, agent?, client_request_id}` | **applied**, seven places; the rev-29 / rev-28 closure banners and Appendix A are history and keep the short form | §0 (three places), §4.10(g) (two places), §6.1 step 0, §9 |
+> | 4 | ruling — the evidence-head anti-rollback floor is **supervisor-owned**, not `brops-signer`-owned; what that gives up is stated in §7 | **applied** | §2.3, §3 row 8, §6.1 steps 11 and 14, §7, Appendix B |
+> | 5 | ruling — the §4.4 evidence carries `builder_id`, and names two timestamps `requested_at` / `completed_at` | **applied** | §1, §4.4 |
+> | 6 | ruling — rename the two artifact types to `brops.execution-receipt.v1` / `brops.containment-evidence.v1` | **NOT applied** — the shipped documents are not the §4.7 / §4.7b schemas under another name; the shapes differ | none (§3, §4.7, §4.7b, §6, §7 unchanged) |
+> | 7 | ruling — the fourth bounded-reason prefix `governed_output_read_refused:` | **applied** — no code emits it or any bounded reason for an output-read refusal; the three prefixes stay the whole set | §4.10(h) routing table |
+>
+> What each refusal found, and what else turned up, is in the KNOWN DIVERGENCES block below.
+>
 > **The superseded verdict, kept because it is the record:** ❌ DESIGN RED. Last reviewed candidate = rev-29 = Architect design RED (1 P0 + 3 P1 at exact
 > HEAD `1a79bc28ba89d78fc547b9f17b4fb94cdea81abe`; CI run 30297820594 9/9 GREEN — CI ≠ design GREEN).
 > CURRENT candidate = rev-30 = PENDING re-audit (the remediation below; it does NOT inherit the rev-29
@@ -119,54 +142,90 @@
 > file (including the 3b-1 map) and this document disagree, THIS document wins and the other
 > is a bug to fix.**
 
-> ### KNOWN DIVERGENCES 2026-10-01 (`T-145`, the whole-repository read) — NON-NORMATIVE, changes no contract
+> ### KNOWN DIVERGENCES — recorded 2026-10-01 (`T-145`, the whole-repository read), updated 2026-10-02 by Amendment A1 — NON-NORMATIVE
 >
 > A file-by-file read found places where this document disagrees with itself or with the code that
-> implements it. Nothing normative is changed here: every contract sentence is **exactly as rev-30
-> left it**, because amending a normative contract — even to fix a typo — is the Architect's and the
-> Owner's act, not a Builder's.
+> implements it. On 2026-10-01 nothing normative was changed for them, because amending a normative
+> contract was not a Builder's act. On 2026-10-02 the Owner decided that where rev-30 and the built,
+> tested code differ, the code is ratified and this text is corrected to it — **Amendment A1**,
+> summarised under the status banner. That is an Owner decision, not an Architect audit. This block
+> itself changes no contract; it records what A1 resolved, what A1 declined, and what is still open.
 >
-> **Status annotations added in place — no contract sentence was changed:**
+> **Status annotations added in place on 2026-10-01 — no contract sentence was changed by them:**
 > - §5 v2(h) said the live isolation kit "has not been re-run against this protocol"; CI runs it.
 > - §5 v2's closing sentence is annotated: `platform_governed_execution_supported()` is the §0.1 spec
 >   symbol, not a function in the tree. §0.1's own two status sentences are unchanged and read the
 >   same way.
 > - §5's inline `CREATE TABLE` blocks are labelled as the pre-amendment text; the SQL file is normative.
 >
-> **Editorial corrections PROPOSED and NOT applied** — the text below is as rev-30 left it. Each looks
-> like a typo or a stale copy, and each agrees with this document's own §2.1.1 table, its role list
-> and the shipped schema; they are still sentences of a normative contract, so they wait for a
-> revision that the Architect and the Owner make:
-> - §2.7 names the launcher's invoking principal `(#5)`; the nine-role list and the paragraph after
->   it have the evidence-recorder runner as **#6**.
-> - §2.1 create-pending says the frame cap is 8192 "each way"; §2.1.1's table and the test list cap
->   the **request** at `AUTHORITY_REQUEST_FRAME_BYTES` (4096) and only the reply at 8192.
-> - Seven places describe the closed renderer command as `{conversation_id, agent?}`; §4.10(g)'s
->   request frame and `bridge/contracts/renderer-governed-turn.schema.json` also require
->   `client_request_id`.
+> **Resolved by A1 — the text now says what the code does:**
+> - **§2.7, the launcher's invoking principal** is the evidence-recorder runner, role **#6** of the
+>   nine-role list (the text said #5). The launcher's own gate is `verify_invoker_is_recorder`
+>   (`apps/desktop/src-tauri/launcher/src/main.rs`).
+> - **The closed renderer command** is `{conversation_id, agent?, client_request_id}` in the seven
+>   places that state the current contract — as `bridge/contracts/renderer-governed-turn.schema.json`
+>   requires and `RendererGovernedTurnRequest` (`core/src/governed_turn_ipc.rs`) carries. The rev-29
+>   and rev-28 closure banners and Appendix A keep the short form: history stays as written.
+> - **Who owns the evidence-head floor** (was open item 1). The supervisor does:
+>   `governed_evidence_head_floor` is a table in the supervisor's ledger
+>   (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas`
+>   (`engine/runtime/governed_supervisor_ledger.py`) inside the supervisor's completion transaction,
+>   and `engine/runtime/isolated_signer.py` opens no SQLite. §2.3, §3 row 8, §6.1 steps 11 and 14, §7
+>   and Appendix B are amended, and §7 states what the signer-owned design protected against that a
+>   supervisor-owned floor does not. `SECURITY_NEGATIVE_TEST_MATRIX.md`'s NM-EVID-12 and NM-ACL-13
+>   are rewritten against the floor as built.
+> - **§4.4's evidence shape** (was open item 2). The governed path carries `builder_id`, and the
+>   evidence names its request and completion timestamps `requested_at` / `completed_at`. §4.4 and
+>   §1 are amended.
+> - **The fourth bounded-reason prefix** (was open item 4). The §4.10(h) routing table (this block
+>   used to call it §6.1's) no longer names `governed_output_read_refused:{reason}`: an output-read
+>   refusal reaches the broker as `PullError::Refused` and leaves it as `upstream_blocked`, with no
+>   bounded-reason string at all. The three prefixes are the complete set.
 >
-> **Open — each needs a ruling, and none is resolved here:**
-> 1. **Who owns the evidence-head floor.** §7, §2.3, §3 row 8, §6.1 step 11 and Appendix B specify a
->    durable `brops-signer`-owned floor DB (`0700`/`0600`) the sidecar cannot reach. As built,
->    `governed_evidence_head_floor` is a table in the **supervisor's** ledger
->    (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas` in
->    `governed_supervisor_ledger.py`, and `isolated_signer.py` opens no SQLite at all; §5 v2(c) puts
->    the floor in the supervisor's completion transaction. `FLOOR_WRITER_SERVICE_DESIGN.md` §0.3 and
->    §9 raised it on 2026-08-15. `SECURITY_NEGATIVE_TEST_MATRIX.md`'s NM-EVID-12 and NM-ACL-13 test a
->    signer-owned database that does not exist.
-> 2. **§4.4's evidence shape.** §4.4 says there is "no `builder_id`" on the governed-model path and
->    §1 that every timestamp field ends in `_ms`. The signer requires and allowlists `builder_id`,
->    the evidence carries unsuffixed `requested_at` / `completed_at` (`engine/runtime/isolated_signer.py`,
->    `governed_supervisor.py`), and §5 v2(e) itself names `builder_id`. `config/spec-conformance.json`
->    records neither as a deviation.
-> 3. **Two artifact-type names.** §3, §4.7, §4.7b, §6 and §7 use
->    `brops.governed-turn-execution-receipt.v1` and `brops.governed-turn-containment.v1`, which appear
->    in no code file. §5 v2(i)/(j) and the code use `brops.execution-receipt.v1` and
->    `brops.containment-evidence.v1`. Whether the shipped documents ARE the §4.7 schemas under another
->    name is not stated anywhere.
-> 4. **A fourth bounded-reason prefix.** §6.1 says the three prefixes are disjoint; its routing table
->    emits `governed_output_read_refused:{reason}` for an output-read refusal, which that rule does
->    not cover and no code produces.
+> **On A1's list and NOT amended — the code does not say what the list assumed. Both stay open:**
+> - **§2.1 create-pending's frame cap.** The proposal was to change "8192 each way" to the §2.1.1
+>   table's request `AUTHORITY_REQUEST_FRAME_BYTES` (4096) / reply 8192. The built authority has one
+>   cap for both directions: `MAX_FRAME_BYTES = 8192` in
+>   `engine/runtime/challenge_authority_server.py`, applied by `read_frame` to the request and by
+>   `write_frame` to the reply. Neither constant name in §2.1.1 exists in any code file, and no
+>   request is refused at 4097 bytes. So the sentence the proposal would have changed is the one that
+>   agrees with the code; the ones that disagree are §2.1.1's table row, §2.1(B)'s "request frame ≤
+>   4096" and §2.1.1(h)'s `request 4096/4097` test. Two ways to close it: build the 4096 request
+>   guard, or amend those three to 8192. **Recommended: amend them to 8192**, which is the Owner's
+>   2026-10-02 rule applied to this item — the peer is authenticated by `SO_PEERCRED` before any
+>   frame is read, so the narrower cap would bound only what the broker itself may send, and
+>   `engine/tests/test_one_standard_pins.py` already pins the authority's cap to the broker's 8192.
+>   It was not done under A1 because A1's list named the opposite edit.
+> - **The two artifact-type names** (open item 3). §3, §4.7, §4.7b, §6 and §7 use
+>   `brops.governed-turn-execution-receipt.v1` and `brops.governed-turn-containment.v1`, which appear
+>   in no code file; §5 v2(i)/(j) and the code use `brops.execution-receipt.v1` and
+>   `brops.containment-evidence.v1`. A rename was conditional on the shipped documents BEING the
+>   §4.7 / §4.7b schemas, and they are not:
+>   - §4.7 specifies a `{payload, signature}` document signed by the **evidence-recorder** key, with
+>     `artifact_type`, `key_id`, `receipt_id`, `runner_id`, `executor_id`, `exit_code`, `contained`,
+>     `output_sha256`, `output_bytes`, `started_at_ms`, `finished_at_ms`. The shipped
+>     `brops.execution-receipt.v1` (`build_execution_receipt`, `engine/runtime/governed_supervisor.py`)
+>     is built by the **supervisor**, is **unsigned**, is discriminated by `protocol`, and carries
+>     `run_id`, `execution_attempt_id`, `lease_id`, `lease_issued_at_ms`, `lease_expires_at_ms`,
+>     `process_group_id`, `cgroup_id`, `execution_started_marker`, `completed_at_ms`, `output_handle`.
+>     Four fields are shared; it attests no exit code and no containment.
+>   - §4.7b specifies `artifact_type`, the run / attempt / lease / runner / executor ids, `cgroup_id`,
+>     `process_group_id`, `contained`, `teardown_outcome`, `measured_at_ms`. The shipped
+>     `brops.containment-evidence.v1` (`proof/src/bin/governed_recorder.rs`) carries `protocol`,
+>     `cgroup`, the launcher / executor / lease paths and digests, `fd_contract`, `invoker_uid`,
+>     `invoker_gid`, `launcher_exit`, `launcher_gate`, `output_bytes` — no run or attempt id, no
+>     `contained`, no `teardown_outcome`.
+>
+>   Renaming would have declared two different documents the same. `config/spec-conformance.json`
+>   already records §4.7 and §5(j) as `partial` for the missing exit-code attestation and the missing
+>   validator. Two ways to close it: build §4.7 / §4.7b as specified, or specify the shipped
+>   documents in their place. **Recommended: keep §4.7 / §4.7b as the target and build them** — the
+>   costlier answer. Ratifying the shipped pair would take the recorder's signature, the exit code and
+>   the containment verdict out of the design, and "the code is ratified" should not remove a
+>   control by renaming it. Nobody has made that ruling; until someone does, these sections stay
+>   `partial`.
+>
+> **Open — not covered by A1:**
 > 5. **`file:line` citations.** Roughly eighty-six citations into `ai.rs`, `commands.rs`, `lib.rs`,
 >    `receipt.rs`, `receipt_store.rs` and several Python modules were read at the audited heads and no
 >    longer point at the cited code — `prepare_governed_turn` is not at `ai.rs:1214-1235`,
@@ -177,6 +236,39 @@
 >    `design_gate` block still records `last_architect_verdict: GREEN` and "rev-30 = Architect DESIGN
 >    GREEN"; the banner above says no Architect re-audit of rev-30 took place. This document wins by
 >    its own rule; the mirror has not been corrected.
+>
+> **Found while applying A1 — each contradicts the code, none was on A1's list, none is ruled or fixed:**
+> 7. **The floor's RULE is not the A–E matrix.** A1 ruled who owns the floor, not how it compares.
+>    §7 specifies cases A–E per `(install_id, task_id)` with a prefix proof from a new
+>    `validate_chain_detailed`. The built CAS (`_evidence_floor_cas`, and its Rust twin) answers an
+>    equal head with equal content for the same task as idempotent and with different content as
+>    `evidence_fork`; then measures the head against the highest head recorded for the **install**
+>    in any task — lower is `stale_evidence`, equal is `evidence_fork`; and otherwise inserts or
+>    overwrites the task's row. There is no prefix test, `validate_chain_detailed` exists nowhere in
+>    the tree, and cases C, D and E all reduce to "strictly higher: advance".
+>    `SECURITY_NEGATIVE_TEST_MATRIX.md` §10 is written against the matrix.
+> 8. **The rest of §4.4.** The built evidence (`EVIDENCE_FIELDS`, `isolated_signer.py`) has no
+>    `lease_id`, no `runner_id` and none of `challenge_handle`, `challenge_key_id`,
+>    `challenge_registry_handle`, `challenge_registry_hash`, `challenge_registry_epoch`,
+>    `challenge_registry_root_key_id`; it carries `record_handle`; `evidence_last_sequence` must be
+>    ≥ 1, not ≥ 0; and the frame's `protocol` is `brops.sign-request.v1`, not
+>    `brops.governed-sign-request.v1`.
+> 9. **The terminal record is published unsigned, and the signer's deep check is field agreement.**
+>    §4.8 specifies a record signed by the `governed-turn-recorder` key and §7 a signer that verifies
+>    signatures on the record, lease and receipt. `build_terminal_record`
+>    (`governed_supervisor.py`) emits canonical JSON with no signature, and the signer's
+>    `_verify_chain_handles` reads the three chain documents and requires them to agree with the
+>    attested evidence on the fields they share. `config/spec-conformance.json` records §7 as
+>    `partial` for a neighbouring reason.
+> 10. **§5 v2's "the four `evidence_*` counters remain deployment constants".** The supervisor's
+>     completion now reads the recorder's evidence chain and derives them
+>     (`derive_evidence_from_chain`, called from `engine/runtime/governed_supervisor_server.py`).
+>     Whether every deployment kit feeds it a measured chain was not established here.
+> 11. **§7's startup integrity check is specified "on open".** The built check
+>     (`_refuse_corrupt_floor_row`) runs on the rows a CAS reads, not when the ledger is opened.
+> 12. **One code comment still says "signer-owned".** The module documentation of
+>     `apps/desktop/src-tauri/core/src/supervisor_ledger.rs` calls the floor "the signer-owned
+>     durable evidence-head floor CAS". A1 changed documents only; the comment is unchanged.
 
 > ### CORRECTION 2026-08-10 (rev-30) — `challenge_handle` covers `{payload, sig}`, NOT the payload alone
 >
@@ -231,7 +323,8 @@ recorder (below), holding **no signing key**.
 
 ```
 untrusted RENDERER / LOGIN PROCESS (webview + message handlers; interactive login identity; NO
-      key/store/DB/manifest/trust-state; sends the broker ONLY a closed {conversation_id, agent?})
+      key/store/DB/manifest/trust-state; sends the broker ONLY a closed
+      {conversation_id, agent?, client_request_id})
   → TRUSTED DESKTOP VERIFIER / BROKER SERVICE (dedicated service UID/SID; SEPARATE process from the
       renderer; owns receipt DB + pinned manifest + PreparedGovernedTurnV1B + final verification +
       accepted-output persistence; resolves system/history/config/IDs itself; the ONLY caller of the
@@ -263,7 +356,7 @@ verifier/broker is a distinct principal from the renderer.
 1. **Renderer / session UI** — the webview + its message handlers. Runs under the **interactive login
    identity** (Actors A/B). **Fully untrusted:** owns **no** key, receipt DB, pinned manifest, trust
    state or authority store; **cannot directly reach** the challenge authority, sidecar, supervisor or
-   signer. It may send the broker only a **closed command** (e.g. `{conversation_id, agent?}`) — never
+   signer. It may send the broker only a **closed command** (e.g. `{conversation_id, agent?, client_request_id}`) — never
    `system`/`history`/`config`/hashes/nonces/prepared objects/verdicts/receipt fields.
 2. **Trusted desktop verifier / BROKER** — a **dedicated service UID/SID**, a **separate process from
    the renderer** (the Tauri app is split: the webview is the renderer; the broker is a separate local
@@ -308,7 +401,7 @@ challenge authority, builds the `PreparedGovernedTurnV1B`, runs final verificati
 the committed result, it **DENOTES the trusted desktop verifier/BROKER service (role #2 — a dedicated
 service UID/SID in its OWN process, separate from the renderer)**, and **NEVER** the renderer/login/webview
 process. The renderer/login process (role #1) is a **thin proxy** that may send the broker **only** a
-closed `{conversation_id, agent?}` command and render the broker's committed reply; it owns/accesses **no**
+closed `{conversation_id, agent?, client_request_id}` command and render the broker's committed reply; it owns/accesses **no**
 key, receipt DB, pinned manifest, prepared object, hash, nonce, challenge authority, sidecar/supervisor/
 signer socket, or verification verdict (§4.10(g)). The authenticated challenge-authority IPC allowlists
 **only the broker UID** and **DENIES** the renderer/login UID (§2.1); the signed challenge returns to the
@@ -418,7 +511,9 @@ WDAC/AppLocker TCB integrity) and a **separate Architect audit of the Windows br
 ## 1. Canonical time model (P0-1) — ONE unit, explicit names
 
 **Every governed-turn artifact uses integer epoch MILLISECONDS**, and **every field name
-ends in `_ms`** so the unit is visible at the call site. The ratified base `execution-lease`
+ends in `_ms`** so the unit is visible at the call site — with two exceptions, both stated
+below: the legacy `bro_evidence` seconds field, and the unsuffixed `requested_at` /
+`completed_at` of the §4.4 attested evidence (Amendment A1). The ratified base `execution-lease`
 (`issued_at_epoch`/`expires_at_epoch`, epoch **seconds** via `int(time.time())`) is **left
 unchanged and is NOT reused** by the governed-turn chain — the governed-turn lease is a
 **separate artifact** with its own `_ms` fields (§4.3), never the base `*_epoch` names with
@@ -434,6 +529,15 @@ silently changed units.
   record — no time comparison — so the seconds field never touches the ms logic. The desktop's
   own receipt-freshness window is ms (`FreshnessWindow{future_skew_ms, max_age_ms}` vs
   `now_ms`) and applies only to governed-turn `_ms` fields, never to the evidence seconds.
+
+- **One unsuffixed pair (Amendment A1, 2026-10-02 — rev-30 allowed no such exception).** The
+  attested evidence of the sign request (§4.4) names two of its timestamps **`requested_at`**
+  and **`completed_at`**, with no `_ms` suffix. Both are integer epoch **milliseconds**: the
+  supervisor fills them from its acceptance row's `requested_at_ms` and its completion row's
+  `completed_at_ms` (`governed_supervisor.py`), and the isolated signer validates them as ms
+  integers (`EVIDENCE_TS_FIELDS`, `isolated_signer.py`) and writes `completed_at` into the
+  envelope as `completed_at_ms` (§4.9). The unit rule holds without exception; the naming rule
+  has this one, and `challenge_accepted_at_ms` in the same object keeps its suffix.
 
 - Canonical fields: `requested_at_ms`, `challenge_issued_at_ms`, `challenge_expires_at_ms`,
   `challenge_accepted_at_ms`, `lease_issued_at_ms`, `lease_expires_at_ms`, `started_at_ms`,
@@ -647,7 +751,7 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
 - **Binary owner / file owner:** `root` (or the dedicated `brops-admin` TCB principal). The file has
   mode `4750` (setuid, owner `root`/TCB, group = the recorder group, **no** world/other bits), and
   its parent directories up to `/` are TCB-owned + non-writable by any runtime/login UID (§2.5).
-- **Invoking principal:** **only** the `evidence-recorder runner` (#5) may `exec` it; the launcher
+- **Invoking principal:** **only** the `evidence-recorder runner` (#6) may `exec` it; the launcher
   checks its real UID/gid on entry (`getresuid`) and refuses (`tcb_integrity_violation`) unless the
   caller is exactly the recorder. No other principal — sidecar, desktop-UI, supervisor, signer, login
   user — may invoke it (mode `0` for other; group-exec limited to the recorder group).
@@ -1198,9 +1302,14 @@ group read-traverse**:
 - **Private-key dirs stay strictly `0700`** owner-only (`signerkeys`→`brops-signer`,
   attestation keys→`brops-supervisor`, evidence-recorder key→`brops-recorder`, **governed-turn-
   recorder key→`brops-supervisor`** — an owner-only `0700` dir held by the supervisor principal,
-  NOT a separate principal, P1-5). The **evidence-head floor DB** (§7 P1-7) is `brops-signer`-owned, dir `0700`/
-  file `0600`. The **acceptance ledger + `governed_turn_staging` store** (§2.4/§5) are
-  supervisor-only `0700`.
+  NOT a separate principal, P1-5). The **evidence-head floor** (§7 P1-7) is **not** a separate
+  database and is **not** `brops-signer`-owned (Amendment A1, 2026-10-02 — rev-30 said a
+  `brops-signer`-owned DB, dir `0700`/file `0600`): `governed_evidence_head_floor` is a table in
+  the supervisor's acceptance ledger and sits behind that ledger's custody and no other. The
+  **acceptance ledger + `governed_turn_staging` store** (§2.4/§5) — and with them the floor — are
+  supervisor-only: directory `0700`, database file `0600`
+  (`governed_supervisor_ledger.open_ledger` creates a missing directory and a fresh file that
+  way). `brops-signer` opens no database. What this gives up is stated in §7.
 - **`sidecar`, `executor`, and `desktop` are in NEITHER `brops-store` nor any owner** ⇒ no
   read/write/list of the published store or any key.
 - IPC stays `AF_UNIX` + `SO_PEERCRED` allow-lists (unchanged).
@@ -1437,7 +1546,7 @@ everywhere; §4 gives the exact key sets.
 | 5 | `brops.governed-sign-request.v1` (attested evidence) | supervisor | **supervisor attestation** key (`supervisor_attestation_key_id`) over `JCS(evidence)` | isolated signer §6.1; desktop re-verifies the attestation bytes | ms | (transported, not stored) | — | `request_nonce` + `execution_attempt_id` | echoes #4/#6 handles; every `*_sha256` DERIVED by signer |
 | 6 | `brops.governed-turn-execution-receipt.v1` | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7; `verify_governed_turn_receipt` | ms | `execution_receipt_handle = SHA256(JCS({payload,signature}))` | recorder store namespace (§2.3) | `receipt_id` (global unique) | `output_handle == output_sha256`; binds attempt/lease |
 | 7 | `brops.governed-turn-containment.v1` | recorder runner | evidence event (evidence-recorder) | provider §7 | ms | `containment_evidence_sha256 = SHA256(JCS(artifact))` | recorder store namespace | attempt+lease | `contained==true`, closed `teardown_outcome` enum |
-| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **signer-owned `governed_evidence_head_floor`** (§7 P1-7/P0-2) | signer-owned floor keyed on `head_sequence` monotonicity + chain-content `(event_count, last_sequence, final_event_hash)` via BEGIN IMMEDIATE CAS A–E matrix (case A lower head → `stale_evidence`; B/D/E → `evidence_fork`; C unchanged re-anchor advances head only; D prefix-extend) | head monotone + chain content prefix-extends (structural) |
+| 8 | evidence event / head (`bro_evidence`, REUSED) | recorder runner | **evidence-recorder** key | isolated signer's `LiveRunStateProvider` §7 | **legacy epoch-seconds (never compared to ms)** | `event_hash` chain | evidence chain + **supervisor-owned `governed_evidence_head_floor`**, a table in the supervisor ledger (Amendment A1 — rev-30: signer-owned) (§7 P1-7/P0-2) | supervisor-owned floor (A1) keyed on `head_sequence` monotonicity + chain-content `(event_count, last_sequence, final_event_hash)` via BEGIN IMMEDIATE CAS A–E matrix (case A lower head → `stale_evidence`; B/D/E → `evidence_fork`; C unchanged re-anchor advances head only; D prefix-extend) | head monotone + chain content prefix-extends (structural) |
 | 9 | `brops.governed-sign-result.v1` | isolated signer | signer key (the receipt envelope #12) | supervisor → bridge → desktop | ms | (transported) | — | `receipt_id` | tagged union `signed`/`refused`; echoes TRANSPORT-ONLY |
 | 10 | `bridge.governed-turn-result.v1` (metadata-only, top-level `protocol` discriminator) + `brops.governed-turn-output-read.v1` pull | sidecar (transport/proxy) | — (carries #9/#12 signed bytes; output pulled) | **desktop verifies signatures + whole-output SHA256, NO store access** | ms | (transported; output via §4.10(f) pull) | — | `receipt_id` + `execution_attempt_id` + `output_stream_id` (read 3-tuple, P1-3) | echoes TRANSPORT-ONLY; desktop equality-checks vs the verified signed envelope #12; output digest vs #12 |
 | 11 | `brops.governed-turn-record.v1` | supervisor | **`governed-turn-recorder`** key (dedicated) | isolated signer's `LiveRunStateProvider` §7 | ms | `record_handle = SHA256(JCS({payload,signature}))` (also create-if-absent at `<run_id>__<execution_attempt_id>.json`) | supervisor store namespace | `(run_id, execution_attempt_id)` | binds ALL of #1,#2,#4 (via `lease_handle`),#6 (via `execution_receipt_handle`),#7,#8 + `challenge_accepted_at_ms` |
@@ -1577,8 +1686,13 @@ selects a **binary-pinned challenge-root anchor baked into the supervisor config
 **NEW governed protocol (§2.2) — the ratified `brops.sign-request.v1` is untouched.**
 `additionalProperties:false` on both objects; unknown-field + duplicate-key rejection;
 `_ms` are integers; `*_handle`/`*_hash` lowercase-64-hex; frame ≤ 256 KiB; large inputs are
-handles, never inline. There is **no `builder_id`** on the governed-model path (no builder
-authority) — only `executor_id` + `runner_id`.
+handles, never inline. The governed-model path **does carry `builder_id`** (Amendment A1,
+2026-10-02 — rev-30 said there is none): it is a supervisor-provisioned identity string
+(§5 v2(e)) that the isolated signer requires and compares to an allowlist, beside `executor_id`
+and `supervisor_id` (`isolated_signer._check_identity`). It is a label the signer checks, not a
+grant: §2 (the executor inherits no builder authority) is not changed by A1. The request and
+completion timestamps are spelled **`requested_at`** / **`completed_at`**, without the `_ms`
+suffix, and are integer epoch milliseconds (§1, A1); `challenge_accepted_at_ms` keeps its suffix.
 ```jsonc
 { "protocol": "brops.governed-sign-request.v1",
   "attestation": {
@@ -1590,9 +1704,9 @@ authority) — only `executor_id` + `runner_id`.
     "task_id": "<string ≤128>", "request_nonce": "<string ≤128>", "receipt_id": "<string ≤128>",
     "decision": "completed",
     "workspace_id": "<string ≤128>", "install_id": "<string ≤128>", "supervisor_id": "<string ≤128>",
-    "executor_id": "<string ≤128>", "runner_id": "<string ≤128>",
+    "executor_id": "<string ≤128>", "builder_id": "<string ≤128>", "runner_id": "<string ≤128>",
     "policy_id": "<string ≤128>", "policy_version": "<string ≤128>",
-    "requested_at_ms": <int>, "completed_at_ms": <int>, "challenge_accepted_at_ms": <int>,
+    "requested_at": <int>, "completed_at": <int>, "challenge_accepted_at_ms": <int>,   // A1: the first two carry no `_ms`; all three are integer epoch ms
     "system_handle": "<64hex>", "history_handle": "<64hex>", "generation_config_handle": "<64hex>",
     "output_handle": "<64hex>", "containment_evidence_handle": "<64hex>", "policy_bundle_handle": "<64hex>",
     "lease_handle": "<64hex>", "execution_receipt_handle": "<64hex>",
@@ -1604,6 +1718,13 @@ authority) — only `executor_id` + `runner_id`.
 `evidence` is authoritative ONLY because `attestation.sig` covers `JCS(evidence)`; every
 `*_handle`/`*_sha256` is **DERIVED by the signer** from the store bytes, never trusted from
 the wire. Malformed/oversize ⇒ `refused` (§4.5).
+
+> **Scope of Amendment A1 in this section.** A1 amended `builder_id` and the two timestamp names
+> and nothing else. The rest of the block above is rev-30's text and is **not** the evidence
+> shape the code validates (`EVIDENCE_FIELDS` in `engine/runtime/isolated_signer.py`): the built
+> evidence has no `lease_id`, no `runner_id` and none of the six `challenge_*` fields, it does
+> carry `record_handle`, and the frame's `protocol` is `brops.sign-request.v1`. Those are listed
+> under KNOWN DIVERGENCES at the head of this document as found and **not ruled**.
 
 ### 4.5 `brops.governed-sign-result.v1` — (artifact #9), COMPLETE tagged union
 **NEW governed protocol (§2.2) — the ratified `brops.sign-result.v1` is untouched.**
@@ -2505,7 +2626,7 @@ webview re-serialize/reconstruct, re-opening the split-authority — a frontend-
 `system`/`history`/`generation_config` could then differ from the already-pre-stored `request_sha256`
 ⇒ fail-closed Block). Instead 3b-1B adds **exactly one** frontend-exposed governed
 `#[tauri::command]` — a **thin renderer-side proxy** (the sole NEW entry in `generate_handler!`,
-`apps/desktop/src-tauri/src/lib.rs:95-166`) that carries **only** `{conversation_id, agent?}` to the
+`apps/desktop/src-tauri/src/lib.rs:95-166`) that carries **only** `{conversation_id, agent?, client_request_id}` to the
 broker over the renderer↔broker IPC above and owns none of the orchestration — while the **broker-service**
 orchestration **`governed_turn_execute`** it invokes **mirrors the merged single-backend-command shape of
 `stream_reply`** (`commands.rs:794`, which today already does prepare → `issue_challenge` pre-store →
@@ -2598,7 +2719,7 @@ Owning this one object, `governed_turn_execute` performs in order:
    re-supplied by the renderer.
 **No post-prepare webview round-trip (LOCKED):** after step 1, `system`/`history`/`generation_config`/
 its hashes/`context`/`conversation_id`/`run_id` are **never** re-serialized to, or re-accepted from, the
-frontend; the only renderer interactions are the initial **thin-proxy Tauri command** carrying **only** `{conversation_id, agent?}` to the broker (the renderer does **not** invoke `governed_turn_execute` — that is a BROKER-SERVICE operation, §0/§4.10(g); the renderer never names the prepared object, its hashes, nonces or the verdict) and the final broker-emitted committed result, rendered read-only. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
+frontend; the only renderer interactions are the initial **thin-proxy Tauri command** carrying **only** `{conversation_id, agent?, client_request_id}` to the broker (the renderer does **not** invoke `governed_turn_execute` — that is a BROKER-SERVICE operation, §0/§4.10(g); the renderer never names the prepared object, its hashes, nonces or the verdict) and the final broker-emitted committed result, rendered read-only. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
 no mutable public copy of the object/JCS/context is exposed; every cross-stage read is via a
 **read-only accessor**; and **before submit** the backend asserts
 `SHA256(prepared.generation_config_jcs) == prepared.context.generation_config_sha256` **and**
@@ -2801,8 +2922,23 @@ have **no** per-hop retry (the submit subprocess is one-shot).
 | §4.10(c) staging-final | `session_unknown,seq_mismatch,len_mismatch,sha_mismatch,handle_not_challenge,publish_divergent,retry_conflict,session_corrupt,malformed` | Terminal | 1 (stage `staging-final`) | 1 Block · `governed_internal_refusal:staging-final:{r}` |
 | §4.10(d) evidence-request pre-acceptance gate | `peer_denied,no_inputs_ready,session_corrupt,retry_conflict,malformed` | Terminal | 1 (stage `evidence-request`) | 1 Block · `governed_internal_refusal:evidence-request:{r}` |
 | §4.10(e)/§4.5 signer/supervisor final governed verdict | (the closed `GOVERNED_REFUSAL_REASONS` union) | Terminal (authoritative) | governed verdict, relayed verbatim | 1 Block · `governed_verdict_refused:{reason}` |
-| §4.10(f) output-read | `stream_unknown,stream_expired,stream_binding_mismatch,seq_out_of_range,malformed` | Terminal | governed verdict, relayed verbatim | pull cannot complete → 1 Block · `governed_output_read_refused:{reason}` |
+| §4.10(f) output-read | `stream_unknown,stream_expired,stream_binding_mismatch,seq_out_of_range,malformed` | Terminal | governed verdict, relayed verbatim | pull cannot complete → the turn Blocks with the closed renderer-facing reason `upstream_blocked`; **no bounded-reason prefix is emitted** (Amendment A1 — see the note under this table) |
 | any desktop↔sidecar local transport failure (§6.1) | — (no verdict frame) | Terminal (one-shot) | neither carrier (out-of-band Tauri error) | 1 Block · `governed_transport_failure:{detail}` |
+
+**Output-read refusals carry no bounded-reason prefix (Amendment A1, 2026-10-02).** rev-30's
+§4.10(f) row ended in `governed_output_read_refused:{reason}` — a FOURTH prefix, which the
+three-prefix rule above did not cover. No code produces that string, or any other bounded-reason
+string, for an output-read refusal. What is built: the supervisor answers
+`brops.governed-turn-output-read-result.v1` with `ok:false` and one of the five literals in the
+row (`engine/runtime/governed_output_read.py`); the broker's pull carries that as
+`PullError::Refused(StreamRefusal)` (`core/src/governed_output_pull.rs`); and
+`PullError::to_turn_reason` reduces it to `TurnReason::UpstreamBlocked`, as does the broker's
+caller (`broker/src/ladder_executor.rs`, which maps every pull error to it) — spelled
+`upstream_blocked` on the renderer↔broker frame. The five literals survive inside `PullError`
+and are not written into any `record_pre_verification_block` reason. So the three prefixes above
+are the complete set and stay disjoint: there is no fourth. (The three belong to this section's
+classification sink, which `config/spec-conformance.json` records as `not_implemented`; A1 does
+not change that.)
 
 **§4.10(d) pre-acceptance reply (added).** Before a `governed_turn_acceptance` row exists, an
 `evidence-request` gate failure returns `brops.governed-evidence-request-result.v1 {status:"refused",
@@ -3210,7 +3346,7 @@ access.
 
 No output renders before step 14 commits.
 0. **Broker-service governed orchestration (P0-1, §4.10(g)):** the renderer's **thin Tauri proxy** forwards
-   the closed `{conversation_id, agent?}` command to the **broker service** over the renderer↔broker IPC
+   the closed `{conversation_id, agent?, client_request_id}` command to the **broker service** over the renderer↔broker IPC
    (§4.10(g)); the **broker** runs **`governed_turn_execute(conversation_id, agent)`** — the ONLY renderer
    inputs (mirroring `stream_reply(conversation_id, agent, on_event)`); `system`/`history`/`workspace_id`/
    `install_id`/`generation_config`/`run_id`/`task_id` are broker-resolved or -generated, never renderer
@@ -3272,9 +3408,13 @@ No output renders before step 14 commits.
     signs it with the supervisor attestation key.
 11. **Isolated signer invokes `LiveRunStateProvider`** (§7) — the ONLY deep protected-store
     verifier — to verify the terminal chain (record + lease-by-handle + receipt-by-handle +
-    challenge + registry + containment + evidence head, incl. the lease-time invariants (P0-4)
-    and the **signer-owned durable head-floor CAS `governed_evidence_head_floor`**, committed
-    before the envelope is minted, §7 P1-7). The desktop never does this (no store access).
+    challenge + registry + containment + evidence head, incl. the lease-time invariants (P0-4)).
+    **The durable head-floor CAS `governed_evidence_head_floor` is NOT part of this step**
+    (Amendment A1, 2026-10-02 — rev-30 placed a signer-owned CAS here): the floor is
+    SUPERVISOR-owned and has already committed, inside the supervisor's write-once completion
+    transaction (`complete-run`, §5 v2(c)), before step 10's attestation exists — and so before
+    the envelope is minted (§7 P1-7). The signer holds no floor and opens no database. The
+    desktop never does this (no store access).
 12. **Isolated signer builds + signs the `brops.governed-receipt-envelope.v1`** (§4.9,
     isolated-signer key) binding record/lease/receipt handles + nonce/attempt + head +
     attestation digest + `output_sha256`/`output_bytes` (the output authority), and returns
@@ -3296,8 +3436,8 @@ No output renders before step 14 commits.
     every bridge/sign-result echo against the verified envelope → strict-UTF8 decode for display
     only (invalid UTF-8 ⇒ Block) → consume the one-time `request_nonce` (`receipt_challenges`) →
     assert `receipt_id` global uniqueness (`receipt_ids_seen`) → check receipt freshness (`_ms`)
-    → persist. A stale/rolled-back evidence head was already refused by the signer's durable
-    head-floor (step 11, §7 P1-7). Only on commit does the broker emit the committed UI-safe result to the renderer proxy to render.
+    → persist. A stale/rolled-back evidence head was already refused by the supervisor's durable
+    head-floor at completion (before step 10; §5 v2(c), §7 P1-7 as amended by A1). Only on commit does the broker emit the committed UI-safe result to the renderer proxy to render.
 
 **Out-of-band transport-failure contract (P1-1/P1-5, LOCKED — covers the desktop↔sidecar steps 0/13/14;
 the post-pre-store authority `create-pending`/`issue` hops have their own equally-durable boundary at
@@ -3411,8 +3551,8 @@ is authority), then require, all fail-closed:
   bytes)`; the receipt's `receipt_id`/`execution_attempt_id`/`lease_id` equal the record's.
 - **Containment:** the containment artifact's run/attempt/lease/runner equal the record's,
   `contained==true`, its evidence event `payload_hash == containment_evidence_sha256`.
-- **Evidence head + anti-rollback (SIGNER-OWNED durable floor, P1-7 / P0-2 — NO desktop head-floor
-  table).** The reused `bro_evidence` head/chain has no timestamp comparison; its anti-truncation
+- **Evidence head + anti-rollback (SUPERVISOR-OWNED durable floor — Amendment A1, 2026-10-02;
+  rev-30 said SIGNER-OWNED; P1-7 / P0-2 — NO desktop head-floor table).** The reused `bro_evidence` head/chain has no timestamp comparison; its anti-truncation
   is **structural**, keyed on the **chain-content** invariants `event_count` / `last_sequence` /
   `final_event_hash` (the per-event `event_hash`/`sequence` linkage). **`head_sequence` is NOT a
   chain-length — it is a re-ANCHOR / re-SIGN counter** that rises **every time the identical chain
@@ -3426,9 +3566,12 @@ is authority), then require, all fail-closed:
   check `bro_evidence.py:112-116` compares `head_sequence` and raises "stale")** COMBINED with the
   **chain-content identity** `(event_count, last_sequence, final_event_hash)`. Today `min_head_sequence`
   is a caller-only parameter never persisted (`bro_completion.py` `TODO(L-4)` defaults it to the
-  store's own current head → self-referential no-op); the fix makes it a **durable
-  `brops-signer`-owned floor DB**, separate from the read-only `brops-store` artifact store (the
-  signer is read-only there, §2.3), dir `0700` / file `0600`:
+  store's own current head → self-referential no-op); the fix makes it a **durable floor table in
+  the SUPERVISOR's ledger** — `governed_evidence_head_floor` in
+  `engine/runtime/supervisor_ledger.sql`, the same supervisor-only database as the acceptance
+  ledger (§2.3, §5: directory `0700` / file `0600`), separate from the `brops-store` artifact
+  store. It is **not** the `brops-signer`-owned floor DB rev-30 specified here: the isolated
+  signer opens no database (Amendment A1; what that gives up is stated at the end of this bullet):
   ```sql
   CREATE TABLE governed_evidence_head_floor (
     install_id            TEXT NOT NULL,          -- supervisor-supplied turn context (NOT in bro_evidence)
@@ -3437,13 +3580,28 @@ is authority), then require, all fail-closed:
     event_count           INTEGER NOT NULL CHECK (event_count >= 1),
     last_sequence         INTEGER NOT NULL CHECK (last_sequence >= 1),          -- == event_count (1-based)
     final_event_hash      TEXT NOT NULL,          -- 64-hex
-    updated_at_ms         INTEGER NOT NULL,       -- SIGNER wall-clock write time (bro_evidence has only issued_at_epoch seconds; NOT chain-derived)
+    updated_at_ms         INTEGER NOT NULL,       -- SUPERVISOR wall-clock write time (A1; bro_evidence has only issued_at_epoch seconds; NOT chain-derived)
     PRIMARY KEY (install_id, task_id) );
   ```
   (`bro_evidence` exposes `task_id`/`event_count`/`last_sequence`/`final_event_hash`/`head_sequence`
   via `load_head` `:84-119`; `install_id` is supervisor turn context, and `updated_at_ms` is the
-  signer's own write clock — the head carries only `issued_at_epoch` seconds, so `_ms` is NOT derived
-  from the chain.) Inside `LiveRunStateProvider`, **before minting the §4.9 envelope**, the signer
+  supervisor's own write clock — the head carries only `issued_at_epoch` seconds, so `_ms` is NOT derived
+  from the chain.)
+  **Where the CAS runs (Amendment A1).** The SUPERVISOR runs it, inside its write-once completion
+  transaction (`complete-run`, §5 v2(c)): `record_completion` → `_evidence_floor_cas` in
+  `engine/runtime/governed_supervisor_ledger.py`, over the evidence head the supervisor itself
+  DERIVED from the recorder's chain — never over a head named on the wire. The Rust twin is
+  `supervisor_ledger::evidence_floor_cas` (`apps/desktop/src-tauri/core/src/supervisor_ledger.rs`),
+  which the Windows kit's supervisor calls on its own durable floor database. A refused head
+  rolls the whole completion back, so no attestation (§4.4) and therefore no §4.9 envelope can
+  exist for it. The signer runs no part of it.
+  *(A1 rules the floor's OWNER and its TRANSACTION, and nothing else. The procedure and the A–E
+  matrix that follow are rev-30's text with the actor unchanged — "the signer", inside
+  `LiveRunStateProvider` — and they are **not** what the built CAS does: there is no
+  `validate_chain_detailed` in the tree, the built comparison is scoped to the install rather
+  than to `(install_id, task_id)`, and it has no prefix test. That is listed under KNOWN
+  DIVERGENCES at the head of this document as found and **not ruled**.)*
+  rev-30's procedure: inside `LiveRunStateProvider`, **before minting the §4.9 envelope**, the signer
   runs `load_head` → `(head_sequence, event_count, last_sequence, final_event_hash)` + a **new
   `validate_chain_detailed`** helper (the existing `validate_chain` returns ONLY the final digest —
   `bro_evidence.py:171` — and discards the per-event hashes it computes at `:158`; the detailed
@@ -3483,10 +3641,14 @@ is authority), then require, all fail-closed:
     last_sequence, final_event_hash, updated_at_ms)` from the validated head.
   (A divergent-content chain that is nonetheless validly signed would require **evidence-recorder key
   compromise**, which is **OUT of the §0 threat model** — the signer does not silently bless it; it
-  refuses.) **Commit the floor BEFORE returning the signed envelope**; concurrent same-chain attempts
+  refuses.) **Commit the floor BEFORE returning the signed envelope** — as built (A1) it commits
+  earlier still, with the completion row, before the attestation is built; concurrent same-chain attempts
   serialize on `BEGIN IMMEDIATE` + the `(install_id, task_id)` PK (closing the TOCTOU). Crash after
   floor-commit before response → the retry hits case B (idempotent, equal head_sequence + equal
-  content) and re-signs the identical envelope (no advance, no re-execution). **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
+  content) and re-signs the identical envelope (no advance, no re-execution). *(As built (A1): a
+  retried `complete-run` with byte-identical facts is the write-once completion's own idempotent
+  answer and does not run the CAS a second time — `record_completion` drives the floor only for a
+  newly inserted completion.)* **Startup integrity (scoped honestly, P1-7 — Option A):** on open, verify each
   floor row is internally self-consistent (`final_event_hash` is 64-hex, `event_count ≥ 1`,
   `last_sequence ≥ 1` = `event_count`, `highest_head_sequence ≥ 1` — matching the DDL CHECKs and the
   real `bro_evidence.py:107-109` `< 1` rejection) and refuse a malformed/corrupt DB, fail-closed.
@@ -3494,12 +3656,14 @@ is authority), then require, all fail-closed:
   (case A, lower `head_sequence` → `stale_evidence`), a same-length or same-head content fork (case B,
   equal head + any content difference → `evidence_fork`), a longer chain that does not reproduce the
   stored prefix (case D divergent lineage → `evidence_fork`), and every other higher-head anomaly
-  (case E → `evidence_fork`), i.e. rollback/fork mounted **through the running signer** by the
-  in-scope sidecar (which per §2.3 cannot read or write this `brops-signer` `0700`/`0600` DB at all). **This local table CANNOT
+  (case E → `evidence_fork`), i.e. rollback/fork mounted **through the running supervisor** (A1 —
+  rev-30: through the running signer) by the in-scope sidecar (which per §2.3 must not be able to
+  read or write the supervisor's `0700`/`0600` ledger at all). **This local table CANNOT
   detect a full-DB restore to an older self-consistent backup** — no external anchor exists to
   compare against, and the restored DB returns the restored (lower) floor as authoritative.
-  Offline/root/admin backup restore of the signer-owned DB requires privileges that are **OUT of
-  the §0 threat model** (admin/root/kernel), so it is **not** defended here. **External monotonic
+  Offline/root/admin backup restore of the supervisor-owned ledger (A1 — rev-30: the signer-owned
+  DB) requires privileges that are **OUT of
+  the §0 threat model** (admin/root/kernel, and the supervisor identity itself), so it is **not** defended here. **External monotonic
   anti-rollback anchoring** (an operator-held pin outside the DB, mirroring `resolve_registry_floor`'s
   `BRO_OPERATOR_REGISTRY_MIN_FILE`, or a hardware monotonic counter) is **DEFERRED to 3b-2**;
   unlike the registry floor (whose strength comes from that external anchor), this evidence-head
@@ -3516,10 +3680,35 @@ is authority), then require, all fail-closed:
   extension → exactly one commits, the other re-evaluates on the new floor; (9) crash after floor
   commit before the envelope response → retry hits case B, identical re-sign, no second advance; plus
   the **lower `head_sequence`** case → `stale_evidence`, and the bootstrap no-row → INSERT. (The
-  Wave-3a desktop SQLite has **no** `evidence_head_floor` table — this primitive is signer-side; a
-  stale head is refused here at the signer, before any envelope is minted. Note: the shipped
+  Wave-3a desktop SQLite has **no** `evidence_head_floor` table — this primitive is supervisor-side
+  (A1 — rev-30: signer-side); a stale head is refused at the supervisor's completion, before any
+  attestation or envelope exists. Note: the shipped
   `tests/test_evidence_chain.py` only exercises `head_sequence == 1`; the `min_head_sequence`
   stale-reject path is currently **uncovered** and these tests add that coverage.)
+
+  **What Amendment A1 gives up here, stated rather than hidden.** rev-30 put this floor in a
+  database only `brops-signer` could open, so it was held by a principal OTHER than the one that
+  presents the evidence head: a supervisor that was compromised, restored from an older ledger, or
+  simply wrong could not lower it, and the signer would have refused a stale or forked head from
+  its own durable memory. As built, the floor is a table in the supervisor's own ledger, advanced
+  by the supervisor's own completion transaction. **The supervisor is the party the floor
+  constrains** — it derives the head, compares it, and stores the result. The floor therefore
+  defends against a stale or forked head reaching the supervisor from below it — a recorder
+  chain whose head is older than, or collides with, one this install already recorded. It does
+  **not** defend against the supervisor itself, nor against
+  anyone who can write the supervisor's ledger file (the supervisor UID; root): either can delete
+  or lower the row and then complete a run on a rolled-back head, and the isolated signer — which
+  holds no floor, opens no database, and copies `evidence_head_sequence` and the other three
+  `evidence_*` values into the envelope from the attested evidence — will sign it. Under §0 the
+  supervisor identity and root are already outside the threat model, and §2.3 requires the
+  in-scope actors (login user, renderer, sidecar service UID) to be kept away from the supervisor's
+  ledger exactly as it required for the signer's, so on the design's own terms A1 opens no path to
+  an actor §0 puts in scope. That a deployed ledger really refuses those actors is `NM-ACL-13` and
+  `NM-ACL-14` in `SECURITY_NEGATIVE_TEST_MATRIX.md`, and neither is bound to a test today. What is
+  lost is the second principal: rev-30's floor was a check ON the supervisor; the built floor is a
+  check BY it. **This is accepted as built by the Owner's decision of 2026-10-02. It is not an
+  Architect ruling**, and the question `FLOOR_WRITER_SERVICE_DESIGN.md` §0.3 and §9 item 1 put to
+  the Architect on 2026-08-15 has not been answered by one.
 - **Registry anti-rollback (supervisor side, crash-consistent):** verify full signed
   registry → create-if-absent publish exact doc + fsync file&dir → durable floor tx persists
   `(highest_registry_epoch, registry_hash, challenge_registry_handle, root_key_id)` → the
@@ -3640,7 +3829,7 @@ the renderer cannot read/write/list the verifier DB or pinned manifest, cannot c
 authority IPC, cannot reach the sidecar/supervisor/signer IPC, cannot supply `system`/`history`/`config`/
 hashes/nonces/receipt fields, and a forged renderer "Verified" event **cannot** create a verified message
 (only the broker's committed verification tx does) — the broker accepts only the closed
-`{conversation_id, agent?}` command and resolves all authoritative inputs itself; (k) Actor C (dedicated
+`{conversation_id, agent?, client_request_id}` command and resolves all authoritative inputs itself; (k) Actor C (dedicated
 **sidecar service UID**, NOT login, NOT broker) attempts to connect the signer socket / read any key or
 store / make an authority sign caller-supplied evidence ⇒ DENIED (peer-auth + ACL); it may only trigger
 a run + relay the final receipt; (l) the seven runtime **service** principals must be pairwise-distinct
@@ -4025,7 +4214,8 @@ The current normative design is §0–§9 above. This log is historical only.
   pre-accept, no execution right) + supervisor acceptance ledger (execution, three UNIQUE
   constraints) + lease `nonce` + `receipt_id` (global, desktop `receipt_ids_seen`) +
   `execution_attempt_id` (unique) + `registry_epoch`/`registry_hash` (registry floor) +
-  **signer-owned durable** evidence-head floor `governed_evidence_head_floor` (BEGIN IMMEDIATE
+  **supervisor-owned durable** (Amendment A1 — rev-30: signer-owned) evidence-head floor
+  `governed_evidence_head_floor`, a table in the supervisor ledger (BEGIN IMMEDIATE
   CAS keyed on `head_sequence` monotonicity + chain-content `(event_count, last_sequence,
   final_event_hash)` — head-keyed A–E matrix; case A lower head → `stale_evidence`, B/D/E →
   `evidence_fork`, C unchanged re-anchor, D prefix-extend; `head_sequence` is a re-anchor counter,
@@ -4037,8 +4227,9 @@ The current normative design is §0–§9 above. This log is historical only.
   read/traverse only), artifacts `0640`, `umask 0027`, setgid kept only for group-inheritance;
   `_harden_dir` refuses `S_IWGRP`. Private-key dirs `0700` owner-only (incl. the
   **`governed-turn-recorder` key under `brops-supervisor`** — a supervisor-held key class, NOT a
-  separate principal, P1-5); **evidence-head floor DB** `brops-signer` `0700`/`0600`; acceptance
-  ledger + `governed_turn_staging` (+ its session/chunk tables, P1-6) + **`governed_output_streams`**
+  separate principal, P1-5); the **evidence-head floor** is a table in the acceptance ledger, not a
+  `brops-signer` DB (Amendment A1 — rev-30: `brops-signer` `0700`/`0600`); acceptance
+  ledger (with `governed_evidence_head_floor`) + `governed_turn_staging` (+ its session/chunk tables, P1-6) + **`governed_output_streams`**
   (P0-2) `0700` supervisor-only; sidecar/executor/desktop = none.
 - **Capability matrix:** executor = `INVOKE_GOVERNED_MODEL` only; `max_tool_calls=0`; no
   builder grants; launcher digest + model profile pinned.

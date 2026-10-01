@@ -4,6 +4,7 @@ import {
   Badge, StatusPill, Async, Modal, FormRow, Input, Textarea, Select, Button, EmptyState,
 } from '../components/ui';
 import { Mark } from '../components/Ambient';
+import { useToast } from '../components/toast';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Markdown } from '../components/markdown';
@@ -131,11 +132,27 @@ function NewRunForm({ onClose, onCreated }: { onClose: () => void; onCreated: (r
   );
 }
 
+// Is this outcome a REFUSAL, or something broken? The backend sends both as one untyped
+// `error { message }` (`RunStepEvent::Error`), so the only thing to go on is the wording — and
+// wording lies in one direction that matters: the operating system and the transport use the
+// refusal vocabulary for things that are plainly broken. `Connection refused (os error 111)`,
+// `Permission denied (os error 13)` and `governed sidecar crashed: exit 1` all matched the old
+// single regex and were announced as "the engine refused this step". So a breakdown signature
+// is checked FIRST and wins; only then is the refusal vocabulary consulted. Unrecognised text
+// falls through to "failed": calling an unknown error a refusal would be the fail-open
+// direction, claiming the system is fine.
+const BREAKDOWN = /os error \d+|\bconnection\b|\beconn|\bsocket\b|broken pipe|timed? ?out|crash|\bexit(ed)?\b|\bpanic|no such file|unreachable/i;
+const REFUSAL = /denied|not permitted|permission|blocked|forbidden|refus|rejected|unauthori/i;
+function readsAsRefusal(message: string): boolean {
+  return !BREAKDOWN.test(message) && REFUSAL.test(message);
+}
+
 // The reactor console for the SELECTED run: the hero reactor-panel (decorative
 // orbit + real HUD counts + status readout), the governed step composer + advance/
 // execute actions, streamed output, and the dispatch-trace timeline of real steps.
 function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const { t, setRoute, lang } = useApp();
+  const toast = useToast();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const reduced = usePrefersReducedMotion();
   const steps = useAsync(() => desktop.listRunSteps(run.id), [run.id]);
@@ -146,8 +163,15 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const [execError, setExecError] = useState<string | null>(null);
   const [approvalNeeded, setApprovalNeeded] = useState(false);
 
+  // A rejected write is REPORTED, then the list is re-read. It used to be `.catch(() => steps.reload())`:
+  // the backend's reason was discarded, so a refused or failed action looked like a click that did
+  // nothing.
+  const reportFailure = (e: unknown) => {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+    steps.reload();
+  };
   const advance = () => {
-    desktop.advanceRun(run.id).then(() => { steps.reload(); onChanged(); }).catch(() => steps.reload());
+    desktop.advanceRun(run.id).then(() => { steps.reload(); onChanged(); }).catch(reportFailure);
   };
   const addStep = () => {
     const trimmed = title.trim();
@@ -156,7 +180,7 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
     // here is created human-in-the-loop and will NOT auto-run.
     desktop.addRunStep(run.id, trimmed, '', reqApproval)
       .then(() => { setTitle(''); setReqApproval(false); steps.reload(); })
-      .catch(() => steps.reload());
+      .catch(reportFailure);
   };
   const execute = async () => {
     if (executing) return;
@@ -182,12 +206,7 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
     }
   };
 
-  // Is this outcome the WALL refusing, or something broken? The same classification the
-  // Analytics read path already uses, applied to the one action on this page that crosses
-  // the wall. Unrecognised text falls through to "failed": calling an unknown error a
-  // governed refusal would be the fail-open direction, claiming the system is fine.
-  const dispatchBlocked = execError !== null
-    && /denied|not permitted|permission|blocked|forbidden|refus|unauthori|governed/i.test(execError);
+  const dispatchBlocked = execError !== null && readsAsRefusal(execError);
 
   const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled';
   const items: RunStep[] = steps.data ?? [];
@@ -282,11 +301,12 @@ function RunConsole({ run, onChanged }: { run: Run; onChanged: () => void }) {
               <Button small variant="ghost" onClick={() => setRoute('approvals')}>{t('command.goToApprovals')}</Button>
             </p>
           )}
-          {/* §D `blocked`: "dispatch denied by wall → reason". A governed REFUSAL and a
-              network failure used to render identically — one warn pill with the raw string,
-              announced to nobody. They are opposite events: a refusal is the wall doing its
-              job and nothing ran; a failure is something broken. Telling the owner they are
-              the same thing teaches them to read the wall as a bug.
+          {/* §D `blocked`: "dispatch denied by wall → reason". A REFUSAL and a network failure
+              used to render identically — one warn pill with the raw string, announced to
+              nobody. They are opposite events: a refusal is a rule doing its job; a failure is
+              something broken. Telling the owner they are the same thing teaches them to read
+              a refusal as a bug. Which rule refused is NOT known here (see `readsAsRefusal`),
+              so the copy names a refusal and stops there.
               `role="alert"` because a dispatch the owner just pressed and that did NOT happen
               is the definition of something a screen-reader user must be told immediately —
               the surrounding `aria-live="polite"` region would queue it behind the stream. */}
@@ -355,8 +375,14 @@ export function Command() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const s = useAsync(() => desktop.listRuns(), []);
 
+  const toast = useToast();
+  // Same rule as the console's writes: say why it did not happen, then re-read.
+  const reportFailure = (e: unknown) => {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+    s.reload();
+  };
   const changeStatus = (id: string, status: string) => {
-    desktop.setRunStatus(id, status).then(() => s.reload()).catch(() => s.reload());
+    desktop.setRunStatus(id, status).then(() => s.reload()).catch(reportFailure);
   };
   // Command-first quick create: the dock issues a run from a one-line intent.
   const dockCreate = () => {
@@ -366,7 +392,7 @@ export function Command() {
       setDockIntent('');
       setSelectedId(run.id);
       s.reload();
-    }).catch(() => s.reload());
+    }).catch(reportFailure);
   };
 
   return (

@@ -4,6 +4,11 @@ import userEvent from '@testing-library/user-event';
 
 // The palette searches entities over the IPC boundary when a backend is present. Mock the
 // boundary, not the service, so the debounce + stale-response guard are the real ones.
+//
+// That sentence was here for a long time while NO test in this file had a backend: `hasBackend()`
+// is false in jsdom, the search effect returned on its first line, and the debounce, the stale
+// guard and `openEntity` never ran. The "entity search" block at the bottom sets
+// `__TAURI_INTERNALS__` and drives them.
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -46,7 +51,10 @@ async function openWithShortcut(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => invokeMock.mockReset());
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+});
 
 describe('CommandPalette — ⌘K opens a real dialog', () => {
   it('is absent until the shortcut, then is a labelled modal dialog', async () => {
@@ -199,6 +207,9 @@ describe('CommandPalette — the listbox says which row Enter is aimed at', () =
     const opener = screen.getByTestId('opener');
     act(() => opener.focus());
     await openWithShortcut(user);
+    // Watched from here on: the only thing that distinguishes "did not chase it" from "chased it
+    // and nothing happened" is whether focus() was called at all.
+    const chased = vi.spyOn(opener, 'focus');
     // React unmounts the opener, exactly as a route change does to the page that owned it.
     rerender(<Harness showOpener={false} />);
     expect(opener.isConnected).toBe(false);
@@ -207,6 +218,11 @@ describe('CommandPalette — the listbox says which row Enter is aimed at', () =
     // The restore must not "succeed" against a node that is no longer in the document. Nothing
     // pretends otherwise, and nothing throws; the route's own focus handoff owns the destination
     // from here. What must NOT happen is a no-op dressed as a restore.
+    //
+    // This used to assert only that `survivor` was not focused — which holds whether or not the
+    // `isConnected` guard exists, because focus() on a detached node focuses nothing. The test
+    // could not fail. The call itself is the thing to refuse.
+    expect(chased).not.toHaveBeenCalled();
     expect(screen.getByTestId('survivor')).not.toHaveFocus();
   });
 
@@ -220,5 +236,96 @@ describe('CommandPalette — the listbox says which row Enter is aimed at', () =
     await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(window.location.hash).toContain('security');
+  });
+});
+
+// With a backend. Everything above runs with `hasBackend()` false, where the search effect returns
+// before it does anything; this block is the only place the debounce, the stale-response guard and
+// the deep link through `openEntity` actually execute.
+describe('CommandPalette — entity search over the IPC boundary', () => {
+  type Hit = { kind: string; id: string; title: string; subtitle: string; route: string };
+  const hit = (title: string): Hit => ({ kind: 'task', id: `id-${title}`, title, subtitle: '', route: 'tasks' });
+
+  /** One controllable reply per `search_all` call, keyed by the query it was made with. */
+  function backend() {
+    const pending = new Map<string, (hits: Hit[]) => void>();
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    invokeMock.mockImplementation((cmd: string, args?: { query?: string }) => {
+      if (cmd !== 'search_all') return Promise.resolve([]);
+      return new Promise<Hit[]>((resolve) => pending.set(args?.query ?? '', resolve));
+    });
+    const searches = () => invokeMock.mock.calls.filter(([cmd]) => cmd === 'search_all').map(([, a]) => a.query);
+    return { pending, searches };
+  }
+
+  function mount() {
+    return render(
+      <AppProvider>
+        <ToastProvider>
+          <CommandPalette />
+        </ToastProvider>
+      </AppProvider>,
+    );
+  }
+
+  it('debounces: one search for the settled query, none for the keystrokes on the way', async () => {
+    const user = userEvent.setup();
+    const { pending, searches } = backend();
+    mount();
+    await openWithShortcut(user);
+    await user.type(screen.getByRole('combobox'), 'qzx');
+    await waitFor(() => expect(searches()).toEqual(['qzx']));
+    await act(async () => { pending.get('qzx')!([hit('Quarterly zebra')]); });
+    expect(await screen.findByText('Quarterly zebra')).toBeInTheDocument();
+  });
+
+  it('drops a reply that arrives after the query it answered was replaced', async () => {
+    const user = userEvent.setup();
+    const { pending, searches } = backend();
+    mount();
+    await openWithShortcut(user);
+    const input = screen.getByRole('combobox');
+    await user.type(input, 'qzx');
+    await waitFor(() => expect(searches()).toEqual(['qzx']));
+    await user.type(input, 'w');
+    await waitFor(() => expect(searches()).toEqual(['qzx', 'qzxw']));
+    // The first reply lands after its query is no longer the one on screen.
+    await act(async () => { pending.get('qzx')!([hit('stale answer')]); });
+    expect(screen.queryByText('stale answer')).toBeNull();
+    await act(async () => { pending.get('qzxw')!([hit('fresh answer')]); });
+    expect(await screen.findByText('fresh answer')).toBeInTheDocument();
+    expect(screen.queryByText('stale answer')).toBeNull();
+  });
+
+  it('ArrowDown on an empty list does not strand the cursor below the first row', async () => {
+    // `Math.min(a + 1, total - 1)` is -1 while the list is empty. When results then arrived,
+    // aria-activedescendant named `…-opt--1`, no row was highlighted, and Enter did nothing.
+    const user = userEvent.setup();
+    const { pending, searches } = backend();
+    mount();
+    await openWithShortcut(user);
+    const input = screen.getByRole('combobox');
+    await user.type(input, 'qzx');
+    await waitFor(() => expect(screen.queryAllByRole('option')).toHaveLength(0));
+    await user.keyboard('{ArrowDown}');
+    await waitFor(() => expect(searches()).toEqual(['qzx']));
+    await act(async () => { pending.get('qzx')!([hit('Only result')]); });
+    const option = await screen.findByRole('option');
+    expect(input.getAttribute('aria-activedescendant')).toBe(option.id);
+    expect(option).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('Enter on an entity row deep-links through openEntity and closes', async () => {
+    const user = userEvent.setup();
+    const { pending, searches } = backend();
+    mount();
+    await openWithShortcut(user);
+    await user.type(screen.getByRole('combobox'), 'qzx');
+    await waitFor(() => expect(searches()).toEqual(['qzx']));
+    await act(async () => { pending.get('qzx')!([hit('Deep link')]); });
+    await screen.findByText('Deep link');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(window.location.hash).toContain('tasks');
   });
 });

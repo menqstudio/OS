@@ -5,9 +5,11 @@ edition = "2021"
 publish = false
 description = "BroPS trusted broker service as a SEPARATE binary crate (rev-30 §0 role #2, §4.10(g)): opens the receipt/broker SQLite DB, binds the renderer→broker AF_UNIX listener, authenticates each connecting peer, and drives one governed turn per connection via brops-core::broker_orchestrator::run_governed_turn. The socket/peer-cred path is Linux-only; every other host fails closed."
 
-# The governed-chain orchestration (chain_executor / chain_hops) is exposed as a library so the Linux
-# live-turn driver (proof crate) can wire the SAME LinuxGovernedTurnChain / LinuxHopConnector /
-# LinuxGovernedExecution the broker binary uses — one source of truth for the real chain.
+# The governed-chain orchestration is exposed as a library so the Linux proof drivers (proof crate)
+# call the code the broker binary calls. Two chains live here: the 4.10(g) LadderChain, which is the
+# only one `brops-broker` builds (and `ladder_turn` builds too), and the direct
+# LinuxGovernedTurnChain / LinuxGovernedExecution, which NO shipped binary constructs — `live_turn`
+# is its one constructor. They share LinuxHopConnector, chain_hops and the manifest resolver.
 [lib]
 name = "brops_broker"
 path = "src/lib.rs"
@@ -25,7 +27,7 @@ path = "src/bin/preflight.rs"
 
 [dependencies]
 # The broker reuses the already-landed governed-turn control flow, framing, peer
-# auth, and the four SQLite schemas. It NEVER re-implements those rules — it wires
+# auth, and the three SQLite schemas. It NEVER re-implements those rules — it wires
 # the transport around brops-core so the broker and the recorder-side checks share
 # ONE source of truth.
 brops-core = { path = "../core" }

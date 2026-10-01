@@ -35,10 +35,13 @@
 //!
 //! ## Pure decision, Windows effect
 //!
-//! Same shape as [`crate::pipe_acl`] and [`crate::tcb_floor`], and for the same reason: this crate's
-//! Windows-only code is covered by no CI at all, so every *decision* — which trustees, which mask,
-//! whether a root directory is acceptable — is a pure function over plain data and is unit-tested on
-//! the Linux runner. Only the syscalls are `#[cfg(windows)]`.
+//! Same shape as [`crate::pipe_acl`] and [`crate::tcb_floor`], and for the same reason: the Linux
+//! runner compiles past this crate's Windows-only code, so every *decision* — which trustees, which
+//! mask, whether a root directory is acceptable — is a pure function over plain data and is
+//! unit-tested there. Only the syscalls are `#[cfg(windows)]`. (This used to say the Windows-only code
+//! "is covered by no CI at all". It is now: the `windows-broker` job in `.github/workflows/ci.yml`
+//! runs `cargo test -p brops-win-live` on `windows-latest`, which is where the read-back test at the
+//! bottom of this file executes.)
 //!
 //! ## Why refusal instead of silent repair
 //!
@@ -104,10 +107,13 @@ pub struct CustodyDacl {
 
 /// Cheap syntactic SID check.
 ///
-/// Duplicated from `pipe_acl` (which is another agent's file in this round and must not be edited) —
-/// same rule, and [`custody_file_dacl`] additionally rejects anything `ConvertStringSidToSidW` will
-/// not parse on the Windows side, which is the real arbiter. This exists so the pure plan can refuse
-/// obviously-wrong input on any host, including in a Linux unit test.
+/// A second copy of the private `pipe_acl::looks_like_sid` — same body, and nothing holds the two
+/// equal. (It was copied because `pipe_acl` could not be edited in the round that wrote this; that
+/// reason is gone and the copy is not. [`FileAce`] likewise mirrors `pipe_acl::PipeAce`, and the
+/// Windows-side `sid_to_string` below mirrors `tcb_floor`'s `sid_string`.) [`custody_file_dacl`]
+/// additionally rejects anything `ConvertStringSidToSidW` will not parse on the Windows side, which is
+/// the real arbiter. This exists so the pure plan can refuse obviously-wrong input on any host,
+/// including in a Linux unit test.
 fn looks_like_sid(s: &str) -> bool {
     s.starts_with("S-1-")
         && s.len() > 4
@@ -225,11 +231,20 @@ pub enum RootRefusal {
 
 /// Is this directory fit to be the deployment root?
 ///
-/// The predicate is **deliberately identical** to the one [`crate::tcb_floor`] applies to the ancestor
-/// directories of every pinned artifact (TCB owner + [`untrusted_write_grantees`] empty). That is the
-/// point: a root this function accepts is a root the runtime §2.5 floor will also accept, so
-/// provisioning cannot hand an operator a deployment that is guaranteed to refuse to serve later. The
-/// `it_agrees_with_the_runtime_floor_ancestor_rule` test pins the two together so they cannot drift.
+/// The predicate is meant to be the one [`crate::tcb_floor`] applies to EACH ancestor directory of a
+/// pinned artifact (TCB owner + [`untrusted_write_grantees`] empty), so that provisioning does not
+/// bless a root the runtime §2.5 floor would refuse for its own descriptor.
+///
+/// Two things this used to claim and does not deliver:
+///
+/// * **"A root this function accepts is a root the runtime floor will also accept" is false for the
+///   ancestors.** [`verify_or_create_deployment_root`] measures the root and nothing above it; the
+///   floor walks every ancestor up to the drive root. A root that passes here under a parent the
+///   floor refuses is a deployment provisioning blesses and the servers then refuse to serve.
+/// * **The two are not pinned together.** `it_agrees_with_the_runtime_floor_ancestor_rule` compares
+///   this function against an inline restatement of the rule written into the test, not against the
+///   floor's own code. `tcb_floor` has no shared ancestor predicate to call — its rule lives inside
+///   `verify_artifact` — so the two can drift with that test green.
 ///
 /// `facts == None` means "could not measure", which is refused rather than assumed benign.
 pub fn check_root_custody(path: &str, facts: Option<&WinFileFacts>) -> Result<(), RootRefusal> {
@@ -922,6 +937,10 @@ mod tests {
         // The provisioning gate and the runtime §2.5 ancestor gate must accept exactly the same set of
         // directories. If they drift, provisioning either blesses a deployment that will refuse to
         // serve, or refuses one that would have served — and the operator gets two stories.
+        //
+        // What this actually compares against is `floor_ok` below: a COPY of the floor's ancestor
+        // rule, restated here. It holds `check_root_custody` to that copy, not to
+        // `tcb_floor::verify_artifact`, so an edit to the floor's rule leaves this green.
         let candidates = vec![
             dir_facts(SID_ADMINISTRATORS, tcb_only_aces()),
             dir_facts(SID_LOCAL_SYSTEM, tcb_only_aces()),
@@ -997,7 +1016,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Windows-only: read the descriptor back off a real file. Does NOT run on the Linux CI runner.
+    // Windows-only: read the descriptor back off a real file. Does NOT run on the Linux CI runner;
+    // it runs in the `windows-broker` CI job (`windows-latest`, `cargo test -p brops-win-live`).
     // ---------------------------------------------------------------------------------------------
 
     #[cfg(windows)]

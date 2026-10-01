@@ -41,26 +41,35 @@
 // he just authorised), so where sources disagree this module widens rather than narrows, and
 // says that it did.
 
-/** The three capability tiers Bro chooses between (`tools/generate_agent_definitions.py`). */
-export type CapabilityTier = 'reader' | 'runner' | 'builder';
+import {
+  ABSOLUTE_PATH_PATTERN_SOURCE, CAPABILITY_TIERS, REPO_PATH_PATTERN_SOURCE, TIER_TOOLS,
+  isAbsolutePath, isRepoPath, type CapabilityTier,
+} from '../services/agentsDispatch';
 
-const TIERS: readonly CapabilityTier[] = ['reader', 'runner', 'builder'];
+// The tier vocabulary, the tier → tools table and the two path patterns are NOT defined here.
+// They live once, in `services/agentsDispatch.ts`, and are re-exported below under the names
+// this module has always offered. There used to be a second, hand-written copy of all three in
+// this file — and it was the only copy checked against the real files, while the Tasks page
+// rendered the unchecked one. `Chat.delegationTiers.guard.test.ts` and
+// `Chat.delegationContract.test.ts` import through THIS module, so they now hold the single
+// copy both surfaces use.
+
+/** The three capability tiers Bro chooses between (`tools/generate_agent_definitions.py`). */
+export type { CapabilityTier };
+
+const TIERS: readonly CapabilityTier[] = CAPABILITY_TIERS;
 
 /**
  * Tools each tier's agent definition grants.
  *
- * A local MIRROR of `TIERS` in `tools/generate_agent_definitions.py` / the `tools:` frontmatter
- * of `.claude/agents/{reader,runner,builder}.md`. The renderer has no filesystem, so it cannot
+ * A MIRROR of `TIERS` in `tools/generate_agent_definitions.py` / the `tools:` frontmatter of
+ * `.claude/agents/{reader,runner,builder}.md`. The renderer has no filesystem, so it cannot
  * read the real definitions at runtime — but a mirror that silently drifts would render a
  * narrower capability than the agent actually holds, which is the one error that matters here.
  * `Chat.delegationTiers.guard.test.ts` reads the real `.claude/agents/*.md` and fails on any
  * difference, so this table is a checked mirror rather than a remembered one.
  */
-export const TIER_TOOLS: Readonly<Record<CapabilityTier, readonly string[]>> = {
-  reader: ['Read', 'Grep', 'Glob'],
-  runner: ['Read', 'Grep', 'Glob', 'Bash'],
-  builder: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash'],
-};
+export { TIER_TOOLS };
 
 /** Stable display order for a tool list, so two equal grants never read as different ones. */
 const TOOL_ORDER = ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'Task'];
@@ -70,27 +79,25 @@ export function isCapabilityTier(v: unknown): v is CapabilityTier {
 }
 
 // ── Path grammar ────────────────────────────────────────────────────────────────────
-// Verbatim copies of `$defs.repoPath.pattern` and `$defs.absolutePath.pattern` from
+// `$defs.repoPath.pattern` and `$defs.absolutePath.pattern` from
 // `engine/schemas/task-contract.schema.json` — the same language `bro_contracts.safe_repo_path`
-// / `safe_work_path` enforce procedurally. Copied rather than re-derived so a scope string the
-// engine would refuse can never be drawn here as a clean, validated grant; the schema file is
-// read back and compared character-for-character in `Chat.delegationContract.test.ts`, so a
-// change on the engine side fails this side loudly instead of quietly widening what we accept.
+// / `safe_work_path` enforce procedurally. Taken verbatim rather than re-derived so a scope
+// string the engine would refuse can never be drawn here as a clean, validated grant; the schema
+// file is read back and compared character-for-character in `Chat.delegationContract.test.ts`,
+// so a change on the engine side fails this side loudly instead of quietly widening what we
+// accept. The strings themselves are `services/agentsDispatch.ts`'s — one copy, see above.
 
 /** `engine/schemas/task-contract.schema.json` → `$defs.repoPath.pattern`. */
-export const REPO_PATH_PATTERN = String.raw`^(?:\.|(?!~)(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?(?:/(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?)*)$`;
+export const REPO_PATH_PATTERN = REPO_PATH_PATTERN_SOURCE;
 
 /** `engine/schemas/task-contract.schema.json` → `$defs.absolutePath.pattern`. */
-export const ABSOLUTE_PATH_PATTERN = String.raw`^(?:/|[A-Za-z]:/)(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?(?:/(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?)*$`;
-
-const REPO_PATH = new RegExp(REPO_PATH_PATTERN);
-const ABSOLUTE_PATH = new RegExp(ABSOLUTE_PATH_PATTERN);
+export const ABSOLUTE_PATH_PATTERN = ABSOLUTE_PATH_PATTERN_SOURCE;
 
 /** A `scope` / `prohibited_scope` entry: repo-relative, or absolute when the work genuinely
  *  lives outside this checkout (a UI agent writing into a Desktop folder). */
 export function isWorkPath(v: unknown): v is string {
   if (typeof v !== 'string' || v.length === 0) return false;
-  return REPO_PATH.test(v) || ABSOLUTE_PATH.test(v);
+  return isRepoPath(v) || isAbsolutePath(v);
 }
 
 // ── The wire contract ───────────────────────────────────────────────────────────────

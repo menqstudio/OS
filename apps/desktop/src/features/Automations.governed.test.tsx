@@ -296,3 +296,84 @@ describe('the unattended path is disclosed rather than implied', () => {
     expect(contract).toHaveTextContent(/interval trigger fires it with nobody present/i);
   });
 });
+
+// `created_at`, `updated_at` and `ran_at` are epoch-milliseconds AS TEXT. The page did
+// `new Date(iso)`, which is Invalid Date for a digit string, so every date it showed was a dash.
+describe('the dates on this page are real dates', () => {
+  it('renders Created, Updated and a run time from the backend\'s epoch text', async () => {
+    setup({ runs: [OLD_RUN] });
+    await loaded();
+    await waitFor(() => expect(history().length).toBe(1));
+    const fact = (label: string) =>
+      Array.from(document.querySelectorAll('.au-facts .au-fact'))
+        .find((n) => n.querySelector('.au-fk')?.textContent === label)
+        ?.querySelector('.mono')?.textContent ?? '';
+    for (const label of ['Created', 'Updated']) {
+      expect(fact(label), label).toMatch(/2023/);
+      expect(fact(label), label).not.toBe('—');
+    }
+    expect(document.querySelector('.au-run-time')?.textContent).toMatch(/2023/);
+  });
+});
+
+// The history was keyed on `selectedId` and drawn unfiltered. `useAsync` keeps the previous data
+// across a dependency change and across an error, so one automation's runs could sit under
+// another's name — for good, if the new read failed.
+describe('the run history belongs to the automation on screen', () => {
+  const SECOND = { ...AUTOMATION, id: 'au-2', name: 'Evening digest' };
+
+  function mountTwo(second: () => Promise<unknown>) {
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_automations') return Promise.resolve([AUTOMATION, SECOND]);
+      if (cmd === 'list_automation_runs') {
+        return args?.id === 'au-2' ? second() : Promise.resolve([OLD_RUN]);
+      }
+      return Promise.resolve(null);
+    });
+    return render(<AppProvider><ToastProvider><Automations /></ToastProvider></AppProvider>);
+  }
+
+  it('a failed read for the second automation shows an error, not the first one\'s runs', async () => {
+    mountTwo(() => Promise.reject(new Error('database is locked')));
+    await loaded();
+    await waitFor(() => expect(history().length).toBe(1));
+    expect(history()[0]).toHaveTextContent('notified: yesterday');
+
+    fireEvent.click(screen.getByRole('button', { name: /Evening digest/ }));
+    await waitFor(() => expect(screen.getByText(/Run history could not be read/)).toBeInTheDocument());
+    expect(screen.getByText(/database is locked/)).toBeInTheDocument();
+    // au-1's run is not drawn under au-2, and the failure is not called "No runs yet".
+    expect(history().length).toBe(0);
+    expect(document.querySelector('.sc-foot')?.textContent ?? '').not.toContain('notified: yesterday');
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+  });
+
+  it('a row that names another automation is never drawn, even from a successful read', async () => {
+    mountTwo(() => Promise.resolve([{ ...OLD_RUN, id: 'r-stray', detail: 'stray row of au-1' }]));
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: /Evening digest/ }));
+    await waitFor(() => expect(screen.getByText(/No runs yet/)).toBeInTheDocument());
+    expect(history().length).toBe(0);
+  });
+});
+
+// `list_automations` is a local SQLite read. Its refusal was titled "Blocked by the wall" and
+// told the owner to "Switch to work mode, or request the required scope/approval".
+describe('a refused read of the automation list is not the wall', () => {
+  it('says the read was refused and promises no mode, scope or approval', async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'list_automations'
+        ? Promise.reject(new Error('list_automations not allowed: permission denied'))
+        : Promise.resolve(null));
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      render(<AppProvider><ToastProvider><Automations /></ToastProvider></AppProvider>);
+      await waitFor(() => expect(screen.getByText('Read refused')).toBeInTheDocument());
+      expect(screen.getByText(/list_automations not allowed/)).toBeInTheDocument();
+      expect(screen.queryByText('Blocked by the wall')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Switch to work mode/)).not.toBeInTheDocument();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
+  });
+});

@@ -45,8 +45,10 @@ describe('credential custody', () => {
   });
 
   it('reports a reference only when the record really carries a non-empty one', () => {
-    expect(credentialCustodyOf({ ...rec(), authRef: 'engine:github' } as Integration)).toBe('referenced');
-    expect(credentialCustodyOf({ ...rec(), authRef: '   ' } as Integration)).toBe('no_reference');
+    // `authRef` is a declared field of `Integration` now, so no cast is needed to carry one.
+    expect(credentialCustodyOf({ ...rec(), authRef: 'engine:github' })).toBe('referenced');
+    expect(credentialCustodyOf({ ...rec(), authRef: '   ' })).toBe('no_reference');
+    expect(credentialCustodyOf({ ...rec(), authRef: null })).toBe('no_reference');
     expect(credentialCustodyOf({ ...rec(), authRef: 1 } as unknown as Integration)).toBe('no_reference');
   });
 });

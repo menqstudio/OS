@@ -221,3 +221,59 @@ describe("Notifications — the ENGINE's reason for an empty stream reaches the 
     expect(screen.queryByText(/holds no tasks/)).not.toBeInTheDocument();
   });
 });
+
+// The panel's title — and its accessible name — was "Governance stream sealed" for everything
+// except a read that carried records: while the read was in flight, when nothing was reached, and
+// over an `ok` read whose own body said the chain "answered with no events".
+describe('Notifications — the gate title names the state the read is actually in', () => {
+  const title = () => document.querySelector('.nsig-gate-title')?.textContent ?? '';
+  const gate = () => document.querySelector('.nsig-gate') as HTMLElement;
+
+  it('reading', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_notifications') return Promise.resolve([NOTE]);
+      if (cmd === 'read_evidence_chain') return new Promise(() => {});
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Notifications /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(title()).toBe('Reading the governance stream'));
+    expect(gate()).toHaveAttribute('aria-label', 'Reading the governance stream');
+  });
+
+  it('unreachable — and no longer waiting for a "read bridge" that already exists', async () => {
+    mountWithChain({ reject: 'broker_unavailable' });
+    await waitFor(() => expect(title()).toBe('Governance stream not reached'));
+    expect(gate()).toHaveAttribute('aria-label', 'Governance stream not reached');
+    expect(gate().textContent).not.toMatch(/once the read bridge lands|not connected to this desktop yet/);
+  });
+
+  it('blocked', async () => {
+    mountWithChain({ reply: { state: 'blocked', surface: 'evidenceChain', reason: 'engine_refused', authenticated: false } });
+    await waitFor(() => expect(title()).toBe('Governance stream read refused'));
+    expect(gate().textContent).toMatch(/The engine refused this read/);
+  });
+
+  it('ok with no events is "answered — no events", never "sealed"', async () => {
+    mountWithChain({ reply: { state: 'ok', surface: 'evidenceChain', records: [], authenticated: false } });
+    await waitFor(() => expect(title()).toBe('Governance stream answered — no events'));
+    expect(gate()).toHaveAttribute('aria-label', 'Governance stream answered — no events');
+  });
+
+  it('ok with records is the only state called mirrored', async () => {
+    mountWithChain({ reply: { state: 'ok', surface: 'evidenceChain', records: [{ id: 'e-1' }], authenticated: false } });
+    await waitFor(() => expect(title()).toBe('Governance stream mirrored'));
+    expect(gate()).toHaveAttribute('aria-label', 'Governance stream mirrored');
+  });
+
+  it('no state is titled "sealed"', async () => {
+    for (const reply of [
+      { state: 'ok', surface: 'evidenceChain', records: [], authenticated: false },
+      { state: 'blocked', surface: 'evidenceChain', reason: 'x', authenticated: false },
+    ]) {
+      const { unmount } = mountWithChain({ reply });
+      await waitFor(() => expect(title()).not.toBe(''));
+      expect(title()).not.toMatch(/sealed/i);
+      unmount();
+    }
+  });
+});

@@ -39,10 +39,14 @@ pub struct ExecutionParams {
     /// floor compared a constant against itself, and the remediation audit found the defect alive
     /// on this platform after it had been marked CLOSED on the strength of the Linux fix alone.
     ///
-    /// In the cross-account deployment this directory belongs to the executor principal and the
-    /// broker cannot write it, which is the property the Linux kit gets from the recorder's 0750
-    /// state directory. In the in-process proof both sides are one process, so there it checks
-    /// the SHAPE of the protocol, not containment — said plainly rather than left to be assumed.
+    /// **The broker authors this chain on this platform, in every deployment of the kit.** This
+    /// used to say that in the cross-account deployment the directory "belongs to the executor
+    /// principal and the broker cannot write it" — the property the Linux kit gets from the
+    /// recorder's 0750 state directory. Nothing here provides it: [`GovernedExecutionCore`]'s
+    /// `execute` writes the chain and runs inside `win_live_turn` (the driver/broker),
+    /// `win_executor` writes only its stdout, and `win_provision` neither creates this directory
+    /// nor ACLs it. So in the live kit, exactly as in the in-process proof, the supervisor's
+    /// derivation checks the SHAPE of the protocol, not containment.
     pub evidence_dir: PathBuf,
     /// The monotonic head sequence for this run. A deployment must advance it across runs or the
     /// supervisor's evidence floor has nothing to order; the caller owns that counter because
@@ -124,6 +128,15 @@ pub fn executor_image_binding(
 
 /// Measure an executor image off disk. `None` when it cannot be read — which
 /// [`executor_image_binding`] turns into a refusal for a kit that spawns one.
+///
+/// This measures the PATH, once, before the spawn: `fs::read` opens the file, hashes it and
+/// closes it, and the producer later opens the same path again to run it (`win_live_turn` uses
+/// `Command::new(&executor_path)`). Nothing holds a handle across the two opens, so the
+/// `measured:<digest>` the containment evidence records means "the bytes at this path matched the
+/// pin shortly before the spawn", not "the image that ran is the image that was hashed" — the
+/// Linux launcher's `fexecve` of the hashed fd is the stronger statement and is not made here.
+/// What narrows the gap is custody, not this function: the executor is a §2.5-pinned artifact
+/// whose writers must be TCB principals.
 fn measure_image(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.is_empty() {
@@ -318,11 +331,13 @@ where
         //      hash-linked chain of what it observed, and the SUPERVISOR derives the head from it
         //      and refuses a completion whose `output_handle` is not the digest recorded here.
         //
-        //      The chain is written to the executor's own evidence directory. In the cross-account
-        //      deployment that directory belongs to the executor principal and the broker cannot
-        //      write it, which is the property the Linux kit gets from the recorder's 0750 state
-        //      dir. In the in-process proof both sides are one process, so this is a shape check
-        //      there, not a containment proof — stated rather than implied.
+        //      The chain is written HERE, by whichever process runs this function — in the live
+        //      kit that is `win_live_turn`, the driver/broker, which sends `complete-run` a few
+        //      lines below. The directory is not the executor principal's and nothing stops the
+        //      broker writing it (this comment used to say otherwise): the Linux kit gets that
+        //      from the recorder's 0750 state dir, and this kit has no recorder principal. So
+        //      this is a shape check in the live kit as well as in the in-process proof, not a
+        //      containment proof — stated rather than implied.
         let evidence = build_run_evidence(
             &plan.lease.execution_attempt_id,
             &output_handle,

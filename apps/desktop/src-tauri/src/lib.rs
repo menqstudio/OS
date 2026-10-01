@@ -63,44 +63,6 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Mint the local trust store on first launch, or verify the existing one.
-///
-/// Runs immediately after the data directory is made owner-only and BEFORE the
-/// database is opened, because the trust store is the thing every governance claim
-/// downstream rests on and a database opened over a half-trusted tree is a database
-/// whose provenance nobody can state.
-///
-/// **A failure aborts startup.** There is no degraded mode: `brops_provision` removes
-/// anything a failed mint wrote, so the choice at this point is a complete trust store
-/// or none, and running with none while pretending otherwise is the failure this whole
-/// path exists to prevent.
-///
-/// # What this now RECORDS, and where it is applied
-///
-/// **Corrected 2026-08-09; the previous version of this comment was the justification for
-/// the O-3 gap.** It said the environment `Provisioned::engine_env()` reports was not
-/// exported because "`bro_signature.load_trusted_keys` reads
-/// `<engine root>/config/trusted-keys.json` and takes no path override". That stopped
-/// being true when O-3's engine half landed: `load_trusted_keys` reads
-/// `resolve_registry_root(root)`, not `root`, and `BRO_TRUSTED_REGISTRY_ROOT`
-/// (`bro_signature.ENV_REGISTRY_ROOT`) names the deployment's registry root under custody
-/// rules at least as strong as the pin's. The comment did not move, so a stale sentence
-/// went on justifying a deployment in which every artifact this module minted verified
-/// perfectly against a registry nothing consulted.
-///
-/// So: `Provisioned::engine_env()` — which now includes `BRO_TRUSTED_REGISTRY_ROOT`, and
-/// still deliberately excludes `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` — is RECORDED here and
-/// applied by `brops_core::engine_trust::apply` to the child process that runs the engine, at
-/// the one seam that launches it (`brops_core::governed_sidecar::GovernedSidecar`, which the
-/// app reaches through `ai::governed_sidecar_call`). It is still not exported into
-/// THIS process: `std::env::set_var` is process-wide and racy, and the host has no
-/// business verifying against a trust root it also holds the keys for.
-///
-/// The second reason the old comment gave is real and survives: `_resolve_operator_root_pin`
-/// hard-fails when a file pin and the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree, so the export
-/// is not unconditional. `engine_trust` states the precedence rule — whole-set or nothing,
-/// agreement permitted, disagreement refused by name in both directions — and that module's
-/// documentation is where it is argued rather than here.
 /// Move aside a machine anchor whose trust store no longer exists, so a REINSTALL can start.
 ///
 /// The two halves live in different places on purpose — the anchor under `%ProgramData%`, the key
@@ -116,13 +78,40 @@ fn secure_db_files(db_path: &std::path::Path) -> std::io::Result<()> {
 /// The app then panicked in the setup hook and the window closed before anything could be read, so
 /// the only symptom was "it opens and shuts". Every reinstall on every machine hits this.
 ///
-/// **The condition is narrow, and that is the whole of its safety.** An anchor is retired only when
-/// the trust directory is **entirely absent** — an uninstall. A store that is PRESENT but whose
-/// files were deleted or edited is left exactly as it was, and provisioning still refuses it by
-/// name: that is tampering, and `provision.rs` has tests pinning that refusal.
+/// **It acts in BOTH directions, and only when exactly one half is there.**
 ///
-/// Nothing is deleted. The anchor is renamed with a timestamp, so a machine that hits this by some
-/// other route still has its old material to look at.
+///   * the anchor manifest is present and the `trust` directory is **entirely absent** — an
+///     uninstall: the anchor is moved aside;
+///   * the `trust` directory is present and the anchor holds **no `PROVISIONING.json`**: the
+///     store is moved aside. This direction was added after the first, and this comment went on
+///     saying "a store that is PRESENT … is left exactly as it was" for as long as it has
+///     existed. It is not left: it is renamed to `trust.orphaned-<time>`.
+///
+/// Both halves present is never touched, whatever is inside them — a store whose files were
+/// deleted or edited still has its anchor, so it reaches the verifier, and provisioning refuses it
+/// by name: that is tampering, and `provision.rs` has tests pinning that refusal.
+///
+/// **What the second direction pre-empts.** `brops_provision` has its own answer to "a trust path
+/// with no provisioning recorded for it" — `refuse_occupied_trust_path`, which refuses to mint
+/// over it. Because this runs first and moves the store away, that refusal cannot be reached from
+/// this startup path any more; it still guards the mint for every other caller. The trade is
+/// deliberate (a refusal there is a window that opens and shuts, on every reinstall) and it is
+/// stated here because the refusal's own doc cannot know it has been bypassed.
+///
+/// Nothing is deleted. Whichever half is retired is renamed with a timestamp, so a machine that
+/// hits this by some other route still has its old material to look at.
+///
+/// **UNMEASURED, and it matters (T-145).** The anchor direction renames
+/// `<machine_root>/trust-anchor` as the app's own account. `brops_provision::anchor` says that is
+/// exactly what a sealed anchor does not allow: a standard user "can never afterwards delete or
+/// rename it once sealed", and "removing the anchor afterwards needs an administrator". Both
+/// cannot be true on a sealed Windows machine. If the seal holds, the rename is refused, the
+/// `Err` arm below prints, provisioning refuses a moment later, and the reinstall this function
+/// exists for is still broken — the fix belongs in the elevated uninstaller. If the rename
+/// succeeds, the seal does not hold against the account it is meant to hold against. The tests
+/// below build UNSEALED temp directories, so they prove the logic and neither of those. Nobody
+/// has run it on a sealed box; that run is the Owner's to order, and its answer decides which of
+/// the two texts is wrong.
 fn retire_orphaned_anchor(machine_root: &std::path::Path, app_data_dir: &std::path::Path) {
     let anchor_dir = machine_root.join("trust-anchor");
     let store_dir = app_data_dir.join("trust");
@@ -170,6 +159,44 @@ fn retire_orphaned_anchor(machine_root: &std::path::Path, app_data_dir: &std::pa
     }
 }
 
+/// Mint the local trust store on first launch, or verify the existing one.
+///
+/// Runs immediately after the data directory is made owner-only and BEFORE the
+/// database is opened, because the trust store is the thing every governance claim
+/// downstream rests on and a database opened over a half-trusted tree is a database
+/// whose provenance nobody can state.
+///
+/// **A failure aborts startup.** There is no degraded mode: `brops_provision` removes
+/// anything a failed mint wrote, so the choice at this point is a complete trust store
+/// or none, and running with none while pretending otherwise is the failure this whole
+/// path exists to prevent.
+///
+/// # What this now RECORDS, and where it is applied
+///
+/// **Corrected 2026-08-09; the previous version of this comment was the justification for
+/// the O-3 gap.** It said the environment `Provisioned::engine_env()` reports was not
+/// exported because "`bro_signature.load_trusted_keys` reads
+/// `<engine root>/config/trusted-keys.json` and takes no path override". That stopped
+/// being true when O-3's engine half landed: `load_trusted_keys` reads
+/// `resolve_registry_root(root)`, not `root`, and `BRO_TRUSTED_REGISTRY_ROOT`
+/// (`bro_signature.ENV_REGISTRY_ROOT`) names the deployment's registry root under custody
+/// rules at least as strong as the pin's. The comment did not move, so a stale sentence
+/// went on justifying a deployment in which every artifact this module minted verified
+/// perfectly against a registry nothing consulted.
+///
+/// So: `Provisioned::engine_env()` — which now includes `BRO_TRUSTED_REGISTRY_ROOT`, and
+/// still deliberately excludes `BRO_OPERATOR_ROOT_PIN_SELF_OWNED` — is RECORDED here and
+/// applied by `brops_core::engine_trust::apply` to the child process that runs the engine, at
+/// the one seam that launches it (`brops_core::governed_sidecar::GovernedSidecar`, which the
+/// app reaches through `ai::governed_sidecar_call`). It is still not exported into
+/// THIS process: `std::env::set_var` is process-wide and racy, and the host has no
+/// business verifying against a trust root it also holds the keys for.
+///
+/// The second reason the old comment gave is real and survives: `_resolve_operator_root_pin`
+/// hard-fails when a file pin and the CI `BRO_OPERATOR_ROOT_PUBKEY` disagree, so the export
+/// is not unconditional. `engine_trust` states the precedence rule — whole-set or nothing,
+/// agreement permitted, disagreement refused by name in both directions — and that module's
+/// documentation is where it is argued rather than here.
 fn provision_local_trust(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     // The audit signer's published identity, if this machine has one. It has to be in hand
     // HERE and not later: `provision` destroys the operator root before it returns, which
@@ -257,22 +284,56 @@ fn dev_config_dir() -> Option<std::path::PathBuf> {
 #[cfg(feature = "dev-ungoverned")]
 fn dev_project_dir() -> Option<String> {
     let config = dev_config_dir()?;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    dev_project_dir_in(&config, home.as_deref())
+}
+
+/// [`dev_project_dir`] over explicit directories, so the rule can be tested without the
+/// environment — and compiled under `test` so it IS tested in the default build, which has no
+/// `dev-ungoverned` feature and would otherwise never compile this function at all.
+///
+/// **An existing record is the owner's answer and is never overwritten.** The file this writes
+/// says "Blank it to turn the agent off and leave chat working", and that was false: a record
+/// with no usable line fell through to the first-launch branch, which re-created `~/BroPS`,
+/// rewrote the file and returned the folder — so blanking it turned the agent back ON, and a
+/// mistyped path was silently replaced by a grant over a different directory than the one the
+/// owner wrote. Now the first-launch branch runs only when there is NO record; a record that
+/// names no existing directory means no agent, and the file is left exactly as it was written.
+#[cfg(any(feature = "dev-ungoverned", test))]
+fn dev_project_dir_in(config: &std::path::Path, home: Option<&std::path::Path>) -> Option<String> {
     let record = config.join("project-dir.txt");
 
-    // An existing line wins — that is how this gets pointed at a real repository.
-    if let Ok(text) = std::fs::read_to_string(&record) {
-        if let Some(dir) = text
-            .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty() && !l.starts_with('#') && std::path::Path::new(l).is_dir())
-        {
-            return Some(dir.to_string());
+    match std::fs::read_to_string(&record) {
+        // An existing line wins — that is how this gets pointed at a real repository.
+        Ok(text) => {
+            let dir = text
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.starts_with('#') && std::path::Path::new(l).is_dir())
+                .map(str::to_string);
+            if dir.is_none() {
+                eprintln!(
+                    "BroPS: {} names no existing folder, so the agent is OFF and chat still works. \
+                     Put an absolute path in it to turn the agent on; delete the file to get the \
+                     default workspace back.",
+                    record.display()
+                );
+            }
+            return dir;
+        }
+        // No record yet: a first launch, and the only case that creates anything.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        // A record that exists and cannot be read is not a first launch either. Guessing a folder
+        // here would be granting one the owner may have withdrawn.
+        Err(e) => {
+            eprintln!("BroPS: cannot read {}: {e}. The agent is OFF.", record.display());
+            return None;
         }
     }
 
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(std::path::PathBuf::from)?;
+    let home = home?;
     let workspace = home.join("BroPS");
     std::fs::create_dir_all(&workspace).ok()?;
     let dir = workspace.to_string_lossy().into_owned();
@@ -303,7 +364,12 @@ pub fn run() {
     //
     // Set BEFORE the builder, because `provider_env()` reads the process environment on first use.
     // It never selects the metered remote provider: an ambient ANTHROPIC_API_KEY still requires an
-    // explicit BROPS_AI_PROVIDER=anthropic, so the default here is the LOCAL sandboxed CLI.
+    // explicit BROPS_AI_PROVIDER=anthropic, so the default here is the LOCAL `claude` CLI.
+    //
+    // Local, and NOT sandboxed in this build. This line used to say "the LOCAL sandboxed CLI"
+    // directly above the block that turns agent mode on by default: with `BROPS_PROJECT_DIR` set
+    // (below, to `~/BroPS` unless the owner pointed it elsewhere) a turn runs rooted in that
+    // folder with Read/Edit/Write/Grep/Glob, Bash and Task, not in the tool-less AI sandbox.
     #[cfg(feature = "dev-ungoverned")]
     // SAFETY: single-threaded startup, before any thread that could read the environment exists.
     unsafe {
@@ -315,8 +381,9 @@ pub fn run() {
         //
         // Nothing in the UI sets it (`BROPS_PROJECT_DIR` appears in no `.ts`/`.tsx`), so a fresh
         // install on another machine had nothing at all and the agent stayed off. This build
-        // remembers the folder per machine and, when it has none, ASKS (see `setup` below) — so the
-        // thousandth install needs the same two clicks as the first and no second setup step.
+        // remembers the folder per machine in `project-dir.txt` and, when that file does not
+        // exist yet, creates `~/BroPS` and records it (`dev_project_dir`). Nothing asks: this said
+        // "ASKS (see `setup` below)", and `setup` has never contained a prompt.
         //
         // An explicitly-set environment variable still wins: it is how a scripted or headless
         // install points the agent at a tree without a person at the screen.
@@ -337,15 +404,23 @@ pub fn run() {
             // Owner-only (0700) BEFORE opening the DB, so conversation/memory/audit
             // data is never briefly world-readable. A failure aborts startup.
             secure_data_dir(&dir)?;
+            // T-011 single-instance: take the exclusive lock BEFORE provisioning, opening
+            // the DB or reconciling — a second instance aborts here and never touches the
+            // first instance's trust store or its live execution state.
+            //
+            // It used to be taken AFTER `provision_local_trust`, which left a window on a
+            // first launch: the mint renames its staging directory to `trust` and writes
+            // the anchor manifest LAST, and a second launch arriving in between saw "a
+            // store with no anchor", which `retire_orphaned_anchor` moves aside — so the
+            // first instance went on to seal an anchor over a store that was no longer
+            // there. The lock needs only the already-secured data directory, so nothing
+            // had to come before it.
+            let instance_lock = acquire_instance_lock(&dir)?;
             // First-launch trust provisioning: mint the operator-signed trusted-key
             // registry, the out-of-registry operator-root pin and the operator-signed
             // artifacts the engine requires, or verify the ones already there. Before
             // the DB opens; a failure aborts startup naming what failed.
             provision_local_trust(&dir)?;
-            // T-011 single-instance: take the exclusive lock BEFORE opening the DB or
-            // reconciling — a second instance aborts here and never touches the first
-            // instance's live execution state.
-            let instance_lock = acquire_instance_lock(&dir)?;
             let db_path = dir.join("brops.db");
             let conn = brops_core::db::open(db_path.to_string_lossy().as_ref())?;
             brops_core::repo::seed(&conn)?;
@@ -354,6 +429,10 @@ pub fn run() {
             // (crashed) session fail-closed, so a durable claim can never wedge a run.
             // Safe under the single-instance lock above (no live foreign session).
             brops_core::repo::runs::reconcile_abandoned_executions(&conn, commands::process_session_id())?;
+            // The same recovery for produced-agent flow runs: one still `running` here was
+            // claimed by a process that died, and nothing else ever moves that row. Before the
+            // scheduler loop below is spawned, so no live claim exists to mistake for a dead one.
+            brops_core::repo::agent_runs::reconcile_abandoned(&conn)?;
             // Sweep AI sandbox directories left by crashed/killed prior runs.
             ai::cleanup_stale_sandboxes();
             app.manage(AppState { db: Mutex::new(conn), _instance_lock: instance_lock });
@@ -362,7 +441,11 @@ pub fn run() {
             // automation whose interval trigger (`every: <N>{m|h|d}`) is due, running its LOCAL
             // action and logging the run. Only local, non-AI actions ever fire unattended — an
             // AI-reaching action routes through the governed, fail-closed chain, never this loop.
-            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`).
+            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`) — and SAID,
+            // as is a tick that failed. `run_due` records every tick it can in `scheduler_ticks`,
+            // error included; this result used to be thrown away with `let _ =`, which is the
+            // reason that table exists, and the two cases that cannot leave a row (no connection,
+            // or a database that would not take one) are the two reported here.
             let scheduler_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -374,8 +457,15 @@ pub fn run() {
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(0);
                     if let Some(state) = scheduler_handle.try_state::<AppState>() {
-                        if let Ok(conn) = state.db.lock() {
-                            let _ = brops_core::repo::automations::run_due(&conn, now_ms);
+                        match state.db.lock() {
+                            Ok(conn) => {
+                                if let Err(e) = brops_core::repo::automations::run_due(&conn, now_ms) {
+                                    eprintln!("brops: scheduler tick at {now_ms} failed: {e}");
+                                }
+                            }
+                            Err(_) => eprintln!(
+                                "brops: scheduler tick at {now_ms} skipped: the database mutex is poisoned"
+                            ),
                         }
                     }
                 }
@@ -384,14 +474,19 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             governed_turn::governed_turn_execute,
-            // Phase-2 governance mirror (READ-ONLY; mirror, never decide). These
+            // Phase-2 governance mirror (READ-ONLY; mirror, never decide). These FOUR
             // commands only READ engine governance surfaces via the sidecar and fail
             // closed to a typed Blocked/Unreachable — they hold no key/lease, touch no
-            // DB, and can author no decision.
+            // DB, and can author no decision. They are in `INTENTIONALLY_UNGATED`
+            // (tools/check_capabilities.py): no manifest entry, no `allow-*` grant.
             governance::read_decision_ledger,
             governance::read_evidence_chain,
             governance::read_verifier_verdicts,
             governance::read_engine_approval_queue,
+            // NOT a read, so not under the comment above (it used to be). It asks the
+            // ENGINE to record an approval REQUEST — still no decision and no key on
+            // this side — and unlike the four reads it is manifest-declared (build.rs)
+            // and capability-gated.
             governance::request_engine_approval,
             commands::list_projects,
             commands::create_project,
@@ -481,10 +576,14 @@ pub fn run() {
             commands::open_window,
             commands::stream_ask,
             commands::stream_run_step,
-            // Filesystem surface (M-8): unlike the commands above, these are
-            // declared in the app manifest (build.rs) and therefore governed by
-            // explicit `allow-*` grants in capabilities/default.json — removing
-            // a grant disables the command for the window.
+            // Filesystem surface (M-8). Declared in the app manifest (build.rs) and
+            // governed by explicit `allow-*` grants in capabilities/default.json —
+            // removing a grant disables the command for the window. That is true of
+            // every `commands::*` entry above as well (T-010 declared them all); this
+            // used to say "unlike the commands above". The commands that are NOT
+            // manifest-declared are the ones in `INTENTIONALLY_UNGATED`
+            // (tools/check_capabilities.py): `governed_turn_execute`, the four
+            // governance reads and the trust self-test.
             files::list_dir,
             files::read_file,
             files::write_file,
@@ -516,6 +615,86 @@ mod tests {
         // Releasing the first lets a later instance acquire it.
         drop(first);
         assert!(acquire_instance_lock(dir.path()).is_ok());
+    }
+
+    /// The lock is taken BEFORE trust provisioning, in the source `setup` runs.
+    ///
+    /// A text check, and it says so: `setup` needs a Tauri app handle and a machine root, so the
+    /// ORDER of its two calls is not reachable from a unit test, and the order is the whole fix —
+    /// with provisioning first, a second launch could move the first one's freshly minted store
+    /// aside (`retire_orphaned_anchor`) before the first had written its anchor manifest. The
+    /// needles are assembled so this test's own text is not one of the matches.
+    #[test]
+    fn the_instance_lock_is_taken_before_trust_provisioning() {
+        let src = include_str!("lib.rs");
+        let lock = concat!("let instance_lock = acquire_instance_lock", "(&dir)?;");
+        let provision = concat!("provision_local_trust", "(&dir)?;");
+        assert_eq!(src.matches(lock).count(), 1, "setup must take the lock exactly once");
+        assert_eq!(src.matches(provision).count(), 1, "setup must provision exactly once");
+        assert!(
+            src.find(lock).unwrap() < src.find(provision).unwrap(),
+            "the single-instance lock must be held before anything can touch the trust store"
+        );
+    }
+}
+
+/// `project-dir.txt` — the development build's one-line grant of a folder to the agent.
+#[cfg(test)]
+mod dev_project_record {
+    use super::dev_project_dir_in;
+
+    fn scene() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config").join("brops");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        (tmp, config, home)
+    }
+
+    /// A first launch — no record at all — creates the workspace and writes the record.
+    #[test]
+    fn a_first_launch_creates_the_workspace_and_records_it() {
+        let (_tmp, config, home) = scene();
+        let dir = dev_project_dir_in(&config, Some(&home)).expect("a first launch picks a folder");
+        assert_eq!(std::path::Path::new(&dir), home.join("BroPS"));
+        assert!(home.join("BroPS").is_dir());
+        let record = std::fs::read_to_string(config.join("project-dir.txt")).unwrap();
+        assert!(record.lines().any(|l| l.trim() == dir), "the record must name the folder: {record}");
+        // And the second launch reads what the first wrote.
+        assert_eq!(dev_project_dir_in(&config, Some(&home)), Some(dir));
+    }
+
+    /// The file's own instruction: "Blank it to turn the agent off". It used to turn it back on.
+    #[test]
+    fn a_blanked_record_turns_the_agent_off_and_is_not_rewritten() {
+        let (_tmp, config, home) = scene();
+        std::fs::create_dir_all(&config).unwrap();
+        let record = config.join("project-dir.txt");
+        for blank in ["", "# only a comment\r\n\r\n", "   \n"] {
+            std::fs::write(&record, blank).unwrap();
+            assert_eq!(dev_project_dir_in(&config, Some(&home)), None, "record {blank:?}");
+            assert_eq!(std::fs::read_to_string(&record).unwrap(), blank, "the record was rewritten");
+            assert!(!home.join("BroPS").exists(), "no workspace may be created for a blanked record");
+        }
+    }
+
+    /// A path that does not exist is the owner's typo, not permission to pick another folder.
+    #[test]
+    fn a_mistyped_path_is_not_replaced_by_the_default_workspace() {
+        let (_tmp, config, home) = scene();
+        std::fs::create_dir_all(&config).unwrap();
+        let record = config.join("project-dir.txt");
+        let typo = format!("{}\n", home.join("no-such-repo").display());
+        std::fs::write(&record, &typo).unwrap();
+        assert_eq!(dev_project_dir_in(&config, Some(&home)), None);
+        assert_eq!(std::fs::read_to_string(&record).unwrap(), typo);
+        assert!(!home.join("BroPS").exists());
+
+        // And a real directory on the line is followed.
+        let repo = home.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(&record, format!("# mine\n{}\n", repo.display())).unwrap();
+        assert_eq!(dev_project_dir_in(&config, Some(&home)), Some(repo.to_string_lossy().into_owned()));
     }
 }
 

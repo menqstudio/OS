@@ -129,9 +129,11 @@ mod linux {
     use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, HopConnector};
     use brops_broker::chain_hops::{HopConn, HopError, Principal};
     use brops_broker::ladder_executor::{LadderChain, SqliteTurnContent, UuidTurnIds};
-    use brops_broker::manifest_resolver::{KeyResolver, ResolvedKeys};
+    use brops_broker::manifest_resolver::{
+        resolve_production_key_pair, KeyResolver, ResolvedKeys,
+    };
 
-    use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
+    use brops_core::broker_orchestrator::run_governed_turn;
     use brops_core::governed_message_store::verify_committed_binding;
     use brops_core::governed_sidecar::{GovernedSidecar, SidecarPrincipal, SidecarTrust};
     use brops_core::governed_submit::{SubmitTransport, BRIDGE_SUBMIT_PROTOCOL};
@@ -139,9 +141,8 @@ mod linux {
     use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
     use brops_core::ipc_framing::decode_one;
     use brops_core::key_manifest::{
-        check_and_persist, parse_floor_json, resolve_production_key, verify_manifest_anchored,
-        AntiRollbackFloor, FloorPersistError, KeyManifest, PinnedRoot, RootAnchor, RootProvenance,
-        VerifiedManifestRoot,
+        check_and_persist, parse_floor_json, verify_manifest_anchored, AntiRollbackFloor,
+        FloorPersistError, KeyManifest, PinnedRoot, RootAnchor, RootProvenance, VerifiedManifestRoot,
     };
     use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
     use brops_core::receipt::sha256_hex;
@@ -212,47 +213,6 @@ mod linux {
             cur = cur.get(*k)?;
         }
         cur.as_i64()
-    }
-
-    fn hex32(value: &str) -> Option<[u8; 32]> {
-        if value.len() != 64 {
-            return None;
-        }
-        let b = value.as_bytes();
-        let mut out = [0u8; 32];
-        for i in 0..32 {
-            let hi = (b[2 * i] as char).to_digit(16)?;
-            let lo = (b[2 * i + 1] as char).to_digit(16)?;
-            out[i] = (hi * 16 + lo) as u8;
-        }
-        Some(out)
-    }
-
-    /// The §2.5 owner/mode floor for the root trust anchor file (audit **F-17**), byte-for-byte the
-    /// check `live_turn.rs` applies to the same file: a regular, root-owned file with no group/other
-    /// write bit, checked on the OPENED fd rather than by a `metadata(path)` re-lookup.
-    ///
-    /// Duplicated rather than shared because `live_turn`'s copy is a private item of a binary in this
-    /// same crate and there is no library here to hold one copy in; the alternative — a new public
-    /// helper in `brops-broker` — would widen a SHIPPED crate's surface for a proof binary.
-    fn anchor_file_is_tcb_owned(path: &str) -> Result<(), &'static str> {
-        use std::os::unix::io::AsRawFd;
-        let f = std::fs::File::open(path).map_err(|_| "unopenable")?;
-        // SAFETY: `f` owns a live descriptor for the whole call; fstat gets a valid out-pointer.
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(f.as_raw_fd(), &mut st) } != 0 {
-            return Err("unstatable");
-        }
-        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
-            return Err("not_regular");
-        }
-        if st.st_uid != 0 {
-            return Err("not_root_owned");
-        }
-        if st.st_mode & 0o022 != 0 {
-            return Err("writable");
-        }
-        Ok(())
     }
 
     fn write_json(path: &Path, value: &Value) {
@@ -382,25 +342,21 @@ mod linux {
                 *floor = advanced;
             }
 
-            // (3) Both production keys, class / validity-window / revocation enforced.
-            let iso = resolve_production_key(
+            // (3) Both production keys, class / validity-window / revocation enforced on each and
+            //     the two required to be distinct — the broker's own implementation of the step
+            //     (`manifest_resolver::resolve_production_key_pair`), not a copy of it. The refusal
+            //     keeps its name: `signer_key_unresolved`, `supervisor_attestation_key_unresolved`,
+            //     `signer_pubkey_malformed`, `supervisor_pubkey_malformed`, or
+            //     `signer_and_supervisor_keys_not_distinct`.
+            let pair = resolve_production_key_pair(
                 &self.manifest,
                 &self.signer_key_id,
-                RECEIPT_ENVELOPE_ARTIFACT_TYPE,
-                now,
-            )
-            .map_err(|_| self.refuse("signer_key_unresolved"))?;
-            let sup = resolve_production_key(
-                &self.manifest,
                 &self.sup_attest_key_id,
-                RECEIPT_ENVELOPE_ARTIFACT_TYPE,
                 now,
             )
-            .map_err(|_| self.refuse("supervisor_attestation_key_unresolved"))?;
-            let iso_pub =
-                hex32(&iso.public_key_hex).ok_or_else(|| self.refuse("signer_pubkey_malformed"))?;
-            let sup_pub = hex32(&sup.public_key_hex)
-                .ok_or_else(|| self.refuse("supervisor_pubkey_malformed"))?;
+            .map_err(|refusal| self.refuse(refusal.as_str()))?;
+            let (iso_pub, sup_pub) =
+                (pair.signer_public_key, pair.supervisor_attestation_public_key);
 
             // F-29, in the type: the key handed to the custody resolver is the exact one the chain
             // is pinned to verify envelopes under — not a second manifest lookup, which would make
@@ -621,15 +577,7 @@ mod linux {
     // Production broker-minted ids (§4.10(g): backend-generated, never renderer-supplied)
     // =============================================================================================
 
-    struct UuidIds;
-    impl BrokerIds for UuidIds {
-        fn new_broker_turn_id(&self) -> String {
-            brops_core::id()
-        }
-        fn new_request_nonce(&self) -> String {
-            brops_core::id()
-        }
-    }
+    use brops_core::real_ids::RealBrokerIds as UuidIds;
 
     fn init_schema(conn: &Connection) -> Result<(), String> {
         brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;
@@ -731,16 +679,24 @@ mod linux {
                 return setup_blocked(&evidence, expect, "config_missing", "trust.root_anchor_path")
             }
         };
-        if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
-            return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path);
-        }
-        // The raw text is kept: an `install_minted` anchor is compared, byte for byte, against the
-        // file the §2.5 pin manifest pins (below).
-        let anchor_raw = std::fs::read_to_string(&anchor_path).ok();
-        let anchor_doc: Value = match anchor_raw.as_deref().and_then(|b| serde_json::from_str(b).ok())
-        {
-            Some(v) => v,
-            None => return setup_blocked(&evidence, expect, "root_anchor_unreadable", &anchor_path),
+        // The §2.5 owner/mode floor for the anchor file (audit F-17) and its bytes, through the ONE
+        // reader this driver shares with `live_turn` (`tcb_verify::read_root_anchor`): custody is an
+        // `fstat` of the descriptor the bytes are then read from. Each driver used to carry its own
+        // checker, which dropped that descriptor, and then read the file again by path.
+        //
+        // The raw bytes are kept: an `install_minted` anchor is compared, byte for byte, against
+        // the file the §2.5 pin manifest pins (below).
+        let anchor_raw = match crate::tcb_verify::read_root_anchor(&anchor_path) {
+            Ok(bytes) => bytes,
+            Err(why) => {
+                return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path)
+            }
+        };
+        let anchor_doc: Value = match serde_json::from_slice(&anchor_raw) {
+            Ok(v) => v,
+            Err(_) => {
+                return setup_blocked(&evidence, expect, "root_anchor_unreadable", &anchor_path)
+            }
         };
         // A typed, closed value. An unknown, misspelled or absent `provenance` is refused outright:
         // a deployment whose anchor cannot say what its custody is has not answered the question.
@@ -793,11 +749,7 @@ mod linux {
         // constant. A kit_generated or demonstration anchor is not asked the question.
         if let Err(why) =
             brops_broker::tcb::check_declared_install_minted_anchor(anchor.provenance, || {
-                crate::tcb_verify::anchor_is_floor_pinned(
-                    &cfg,
-                    anchor_raw.as_deref().unwrap_or_default().as_bytes(),
-                )
-                .map_err(|detail| {
+                crate::tcb_verify::anchor_is_floor_pinned(&cfg, &anchor_raw).map_err(|detail| {
                     eprintln!("ladder_turn: the install_minted anchor is not the floor-pinned one: {detail}");
                     detail
                 })

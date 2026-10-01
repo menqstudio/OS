@@ -14,8 +14,10 @@
 //!   `malformed` (serde `deny_unknown_fields`). `client_request_id` is a NON-authoritative UUIDv4
 //!   correlation token; it grants no signing/verification authority and never enters `request_sha256`.
 //! - Reply `brops.renderer-governed-turn-result.v1`: on commit carries the broker-produced immutable
-//!   projection `message { message_id, role:"assistant", author, body, created_at_ms,
-//!   trust_state:"trusted_verified" }`; on blocked carries NO `message` and a CLOSED `reason` enum.
+//!   projection `message { message_id, role:"assistant", author, body, created_at_ms, trust_state }`,
+//!   where `trust_state` is the label the committing transaction stored — `"trusted_verified"`, or
+//!   `"demonstration_custody"` for a chain that ran under a root whose custody proves nothing; on
+//!   blocked carries NO `message` and a CLOSED `reason` enum.
 //! - Idempotency key = normalized `{client_request_id, conversation_id, agent}`; live-duplicate ⇒
 //!   reattach; same `client_request_id` + different conversation/agent ⇒ `retry_conflict`; a different
 //!   request while the conversation has a live turn ⇒ `turn_in_progress`.
@@ -28,11 +30,21 @@ pub const RESULT_PROTOCOL: &str = "brops.renderer-governed-turn-result.v1";
 
 /// Field caps (bytes). `conversation_id`/`agent` mirror the renderer-owned inputs; the request frame as a
 /// whole is additionally bounded by `RENDERER_IPC_FRAME_BYTES` at the transport layer (broker service).
+///
+/// `MAX_ID_BYTES` caps the RENDERER's ids. It has the same value as `governed_prepare::MAX_ID_LEN`,
+/// which caps the ids of the signed chain, and is deliberately not an alias of it: they bound
+/// different inputs at different doors, and tying them would move one when the other is retuned.
 pub const MAX_ID_BYTES: usize = 128;
-pub const RENDERER_IPC_FRAME_BYTES: usize = 8192;
+/// The frame bound, and it IS the transport's: [`crate::ipc_framing::MAX_FRAME_PAYLOAD_BYTES`]. It was
+/// a second literal `8192` with nothing equating the two, so the size check in
+/// [`ValidatedRequest::decode`] and the one the framing applies could have drifted apart unnoticed.
+pub const RENDERER_IPC_FRAME_BYTES: usize = crate::ipc_framing::MAX_FRAME_PAYLOAD_BYTES;
 
-/// The one trust state a committed governed turn renders as. There is exactly one value: the renderer can
-/// never construct any other, and only the broker verification transaction sets it (rev-30 P0).
+/// The trust state a PRODUCTION-custody committed turn renders as. It is not the only state a
+/// committed message can carry: `governed_message_store` also commits `demonstration_custody`, and
+/// [`CommittedMessage::trust_state`] is whichever the row holds. This comment used to say "there is
+/// exactly one value". What still holds is that the renderer can construct neither, and only the
+/// broker verification transaction sets one (rev-30 P0).
 pub const TRUSTED_VERIFIED: &str = "trusted_verified";
 /// A committed assistant message always has this role.
 pub const ASSISTANT_ROLE: &str = "assistant";
@@ -222,7 +234,8 @@ pub struct CommittedMessage {
     pub author: String,
     pub body: String,
     pub created_at_ms: i64,
-    /// Always [`TRUSTED_VERIFIED`].
+    /// The label the committing transaction stored: [`TRUSTED_VERIFIED`] or `demonstration_custody`.
+    /// NOT a constant — see [`CommittedMessage::new`].
     pub trust_state: String,
 }
 
@@ -410,11 +423,38 @@ mod tests {
         assert_eq!(decide_idempotency(&req, &[]), IdempotencyDecision::New);
     }
 
+    /// The role is constant; the trust state is NOT, and the projection carries whichever it was
+    /// given. This test used to be named `..._is_always_assistant_and_trusted_verified` and passed
+    /// `TRUSTED_VERIFIED` in to assert it back out — true of any struct with a field.
     #[test]
-    fn committed_message_is_always_assistant_and_trusted_verified() {
+    fn committed_message_is_always_assistant_and_carries_the_state_it_was_committed_under() {
         let m = CommittedMessage::new("m-1".into(), "Bro".into(), "hello".into(), 1234, TRUSTED_VERIFIED.into());
         assert_eq!(m.role, ASSISTANT_ROLE);
         assert_eq!(m.trust_state, TRUSTED_VERIFIED);
+
+        // A demonstration-custody row projects as what it is, on the struct and on the wire.
+        let d = CommittedMessage::new("m-2".into(), "Bro".into(), "hello".into(), 1234, "demonstration_custody".into());
+        assert_eq!(d.role, ASSISTANT_ROLE);
+        assert_ne!(d.trust_state, TRUSTED_VERIFIED, "demonstration custody must not be reported as trusted_verified");
+        let json = RendererGovernedTurnResult::committed(CRID.into(), "bt-1".into(), "conv-1".into(), d).to_json();
+        assert!(json.contains(r#""trust_state":"demonstration_custody""#), "{json}");
+        assert!(!json.contains(TRUSTED_VERIFIED), "{json}");
+    }
+
+    /// The frame bound in `decode`, which no test reached: the only "oversize" case above is the
+    /// ID cap. The request here is VALID — the same frame the happy path decodes — padded with
+    /// trailing whitespace, which JSON permits, so nothing but the size check can refuse it.
+    #[test]
+    fn a_request_larger_than_one_frame_is_malformed_even_when_it_would_decode() {
+        let valid = req_json("");
+        assert!(ValidatedRequest::decode(&valid).is_ok());
+        let at_the_bound = format!("{valid}{}", " ".repeat(RENDERER_IPC_FRAME_BYTES - valid.len()));
+        assert_eq!(at_the_bound.len(), RENDERER_IPC_FRAME_BYTES);
+        assert!(ValidatedRequest::decode(&at_the_bound).is_ok(), "exactly one frame is allowed");
+        let over = format!("{at_the_bound} ");
+        assert_eq!(ValidatedRequest::decode(&over), Err(TurnReason::Malformed));
+        // One number, not two that happen to agree.
+        assert_eq!(RENDERER_IPC_FRAME_BYTES, crate::ipc_framing::MAX_FRAME_PAYLOAD_BYTES);
     }
 
     #[test]

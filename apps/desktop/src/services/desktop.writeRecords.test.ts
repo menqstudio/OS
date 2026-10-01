@@ -8,6 +8,9 @@
 // vocabulary of the governed receipt path, which is a strictly stronger guarantee).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
@@ -86,24 +89,21 @@ describe('local write records are reachable from the renderer', () => {
     expect(got).toHaveProperty('actual_content_sha256', 'c'.repeat(64));
   });
 
-  it('the vocabulary is the weaker one: nothing on this path reports "verified"', async () => {
+  it('the vocabulary is the weaker one: nothing on this path reports "verified"', () => {
     // The states are exactly the four the backend can defend. `verified`/`trusted_verified`
     // belong to the governed receipt path, which holds a key and custody; this one holds
     // neither, so it must never be able to produce those words.
-    const reported = new Set<string>();
-    for (const s of [
-      { state: 'recorded', record },
-      { state: 'content_diverged', record, actual_content_sha256: 'c'.repeat(64) },
-      { state: 'deleted_but_present', record },
-      { state: 'unrecorded' },
-    ]) {
-      invokeMock.mockResolvedValue(s);
-      reported.add((await desktop.memoryWriteRecordState('m-1')).state);
-    }
-    expect([...reported].sort()).toEqual([
-      'content_diverged', 'deleted_but_present', 'recorded', 'unrecorded',
-    ]);
-    for (const s of reported) expect(s).not.toMatch(/verif/i);
+    //
+    // Read from the DECLARATION. This test used to push four states it had typed itself through
+    // a pass-through wrapper and assert the same four came back without the word "verif" — a
+    // statement about this file's own literals, which no change to the product could falsify.
+    // The union below is the thing a page switches over, so it is the thing that must not grow one.
+    const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'desktop.ts'), 'utf8');
+    const union = /export type WriteRecordState =([\s\S]*?);\n\n/.exec(source);
+    expect(union, 'desktop.ts no longer declares WriteRecordState as a union').not.toBeNull();
+    const declared = [...union![1].matchAll(/state: '([^']+)'/g)].map((m) => m[1]);
+    expect(declared.sort()).toEqual(['content_diverged', 'deleted_but_present', 'recorded', 'unrecorded']);
+    for (const s of declared) expect(s).not.toMatch(/verif/i);
   });
 
   it('a rejected read rejects — a missing record is a state, an unreadable one is not', async () => {
@@ -133,12 +133,8 @@ describe('declaring a connector', () => {
     expect(Object.keys(args).sort()).toEqual(['name', 'provider']);
   });
 
-  it('a newly declared connector is disconnected: declaring is not connecting', async () => {
-    invokeMock.mockResolvedValue({
-      id: 'in-3', name: 'GitHub', provider: 'github',
-      status: 'disconnected', createdAt: 'now', updatedAt: 'now',
-    });
-    const created = await desktop.createIntegration('GitHub', 'github');
-    expect(created.status).toBe('disconnected');
-  });
+  // "A newly declared connector is disconnected" was asserted here by mocking `status:
+  // 'disconnected'` and reading `status` back. The wrapper is a bare `invoke`; that fact is decided
+  // by the INSERT in src-tauri/core/src/repo.rs and can only be tested there. What this boundary
+  // CAN decide is the line above: it sends nothing that could carry a status or a credential.
 });

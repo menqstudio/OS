@@ -43,5 +43,14 @@
       "command": "save_ask_to_chat",
       "note": "Persists the AI answer produced by stream_ask (does not itself call the provider). Provenance-guarded via a server-generated one-time result_id (T-013); tracked under stream_ask. Not enforced by the provider-call gate because it invokes no provider entry."
     }
+  ],
+  "model_surfaces_outside_the_provider_gate": [
+    {
+      "command": "demonstration_verified_reply",
+      "governance": "excluded",
+      "reaches_model_by": "a subprocess, not an ai:: provider entry: `cmd /C $BROPS_SELFTEST_MODEL_CMD` over the conversation transcript, spawned inside brops_win_live::proof::in_process_turn_produce (commands.rs run_demonstration_model). Windows only; refuses when the variable is unset, off Windows, on an empty conversation or reply, and when the chain does not verify.",
+      "tracking": "T-145. The reply is posted with a `demonstration_verified` badge under the compiled-in DEMONSTRATION anchor — never production trusted_verified. It is a model run on a chat turn that the four `surfaces` above do not include, and this inventory said nothing about it while Cargo.toml said the kit 'never touches live AI turns'.",
+      "note": "RECORDED, NOT ENFORCED. tools/check_ai_surfaces.py finds a surface by a call to ai::generate / ai::generate_stream / ai::governed_turn, and this command makes none, so the gate neither requires this entry nor notices if it goes stale. It cannot sit under `surfaces`: the gate would reject it there as reaching no provider entry. Teaching the gate that a spawned model command is a provider entry is open, and until it is, a second command of this shape would be invisible to it."
+    }
   ]
 }

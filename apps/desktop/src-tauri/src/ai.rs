@@ -1,18 +1,37 @@
 //! Provider-agnostic AI layer for BroPS.
 //!
-//! Default provider is the **local `claude` CLI** (Claude Code) — it uses the
-//! user's own Claude login, so replies cost nothing beyond their existing
-//! subscription and no API key is stored anywhere. If `ANTHROPIC_API_KEY` is
-//! set, the metered Anthropic API is used instead. A local Ollama model is
-//! available as a third option. When nothing is reachable the caller gets an
-//! honest error string that the UI surfaces rather than faking a reply.
+//! **There is no default provider.** With nothing set, [`resolve_provider`] refuses
+//! ("no AI provider configured") and the UI shows that refusal rather than a reply:
+//! a governed build never degrades to an ungoverned model by accident, and no
+//! provider is ever picked because a variable happened to be in the environment.
+//! The rules, which `resolve_provider` implements and its tests pin:
+//!
+//!   * the **governed engine** (the bridge sidecar, behind the engine wall) is
+//!     selected only with `BROPS_ALLOW_GOVERNED_ENGINE=1`;
+//!   * the three **ungoverned** providers — the local `claude` CLI (the user's own
+//!     Claude login, no API key stored), the metered Anthropic API, a local Ollama
+//!     model — all need the development opt-in `BROPS_ALLOW_UNGOVERNED=1`;
+//!   * under that opt-in with nothing forced, the provider is the local `claude`
+//!     CLI. An ambient `ANTHROPIC_API_KEY` never selects the metered API: that
+//!     takes an explicit `BROPS_AI_PROVIDER=anthropic` as well.
+//!
+//! This header used to say the default was the local CLI and that a set
+//! `ANTHROPIC_API_KEY` switched to Anthropic. Neither has been true since the
+//! fail-closed policy landed.
 //!
 //! Configuration (all optional; secrets come from the environment, never SQLite):
-//!   BROPS_AI_PROVIDER    – force one of: claude-cli | anthropic | ollama
+//!   BROPS_AI_PROVIDER    – force one of: governed-engine | claude-cli | anthropic | ollama
+//!   BROPS_ALLOW_GOVERNED_ENGINE – opt-in: the governed engine may be selected
+//!   BROPS_ALLOW_UNGOVERNED      – opt-in (development only): an ungoverned provider may be
+//!   BROPS_GOVERNED_PYTHON  – interpreter for the sidecar (default: python)
+//!   BROPS_GOVERNED_SIDECAR – sidecar script (default: bridge/engine_sidecar.py)
+//!   BROPS_PROJECT_DIR    – agent mode: a real directory the `claude` CLI turn is rooted in,
+//!                          with file tools, Bash and Task (see `tool_args`); unset ⇒ no tools
 //!   BROPS_CLAUDE_BIN     – path to the `claude` binary (default: claude)
 //!   BROPS_CLAUDE_MODEL   – model for the CLI (optional; CLI default otherwise)
-//!   ANTHROPIC_API_KEY    – if set (and provider not forced), use Anthropic
+//!   ANTHROPIC_API_KEY    – required by the anthropic provider; never selects it
 //!   BROPS_ANTHROPIC_MODEL– Anthropic model id (default: claude-sonnet-5)
+//!   BROPS_ANTHROPIC_MAX_TOKENS – Anthropic reply cap (default: 1024)
 //!   BROPS_OLLAMA_MODEL   – Ollama model tag  (default: llama3.2)
 //!   BROPS_OLLAMA_URL     – Ollama base url   (default: http://localhost:11434;
 //!                          loopback + port 11434 + no path unless opted in)
@@ -32,8 +51,24 @@ const DEFAULT_CLAUDE_BIN: &str = "claude";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 // Governed engine (opt-in, default OFF): the desktop shells out to the bridge
-// sidecar, which runs the turn behind the engine wall. (Real signed-receipt
-// verification is pending — Receipt Protocol v1; the path is fail-closed until then.)
+// sidecar, which runs the turn behind the engine wall. Signed-receipt verification
+// EXISTS (`brops_core::receipt_store::verify_and_record_receipt`); what keeps the
+// path fail-closed is that this install provisions none of its inputs — see
+// `commands::GOVERNED_VERIFICATION_UNCONFIGURED`, which is the refusal a turn gets.
+/// What the provider card says about the governed engine. Shown in the UI, so it has to name the
+/// refusal a governed turn really gets. It used to read "signed-receipt verification is still
+/// PENDING (Receipt Protocol v1)" long after `verify_and_record_receipt` was the code that ran —
+/// which told the owner the path was shut for want of a feature, when it is shut for want of
+/// provisioning. Conditional on purpose ("for as long as"): the measurement lives in
+/// `commands::governed_verification_unconfigured`, not here, and this text must stay true on the
+/// day that measurement changes its answer.
+const GOVERNED_STATUS_DETAIL: &str = "Governed engine (opt-in): AI turns run behind the engine wall. \
+Signed-receipt verification is implemented; a governed turn is refused before the model is called for \
+as long as this install provisions none of its inputs (trusted key manifest, policy-bundle digest, \
+containment-evidence digest, executor/builder roster). That refusal names itself \
+`governed_verification_unconfigured` — missing provisioning, not a check that ran and failed. Real \
+turns also need an operator-provisioned supervisor sidecar. Self-test the plumbing with \
+`python bridge/engine_sidecar.py --self-test`.";
 const DEFAULT_GOVERNED_PYTHON: &str = "python";
 const DEFAULT_GOVERNED_SIDECAR: &str = "bridge/engine_sidecar.py";
 const GOVERNED_TASK_CLASS: &str = "standard-builder"; // engine bro_protected.STANDARD
@@ -398,10 +433,13 @@ fn env_bool(key: &str) -> bool {
 ///     `allow_ungoverned`; anthropic additionally requires a non-empty key.
 ///   * any other non-empty forced string → Err (unknown provider).
 ///   * nothing forced (default) → GovernedEngine iff `allow_governed`; else, iff
-///     `allow_ungoverned`, anthropic-if-key-else-claude-cli; else Err.
+///     `allow_ungoverned`, the local claude CLI; else Err.
 ///
-/// Never auto-selects Anthropic merely because ANTHROPIC_API_KEY is set — that
-/// only happens under an explicit `allow_ungoverned` development opt-in.
+/// Never auto-selects Anthropic because ANTHROPIC_API_KEY is set, under any flag:
+/// the metered provider is reached only by forcing `anthropic` by name. (This
+/// said "anthropic-if-key-else-claude-cli" for the unforced case after the code
+/// stopped doing that; `default_with_allow_ungoverned_is_claude_cli_never_ambient_anthropic`
+/// pins the code.)
 fn resolve_provider(env: &ProviderEnv) -> Result<Provider, String> {
     let key = || env.anthropic_key.clone().filter(|k| !k.is_empty());
     let governed = || Provider::GovernedEngine {
@@ -612,7 +650,7 @@ pub async fn status() -> AiStatus {
             // Real turns require operator provisioning (issuer key + trusted-key
             // registry + workspace binding); until then the sidecar fails closed.
             ready: false,
-            detail: "Governed engine (opt-in): AI turns run behind the engine wall. Real signed-receipt verification is still PENDING (Receipt Protocol v1) — the governed path is fail-closed until it lands, and real turns also need an operator-provisioned supervisor sidecar. Self-test the plumbing with `python bridge/engine_sidecar.py --self-test`.".into(),
+            detail: GOVERNED_STATUS_DETAIL.into(),
         },
     }
 }
@@ -963,16 +1001,12 @@ impl Drop for TempFileGuard {
     }
 }
 
-/// Write the system prompt to an owner-only (0600) file inside the private AI
-/// sandbox and return its path. It is passed to claude via
-/// `--append-system-prompt-file` (not `--append-system-prompt <text>`), so the
-/// persona/system text never appears in argv / `/proc/<pid>/cmdline` — the same
-/// protection the transcript gets via stdin.
 /// The repo Bro operates on as a coding agent, from `BROPS_PROJECT_DIR`. When it points at a
 /// real directory, AI turns run rooted there with the file tools (Read/Edit/Write/Grep/Glob),
 /// **Bash**, and **Task** in `acceptEdits` mode — see [`tool_args`], which is the grant, and
-/// [`BRO_BASH_DENY`] / [`builtin_agent_deny_patterns`] / [`protected_path_deny_patterns`],
-/// which are the bounds on it. Unset ⇒ the classic fail-closed sandboxed chat (no tools).
+/// [`builtin_agent_deny_patterns`] / [`protected_path_deny_patterns`], which are the bounds on
+/// it. ([`BRO_BASH_DENY`] was a third and is empty by Owner decision: the shell itself is not
+/// bounded.) Unset ⇒ the classic fail-closed sandboxed chat (no tools).
 ///
 /// This paragraph used to read "ONLY the file tools … never Bash or any executor, so Bro …
 /// cannot run commands", while [`tool_args`] forty lines away granted `Bash` and then `Task`.
@@ -1017,8 +1051,10 @@ asked early.\n\
 \n--- HOW YOU DELEGATE ---\n\
 Two things decide what a specialist may do, and you set both.\n\
 1. WHAT THEY MAY DO — YOU decide this, per task, by choosing the agent type. `.claude/agents/` holds \
-three capability tiers: `reader` (Read/Grep/Glob — cannot run, cannot change), `runner` (adds Bash — \
-can build and test but not edit), `builder` (adds Edit/Write — can change files). Grant the NARROWEST \
+three capability tiers: `reader` (Read/Grep/Glob — cannot run, cannot change), `runner` (adds Bash and \
+holds no Edit or Write tool — it can build and test, and a shell can still write a file, so \"change \
+nothing\" is an instruction you give a runner, not a limit on it), `builder` (adds Edit/Write — can \
+change files). Grant the NARROWEST \
 tier that lets the job finish; a question about the code gets `reader`, finding out whether something \
 works gets `runner`, and only work that genuinely changes files gets `builder`. The tier is the ONLY \
 thing that actually bounds a specialist's tools, so choosing it IS the capability decision.\n\
@@ -1031,12 +1067,13 @@ name on that list. Never spawn it, or any of the other five. Every specialist yo
 `runner`, or `builder` — those three names and nothing else. The app refuses the rest outright, and \
 that refusal is a boundary rather than an obstacle to route around: if a task genuinely needs more than \
 `builder` has, say exactly what it needs and stop.\n\
-`.claude/agents/` also holds 262 pack-role files (generated from `engine/packs/registry.json` + \
-`engine/agents/authority-policy.json`). You cannot spawn those by name from here — read them. Each one \
+`.claude/agents/` also holds {pack_role_files} pack-role files (generated from \
+`engine/packs/registry.json` + `engine/agents/authority-policy.json`) beside the three tier files. You \
+cannot spawn those by name from here — read them. Each one \
 records the authority its role was derived with, so when work belongs to a declared specialism: read \
 that file, spawn the TIER whose tools match its `tools:` line, and name the pack and role in the task \
-prompt. An Independent Verifier's file grants no Write on purpose — it must not be able to edit what it \
-is judging — so it gets `runner`, never `builder`. That mapping is your decision and nothing enforces \
+prompt. An Independent Verifier's file grants no Write on purpose — it must not be handed the tools to \
+edit what it is judging — so it gets `runner`, never `builder`. That mapping is your decision and nothing enforces \
 it for you; get it wrong and the specialist has more reach than its role allows. Never hand \
 verification to whoever built the thing.\n\
 2. WHERE — state `scope` and `prohibited_scope` in EVERY task you hand out, as concrete paths. Scope \
@@ -1048,21 +1085,30 @@ Also give each specialist the objective, what done looks like, and how it will b
 that has to guess the goal will guess the scope too.\n\
 \n--- WHAT YOU CAN DO ---\n\
 You operate inside the real repository rooted at {dir}, with Read/Edit/Write/Grep/Glob, Bash, and Task. \
-You CAN run builds, tests, git status/diff/log/commit, and inspect anything. You CANNOT delete files, \
-git push, install dependencies, or open a nested shell — for those, give Gev the exact command. Never \
-claim you ran something you did not.\n\
+You CAN run builds, tests, git status/diff/log/commit, and inspect anything. You can ALSO delete files, \
+git push, install dependencies and open a nested shell: this app refuses none of the four — Gev lifted \
+those limits himself on 2026-08-20. They are the four that are hard to undo, and nothing stands behind \
+you on them, so the care is yours. Never claim you ran something you did not.\n\
 - App: apps/desktop (Tauri + React/TS). Frontend apps/desktop/src (views in features/, shell components/Shell.tsx, IPC wrapper services/desktop.ts). Rust backend apps/desktop/src-tauri/src (commands.rs, ai.rs, governance.rs, files.rs; commands registered in lib.rs). Data core src-tauri/core/src/repo.rs + schema core/schema/*.sql.\n\
 - Design system: apps/desktop/src/theme/aios.css (ported from the brops-aios mockup). Match it.\n\
 - IPC: Tauri #[tauri::command]s invoked from services/desktop.ts; channel names are the snake_case command names.\n\
 - TRUST IS FAIL-CLOSED — never break it: src-tauri/core/src (receipt_store.rs, governed_verification.rs, production_trust.rs, key_manifest.rs). Never render trusted_verified without the real chain.\n\
-- THE TRUST SURFACE IS READ-ONLY TO YOU, AND THAT IS ENFORCED, NOT REQUESTED. The engine (engine/runtime, engine/schemas, engine/contracts, engine/laws, bridge), the verification core and privileged crates (core/src/receipt*.rs, governed_verification.rs, production_trust.rs, key_manifest.rs, manifest_authority.rs, supervisor_ledger.rs, tcb_integrity.rs, privilege_drop.rs, core/schema, src/engine_trust.rs, src/governance.rs, src/governed_turn.rs, src/governed_selftest.rs, broker, launcher, executor, win-broker, win-live, provision, audit-signer, proof) and what proves them (tools/, .github/, capabilities/, command-policy.json, ai-surface-policy.json) are snapshotted before your turn and checked after it. Anything you change there is put back and reported to Gev — including through a specialist you spawn, and including via a shell command. Read them freely. If work genuinely needs a change there, say exactly what and why, and stop; that is a decision for Gev, not a file edit.\n\
+- THE TRUST SURFACE IS READ-ONLY TO YOU, AND THAT IS ENFORCED, NOT REQUESTED. The engine and its wire, the verification core and the privileged crates around it, and what proves them are snapshotted before your turn and checked after it. The paths, exactly as the guard holds them: {protected}. Anything you change there is put back in the working tree and reported to Gev — including through a specialist you spawn, and including via a shell command. Read them freely. If work genuinely needs a change there, say exactly what and why, and stop; that is a decision for Gev, not a file edit.\n\
 - DO NOT edit: .env or secrets/keys of any kind.\n\
-- Package manager npm. Reply in Armenian unless it's code/identifiers/commands."
+- Package manager npm. Reply in Armenian unless it's code/identifiers/commands.",
+            // ONE list. The prose used to carry its own copy of the protected paths and had
+            // already lost two (`core/src/engine_trust.rs`, `core/src/governed_sidecar.rs`): the
+            // guard restored them and the model had never been told they were protected.
+            protected = BRO_PROTECTED_PATHS.join(", "),
+            pack_role_files = PACK_ROLE_FILES,
         ),
     }
 }
 
-/// Write the per-turn system prompt to its own file in the sandbox.
+/// Write the per-turn system prompt to its own owner-only (0600) file inside the private AI
+/// sandbox and return its path. It is passed to claude via `--append-system-prompt-file` (not
+/// `--append-system-prompt <text>`), so the persona/system text never appears in argv /
+/// `/proc/<pid>/cmdline` — the same protection the transcript gets via stdin.
 ///
 /// `project_dir` is a parameter, not a read of `BROPS_PROJECT_DIR` inside this function, because
 /// that made the produced content depend on the ambient environment of whoever ran the process — a
@@ -1112,15 +1158,14 @@ fn write_system_prompt_file(
     Err("could not create a unique system prompt file".to_string())
 }
 
-/// Commands the in-app Bro coding agent may NEVER run, even with Bash enabled — the owner's standing boundary:
-/// never push, delete, or install dependencies without asking. Passed to `claude` as `--disallowedTools`,
-/// which OVERRIDES the allow-list, so these stay blocked while ordinary build/test/inspect commands run.
-// Honest note: `--disallowedTools` is prefix-matching, NOT a hard sandbox — a determined
-// command can still be smuggled through `sh -c`, `env`, chaining, or subshells. The owner
-// deliberately keeps Bro powerful (deny-list, not a restrictive allow-list), so this list
-// closes every CONCRETE bypass an audit surfaced while leaving normal build/test/inspect
-// commands free. It is defense-in-depth, not a boundary of last resort.
-/// Shell patterns the agent may not run.
+/// Shell patterns the agent may not run, passed to `claude` as `--disallowedTools` (which overrides
+/// the allow-list). **There are none: the agent's shell is not bounded by this app.**
+///
+/// This doc used to open "Commands the in-app Bro coding agent may NEVER run, even with Bash enabled
+/// — never push, delete, or install dependencies without asking", above a constant that had been
+/// emptied. The list it described is recorded below as what was given up, not as what holds. And
+/// when it did hold it was prefix-matching, not a sandbox: `sh -c`, `env`, chaining and subshells
+/// carried a denied command through.
 ///
 /// **EMPTY BY OWNER DECISION, 2026-08-20.** Gev asked for it in his own words, twice, naming all
 /// four categories: *"ջնջում … push … փաթեթի տեղադրում … ներդրված shell — սրան էլ թող անի"*. He
@@ -1144,10 +1189,25 @@ fn write_system_prompt_file(
 /// carries any of them through. So this is one decision, not four, and it was taken as one.
 ///
 /// **What did NOT change, deliberately.** `protected_path_deny_patterns()` and `TrustSurfaceGuard`
-/// still stand: a turn cannot write the files that decide what "verified" means. That is not a
+/// still stand: an `Edit`/`Write` at a file that decides what "verified" means is refused, and a
+/// change made any other way is put back in the working tree when the turn ends. That is not a
 /// blast-radius limit, it is the property the product exists to have, and the owner did not ask for
 /// it and was not offered it.
+///
+/// **What the emptying cost THAT property, which nobody wrote down at the time.** The guard's
+/// argument for `.github/workflows` was "pushing is not a capability this app has". With `git push`
+/// and `git commit` unrefused that is no longer so: the guard restores working-tree bytes and never
+/// looks inside `.git`, so a protected change that was committed or pushed before the turn ended
+/// is restored on disk and still exists in history and on the remote. See [`TrustSurfaceGuard`],
+/// which now says so. Closing it means refusing something the Owner chose to allow, so it is his.
 const BRO_BASH_DENY: &[&str] = &[];
+
+/// How many pack-role definitions `.claude/agents/` holds, as Bro's system prompt states it.
+///
+/// 259 roles across 52 packs (`engine/packs/registry.json`); with `reader`, `runner` and `builder`
+/// the directory holds 262 files. The prompt said "262 pack-role files" — the total, counting the
+/// three tiers as pack roles. `the_prompt_counts_the_pack_role_files_that_exist` counts the files.
+const PACK_ROLE_FILES: usize = 259;
 
 // ── The trust surface: the part of this repository a model turn may not change ──────────
 //
@@ -1165,8 +1225,8 @@ const BRO_BASH_DENY: &[&str] = &[];
 //      it is the one that gives a clean refusal the model can read and route around honestly.
 //      It is also the one with a hole: `--disallowedTools` is a matcher on tool calls, and
 //      `Bash` is a granted tool that writes files without being an `Edit` — `python -c` and a
-//      hundred other spellings are not in `BRO_BASH_DENY` and could not be, since it is a
-//      deny-list over a shell.
+//      hundred other spellings. Nothing refuses those: `BRO_BASH_DENY` is empty, and even when
+//      it was not it could not have listed them, since it was a deny-list over a shell.
 //   2. `TrustSurfaceGuard` — a byte-exact snapshot taken before the turn and checked after it.
 //      This one does not care HOW a file changed: Edit, Write, a subagent spawned through
 //      `Task`, a shell redirect, a script. If a protected file's bytes differ when the turn
@@ -1299,12 +1359,20 @@ struct FileSnapshot {
 /// A byte-exact snapshot of [`BRO_PROTECTED_PATHS`] under one root, taken before an agent-mode
 /// turn and settled after it.
 ///
-/// WHAT IT GUARANTEES, EXACTLY. Every protected file that existed when the turn started holds
-/// the same bytes when the turn ends — whichever tool, subagent or shell command changed it,
-/// and whether the turn succeeded, errored, timed out or was cancelled (settling is on `Drop`
-/// as well as on the success path, and is idempotent). Nothing is destroyed to achieve that:
-/// the rejected content is written into the AI sandbox first, so a change made in good faith
-/// is recoverable and can be shown to the owner.
+/// WHAT IT GUARANTEES, EXACTLY. Every protected file that existed when the turn started is a
+/// regular file holding the same bytes IN THE WORKING TREE when the turn ends — whichever tool,
+/// subagent or shell command changed it, and whether the turn succeeded, errored, timed out or
+/// was cancelled (settling is on `Drop` as well as on the success path, and is idempotent).
+/// Nothing is destroyed to achieve that: the rejected content is written into the AI sandbox
+/// first, so a change made in good faith is recoverable and can be shown to the owner.
+///
+/// "A regular file" is part of the guarantee, not a detail. The snapshot refuses to follow a
+/// symlink, and `settle` used to read and restore THROUGH one: a protected file swapped for a
+/// link to an identical copy matched its digest and produced no notice, the next turn's
+/// snapshot skipped the link, and from then on the copy was editable unseen — and a link whose
+/// target differed had the original bytes written to wherever it pointed, outside the tree. A
+/// path that is no longer a regular file is now a change in itself: the link is removed, never
+/// written through, and the file is recreated in its place.
 ///
 /// WHAT IT DOES NOT. It is detection, not prevention — the write happens and is then undone,
 /// so a turn that read a secret is not un-read, and a process the turn started that is still
@@ -1312,8 +1380,16 @@ struct FileSnapshot {
 /// and deliberately left alone: deleting output a test legitimately produced is a worse
 /// failure than reporting it, and a new file cannot take effect on its own — the `mod`, the
 /// `import` or the registration that would reach it lives in an existing file, which is
-/// restored. `.github/workflows` is the one exception to that reasoning, and it is covered by
-/// the fact that pushing is not a capability this app has.
+/// restored.
+///
+/// AND IT COVERS THE WORKING TREE ONLY. `.git` is in [`SNAPSHOT_SKIP_DIRS`], so nothing here
+/// sees history. This paragraph used to end "`.github/workflows` is the one exception to that
+/// reasoning, and it is covered by the fact that pushing is not a capability this app has."
+/// It is one: [`BRO_BASH_DENY`] is empty by Owner decision, so `git commit` and `git push` run
+/// like any other command. Two things follow, and neither is covered by anything in this file:
+/// a NEW workflow file takes effect on its own once pushed (it needs no existing file to reach
+/// it), and a change to a protected file that was committed or pushed during the turn is
+/// restored on disk while the commit, and the remote, keep it.
 pub(crate) struct TrustSurfaceGuard {
     root: std::path::PathBuf,
     files: std::collections::BTreeMap<std::path::PathBuf, FileSnapshot>,
@@ -1343,11 +1419,56 @@ impl TrustSurfaceGuard {
         let quarantine = quarantine_dir();
 
         for (path, snap) in &self.files {
-            let current = std::fs::read(path).ok();
-            if current.as_deref().map(brops_core::receipt::sha256_hex) == Some(snap.digest.clone()) {
+            // What the PATH is, before what it holds. Every one of these was a regular file
+            // reached through real directories when it was snapshotted (`collect_snapshot` follows
+            // no link), so a link anywhere between the root and the file is a change whatever the
+            // link resolves to — and it must be found BEFORE the read and the write below, both of
+            // which would follow it.
+            let link = self.link_on_the_way_to(path);
+            let rel = self.relative(path);
+            if let Some(link) = &link {
+                let link_rel = self.relative(link);
+                // The link is what the turn wrote, so the link is what is kept: its target, as
+                // text. Never the bytes behind it — reading through is how a link pulls the guard
+                // onto a path outside the tree, and that path may not be a file at all.
+                if let Some(qdir) = quarantine.as_ref() {
+                    let dest = qdir.join(format!("{link_rel}.symlink-target.txt"));
+                    if let Some(parent) = dest.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let target = std::fs::read_link(link)
+                        .map(|t| t.to_string_lossy().into_owned())
+                        .unwrap_or_else(|e| format!("(unreadable link: {e})"));
+                    let _ = std::fs::write(&dest, target);
+                }
+                if snap.bytes.is_none() {
+                    // Nothing to put in its place, so the link stays and the notice says so.
+                    unrestorable.push(format!(
+                        "{rel} (replaced by a symlink at {link_rel}; too large to snapshot; NOT restored)"
+                    ));
+                    continue;
+                }
+                // `remove_file` unlinks a symlink on unix whatever it points at; a Windows
+                // directory link needs `remove_dir`. Neither touches the target.
+                if let Err(e) = std::fs::remove_file(link).or_else(|_| std::fs::remove_dir(link)) {
+                    unrestorable.push(format!(
+                        "{rel} (replaced by a symlink at {link_rel} that could not be removed: {e}; \
+                         NOT written through)"
+                    ));
+                    continue;
+                }
+            }
+            // Only a regular file is read: a directory, a FIFO or a device in the file's place is
+            // a change, and reading one of those can block or never end.
+            let current = match std::fs::symlink_metadata(path) {
+                Ok(md) if md.is_file() => std::fs::read(path).ok(),
+                _ => None,
+            };
+            if link.is_none()
+                && current.as_deref().map(brops_core::receipt::sha256_hex) == Some(snap.digest.clone())
+            {
                 continue;
             }
-            let rel = self.relative(path);
             // Keep what the turn wrote before putting the original back — a change made in
             // good faith must be recoverable, and evidence of one made in bad faith must not
             // be destroyed by the response to it.
@@ -1364,6 +1485,9 @@ impl TrustSurfaceGuard {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     match std::fs::write(path, original) {
+                        Ok(()) if link.is_some() => restored.push(format!(
+                            "{rel} (had been replaced by a symlink; the link was removed, not followed)"
+                        )),
                         Ok(()) => restored.push(rel),
                         Err(e) => unrestorable.push(format!("{rel} (restore failed: {e})")),
                     }
@@ -1412,6 +1536,27 @@ impl TrustSurfaceGuard {
         }
         eprintln!("{notice}");
         Some(notice)
+    }
+
+    /// The first symlink met walking from the root down to `path` (inclusive), if there is one.
+    ///
+    /// Component by component, because `symlink_metadata(path)` alone declines to follow only the
+    /// LAST component: `engine/runtime` swapped for a link to a directory elsewhere would leave
+    /// every file "under" it looking like a regular file. The root itself is not examined — where
+    /// the owner keeps the repository is theirs to decide, links included.
+    fn link_on_the_way_to(&self, path: &std::path::Path) -> Option<std::path::PathBuf> {
+        let below = path.strip_prefix(&self.root).ok()?;
+        let mut at = self.root.clone();
+        for part in below.components() {
+            at.push(part);
+            match std::fs::symlink_metadata(&at) {
+                Ok(md) if md.is_symlink() => return Some(at),
+                Ok(_) => {}
+                // Nothing here, so nothing below it either: a deleted file, not a link.
+                Err(_) => return None,
+            }
+        }
+        None
     }
 
     fn relative(&self, path: &std::path::Path) -> String {
@@ -1527,22 +1672,8 @@ fn bro_agent_definitions_json() -> String {
             .join(",");
         format!(
             "\"{name}\":{{\"description\":{desc},\"tools\":[{tools_json}],\"prompt\":{prompt}}}",
-            desc = json_str(&format!(
-                "{blurb} Bro picks the tier per task — grant the narrowest one that lets the job finish."
-            )),
-            prompt = json_str(&format!(
-                "You are a **{name}** specialist, spawned by Bro for one task.
-
-{blurb}
-
-Your tools are the capability half of your grant, and Bro chose this tier deliberately — a narrower one than you might want is a decision, not an oversight. If the task cannot be done at this level, say exactly what you would need and stop. Do not work around the limit.
-
-The PATH half arrives in your task prompt as `scope` and `prohibited_scope`. Outside `scope` is read-only; `prohibited_scope` is untouchable. Scope may point outside this repository when the work genuinely lives elsewhere. If the task cannot be done inside its scope, say so and stop — do not widen it yourself.
-
-Read `CLAUDE.md` before you act. Report evidence, not assurances: what you changed, what you ran, what it printed. If something cannot be made genuinely true, leave it failing and say so. Never weaken a check to make a test pass, and never claim you ran something you did not.
-
-You return your result to Bro. You do not delegate further."
-            ))
+            desc = json_str(&tier_description(blurb)),
+            prompt = json_str(&tier_prompt(name, blurb))
         )
     };
     format!(
@@ -1552,6 +1683,36 @@ You return your result to Bro. You do not delegate further."
             .map(|(name, blurb, tools)| tier(name, blurb, tools))
             .collect::<Vec<_>>()
             .join(",")
+    )
+}
+
+/// A tier's `description`, as the CLI shows it to Bro when he picks one.
+///
+/// The same sentence `tools/generate_agent_definitions.py` writes into `.claude/agents/<tier>.md`,
+/// and [`tier_prompt`] is that file's body. They are separate functions rather than text inside a
+/// closure so `tier_definitions_match_the_generated_agent_files` can hold each against the file:
+/// until T-145 that test compared the `tools:` line only, and the prose had drifted twice — the
+/// runner was told it "cannot edit" and every tier was told to read a different set of documents
+/// than its generated twin.
+fn tier_description(blurb: &str) -> String {
+    format!("{blurb} Bro picks the tier per task — grant the narrowest one that lets the job finish.")
+}
+
+/// A tier's system prompt: the body of its generated `.claude/agents/<tier>.md`, without the two
+/// Markdown headings and unwrapped (the file wraps at 100 columns; an argv value has no reason to).
+fn tier_prompt(name: &str, blurb: &str) -> String {
+    format!(
+        "You are a **{name}** specialist, spawned by Bro for one task.
+
+{blurb}
+
+Your tools above are the capability half of your grant, and Bro chose this tier deliberately — a narrower one than you might want is a decision, not an oversight. If the task cannot be done at this level, say exactly what you would need and stop. Do not work around the limit.
+
+The PATH half arrives in your task prompt as `scope` and `prohibited_scope`. Outside `scope` is read-only; `prohibited_scope` is untouchable. Scope may point outside this repository when the work genuinely lives elsewhere. If the task cannot be done inside its scope, say so and stop — do not widen it yourself.
+
+Read every path in `config/canonical-read-manifest.json`, in the order it lists them, before you act — that file is the read order, and the only one. Report evidence, not assurances: what you changed, what you ran, what it printed. If something cannot be made genuinely true, leave it failing and say so. Never weaken a check to make a test pass, and never claim you ran something you did not.
+
+You return your result to Bro. You do not delegate further."
     )
 }
 
@@ -1569,7 +1730,9 @@ const BRO_TIERS: [(&str, &str, &[&str]); 3] = [
     ),
     (
         "runner",
-        "Reads and RUNS — builds, tests, git status/diff/log, any inspection — but cannot edit. Use to find out whether something actually works, and whenever the answer must not be produced by the same hand that could change the thing being measured.",
+        // "but cannot edit" until T-145. It holds `Bash`, and a shell writes files: the tool list
+        // withholds the edit TOOLS, not the ability. The sentence is the generator's, word for word.
+        "Reads and RUNS — builds, tests, git status/diff/log, any inspection — and holds no Edit or Write tool. Bash can still write a file, and nothing refuses that in advance, so not changing anything is an instruction here, not an enforced limit. Use to find out whether something actually works, and whenever the answer must not be produced by the same hand that could change the thing being measured.",
         &["Read", "Grep", "Glob", "Bash"],
     ),
     (
@@ -1579,33 +1742,6 @@ const BRO_TIERS: [(&str, &str, &[&str]); 3] = [
     ),
 ];
 
-/// Agent types the CLI offers that this app never defined — **observed, not assumed**.
-///
-/// `--agents` (above) hands the CLI our three tiers, and `--setting-sources ""` keeps every
-/// `.claude/agents/` pack role out. Neither of those suppresses the CLI's OWN built-in agent
-/// types, and the `Task` grant reaches them: the live `system` `init` frame lists them beside
-/// our tiers, and a spawn of one goes through.
-///
-/// Verbatim from a real init frame (CLI 2.1.220, session `b1847222-63c0-4ccf-ad8d-08a7faeaa550`,
-/// 2026-08-07 — the same list a capture a session earlier reported, so it is stable across at
-/// least two runs):
-///
-/// ```text
-/// "agents": ["builder","claude","claude-code-guide","Explore","general-purpose","Plan",
-///            "reader","runner","statusline-setup"]
-/// ```
-///
-/// `builder`/`reader`/`runner` are ours; the six below are the CLI's. What matters about them is
-/// exactly one fact, and it is a fact rather than an estimate: **this app passed no definition
-/// for any of them, so nothing this app chose bounds what one can do.** Their real tool lists are
-/// NOT recorded here, because we have never read them — `general-purpose` is documented by the
-/// CLI as holding `*`, but a doc string is not an observation and this module does not put
-/// unobserved capability on a card. Recording the NAMES is different: the names were observed,
-/// and knowing a name is the CLI's is what lets [`agent_origin`] say "not ours" instead of
-/// leaving the owner a blank where a broad grant belongs.
-///
-/// A newer CLI may add or rename these. That is why an unlisted, non-tier name is not silently
-/// treated as fine — see [`AgentOrigin::Unrecognized`], which draws the same conclusion.
 /// `--disallowedTools` patterns that make a CLI built-in genuinely UNSPAWNABLE.
 ///
 /// This is the half of the fix that is not a report. The delegation surface can only ever say
@@ -1641,6 +1777,33 @@ fn builtin_agent_deny_patterns() -> Vec<String> {
         .collect()
 }
 
+/// Agent types the CLI offers that this app never defined — **observed, not assumed**.
+///
+/// `--agents` (above) hands the CLI our three tiers, and `--setting-sources ""` keeps every
+/// `.claude/agents/` pack role out. Neither of those suppresses the CLI's OWN built-in agent
+/// types, and the `Task` grant reaches them: the live `system` `init` frame lists them beside
+/// our tiers, and a spawn of one goes through.
+///
+/// Verbatim from a real init frame (CLI 2.1.220, session `b1847222-63c0-4ccf-ad8d-08a7faeaa550`,
+/// 2026-08-07 — the same list a capture a session earlier reported, so it is stable across at
+/// least two runs):
+///
+/// ```text
+/// "agents": ["builder","claude","claude-code-guide","Explore","general-purpose","Plan",
+///            "reader","runner","statusline-setup"]
+/// ```
+///
+/// `builder`/`reader`/`runner` are ours; the six below are the CLI's. What matters about them is
+/// exactly one fact, and it is a fact rather than an estimate: **this app passed no definition
+/// for any of them, so nothing this app chose bounds what one can do.** Their real tool lists are
+/// NOT recorded here, because we have never read them — `general-purpose` is documented by the
+/// CLI as holding `*`, but a doc string is not an observation and this module does not put
+/// unobserved capability on a card. Recording the NAMES is different: the names were observed,
+/// and knowing a name is the CLI's is what lets [`agent_origin`] say "not ours" instead of
+/// leaving the owner a blank where a broad grant belongs.
+///
+/// A newer CLI may add or rename these. That is why an unlisted, non-tier name is not silently
+/// treated as fine — see [`AgentOrigin::Unrecognized`], which draws the same conclusion.
 const OBSERVED_CLI_BUILTIN_AGENTS: [&str; 6] = [
     "claude",
     "claude-code-guide",
@@ -1681,10 +1844,13 @@ fn json_str(raw: &str) -> String {
 /// The owner asked for this deliberately and knows what it means: Bro can start agents that write
 /// files and run commands in this repository without a per-step approval.
 ///
-/// `BRO_BASH_DENY` still bounds the shell: no delete, no push, no dependency install, no nested
-/// shell that would re-parse its way past the prefix match. Those are blast-radius limits rather
-/// than capability limits — everything Bro can usefully do he can still do, and the four classes
-/// he cannot are the ones that are hard to undo.
+/// **The shell is not bounded.** This paragraph said "`BRO_BASH_DENY` still bounds the shell: no
+/// delete, no push, no dependency install, no nested shell" for as long as that constant has been
+/// empty (Owner decision, 2026-08-20 — see its docs). What IS still denied is two things, and
+/// neither is a shell rule: spawning one of the CLI's own agent types
+/// ([`builtin_agent_deny_patterns`]) and an `Edit`/`Write`/`NotebookEdit` at a protected path
+/// ([`protected_path_deny_patterns`]). A shell command that writes a protected file is not
+/// refused; it is undone afterwards by [`TrustSurfaceGuard`], in the working tree only.
 ///
 /// Unset ⇒ NO tools at all (the fail-closed sandboxed chat).
 fn tool_args(agent: bool) -> Vec<String> {
@@ -1705,7 +1871,7 @@ fn tool_args(agent: bool) -> Vec<String> {
             .collect();
         // The chain above already carries both of the sets that did NOT change: the CLI's own agent
         // types, which `--agents` does not displace and `--setting-sources ""` does not hide
-        // (`BRO_BUILTIN_AGENT_DENY`), and a WRITE at any path that decides what "verified" means --
+        // (`builtin_agent_deny_patterns`), and a WRITE at any path that decides what "verified" means --
         // the prevention half whose enforcement twin is `TrustSurfaceGuard`.
         if !denied.is_empty() {
             a.push("--disallowedTools".into());
@@ -2013,15 +2179,6 @@ fn clean_path_token(raw: &str) -> &str {
     raw.trim().trim_matches(|c| c == '`' || c == '"' || c == '\'').trim_end_matches([',', '.', ';'])
 }
 
-/// Read `scope:` / `prohibited_scope:` out of a task prompt.
-///
-/// Bro is instructed (see [`bro_agent_system_suffix`]) to state both as concrete paths in every
-/// task. This is a deliberately narrow reader of that convention: a line whose first token is the
-/// label, and space/comma-separated paths after it — the task-contract grammar has no whitespace
-/// in a path, so splitting on it cannot cut one in half. Prose that does not match is simply not
-/// a grant here; the full prompt travels alongside and is what the surface shows.
-///
-/// What this can never do is make the scope enforced. It is text Bro wrote, read back by us.
 /// Does this token look like a path a task contract could carry?
 ///
 /// Mirrors `engine/schemas/task-contract.schema.json`: repo-relative or absolute, forward slashes
@@ -2062,6 +2219,15 @@ fn is_grant_path(token: &str) -> bool {
     true
 }
 
+/// Read `scope:` / `prohibited_scope:` out of a task prompt.
+///
+/// Bro is instructed (see [`bro_agent_system_suffix`]) to state both as concrete paths in every
+/// task. This is a deliberately narrow reader of that convention: a line whose first token is the
+/// label, and space/comma-separated paths after it — the task-contract grammar has no whitespace
+/// in a path, so splitting on it cannot cut one in half. Prose that does not match is simply not
+/// a grant here; the full prompt travels alongside and is what the surface shows.
+///
+/// What this can never do is make the scope enforced. It is text Bro wrote, read back by us.
 pub fn parse_task_grant(prompt: &str) -> (Vec<String>, Vec<String>) {
     let mut scope = Vec::new();
     let mut prohibited = Vec::new();
@@ -2662,9 +2828,6 @@ async fn claude_cli(bin: &str, system: &str, messages: &[ChatMsg]) -> Result<Str
     })
 }
 
-/// Build a `bridge.task-request` JSON for one governed AI turn. Carries no lease,
-/// key, or environment (the sidecar/engine own those); the system prompt +
-/// conversation travel as `rationale`, JSON-escaped so content can't forge structure.
 /// The canonical governed-request context (design §2.2), built ONCE by the command
 /// layer and used — from this single immutable source — for THREE things that must
 /// never drift: (1) issuing the durable one-time nonce challenge; (2) riding inside
@@ -2741,6 +2904,9 @@ pub fn prepare_governed_turn(
     Ok(PreparedGovernedTurn { system: system.to_string(), history, context })
 }
 
+/// Build a `bridge.task-request` JSON for one governed AI turn. Carries no lease,
+/// key, or environment (the sidecar/engine own those); the system prompt +
+/// conversation travel as `rationale`, JSON-escaped so content can't forge structure.
 fn governed_request(prepared: &PreparedGovernedTurn) -> String {
     let ctx = &prepared.context;
     // `system` + structured `history` are the EXECUTION / SIGNING authority (audit R2
@@ -3061,9 +3227,10 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
     if key.is_empty() {
         return Err("ANTHROPIC_API_KEY is empty".to_string());
     }
+    let max_tokens = anthropic_max_tokens(env_nonempty("BROPS_ANTHROPIC_MAX_TOKENS").as_deref());
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
         "system": system,
         "messages": messages.iter().map(|m| serde_json::json!({ "role": m.role, "content": m.content })).collect::<Vec<_>>(),
     });
@@ -3084,6 +3251,41 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
     }
     let body = bounded_body(resp, MAX_HTTP_BODY).await?;
     let json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    anthropic_reply(&json, max_tokens)
+}
+
+/// The reply cap sent to Anthropic when `BROPS_ANTHROPIC_MAX_TOKENS` does not name one.
+const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 1024;
+/// The largest cap `BROPS_ANTHROPIC_MAX_TOKENS` may ask for. A bound, so a typo is not a bill.
+const MAX_ANTHROPIC_MAX_TOKENS: u32 = 32_000;
+
+/// Opening marker of the notice appended to a reply the provider cut off. Stable, like
+/// [`TRUST_SURFACE_NOTICE`], so the UI (and a test) can match on it.
+pub const TRUNCATED_REPLY_NOTICE: &str = "[BroPS] REPLY CUT OFF";
+
+/// `BROPS_ANTHROPIC_MAX_TOKENS` as a cap: a whole number from 1 to
+/// [`MAX_ANTHROPIC_MAX_TOKENS`], else the default (and a line saying the value was ignored).
+fn anthropic_max_tokens(raw: Option<&str>) -> u32 {
+    let Some(raw) = raw else { return DEFAULT_ANTHROPIC_MAX_TOKENS };
+    match raw.trim().parse::<u32>() {
+        Ok(n) if (1..=MAX_ANTHROPIC_MAX_TOKENS).contains(&n) => n,
+        _ => {
+            eprintln!(
+                "[brops] WARN BROPS_ANTHROPIC_MAX_TOKENS={raw:?} is not a whole number from 1 to \
+                 {MAX_ANTHROPIC_MAX_TOKENS}; using {DEFAULT_ANTHROPIC_MAX_TOKENS}"
+            );
+            DEFAULT_ANTHROPIC_MAX_TOKENS
+        }
+    }
+}
+
+/// The text of one Anthropic Messages reply — and whether it is the whole reply.
+///
+/// `stop_reason` was never read: a reply that hit `max_tokens` came back as the joined text and
+/// was shown, and persisted, as a complete answer that happened to stop mid-sentence. A truncated
+/// answer is not a malformed one, so it is still returned — with a notice saying it was cut and
+/// at what cap, because the text alone cannot say that about itself.
+fn anthropic_reply(json: &serde_json::Value, max_tokens: u32) -> Result<String, String> {
     let text: String = json
         .get("content")
         .and_then(|c| c.as_array())
@@ -3099,6 +3301,13 @@ async fn anthropic(key: &str, model: &str, system: &str, messages: &[ChatMsg]) -
         .to_string();
     if text.is_empty() {
         return Err("Anthropic returned no text content".to_string());
+    }
+    if json.get("stop_reason").and_then(|r| r.as_str()) == Some("max_tokens") {
+        return Ok(format!(
+            "{text}\n\n{TRUNCATED_REPLY_NOTICE}: the provider stopped at its max_tokens cap \
+             ({max_tokens}), so this is not the whole answer. Set BROPS_ANTHROPIC_MAX_TOKENS higher \
+             to get the rest."
+        ));
     }
     Ok(text)
 }
@@ -3442,7 +3651,7 @@ mod tests {
 
     /// The roster the app is actually offered, read off the real init frame.
     ///
-    /// `--agents` puts our three tiers in and `--setting-sources ""` keeps all 262 pack roles out
+    /// `--agents` puts our three tiers in and `--setting-sources ""` keeps all 259 pack roles out
     /// — both confirmed here — but neither suppresses the CLI's own six. This test exists so
     /// [`OBSERVED_CLI_BUILTIN_AGENTS`] is a transcript of that line rather than a list someone
     /// remembered, and so a CLI that changes the roster fails here instead of silently widening
@@ -3655,12 +3864,19 @@ mod tests {
         let pos = argv.iter().position(|a| a == "--disallowedTools").expect("--disallowedTools");
         let deny = &argv[pos + 1..];
         assert!(!BRO_PROTECTED_PATHS.is_empty());
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
         for path in BRO_PROTECTED_PATHS {
-            let is_file = path
-                .rsplit('/')
-                .next()
-                .and_then(|s| s.rsplit_once('.'))
-                .is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty());
+            // Asked of the CHECKOUT, not recomputed. This used to repeat the production
+            // expression (`rsplit('/')…rsplit_once('.')`) token for token and assert what it
+            // derived, so a misclassified entry — a dotted directory name, an extensionless
+            // file — was wrong identically on both sides. What an entry IS is a fact about the
+            // tree, and it also catches an entry that names nothing any more.
+            let on_disk = repo.join(path);
+            let is_file = on_disk.is_file();
+            assert!(
+                is_file || on_disk.is_dir(),
+                "{path} is protected and does not exist — renamed or removed without the list"
+            );
             let spec = if is_file { (*path).to_string() } else { format!("{path}/**") };
             for tool in ["Edit", "Write", "NotebookEdit"] {
                 let pat = format!("{tool}({spec})");
@@ -3786,6 +4002,83 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A protected file swapped for a symlink is a change, and the link is never followed.
+    ///
+    /// `collect_snapshot` refuses to follow a link and `settle` read and wrote straight through
+    /// one, so the two halves disagreed about what a path is. Three shapes, each of which the old
+    /// `settle` got wrong in a different way:
+    ///
+    ///   * a link to an IDENTICAL copy matched the digest — no notice, and the next turn's
+    ///     snapshot skipped the link, leaving the copy editable unseen from then on;
+    ///   * a link to DIFFERENT bytes was "restored" by writing the original through the link,
+    ///     onto a file outside the tree;
+    ///   * a protected DIRECTORY swapped for a link did both at once for every file under it.
+    #[cfg(unix)]
+    #[test]
+    fn a_protected_path_swapped_for_a_symlink_is_restored_and_never_written_through() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("brops-guard-link-{}", brops_core::id()));
+        let root = base.join("repo");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let write = |rel: &str, body: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+            p
+        };
+        let same = write("tools/check_same.py", "raise SystemExit(1)\n");
+        let differs = write("tools/check_differs.py", "raise SystemExit(1)\n");
+        let in_dir = write("engine/runtime/isolated_signer.py", "TRUSTED = True\n");
+
+        let guard = TrustSurfaceGuard::take(&root);
+
+        // (1) identical copy outside the tree, linked into the file's place.
+        let same_copy = outside.join("same.py");
+        std::fs::write(&same_copy, "raise SystemExit(1)\n").unwrap();
+        std::fs::remove_file(&same).unwrap();
+        symlink(&same_copy, &same).unwrap();
+        // (2) different bytes outside the tree, linked into the file's place.
+        let other = outside.join("other.py");
+        std::fs::write(&other, "raise SystemExit(0)\n").unwrap();
+        std::fs::remove_file(&differs).unwrap();
+        symlink(&other, &differs).unwrap();
+        // (3) the whole protected directory moved out and linked back.
+        let moved = outside.join("runtime");
+        std::fs::rename(root.join("engine/runtime"), &moved).unwrap();
+        symlink(&moved, root.join("engine/runtime")).unwrap();
+        std::fs::write(moved.join("isolated_signer.py"), "TRUSTED = False\n").unwrap();
+
+        let notice = guard.settle().expect("a path that became a link is a change");
+
+        for (path, body) in [
+            (&same, "raise SystemExit(1)\n"),
+            (&differs, "raise SystemExit(1)\n"),
+            (&in_dir, "TRUSTED = True\n"),
+        ] {
+            let md = std::fs::symlink_metadata(path).unwrap();
+            assert!(md.is_file(), "{} must be a regular file again, not a link", path.display());
+            assert_eq!(std::fs::read_to_string(path).unwrap(), body);
+        }
+        assert!(
+            std::fs::symlink_metadata(root.join("engine/runtime")).unwrap().is_dir(),
+            "the protected directory must be a real directory again"
+        );
+        // Nothing was written through any link: what the links pointed at is exactly as it was.
+        assert_eq!(std::fs::read_to_string(&same_copy).unwrap(), "raise SystemExit(1)\n");
+        assert_eq!(std::fs::read_to_string(&other).unwrap(), "raise SystemExit(0)\n");
+        assert_eq!(
+            std::fs::read_to_string(moved.join("isolated_signer.py")).unwrap(),
+            "TRUSTED = False\n"
+        );
+        // And all three are named, the silent one included.
+        for name in ["check_same.py", "check_differs.py", "isolated_signer.py"] {
+            assert!(notice.contains(name), "{name} missing from: {notice}");
+        }
+        assert!(notice.contains("symlink"), "the notice must say what it found: {notice}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// The doc-vs-grant contradiction the audit found: `bro_agent_dir`'s comment said agent mode
     /// grants "ONLY the file tools … never Bash or any executor", while `tool_args` granted Bash
     /// and then Task. This pins the direction of the fix — the GRANT is the truth — by making
@@ -3842,7 +4135,7 @@ mod tests {
         assert!(!json["runner"]["tools"].as_array().unwrap().iter().any(|t| t == "Write"));
 
         // Windows caps a command line at 32767 chars, and this module keeps bulk out of argv. That
-        // is the reason only the three tiers go inline and the 262 pack roles stay on disk.
+        // is the reason only the three tiers go inline and the 259 pack roles stay on disk.
         assert!(agent[pos + 1].len() < 8_000, "the inline definitions must stay small");
     }
 
@@ -3851,25 +4144,137 @@ mod tests {
     /// because it reads as enforcement.
     #[test]
     fn tier_definitions_match_the_generated_agent_files() {
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
         let json: serde_json::Value = serde_json::from_str(&bro_agent_definitions_json()).unwrap();
+        // One line of prose, however the source wrapped it.
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
         for tier in ["reader", "runner", "builder"] {
-            let md = repo.join(".claude").join("agents").join(format!("{tier}.md"));
-            let text = match std::fs::read_to_string(&md) {
-                Ok(t) => t,
-                // A packaged build has no repo checkout beside it. Skipping is honest here: the
-                // check is about the repo's two copies agreeing, and CI runs it from the checkout.
-                Err(_) => return,
+            let md = agents_dir().join(format!("{tier}.md"));
+            // NOT skipped when unreadable. This used to `return` here "because a packaged build has
+            // no checkout beside it" — but a test binary only ever runs from a checkout, so the one
+            // thing that branch did was turn a renamed or deleted tier file into a pass.
+            let text = std::fs::read_to_string(&md)
+                .unwrap_or_else(|e| panic!("{}: {e} — the tier's generated twin is gone", md.display()));
+            let mut parts = text.splitn(3, "---\n");
+            assert_eq!(parts.next(), Some(""), "{tier}.md must open with front matter");
+            let front = parts.next().unwrap_or_else(|| panic!("{tier}.md has no front matter"));
+            let body = parts.next().unwrap_or_else(|| panic!("{tier}.md has no body"));
+            let field = |key: &str| -> &str {
+                front
+                    .lines()
+                    .find_map(|l| l.strip_prefix(key))
+                    .unwrap_or_else(|| panic!("{tier}.md declares no {key}"))
+                    .trim()
             };
-            let line = text
-                .lines()
-                .find(|l| l.starts_with("tools:"))
-                .unwrap_or_else(|| panic!("{tier}.md declares no tools"));
-            let from_file: Vec<&str> = line["tools:".len()..].trim().split(", ").collect();
+
+            let from_file: Vec<&str> = field("tools:").split(", ").collect();
             let from_rust: Vec<&str> =
                 json[tier]["tools"].as_array().unwrap().iter().map(|t| t.as_str().unwrap()).collect();
             assert_eq!(from_rust, from_file, "{tier}: ai.rs and .claude/agents/{tier}.md disagree");
+
+            // The description is what Bro reads when he chooses a tier, so a drifted one is a
+            // drifted capability claim. The generator may write it plain or as a quoted scalar
+            // (a JSON string is a YAML double-quoted one); both are the same sentence.
+            let raw = field("description:");
+            let described: String = if raw.starts_with('"') {
+                serde_json::from_str(raw).unwrap_or_else(|e| panic!("{tier}.md description: {e}"))
+            } else {
+                raw.to_string()
+            };
+            assert_eq!(
+                json[tier]["description"].as_str().unwrap(),
+                described,
+                "{tier}: the description Bro is shown is not the generated one"
+            );
+
+            // And the prompt the specialist runs under: the file's body without its two headings.
+            let body: String =
+                body.lines().filter(|l| !l.starts_with("## ")).collect::<Vec<_>>().join("\n");
+            assert_eq!(
+                flat(json[tier]["prompt"].as_str().unwrap()),
+                flat(&body),
+                "{tier}: the inline prompt is not the generated body"
+            );
         }
+    }
+
+    /// `.claude/agents/`, from the checkout this test binary was built in.
+    fn agents_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join(".claude")
+            .join("agents")
+    }
+
+    /// The number Bro's prompt gives for the pack-role files is the number of files there are.
+    /// It said 262 — the whole directory, the three tiers counted as pack roles.
+    #[test]
+    fn the_prompt_counts_the_pack_role_files_that_exist() {
+        let names: Vec<String> = std::fs::read_dir(agents_dir())
+            .expect(".claude/agents must exist in a checkout")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".md"))
+            .collect();
+        // A pack role is `<pack>--<role>.md`; a tier has no `--`.
+        let pack_roles = names.iter().filter(|n| n.contains("--")).count();
+        assert_eq!(pack_roles, PACK_ROLE_FILES, "PACK_ROLE_FILES is not the count on disk");
+        assert_eq!(names.len(), PACK_ROLE_FILES + BRO_TIERS.len(), "and the rest are the tiers");
+        let prompt = bro_agent_system_suffix(Some("C:/repo"));
+        assert!(
+            prompt.contains(&format!("holds {PACK_ROLE_FILES} pack-role files")),
+            "the prompt must state that count"
+        );
+    }
+
+    /// Bro is told what his shell can do, and it is what the argv allows.
+    ///
+    /// The prompt said "You CANNOT delete files, git push, install dependencies, or open a nested
+    /// shell" while `BRO_BASH_DENY` was empty — an unenforced request presented as a capability
+    /// limit, and the opposite of the recorded Owner decision. This holds the sentence to the
+    /// constant in BOTH directions, so restoring a deny without rewriting the prompt fails too.
+    #[test]
+    fn the_prompt_claims_no_shell_limit_the_argv_does_not_enforce() {
+        let prompt = bro_agent_system_suffix(Some("C:/repo"));
+        let argv = tool_args(true);
+        let bash_denied = argv.iter().any(|a| a.starts_with("Bash("));
+        assert_eq!(bash_denied, !BRO_BASH_DENY.is_empty(), "argv and the constant disagree");
+        if BRO_BASH_DENY.is_empty() {
+            assert!(!prompt.contains("You CANNOT"), "the prompt states a limit nothing enforces");
+            assert!(prompt.contains("this app refuses none of the four"), "…and must say so plainly");
+        } else {
+            assert!(
+                !prompt.contains("refuses none of the four"),
+                "a shell deny list is back; the prompt must stop saying nothing is refused"
+            );
+        }
+        // The runner's limit is the same kind of claim, one tier down.
+        assert!(!prompt.contains("but not edit"), "a runner holds Bash; it is not unable to write");
+        assert!(prompt.contains("holds no Edit or Write tool"));
+    }
+
+    /// Every protected path is NAMED to Bro, from the one list the guard enforces.
+    #[test]
+    fn the_prompt_names_every_protected_path() {
+        let prompt = bro_agent_system_suffix(Some("C:/repo"));
+        for path in BRO_PROTECTED_PATHS {
+            assert!(prompt.contains(path), "Bro is never told `{path}` is protected");
+        }
+    }
+
+    /// The provider card says why the governed path is shut, in the refusal's own name.
+    #[test]
+    fn the_governed_status_names_the_refusal_a_turn_really_gets() {
+        let name = crate::commands::GOVERNED_VERIFICATION_UNCONFIGURED
+            .split(':')
+            .next()
+            .expect("the reason opens with its machine name");
+        assert!(GOVERNED_STATUS_DETAIL.contains(name), "{GOVERNED_STATUS_DETAIL}");
+        assert!(
+            !GOVERNED_STATUS_DETAIL.contains("PENDING"),
+            "receipt verification is implemented; the card must not call it pending"
+        );
     }
 
     // Security regression: chat calls must disable ALL Claude tools so a
@@ -3982,11 +4387,17 @@ mod tests {
         assert!(validate_input("s", std::slice::from_ref(&u)).is_ok());
         // assistant-last is allowed (group chat: an agent replying after another)
         assert!(validate_input("s", &[u.clone(), a.clone()]).is_ok());
-        // arbitrary roles rejected
-        assert!(validate_input("s", &[ChatMsg { role: "system".into(), content: "x".into() }]).is_err());
-        assert!(validate_input("s", &[ChatMsg { role: "agent".into(), content: "x".into() }]).is_err());
+        // Arbitrary roles rejected — and rejected BY THE ROLE RULE. Each case carries a user turn
+        // beside the bad one and pins the refusal's own words: sent alone, a `system` message also
+        // trips "no user message", so `.is_err()` stayed true with the role check deleted.
+        for bad in ["system", "agent", "User", ""] {
+            let err = validate_input("s", &[u.clone(), ChatMsg { role: bad.into(), content: "x".into() }])
+                .expect_err("a role other than user/assistant must be refused");
+            assert!(err.contains("invalid message role"), "{bad:?} was refused for another reason: {err}");
+        }
         // must contain a user turn to reply to
-        assert!(validate_input("s", &[a]).is_err());
+        let err = validate_input("s", &[a]).expect_err("no user turn, nothing to reply to");
+        assert!(err.contains("no user message"), "refused for another reason: {err}");
     }
 
     #[test]
@@ -4557,6 +4968,40 @@ mod tests {
             ..base_env()
         };
         assert!(matches!(resolve_provider(&env), Ok(Provider::Anthropic { .. })));
+    }
+
+    /// A reply the provider stopped at `max_tokens` must say so. It used to come back as the
+    /// joined text and nothing else — a cut-off answer shown, and saved, as a whole one.
+    #[test]
+    fn a_reply_cut_at_the_token_cap_says_it_was_cut() {
+        let whole = serde_json::json!({
+            "content": [{ "type": "text", "text": "All of it." }],
+            "stop_reason": "end_turn"
+        });
+        assert_eq!(anthropic_reply(&whole, 1024).unwrap(), "All of it.");
+
+        let cut = serde_json::json!({
+            "content": [{ "type": "text", "text": "The first half of a sent" }],
+            "stop_reason": "max_tokens"
+        });
+        let got = anthropic_reply(&cut, 1024).unwrap();
+        assert!(got.starts_with("The first half of a sent"), "the text itself is kept: {got}");
+        assert!(got.contains(TRUNCATED_REPLY_NOTICE), "a truncated reply must be marked: {got}");
+        assert!(got.contains("1024"), "…with the cap it hit: {got}");
+
+        // No text at all is still an error, whatever the stop reason.
+        let empty = serde_json::json!({ "content": [], "stop_reason": "max_tokens" });
+        assert!(anthropic_reply(&empty, 1024).is_err());
+    }
+
+    #[test]
+    fn the_anthropic_cap_is_a_bounded_whole_number_or_the_default() {
+        assert_eq!(anthropic_max_tokens(None), DEFAULT_ANTHROPIC_MAX_TOKENS);
+        assert_eq!(anthropic_max_tokens(Some("4096")), 4096);
+        assert_eq!(anthropic_max_tokens(Some(" 1 ")), 1);
+        for bad in ["0", "-5", "lots", "", "99999999", "4096.5"] {
+            assert_eq!(anthropic_max_tokens(Some(bad)), DEFAULT_ANTHROPIC_MAX_TOKENS, "{bad:?}");
+        }
     }
 
     #[test]

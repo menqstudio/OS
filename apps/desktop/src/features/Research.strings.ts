@@ -163,10 +163,13 @@ export const STR = {
     hy: 'Ջնջել հետազոտման գրառումը',
     ru: 'Удалить запись исследования',
   },
-  deletePrompt: {
-    en: 'This permanently removes the record.',
-    hy: 'Սա ընդմիշտ հեռացնում է գրառումը։',
-    ru: 'Это навсегда удалит запись.',
+  // A refusal that will not change on a retry. `classifyDeleteRefusal` returns `policy` only
+  // for the capability wall's own wording or the handler's `forbidden_command:` prefix; any
+  // other failure is left unclassified and gets no such sentence.
+  deleteRefusedPermanent: {
+    en: 'This is a standing policy refusal, not a transient failure — retrying cannot succeed.',
+    hy: 'Սա մշտական քաղաքականության մերժում է, ոչ թե ժամանակավոր ձախողում — կրկնելը չի կարող հաջողել։',
+    ru: 'Это постоянный отказ политики, а не временный сбой — повтор не поможет.',
   },
   deleting: {
     en: 'Deleting…',
@@ -189,11 +192,18 @@ export const STR = {
     ru: 'Готово',
   },
 
-  // -- §D: the governed run, its verified-receipt badge, and its `blocked` state --
+  // -- §D: the run, its held-answer badge, and its `blocked` state --
+  //
+  // The panel was titled "GOVERNED RUN" and its hint said "The question goes through the
+  // governed turn". Neither is this page's to promise: `stream_ask` takes the governed path
+  // only when the resolved provider is the governed engine, takes an ungoverned one under the
+  // development switch, and with no provider configured fails before any turn. So the title
+  // names the action, the hint says the path is decided by the configured provider, and the
+  // badge on the outcome — which the backend DOES report — says which one it was.
   runPanel: {
-    en: 'GOVERNED RUN',
-    hy: 'ԿԱՌԱՎԱՐՎՈՂ ԿԱՏԱՐՈՒՄ',
-    ru: 'УПРАВЛЯЕМЫЙ ЗАПУСК',
+    en: 'RUN THE QUESTION',
+    hy: 'ՀԱՐՑԻ ԿԱՏԱՐՈՒՄ',
+    ru: 'ЗАПУСК ВОПРОСА',
   },
   runIt: {
     en: 'Run this question',
@@ -206,9 +216,9 @@ export const STR = {
     ru: 'Выполняется…',
   },
   runHint: {
-    en: 'Enter runs · Esc cancels. The question goes through the governed turn — the same path chat uses.',
-    hy: 'Enter-ը կատարում ա · Esc-ը չեղարկում։ Հարցը գնում ա կառավարվող շրջանով՝ նույն ուղին, ինչ չաթը։',
-    ru: 'Enter запускает · Esc отменяет. Вопрос идёт через управляемый ход — тот же путь, что и чат.',
+    en: 'Enter runs · Esc cancels. The configured provider decides the path: the governed turn when it is the governed engine, and none at all when no provider is set. The outcome below says which one produced the answer.',
+    hy: 'Enter-ը կատարում ա · Esc-ը չեղարկում։ Ուղին որոշում ա կարգավորված provider-ը՝ կառավարվող շրջան, երբ այն կառավարվող շարժիչն ա, ու ոչ մի ուղի, երբ provider դրված չի։ Ներքևի արդյունքն ասում ա, թե որ ուղին ա տվել պատասխանը։',
+    ru: 'Enter запускает · Esc отменяет. Путь определяет настроенный провайдер: управляемый ход, когда это управляемый движок, и никакого, когда провайдер не задан. Результат ниже сообщает, какой путь дал ответ.',
   },
   needQuestion: {
     en: 'This record has no question to run.',
@@ -234,9 +244,10 @@ export const STR = {
   //
   // There used to be ONE pair here, `verifiedHeld` / `verifiedHeldNote`, reading "Verified · held"
   // and "Verified desktop-side and held by the backend" for every held answer. Two paths stash
-  // one, and on a shipped install the only reachable path runs no governed turn, issues no
-  // challenge and produces no receipt. The strongest claim on the page was attached to the weakest
-  // outcome the app has.
+  // one, and the ungoverned development path (`BROPS_ALLOW_UNGOVERNED`) runs no governed turn,
+  // issues no challenge and produces no receipt. The strongest claim on the page was attached to
+  // the weakest outcome the app has. (An install that configures no provider reaches neither
+  // path: `stream_ask` fails with an error before any answer exists.)
   //
   // Four pairs now, one per provenance — including one for a value this version does not
   // recognise, because an unknown outcome must read as a warning and never as a pass.

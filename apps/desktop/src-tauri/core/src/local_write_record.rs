@@ -20,6 +20,15 @@
 //!   layer (migration 0021 RAISEs on UPDATE/DELETE and on any INSERT that does not
 //!   extend the current head). [`check_chain`] recomputes every hash and every link.
 //!
+//!   **Who checks it.** `check_chain` is the whole-ledger walk, and no product path calls it: it
+//!   is a library function reached only by tests. What the product does call is [`state_of`], and
+//!   that used to compare the row's digest with the latest record's `content_sha256` and nothing
+//!   else — so a record edited in the database file (the edit this ledger exists to expose)
+//!   answered `Recorded` as long as the stored digest was edited to match. `state_of` now
+//!   recomputes the hash of the record it answers from and checks that record's link to its actual
+//!   predecessor, and refuses to answer from one that fails. That is a check of ONE link per
+//!   read, not of the chain: a break further back is still found only by `check_chain`.
+//!
 //! # What a record does NOT prove — read before naming anything on screen
 //!
 //! **Nothing here is signed.** There is no key, no manifest, no external authority, no
@@ -211,8 +220,13 @@ pub fn knowledge_content_sha256(title: &str, body: &str, source: &str, tags: &st
 }
 
 /// The record hash: SHA-256 over the canonical envelope of every stored field except the
-/// hash itself. `prev_record_sha256` is inside the envelope, which is what makes the
-/// chain a chain — altering any earlier record invalidates every later hash.
+/// hash itself **and the row's `id`**. `prev_record_sha256` is inside the envelope, which is
+/// what makes the chain a chain — altering any earlier record invalidates every later hash.
+///
+/// `id` is a surrogate key minted at insert (`crate::id()`), stored `UNIQUE`, and NOT covered:
+/// it can be rewritten without the hash or [`check_chain`] noticing. Nothing reads it as
+/// evidence — a record is identified by `seq` and by its hash — and binding it would be a new
+/// protocol tag, not an edit to this one. This doc used to say "every stored field".
 pub fn record_sha256(
     seq: i64,
     subject_kind: SubjectKind,
@@ -408,6 +422,17 @@ pub fn state_of(
     let Some(record) = latest_for(conn, subject_kind, subject_id)? else {
         return Ok(SubjectState::Unrecorded);
     };
+    // Nothing is concluded from a record that does not hold together. Every answer below is
+    // read off `record`; one whose hash no longer matches its fields, or that does not link to
+    // the record actually stored before it, is not evidence of anything. That is an ERROR, not a
+    // state: the caller's surface reports a failed read as a fault, which is what it is, and
+    // none of the four states would be true.
+    if let Some(reason) = record_break(conn, &record)? {
+        return Err(CoreError::Invalid {
+            field: "write_record",
+            value: format!("record {} is broken: {reason}", record.seq),
+        });
+    }
     if record.operation == WriteOp::Deleted {
         return Ok(SubjectState::DeletedButPresent { record });
     }
@@ -419,6 +444,57 @@ pub fn state_of(
             record,
         })
     }
+}
+
+/// Check ONE record in place: its protocol tag, its own hash, and its link to the record
+/// actually stored at `seq - 1` (or to genesis). `None` when it holds; the reason when it does
+/// not. The same three checks [`check_chain`] makes per record, for a caller that is about to
+/// answer from this record and cannot walk the ledger on every read.
+fn record_break(conn: &Connection, record: &WriteRecord) -> CoreResult<Option<&'static str>> {
+    let (protocol, kind, op): (String, String, String) = conn.query_row(
+        "SELECT protocol, subject_kind, operation FROM store_write_records WHERE seq = ?1",
+        [record.seq],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    if protocol != PROTOCOL {
+        return Ok(Some("unknown record protocol"));
+    }
+    // `map` substitutes a default for a token outside the CHECK domain; a record carrying one is
+    // foreign, and the hash below would be computed over the substitute rather than the stored value.
+    if SubjectKind::parse(&kind).is_none() || WriteOp::parse(&op).is_none() {
+        return Ok(Some("subject_kind or operation is outside its domain"));
+    }
+    let recomputed = record_sha256(
+        record.seq,
+        record.subject_kind,
+        &record.subject_id,
+        record.operation,
+        &record.content_sha256,
+        &record.prev_record_sha256,
+        &record.recorded_at,
+    );
+    if recomputed != record.record_sha256 {
+        return Ok(Some("record_sha256 does not match the record's own fields"));
+    }
+    let expected_prev: String = if record.seq == 1 {
+        GENESIS_PREV_SHA256.to_string()
+    } else {
+        match conn
+            .query_row(
+                "SELECT record_sha256 FROM store_write_records WHERE seq = ?1",
+                [record.seq - 1],
+                |r| r.get(0),
+            )
+            .optional()?
+        {
+            Some(prev) => prev,
+            None => return Ok(Some("the preceding record is missing (seq is not contiguous)")),
+        }
+    };
+    if record.prev_record_sha256 != expected_prev {
+        return Ok(Some("prev_record_sha256 does not link to the preceding record"));
+    }
+    Ok(None)
 }
 
 /// Recompute the whole ledger: every `record_sha256` from its own fields, every
@@ -655,6 +731,110 @@ mod tests {
             }
             other => panic!("a tampered ledger must not report {other:?}"),
         }
+    }
+
+    /// The guard-less table of the test above, with two records for one subject.
+    fn unguarded_ledger() -> (Connection, String, String) {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE store_write_records (
+                seq INTEGER PRIMARY KEY, id TEXT NOT NULL, protocol TEXT NOT NULL,
+                subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL, operation TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL, prev_record_sha256 TEXT NOT NULL,
+                record_sha256 TEXT NOT NULL, recorded_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        let seed = |seq: i64, op: WriteOp, prev: &str, content: &str, at: &str| -> String {
+            let h = record_sha256(seq, SubjectKind::MemoryEntry, "m-1", op, content, prev, at);
+            c.execute(
+                "INSERT INTO store_write_records VALUES (?1,'id',?2,'memory_entry','m-1',?3,?4,?5,?6,?7)",
+                rusqlite::params![seq, PROTOCOL, op.as_str(), content, prev, h, at],
+            )
+            .unwrap();
+            h
+        };
+        let h1 = seed(1, WriteOp::Created, GENESIS_PREV_SHA256, &mem_digest("a"), "1000");
+        let h2 = seed(2, WriteOp::Updated, &h1, &mem_digest("b"), "1001");
+        (c, h1, h2)
+    }
+
+    fn broken(result: CoreResult<SubjectState>) -> String {
+        match result {
+            Err(CoreError::Invalid { field: "write_record", value }) => value,
+            other => panic!("a broken record must be an error, not an answer: {other:?}"),
+        }
+    }
+
+    /// THE PRODUCT'S READ. `state_of` is what the memory and knowledge pages call, and it used to
+    /// compare one stored digest with the row's and stop. So the edit this ledger exists to expose
+    /// — a record rewritten in the database file to agree with a rewritten row — read `Recorded`:
+    /// nothing on a product path recomputed a record's hash. Only `check_chain` did, and only
+    /// tests call that.
+    #[test]
+    fn state_of_does_not_answer_from_a_record_whose_own_hash_is_stale() {
+        let (c, _h1, _h2) = unguarded_ledger();
+        // Positive control: the untouched ledger answers, both ways.
+        assert!(matches!(
+            state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("b")).unwrap(),
+            SubjectState::Recorded { .. }
+        ));
+        assert!(matches!(
+            state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("other")).unwrap(),
+            SubjectState::ContentDiverged { .. }
+        ));
+
+        // The out-of-band edit: the row was changed to TAMPERED and the latest record's stored
+        // digest was changed to match, without re-deriving the record's hash.
+        c.execute(
+            "UPDATE store_write_records SET content_sha256 = ?1 WHERE seq = 2",
+            [mem_digest("TAMPERED")],
+        )
+        .unwrap();
+        let why = broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("TAMPERED")));
+        assert!(why.contains("record 2") && why.contains("record_sha256"), "{why}");
+        // It is refused whatever the row says — no state is true of a record that does not hold.
+        broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("b")));
+    }
+
+    /// The LINK, on its own: the latest record is rewritten wholesale — new content AND a hash
+    /// re-derived over it — so its own hash recomputes. What gives it away is that an editor
+    /// who also wants the predecessor gone has nothing consistent to point `prev` at.
+    #[test]
+    fn state_of_does_not_answer_from_a_record_that_does_not_link_to_its_predecessor() {
+        let (c, _h1, _h2) = unguarded_ledger();
+        let forged_prev = mem_digest("a record that was never stored");
+        let forged = record_sha256(
+            2, SubjectKind::MemoryEntry, "m-1", WriteOp::Updated, &mem_digest("TAMPERED"), &forged_prev, "1001",
+        );
+        c.execute(
+            "UPDATE store_write_records SET content_sha256 = ?1, prev_record_sha256 = ?2, record_sha256 = ?3 \
+             WHERE seq = 2",
+            rusqlite::params![mem_digest("TAMPERED"), forged_prev, forged],
+        )
+        .unwrap();
+        let why = broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("TAMPERED")));
+        assert!(why.contains("does not link"), "{why}");
+
+        // And a predecessor that is simply gone.
+        let (c, _h1, _h2) = unguarded_ledger();
+        c.execute("DELETE FROM store_write_records WHERE seq = 1", []).unwrap();
+        let why = broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("b")));
+        assert!(why.contains("missing"), "{why}");
+    }
+
+    /// A foreign protocol tag or an operation outside the domain is not read through `map`'s
+    /// defaults: the record is refused, not re-interpreted.
+    #[test]
+    fn state_of_does_not_answer_from_a_foreign_record() {
+        let (c, _h1, _h2) = unguarded_ledger();
+        c.execute("UPDATE store_write_records SET protocol = 'someone.elses.v9' WHERE seq = 2", []).unwrap();
+        let why = broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("b")));
+        assert!(why.contains("protocol"), "{why}");
+
+        let (c, _h1, _h2) = unguarded_ledger();
+        c.execute("UPDATE store_write_records SET operation = 'blessed' WHERE seq = 2", []).unwrap();
+        let why = broken(state_of(&c, SubjectKind::MemoryEntry, "m-1", &mem_digest("b")));
+        assert!(why.contains("domain"), "{why}");
     }
 
     #[test]

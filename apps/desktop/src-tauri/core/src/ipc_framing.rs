@@ -27,11 +27,34 @@ pub enum FrameError {
     DeclaredOversize(usize),
     /// Bytes remain after a complete frame where exactly one was expected.
     TrailingBytes,
+    /// The frame has no payload. A frame carries one JSON document, and there is no empty one.
+    Empty,
+}
+
+/// The payload length a 4-byte prefix declares, or why it is not a frame.
+///
+/// THE one place the length rule is written, for every reader in this module. Two things are
+/// refused before a byte of payload is read or allocated: a length over the cap, and ZERO. The
+/// zero rule used to be decided in three places and two ways — [`decode_one`] and
+/// [`FrameDecoder::next_frame`] here accepted an empty frame, while the broker's two hand-rolled
+/// socket readers (and every Python service on the other end of them) refused one.
+fn declared_len(prefix: [u8; LENGTH_PREFIX_BYTES]) -> Result<usize, FrameError> {
+    let declared = u32::from_be_bytes(prefix) as usize;
+    if declared == 0 {
+        return Err(FrameError::Empty);
+    }
+    if declared > MAX_FRAME_PAYLOAD_BYTES {
+        return Err(FrameError::DeclaredOversize(declared));
+    }
+    Ok(declared)
 }
 
 /// Encode `payload` as a length-prefixed frame: `u32 big-endian length || payload`. Fails closed if the
-/// payload exceeds the cap.
+/// payload exceeds the cap, or is empty — a frame every reader refuses is not one to send.
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
+    if payload.is_empty() {
+        return Err(FrameError::Empty);
+    }
     if payload.len() > MAX_FRAME_PAYLOAD_BYTES {
         return Err(FrameError::Oversize(payload.len()));
     }
@@ -49,10 +72,7 @@ pub fn decode_one(buf: &[u8]) -> Result<&[u8], FrameError> {
     if buf.len() < LENGTH_PREFIX_BYTES {
         return Err(FrameError::Truncated);
     }
-    let declared = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-    if declared > MAX_FRAME_PAYLOAD_BYTES {
-        return Err(FrameError::DeclaredOversize(declared));
-    }
+    let declared = declared_len([buf[0], buf[1], buf[2], buf[3]])?;
     let end = LENGTH_PREFIX_BYTES + declared;
     if buf.len() < end {
         return Err(FrameError::Truncated);
@@ -81,15 +101,12 @@ impl FrameDecoder {
     }
 
     /// Pop the next complete frame payload, or None if not yet complete. `Err` on a declared-oversize
-    /// length (fail closed — the caller must drop the connection).
+    /// or zero length (fail closed — the caller must drop the connection).
     pub fn next_frame(&mut self) -> Result<Option<Vec<u8>>, FrameError> {
         if self.buf.len() < LENGTH_PREFIX_BYTES {
             return Ok(None);
         }
-        let declared = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
-        if declared > MAX_FRAME_PAYLOAD_BYTES {
-            return Err(FrameError::DeclaredOversize(declared));
-        }
+        let declared = declared_len([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])?;
         let end = LENGTH_PREFIX_BYTES + declared;
         if self.buf.len() < end {
             return Ok(None);
@@ -98,6 +115,30 @@ impl FrameDecoder {
         self.buf.drain(..end);
         Ok(Some(payload))
     }
+}
+
+/// Why a blocking read of one frame failed: the stream, or the frame.
+#[derive(Debug)]
+pub enum ReadFrameError {
+    /// The read itself failed or the peer closed early (`UnexpectedEof`).
+    Io(std::io::Error),
+    /// The prefix declared something that is not a frame; nothing past it was read.
+    Frame(FrameError),
+}
+
+/// Read EXACTLY ONE frame's payload from a blocking stream: the 4-byte prefix, then exactly the
+/// declared number of bytes. The declared length is judged by [`declared_len`] BEFORE the payload
+/// buffer is allocated, so a peer cannot make this side allocate on its say-so.
+///
+/// This is the reader for a one-request/one-reply channel over a real socket. The broker had two
+/// copies of it, hand-rolled, each restating the bound and the zero rule.
+pub fn read_one_frame<R: std::io::Read>(reader: &mut R) -> Result<Vec<u8>, ReadFrameError> {
+    let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
+    reader.read_exact(&mut prefix).map_err(ReadFrameError::Io)?;
+    let declared = declared_len(prefix).map_err(ReadFrameError::Frame)?;
+    let mut body = vec![0u8; declared];
+    reader.read_exact(&mut body).map_err(ReadFrameError::Io)?;
+    Ok(body)
 }
 
 /// OS peer credentials of a connected AF_UNIX peer (from `SO_PEERCRED` on Linux). The real read is a
@@ -161,6 +202,58 @@ mod tests {
         assert_eq!(decode_one(&evil), Err(FrameError::DeclaredOversize(u32::MAX as usize)));
     }
 
+    /// The zero rule, at every door: a frame with no payload is refused by the one-shot decoder,
+    /// by the streaming decoder, by the blocking reader, and is not one this side will encode.
+    #[test]
+    fn an_empty_frame_is_refused_by_every_reader_and_never_encoded() {
+        let empty = 0u32.to_be_bytes();
+        assert_eq!(decode_one(&empty), Err(FrameError::Empty));
+        let mut d = FrameDecoder::new();
+        d.feed(&empty);
+        assert_eq!(d.next_frame(), Err(FrameError::Empty));
+        assert!(matches!(
+            read_one_frame(&mut &empty[..]),
+            Err(ReadFrameError::Frame(FrameError::Empty))
+        ));
+        assert_eq!(encode_frame(b""), Err(FrameError::Empty));
+        // Positive control: one byte is a frame, at all three.
+        let one = encode_frame(b"x").unwrap();
+        assert_eq!(decode_one(&one).unwrap(), b"x");
+        assert_eq!(read_one_frame(&mut &one[..]).unwrap(), b"x".to_vec());
+    }
+
+    /// The blocking reader: exactly one frame, the bound judged before allocation, and a peer
+    /// that stops early is an I/O failure rather than a short frame handed up as a whole one.
+    #[test]
+    fn read_one_frame_reads_exactly_one_bounded_frame() {
+        let mut two = encode_frame(b"first").unwrap();
+        two.extend_from_slice(&encode_frame(b"second").unwrap());
+        let mut stream = &two[..];
+        assert_eq!(read_one_frame(&mut stream).unwrap(), b"first".to_vec());
+        // It consumed exactly one frame: the second is still there to be read.
+        assert_eq!(read_one_frame(&mut stream).unwrap(), b"second".to_vec());
+
+        let mut evil = (u32::MAX).to_be_bytes().to_vec();
+        evil.extend_from_slice(b"x");
+        assert!(matches!(
+            read_one_frame(&mut &evil[..]),
+            Err(ReadFrameError::Frame(FrameError::DeclaredOversize(n))) if n == u32::MAX as usize
+        ));
+        let at_cap = (MAX_FRAME_PAYLOAD_BYTES as u32 + 1).to_be_bytes();
+        assert!(matches!(
+            read_one_frame(&mut &at_cap[..]),
+            Err(ReadFrameError::Frame(FrameError::DeclaredOversize(_)))
+        ));
+
+        let whole = encode_frame(b"hello").unwrap();
+        for cut in [0, 2, 4, 6, whole.len() - 1] {
+            assert!(
+                matches!(read_one_frame(&mut &whole[..cut]), Err(ReadFrameError::Io(_))),
+                "a stream cut at {cut} bytes is not a frame"
+            );
+        }
+    }
+
     #[test]
     fn streaming_decoder_yields_frames_across_chunks() {
         let f1 = encode_frame(b"first").unwrap();
@@ -185,11 +278,19 @@ mod tests {
     /// `NM-IPC-06` — "Renderer → any service IPC". The matrix row names its spec section and
     /// `config/negative-matrix.json` carries it; this comment deliberately does NOT repeat the
     /// number, because `check_spec_references.py` reads a § in the source as a claim that the
-    /// whole section holds, and what was established here is one row. The renderer/login UID is on the deny
-    /// list and is refused by `authorize_peer` BEFORE any frame is read, so no trusted-principal
-    /// channel can be reached from the window. The row bound here is the renderer arm; the same
-    /// assertion block also covers the sidecar arm and the not-on-the-allowlist arm, which belong
-    /// to other rows and are deliberately left where they are rather than split apart.
+    /// whole section holds, and what was established here is one row. A UID on the deny list is
+    /// refused by `authorize_peer` BEFORE any frame is read. The row bound here is the renderer arm;
+    /// the same assertion block also covers the sidecar arm and the not-on-the-allowlist arm, which
+    /// belong to other rows and are deliberately left where they are rather than split apart.
+    ///
+    /// WHAT THIS DOES NOT ESTABLISH. It exercises the PREDICATE, with three invented UIDs. It used
+    /// to conclude "so no trusted-principal channel can be reached from the window", and that is
+    /// not shown here: the one caller of `authorize_peer` in this workspace is the broker's
+    /// RENDERER door (`broker/src/main.rs::handle_conn`), which passes an EMPTY deny list — there
+    /// the renderer is the allowed peer, and a wrong UID is refused as `NotAllowed`. The doors a
+    /// renderer must not reach (challenge authority, supervisor, signer) are Python services with
+    /// their own peer checks and their own rows. So the `Denied` branch below has no shipped
+    /// caller that populates it, and the matrix row resting on this test alone overstates it.
     ///
     /// Order matters and is what the mutation proves: `denied` is consulted FIRST, so a renderer
     /// gets `Denied`, not `NotAllowed`. Delete that check and the renderer still fails to connect

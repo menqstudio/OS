@@ -90,6 +90,23 @@ describe('Files — a sealed file is refused, and the page says why', () => {
   });
 });
 
+describe('Files — a file nobody has read is not announced as open', () => {
+  it('names an unread row "not opened yet", and "open" only once a read established it', async () => {
+    mount(() => Promise.resolve({ path: '/home/gev/notes.txt', content: 'hello', readonly: false, sizeBytes: 5 }));
+    await screen.findByText('notes.txt');
+    // `guards` is empty: nothing was read. The label used to end ", open" for every such row.
+    const unread = screen.getByRole('row', { name: /notes\.txt/ });
+    expect(unread).toHaveAccessibleName('notes.txt, file, not opened yet');
+    expect(screen.getByRole('row', { name: /sealed\.key/ })).toHaveAccessibleName('sealed.key, file, not opened yet');
+
+    await open('notes.txt');
+    await waitFor(() =>
+      expect(screen.getByRole('row', { name: /notes\.txt/ })).toHaveAccessibleName('notes.txt, file, open'));
+    // The other row was still never read.
+    expect(screen.getByRole('row', { name: /sealed\.key/ })).toHaveAccessibleName('sealed.key, file, not opened yet');
+  });
+});
+
 describe('isGuardDenied — the classifier the blocked state turns on', () => {
   it('recognises the engine vocabulary for a refusal', () => {
     for (const m of ['permission denied', 'not permitted', 'not allowed', 'sealed',

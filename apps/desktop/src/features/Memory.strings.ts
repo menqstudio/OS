@@ -22,17 +22,29 @@ export const STR = {
   // --- Recall rail / memory detail ------------------------------------------
   memoryEyebrow: { en: 'MEMORY', hy: 'ՀԻՇՈՂՈՒԹՅՈՒՆ', ru: 'ПАМЯТЬ' },
   sealed: { en: 'Sealed', hy: 'Կնքված', ru: 'Запечатано' },
+  // Shown ONLY for a link written `[[sealed:…]]`. The page has no sealed-evidence store to
+  // consult, so it reports what the link's own text says and that it opens nothing here —
+  // not that some referenced material "stays sealed".
   refSealedEvidence: {
-    en: 'References sealed evidence',
-    hy: 'Հղում է կնքված ապացույցին',
-    ru: 'Ссылается на запечатанные доказательства',
+    en: 'References marked sealed',
+    hy: 'Կնքված նշված հղումներ',
+    ru: 'Ссылки, помеченные как запечатанные',
   },
   sealedExplain: {
-    en: 'This memory points at evidence the local store cannot surface. The referenced material stays sealed:',
-    hy: 'Այս հիշողությունը հղում է ապացույցի, որը լոկալ store-ը չի կարող ցուցադրել։ Հղված նյութը մնում է կնքված․',
-    ru: 'Это воспоминание указывает на доказательства, которые локальное хранилище не может показать. Указанный материал остаётся запечатанным:',
+    en: 'This memory carries links written as [[sealed:…]]. That mark is the link’s own text; the local store holds nothing behind it, so these open nothing here:',
+    hy: 'Այս հիշողությունն ունի [[sealed:…]] ձևով գրված հղումներ։ Այդ նշանը հղման սեփական տեքստն է. լոկալ store-ը դրա հետևում ոչինչ չի պահում, ուստի սրանք այստեղ ոչինչ չեն բացում․',
+    ru: 'В этом воспоминании есть ссылки, записанные как [[sealed:…]]. Эта пометка — собственный текст ссылки; локальное хранилище за ней ничего не держит, поэтому здесь они ничего не открывают:',
   },
   sealedUnavailable: { en: 'Sealed / unavailable', hy: 'Կնքված / անհասանելի', ru: 'Запечатано / недоступно' },
+  // A `[[link]]` that matches no other memory. That is everything the page knows about it:
+  // it is NOT called sealed, because nothing sealed it — only a link its author wrote as
+  // `[[sealed:…]]` carries that word.
+  unresolvedLower: { en: 'unresolved', hy: 'չլուծված', ru: 'не разрешена' },
+  unresolvedTitle: {
+    en: 'No other memory matches this link',
+    hy: 'Ոչ մի այլ հիշողություն չի համապատասխանում այս հղմանը',
+    ru: 'Этой ссылке не соответствует ни одно другое воспоминание',
+  },
   formed: { en: 'formed', hy: 'ձևավորվել է', ru: 'создано' },
   updated: { en: 'updated', hy: 'թարմացվել է', ru: 'обновлено' },
   links: { en: 'links', hy: 'հղում', ru: 'ссылки' },
@@ -62,22 +74,6 @@ export const STR = {
   storeReading: { en: 'Reading the store…', hy: 'Կարդում ենք պահոցը…', ru: 'Читаем хранилище…' },
   storeUnavailable: { en: 'Store unavailable', hy: 'Պահոցն անհասանելի է', ru: 'Хранилище недоступно' },
   storeLoaded: { en: 'Read from the store', hy: 'Կարդացված է պահոցից', ru: 'Прочитано из хранилища' },
-  // Provenance, stated plainly next to the counts — and kept CURRENT.
-  //
-  // This line used to read "Local store · no verification chain". That was true when it
-  // was written and is not true now: every memory write appends a record in the same
-  // transaction as the row (`core/src/local_write_record.rs`, migration 0021), hashing
-  // the row's content into an append-only chain the database itself enforces. A stale
-  // honest label becomes a dishonest one, so the line says what the record really is.
-  //
-  // What it must NOT say: nothing here is signed — no key, no manifest, no authority, no
-  // containment — and the record attests CONTENT, never the writer. So no "verified", no
-  // "trusted", and nothing a reader would file next to a governed turn's badge.
-  provenance: {
-    en: 'Local store · each write appends a local record · shows the row is unchanged since it was written, never who wrote it',
-    hy: 'Տեղական պահոց · ամեն գրում ավելացնում է լոկալ գրանցում · ցույց է տալիս, որ տողը գրվելուց հետո չի փոխվել, բայց ոչ թե ով է գրել',
-    ru: 'Локальное хранилище · каждая запись добавляет локальный журнальный след · показывает, что строка не менялась с момента записи, но не кто её записал',
-  },
 
   // --- Refused writes (delete/pin may be denied by the window capability set) --
   deleteRefusedTitle: {

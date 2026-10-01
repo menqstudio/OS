@@ -14,14 +14,13 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::chain_executor::{ResolvedTurn, TurnResolver};
+use crate::chain_executor::{ResolvedTurn, SystemWallClock, TurnResolver, WallClock};
 use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
     check_and_persist, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
-    RootAnchor, VerifiedManifestRoot,
+    ResolvedManifestKey, RootAnchor, VerifiedManifestRoot,
 };
 use crate::tcb_probe::FloorPinnedAnchor;
 use brops_core::production_trust::{resolve_trust_state, TrustState};
@@ -87,6 +86,11 @@ struct Provisioned {
     /// input it still needs. `KitCustody` in `proof/src/bin/ladder_turn.rs` does exactly this, and the
     /// shipped broker now does it the same way rather than a second way.
     custody: Arc<Mutex<Option<(VerifiedManifestRoot, String)>>>,
+    /// The clock the key validity windows are evaluated against. Every construction installs
+    /// [`SystemWallClock`]; only the test-only `with_clock` replaces it. It is a seam for the reason
+    /// `chain_executor` gives for its own: a reading of `None` must REFUSE, and that refusal cannot
+    /// be tested against the host's real clock.
+    clock: Arc<dyn WallClock>,
 }
 
 /// The broker's production resolver. `None` inner ⇒ no trusted manifest ⇒ fail-closed (every turn Blocks).
@@ -197,8 +201,18 @@ impl ProductionResolver {
                 facts,
                 anchor,
                 custody: Arc::new(Mutex::new(None)),
+                clock: Arc::new(SystemWallClock),
             }),
         }
+    }
+
+    /// Replace the validity-window clock. Test-only: no binary can hand the resolver a clock.
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
+        if let Some(p) = self.inner.as_mut() {
+            p.clock = clock;
+        }
+        self
     }
 
     pub fn is_provisioned(&self) -> bool {
@@ -213,6 +227,7 @@ impl ProductionResolver {
             cell: Arc::clone(&p.custody),
             manifest: p.manifest.clone(),
             signer_key_id: p.signer_key_id.clone(),
+            clock: Arc::clone(&p.clock),
         })
     }
 }
@@ -247,29 +262,102 @@ pub trait KeyResolver {
     fn resolve_keys(&self) -> Result<ResolvedKeys, TurnReason>;
 }
 
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+/// Both production keys of ONE turn, resolved out of an already root-verified manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedKeyPair {
+    pub signer: ResolvedManifestKey,
+    pub signer_public_key: [u8; 32],
+    pub supervisor_attestation: ResolvedManifestKey,
+    pub supervisor_attestation_public_key: [u8; 32],
 }
 
-fn hex32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let b = s.as_bytes();
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        let hi = (b[2 * i] as char).to_digit(16)?;
-        let lo = (b[2 * i + 1] as char).to_digit(16)?;
-        out[i] = (hi * 16 + lo) as u8;
-    }
-    Some(out)
+/// Why [`resolve_production_key_pair`] refused. Every variant is a refusal; [`as_str`](Self::as_str)
+/// is the stage name the proof drivers report, so a kit can tell WHICH key did not resolve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyPairRefusal {
+    SignerKeyUnresolved,
+    SupervisorAttestationKeyUnresolved,
+    SignerPubkeyMalformed,
+    SupervisorPubkeyMalformed,
+    /// The receipt signer and the supervisor attestation resolved to the same key id or the same
+    /// public key.
+    KeysNotDistinct,
 }
+
+impl KeyPairRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KeyPairRefusal::SignerKeyUnresolved => "signer_key_unresolved",
+            KeyPairRefusal::SupervisorAttestationKeyUnresolved => {
+                "supervisor_attestation_key_unresolved"
+            }
+            KeyPairRefusal::SignerPubkeyMalformed => "signer_pubkey_malformed",
+            KeyPairRefusal::SupervisorPubkeyMalformed => "supervisor_pubkey_malformed",
+            KeyPairRefusal::KeysNotDistinct => "signer_and_supervisor_keys_not_distinct",
+        }
+    }
+}
+
+/// Resolve BOTH pinned keys of a turn — the receipt signer and the supervisor attestation — through
+/// [`resolve_production_key`], so trust class, revocation, validity window and allowed protocol are
+/// enforced on each, and require the two to be different keys.
+///
+/// This is the ONE implementation of that step ON LINUX — `win-live/src/resolver.rs` still resolves
+/// the two keys itself and has no distinctness check. [`ProductionResolver`]'s `resolve_keys` calls it,
+/// and so do both proof drivers (`proof/src/bin/{ladder_turn,live_turn}.rs`). It exists because the
+/// step used to be written out in each of them, and the copies drifted: `live_turn` took the
+/// supervisor key with a bare `manifest.keys.iter().find(..)` on the key id, so a revoked, expired
+/// or development-class key verified an attestation there while every other caller refused it.
+///
+/// **Distinct, by id and by key.** Both keys are resolved under the same allowed protocol — the
+/// manifest has no `key_usage` discriminator yet (`config/negative-matrix.json` carries the rows
+/// that need one as blocked) — so nothing else stops one manifest entry from being named as both the
+/// isolated signer and the supervisor. One key in both roles would let whichever principal holds it
+/// produce the attestation AND the envelope that vouches for it, which is the collapse the two
+/// signatures exist to prevent. The manifest must not be trusted to keep them apart on its own.
+///
+/// `manifest` must already be root-verified by the caller; this function reads no signature.
+pub fn resolve_production_key_pair(
+    manifest: &KeyManifest,
+    signer_key_id: &str,
+    sup_attest_key_id: &str,
+    now_ms: i64,
+) -> Result<ResolvedKeyPair, KeyPairRefusal> {
+    let signer =
+        resolve_production_key(manifest, signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
+            .map_err(|_| KeyPairRefusal::SignerKeyUnresolved)?;
+    let supervisor_attestation =
+        resolve_production_key(manifest, sup_attest_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now_ms)
+            .map_err(|_| KeyPairRefusal::SupervisorAttestationKeyUnresolved)?;
+    let signer_public_key =
+        hex32(&signer.public_key_hex).ok_or(KeyPairRefusal::SignerPubkeyMalformed)?;
+    let supervisor_attestation_public_key = hex32(&supervisor_attestation.public_key_hex)
+        .ok_or(KeyPairRefusal::SupervisorPubkeyMalformed)?;
+    // Compared as BYTES, after decoding: two hex spellings of one key are one key.
+    if signer.key_id == supervisor_attestation.key_id
+        || signer_public_key == supervisor_attestation_public_key
+    {
+        return Err(KeyPairRefusal::KeysNotDistinct);
+    }
+    Ok(ResolvedKeyPair {
+        signer,
+        signer_public_key,
+        supervisor_attestation,
+        supervisor_attestation_public_key,
+    })
+}
+
+// The 64-hex decoder is `brops_core::key_manifest::decode_hex32`; this file carried a copy of it.
+use brops_core::key_manifest::decode_hex32 as hex32;
 
 impl KeyResolver for ProductionResolver {
     fn resolve_keys(&self) -> Result<ResolvedKeys, TurnReason> {
         // No manifest provisioned ⇒ fail closed (the shipped default; unchanged behaviour).
         let p = self.inner.as_ref().ok_or(TurnReason::UpstreamBlocked)?;
-        let now = now_ms();
+        // Fail-closed, not zero: a clock this host cannot read is a refusal. It used to be
+        // `unwrap_or(0)`, which evaluated every key's validity window at the epoch — the shape
+        // `chain_executor`'s clock note records as the defect, in the same crate.
+        let now = p.clock.now_ms().ok_or(TurnReason::UpstreamBlocked)?;
 
         // (1) Verify the manifest against the root anchor — the floor-pinned anchor file's in the shipped
         //     broker (never a config-supplied root); a demonstration anchor only under
@@ -298,13 +386,12 @@ impl KeyResolver for ProductionResolver {
             *floor = advanced;
         }
 
-        // (3) Resolve BOTH production keys from the verified manifest (class/window/revocation enforced).
-        let iso = resolve_production_key(&p.manifest, &p.signer_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)
+        // (3) Resolve BOTH production keys from the verified manifest (class/window/revocation enforced),
+        //     and require them to be two different keys. One implementation, shared with the drivers.
+        let pair = resolve_production_key_pair(&p.manifest, &p.signer_key_id, &p.sup_attest_key_id, now)
             .map_err(|_| TurnReason::UpstreamBlocked)?;
-        let sup = resolve_production_key(&p.manifest, &p.sup_attest_key_id, RECEIPT_ENVELOPE_ARTIFACT_TYPE, now)
-            .map_err(|_| TurnReason::UpstreamBlocked)?;
-        let iso_pub = hex32(&iso.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
-        let sup_pub = hex32(&sup.public_key_hex).ok_or(TurnReason::UpstreamBlocked)?;
+        let (iso, iso_pub, sup_pub) =
+            (pair.signer, pair.signer_public_key, pair.supervisor_attestation_public_key);
 
         // Record what this turn established, for the custody resolver to read. Written AFTER every check
         // above has passed, so a turn that failed verification leaves no observation behind for the next
@@ -340,6 +427,8 @@ pub struct BrokerCustody {
     cell: Arc<Mutex<Option<(VerifiedManifestRoot, String)>>>,
     manifest: KeyManifest,
     signer_key_id: String,
+    /// The same clock the key resolution read (see `Provisioned::clock`).
+    clock: Arc<dyn WallClock>,
 }
 
 impl crate::chain_executor::CustodyResolver for BrokerCustody {
@@ -353,12 +442,22 @@ impl crate::chain_executor::CustodyResolver for BrokerCustody {
                 )
             }
         };
+        // An unreadable clock has no opinion about a validity window, and "no opinion" must not read
+        // as "inside it": no label, so `persist_committed` refuses.
+        let now = match self.clock.now_ms() {
+            Some(now) => now,
+            None => {
+                return TrustState::NoTrustedManifest(
+                    "the wall clock is unreadable, so no key validity window can be evaluated",
+                )
+            }
+        };
         resolve_trust_state(
             Some(&self.manifest),
             Some(&verified),
             &self.signer_key_id,
             RECEIPT_ENVELOPE_ARTIFACT_TYPE,
-            now_ms(),
+            now,
             &envelope_key_hex,
         )
     }
@@ -775,6 +874,16 @@ mod tests {
     /// from that path, exactly as `main.rs` reads it at broker start — so calling this twice models
     /// two broker processes over one deployment, which is the case the in-memory advance never covered.
     fn resolver_at_epoch(epoch: u64, floor_path: &std::path::Path) -> (ProductionResolver, KeyManifest) {
+        resolver_at_epoch_persisting_to(epoch, floor_path, floor_path)
+    }
+
+    /// The same resolver, with the floor READ from one path and WRITTEN BACK to another — so a test
+    /// can make the persist fail while everything else about the deployment stays resolvable.
+    fn resolver_at_epoch_persisting_to(
+        epoch: u64,
+        floor_path: &std::path::Path,
+        persist_to: &std::path::Path,
+    ) -> (ProductionResolver, KeyManifest) {
         let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
         let signer = SigningKey::from_bytes(&seed32(
             "1111111111111111111111111111111111111111111111111111111111111111", // gitleaks:allow (test key)
@@ -805,7 +914,7 @@ mod tests {
             run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000, author: "Bro".into(),
         };
         let r = ProductionResolver::provisioned_with_pin(
-            demo_pin(), manifest.clone(), root_sig, floor, floor_path.to_path_buf(),
+            demo_pin(), manifest.clone(), root_sig, floor, persist_to.to_path_buf(),
             "signer-1".into(), "sup-1".into(), facts,
         );
         (r, manifest)
@@ -846,6 +955,11 @@ mod tests {
 
     /// A floor that cannot be written down is not a floor: the turn refuses rather than serving on an
     /// advance that will be lost.
+    ///
+    /// The manifest here carries BOTH production keys, on purpose. This test used to build its own
+    /// with `"keys": []` while asking for `signer-1`, so the turn blocked on `KeyNotFound` whether or
+    /// not the persist refused, and deleting the refusal left it green. The control below is what
+    /// makes the unwritable path the only reason left to block.
     #[test]
     fn an_unwritable_floor_blocks_the_turn() {
         let dir = tempfile::tempdir().unwrap();
@@ -853,29 +967,196 @@ mod tests {
         std::fs::write(&floor_path, brops_core::key_manifest::floor_json_bytes(
             &AntiRollbackFloor { highest_epoch: 0, highest_hash: String::new() },
         )).unwrap();
-        let (_, _) = resolver_at_epoch(2, &floor_path);
-        // Same starting floor, but the resolver is pointed at a path inside a directory that does not
-        // exist, so both the temp write and the rename fail.
-        let (r, _) = resolver_at_epoch(2, &floor_path);
-        drop(r);
+
+        // The control: this exact deployment, persisting to a writable path, RESOLVES.
+        let (writable, _) =
+            resolver_at_epoch_persisting_to(5, &floor_path, &dir.path().join("floor-written.json"));
+        writable
+            .resolve(&req(), "bt", "nonce")
+            .expect("with a writable floor this manifest and these keys resolve");
+
+        // The same deployment, pointed at a path inside a directory that does not exist, so both
+        // the temp write and the rename fail.
         let unwritable = dir.path().join("no-such-dir").join("floor.json");
-        let floor = brops_core::key_manifest::parse_floor_json(&std::fs::read(&floor_path).unwrap()).unwrap();
-        let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
-        let manifest: KeyManifest = serde_json::from_value(json!({
-            "manifest_epoch": 5u64, "root_key_id": tcb::DEMO_ROOT_KEY_ID, "keys": []
-        })).unwrap();
-        let root_sig = base64::engine::general_purpose::STANDARD
-            .encode(root.sign(&manifest.canonical_bytes()).to_bytes());
-        let r = ProductionResolver::provisioned_with_pin(
-            demo_pin(), manifest, root_sig, floor, unwritable,
-            "signer-1".into(), "sup-1".into(),
-            ResolvedFacts {
-                workspace_id: "ws".into(), install_id: "inst".into(),
-                system_sha256: "a".repeat(64), history_sha256: "b".repeat(64),
-                generation_config_sha256: "c".repeat(64), requested_at: "1".into(),
-                run_id: "r".into(), task_id: "t".into(), requested_at_ms: 1, author: "Bro".into(),
-            },
-        );
+        let (r, _) = resolver_at_epoch_persisting_to(5, &floor_path, &unwritable);
         assert!(matches!(r.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)));
+        // And a turn refused there leaves no custody observation for the next one to commit on.
+        assert!(matches!(r.custody().unwrap().resolve(), TrustState::NoTrustedManifest(_)));
+    }
+
+    // ---- the key pair (the one implementation the drivers share) -----------------------------
+
+    /// A manifest with the two keys a turn pins, each field overridable, and NO signature: the
+    /// pair resolution reads none — root verification is the caller's, before it.
+    fn pair_manifest(signer: serde_json::Value, supervisor: serde_json::Value) -> KeyManifest {
+        serde_json::from_value(json!({
+            "manifest_epoch": 2u64, "root_key_id": "any-root", "keys": [signer, supervisor]
+        }))
+        .unwrap()
+    }
+
+    fn key(key_id: &str, public_key_hex: &str) -> serde_json::Value {
+        json!({
+            "key_id": key_id, "public_key_hex": public_key_hex, "trust_class": "production",
+            "valid_from_ms": 1000, "valid_to_ms": 9000, "key_epoch": 2u64, "revoked": false,
+            "allowed_protocols": [RECEIPT_ENVELOPE_ARTIFACT_TYPE]
+        })
+    }
+
+    fn with(mut key: serde_json::Value, field: &str, value: serde_json::Value) -> serde_json::Value {
+        key[field] = value;
+        key
+    }
+
+    #[test]
+    fn two_distinct_production_keys_in_their_window_resolve_as_a_pair() {
+        let m = pair_manifest(key("signer-1", &"11".repeat(32)), key("sup-1", &"22".repeat(32)));
+        let pair = resolve_production_key_pair(&m, "signer-1", "sup-1", 5000).expect("resolves");
+        assert_eq!(pair.signer.key_id, "signer-1");
+        assert_eq!(pair.signer_public_key, [0x11; 32]);
+        assert_eq!(pair.supervisor_attestation.key_id, "sup-1");
+        assert_eq!(pair.supervisor_attestation_public_key, [0x22; 32]);
+    }
+
+    /// THE `live_turn` DEFECT, as the function that replaced it. The supervisor attestation key is
+    /// held to everything the signer key is: a key that is merely PRESENT under the right id is not
+    /// enough.
+    #[test]
+    fn the_supervisor_key_is_held_to_class_revocation_window_and_protocol() {
+        let signer = || key("signer-1", &"11".repeat(32));
+        let sup = || key("sup-1", &"22".repeat(32));
+        let refused = KeyPairRefusal::SupervisorAttestationKeyUnresolved;
+        for (what, supervisor, now) in [
+            ("revoked", with(sup(), "revoked", json!(true)), 5000),
+            ("development class", with(sup(), "trust_class", json!("development")), 5000),
+            ("not yet valid", sup(), 999),
+            ("expired", sup(), 9000),
+            ("another protocol", with(sup(), "allowed_protocols", json!(["brops.other.v1"])), 5000),
+        ] {
+            // `now` is inside the SIGNER's window in every case, so the signer is not what refuses.
+            let signer = with(with(signer(), "valid_from_ms", json!(1)), "valid_to_ms", json!(99_999));
+            let m = pair_manifest(signer, supervisor);
+            assert_eq!(
+                resolve_production_key_pair(&m, "signer-1", "sup-1", now),
+                Err(refused),
+                "{what}"
+            );
+        }
+        // Absent altogether is the same refusal, and the signer is held to the same rule.
+        let m = pair_manifest(signer(), sup());
+        assert_eq!(resolve_production_key_pair(&m, "signer-1", "sup-9", 5000), Err(refused));
+        let m = pair_manifest(with(signer(), "revoked", json!(true)), sup());
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "sup-1", 5000),
+            Err(KeyPairRefusal::SignerKeyUnresolved)
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_32_bytes_of_hex_is_refused_by_the_name_of_which_one() {
+        let m = pair_manifest(key("signer-1", "zz"), key("sup-1", &"22".repeat(32)));
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "sup-1", 5000),
+            Err(KeyPairRefusal::SignerPubkeyMalformed)
+        );
+        let m = pair_manifest(key("signer-1", &"11".repeat(32)), key("sup-1", &"22".repeat(31)));
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "sup-1", 5000),
+            Err(KeyPairRefusal::SupervisorPubkeyMalformed)
+        );
+    }
+
+    /// One key must not be both the receipt signer and the supervisor attestation — named twice by
+    /// one id, or entered twice under two ids, or under two spellings of one hex string.
+    #[test]
+    fn one_key_cannot_be_both_the_signer_and_the_supervisor_attestation() {
+        let m = pair_manifest(key("signer-1", &"11".repeat(32)), key("sup-1", &"22".repeat(32)));
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "signer-1", 5000),
+            Err(KeyPairRefusal::KeysNotDistinct)
+        );
+        let m = pair_manifest(key("signer-1", &"ab".repeat(32)), key("sup-1", &"ab".repeat(32)));
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "sup-1", 5000),
+            Err(KeyPairRefusal::KeysNotDistinct)
+        );
+        let m = pair_manifest(key("signer-1", &"ab".repeat(32)), key("sup-1", &"AB".repeat(32)));
+        assert_eq!(
+            resolve_production_key_pair(&m, "signer-1", "sup-1", 5000),
+            Err(KeyPairRefusal::KeysNotDistinct)
+        );
+    }
+
+    /// The shipped resolver goes THROUGH that function: a config naming one key for both roles
+    /// resolves nothing, and leaves no custody observation behind.
+    #[test]
+    fn the_broker_resolver_refuses_one_key_in_both_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let (good, _) = demo_resolver(dir.path(), true);
+        let inner = good.inner.as_ref().unwrap();
+        let collapsed = ProductionResolver::provisioned_with_pin(
+            demo_pin(),
+            inner.manifest.clone(),
+            inner.root_sig_b64.clone(),
+            AntiRollbackFloor { highest_epoch: 2, highest_hash: inner.manifest.content_hash() },
+            dir.path().join("floor-collapsed.json"),
+            "signer-1".into(),
+            "signer-1".into(),
+            inner.facts.clone(),
+        );
+        assert!(matches!(collapsed.resolve_keys(), Err(TurnReason::UpstreamBlocked)));
+        assert!(matches!(collapsed.custody().unwrap().resolve(), TrustState::NoTrustedManifest(_)));
+        // The control: the same deployment naming the two keys it has does resolve.
+        good.resolve_keys().expect("two distinct keys resolve");
+    }
+
+    // ---- the clock ------------------------------------------------------------------------------
+
+    struct UnreadableClock;
+    impl WallClock for UnreadableClock {
+        fn now_ms(&self) -> Option<i64> {
+            None
+        }
+    }
+    struct FixedClock(i64);
+    impl WallClock for FixedClock {
+        fn now_ms(&self) -> Option<i64> {
+            Some(self.0)
+        }
+    }
+
+    /// A clock the host cannot read is a refusal, never a window evaluated at 0.
+    #[test]
+    fn an_unreadable_clock_blocks_key_resolution_and_custody() {
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = demo_resolver(dir.path(), true);
+        let r = r.with_clock(Arc::new(UnreadableClock));
+        assert!(matches!(r.resolve_keys(), Err(TurnReason::UpstreamBlocked)));
+        assert!(matches!(r.custody().unwrap().resolve(), TrustState::NoTrustedManifest(_)));
+
+        // Custody reads the clock itself, per call: a turn that resolved while the clock worked
+        // stops producing a label the moment it does not. `custody()` hands out a view of the SAME
+        // observation cell, so the one taken after the clock is swapped still holds the turn.
+        let (ok, _) = demo_resolver(dir.path(), true);
+        ok.resolve_keys().expect("the real clock is inside the fixture's validity window");
+        assert!(ok.custody().unwrap().resolve().committed_label().is_some());
+        let ok = ok.with_clock(Arc::new(UnreadableClock));
+        match ok.custody().unwrap().resolve() {
+            TrustState::NoTrustedManifest(why) => assert!(why.contains("clock"), "{why}"),
+            other => panic!("an unreadable clock produced {other:?}"),
+        }
+    }
+
+    /// The seam is the clock the window is evaluated against, not decoration: the fixture's keys
+    /// are valid from 1 ms, so a reading of 0 is BEFORE the window and must refuse.
+    #[test]
+    fn the_injected_clock_is_the_one_the_validity_window_is_evaluated_against() {
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = demo_resolver(dir.path(), true);
+        let r = r.with_clock(Arc::new(FixedClock(0)));
+        assert!(matches!(r.resolve_keys(), Err(TurnReason::UpstreamBlocked)));
+        let (r, _) = demo_resolver(dir.path(), true);
+        let r = r.with_clock(Arc::new(FixedClock(5_000)));
+        r.resolve_keys().expect("5000 ms is inside the fixture's window");
     }
 }

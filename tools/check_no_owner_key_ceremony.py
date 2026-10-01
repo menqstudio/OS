@@ -32,6 +32,10 @@ A CONTROL, so a green means something: the sweep must read at least one file it 
 forbidden token — its own test file, which is exempt by path and therefore proves the walk reached it
 and the matcher fired. A walk that read nothing would otherwise pass vacuously.
 
+ONE WORDING IN ONE FILE is a narrower exemption than history, and it is a separate table
+(`PHRASE_EXEMPT`): an applied SQL migration whose comment cannot be edited. It is excused for the phrases named beside it and swept for
+everything else, and the test fails an entry whose file has stopped containing its phrase.
+
 Usage:  python tools/check_no_owner_key_ceremony.py [repo-root]
 """
 from __future__ import annotations
@@ -77,6 +81,16 @@ FORBIDDEN_TOKENS = (
 #: Narrow on purpose: each is a CLAIM, not a topic, so the honest sentence explaining why the
 #: ceremony is gone ("nobody holds an offline root") does not trip it.
 FORBIDDEN_PHRASES = (
+    # T-145 (H2). Five wordings that named a key kept off the machine as the route to production
+    # trust, in text a person reads: the trust self-test's on-screen custody note and its two
+    # frontend mirrors, a migration comment, and the Windows proof record. None named a tool, so
+    # rule 2 could not see them, and none said "owner", so the six phrases below could not either.
+    # Each is the wording of a sentence that was in the tree; the test keeps the sentence beside it.
+    "offline-hsm",
+    "offline-root custody",
+    "offline-root-verified",
+    "production offline root",
+    "the operator's offline root",
     "owner's offline",
     "offline-root-custodian",
     "owner-provided key",
@@ -124,6 +138,23 @@ EXEMPT_PREFIXES = (
     # them — the runtime half of this gate.
     "engine/tests/test_live_provisioning_anchor.py",
 )
+
+#: Exempt for the NAMED phrases only, by exact path — never a prefix, and never the whole file.
+#:
+#: `EXEMPT_PREFIXES` above switches every rule off for a path. That is right for history that may
+#: say anything, and far too wide for a file that has to carry ONE wording: it stays swept
+#: for every token and every other phrase. An entry is a debt with a reason beside it, and
+#: `test_check_no_owner_key_ceremony` fails an entry whose file no longer contains its phrase, so
+#: an exemption cannot outlive the thing it excused.
+PHRASE_EXEMPT = {
+    # An APPLIED migration. Its comment contrasts the demonstration anchor with a root kept off the
+    # machine, which no longer exists as a concept (#78) — but a migration is history: its bytes
+    # are what every existing database was built from, and `core/tests/schema_migrations.rs` reads
+    # them. The wording is corrected where it is live (`governed_selftest.rs`), not here.
+    "apps/desktop/src-tauri/core/schema/0018_demonstration_verified.sql": (
+        "production offline root",
+    ),
+}
 
 #: The control: a file that is exempt AND must contain a forbidden token.
 CONTROL = "tools/test_check_no_owner_key_ceremony.py"
@@ -185,6 +216,8 @@ def check(root: pathlib.Path) -> tuple[list[str], bool]:
             f'"{p}"' for p in FORBIDDEN_PHRASES if p in flat]
         if rel == CONTROL and hits:
             control_seen = True
+        excused = PHRASE_EXEMPT.get(rel, ())
+        hits = [h for h in hits if h.strip('"') not in excused]
         if hits and not rel.startswith(EXEMPT_PREFIXES):
             problems.append(f"{rel} names {', '.join(hits)}")
     return problems, control_seen

@@ -131,7 +131,8 @@ export function CommandPalette() {
 
   const total = navResults.length + entities.length;
 
-  // Keep the highlighted index within the (possibly shrunk) result set.
+  // Keep the highlighted index within the result set when the set shrinks. It cannot go below
+  // zero: ArrowDown floors it (see onKeyDown), which is the one place that could have stored -1.
   useEffect(() => {
     setActive((a) => (a >= total ? Math.max(0, total - 1) : a));
   }, [total]);
@@ -153,7 +154,8 @@ export function CommandPalette() {
   };
 
   const onKeyDown: React.KeyboardEventHandler = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, total - 1)); }
+    // Floored at 0: with an empty list `total - 1` is -1, and ArrowDown used to store it.
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.max(0, Math.min(a + 1, total - 1))); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
     else if (e.key === 'Home') { e.preventDefault(); setActive(0); }
     else if (e.key === 'End') { e.preventDefault(); setActive(Math.max(0, total - 1)); }

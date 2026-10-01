@@ -101,7 +101,28 @@
 //! Python side carries the other 17 in a named tuple with a test asserting the union is exactly §4.6's
 //! 28, so the gap is machine-checked rather than prose. It needs an Architect ruling, not a patch here.
 //!
-//! ## NOT WIRED — read this before believing the frame arrives
+//! ## WIRED, NOT REACHABLE — the section below is HISTORY, kept for what it records
+//!
+//! RETRACTED. Everything under this heading down to the `use` line was written between 2026-08-10
+//! and 2026-08-12 and three of its claims stopped being true when the broker's ladder executor
+//! landed. The sibling module `governed_output_pull` retracted its copy on 2026-09-20; this one was
+//! missed. Read against the tree:
+//!
+//!  * "[`SignedTurnResult::check_echoes`] still [has no production caller] ... §6.1 step 14 — a later
+//!    stage that is not built": it is called from `LadderChain::run_verified` in
+//!    `broker/src/ladder_executor.rs`, on the verified envelope, right after the submit.
+//!  * "(2) **Nothing CALLS** `governed_turn_submit_prepared`": the same function calls it, and its
+//!    `config/reachability-declarations.json` entry is `must_have_caller`.
+//!  * "the broker's Linux execution reads the recorder's output straight off the local filesystem ...
+//!    instead of through the §4.10(f) egress at all": the ladder pulls through
+//!    `governed_output_pull::pull_output` (`LadderChain::pull`).
+//!
+//! What is still true of [`BridgeTurnResult::parse`] itself: no production code calls it — the ladder
+//! uses `parse_frame`, and `parse` is reached only by the CI pull driver and this module's tests.
+//! And what holds the line now is a deployment condition rather than a missing caller: the ladder is
+//! the executor only when `$BROPS_BROKER_CONFIG` resolves, which it does on no shipped install.
+//!
+//! The original text follows, unedited.
 //!
 //! Nothing in this tree calls [`BridgeTurnResult::parse`] in production, and the missing piece is again a
 //! HOP rather than a hookup — but it MOVED on 2026-08-10 and the new position is narrower. §4.10(g)'s
@@ -210,8 +231,10 @@ const MAX_CONTAINMENT_EVIDENCE_B64_LEN: usize = 65536;
 // constant; this module carried a private `128` literal beside it, which is the shape where one
 // copy moves and the other does not. There is now exactly one `128` in the crate for this rule.
 
-/// §4.6/§4.10(e)/§4.10(f): `output_bytes` is `<int 0..8388608>`.
-const MAX_OUTPUT_BYTES: u64 = 8_388_608;
+/// §4.6/§4.10(e)/§4.10(f): `output_bytes` is `<int 0..8388608>`. The number is the pull module's
+/// — it was a second private `8_388_608` here, with nothing equating the two, beside a stream-id
+/// length that DID have an equality test.
+use crate::governed_output_pull::MAX_OUTPUT_BYTES;
 
 /// The literal maximum §4.6 frame, as the sidecar writes it (`json.dumps` with default separators).
 /// Asserted by construction in this module's tests and in `bridge/tests/test_governed_turn_result_bridge.py`,
@@ -1147,8 +1170,68 @@ mod tests {
         assert!(pull_api.contains("envelope: &ReceiptEnvelope,"));
         // No constructor or entry point there takes a length or a digest as a parameter, so the
         // only values those gates can read are the envelope's.
-        assert!(!pull_api.contains("output_bytes: u64,"));
-        assert!(!pull_api.contains("expected_sha256: &str,"));
+        //
+        // Read off the SIGNATURES. The two needles this used to search for ended in a comma
+        // (`"output_bytes: u64,"`), so a function taking the length as its LAST or ONLY parameter
+        // was invisible to it — and one exists: `expected_chunk_count(output_bytes: u64)`. That
+        // one is allowed BY NAME: it turns a length into a chunk count and gates nothing. Any
+        // other function that grows a length or a digest parameter fails here.
+        let takes = |needle: &str| -> Vec<String> {
+            fn_signatures(pull_api)
+                .into_iter()
+                .filter(|(_, params)| params.contains(needle))
+                .map(|(name, _)| name)
+                .collect()
+        };
+        assert_eq!(takes("output_bytes"), ["expected_chunk_count"]);
+        assert_eq!(takes("sha256"), Vec::<String>::new());
+        assert_eq!(takes("digest"), Vec::<String>::new());
+        // The reader itself, so the two empty lists above are not empty because nothing was read.
+        let names: Vec<String> = fn_signatures(pull_api).into_iter().map(|(n, _)| n).collect();
+        for expected in ["pull_output", "start", "from_envelope", "expected_chunk_count"] {
+            assert!(names.iter().any(|n| n == expected), "the signature reader missed `{expected}`");
+        }
+    }
+
+    /// Every `fn` in a source text as `(name, parameter list)`, whatever its visibility. A text
+    /// scan, like the test it serves: the property is the absence of an API.
+    fn fn_signatures(source: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let mut rest = source;
+        while let Some(at) = rest.find("fn ") {
+            let boundary = at == 0 || !rest.as_bytes()[at - 1].is_ascii_alphanumeric() && rest.as_bytes()[at - 1] != b'_';
+            let after = &rest[at + 3..];
+            rest = after;
+            if !boundary {
+                continue;
+            }
+            let name: String =
+                after.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            let Some(open) = after.find('(') else { continue };
+            // A doc comment saying "fn foo" has no parameter list on its line; skip it.
+            if name.is_empty() || after[..open].contains('\n') {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut close = None;
+            for (i, c) in after[open..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(close) = close {
+                out.push((name, after[open + 1..close].to_string()));
+            }
+        }
+        out
     }
 
     #[test]
