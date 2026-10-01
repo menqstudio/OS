@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t135/deb-postinst` — `main` @ `a705778`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t136/install-accounts` — `main` @ `377537b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #305 · branch `t135/deb-postinst`** (base `main`, tip `a705778`, task T-135).
+> **⏭️ CURRENT ACTIVE: PR #306 · branch `t136/install-accounts`** (base `main`, tip `377537b`, task T-136).
 >
-> T-135: slice A of the approved install design; the .deb runs the installer
+> T-136: slice B, first increment; the installer creates the service accounts and CI calls it
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2318 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2340 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1222 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context

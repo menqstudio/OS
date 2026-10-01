@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #305 · branch `t135/deb-postinst`** (base `main`, tip `a705778`, task T-135).
+> **⏭️ CURRENT ACTIVE: PR #306 · branch `t136/install-accounts`** (base `main`, tip `377537b`, task T-136).
 >
-> T-135: slice A of the approved install design; the .deb runs the installer
+> T-136: slice B, first increment; the installer creates the service accounts and CI calls it
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -46,7 +46,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2318 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2340 OK, 14 skipped |
 | Rust, 10 crates · 2026-09-30 | 1222 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

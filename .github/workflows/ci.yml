@@ -157,23 +157,17 @@ jobs:
       - name: Build the live-turn binaries (launcher + recorder/executor/driver)
         run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml -p brops-launcher -p brops-governed-live
       # The script documents these accounts as "already provisioned on the box"; on an ephemeral
-      # runner we provision them here. Fixed uids so a failure is legible against the design's
-      # §0 principal table. `--no-create-home` keeps them without a traversable home, which is the
-      # posture the design assumes.
-      - name: Provision the six service accounts
+      # runner the INSTALLER provisions them — `engine/install/brops_install.sh accounts`, the
+      # ACCOUNTS step of docs/design/DEBIAN_INSTALL_PROVISIONING.md §4. Until T-136 this step
+      # created them inline, so the only code that had ever made these accounts was a workflow
+      # and no install could. Fixed uids, no login shell, no home: the installer's table, held
+      # to `provision_keys.py` and to the kit by `engine/tests/test_brops_install.py`.
+      # The installer owns SEVEN accounts and this job's turn uses six; the seventh,
+      # `brops-sidecar`, is created here too and nothing in `run_live_turn.sh` names it.
+      - name: Provision the service accounts (the installer's accounts step)
         run: |
           set -eu
-          for spec in \
-            "brops-verifier_broker:5001" \
-            "brops-challenge:5002" \
-            "brops-supervisor:5004" \
-            "brops-recorder:5005" \
-            "brops-signer:5006" \
-            "brops-executor:5007" ; do
-            user="${spec%%:*}"; uid="${spec##*:}"
-            sudo groupadd -g "$uid" "$user"
-            sudo useradd -u "$uid" -g "$uid" -M --no-create-home -s /usr/sbin/nologin "$user"
-          done
+          sudo bash engine/install/brops_install.sh accounts
           id brops-verifier_broker; id brops-executor
       # Fail-closed by construction: the script exits non-zero unless the driver prints
       # `production_verified=true bound=true`, and it never fabricates an acceptance. A RED here
@@ -237,21 +231,21 @@ jobs:
       # all of which demand the SIDECAR uid, is unreachable by construction. 5003 is the gap in
       # the §0 principal table, where the design lists `brops-sidecar` between `brops-challenge`
       # and `brops-supervisor`.
-      - name: Provision the seven service accounts
+      #
+      # They are the INSTALLER's accounts since T-136: `engine/install/brops_install.sh accounts`
+      # creates them, where this step used to run `useradd` itself. The second call is the
+      # idempotence claim run for real, as root, on a box that now holds all seven — the one
+      # thing the unit tests can only show against a passwd FILE. It must create nothing.
+      - name: Provision the seven service accounts (the installer's accounts step, twice)
         run: |
           set -eu
-          for spec in \
-            "brops-verifier_broker:5001" \
-            "brops-challenge:5002" \
-            "brops-sidecar:5003" \
-            "brops-supervisor:5004" \
-            "brops-recorder:5005" \
-            "brops-signer:5006" \
-            "brops-executor:5007" ; do
-            user="${spec%%:*}"; uid="${spec##*:}"
-            sudo groupadd -g "$uid" "$user"
-            sudo useradd -u "$uid" -g "$uid" -M --no-create-home -s /usr/sbin/nologin "$user"
-          done
+          sudo bash engine/install/brops_install.sh accounts
+          again=$(sudo bash engine/install/brops_install.sh accounts 2>&1)
+          echo "$again"
+          case "$again" in
+            *"0 group(s) and 0 account(s) created"*) ;;
+            *) echo "FAIL: a second accounts run did not report creating nothing"; exit 1 ;;
+          esac
           id brops-sidecar; id brops-supervisor
       # Fail-closed by construction. `ladder_evidence.py` exits non-zero unless the §4.6 frame
       # says `ok`, its §4.9 envelope verifies under the manifest-resolved production key, the

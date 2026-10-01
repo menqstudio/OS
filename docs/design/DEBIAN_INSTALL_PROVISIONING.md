@@ -8,7 +8,8 @@
 > պետք միայն այս դիզայնի համար։
 
 Status: **APPROVED by the Owner on 2026-10-01** («այո»). Task `T-131`. Slice A landed in `T-135`;
-B, C, D are in progress. Approval is of the design, not of any slice's code — every slice is ◑.
+slice B's ACCOUNTS step in `T-136` (`engine/install/brops_install.sh accounts`, which CI's two kit jobs
+now call instead of running `useradd` themselves); the rest of B, and C and D, are in progress. Approval is of the design, not of any slice's code — every slice is ◑.
 Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / proposal.
 
 ## 1 · The decision this serves
@@ -50,7 +51,8 @@ create anything under `/var/lib/brops-trust-anchor` or `/opt/brops`.
 
 1. **Accounts.** Create the seven fixed principals the kit uses ✅ (`run_ladder_turn.sh:89-95`:
    `brops-verifier_broker`, `brops-challenge`, `brops-supervisor`, `brops-recorder`, `brops-signer`,
-   `brops-executor`, `brops-sidecar`) as system users, plus
+   `brops-executor`, `brops-sidecar`) as system users — uids 5001–5007 ✅ built in `T-136`; note
+   `brops-sidecar`'s 5003 has no source in `provision_keys.py`, only in the installer — plus
    `brops-anchor` for the anchors. Pairwise distinct; refuse if any exists with a different shape.
 2. **Engine anchor.** Run the existing `mint` for the **desktop user** named on the command line
    (`--user`, which `postinst` takes from `SUDO_USER` or debconf), with `machine_root` =
