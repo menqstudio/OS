@@ -84,6 +84,11 @@ def group_line(name: str, gid: int) -> str:
 
 class InstallerCase(unittest.TestCase):
     def setUp(self) -> None:
+        # A Debian installer: `getent`, passwd-shaped databases and `id -u` are what it reads, and
+        # the engine suite also runs on windows-latest, where 12 of these failed in T-136's first
+        # CI run. Skipped BY NAME there; the workflow-text tests below still run on every platform.
+        if os.name != "posix":
+            self.skipTest("brops_install.sh is a Debian installer; its behaviour is only defined on POSIX")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.tmp = pathlib.Path(self._tmp.name)
