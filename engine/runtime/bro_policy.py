@@ -68,7 +68,7 @@ UNKNOWN_ROLE = "unknown"
 # tools are excluded by construction: a shell command's read-only classification
 # is a static reading of text the shell then interprets. The parser in
 # bro_security closes the forms it knows — it refuses `$(...)`, backticks and
-# redirection, splits on every separator including a lone `&`, never treats a
+# redirection and a lone `&`, splits on every other separator, never treats a
 # path-qualified executable as a builtin, and allowlists the flags of `find` and
 # of the read-only git subcommands — but it does not model variable and glob
 # expansion, aliases or PATH lookup, and each of those closures was a bypass
