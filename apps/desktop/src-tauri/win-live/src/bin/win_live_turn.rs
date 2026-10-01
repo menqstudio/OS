@@ -178,8 +178,14 @@ mod win {
             Ok(v) => v,
             Err(_) => return blocked("manifest_root_signature_invalid"),
         };
-        // Load + TCB-integrity-verify the anti-rollback floor (audit R1): a reset/tampered floor.json is
-        // rejected because floor.sig will not verify under the TCB floor key.
+        // Load the anti-rollback floor and check its embedded signature (audit R1). That signature is a
+        // CORRUPTION check only: the floor key is a public source constant (`tcb::FLOOR_SEED_HEX`), so
+        // a source-reading adversary who can write the deployment dir can produce a validly-signed
+        // lowered floor and this call accepts it. (This comment used to say a reset/tampered floor is
+        // rejected "because floor.sig will not verify under the TCB floor key" — the claim
+        // WINDOWS_ANTIROLLBACK_HARDENING.md withdrew everywhere else; there is also no separate
+        // `floor.sig` file, the signature is a field of `floor.json`.) The real boundary is the OS
+        // write-ACL on the deployment directory. See `resolver::load_verified_floor`.
         let floor = match brops_win_live::resolver::load_verified_floor(std::path::Path::new(&cfg.trust.floor_path)) {
             Ok(f) => f,
             Err(e) => return blocked(&format!("floor:{e}")),
@@ -261,6 +267,11 @@ mod win {
             // F-02/F-01: the four `facts.evidence_*` deployment constants are gone. The execution
             // measures its own chain and the supervisor derives the head from it, so the evidence
             // head describes THIS run instead of naming the same value for every run of the kit.
+            // "Its own" is this process: the chain is written by `execute` running HERE, in the
+            // driver/broker, into a directory under the store that this process creates. Neither
+            // it nor `recorder-state` below belongs to an executor principal, and `win_provision`
+            // creates and ACLs neither — so the supervisor's derivation is a shape check on the
+            // live kit too. See `ExecutionParams::evidence_dir`.
             evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
             // audit R-42: this was `cfg.facts.evidence_head_sequence` — a value read out of
             // `config.json`, identical on every run of the deployment. `head_sequence` is the ONE

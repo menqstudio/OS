@@ -378,10 +378,20 @@ pub struct SupervisorConfig {
     /// artifacts into (audit F-02) — the same store the isolated signer reads by handle.
     pub store_dir: PathBuf,
     /// Where the EXECUTION writes its per-run evidence chain (audit **F-01**). The supervisor
-    /// reads it here rather than accepting the evidence head on the wire: in the cross-account
-    /// deployment this directory belongs to the executor principal, so the broker cannot write
-    /// what the supervisor is about to attest. In the in-process proof both sides are one
-    /// process, which makes it a shape check there — said plainly rather than assumed.
+    /// reads it here rather than accepting the evidence head on the wire.
+    ///
+    /// **That is a SHAPE check in every deployment of this kit, not a containment one.** This
+    /// used to say that in the cross-account deployment the directory belongs to the executor
+    /// principal, "so the broker cannot write what the supervisor is about to attest". No
+    /// deployment of this kit has that property: the chain is written by
+    /// `GovernedExecutionCore::execute`, which runs inside `win_live_turn` — the driver/broker —
+    /// and that same process then sends `complete-run`. `win_executor` writes 32 bytes to stdout
+    /// and nothing else, and `win_provision` creates no `run-evidence` directory and puts no ACL
+    /// on one. So the party the supervisor "derives" the head from is the party it is checking.
+    /// What derivation does buy: the head describes THIS run instead of a deployment constant,
+    /// and a completion whose `output_handle` is not the digest the chain recorded is refused.
+    /// A separately-principalled recorder writing into a directory the broker cannot write is the
+    /// Linux kit's property and is not built here.
     pub evidence_dir: PathBuf,
     /// The supervisor's OWN durable anti-rollback/anti-fork floor over the shared supervisor DDL
     /// (audit **R-42**/**R-24**). REQUIRED, not optional: an unconfigured floor must refuse, never
@@ -679,6 +689,13 @@ impl Supervisor {
     /// degrade to "no floor configured" — the whole class of defect this repository keeps finding is
     /// a control that quietly stops applying. There is no `Option<PathBuf>` and no in-memory
     /// fallback: the only way to run without a floor is to not run.
+    ///
+    /// What this does NOT refuse: a floor that is simply ABSENT. `create_dir_all`, `Connection::open`
+    /// and `create_schema` below make a missing db into a new, empty one, and nothing records that a
+    /// floor was ever initialised here. So "cannot be opened" stops the supervisor; "was deleted"
+    /// does not — it restarts the floor from nothing. Custody of this path is therefore the whole
+    /// of the anti-rollback property, and `win_supervisor` currently puts it inside `store_dir`
+    /// (see the comment at its `evidence_floor_db`).
     pub fn new(cfg: SupervisorConfig) -> Result<Self, String> {
         if cfg.evidence_floor_db.as_os_str().is_empty() {
             return Err("supervisor: evidence_floor_db is required (the anti-rollback floor is not optional)".to_string());

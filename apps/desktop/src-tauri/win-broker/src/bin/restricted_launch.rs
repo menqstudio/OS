@@ -4,19 +4,46 @@
 //!   1. duplicates the caller's token and derives a RESTRICTED primary token
 //!      (`CreateRestrictedToken` with `DISABLE_MAX_PRIVILEGE` → every privilege except `SeChangeNotify`
 //!      is stripped) and lowers its integrity to **Low** (`SetTokenInformation(TokenIntegrityLevel)`);
-//!   2. reads the restricted token's OBSERVED facts (privileges via `LookupPrivilegeNameW`, integrity,
-//!      `IsTokenRestricted`) and gates them with the pure
-//!      `brops_core::windows_broker::verify_restricted_token` — launch is REFUSED if any forbidden
-//!      privilege survives, the integrity is too high, or the token is not restricted (fail-closed);
-//!   3. also gates the canonical STARTUPINFOEX handle-role list (slots 0..=6) with the pure
+//!   2. reads two OBSERVED facts off the restricted token — its privileges (`GetTokenInformation` +
+//!      `LookupPrivilegeNameW`) and `IsTokenRestricted` — and gates them with the pure
+//!      `brops_core::windows_broker::verify_restricted_token`: launch is REFUSED if a forbidden
+//!      privilege is seen or the token is not restricted;
+//!   3. prints a verdict for the canonical STARTUPINFOEX handle-role list (slots 0..=6) from the pure
 //!      `verify_startupinfo_handle_list`;
-//!   4. launches the target under the restricted token (`CreateProcessWithTokenW`, which the elevated
-//!      broker may call via `SeImpersonatePrivilege`), waits, and reports the child exit code.
+//!   4. launches the target under the restricted token with `CreateProcessAsUserW` (after a
+//!      best-effort enable of `SeIncreaseQuotaPrivilege` on its own token), waits up to 30 s, and
+//!      PRINTS the child's exit code.
 //!
-//! This proves the restricted-token + integrity-drop + privilege-allowlist launch primitive on the real
-//! syscalls, backing `verify_restricted_token`/`verify_startupinfo_handle_list` (§0.1 primitive 4). It does
-//! NOT by itself flip `platform_governed_execution_supported()` (the dedicated-service-account session-0
-//! packaging + CNG key custody + Architect audit remain). cfg(windows) only.
+//! Four things this doc used to claim and the code does not do. Each is a known, open defect
+//! (`win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md`, dim4-P2, covers the second and third):
+//!
+//! * **The privilege read can fail OPEN.** `token_privilege_names` returns an EMPTY set when the sizing
+//!   call reports zero bytes, and silently drops any privilege whose `LookupPrivilegeNameW` fails. An
+//!   empty or shortened set passes `verify_restricted_token`. So step 2 is not fail-closed, whatever
+//!   the comment at the call site says.
+//! * **Integrity is not read back.** The `ObservedToken` handed to the gate carries the LITERAL
+//!   `IntegrityLevel::Low`. It rests on `SetTokenInformation` having returned success; there is no
+//!   `GetTokenInformation(TokenIntegrityLevel)` in this file, so the gate's "integrity too high" branch
+//!   cannot fire here.
+//! * **The handle-list verdict is a tautology and gates nothing.** The list given to
+//!   `verify_startupinfo_handle_list` is built from `expected_handle_role`, the function it is checked
+//!   against; a DENY would only be printed, the launch proceeds either way; and the launch passes plain
+//!   `STARTUPINFOW` with `bInheritHandles = FALSE` — there is no STARTUPINFOEX handle list at all.
+//! * **The exit code is not propagated.** The process returns `0` after any launch that started,
+//!   whatever the child returned and whether or not the 30 s wait timed out.
+//!
+//! It was also described as `CreateProcessWithTokenW` via `SeImpersonatePrivilege`. That is `spawn_as`;
+//! this binary has never called it.
+//!
+//! What it does prove on the real syscalls: a restricted, privilege-stripped token can be derived, its
+//! integrity lowering succeeds or the run stops, and a child starts under it. It is a standalone proof
+//! binary — nothing in the tree invokes it, and the live kit's executor spawn applies none of this.
+//! It does not open the Windows governed gate. (This doc used to name
+//! `platform_governed_execution_supported()` as the thing it does not flip; no function of that name
+//! exists in the tree — it is the §0.1 specification symbol.) cfg(windows) only.
+//!
+//! The child command line is `"<exe>"` followed by the remaining arguments joined with single spaces,
+//! with NO quoting or escaping: an argument containing a space or a quote reaches the child re-split.
 //!
 //!   restricted_launch <exe> [args...]
 
@@ -78,6 +105,12 @@ mod win {
     }
 
     /// Read the token's privilege NAMES (e.g. "SeChangeNotifyPrivilege").
+    ///
+    /// NOT fail-closed, in two places, against the rule the caller states at step (3): when the
+    /// sizing call leaves `needed == 0` this returns `Ok` with an EMPTY set, and a privilege whose
+    /// `LookupPrivilegeNameW` fails is dropped from the set without a trace. `verify_restricted_token`
+    /// is an allowlist over the names it is given, so both paths pass it. The fix is to return `Err`
+    /// in both cases; not made here because this code has to be built and run on Windows first.
     unsafe fn token_privilege_names(token: HANDLE) -> Result<BTreeSet<String>, Error> {
         let mut needed = 0u32;
         let _ = GetTokenInformation(token, TokenPrivileges, None, 0, &mut needed);
@@ -200,6 +233,9 @@ mod win {
             // (3) Read observed facts + gate with the pure predicate. A privilege-enumeration FAILURE
             // must fail closed — an unreadable privilege set is NOT a clean one, and defaulting to
             // empty would silently pass the allowlist that exists to reject escalation privileges.
+            // That is the RULE. `token_privilege_names` does not yet keep it: it returns an empty set
+            // on a zero-size answer and drops unnameable privileges (see its doc), so only an `Err`
+            // from the second `GetTokenInformation` call reaches the refusal below.
             let privileges = match token_privilege_names(restricted) {
                 Ok(p) => p,
                 Err(e) => {
@@ -210,8 +246,10 @@ mod win {
             };
             // windows-rs wraps the BOOL return as a Result (Ok == the token IS restricted).
             let is_restricted = IsTokenRestricted(restricted).is_ok();
-            // integrity is now guaranteed Low: set_low_integrity above hard-failed otherwise, so this
-            // is an OBSERVED fact (the drop succeeded), not an assumed one.
+            // The integrity below is a LITERAL, not a read-back. (This comment used to call it an
+            // OBSERVED fact.) What was observed is that `SetTokenInformation` returned success —
+            // set_low_integrity above hard-fails otherwise. Nothing reads `TokenIntegrityLevel` back
+            // off the token, so `verify_restricted_token`'s integrity branch cannot fail here.
             let observed = ObservedToken {
                 privileges: privileges.clone(),
                 integrity: IntegrityLevel::Low,
@@ -228,15 +266,20 @@ mod win {
                 }
             }
 
-            // (3b) Gate the canonical STARTUPINFOEX handle-role list (slots 0..=6) — pure predicate.
+            // (3b) Print the pure predicate's verdict on the canonical STARTUPINFOEX handle-role list
+            // (slots 0..=6). This is NOT a gate: `roles` is built from `expected_handle_role`, which
+            // is what the predicate compares against, so it cannot return DENY; a DENY would only be
+            // printed and the launch below would go ahead; and that launch supplies no handle list.
             let roles: Vec<(i32, _)> = (0..=6).map(|s| (s, expected_handle_role(s).unwrap())).collect();
             match verify_startupinfo_handle_list(&roles) {
                 Ok(()) => println!("VERIFY_HANDLE_LIST=ALLOW"),
                 Err(v) => println!("VERIFY_HANDLE_LIST=DENY({v:?})"),
             }
 
-            // (4) Launch the target under the restricted token (SeImpersonate path).
-            // CreateProcessAsUser with a restricted token needs SeIncreaseQuota enabled on our token.
+            // (4) Launch the target under the restricted token with CreateProcessAsUserW. (Not the
+            // SeImpersonate / CreateProcessWithTokenW path this comment used to name — that is
+            // `spawn_as`.) CreateProcessAsUser with a restricted token needs SeIncreaseQuota enabled
+            // on our token; the enable is best-effort and a failure surfaces as LAUNCH=FAIL.
             let mut self_tok = HANDLE::default();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut self_tok).is_ok() {
                 let _ = enable_privilege(self_tok, "SeIncreaseQuotaPrivilege");

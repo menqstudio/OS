@@ -49,10 +49,18 @@ mod win {
             store_dir: std::path::PathBuf::from(&cfg.store_dir),
             // F-01: where the execution writes its per-run evidence chain.
             evidence_dir: std::path::PathBuf::from(&cfg.store_dir).join("run-evidence"),
-            // audit R-42: the supervisor's OWN durable evidence-head floor. It lives in a
-            // supervisor state directory rather than in the shared store, because the store is
-            // written by the execution and a floor the constrained party can delete is the
-            // engine's L-4 defect ported to Windows.
+            // audit R-42: the supervisor's OWN durable evidence-head floor. R-42 wants it OUTSIDE
+            // the shared store, because the store is written by the execution and a floor the
+            // constrained party can delete is the engine's L-4 defect ported to Windows.
+            //
+            // It is NOT outside it. (This comment used to say it was.) The path below is
+            // `<store_dir>\supervisor-state\evidence-floor.db`: a child of the very directory the
+            // driver writes output blobs and `run-evidence` into, with no ACL of its own —
+            // `win_provision` does not create it, `Supervisor::new` `create_dir_all`s it. And an
+            // ABSENT db is not refused: `Supervisor::new` opens a fresh one and creates the schema,
+            // so a principal that can delete inside the store resets the floor to empty.
+            // OPEN: a supervisor-only state directory outside `store_dir`, created and ACL'd by
+            // provisioning, and a refusal to start when a previously initialised floor is missing.
             evidence_floor_db: std::path::PathBuf::from(&cfg.store_dir)
                 .join("supervisor-state")
                 .join("evidence-floor.db"),

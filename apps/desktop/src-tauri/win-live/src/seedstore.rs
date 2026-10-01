@@ -1,4 +1,18 @@
-//! DPAPI custody for the live-kit principal seeds (closes the "seeds are plaintext hex at rest" audit note).
+//! DPAPI seal/unseal primitives for the live-kit principal seeds.
+//!
+//! **This does NOT close the "seeds are plaintext hex at rest" audit note, and this line used to say it
+//! did.** The primitives below are real; the only caller that would apply them, the seal-on-first-read in
+//! `config::read_seed`, cannot succeed for the account it is meant for in a provisioned deployment.
+//! Sealing in place needs to CREATE `<seed>.sealing` in `keys\` and rename it over the seed. `win_provision`
+//! grants the owning service account `FILE_GENERIC_READ` on the seed and nothing else, and `keys\` inherits
+//! the DACL of a root that `provision_custody::check_root_custody` refuses if any non-TCB principal can
+//! write it — so the service account cannot create the temp file, and `read_seed` swallows that failure
+//! and returns the seed. (Read from the code; this has not been observed on a Windows host.) The seed
+//! therefore STAYS 64 plaintext hex characters, and its custody is the ACL `win_provision` creates it with —
+//! not encryption at rest. `proof/WINDOWS_BROKER_AUDIT_VERDICT.md` and the audit ledger already withdrew the
+//! claim; the source had not. The seal can still happen when the reader is itself a TCB principal (the
+//! same-account proof run elevated), and what it produces there is a file under `keys\`'s inherited DACL
+//! rather than the explicit one it replaced.
 //!
 //! A seed at rest is EITHER a legacy 64-char ASCII-hex file (Linux CI / in-process proof), OR a per-user
 //! DPAPI blob bound to the OWNING service account's master key. `config::read_seed` detects which by content,
@@ -10,10 +24,11 @@
 //! seed (remediation audit, P1). The seal is applied on FIRST READ. Between provisioning and that read the
 //! seed is plaintext hex on disk, and `attest.seed` + `signer.seed` are the two production keys
 //! `verify_and_accept` checks — so in that window the boundary is not cryptographic at all, and anyone who
-//! can read the file can sign anything the chain will then accept. `win_provision::write_seed` closes the
-//! window by restricting each seed to its owning account before anything can read it, which also makes the
+//! can read the file can sign anything the chain will then accept. `win_provision` (`write_custody_file`)
+//! closes the window by creating each seed already restricted to its owning account, which also makes the
 //! trust-on-first-use binding correct by construction: the owning account is the only one that CAN read it.
-//! The cryptographic boundary is what remains AFTER that, not what protects the seed before it.
+//! The cryptographic boundary is what would remain AFTER a seal, not what protects the seed before it — and
+//! per the paragraph above, in a provisioned cross-account deployment that seal does not happen.
 //!
 //! DPAPI-NG `SID=` was rejected: its protector needs the AD DS KDS root key, which does not exist on a
 //! standalone/workgroup box (this deployment uses local accounts). Classic per-user DPAPI is the right fit.

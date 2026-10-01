@@ -33,7 +33,9 @@
 #   -RootProvenance       The custody declaration for that anchor: external | kit_generated |
 #                         demonstration. Only `external` can render a production verdict; anything else
 #                         completes the chain and reports demonstration custody, honestly.
-#   elevated PowerShell   `win_provision` and `win_tcb_pin` set ACLs/owners with icacls.
+#   elevated PowerShell   `win_provision` creates its custody files with an Administrators owner and a
+#                         protected DACL (CreateFileW, no icacls); `win_tcb_pin` still sets the pin
+#                         manifest's ACL and owner by spawning icacls. Both need elevation.
 #
 # What this proof does and does NOT establish:
 #   * It DOES exercise the real named-pipe transport, the real peer-SID gate (both directions), the real

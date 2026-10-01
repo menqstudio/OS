@@ -221,6 +221,13 @@ where
     let executor_sha = crypto::sha256_hex(b"brops-executor.bin");
 
     // ---- root-signed production key manifest + anti-rollback floor ----
+    // This is a hand copy of the manifest `win_provision` builds, and it has DRIFTED from it: that
+    // one carries three keys (signer, attest, challenge — remediation round 3, P1s-1), this one two.
+    // The proof never goes through `Config::load`, so `verify_and_bind_pubs` — which is what needs
+    // the challenge key in the manifest — is not exercised by it. The custody resolver, `UuidIds`,
+    // `init_schema` and the `trust_str` formatter below are likewise twins of `win_live_turn`'s
+    // (whose copy of that string is the one `win_live_proof.ps1` parses). Nothing holds the pairs
+    // equal.
     let manifest_json = json!({
         "manifest_epoch": 2u64,
         "root_key_id": root_key_id,
@@ -349,8 +356,9 @@ where
         store_dir: store_dir.to_path_buf(),
         containment_mode: "windows-proof-kit:in-process, no setuid launcher".to_string(),
         // F-02/F-01: the evidence head is MEASURED by the execution now, not configured. The
-        // proof writes its chain beside the store; in the in-process proof that is a shape check,
-        // and in the cross-account deployment the directory belongs to the executor principal.
+        // proof writes its chain inside the store, as the live driver does. That is a shape check
+        // here AND in the live kit: in both, the process that writes the chain is the one that
+        // sends `complete-run`. No deployment gives this directory to an executor principal.
         evidence_dir: store_dir.join("run-evidence"),
         // audit R-42: this was the literal `3`. `head_sequence` is the ONE field in the evidence
         // chain that orders two runs against each other, so a constant made the supervisor's floor
