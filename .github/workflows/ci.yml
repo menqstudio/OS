@@ -587,6 +587,20 @@ jobs:
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml \
             -p brops-provision -p brops-audit-signer --no-fail-fast -- --test-threads=1 --nocapture
 
+      # The installer that mints the engine anchor as ANOTHER uid (T-137, slice D of
+      # docs/design/DEBIAN_INSTALL_PROVISIONING.md). Its end-to-end test needs root and is
+      # `#[ignore]`d in the run above, so without this step the one test that mints as root,
+      # verifies AS THE DESKTOP UID and makes 48 write attempts the kernel must deny would run
+      # on nobody's machine but a Builder's. It works only inside a scratch directory under /run
+      # that it creates and removes; the desktop account is $SUDO_USER, the runner.
+      - name: The POSIX anchor installer, as root, proved for the desktop uid
+        if: runner.os == 'Linux'
+        run: |
+          bin=$(ls -t apps/desktop/src-tauri/target/debug/deps/posix_install-* | grep -v '\.d$' | head -1)
+          test -x "$bin" || { echo "FAIL: no posix_install test binary was built"; exit 1; }
+          sudo env "PATH=$PATH" "$bin" --ignored --exact \
+            root_installs_an_anchor_the_desktop_uid_verifies_and_cannot_touch --nocapture
+
       # ---------------------------------------------------------------------------------------
       # Windows: build as the runner, RUN as the standard account.
       # ---------------------------------------------------------------------------------------

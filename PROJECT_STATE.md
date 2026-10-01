@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #306 · branch `t136/install-accounts`** (base `main`, tip `377537b`, task T-136).
+> **⏭️ CURRENT ACTIVE: PR #307 · branch `t137/posix-anchor-install`** (base `main`, tip `560bbbd`, task T-137).
 >
-> T-136: slice B, first increment; the installer creates the service accounts and CI calls it
+> T-137: slice D; a root installer mints the engine anchor on POSIX and proves it for the desktop uid
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-09-30 | 2340 OK, 14 skipped |
-| Rust, 10 crates · 2026-09-30 | 1222 passed |
+| Rust, 10 crates · 2026-10-01 | 1242 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 

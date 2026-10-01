@@ -61,6 +61,14 @@ pub mod canonical;
 /// the rejected alternatives, and the exact elevation the installer needs.
 pub mod audit_signer;
 
+/// The POSIX **installer** half: root mints the anchor the application may only find.
+///
+/// Unix-only, and nothing on the application's launch path calls it. `provision_with_anchor`
+/// still refuses on POSIX exactly as before; this module is the "DIFFERENT uid, before the
+/// application starts" that refusal names.
+#[cfg(unix)]
+pub mod posix_install;
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -143,9 +151,11 @@ pub const MINTED_AUTHORITIES: [&str; 9] = [
 ///
 /// What genuinely remains open:
 ///
-/// * **POSIX has never run this.** [`anchor`]'s `seal` returns `Unsupported` off Windows; a
-///   POSIX deployment needs the directory created by another uid and provisioning run once as
-///   that uid. Destroying the root removes the KEY; only a second principal moves the ANCHOR.
+/// * **On POSIX the application cannot do this, and never will.** [`anchor`]'s `seal` returns
+///   `Unsupported` off Windows; the anchor has to be created by another uid, and the tool that
+///   does it is `posix_install` (run as root by the install step, never by the application).
+///   A POSIX first launch on a machine whose install step did not run it is still refused.
+///   Destroying the root removes the KEY; only a second principal moves the ANCHOR.
 /// * **`bro_custody`'s Windows rule reads one descriptor** and cannot see an ancestor. The
 ///   property holds because *provisioning* walks the chain to the volume root; the engine alone
 ///   would accept a sealed leaf under a renameable parent.
@@ -1501,6 +1511,24 @@ fn write_anchor_files(
     trust: &Path,
     minted: &Minted,
 ) -> Result<(), ProvisionError> {
+    write_anchor_files_for(anchor_dir, trust, trust, minted)
+}
+
+/// [`write_anchor_files`], with WHERE THE STORE IS READ FROM separated from WHERE IT WILL LIVE.
+///
+/// The application mints the app-side store in place, so the two are the same path and
+/// [`write_anchor_files`] passes it twice. The POSIX installer (`posix_install`) cannot: it is
+/// root, and root must not write inside a directory the desktop account controls. It mints
+/// into a root-only staging directory, hashes the files THERE — before the desktop account has
+/// been able to touch one byte of them — and records the path the store is about to be
+/// delivered to. `files_at` is the first, `trust` is the second, and the manifest binds the
+/// second because that is the string `verify_store` compares on every launch.
+fn write_anchor_files_for(
+    anchor_dir: &Path,
+    files_at: &Path,
+    trust: &Path,
+    minted: &Minted,
+) -> Result<(), ProvisionError> {
     // `Exposure::WorldReadable` (0755/0644), stated rather than inherited. These files ARE
     // the trust anchor: `bro_signature._pin_from_file` refuses a pin that is
     // group/other-writable and `_refuse_writable_registry_root` refuses a registry ROOT
@@ -1537,7 +1565,7 @@ fn write_anchor_files(
     // half this account can rewrite is vouched for by the half it cannot.
     let mut files = BTreeMap::new();
     for relative in provisioned_files() {
-        let path = under(trust, &relative);
+        let path = under(files_at, &relative);
         let bytes = io(std::fs::read(&path), "hashing a provisioned file", &path)?;
         files.insert(relative, Value::from(sha256_hex(&bytes)));
     }

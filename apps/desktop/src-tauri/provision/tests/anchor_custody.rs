@@ -614,8 +614,14 @@ fn a_platform_that_cannot_seal_refuses_at_the_top_and_says_what_is_missing() {
         assert!(text.contains("DIFFERENT uid"), "{text}");
         assert!(text.contains("0755") && text.contains("0644"), "{text}");
         assert!(text.contains("brops-anchor"), "{text}");
-        // And the honest part: nothing ships that creates it, so this is not a step to follow.
-        assert!(text.contains("no shipped tool creates it yet"), "{text}");
+        // WHICH tool creates it, who runs it, and — the honest part — that this application
+        // is not the one that does. Until 2026-10-01 this line asserted "no shipped tool
+        // creates it yet"; the tool now exists (`posix_install`), and the refusal is unchanged.
+        assert!(text.contains(anchor::INSTALLER_TOOL), "{text}");
+        assert!(text.contains("AS ROOT"), "{text}");
+        assert!(text.contains("this application never runs that tool"), "{text}");
+        assert!(text.contains("NOT supported for a first launch"), "{text}");
+        assert!(!text.contains("no shipped tool creates it yet"), "{text}");
         // Never a fallback. An app that provisioned into a directory it can write would look
         // provisioned and not be, which is strictly worse than one that will not start.
         assert!(!text.to_lowercase().contains("proceeding"), "{text}");
