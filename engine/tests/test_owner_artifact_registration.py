@@ -403,7 +403,7 @@ from test_control_room_api import cancel_command, task_contract  # noqa: E402
 
 
 class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
-    """O-4: the owner path is closed in code, and what remains is the Owner's signature.
+    """O-4: the owner path is closed in code, and what remains is a caller for the mint.
 
     These tests were written when registering `control-room-command` was a prerequisite and
     nothing consumed one, so they asserted that even a flawless artifact was refused. That was
@@ -413,8 +413,10 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
     deliberately is how the old state survives in everyone's head.
 
     What is NOT closed: no `control-room-command` key is pinned in the shipped
-    `config/trusted-keys.json`, so on a real deployment an owner command still refuses. That is
-    the Owner's ceremony, not a code gap, and `test_an_unpinned_key_still_refuses` holds it.
+    `config/trusted-keys.json`, so against that registry an owner command still refuses, and
+    `test_an_unpinned_key_still_refuses` holds it. No person closes it: the install provisions
+    the `control-room` key, and nothing in the shipped product calls
+    `provision::mint_control_room_command` yet (PR #78).
     """
 
     def setUp(self) -> None:
@@ -494,11 +496,12 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
         self.assertIn("different command", str(caught.exception))
 
     def test_an_unpinned_key_still_refuses(self) -> None:
-        """The part that is the OWNER's, not the code's.
+        """The part that is the REGISTRY's, not this module's.
 
         Same artifact, same signature, same everything — but signed by a key the operator-signed
         registry does not grant `control-room-command`. It refuses. Registering the artifact type
-        did not open a path; pinning a key is what opens it, and only the Owner can do that.
+        did not open a path; a registry that pins the key is what opens it, and the install is
+        what signs that registry — no person holds the root that does (PR #78).
         """
         command = self.owner_command()
         payload = {

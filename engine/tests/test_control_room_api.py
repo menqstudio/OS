@@ -331,7 +331,9 @@ class ControlRoomActorProofTests(unittest.TestCase):
 
         It used to list three code changes that would close O-4. All three landed, so a reader
         following that message would have gone off to build what already existed. What is missing
-        now is the Owner's signature, and only one of those two is actionable by whoever hits it.
+        now is the signed artifact — the install provisions the key and nothing in the shipped
+        product calls the mint yet (PR #78) — and only one of those two is actionable by whoever
+        hits it.
         """
         owner = self.command(requested_by_type="owner", requested_by="owner-gev")
         with self.assertRaises(ControlRoomAPIError) as caught:

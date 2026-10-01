@@ -316,7 +316,7 @@ def load_execution_lease_from_env(
     # Ed25519, not HMAC: the lease is consumed by the enforcement hook inside the
     # builder's process, so a symmetric key would let the builder mint its own
     # lease. verify_artifact checks it against the operator-signed trusted-key
-    # registry, so only the offline issuer key can grant execution capabilities.
+    # registry, so only a holder of the issuer key can grant execution capabilities.
     from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     raw = os.getenv("BRO_EXECUTION_LEASE")
     if not raw:

@@ -550,7 +550,7 @@ An **egress grant** is a fourth axis, orthogonal to the three that exist:
 
 All four must be satisfied; none substitutes for another. A `reader` tier with `WebFetch` withheld is not an egress grant — it is a tool grant that happens to exclude one route to the network, and `Bash` reopens it.
 
-**It lives on the execution lease, not on `authority-policy.json`.** The reason is not taste: the lease is the only grant artifact in this tree that is Ed25519-signed by an offline issuer and verified *inside the graded party's own process* — `bro_execution_lease.py` states it exactly: "a symmetric key would let the builder mint its own lease". `authority-policy.json` is plaintext in a repo the agent can edit. A destination grant that lives only there is a grant the policed party writes. `authority-policy.json` gets a **named class**, never a host list, so it cannot drift from the lease.
+**It lives on the execution lease, not on `authority-policy.json`.** The reason is not taste: the lease is the only grant artifact in this tree that is Ed25519-signed by the issuer key and verified *inside the graded party's own process* — `bro_execution_lease.py` states it exactly: "a symmetric key would let the builder mint its own lease". `authority-policy.json` is plaintext in a repo the agent can edit. A destination grant that lives only there is a grant the policed party writes. `authority-policy.json` gets a **named class**, never a host list, so it cannot drift from the lease.
 
 **Exact declared shape**, in `contracts/execution-lease.schema.json` (source of record; `engine/schemas/` keeps a byte-identical copy gated by `tools/check_contracts_single_source.py`), added to both `required` and `properties`:
 

@@ -169,8 +169,9 @@ class RecoveryHandsBackAuthorityTests(ReconcilerFixture):
     type, and no owner-bound artifact type exists for this engine to verify one with
     (`bro_orchestration_runtime.OWNER_ACTOR_UNPROVABLE`). A recovery anybody can sign
     off is not a recovery. So the tests below assert the refusal and the stranding it
-    leaves behind; the hand-back behaviour returns — with its own tests — when the
-    owner mints the artifact that message names.
+    leaves behind; the hand-back behaviour returns — with its own tests — when a
+    shipped path mints the artifact that message names. No person does: the install
+    provisions the key that signs it (PR #78).
     """
 
     def test_recovery_is_refused_until_the_owner_actor_can_be_proven(self):

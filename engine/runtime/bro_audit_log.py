@@ -403,9 +403,10 @@ def _sign_anchor(argv: list[str], payload: dict) -> dict:
 
 
 def head_anchor_payload(path, *, key_id: str, now: int) -> dict:
-    """Build the audit-head payload an EXTERNAL recorder/operator signs.
+    """Build the audit-head payload a party OUTSIDE this process signs.
 
-    The out-of-band path, for an operator anchoring a ledger by hand. This module
+    The out-of-band path. No person holds an ``audit-anchor`` key (PR #78): the only
+    party that can sign this payload is the separate signer service. This module
     never signs - the returned payload leaves the process, is signed by the
     ``audit-anchor`` authority, and comes back through ``attach_head_anchor``. The
     chain is structurally verified first so an anchor is never minted over an

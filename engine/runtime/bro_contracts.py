@@ -570,7 +570,7 @@ def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str,
     # Ed25519, not HMAC: the enforcement hook runs in the builder's process, so a
     # symmetric key would let the builder mint its own grant. verify_artifact
     # checks the signature against the operator-signed trusted-key registry, so
-    # only the offline issuer key can authorize a mode.
+    # only a holder of the issuer key can authorize a mode.
     from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     path = os.getenv("BRO_MODE_GRANT")
     if not path:

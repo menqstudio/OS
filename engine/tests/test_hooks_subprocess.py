@@ -149,7 +149,7 @@ class HookSubprocessTests(unittest.TestCase):
         subprocess anchors trust in the on-disk registry at
         <fixture root>/config/trusted-keys.json plus the external operator pin, and the
         committed dev registry's private key is (correctly) not in the repo —
-        so this fixture stands in for the offline operator: it generates a test
+        so this fixture stands in for the install's provisioning: it generates a test
         operator-root key, swaps in a registry signed by that key for the
         lifetime of the class (byte-exact restore via addClassCleanup), signs
         the binding with the SAME key, and hands the subprocess the matching

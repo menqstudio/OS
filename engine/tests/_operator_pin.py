@@ -5,7 +5,7 @@ trusted-key registry (``BRO_OPERATOR_ROOT_PUBKEY`` for CI,
 ``BRO_OPERATOR_ROOT_PUBKEY_FILE`` for production), so ``load_trusted_keys`` and the
 module verify paths refuse to run without it. Tests build an ephemeral operator key
 per fixture; this helper exports that key as the CI pin for the lifetime of the
-test, standing in for the offline operator who sets it in production.
+test, standing in for the install that sets it in production.
 
 Not a test module (no ``test_`` prefix), so unittest discovery ignores it. The env
 var name is hardcoded to avoid any import-order dependency on ``bro_signature``.

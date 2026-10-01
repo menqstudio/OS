@@ -229,8 +229,9 @@ fn main() {
         "production receipt-signing seed",
     );
     // Audit A: the root PRIVATE key is NOT written to the live deployment. The manifest is signed here with
-    // the TCB root (crate::tcb); the driver pins only the root PUBLIC key. In production the root private is
-    // held offline entirely — nothing about the root private lands on the serving box.
+    // the TCB root (crate::tcb); the driver pins only the root PUBLIC key. Nothing about the root private
+    // lands on the serving box — and nobody holds the private half of the compiled pin at all (Owner
+    // decision #78), which is why this tool cannot complete against it until T-131.
 
     let challenge_key_id = "brops-live-challenge-1".to_string(); // gitleaks:allow (fake public key-id)
     let sup_attest_key_id = "brops-live-sup-attest-1".to_string(); // gitleaks:allow (fake public key-id)
@@ -268,7 +269,7 @@ fn main() {
     // key then signed a receipt over material the attacker had authored. Putting them in the
     // root-signed manifest makes the substitution arithmetic — `config::verify_and_bind_pubs` refuses
     // any config whose `pubs` disagree — and the root private that could re-sign the manifest is
-    // offline, not on this box.
+    // never written to this box.
     let manifest_json = json!({
         "manifest_epoch": 2u64,
         "root_key_id": root_key_id,

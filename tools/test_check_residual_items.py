@@ -203,8 +203,9 @@ class LiveRepositoryTests(unittest.TestCase):
 
         This used to assert the membership directly -- "O-3 is the only item needing an Owner
         secret" -- which was true the day the inventory was written and false the day the O-2 and
-        O-5 work established that an audit-anchor signer and an evidence-floor anchor are also
-        things only the Owner can mint. A test that pins today's answer goes red when someone
+        O-5 work was read as adding an audit-anchor signer and an evidence-floor anchor to that
+        list — and false again when PR #78 emptied it: the install mints every authority key and
+        no person holds one. A test that pins today's answer goes red when someone
         LEARNS something, which trains people to edit the test rather than read it.
 
         So the property, not the membership: the cell is a clean machine-readable verdict, and a

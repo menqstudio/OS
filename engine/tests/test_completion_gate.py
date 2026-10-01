@@ -158,8 +158,9 @@ class ConductorStopTests(unittest.TestCase):
 
         Without one the conductor identity is `BRO_ROLE` plus `BRO_AGENT_ID` and
         nothing else, so the exemption is refused rather than granted on the
-        environment's word — and the refusal names the artifact the owner must
-        mint, because nothing in this repository can mint it.
+        environment's word — and the refusal names the artifact that must be
+        presented, because nothing in this engine can mint it: first-launch
+        provisioning does, and no person holds the key (PR #78).
         """
         allowed, reason = self.authorize(self.conductor())
         self.assertFalse(allowed, reason)

@@ -20,7 +20,7 @@ a file IS a ledger is derived from its archived ``*.jsonl`` suffix, never from t
 attacker-supplied manifest — a crafted manifest cannot opt a ledger out of chain
 verification by declaring ``audit_chain: null``.
 
-The manifest itself may be signed by the offline operator (an Ed25519 detached
+The manifest itself may be signed under the operator root (an Ed25519 detached
 signature over the canonical payload, verified through bro_signature's key
 registry). When trusted keys are supplied — or the archive carries a signed
 manifest at all — verification is authoritative: a tampered or unsigned manifest
@@ -54,8 +54,9 @@ MANIFEST_NAME = "backup-manifest.json"
 # bro_signature.ARTIFACT_AUTHORITY, so a signed backup manifest can never be
 # replayed as a registry artifact (or vice versa).
 MANIFEST_ARTIFACT_TYPE = "backup-manifest"
-# Only the offline operator may sign a backup manifest; the builder that writes
-# the runtime state it snapshots holds no operator key.
+# Only the operator root may sign a backup manifest; the builder that writes
+# the runtime state it snapshots holds no operator key. On the desktop deployment
+# nobody does: the install destroys that root after provisioning (PR #78).
 MANIFEST_AUTHORITIES = ("operator-root",)
 
 
@@ -166,8 +167,8 @@ def backup(sources: dict[str, pathlib.Path], dest: pathlib.Path, *, now: int,
     dest = dest.expanduser()
     if dest.exists() and any(dest.iterdir()):
         raise BackupError(f"backup destination is not empty: {dest}")
-    # artifact_type is carried in the payload from the start so the offline
-    # operator's signing step only adds its key_id and wraps {payload, signature};
+    # artifact_type is carried in the payload from the start so the signing step,
+    # which happens outside this process, only adds its key_id and wraps {payload, signature};
     # verify_signed_payload then binds the signature to this artifact type.
     manifest: dict = {"schema": 1, "artifact_type": MANIFEST_ARTIFACT_TYPE,
                       "created_at_epoch": int(now), "sources": {}}

@@ -366,7 +366,9 @@ command surface.
 
   **A proof kit that runs is not a shipped guarantee.** Opening the gate needs an independent audit
   of the whole chain **and** the Owner's approval — a green CI run is neither. Five engine residual
-  items remain OPEN, three of them waiting on an artifact only the Owner can mint.
+  items remain OPEN. None of them waits on a key or an artifact from a person: the install mints
+  every authority key (#78), and what blocks them is deployment wiring and a second principal
+  (`docs/PHASE_10_PRODUCTION_ITEMS.md`).
 
 Operationally: do not present governed mode as a working feature to users yet. Live status:
 [`NEXT_CHAT.md`](../NEXT_CHAT.md) and [`config/current_state.json`](../config/current_state.json).

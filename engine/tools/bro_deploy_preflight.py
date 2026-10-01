@@ -8,7 +8,7 @@ startup:
   * the operator-root trust anchor is pinned from an operator-controlled FILE outside
     the repository (BRO_OPERATOR_ROOT_PUBKEY_FILE) — not the raw CI env var, which a
     process that can set its own environment could also set;
-  * the trusted-key registry authenticates against that pin, carries the owner-held
+  * the trusted-key registry authenticates against that pin, carries the delegated
     recovery authority (blocker 7), binds every builder/verifier key to a subject
     agent id (blocker 6b — an unbound signer is not an identity), and ships no private
     key material;

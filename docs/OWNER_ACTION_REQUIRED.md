@@ -330,12 +330,17 @@ building the enum by hand is how a demonstration root gets to call itself produc
 
 **The provenance is NOT a config value, and that is the part worth reading.** A `[trust].root_provenance`
 key would have let anyone who can write the config directory claim your custody for an anchor you never
-held. It is derived instead from WHICH anchor the binary pinned: `broker/src/tcb.rs` compiles in one
-production root whose private half "is held OFFLINE by the operator … never appears in a deployed binary
-or on the serving box", and any other pinned root can only have arrived through `provisioned_with_pin`,
-which is `pub(crate)` and exists for tests. So a deployment under the shipped anchor commits
+held. It is derived instead from WHICH anchor the binary pinned: `broker/src/tcb.rs` compiled in one
+production root, and any other pinned root could only have arrived through `provisioned_with_pin`,
+which is `pub(crate)` and exists for tests. So a deployment under the compiled anchor would commit
 `trusted_verified`, and a test or kit anchor commits `demonstration_custody` — with no way for a
 deployment to move itself from the second to the first.
+
+*(Corrected 2026-10-01. This paragraph quoted `tcb.rs` describing that compiled root's private half
+as kept off the machine by an operator. Nobody holds it — #78 — so no deployment was ever under it.
+Since `T-140` the broker reads its root from the floor-pinned anchor file instead, and an
+install-minted root commits `demonstration_custody` until you flip
+`INSTALL_MINTED_CUSTODY_ACCEPTED`: §0.)*
 
 **Proved by breaking it**, three mutants, each killing a named test: reverting `main.rs` to
 `ChainExecutor::new` kills `the_custody_resolver_is_wired_in_the_shipped_broker`; making the provenance
@@ -408,7 +413,7 @@ call itself production."* Only an install-minted root can produce `trusted_verif
 
 | Option | What happens | What it costs |
 | :--- | :--- | :--- |
-| **A — wire a custody resolver** in `build_governed_executor`, ending at `resolve_trust_state` | a provisioned Linux deployment completes governed round trips and commits them, labelled for the custody it actually has (`demonstration_custody` under the shipped anchor, `trusted_verified` only under your offline root) | the product starts writing governed rows on provisioned hosts. The label is the honesty, and the label is enforced by a gate that already exists |
+| **A — wire a custody resolver** in `build_governed_executor`, ending at `resolve_trust_state` | a provisioned Linux deployment completes governed round trips and commits them, labelled for the custody it actually has (`demonstration_custody` under the shipped anchor; `trusted_verified` only under an install-minted root, and only once you flip `INSTALL_MINTED_CUSTODY_ACCEPTED` — this cell named a root kept by you when it was posed, which #78 rules out: §0) | the product starts writing governed rows on provisioned hosts. The label is the honesty, and the label is enforced by a gate that already exists |
 | **B — leave it unwired** | `persist_committed` keeps refusing on every shipped install. Phase 1's two rows stay open **permanently**, since no provisioning can close them | nothing changes, and the roadmap carries two rows that can never tick |
 
 **The recommendation is A**, for one reason: refusing to commit at all is not more honest than

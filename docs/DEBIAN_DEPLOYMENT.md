@@ -287,11 +287,9 @@ nothing in this repository mints yet, and says so where it stands.
 
   ```bash
   export BRO_ENV=ci
-  # From the PUBLISHED REGISTRY, which is public by construction. NOT from
-  # /media/usb/bro-root/operator-root.json — that file holds the private half too, as this
-  # document says at Step 1, and an earlier version of this line sent whoever ran it straight
-  # into it. Reading a private key to obtain a public one is never necessary and is exactly the
-  # step this runbook keeps telling agents not to take.
+  # From the PUBLISHED REGISTRY, which is public by construction — never from a file that
+  # holds a private half. Reading a private key to obtain a public one is never necessary and
+  # is exactly the step this runbook keeps telling agents not to take.
   export BRO_OPERATOR_ROOT_PUBKEY=$(python3 -c "import json; print(json.load(open('$HOME/OS/engine/config/trusted-keys.json'))['payload']['operator_public_key'])")
   # expect: unknown signing key: 'wrong-key-…'   — the KEY is what was rejected
   ```
@@ -300,10 +298,12 @@ nothing in this repository mints yet, and says so where it stands.
   *accepted*. A negative test with no positive control cannot tell "the check works" from
   "everything is refused".
 
-  ⚠️ **Both halves of this one need the Owner.** The registry above is what Step 4 publishes, and
-  a correctly signed anchor is what Step 3 produces — so until the Owner has run Steps 1, 3 and 4
-  there is no pin to set and no positive control to run. Report this check as **NOT RUN**, not as
-  passed. It is listed here rather than moved because it belongs with the other three
+  ⚠️ **Neither half of this one can be run today, and no person is what it waits for.** The
+  positive control needs a correctly signed production evidence-floor anchor, and nothing in this
+  repository mints one: `provision::mint_floor_anchor` exists and no shipped path calls it (O-5 —
+  *when* it is minted is an open design question). The steps that once produced it by hand were
+  deleted (above); no person holds or signs with a root (#78). Report this check as **NOT RUN**,
+  not as passed. It is listed here rather than moved because it belongs with the other three
   negatives; what it needs is stated so nobody records a refusal-for-the-wrong-reason as
   evidence.
 

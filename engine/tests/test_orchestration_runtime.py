@@ -260,8 +260,8 @@ class DurableRuntimeTests(unittest.TestCase):
         """O-4 in the runtime: `owner-gev` was a string the caller typed.
 
         Approving a retry is the OWNER's decision and nothing in this engine can
-        verify that a caller is the owner, so the call refuses and says exactly what
-        the owner must mint. It must not re-queue on a self-assertion, and the task
+        verify that a caller is the owner, so the call refuses and says exactly which
+        artifact is missing. It must not re-queue on a self-assertion, and the task
         must stay where the budget gate left it.
         """
         self.blocked_task()

@@ -51,8 +51,8 @@ pub fn demo_root_public_key_hex() -> String {
 /// compile-time constant in open source, so its signature is NOT a defense against an adversary who can read
 /// the source AND write the deployment directory. Such an attacker recomputes `floor_signing_key()` and
 /// forges a lowered, validly-signed `floor.json`, rolling the anti-rollback floor back to replay an older,
-/// genuinely-root-signed manifest (e.g. reviving a since-revoked signer key) → `trusted_verified` WITHOUT the
-/// offline root. The floor signature therefore only detects ACCIDENTAL corruption / non-source-reading
+/// genuinely-root-signed manifest (e.g. reviving a since-revoked signer key) → `trusted_verified` without
+/// ever signing as the root. The floor signature therefore only detects ACCIDENTAL corruption / non-source-reading
 /// tampering; it is a defense-in-depth corruption check, not the anti-rollback trust boundary.
 ///
 /// THE REAL anti-rollback boundary is the OS write-protection on the deployment directory: `floor.json` must

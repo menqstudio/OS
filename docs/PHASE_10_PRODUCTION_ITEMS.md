@@ -367,7 +367,9 @@ an unverifiable identity; it is not a regression to be "fixed" by re-defaulting 
 credential is minted by first-launch provisioning, not by any person; the item stays open because no desktop
 turn reaches `authorize_conductor_stop` yet (the bridge sidecar's real mode is fail-closed until Wave 3b).
 
-**Exactly what Gev must provide.** Mint, offline with the operator-root key, an artifact of the form
+**Nothing for Gev to provide.** *(Corrected for PR #78: this paragraph told him to produce the
+artifact himself with the operator-root key, directly under the paragraph saying no person does.)*
+First-launch provisioning mints the artifact, in this shape —
 
 ```json
 {"payload": {"schema": 1, "artifact_type": "conductor-session", "key_id": "<operator-root key_id>",
@@ -376,9 +378,10 @@ turn reaches `authorize_conductor_stop` yet (the bridge sidecar's real mode is f
  "signature": "<ed25519 hex over the canonical payload>"}
 ```
 
-with that `key_id` listed `active` in the operator-signed `engine/config/trusted-keys.json` (an
-`operator-root` authority key is already allowed to sign `conductor-session`), then export
-`BRO_CONDUCTOR_SESSION_TOKEN=<path to that file>` in the harness environment, and rotate it per session.
+— signs it with the operator root it holds only in memory, lists that `key_id` `active` in the
+registry it signs in the same run, destroys the root, and exports
+`BRO_CONDUCTOR_SESSION_TOKEN=<path to that file>` through `Provisioned::engine_env()`. The token is
+install-scoped: with the root gone, nothing on the machine can mint a second one.
 
 **Test evidence:** `engine/tests/test_conductor_session_token.py` — the shipped policy declares the flag;
 absent / non-boolean / unreadable policy all require; only an explicit `false` waives; required-and-absent
@@ -393,7 +396,7 @@ matching stop-gate refusal. Every one of these checks was deleted once and the m
 - **Severity:** LOW
 - **Status:** OPEN
 - **Owner secret needed:** no
-  *(Was "yes — signed by the offline operator root". That is wrong twice over.)* A
+  *(Was "yes", naming a signature by an operator root kept off the machine. That is wrong twice over.)* A
   `control-room-command` artifact is required per owner command, bound to that command's
   `command_id`, `task_id` and `command` — but `engine/runtime/bro_signature.py` binds the type to the
   **delegated `control-room` authority, not `operator-root`** ("an owner command is a routine,

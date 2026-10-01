@@ -32,7 +32,7 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         os.environ["BRO_RECOVERY_STORE"] = self.temp.name
-        # an ephemeral registry holding the owner-held recovery authority; recovery
+        # an ephemeral registry holding the delegated recovery authority; recovery
         # proofs are signed by it and verified against it
         self.regdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.regdir.cleanup)

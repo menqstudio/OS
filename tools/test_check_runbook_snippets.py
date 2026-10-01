@@ -145,7 +145,7 @@ class CitedPaths(unittest.TestCase):
         """/etc, /opt and /media cannot be checked from a repository, and the gate must not
         imply that it did. Two of this week's three wrong paths were of exactly this kind."""
         self.assertEqual([], self.paths("cat /etc/brops/trusted-keys.json"))
-        self.assertEqual([], self.paths("ls /media/usb/bro-root/operator-root.json"))
+        self.assertEqual([], self.paths("ls /media/usb/trusted-keys.json"))
 
     def test_a_directory_without_an_extension_is_not_treated_as_a_file(self):
         self.assertEqual([], self.paths("discover -s engine/tests -t engine/tests"))

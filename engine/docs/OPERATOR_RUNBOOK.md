@@ -103,7 +103,7 @@ It exits non-zero — printing each `RED:` reason — unless all of the followin
   key that signed the registry. The raw `BRO_OPERATOR_ROOT_PUBKEY` env var is for CI
   only; a production deployment that relies on it is reported un-hardened.
 - **The registry is hardened.** It authenticates against that pin, carries the
-  owner-held `recovery` authority, and every `builder`/`verifier` key is bound to a
+  delegated `recovery` authority, and every `builder`/`verifier` key is bound to a
   `subject_agent_id`, so its signatures are tied to an agent identity.
 - **Ledgers are external.** Every configured ledger/store
   (`BRO_EXECUTION_LEASE_LEDGER`, `BRO_RECOVERY_STORE`, `BRO_TASK_LOCK_LEDGER`,
@@ -114,11 +114,18 @@ It exits non-zero — printing each `RED:` reason — unless all of the followin
 This is a deployment check, not a CI step: CI legitimately pins via the env var,
 which the preflight — correctly — reports as un-hardened for production.
 
-Two owner responsibilities the preflight cannot check from inside the process, and
-which remain yours: the `recovery` private key is held **offline** (the registry
-ships only its public key), and the runner producing execution-receipt worktree
-snapshots runs under an **OS identity distinct** from the builder, so the snapshot a
-receipt attests cannot be mutated by the process it polices.
+Two custody properties the preflight cannot check from inside the process: the
+`recovery` private key is **out of the policed builder's reach** (the registry ships
+only its public key), and the runner producing execution-receipt worktree snapshots
+runs under an **OS identity distinct** from the builder, so the snapshot a receipt
+attests cannot be mutated by the process it polices.
+
+On the desktop deployment (§0 A) no person holds the `recovery` key: the install mints
+it and RETAINS its private half in the app-side store (`provision::RETAINED_AUTHORITIES`).
+A recovery proof there is therefore **not independent of the account the app runs
+as** — it rests on the custody of that store, exactly as `bro_recovery._verify_recovery_proof`
+says. On an engine-only deployment (§0 B) the separation is yours to configure, and
+it yields a development root.
 
 ## 1. Machine-local state
 
@@ -238,9 +245,10 @@ This is deliberate — an interrupted transaction must be reconciled, not raced.
 2. Restore the worktree to that before-state (e.g. discard the partial change).
 3. Prove recovery — only valid for `REVERSIBLE` / `COMPENSATABLE` effects, and
    only when the live repository state matches the recorded before-state. Recovery
-   now requires an **owner-signed `recovery-proof` artifact** (a document signed by
-   the offline owner-held `recovery` authority, bound to the task/record/before-state/
-   effect-class/state-version), not a bare hex string — obtain that document, then
+   now requires a **signed `recovery-proof` artifact** (a document signed under
+   the delegated `recovery` authority, bound to the task/record/before-state/
+   effect-class/state-version), not a bare hex string. No person holds that key:
+   the desktop install mints and retains it (§0.1). Obtain that document, then
    pass it in:
    ```
    python3 -c "import sys, json; sys.path.insert(0,'runtime'); import bro_recovery as r; \

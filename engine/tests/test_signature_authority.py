@@ -262,7 +262,7 @@ class PrimitiveTests(SignatureFixture):
 class CommittedRegistryTests(unittest.TestCase):
     """Phase 1 trust root: the committed config/trusted-keys.json must load and
     verify against its own operator key. A registry that is merely present is not
-    trusted; load_trusted_keys refuses one the offline operator did not sign, so a
+    trusted; load_trusted_keys refuses one the pinned operator root did not sign, so a
     successful load is proof the trust anchor is intact."""
 
     def test_repo_trusted_key_registry_loads(self):

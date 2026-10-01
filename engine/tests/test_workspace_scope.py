@@ -269,7 +269,7 @@ _OMIT = object()
 
 class BindingLoadTests(WorkspaceFixture):
     """load_workspace trusts ONLY an operator-signed binding (H-1) with an
-    enforced expiry (M-8). The fixture stands in for the offline operator: it
+    enforced expiry (M-8). The fixture stands in for the install's provisioning: it
     generates a test operator-root key, writes a registry signed by that key
     into a scratch repository root, and exports the same key as the external
     CI pin, so verify_artifact's Ed25519 verification runs for real against
