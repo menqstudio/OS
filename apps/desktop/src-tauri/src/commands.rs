@@ -3124,6 +3124,17 @@ mod tests {
                 "`{call}` must appear once, in run_governed_turn — a second copy of the pipeline is back"
             );
         }
+        // The unconfigured pre-flight leaves `run_governed_turn` THROUGH `only_a_block`, and by no
+        // other return. `the_unconfigured_preflight_can_only_block` tests the helper; this holds
+        // the call: with `return outcome;` put back, the helper stays tested and nothing calls it.
+        let preflight = production
+            .split("if let Some(outcome) = unconfigured {")
+            .nth(1)
+            .expect("the unconfigured pre-flight branch moved")
+            .split('}')
+            .next()
+            .unwrap();
+        assert_eq!(preflight.trim(), "return only_a_block(outcome);");
     }
 
     // The generic approve verb's refusal names the path that DOES approve. It used to say native
