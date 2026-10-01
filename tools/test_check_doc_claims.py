@@ -250,7 +250,35 @@ class VersionClaims(unittest.TestCase):
         code, out = run(root)
         self.assertEqual(code, 1)
         self.assertIn("claims cargo 1.96", out)
-        self.assertIn(("CLAUDE.md", "cargo", "1.96"), m.QUOTED_STALE_VERSIONS)
+        self.assertIn(("MASTER_EXECUTION_ROADMAP.md", "cargo", "1.96"), m.QUOTED_STALE_VERSIONS)
+        # ... and the same sentence IS exempt in the one file the triple names.
+        named = build(self.tmp / "named", doc="*(This line said cargo 1.96.)*\n",
+                      docname="MASTER_EXECUTION_ROADMAP.md")
+        code, out = run(named)
+        self.assertEqual(code, 0, out)
+
+    def test_an_exemption_whose_sentence_is_gone_is_RED(self):
+        """This test used to assert that `("CLAUDE.md", "cargo", "1.96")` stays in the set --
+        pinning an exemption for a sentence CLAUDE.md had stopped carrying. An exemption with
+        nothing to exempt is a hole with a name on it: `cargo 1.96`, the string this gate was
+        written to catch, could be written back into that file as a plain claim and pass."""
+        root = build(self.tmp, doc="cargo 1.97.1 is what the box has.\n",
+                     docname="MASTER_EXECUTION_ROADMAP.md")
+        code, out = run(root)
+        self.assertEqual(code, 1)
+        self.assertIn("QUOTED_STALE_VERSIONS exempts `cargo 1.96` in MASTER_EXECUTION_ROADMAP.md, "
+                      "and MASTER_EXECUTION_ROADMAP.md no longer says it", out)
+
+    def test_every_exemption_in_this_repository_still_has_its_sentence(self):
+        self.assertEqual(m.unused_version_exemptions(ROOT), [])
+        for rel, _tool, _version in m.QUOTED_STALE_VERSIONS:
+            self.assertTrue((ROOT / rel).is_file(), f"{rel} is exempted and does not exist")
+        self.assertNotIn(("CLAUDE.md", "cargo", "1.96"), m.QUOTED_STALE_VERSIONS)
+
+    def test_an_exemption_for_a_file_the_tree_does_not_have_is_not_judged(self):
+        """The synthetic-root asymmetry, stated: these fixtures carry none of the real
+        documents, and "the file is not in this tree" is not a verdict on the exemption."""
+        self.assertEqual(m.unused_version_exemptions(build(self.tmp, doc="fine\n")), [])
 
     def test_a_tool_the_record_does_not_name_is_not_checked(self):
         """Deliberate, and pinned so nobody later defends it as a guarantee: the record is
@@ -606,8 +634,10 @@ class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
     tests read the count off that line instead of repeating it: the hard-coded twelve failed on the
     thirteenth, and the constant was the defect.
 
-    `known_tickets()` reads a hard-coded list against the module's ROOT, so there is nothing
-    synthetic to build here: the list only ever describes this repository.
+    `known_tickets(root)` reads its list of sources under the root it is GIVEN. It used to read
+    the module's ROOT whatever it was pointed at, and this docstring recorded that as the reason
+    nothing synthetic could be built here; `TicketSourcesAreReadUnderTheCallersRoot` below is
+    what that sentence said could not be written.
     """
 
     def test_the_september_archive_is_a_ticket_source(self):
@@ -619,10 +649,7 @@ class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
         `NEXT_CHAT.md` and `config/current_state.json` both still name them. So this is
         belt-and-braces today and load-bearing the moment that row is shortened, which is exactly
         the edit it is here to survive."""
-        source = pathlib.Path(m.__file__).read_text(encoding="utf-8")
-        start = source.index("def known_tickets()")
-        end = source.index("def main(", start)
-        self.assertIn("docs/archive/TASKS_ARCHIVE_2026-09.md", source[start:end])
+        self.assertIn("docs/archive/TASKS_ARCHIVE_2026-09.md", m.TICKET_SOURCES)
 
     @staticmethod
     def _carried():
@@ -758,6 +785,40 @@ class EntryPointRunsEverything(unittest.TestCase):
         self.assertEqual(len(guard), 1)
         self.assertGreater(guard[0], max(classes))
 
+
+
+class TicketSourcesAreReadUnderTheCallersRoot(unittest.TestCase):
+    """`known_tickets()` took no argument and read the real repository's boards from inside
+    `main(root)`, so every fixture's ticket check was answered by THIS repository."""
+
+    def setUp(self):
+        box = tempfile.TemporaryDirectory(prefix="tickets-")
+        self.addCleanup(box.cleanup)
+        self.tmp = pathlib.Path(box.name).resolve()
+
+    def test_a_synthetic_root_knows_only_its_own_tickets(self):
+        root = build(self.tmp, doc="fine\n")
+        self.assertEqual(m.known_tickets(root), set())
+        (root / "TASKS.md").write_text("| **T-901** | a row | Open |\n", encoding="utf-8")
+        self.assertEqual(m.known_tickets(root), {"T-901"})
+        self.assertGreater(len(m.known_tickets(ROOT)), 50, "the real boards went missing")
+
+    def test_a_ticket_on_the_fixtures_own_board_is_green(self):
+        """The half the old function could not show: the id is on a board IN THE FIXTURE and
+        on no board in this repository."""
+        root = build(self.tmp, doc="carried by `T-901`.\n")
+        (root / "TASKS.md").write_text("| **T-901** | a row | Open |\n", encoding="utf-8")
+        self.assertNotIn("T-901", m.known_tickets(ROOT))
+        code, out = run(root)
+        self.assertEqual(code, 0, out)
+
+    def test_a_ticket_that_is_real_HERE_is_red_in_a_fixture_with_no_boards(self):
+        """...and the other half: a real id passed in a fixture that had no board at all."""
+        real = sorted(m.known_tickets(ROOT))[0]
+        root = build(self.tmp, doc=f"carried by `{real}`.\n")
+        code, out = run(root)
+        self.assertEqual(code, 1)
+        self.assertIn(f"names `{real}`, which is in no task board", out)
 
 
 class CountedClaimTests(unittest.TestCase):
@@ -932,6 +993,51 @@ class CountedClaimTests(unittest.TestCase):
                                       "cited_in": ["d.md"]}}, {"d.md": "0"})
         self.assertTrue(any("`command` must name the command" in p for p in problems), problems)
 
+    # ---- the shape of a claim: each arm had no test, and each could be deleted --------------------
+
+    GOOD = {"value": 0, "command": "ls *.nope", "derive": {"glob": "*.nope"}, "cited_in": ["d.md"]}
+
+    def _shape(self, **changes):
+        claim = {k: v for k, v in {**self.GOOD, **changes}.items() if v is not ...}
+        return self._write({"c": claim}, {"d.md": "0 of them"})
+
+    def test_the_shape_control_is_green(self):
+        self.assertEqual(self._shape(), [])
+
+    def test_a_claim_that_is_not_an_object_is_refused(self):
+        problems = self._write({"c": ["value", 3]}, {"d.md": "3"})
+        self.assertEqual(problems, ["config/counted-claims.json `c`: must be an object"])
+
+    def test_a_value_that_is_not_a_non_negative_integer_is_refused(self):
+        for value in (-1, True, "3", 2.0, None):
+            with self.subTest(value=value):
+                problems = self._shape(value=value)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("`value` must be a non-negative integer", problems[0])
+
+    def test_a_derive_that_is_not_exactly_one_kind_is_refused(self):
+        for derive in (["glob", "*.py"], {}, {"glob": "*.nope", "line_regex": "d.md::x"}, "*.py"):
+            with self.subTest(derive=derive):
+                problems = self._shape(derive=derive)
+                self.assertTrue(any("`derive` must be an object with exactly one of" in p
+                                    for p in problems), problems)
+
+    def test_a_measured_head_that_is_not_hex_is_refused(self):
+        for head in ("HEAD", "main", "abc12", "g" * 12):
+            with self.subTest(head=head):
+                problems = self._shape(derive=None, measured={
+                    "date": "2026-09-20", "head": head, "environments": {"box": {"ran": 0}}})
+                self.assertTrue(any("`measured.head` must be 7-40 hex" in p for p in problems),
+                                problems)
+
+    def test_a_claim_that_cites_no_document_is_refused(self):
+        for cited in (..., [], "d.md", None):
+            with self.subTest(cited_in=cited):
+                problems = self._shape(cited_in=cited)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("`cited_in` must list the documents that carry this number",
+                              problems[0])
+
     # ---- the rule that actually catches the drift -----------------------------------------------
 
     def test_a_document_missing_the_current_value_is_refused(self):
@@ -1001,6 +1107,38 @@ class CountedClaimTests(unittest.TestCase):
     def test_this_repository_has_no_counted_claim_problems(self):
         problems = m.counted_claim_failures(ROOT)
         self.assertEqual(problems, [], "\n".join(problems))
+
+    def _measured_at(self, pick: str) -> list[str]:
+        """The GATE's verdict on a claim measured at the base, the branch or a hash that is
+        no commit at all -- in a real repository where `origin/main` is the base."""
+        box = tempfile.TemporaryDirectory(prefix="counted-git-")
+        self.addCleanup(box.cleanup)
+        root, base, branch, _tree = build_git(pathlib.Path(box.name).resolve(), doc="5 tests\n")
+        head = {"base": base, "branch": branch, "absent": "0" * 39 + "1"}[pick]
+        (root / "config" / "counted-claims.json").write_text(json.dumps({"claims": {"suite": {
+            "value": 5, "command": "run it", "derive": None, "cited_in": ["DOC.md"],
+            "measured": {"date": "2026-09-20", "head": head,
+                         "environments": {"box": {"ran": 5}}}}}}), encoding="utf-8")
+        self.assertEqual(m.main_ref(root), "refs/remotes/origin/main")
+        return m.counted_claim_failures(root)
+
+    def test_a_claim_measured_on_a_BRANCH_commit_is_refused_by_the_gate(self):
+        """The reachability arm, run. The test below this one re-implements the rule -- it calls
+        `git merge-base --is-ancestor` itself over the real declaration -- so the gate's own arm
+        could be deleted with it green; and in every temp-dir fixture `main_ref()` was None, so
+        the arm never fired in a test at all. Here `origin/main` resolves and the head is one
+        commit past it: the exact shape a squash merge erases."""
+        problems = self._measured_at("branch")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is a commit but is NOT reachable from refs/remotes/origin/main", problems[0])
+
+    def test_a_claim_measured_on_the_commit_that_landed_is_green(self):
+        self.assertEqual(self._measured_at("base"), [])
+
+    def test_a_claim_measured_on_a_hash_that_is_no_commit_is_refused(self):
+        problems = self._measured_at("absent")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is not a commit in this repository", problems[0])
 
     def test_every_measured_head_is_REACHABLE_FROM_MAIN_and_not_just_a_commit(self):
         """The failure this rule was written for, and it was found by CI rather than by me.

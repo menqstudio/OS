@@ -72,10 +72,16 @@ HEDGE = re.compile("|".join(HEDGES), re.IGNORECASE)
 
 # The sentence names its own evidence, so the hedge is describing a past uncertainty rather
 # than asserting a present one.
+#
+# `reproduc` and `mutat` are STEMS and carry their own `\w*`. They used to sit bare inside the
+# trailing `\b`, which made both dead: after `reproduc` comes the `e` of "reproduced", not a
+# word boundary, so the only strings they matched were the non-words "reproduc" and "mutat" --
+# and a sentence that said "reproduced on the box" or "mutation sweep done" was flagged as an
+# unmarked guess while naming its evidence.
 EVIDENCE = re.compile(
     r"\b(?:measured|measure|ran|runs|printed|prints|verified|verify|checked|observed|"
-    r"reproduc|mutat|git show|git log|rev-parse|cat-file|:\d+\b|\d+\s*(?:tests?|OK|passed|"
-    r"bytes|lines))\b", re.IGNORECASE)
+    r"reproduc\w*|mutat\w*|git show|git log|rev-parse|cat-file|:\d+\b|\d+\s*(?:tests?|OK|"
+    r"passed|bytes|lines))\b", re.IGNORECASE)
 
 MARKED = re.compile(r"<!--\s*UNVERIFIED:|^\s*>?\s*UNVERIFIED:", re.IGNORECASE)
 

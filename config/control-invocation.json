@@ -116,8 +116,8 @@
     "tools/check_ai_surfaces.py": {
       "kind": "check",
       "blocks": "nothing",
-      "why": "It runs on every pull request, but in the `AI-surface inventory gate` job, whose context is not among the 33 required in config/required-checks.json — so a red run there blocks no merge. Measured 2026-08-31 by reading that file, not assumed.",
-      "unenforced_reason": "Its own text says fail-closed and it runs on every pull request - but in the `AI-surface inventory gate` job, whose context is NOT among the 33 required in config/required-checks.json, and in a workflow that is additionally `paths:`-filtered. A red run there does not block a merge. This is recorded rather than fixed because making the context required is a branch-protection change, which is the Owner's act and not a gate's.",
+      "why": "It runs on every pull request, but in the `AI-surface inventory gate` job, whose context is not among the required `contexts` in config/required-checks.json — so a red run there blocks no merge. Measured 2026-08-31 by reading that file, not assumed. (This sentence carried a count of those contexts, 33, which was two short a month later; tools/check_control_invocation.py reads the set, so the number is not kept.)",
+      "unenforced_reason": "Its own text says fail-closed and it runs on every pull request - but in the `AI-surface inventory gate` job, whose context is NOT among the required `contexts` in config/required-checks.json, and in a workflow that is additionally `paths:`-filtered. A red run there does not block a merge. This is recorded rather than fixed because making the context required is a branch-protection change, which is the Owner's act and not a gate's.",
       "tracked_by": "TASKS.md"
     },
     "tools/check_artwork_geometry.py": {
@@ -238,7 +238,7 @@
     "tools/check_produced_artifact.py": {
       "kind": "check",
       "blocks": "merge",
-      "why": "Runs in `Production half · the five conditions (T-055)`, which IS among the 34 required contexts in config/required-checks.json since 2026-09-19 (#220, the Owner's edit that executed the expired T-055 deferral): a red T-055 job blocks a merge. Until then it said `blocks: nothing`, measured 2026-08-31 when the job name was absent from that file - and tools/check_control_invocation.py refused the understatement the moment the context was added, which is what it is for."
+      "why": "Runs in `Production half · the five conditions (T-055)`, which IS among the required `contexts` in config/required-checks.json since 2026-09-19 (#220, the Owner's edit that executed the expired T-055 deferral): a red T-055 job blocks a merge. Until then it said `blocks: nothing`, measured 2026-08-31 when the job name was absent from that file - and tools/check_control_invocation.py refused the understatement the moment the context was added, which is what it is for."
     },
     "tools/check_reachability.py": {
       "kind": "check",

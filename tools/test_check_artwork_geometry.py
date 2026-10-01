@@ -11,6 +11,8 @@ only evidence is "the tree is green today" cannot tell a clean tree from a rule 
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import importlib.util
 import pathlib
 import shutil
@@ -218,6 +220,37 @@ class TheRealRepository(unittest.TestCase):
         names = {p.name for p in (ROOT / m.SHEET_DIR).glob("*.svg")}
         self.assertIn("verification-light.svg", names)
         self.assertIn("verification-dark.svg", names)
+
+
+class TheExitCode(unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def setUp(self):
+        ASyntheticPair.setUp(self)
+
+    def write(self, name, text):
+        (self.sheets / name).write_bytes(text.encode("utf-8"))
+
+    def _main(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = m.main(self.root)
+        return code, out.getvalue()
+
+    def test_a_correct_pair_exits_zero(self):
+        code, out = self._main()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_sheet_that_does_not_parse_exits_one_and_is_named(self):
+        self.write("sheet-light.svg", LIGHT.replace("</svg>", ""))
+        code, out = self._main()
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("RED:"), out)
+        self.assertIn("does not parse", out)
 
 
 if __name__ == "__main__":

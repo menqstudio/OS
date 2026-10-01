@@ -206,10 +206,6 @@ class DeclarationTests(unittest.TestCase):
         self.assertIn("self-inconsistent", why)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RefusedDeclarationRollbackTests(unittest.TestCase):
     """A refused declaration must leave no trace.
 
@@ -235,3 +231,7 @@ class RefusedDeclarationRollbackTests(unittest.TestCase):
         self.assertFalse(order.declare(self.root, "s1", 2, NOTE)[0])
         self.assertEqual(receipts.load(self.root, "s1")["declared_phase"], 1)
         self.assertTrue(order.verify_declaration(self.root, "s1")[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

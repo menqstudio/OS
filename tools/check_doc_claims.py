@@ -177,14 +177,41 @@ ANCHOR_FIELDS = ("prs[].head", "current_workflow_pr.head")
 # Listed as (file, tool, version) triples, BY NAME, exactly like PRE_IMPORT_SHAS and for the
 # same reason: a rule general enough to recognise a quotation -- "a version after the word
 # said" -- would hand back the guarantee this check provides, and every stale number in the
-# repository is one sentence away from qualifying. Three named exceptions can be read; a
-# heuristic cannot be audited. If one of these lines is ever rewritten, its entry goes RED as
-# an unused exemption is not caught here -- the entry simply stops matching and the quotation
-# is checked as a claim, which is the safe direction to fail.
+# repository is one sentence away from qualifying. Named exceptions can be read; a heuristic
+# cannot be audited.
+#
+# AN ENTRY THAT NO LONGER MATCHES ITS FILE IS RED (`unused_version_exemptions`). This comment
+# used to say the opposite -- that an unused entry "is not caught here" and merely "stops
+# matching", "the safe direction to fail". It is not safe: the exemption outlives the sentence
+# and waits. `("CLAUDE.md", "cargo", "1.96")` sat here after CLAUDE.md stopped quoting that
+# number, which meant `cargo 1.96` -- the exact string this gate was written to catch -- could
+# be written back into CLAUDE.md as a plain claim and pass. That entry is gone; the count in
+# this comment said "Three" over a set of two.
 QUOTED_STALE_VERSIONS = {
-    ("CLAUDE.md", "cargo", "1.96"),
     ("MASTER_EXECUTION_ROADMAP.md", "cargo", "1.96"),
 }
+
+
+def unused_version_exemptions(root: pathlib.Path) -> list[str]:
+    """Every QUOTED_STALE_VERSIONS triple whose file no longer quotes that version.
+
+    Judged only where the file EXISTS under `root`: this gate's own tests run it on synthetic
+    roots that carry none of the real documents, and "the exempted file is not in this tree" is
+    not a claim about the exemption. In the real repository the file is there and the rule holds.
+    """
+    problems: list[str] = []
+    for rel, tool, version in sorted(QUOTED_STALE_VERSIONS):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        quoted = {(t.lower().rstrip("3"), v) for t, v in VERSION.findall(text)}
+        if (tool, version) not in quoted:
+            problems.append(
+                f"QUOTED_STALE_VERSIONS exempts `{tool} {version}` in {rel}, and {rel} no longer "
+                f"says it. An exemption that outlives its sentence lets the stale number back in "
+                f"unflagged; remove the entry from tools/check_doc_claims.py")
+    return problems
 
 
 def anchored_pr_heads(root: pathlib.Path) -> set[str]:
@@ -296,18 +323,36 @@ def _version_prefix(claimed: str, actual: str) -> bool:
     return len(want) <= len(have) and have[:len(want)] == want
 
 
-def known_tickets() -> set[str]:
+#: Where tickets live. A ticket id named in a canonical document must appear in one of these.
+TICKET_SOURCES = (
+    "TASKS.md", "apps/desktop/AUDIT/AUDIT_LEDGER.md",
+    "apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md",
+    "docs/archive/TASKS_ARCHIVE_2026-08.md",
+    # A row carried off the board is still a real ticket. Without this line,
+    # every canonical mention of the twelve merged rows moved out on
+    # 2026-09-19 becomes "a ticket in no board" -- the gate working, and a
+    # genuine RED rather than a formality.
+    "docs/archive/TASKS_ARCHIVE_2026-09.md",
+    "docs/PHASE_10_PRODUCTION_ITEMS.md", "docs/OWNER_ACTION_REQUIRED.md",
+)
+
+
+def known_tickets(root: pathlib.Path = ROOT) -> set[str]:
+    """Every ticket id the boards, ledgers and archives UNDER `root` name.
+
+    `root` is the caller's. This took no argument and read `ROOT / rel`, while `main(root)`
+    called it -- the defect `git()`'s docstring above says was fixed, in the function next to
+    it. So on a synthetic root the ticket check consulted the REAL repository's boards: a
+    made-up id was "in no board" because it is in no board HERE, the right answer for the
+    wrong reason, and a fixture naming a real id passed with no board in the fixture at all.
+
+    Limit, kept and stated: TASKS.md and the ledger are both sources and checked documents, so
+    an id typed into one of them is "known" by being typed. That is the design -- a ticket
+    exists where tickets live -- and what this check holds is every OTHER document to them.
+    """
     ids: set[str] = set()
-    for rel in ("TASKS.md", "apps/desktop/AUDIT/AUDIT_LEDGER.md",
-                "apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md",
-                "docs/archive/TASKS_ARCHIVE_2026-08.md",
-                # A row carried off the board is still a real ticket. Without this line,
-                # every canonical mention of the twelve merged rows moved out on
-                # 2026-09-19 becomes "a ticket in no board" -- the gate working, and a
-                # genuine RED rather than a formality.
-                "docs/archive/TASKS_ARCHIVE_2026-09.md",
-                "docs/PHASE_10_PRODUCTION_ITEMS.md", "docs/OWNER_ACTION_REQUIRED.md"):
-        path = ROOT / rel
+    for rel in TICKET_SOURCES:
+        path = root / rel
         if path.is_file():
             ids |= set(TICKET.findall(path.read_text(encoding="utf-8", errors="ignore")))
     return ids
@@ -517,9 +562,10 @@ def main(root: pathlib.Path = ROOT) -> int:
         print(f"RED: cannot read {MANIFEST_REL}: {exc}")
         return 1
 
-    tickets = known_tickets()
+    tickets = known_tickets(root)
     versions, toolchain_problem = declared_versions(root)
     problems: list[str] = [] if toolchain_problem is None else [toolchain_problem]
+    problems += unused_version_exemptions(root)
     checked = {"paths": 0, "shas": 0, "tickets": 0, "versions": 0, "control": 0}
     # Resolved once, not per hash: `main` does not move during a run, and a
     # per-hash lookup would make the verdict depend on how many hashes there are.

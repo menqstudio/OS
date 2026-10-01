@@ -141,6 +141,34 @@ class SpecReferenceGateTests(unittest.TestCase):
 # These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
 # exactly why ci.yml now runs the tools suite on windows-latest as well.
 
+class SkippedDirectoriesAreJudgedBelowTheRoot(unittest.TestCase):
+    """`source_files` tested the ABSOLUTE path against the skip list, so a checkout under a
+    directory named `dist` (or `target`, or `AUDIT`) scanned nothing and declared every
+    section reference in the source accounted for."""
+
+    def setUp(self):
+        self.original_root = gate.ROOT
+        self.outer = pathlib.Path(
+            __import__("tempfile").mkdtemp(prefix="brops-specgate-skip-")).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.outer, ignore_errors=True))
+        self.addCleanup(lambda: setattr(gate, "ROOT", self.original_root))
+        gate.ROOT = self.outer / "dist" / "AUDIT" / "repo"
+        (gate.ROOT / "engine").mkdir(parents=True)
+        (gate.ROOT / "engine" / "thing.py").write_text("# see §4.2\n", encoding="utf-8")
+
+    def rels(self):
+        return [p.relative_to(gate.ROOT).as_posix() for p in gate.source_files()]
+
+    def test_sources_are_found_under_a_root_named_like_a_skipped_directory(self):
+        self.assertEqual(self.rels(), ["engine/thing.py"])
+
+    def test_a_skipped_directory_INSIDE_the_root_is_still_skipped(self):
+        nested = gate.ROOT / "engine" / "node_modules" / "pkg"
+        nested.mkdir(parents=True)
+        (nested / "x.py").write_text("# §9.9\n", encoding="utf-8")
+        self.assertEqual(self.rels(), ["engine/thing.py"])
+
+
 class MissingDeclarationMessagePathSpelling(unittest.TestCase):
     def test_the_missing_declaration_message_spells_the_path_with_forward_slashes(self):
         import contextlib

@@ -733,11 +733,333 @@ class SettledHeadTests(unittest.TestCase):
         self.assertEqual(sap.settled_head_for(self.HEAD, None), self.HEAD)
 
     def test_an_unreadable_gh_fails_SOFT_rather_than_refusing_the_settle(self):
-        # Deliberate asymmetry with parked_roles(), which refuses. This helper only avoids MOVING a
-        # field that is already right; a gh outage must not turn a settle into a refusal, and the
-        # gate downstream still fails closed if the value is wrong.
-        self._patch(None)
-        self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)
+        """Deliberate asymmetry with parked_roles(), which refuses. This helper only avoids
+        MOVING a field that is already right; a gh outage must not turn a settle into a
+        refusal, and the gate downstream still fails closed if the value is wrong.
+
+        Driven through the REAL `carrier_merge_commit`, with `gh` itself failing. This test
+        used to be byte-for-byte the open-carrier test above -- `_patch(None)` and the same
+        assertion -- so it replaced the function under test with a lambda and the three
+        fail-soft arms inside it (non-zero exit, unparseable JSON, an oid that is not 40 hex)
+        were run by nothing.
+        """
+        for label, completed in self.GH_FAILURES:
+            with self.subTest(gh=label):
+                self._gh(completed)
+                self.assertIsNone(sap.carrier_merge_commit(138))
+                self.assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)
+
+    GH_FAILURES = (
+        # A failing `gh` that still printed a well-formed answer is not believed either.
+        ("non-zero exit", subprocess.CompletedProcess(
+            [], 1, json.dumps({"mergeCommit": {"oid": "a" * 40}}), "GraphQL: outage")),
+        ("not JSON", subprocess.CompletedProcess([], 0, "<html>502</html>", "")),
+        ("empty output", subprocess.CompletedProcess([], 0, "", "")),
+        ("no merge commit", subprocess.CompletedProcess([], 0, '{"mergeCommit": null}', "")),
+        ("short oid", subprocess.CompletedProcess([], 0, '{"mergeCommit": {"oid": "abc123"}}', "")),
+        ("non-hex oid", subprocess.CompletedProcess(
+            [], 0, json.dumps({"mergeCommit": {"oid": "z" * 40}}), "")),
+    )
+
+    def _gh(self, completed):
+        real = sap.subprocess.run
+        self.addCleanup(setattr, sap.subprocess, "run", real)
+        sap.subprocess.run = lambda *a, **k: completed
+
+    def test_a_readable_merge_commit_is_returned_as_it_is(self):
+        """The control for the six failures above: the same road, answering."""
+        self._gh(subprocess.CompletedProcess(
+            [], 0, json.dumps({"mergeCommit": {"oid": self.HEAD}}), ""))
+        self.assertEqual(sap.carrier_merge_commit(138), self.HEAD)
+
+
+class _Repository(unittest.TestCase):
+    """A whole throwaway repository for the two entry points: the mirror, the three banner
+    documents, and every network read replaced by a value. `main()` and `settle()` had no test
+    at all, which is how the ORDER of their steps went unexamined."""
+
+    HEAD = "f" * 40
+    PARENT = "e" * 40
+    OLD = "a" * 40
+
+    def setUp(self):
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        (self.root / "config").mkdir()
+        self.state = self.root / "config" / "current_state.json"
+        self.state.write_text(json.dumps({
+            "schema": 2,
+            "settled_at_main_head": self.OLD,
+            "sync": {"baseline_main_head_at_sync": self.OLD, "snapshot_branch": "feat/old"},
+            "active": {"branch": "feat/old"},
+            "prs": [],
+            "current_workflow_pr": {"number": 300, "branch": "feat/old", "state": "open",
+                                    "what": "the old carrier", "note": "old note", "base": "main"},
+            "next_action_by_carrier": {"current": "PR #300", "_note": "old", "open": "o",
+                                       "merged": "m"},
+        }, indent=2), encoding="utf-8")
+        for name in sap.BANNER_FILES:
+            (self.root / name).write_text(
+                "# " + name + "\n\n" + sap.BANNER_OPEN + "\nold banner\n" + sap.BANNER_CLOSE
+                + "\n\n## Body\n", encoding="utf-8")
+        self.merge_commit = None
+        for name, value in (
+            ("ROOT", self.root), ("STATE", self.state),
+            ("live_main_head", lambda: self.HEAD),
+            ("take_main_ci_reading", lambda: {}),
+            ("live_open_prs", lambda: []),
+            ("carrier_merge_commit", lambda number: self.merge_commit),
+        ):
+            self.addCleanup(setattr, sap, name, getattr(sap, name))
+            setattr(sap, name, value)
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {p.name: p.read_bytes() for p in [self.state] + [self.root / n for n in sap.BANNER_FILES]}
+
+    def mirror(self) -> dict:
+        return json.loads(self.state.read_text(encoding="utf-8"))
+
+    def run_quietly(self, fn, *args, **kwargs):
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return fn(*args, **kwargs)
+
+    def refuse(self, name: str, message: str):
+        def refusing(*a, **k):
+            raise SystemExit("RED: " + message + ". Nothing has been written.")
+        self.addCleanup(setattr, sap, name, getattr(sap, name))
+        setattr(sap, name, refusing)
+
+    def assertRefusesAndWritesNothing(self, fn, *args, needle: str = "Nothing has been written"):
+        """`fn` refuses, and the mirror and the three documents are byte-identical after."""
+        before = self.snapshot()
+        with self.assertRaises(SystemExit) as caught:
+            self.run_quietly(fn, *args)
+        self.assertIn(needle, str(caught.exception))
+        self.assertEqual(self.snapshot(), before,
+                         "the tool refused, said nothing was written, and something was")
+
+
+class ARefusalWritesNothing_Sync(_Repository):
+    """`--pr N --branch B --summary S`. Each of these refusals ends "Nothing has been written"
+    and each fired AFTER `config/current_state.json` had been rewritten."""
+
+    ARGS = ["--pr", "301", "--branch", "feat/new", "--what", "the new carrier"]
+
+    def sync(self, summary: str = "One line on what this PR does."):
+        return sap.main(self.ARGS + ["--summary", summary])
+
+    def sync_unguarded(self, summary: str = "One line on what this PR does."):
+        """`main` WITHOUT the restore-on-refusal guard, so what these tests show is the ORDER:
+        the refusal came before any write, rather than a write that was then put back."""
+        return sap.main.__wrapped__(self.ARGS + ["--summary", summary])
+
+    def test_the_control_a_good_run_moves_the_mirror_and_all_three_banners(self):
+        self.assertEqual(self.run_quietly(self.sync), 0)
+        mirror = self.mirror()
+        self.assertEqual(mirror["current_workflow_pr"]["number"], 301)
+        self.assertEqual(mirror["current_workflow_pr"]["what"], "the new carrier")
+        self.assertEqual(mirror["active"]["branch"], "feat/new")
+        self.assertEqual(mirror["sync"]["baseline_main_head_at_sync"], self.HEAD)
+        for name in sap.BANNER_FILES:
+            text = (self.root / name).read_text(encoding="utf-8")
+            self.assertIn("CURRENT ACTIVE: PR #301", text)
+            self.assertNotIn("old banner", text)
+            self.assertIn("## Body", text)
+
+    def test_a_banner_over_its_ceiling_refuses_before_the_mirror_moves(self):
+        """The reproduction in the finding: a 1500-character --summary."""
+        self.assertRefusesAndWritesNothing(self.sync_unguarded, "x" * 1500)
+
+    def test_an_unreadable_audit_position_refuses_before_the_mirror_moves(self):
+        self.refuse("audit_position_sentence", "the audit ledger announces no round")
+        self.assertRefusesAndWritesNothing(self.sync_unguarded)
+
+    def test_an_unlistable_set_of_open_prs_refuses_before_the_mirror_moves(self):
+        self.refuse("live_open_prs", "`gh pr list` failed AND the REST fallback failed")
+        self.assertRefusesAndWritesNothing(self.sync_unguarded)
+
+    def test_a_document_without_banner_markers_refuses_before_the_mirror_moves(self):
+        (self.root / "TASKS.md").write_text("# TASKS\n\nno markers here\n", encoding="utf-8")
+        self.assertRefusesAndWritesNothing(self.sync_unguarded, needle="TASKS.md carries no")
+
+    def test_a_writer_that_refuses_midway_leaves_the_mirror_as_it_found_it(self):
+        """rewrite_state has already written by the time rewrite_main_ci can refuse. The
+        sentence is made true by putting the mirror's bytes back, not by rewording it."""
+        self.refuse("rewrite_main_ci", "rewriting main_ci changed its SHAPE")
+        self.assertRefusesAndWritesNothing(self.sync)
+
+
+class ARefusalWritesNothing_Settle(_Repository):
+    """`--settled`, with and without the pull request that records it."""
+
+    def settle(self, next_up=None, pr=302, branch="chore/settle"):
+        return sap.settle(self.HEAD, next_up, pr, branch)
+
+    def settle_unguarded(self, next_up=None, pr=302, branch="chore/settle"):
+        """`settle` WITHOUT the restore-on-refusal guard: these show the ORDER of its steps."""
+        return sap.settle.__wrapped__(self.HEAD, next_up, pr, branch)
+
+    def test_a_banner_over_its_ceiling_refuses_before_the_mirror_moves(self):
+        self.assertRefusesAndWritesNothing(self.settle_unguarded, "x" * 1500)
+
+    def test_an_unreadable_audit_position_refuses_before_the_mirror_moves(self):
+        self.refuse("audit_position_sentence", "config/current_state.json names no report")
+        self.assertRefusesAndWritesNothing(self.settle_unguarded)
+
+    def test_a_document_without_banner_markers_refuses_before_the_mirror_moves(self):
+        (self.root / "NEXT_CHAT.md").write_text("# NEXT\n", encoding="utf-8")
+        self.assertRefusesAndWritesNothing(self.settle_unguarded, needle="NEXT_CHAT.md carries no")
+
+    def test_a_writer_that_refuses_midway_leaves_the_mirror_as_it_found_it(self):
+        """settle() writes `settled_at_main_head` itself and THEN calls the writers; a refusal
+        from any of them used to leave that first write behind."""
+        self.refuse("rewrite_carrier_block", "the carrier block could not be rewritten")
+        self.assertRefusesAndWritesNothing(self.settle)
+
+
+class SettleWritesOneAnswer(_Repository):
+    """settle() computed three values that rewrite_state() then overwrote in the same run."""
+
+    def settle(self, pr=302, branch="chore/settle"):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            sap.settle(self.HEAD, None, pr, branch)
+        return out.getvalue()
+
+    def test_with_its_own_pull_request_the_branch_fields_name_that_branch(self):
+        said = self.settle()
+        mirror = self.mirror()
+        self.assertEqual(mirror["active"]["branch"], "chore/settle")
+        self.assertEqual(mirror["sync"]["snapshot_branch"], "chore/settle")
+        self.assertEqual(mirror["current_workflow_pr"]["number"], 302)
+        self.assertEqual(mirror["settled_at_main_head"], self.HEAD)
+        # ... and the closing line says so, instead of "banners point at main" over a banner
+        # that names a pull request and its branch.
+        self.assertIn("the banners name PR #302 on chore/settle", said)
+        self.assertNotIn("banners point at main", said)
+        self.assertIn("PR #302 on `chore/settle`",
+                      (self.root / "NEXT_CHAT.md").read_text(encoding="utf-8"))
+
+    def test_without_one_the_branch_fields_go_to_main(self):
+        said = self.settle(pr=None, branch=None)
+        mirror = self.mirror()
+        self.assertEqual(mirror["active"]["branch"], "main")
+        self.assertEqual(mirror["sync"]["snapshot_branch"], "main")
+        self.assertIn("banners point at main, not at a deleted branch", said)
+
+    def test_the_first_parent_rule_survives_the_carrier_rewrite(self):
+        """`settled_head_for` exists to write the value the gate pins the field to: the first
+        parent of the carrier's merge commit. rewrite_state() overwrote it with the live head
+        a few lines later, so with --pr the rule was dead code."""
+        self.merge_commit = self.HEAD                 # the settle PR merged AS the head settled at
+
+        class _Parent:
+            stdout = self.PARENT
+            returncode = 0
+        real = sap.subprocess.run
+        self.addCleanup(setattr, sap.subprocess, "run", real)
+        sap.subprocess.run = lambda *a, **k: _Parent()
+        self.settle()
+        mirror = self.mirror()
+        self.assertEqual(mirror["settled_at_main_head"], self.PARENT)
+        self.assertEqual(mirror["sync"]["baseline_main_head_at_sync"], self.HEAD)
+
+
+class ASwapThatFindsNothingRefuses(_StateFile):
+    """`swap()` was silent when its text was absent, which is how two swaps went on "patching"
+    sentences the mirror had not carried for months."""
+
+    def state(self, text: str):
+        self.path.write_text(text, encoding="utf-8")
+
+    GOOD = json.dumps({
+        "schema": 2, "settled_at_main_head": "a" * 40,
+        "sync": {"baseline_main_head_at_sync": "a" * 40, "snapshot_branch": "b"},
+        "active": {"branch": "b"}, "prs": [],
+        "current_workflow_pr": {"number": 180, "branch": "b", "state": "open", "note": "n"},
+    }, indent=2)
+
+    def test_the_control_the_expected_layout_is_rewritten(self):
+        self.state(self.GOOD)
+        changed = sap.rewrite_state(180, "c", "s", "f" * 40)
+        self.assertEqual(self.read()["active"]["branch"], "c")
+        for label in ("baseline head", "settled head", "snapshot branch", "active branch",
+                      "workflow pr", "note"):
+            self.assertIn(label, changed)
+
+    def test_a_layout_the_patterns_do_not_match_is_refused_by_name(self):
+        """`active` written on one line: valid JSON, same data, and the active-branch swap
+        finds nothing. It used to report success and leave `active.branch` on the old value."""
+        one_line = self.GOOD.replace('"active": {\n    "branch": "b"\n  },',
+                                     '"active": {"branch": "b"},')
+        self.assertNotEqual(one_line, self.GOOD)
+        self.state(one_line)
+        with self.assertRaises(SystemExit) as caught:
+            sap.rewrite_state(180, "c", "s", "f" * 40)
+        self.assertIn("cannot move the active branch", str(caught.exception))
+        self.assertIn("Nothing has been written", str(caught.exception))
+        self.assertEqual(self.path.read_text(encoding="utf-8"), one_line)
+
+    def test_no_swap_patches_text_the_mirror_does_not_carry(self):
+        """The two dead swaps named sentences -- "marker in the PR #N body." and "self-carrier
+        is PR #N)" -- that are in neither the fixture nor the real mirror."""
+        real = (pathlib.Path(sap.__file__).resolve().parents[1] / "config"
+                / "current_state.json").read_text(encoding="utf-8")
+        source = pathlib.Path(sap.__file__).read_text(encoding="utf-8")
+        for phrase in ("marker in the PR #", "self-carrier is PR #"):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, real)
+                self.assertNotIn(phrase, source)
+
+
+class RestRoadParsing(unittest.TestCase):
+    """The REST road parses with the gate's `_json_documents` and is bounded by a timeout."""
+
+    ROW = {"number": 7, "head": {"ref": "b", "sha": "c" * 40}, "base": {"ref": "main"},
+           "draft": False, "title": "t"}
+
+    def setUp(self):
+        self._real = (sap._repo_slug, sap.subprocess.run)
+        self.addCleanup(lambda: setattr(sap, "_repo_slug", self._real[0]))
+        self.addCleanup(lambda: setattr(sap.subprocess, "run", self._real[1]))
+        sap._repo_slug = lambda: "someone/fork"
+
+    def rows(self, stdout: str):
+        sap.subprocess.run = lambda args, **k: subprocess.CompletedProcess(args, 0, stdout, "")
+        return sap._rest_open_prs()
+
+    def page(self, number: int) -> str:
+        return json.dumps([dict(self.ROW, number=number)])
+
+    def test_every_shape_gh_paginate_can_emit_is_read(self):
+        """`[..][..]` is the one the old `.replace("][", "],[")` turned into `Extra data` and a
+        None -- the shape it was written to defend."""
+        for label, stdout in (
+            ("one array", json.dumps([dict(self.ROW, number=7), dict(self.ROW, number=9)])),
+            ("concatenated arrays", self.page(7) + self.page(9)),
+            ("one array per line", self.page(7) + "\n" + self.page(9) + "\n"),
+        ):
+            with self.subTest(shape=label):
+                self.assertEqual([r["number"] for r in self.rows(stdout)], [7, 9])
+
+    def test_a_truncated_page_is_no_answer_rather_than_a_partial_one(self):
+        self.assertIsNone(self.rows(self.page(7) + '[{"number": 9, "head"'))
+
+    def test_the_read_is_bounded_and_a_hang_is_no_answer(self):
+        seen = {}
+
+        def hang(args, **kwargs):
+            seen.update(kwargs)
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        sap.subprocess.run = hang
+        self.assertIsNone(sap._rest_open_prs())
+        self.assertEqual(seen.get("timeout"), 60)
 
 
 if __name__ == "__main__":

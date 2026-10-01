@@ -213,10 +213,10 @@ def check(root: pathlib.Path) -> tuple[list[str], int, int]:
     return problems, files, calls
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=".")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     root = pathlib.Path(args.root)
 
     problems, files, calls = check(root)

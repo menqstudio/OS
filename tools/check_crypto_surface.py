@@ -40,7 +40,20 @@ The `fixed=` datum lives inside the `#` comment because the workflow's own parse
 file with `id="${line%%#*}"` and then strips all whitespace — anything left outside the comment
 would be concatenated onto the advisory id and passed to pip-audit as garbage.
 
-Exit 0 = both rules hold. Exit 1 = a violation. No other outcome.
+  **Rule 3 — one RustSec waiver list, written twice.** The Rust waivers live in two files,
+  `cargo-audit-ignore.txt` for cargo-audit and `[advisories].ignore` in `deny.toml` for
+  cargo-deny, and each carries a comment saying "keep in sync" with the other. A comment is
+  not a check: an id added to one and not the other is an advisory one scanner waives and the
+  other does not, and whichever job is read first decides what the reader believes. The two
+  must be the same set.
+
+  **Rule 0 — there was something to check.** A missing waiver file, a requirements file with
+  no `cryptography==` pin, or a root with no Python in it is RED. Before this rule, running
+  the gate from an empty directory printed "GREEN: ... 0 waived advisories each record a fix
+  above the pinned (unpinned)", and so did renaming the waiver file: `--root` defaulted to
+  the current directory, and every absent input read as "nothing to object to".
+
+Exit 0 = every rule holds. Exit 1 = a violation. No other outcome.
 
 **What this gate does NOT do**, printed on every run because a gate that overstates its
 coverage is the same lie one level up:
@@ -59,12 +72,17 @@ import ast
 import pathlib
 import re
 import sys
+import tomllib
 
 #: The advisory-waiver file whose premises this gate defends.
 IGNORE_FILE = pathlib.Path(".github/supply-chain/pip-audit-ignore.txt")
 
 #: The hash-pinned requirements that decide which waivers are still needed.
 REQUIREMENTS = pathlib.Path("engine/requirements-ci.txt")
+
+#: The two homes of the RustSec waiver list (rule 3).
+CARGO_AUDIT_IGNORE = pathlib.Path(".github/supply-chain/cargo-audit-ignore.txt")
+CARGO_DENY = pathlib.Path(".github/supply-chain/deny.toml")
 
 #: Directories never scanned: not ours, or not source.
 SKIP_DIRS = frozenset(
@@ -274,14 +292,85 @@ def scan_waivers(root: pathlib.Path) -> tuple[list[str], str | None, int]:
     return problems, pinned, len(entries)
 
 
+def cargo_audit_waivers(root: pathlib.Path) -> set[str] | None:
+    """The ids cargo-audit is told to ignore, read the way the workflow reads them
+    (`id="${line%%#*}"`, whitespace stripped). None when the file is absent."""
+    path = root / CARGO_AUDIT_IGNORE
+    if not path.is_file():
+        return None
+    ids = (re.sub(r"\s+", "", line.split("#", 1)[0])
+           for line in path.read_text(encoding="utf-8").splitlines())
+    return {identifier for identifier in ids if identifier}
+
+
+def cargo_deny_waivers(root: pathlib.Path) -> set[str] | None:
+    """The ids `[advisories].ignore` in deny.toml waives. None when the file is absent.
+
+    An entry is a bare string or a `{ id = "...", reason = "..." }` table; both are read.
+    """
+    path = root / CARGO_DENY
+    if not path.is_file():
+        return None
+    document = tomllib.loads(path.read_text(encoding="utf-8"))
+    entries = (document.get("advisories") or {}).get("ignore") or []
+    return {str(entry.get("id") if isinstance(entry, dict) else entry) for entry in entries}
+
+
+def scan_rustsec_waivers(root: pathlib.Path) -> tuple[list[str], int]:
+    """Rule 3. The two RustSec waiver lists are one set. Returns (problems, how many ids)."""
+    try:
+        audit, deny = cargo_audit_waivers(root), cargo_deny_waivers(root)
+    except tomllib.TOMLDecodeError as error:
+        return [f"{CARGO_DENY.as_posix()} is not valid TOML ({error}), so its waiver list "
+                f"cannot be compared with {CARGO_AUDIT_IGNORE.as_posix()}"], 0
+    problems = [f"{rel.as_posix()} is missing, so the RustSec waiver list has one home "
+                f"instead of two and nothing can be compared"
+                for rel, found in ((CARGO_AUDIT_IGNORE, audit), (CARGO_DENY, deny))
+                if found is None]
+    if problems:
+        return problems, 0
+    for only, here, there in ((sorted(audit - deny), CARGO_AUDIT_IGNORE, CARGO_DENY),
+                              (sorted(deny - audit), CARGO_DENY, CARGO_AUDIT_IGNORE)):
+        if only:
+            problems.append(
+                f"{here.as_posix()} waives {', '.join(only)} and {there.as_posix()} does not. "
+                f"The two files are one waiver list read by two scanners; an id in only one of "
+                f"them is waived by one job and reported by the other")
+    return problems, len(audit)
+
+
+def missing_inputs(root: pathlib.Path, pinned: str | None) -> list[str]:
+    """Rule 0. What this gate reads must be there to be read."""
+    problems: list[str] = []
+    if not (root / IGNORE_FILE).is_file():
+        problems.append(
+            f"{IGNORE_FILE.as_posix()} is missing under {root} — the waiver file this gate "
+            f"defends was not read, so nothing about it was checked")
+    if not (root / REQUIREMENTS).is_file():
+        problems.append(f"{REQUIREMENTS.as_posix()} is missing under {root} — there is no pin to "
+                        f"hold a waiver to")
+    elif pinned is None:
+        problems.append(f"{REQUIREMENTS.as_posix()} names no `cryptography==` pin — there is no "
+                        f"pin to hold a waiver to")
+    if not python_files(root):
+        problems.append(f"no Python source was found under {root} — the surface scan read "
+                        f"nothing, which is not the same as finding nothing")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", default=".", help="repository root (default: cwd)")
+    # The repository this file sits in, not the current directory: a gate whose verdict
+    # depends on where the shell happens to be standing answers about the wrong tree.
+    parser.add_argument("--root", default=str(pathlib.Path(__file__).resolve().parents[1]),
+                        help="repository root (default: the repository this script is in)")
     args = parser.parse_args(argv)
     root = pathlib.Path(args.root).resolve()
 
     surface = scan_surface(root)
     waivers, pinned, waived_count = scan_waivers(root)
+    rustsec, rustsec_count = scan_rustsec_waivers(root)
+    absent = missing_inputs(root, pinned)
 
     print("Limits of this gate, stated on every run:")
     print("  - a static AST scan of *.py; dynamic getattr/import_module walks past it")
@@ -289,8 +378,18 @@ def main(argv: list[str] | None = None) -> int:
     print("  - it checks a waiver's PREMISE and its freshness, never whether it was right")
     print()
 
-    if surface or waivers:
-        print("RED: the pip-audit waivers no longer rest on what they claim")
+    if absent:
+        print("RED: this gate had nothing to check")
+        print()
+        print("  Rule 0 — an input is missing, and a missing input is not a clean one:")
+        for problem in absent:
+            print(f"    - {problem}")
+        return 1
+
+    if surface or waivers or rustsec:
+        print("RED: the pip-audit waivers no longer rest on what they claim"
+              if surface or waivers else
+              "RED: the RustSec waiver list is written twice and the two copies differ")
         if surface:
             print()
             waived = (
@@ -315,6 +414,11 @@ def main(argv: list[str] | None = None) -> int:
             print("  Rule 2 — a waiver does not say what it rests on, or has outlived it:")
             for problem in waivers:
                 print(f"    - {problem}")
+        if rustsec:
+            print()
+            print("  Rule 3 — the RustSec waiver list is not one set:")
+            for problem in rustsec:
+                print(f"    - {problem}")
         return 1
 
     tail = (
@@ -324,7 +428,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"GREEN: cryptography surface is Ed25519-raw only; {tail} above the pinned "
-        f"{pinned or '(unpinned)'}"
+        f"{pinned}; {rustsec_count} RustSec waiver(s) identical in "
+        f"{CARGO_AUDIT_IGNORE.name} and {CARGO_DENY.name}"
     )
     return 0
 

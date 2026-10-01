@@ -215,6 +215,38 @@ class PalettesMirrorTokens(unittest.TestCase):
         self.assertIn("warning", str(caught.exception))
         self.assertIn("#111111", str(caught.exception))
 
+    def test_two_light_tokens_SWAPPED_are_refused(self):
+        """The defect. `bg` and `surface` exchanged: both values are in tokens.ts, so the
+        whole-file substring test accepted a manifest describing a palette nobody ships."""
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        light = manifest["palettes"]["light"]
+        self.assertNotEqual(light["bg"], light["surface"])
+        light["bg"], light["surface"] = light["surface"], light["bg"]
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        said = str(caught.exception)
+        self.assertIn("light palette: bg = ", said)
+        self.assertIn("light palette: surface = ", said)
+
+    def test_a_light_token_carrying_the_DARK_value_is_refused(self):
+        """The right name, the right file, the wrong theme -- also accepted before."""
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        dark_bg = manifest["palettes"]["dark"]["bg"]
+        manifest["palettes"]["light"]["bg"] = dark_bg
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        self.assertIn(f"light palette: bg = {dark_bg}, but", str(caught.exception))
+        self.assertNotIn("dark palette", str(caught.exception))
+
+    def test_an_entry_naming_a_token_the_source_does_not_declare_is_refused(self):
+        manifest = cc.load_manifest(REPO_ROOT / cc.DEFAULT_MANIFEST)
+        manifest["palettes"]["light"]["no-such-token"] = "#ffffff"   # a value that IS in the file
+        manifest["palettes"]["light"]["aios-no-such"] = "#ffffff"
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
+        self.assertIn("declares no `noSuchToken` for the light theme", str(caught.exception))
+        self.assertIn("declares no `--no-such` for the light theme", str(caught.exception))
+
     def test_selected_is_exempt_because_it_is_a_composite(self):
         # `selected` is an rgba in the tokens and a precomputed opaque composite here, so there is
         # nothing for it to match. Exempt BY NAME, not by pattern — a suffix rule would silently
@@ -233,6 +265,53 @@ class PalettesMirrorTokens(unittest.TestCase):
         with self.assertRaises(cc.ContrastError):
             cc._require_palettes_mirror_tokens(manifest["palettes"], REPO_ROOT)
 
+
+
+class ThePaletteReaders(unittest.TestCase):
+    """The two parsers the per-token comparison stands on, on text small enough to read."""
+
+    TS = (
+        "export const lightColors: ColorTokens = {\n"
+        "  bg: '#F5F6F8',\n  accentText: '#ffffff',\n  hover: 'rgba(56, 86, 254, 0.08)',\n};\n\n"
+        "export const darkColors: ColorTokens = {\n  bg: '#0c0e13',\n  accentText: '#0c0e13',\n};\n"
+    )
+    CSS = (
+        ":root{\n  /* --ink:#000000; a comment is not a declaration */\n"
+        "  --ink:#EAF0F8; --cyan:#38BDF8;\n  --bg:#05070C\n}\n"
+        "@media (max-width:600px){ :root{ --s5:12px } }\n"
+        ':root[data-theme="light"]{ --ink:#0C1220; --bg:#F4F7FC; }\n'
+    )
+
+    def test_tokens_ts_is_read_per_theme_and_lower_cased(self):
+        self.assertEqual(cc.tokens_ts_palettes(self.TS), {
+            "light": {"bg": "#f5f6f8", "accentText": "#ffffff", "hover": "rgba(56, 86, 254, 0.08)"},
+            "dark": {"bg": "#0c0e13", "accentText": "#0c0e13"},
+        })
+
+    def test_a_tokens_ts_without_a_theme_block_is_refused(self):
+        with self.assertRaises(cc.ContrastError) as caught:
+            cc.tokens_ts_palettes(self.TS.replace("darkColors", "nightColors"))
+        self.assertIn("darkColors", str(caught.exception))
+
+    def test_aios_light_is_the_base_overlaid_with_the_light_block(self):
+        palettes = cc.aios_palettes(self.CSS)
+        self.assertEqual(palettes["dark"], {"--ink": "#eaf0f8", "--cyan": "#38bdf8",
+                                            "--bg": "#05070c"})
+        # `--cyan` is not restated for light, so light inherits the base value -- as a browser does.
+        self.assertEqual(palettes["light"], {"--ink": "#0c1220", "--cyan": "#38bdf8",
+                                             "--bg": "#f4f7fc"})
+
+    def test_a_responsive_root_block_is_not_a_theme(self):
+        self.assertNotIn("--s5", cc.aios_palettes(self.CSS)["light"])
+
+    def test_an_aios_css_without_a_base_root_block_is_refused(self):
+        with self.assertRaises(cc.ContrastError):
+            cc.aios_palettes(':root[data-theme="light"]{ --ink:#0C1220; }')
+
+    def test_the_manifest_spelling_maps_to_the_tokens_ts_key(self):
+        self.assertEqual(cc._camel("accent-text"), "accentText")
+        self.assertEqual(cc._camel("success-tint"), "successTint")
+        self.assertEqual(cc._camel("bg"), "bg")
 
 
 class TwoPalettes(unittest.TestCase):

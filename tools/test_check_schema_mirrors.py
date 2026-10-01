@@ -194,6 +194,39 @@ class ScopedValidationTests(unittest.TestCase):
     def test_a_declared_negative_test_that_was_renamed_away_is_not(self):
         self.assertFalse(m.has_negative_test(self.SRC, "rejects_bad_thing_schema_v2"))
 
+    NEGATIVE = "fn rejects_bad_schema_version() { assert!(parse(\"{}\").is_err()); }\n"
+
+    def _has(self, attributes: str) -> bool:
+        return m.has_negative_test(attributes + self.NEGATIVE, "rejects_bad_schema_version")
+
+    def test_the_attribute_is_part_of_the_check(self):
+        """`G-02`: the function without `#[test]` above it is a function, not a test."""
+        self.assertTrue(self._has("#[test]\n"))
+        self.assertFalse(self._has(""))
+        self.assertFalse(self._has("#[allow(dead_code)]\n"))
+        self.assertFalse(self._has("// #[test]\n"))
+
+    def test_harmless_attributes_beside_test_are_accepted(self):
+        for attributes in ("#[test]\n#[should_panic]\n", "#[should_panic(expected = \"x\")]\n#[test]\n",
+                           "#[test]\n#[allow(clippy::unwrap_used)]\n"):
+            with self.subTest(attributes=attributes):
+                self.assertTrue(self._has(attributes))
+
+    def test_an_IGNORED_negative_test_is_not_a_negative_test(self):
+        """The hole. `#[test] #[ignore] fn …` was accepted -- the docstring even named
+        `#[ignore]` as tolerated -- and cargo does not run it."""
+        for attributes in ("#[test]\n#[ignore]\n", "#[ignore]\n#[test]\n",
+                           "#[test]\n#[ignore = \"flaky\"]\n", "#[test] #[ignore]\n"):
+            with self.subTest(attributes=attributes):
+                self.assertFalse(self._has(attributes))
+
+    def test_a_cfg_gated_negative_test_is_not_one_either(self):
+        """Not compiled where the condition is false, so not run there."""
+        for attributes in ("#[test]\n#[cfg(windows)]\n", "#[cfg(target_os = \"linux\")]\n#[test]\n",
+                           "#[test]\n#[cfg_attr(not(feature = \"slow\"), ignore)]\n"):
+            with self.subTest(attributes=attributes):
+                self.assertFalse(self._has(attributes))
+
 
 class RealRepositoryTests(unittest.TestCase):
     """The regression: the real mirrors, against the real schemas."""

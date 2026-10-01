@@ -677,6 +677,39 @@ def undeclared_references(refs: dict[str, list[str]], declared, local_ok: set[st
     return failures
 
 
+def tokens_set_anywhere(texts: dict[str, str], root_declared) -> set[str]:
+    """Every custom property something in the tree SETS. Pure/testable.
+
+    Anything SET anywhere in the tree counts as declared for the reference check; only the §C.1
+    comparison insists on the root block. "Set" has to include the React inline-style form —
+    `style={{ ['--i']: index }}` is how every staggered list in this app passes its index to CSS,
+    and a scan that only understood `--i: 0;` would report all of them as broken. The looser
+    pattern is deliberate: this check exists to find tokens NOTHING sets, so it must err toward
+    believing a token is set.
+
+    This lived inline in `main()`, where no test could reach it. The A-09 test written for its
+    comment-stripping -- `test_a_declaration_inside_a_COMMENT_does_not_count` -- handed
+    `undeclared_references` an EMPTY declared set and a stylesheet with no comment in it, so
+    replacing the stripping below with `live = text` left all 56 tests green.
+    """
+    declared_anywhere = set(root_declared)
+    for text in texts.values():
+        # Comments are stripped HERE TOO. They were stripped on the reference side and not on the
+        # declaring side, so `/* --x: 4px */` in any file silenced a real undeclared `var(--x)`
+        # anywhere in the tree — a check defeated by a comment (A-09, fifth audit).
+        live = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+        for name, value in re.findall(
+                r"""['"\[\s]*(--[a-zA-Z0-9-]+)['"\]\s]*:\s*([^;,}\n]*)""", live):
+            # A TYPE ANNOTATION SETS NOTHING. `type T = { '--x': string }` matched the same shape
+            # as a real declaration and counted as one. A bare TS primitive on the value side is
+            # never a CSS value, so it is the cheap, exact discriminator.
+            if value.strip().rstrip("|&?") .strip() in {"string", "number", "boolean", "any", "unknown"}:
+                continue
+            declared_anywhere.add(name)
+        declared_anywhere |= set(re.findall(r"""setProperty\(\s*['"](--[a-zA-Z0-9-]+)['"]""", live))
+    return declared_anywhere
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=str(ROOT))
@@ -695,27 +728,7 @@ def main(argv: list[str] | None = None) -> int:
     for pattern in SOURCE_GLOBS:
         for path in root.glob(pattern):
             texts[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
-    # Anything SET anywhere in the tree counts as declared for the reference check; only the §C.1
-    # comparison insists on the root block. "Set" has to include the React inline-style form —
-    # `style={{ ['--i']: index }}` is how every staggered list in this app passes its index to CSS,
-    # and a scan that only understood `--i: 0;` would report all of them as broken. The looser
-    # pattern is deliberate: this check exists to find tokens NOTHING sets, so it must err toward
-    # believing a token is set.
-    declared_anywhere = set(declared)
-    for text in texts.values():
-        # Comments are stripped HERE TOO. They were stripped on the reference side and not on the
-        # declaring side, so `/* --x: 4px */` in any file silenced a real undeclared `var(--x)`
-        # anywhere in the tree — a check defeated by a comment (A-09, fifth audit).
-        live = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-        for name, value in re.findall(
-                r"""['"\[\s]*(--[a-zA-Z0-9-]+)['"\]\s]*:\s*([^;,}\n]*)""", live):
-            # A TYPE ANNOTATION SETS NOTHING. `type T = { '--x': string }` matched the same shape
-            # as a real declaration and counted as one. A bare TS primitive on the value side is
-            # never a CSS value, so it is the cheap, exact discriminator.
-            if value.strip().rstrip("|&?") .strip() in {"string", "number", "boolean", "any", "unknown"}:
-                continue
-            declared_anywhere.add(name)
-        declared_anywhere |= set(re.findall(r"""setProperty\(\s*['"](--[a-zA-Z0-9-]+)['"]""", live))
+    declared_anywhere = tokens_set_anywhere(texts, declared)
 
     failures = compare(expected, declared)
     # Every ORDERED scale, not only spacing. `--t-body: 99px` and `--r-pill: 0px` in a later

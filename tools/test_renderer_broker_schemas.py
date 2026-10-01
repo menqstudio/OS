@@ -7,9 +7,19 @@ on ``jsonschema`` — they load each schema with ``json.load`` (proving it is va
 JSON) and make direct *structural* assertions about the constraints the design
 locks: protocol consts, ``additionalProperties: false`` everywhere, the closed
 committed/blocked oneOf, the committed message's required fields + ``role`` /
-``trust_state`` consts, and the closed ``reason`` enum. Kept in lock-step with
-``apps/desktop/src-tauri/core/src/governed_turn_ipc.rs`` so the Rust wire types
-and the schemas agree.
+``trust_state`` consts, and the closed ``reason`` enum.
+
+WHERE THE SCHEMA AND THE RUST TYPE DO NOT AGREE, stated because this paragraph used to
+say the two are "kept in lock-step": they are, on shape and on every field but one. The
+schema pins the committed message's ``trust_state`` to the const ``trusted_verified``.
+The Rust ``CommittedMessage`` no longer does -- ``CommittedMessage::new`` carries the
+label the committing transaction stored, and ``governed_message_store.rs`` allows two
+(``trusted_verified`` and ``demonstration_custody``). So the broker can project a frame
+this schema refuses, and the renderer (``governedTurn.ts``) refuses it too, on purpose
+and fail-closed. Which side is the contract -- widen the schema to the labels the broker
+can commit, or have the broker decline to project anything but ``trusted_verified`` --
+is a decision about what the window may be shown as committed, and it is the Owner's.
+These tests pin the schema as it is: the NARROWER of the two.
 
 Run: ``python -m unittest tools.test_renderer_broker_schemas`` (or execute the
 file directly).
@@ -143,7 +153,9 @@ class ResultSchemaTests(unittest.TestCase):
         self.assertIs(message["additionalProperties"], False)
         self.assertEqual(set(message["required"]), COMMITTED_MESSAGE_FIELDS)
         self.assertEqual(set(message["properties"]), COMMITTED_MESSAGE_FIELDS)
-        # role and trust_state are LOCKED consts.
+        # role and trust_state are LOCKED consts IN THE SCHEMA. The Rust type's trust_state
+        # is not a constant any more (see the module docstring); this asserts the schema, which
+        # is what the renderer accepts, not what the broker is able to send.
         self.assertEqual(message["properties"]["role"]["const"], "assistant")
         self.assertEqual(
             message["properties"]["trust_state"]["const"], "trusted_verified"

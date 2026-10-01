@@ -60,12 +60,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # WHY rust-cache, AND WHY HERE -- written once; every other use points at this note.
+      # Before it was added, nine crates were rebuilt from zero in every job that touches
+      # cargo: no workflow cached anything (`grep -c "rust-cache|~/.cargo"` over
+      # .github/workflows/*.yml returned 0 for every file at the time). That measurement is
+      # history, not a present claim -- it stopped being true the moment this step landed, and
+      # the paragraph saying so was then pasted, in the present tense, above all eleven uses.
+      # The part that stays true: the step goes AFTER the toolchain step, not after checkout.
+      # The plugin keys its cache on the CURRENT rustc version, so a cache taken before the
+      # toolchain is selected is keyed on the runner's preinstalled compiler and never hits.
+      # That is upstream's own instruction at this sha.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -89,12 +93,7 @@ jobs:
       # The Tauri host crate (`brops`) is deliberately NOT here: it needs webkit2gtk. Its absence
       # is a real coverage gap on Windows and is tracked separately — it is stated rather than
       # papered over by testing something adjacent and calling it covered.
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -143,12 +142,7 @@ jobs:
       # nothing re-ran it — `CURRENT_LINUX_E2E: proven` rested on a single manual run that no gate
       # reproduced (independent audit, ci-tests section). A hosted ubuntu runner has everything the
       # script asks for: passwordless sudo, useradd, setuid on ext4, /opt, and sudoers.d.
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -202,12 +196,7 @@ jobs:
       # one-shot sidecar subprocess, from a SEVENTH principal, driving the real supervisor
       # services, reaching the real privileged recorder → setuid launcher → contained executor,
       # recording the evidence, and exiting non-zero unless the round trip completed.
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -284,12 +273,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -374,8 +358,10 @@ jobs:
       # from `grep -cE '^  [a-z0-9_-]+:$'`, which also counts `push:` and `pull_request:` under
       # `on:` — a number read off a command whose output I had not looked at. And "neither windows
       # job touches tools/" stopped being true in the same commit that wrote it, because that
-      # commit added THIS job. Measured now, with the `jobs:` key as the anchor: **21 jobs — 17
-      # ubuntu, 3 windows, 1 two-OS matrix.**
+      # commit added THIS job. It then said "Measured now ... 21 jobs — 17 ubuntu, 3 windows,
+      # 1 two-OS matrix", which was right for one commit and wrong from the next job on. Three
+      # wrong counts in one comment is the finding, so the number is no longer kept here. To
+      # measure it: count the keys two spaces deep under `jobs:`, and their `runs-on:` values.
       #
       # That is not hypothetical. `tools/test_check_audit_actor.py` had TWO tests failing on
       # Windows — `check_audit_actor.py` rendered `apps\desktop\src-tauri\core\src\repo.rs` where
@@ -512,12 +498,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -772,14 +753,11 @@ jobs:
       # The pure §0.W verification core must pass on the ACTUAL Windows platform (not only the Linux
       # runner), then the REAL winapi named-pipe peer-SID authentication (the SO_PEERCRED equivalent,
       # §0.W.4) must authenticate a live client connection. This is a partial Windows machine-proof — it
-      # does NOT flip platform_governed_execution_supported() (the remaining §0.1 primitives + the
-      # dedicated-service-SID proof are unbuilt), so governed turns stay fail-closed on Windows.
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # does NOT open the gate: `connect_broker()` still returns `UnsupportedPlatform` off Linux (the
+      # remaining §0.1 primitives + the dedicated-service-SID proof are unbuilt), so governed turns stay
+      # fail-closed on Windows. (This line named `platform_governed_execution_supported()`. No function
+      # of that name exists in the tree — it is the §0.1 spec symbol — so it could not be "flipped".)
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -964,6 +942,14 @@ jobs:
       # and branch protection is the Owner's.
       - name: App version agrees with itself across all four files
         run: python tools/check_version_parity.py
+      # `.claude/agents/*.md` is GENERATED from the pack and authority registries, and each
+      # file's `tools:` line reads as a capability grant. Until this step ran nowhere:
+      # START_HERE.md listed `--check` as something to remember before a PR, and the only
+      # automated comparison was the three tier files against ai.rs. The pack-role files
+      # could drift from the registries with every job here green. This job, not a new one:
+      # a new job is a new required context and branch protection is the Owner's.
+      - name: Agent definitions match the pack + authority registries
+        run: python tools/generate_agent_definitions.py --check
       - name: Gate self-tests
         working-directory: tools
         run: |
@@ -976,6 +962,9 @@ jobs:
           python -m unittest test_roadmap_split
           python -m unittest test_check_control_invocation
           python -m unittest test_check_version_parity
+          python -m unittest test_check_state_fields
+          python -m unittest test_check_no_assumptions
+          python -m unittest test_generate_agent_definitions
 
   canonical-law:
     name: Canonical law · read receipt · roadmap order · update law
@@ -994,7 +983,7 @@ jobs:
       # closed, and it is the half that cannot be skipped with --no-verify or an env var.
       - name: Gate self-tests
         working-directory: tools
-        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_check_source_control_bytes test_wall_bash_gap test_check_main_ci
+        run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_check_source_control_bytes test_wall_bash_gap test_coordination_stop_guard test_check_main_ci
       # `lstrip("./")` strips a CHARACTER SET, not a prefix, and reads exactly like a prefix
       # strip. It was written three times: check_doc_claims.py hit it and fixed it inline
       # leaving only a comment, and check_roadmap_order.py:373 plus check_audit_reports.py:119
@@ -1200,17 +1189,15 @@ jobs:
     # scheduling contest to work whose finish line a machine could see. Writing the gate first and
     # leaving it failing is what ended that.
     #
-    # It is still ABSENT from config/required-checks.json, and the reason has changed with it.
-    # It is no longer "this can never pass"; it is that a context must be OBSERVED green in CI
-    # before it is required. This repository learned that the expensive way: `Windows · §0.W broker
-    # syscall proof` was made required on 2026-08-18 and failed the same day, and its exclusion
-    # note in config/required-checks.json is the record. Requiring a context on the strength of a
-    # local run is the same mistake in a new place.
-    #
-    # That deferral is not a comment anyone has to remember — it is a DATED entry in
-    # config/deferred-enforcement.json, and tools/check_repo_state.py::verify_deferred_enforcement
-    # (which runs inside the already-required `Repo-state` context) turns RED once the date passes
-    # while this name is still missing from `contexts`.
+    # It IS a required check now: this job's name is in `contexts` in config/required-checks.json.
+    # For a while it was not, on purpose — a context must be OBSERVED green in CI before it is
+    # required. This repository learned that the expensive way: `Windows · §0.W broker syscall
+    # proof` was made required on 2026-08-18 and failed the same day, and its exclusion note in
+    # config/required-checks.json is the record. While it waited, the wait was a DATED entry in
+    # config/deferred-enforcement.json, which tools/check_repo_state.py::
+    # verify_deferred_enforcement turns RED once the date passes. That entry was closed when the
+    # context was added: `deferrals` there is empty. This paragraph said "still ABSENT" and "a
+    # DATED entry" after both stopped being true.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
@@ -1230,12 +1217,7 @@ jobs:
       # config/produced-artifact-contract.json -- CI runs what the contract says
       # it runs, so a reader can reproduce this locally with the same line.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` above.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri

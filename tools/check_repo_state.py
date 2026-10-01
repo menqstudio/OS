@@ -20,7 +20,11 @@ enforces EXACT heads and the CI event context, so:
 
 Run context:
   - CI (GITHUB_ACTIONS=true): live verification REQUIRED; missing `gh`/event/ancestry => fail closed.
-  - Local without an authenticated `gh`: the ONLINE portion is SKIPPED (exit 0); CI is the wall.
+  - Local without an authenticated `gh`: RED, exit 1 — the same refusal as in CI. This line said
+    "the ONLINE portion is SKIPPED (exit 0)", and that stopped being reachable when the main-CI
+    reading was added: it needs `gh`, it is fail-closed by design ("a reading that could not be
+    taken is a refusal, never a skip"), and it runs before the skip could. The skip was kept as
+    dead code under a docstring that still promised it. One behaviour now: no `gh`, no verdict.
 """
 from __future__ import annotations
 
@@ -336,11 +340,11 @@ def verify_settled_snapshot(carrier_no: int, carrier_state: str, snapshot: dict,
     # tests `A-11` rewrote for saying exactly this. *"A check that could not run has not passed"*
     # applied to it too, and `_is_noop` in the name hid that.
     #
-    # The local path is not endangered. The only call site sits inside `if not _have_gh(): …
-    # return` — a laptop without `gh` never reaches this function at all, and the gate says
-    # "SKIPPED (online PR checks)" out loud. Reaching here with an empty state means `gh` IS
-    # available and the read of THIS carrier specifically failed, which is a different fact and
-    # deserves a different answer.
+    # The local path is not endangered. The only call site sits AFTER `if not _have_gh(): …
+    # return 1` — a laptop without `gh` never reaches this function at all; the gate has
+    # already refused, out loud, for that reason. Reaching here with an empty state means `gh`
+    # IS available and the read of THIS carrier specifically failed, which is a different fact
+    # and deserves a different answer.
     if not carrier_state:
         return [f"current_workflow_pr #{carrier_no}: GitHub is reachable but its state could not "
                 f"be read (gh errored, timed out, was rate-limited, or returned malformed JSON). "
@@ -705,9 +709,16 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
     goes stale silently and nothing notices, which is how the seventh round's `G-01` survived six
     audits: everyone read a document that said enforcement was convention.
 
-    `live is None` is a REFUSAL, not a skip. The caller only reaches this when `gh` is available, so
-    an unreadable protection state means the read failed specifically — the same reasoning as
-    `G-05`, and the same answer.
+    `live is None` is a REFUSAL for every reason but one. The caller only reaches this when `gh`
+    is available, so an unreadable protection state means the read failed specifically — the
+    same reasoning as `G-05`, and the same answer: an outage or a timeout is RED.
+
+    The one exception is a 403 / 404 ("Resource not accessible", "Not Found"), which is a
+    printed SKIP. That is what the workflow token always gets — `administration` is not a
+    `GITHUB_TOKEN` scope — so in CI this comparison never runs, says so on stderr, and leaves
+    `verify_required_contexts_exist` as the half CI carries. The live comparison is real only
+    where the caller holds admin rights: locally, Owner-side. This docstring said "a REFUSAL,
+    not a skip" flatly while the code below skipped.
     """
     if live is None:
         # NO RIGHTS IS NOT AN OUTAGE, and this one cannot be fixed by granting a permission:
@@ -720,14 +731,12 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
                   f"hold; {REQUIRED_CHECKS.as_posix()} verified against workflow job names only)",
                   file=sys.stderr)
             return []
-        hint = ""
-        if "403" in why or "Resource not accessible" in why:
-            hint = (" This reads as a PERMISSION gap, not an outage: the job needs "
-                    "`administration: read` in its `permissions:` block. This check failed on "
-                    "exactly that on its first CI run.")
+        # No permission hint here. There was one, for a 403 — unreachable, because the branch
+        # above has already returned for every 403, and wrong, because it told the reader to
+        # add `administration: read`, a scope the comment above says does not exist.
         return [f"branch protection could not be read from GitHub, so "
                 f"{REQUIRED_CHECKS.as_posix()} could not be verified. A check that could not run "
-                f"has not passed.{hint} ({why or 'no reason reported'})"]
+                f"has not passed. ({why or 'no reason reported'})"]
     failures: list[str] = []
     for flag, path in (("enforce_admins", ("enforce_admins", "enabled")),
                        ("required_linear_history", ("required_linear_history", "enabled")),
@@ -940,10 +949,10 @@ def verify_required_contexts_exist(expected: dict, workflow_dir: pathlib.Path) -
     problems: list[str] = []
     if not workflow_dir.is_dir():
         return problems
-    names: set[str] = set()
-    for path in sorted(workflow_dir.glob("*.y*ml")):
-        for m in re.finditer(r"^\s{4,6}name:\s*(.+?)\s*$", path.read_text(encoding="utf-8"), re.M):
-            names.add(m.group(1).strip().strip('"\''))
+    # `workflow_job_names` says it was factored out of here "because two rules now need the same
+    # population and two copies of a regex is how they stop agreeing" — and this function went
+    # on carrying its own copy of the loop. It calls the one now.
+    names = workflow_job_names(workflow_dir)
     if not names:
         return [f"no job names found under {workflow_dir.name}/ — this check verified nothing"]
     for context in expected.get("contexts") or []:
@@ -967,10 +976,11 @@ def _live_protection() -> tuple[dict | None, str]:
     REST only — `gh api` is v3 here, the road that survived the 2026-08-17 GraphQL outage (PR #149).
 
     The reason is returned rather than swallowed because the two ways this fails are not the same
-    fact. A 403 is a **permission gap**: the workflow token needs `administration: read`, and this
-    check failed on exactly that on its first CI run. A 503 or a timeout is an **outage**. Both are
-    refusals — a check that could not run has not passed — but a refusal that does not name which
-    one it is sends the reader to the wrong fix.
+    fact, and `verify_branch_protection` answers them differently. A 403 / 404 is a **permission
+    gap** that nothing can close for the workflow token (`administration` is not a `GITHUB_TOKEN`
+    scope): that is a printed skip. A 503 or a timeout is an **outage**: that is a refusal — a
+    check that could not run has not passed. A reason that does not say which one it is would send
+    the reader to the wrong fix.
     """
     try:
         # encoding is EXPLICIT: `text=True` decodes with the process locale, cp1252 on Windows, and
@@ -1189,15 +1199,15 @@ def main(argv: list[str] | None = None) -> int:
                if isinstance(pr, dict) and pr.get("number") is not None]
     carrier_no = (snap.get("current_workflow_pr") or {}).get("number")
     if not _have_gh():
-        if in_ci:
-            print("RED: gh CLI unavailable in CI — cannot verify live GitHub PR state (fail-closed).", file=sys.stderr)
-            return 1
-        if failures:
-            for f in failures:
-                print(f"  - {f}", file=sys.stderr)
-            return 1
-        print("SKIPPED (online PR checks): gh unavailable locally; event-context checks passed. CI is the wall.")
-        return 0
+        # One answer, in CI and on a laptop: RED. There was a third branch here that printed
+        # "SKIPPED ... CI is the wall" and returned 0 when `failures` was empty. It could not be
+        # reached: with no `gh` the main-CI reading above has already appended a failure.
+        where = "in CI" if in_ci else "locally"
+        print(f"RED: gh CLI unavailable {where} — cannot verify live GitHub PR state "
+              f"(fail-closed).", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
     failures += compare_external_prs(snap, fetch_live(numbers))
 
     # Once the carrier is no longer OPEN the snapshot has to say so, record the main it settled at,

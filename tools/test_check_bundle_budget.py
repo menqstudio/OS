@@ -5,6 +5,8 @@ Vite manifest + built asset bytes) in a temp dir, so no real Vite build is neede
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import gzip
 import json
 import os
@@ -186,13 +188,9 @@ class CheckBundleBudgetTests(unittest.TestCase):
             cb.check(root)
 
 
-class FreshnessTests(unittest.TestCase):
-    """The gate must refuse to grade a build older than the tree — ninth audit `I-12`.
-
-    The finding is a measurement, not a theory: the gate reported GREEN at 151.6 KB against a
-    `dist/` built BEFORE the deletion whose effect it was being cited to prove, then GREEN again
-    at 133.0 KB after a rebuild of the identical tree. Two numbers, one source, both "GREEN".
-    """
+class _DesktopTree:
+    """A complete fake desktop tree. A mixin and not a TestCase: `StaleMessagePathSpelling`
+    used to subclass `FreshnessTests` to borrow `_tree`, and so re-ran its five tests."""
 
     def _tree(self, source_offset: float):
         """A complete fake desktop tree; `source_offset` seconds are added to the source mtime."""
@@ -218,6 +216,15 @@ class FreshnessTests(unittest.TestCase):
             p.write_text("x", encoding="utf-8")
             os.utime(p, (base + source_offset, base + source_offset))
         return root, desktop, mpath, base
+
+
+class FreshnessTests(_DesktopTree, unittest.TestCase):
+    """The gate must refuse to grade a build older than the tree — ninth audit `I-12`.
+
+    The finding is a measurement, not a theory: the gate reported GREEN at 151.6 KB against a
+    `dist/` built BEFORE the deletion whose effect it was being cited to prove, then GREEN again
+    at 133.0 KB after a rebuild of the identical tree. Two numbers, one source, both "GREEN".
+    """
 
     def test_a_source_newer_than_the_manifest_is_red(self):
         root, _, _, _ = self._tree(source_offset=60)
@@ -376,7 +383,7 @@ class RouteBudgetTests(unittest.TestCase):
 # These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
 # exactly why ci.yml now runs the tools suite on windows-latest as well.
 
-class StaleMessagePathSpelling(FreshnessTests):
+class StaleMessagePathSpelling(_DesktopTree, unittest.TestCase):
     def test_the_staleness_message_spells_paths_with_forward_slashes(self):
         root, desktop, mpath, base = self._tree(source_offset=-60)
         p = desktop / "src" / "features" / "Late.tsx"
@@ -386,6 +393,34 @@ class StaleMessagePathSpelling(FreshnessTests):
         self.assertEqual(len(problems), 1, problems)
         self.assertNotIn("\\", problems[0], "the stale-build message used OS-native separators")
         self.assertIn("apps/desktop/src/features/Late.tsx", problems[0])
+
+
+class TheExitCode(_DesktopTree, unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def _main(self, root):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cb.main(["--root", str(root)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_fresh_build_within_budget_exits_zero(self):
+        root, _, _, _ = self._tree(source_offset=-60)
+        code, out, err = self._main(root)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_stale_build_exits_one_and_says_stale_not_over_budget(self):
+        root, _, _, _ = self._tree(source_offset=60)
+        code, out, err = self._main(root)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("RED: the build is stale", err)
+        self.assertNotIn("budget exceeded", err)
+
 
 if __name__ == "__main__":
     unittest.main()

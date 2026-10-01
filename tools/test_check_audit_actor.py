@@ -7,6 +7,8 @@ everything would fail too.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import sys
 import tempfile
@@ -138,6 +140,31 @@ class RealTree(unittest.TestCase):
         # A number, not a shrug: if the call sites vanish the gate must not stay green.
         self.assertGreaterEqual(calls, 40, "the gate found almost no audit::record calls")
         self.assertGreaterEqual(files, 10)
+
+
+class TheExitCode(unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def _main(self, files):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = ca.main(["--root", str(_tree(files))])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_tree_of_derived_actors_exits_zero(self):
+        code, out, err = self._main({f"{CORE}/repo.rs": DERIVED})
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_hardcoded_actor_exits_one_and_is_named(self):
+        src = 'fn f() { audit::record(tx, "x.y", "user", "gev", "t", id)?; }\n'
+        code, out, err = self._main({f"{CORE}/repo.rs": src})
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn(f"{CORE}/repo.rs:1:", err)
 
 
 if __name__ == "__main__":

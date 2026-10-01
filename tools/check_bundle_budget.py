@@ -330,10 +330,10 @@ def check(root: pathlib.Path) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Fail CI when a frontend entry exceeds its gzip budget.")
     ap.add_argument("--root", default=".")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     root = pathlib.Path(args.root)
 
     problems = check(root)

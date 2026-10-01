@@ -8,7 +8,7 @@ engine security functions with zero callers. Every one of them READ as protectio
 nothing, and every one was found by a human audit rather than by the build — because a gate
 that checks a thing EXISTS cannot tell you the thing is REACHED.
 
-So reachability is now a claim the build checks, in three places where the defect actually
+So reachability is now a claim the build checks, in four places where the defect actually
 landed:
 
   1. Every ``#[tauri::command]`` registered in ``apps/desktop/src-tauri/src/lib.rs`` is invoked
@@ -19,8 +19,11 @@ landed:
      which nobody knows which it is.
   2. Security-critical ``engine/runtime/**`` symbols — the ones
      ``docs/PHASE_10_PRODUCTION_ITEMS.md`` names — have a caller outside their own module and
-     outside their own tests. ``assert_no_bytecode_shadow`` is the worked example: it exists,
-     it is documented, it raises the right error, and it has never once been called.
+     outside their own tests. ``assert_no_bytecode_shadow`` was the worked example: it
+     existed, it was documented, it raised the right error, and it had never once been
+     called. It has a caller now (``engine/runtime/bro_control_plane.py``, which this gate
+     prints), so the example is history; the sentence said "has never once been called" for
+     as long as nothing re-read it.
   3. Declared ``apps/desktop/src-tauri/**`` RUST symbols have a caller outside their own
      module and outside ``#[cfg(test)]``. This is the same defect in the language the security
      core is written in, and it was invisible here until 2026-08-09: ``rustc`` never warns
@@ -29,7 +32,9 @@ landed:
      production callers. That ladder was **deleted on 2026-08-10** when rev-30 §4.10(f) was
      actually built (as supervisor state, in the engine) and its table turned out to disagree
      with the design it cited — so this gate's worked example is now history rather than a file
-     you can open, and the ``rust_symbols`` section it justified is empty. The examples below
+     you can open. The ``rust_symbols`` section it justified was empty for a while after that
+     and is not any more: the gate prints how many it enforces and how many are declared
+     caller-less, and that line, not this paragraph, is the count. The examples here
      are kept in the past tense for the same reason the rule is kept: the next one will look
      exactly like it did.
   4. Every ``allow-*``/``deny-*`` grant in
@@ -76,6 +81,10 @@ What it DOES hold reliably: comments and block comments are stripped before matc
 mention in a comment is never a call; and test files are classified separately, so a symbol
 whose only callers are its own tests is RED — which is exactly how ``assert_no_bytecode_shadow``
 managed to look green.
+
+Every file walk skips build output by the path RELATIVE TO THE ROOT (``skipped``). The walks
+tested the absolute path, so a checkout that merely lived under a directory called ``dist``
+or ``target`` scanned nothing and found nothing unreachable.
 
 stdlib only, no network. Run: ``python tools/check_reachability.py [--root DIR]``
 """
@@ -181,6 +190,17 @@ def registered_commands(root: pathlib.Path) -> set[str]:
     return set(re.findall(r"(?:[a-zA-Z_][a-zA-Z0-9_]*::)+([a-z0-9_]+)", body))
 
 
+def skipped(root: pathlib.Path, path: pathlib.Path) -> bool:
+    """Is `path` inside a directory this gate does not scan -- judged BELOW `root`.
+
+    `SKIP_PARTS & set(path.parts)` read the absolute path, so the names of the directories
+    the checkout sits in counted too: under `/builds/dist/repo` every file was "in dist",
+    every walk came back empty, and an empty walk has no uncalled symbol in it.
+    `check_no_lstrip_prefix.python_files` documents the same defect and the same fix.
+    """
+    return bool(SKIP_PARTS & set(path.relative_to(root).parts))
+
+
 def defined_commands(root: pathlib.Path) -> dict[str, str]:
     """`#[tauri::command]`-annotated fn name -> the file defining it."""
     found: dict[str, str] = {}
@@ -188,7 +208,7 @@ def defined_commands(root: pathlib.Path) -> dict[str, str]:
     if not base.is_dir():
         return found
     for path in sorted(base.rglob("*.rs")):
-        if SKIP_PARTS & set(path.parts):
+        if skipped(root, path):
             continue
         text = _read(path)
         for match in re.finditer(
@@ -225,7 +245,7 @@ def frontend_callers(
     if not base.is_dir():
         return production, tests
     for path in sorted(base.rglob("*")):
-        if path.suffix not in FRONTEND_SUFFIXES or SKIP_PARTS & set(path.parts):
+        if path.suffix not in FRONTEND_SUFFIXES or skipped(root, path):
             continue
         text = strip_c_comments(_read(path))
         target = tests if is_frontend_test(path) else production
@@ -249,7 +269,7 @@ def python_files(root: pathlib.Path) -> list[pathlib.Path]:
         if not base.is_dir():
             continue
         for path in base.rglob("*.py"):
-            if SKIP_PARTS & set(path.parts):
+            if skipped(root, path):
                 continue
             out.append(path)
     return sorted(out)
@@ -353,7 +373,7 @@ def rust_files(root: pathlib.Path) -> list[pathlib.Path]:
         if not base.is_dir():
             continue
         for path in base.rglob("*.rs"):
-            if SKIP_PARTS & set(path.parts):
+            if skipped(root, path):
                 continue
             out.append(path)
     return sorted(out)
@@ -477,29 +497,32 @@ def rust_callers(
     return outside, only_tests
 
 
+def _capabilities_gate():
+    """`check_capabilities`, imported rather than copied from."""
+    tools_dir = str(pathlib.Path(__file__).resolve().parent)
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import check_capabilities  # noqa: E402  (deliberate: one source of truth)
+
+    return check_capabilities
+
+
 def capability_grants(root: pathlib.Path) -> dict[str, str]:
-    """command fn name -> 'allow' | 'deny' from capabilities/default.json (core:* ignored)."""
+    """command fn name -> 'allow' | 'deny' from capabilities/default.json (core:* ignored).
+
+    The permission-id -> command-name mapping is `check_capabilities.grants_from_permissions`.
+    It was written out a second time here, next to the function below that imports the
+    allowlist precisely because two copies in two gates drift. What stays local is only how
+    a MISSING file reads: this gate treats it as no grants, that one refuses to run.
+    """
     doc = json.loads(_read(root / DEFAULT_CAP) or "{}")
-    grants: dict[str, str] = {}
-    for perm in doc.get("permissions", []):
-        if perm.startswith("core:"):
-            continue
-        for kind in ("allow", "deny"):
-            prefix = f"{kind}-"
-            if perm.startswith(prefix):
-                grants[perm[len(prefix):].replace("-", "_")] = kind
-    return grants
+    return _capabilities_gate().grants_from_permissions(doc.get("permissions", []))
 
 
 def intentionally_ungated() -> set[str]:
     """Reuse `check_capabilities.INTENTIONALLY_UNGATED` rather than copy it — two lists of the
     same commands in two gates is itself a drift defect."""
-    tools_dir = str(pathlib.Path(__file__).resolve().parent)
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    import check_capabilities  # noqa: E402  (deliberate: one source of truth for the list)
-
-    return set(check_capabilities.INTENTIONALLY_UNGATED)
+    return set(_capabilities_gate().INTENTIONALLY_UNGATED)
 
 
 # --------------------------------------------------------------------------------------
@@ -1116,7 +1139,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{summary['registered'] - summary['reached']} are declared with written reasons in "
         f"{DECLARATIONS.as_posix()} ({summary['declared_commands']} entries). "
         f"{summary['grants']} capability grants correspond to registered commands "
-        f"({summary['ungated']} commands intentionally ungated)."
+        f"({summary['ungated']} commands registered outside the app manifest, which Tauri "
+        f"refuses to the window — an `invoke` of one of those counts as a caller here and "
+        f"cannot succeed; see check_capabilities.INTENTIONALLY_UNGATED)."
     )
     print(
         f"       engine security symbols: {len(live)} enforced with a real caller; "

@@ -14,6 +14,8 @@ is a test measuring the wrong thing.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import shutil
@@ -58,7 +60,10 @@ def helper_without_the_id_in_its_name():
 '''
 
 
-class NegativeMatrixGateTests(unittest.TestCase):
+class _MatrixFixture:
+    """The miniature matrix, its mirror and its test file. A mixin and not a TestCase, so a
+    second class can use the fixture without re-running every test of the first."""
+
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="brops-nmgate-")).resolve()
         self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
@@ -84,6 +89,9 @@ class NegativeMatrixGateTests(unittest.TestCase):
 
     def run_gate(self):
         return gate.check(self.tmp)
+
+
+class NegativeMatrixGateTests(_MatrixFixture, unittest.TestCase):
 
     # -- the GREEN control ------------------------------------------------------------------
     # Without it every RED below would also be produced by a gate that refuses everything.
@@ -292,6 +300,34 @@ class MatrixParserTests(unittest.TestCase):
         import generate_negative_matrix as generator
         with self.assertRaises(generator.ParseError):
             generator.parse(MATRIX + MATRIX)
+
+
+class TheExitCode(_MatrixFixture, unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def _main(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = gate.main(["--root", str(self.tmp)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_an_honest_mirror_exits_zero(self):
+        self.write_mirror(self.all_three_unreviewed())
+        code, out, err = self._main()
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("GREEN: 3 matrix cases"), out)
+
+    def test_a_mirror_missing_a_row_exits_one_and_names_it(self):
+        cases = self.all_three_unreviewed()
+        del cases["NM-REPLAY-02"]
+        self.write_mirror(cases)
+        code, out, err = self._main()
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("NM-REPLAY-02", err)
 
 
 if __name__ == "__main__":

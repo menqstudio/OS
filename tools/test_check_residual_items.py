@@ -110,6 +110,28 @@ class InventoryGateTests(unittest.TestCase):
         problems = check(_tree(_full_inventory(), security=_canonical(downgraded)))
         self.assertTrue(any("severity drift for O-3" in p for p in problems), problems)
 
+    def test_a_downgrade_in_ONE_of_two_statements_of_the_list_is_RED(self):
+        """CLAUDE.md carries the list twice -- English, then Armenian. The gate kept only the
+        last occurrence, so a downgrade in the first was invisible: the second still said
+        HIGH, the comparison passed, and the document a reader opens first said LOW."""
+        downgraded = dict(_SEVERITIES, **{"O-1": "LOW"})
+        for label, text in (
+            ("first", _canonical(downgraded) + "\n\n# Հայերեն\n\n" + _canonical(_SEVERITIES)),
+            ("second", _canonical(_SEVERITIES) + "\n\n# Հայերեն\n\n" + _canonical(downgraded)),
+        ):
+            with self.subTest(downgraded=label):
+                problems = check(_tree(_full_inventory(), claude=text))
+                self.assertIn(
+                    "severity drift for O-1: CLAUDE.md says LOW, "
+                    "docs/PHASE_10_PRODUCTION_ITEMS.md says HIGH", " ".join(problems))
+                self.assertTrue(any("CLAUDE.md disagrees with itself — it says HIGH and LOW" in p
+                                    for p in problems), problems)
+
+    def test_a_list_stated_twice_the_same_way_is_green(self):
+        """The control: stating it twice is not the defect; stating it two ways is."""
+        twice = _canonical(_SEVERITIES) + "\n\n# Հայերեն\n\n" + _canonical(_SEVERITIES)
+        self.assertEqual(check(_tree(_full_inventory(), claude=twice, security=twice)), [])
+
     def test_a_canonical_doc_that_stops_naming_an_item_is_RED(self):
         partial = {k: v for k, v in _SEVERITIES.items() if k != "O-5"}
         problems = check(_tree(_full_inventory(), claude=_canonical(partial)))
@@ -181,10 +203,15 @@ class ParsingTests(unittest.TestCase):
     def test_combined_severity_lines_are_understood(self):
         """CLAUDE.md writes `**O-4 / O-5 (LOW)**` on one line."""
         found = declared_severities("  - **O-4 / O-5 (LOW)** control-room actor …")
-        self.assertEqual(found, {"O-4": "LOW", "O-5": "LOW"})
+        self.assertEqual(found, {"O-4": {"LOW"}, "O-5": {"LOW"}})
 
     def test_MED_is_normalised_to_MEDIUM(self):
-        self.assertEqual(declared_severities("**O-2 (MED)** …"), {"O-2": "MEDIUM"})
+        self.assertEqual(declared_severities("**O-2 (MED)** …"), {"O-2": {"MEDIUM"}})
+
+    def test_every_occurrence_is_kept_not_only_the_last(self):
+        text = "**O-1 (LOW)** … later … **O-1 (HIGH)** … and **O-2 (MED)** … **O-2 (MEDIUM)**"
+        self.assertEqual(declared_severities(text),
+                         {"O-1": {"LOW", "HIGH"}, "O-2": {"MEDIUM"}})
 
 
 class LiveRepositoryTests(unittest.TestCase):
@@ -199,31 +226,30 @@ class LiveRepositoryTests(unittest.TestCase):
             self.assertEqual(sections[item]["Status"].upper(), "OPEN", item)
 
     def test_the_inventory_records_which_items_need_the_owner(self):
-        """Every item answers yes-or-no, and every `yes` says WHAT the Owner must provide.
+        """Every item answers yes-or-no, and today every answer is `no`.
 
-        This used to assert the membership directly -- "O-3 is the only item needing an Owner
-        secret" -- which was true the day the inventory was written and false the day the O-2 and
-        O-5 work was read as adding an audit-anchor signer and an evidence-floor anchor to that
-        list — and false again when PR #78 emptied it: the install mints every authority key and
-        no person holds one. A test that pins today's answer goes red when someone
-        LEARNS something, which trains people to edit the test rather than read it.
+        The history of this docstring is the reason for its shape. It first pinned "O-3 is the
+        only item needing an Owner secret". Then it said the O-2 and O-5 work had put an
+        audit-anchor signer and an evidence-floor anchor on the same list, and argued against pinning any membership at all. That conclusion was
+        reversed by a DECISION, not by a finding: Owner decision #78 (2026-08-09) -- no person
+        holds a key; the install mints trust. The inventory's five rows all read `no`, and
+        CLAUDE.md §6 says none needs an Owner-minted artifact.
 
-        So the property, not the membership: the cell is a clean machine-readable verdict, and a
-        `yes` that does not name the artifact is the failure worth catching -- an unnamed Owner
-        dependency is one nobody can act on.
+        So the membership is asserted again, on purpose. A `yes` reappearing here is not
+        "someone learned something": it is an inventory asking a person to mint, hold or sign
+        with a key, against a recorded decision, and that should go red until the decision
+        itself is changed by the Owner. The old `if answer == "yes"` arm, which only asked that
+        a `yes` name its artifact, had nothing left to run on and is gone.
         """
         text = (REPO_ROOT / "docs" / "PHASE_10_PRODUCTION_ITEMS.md").read_text(encoding="utf-8")
         sections = parse_inventory(text)
         for item in ITEMS:
             answer = sections[item]["Owner secret needed"].strip().lower()
-            self.assertIn(answer, ("yes", "no"), f"{item}: {answer!r} is not a verdict")
-            if answer == "yes":
-                body = text.split(f"### {item}", 1)[1]
-                head = body.split("- **Owner secret needed:**", 1)[1][:600].lower()
-                self.assertTrue(
-                    any(w in head for w in ("artifact", "key", "custody", "signer")),
-                    f"{item} needs an Owner secret but does not name what",
-                )
+            self.assertEqual(
+                answer, "no",
+                f"{item}: the inventory says an Owner secret is needed ({answer!r}). Owner "
+                f"decision #78: no person holds a key. That is a decision for the Owner to "
+                f"reverse, not a cell to edit.")
 
 
 if __name__ == "__main__":

@@ -103,7 +103,9 @@ def stray_schema_files(root: pathlib.Path) -> list[pathlib.Path]:
     """`*.schema.json` outside every declared home — a third copy nobody is holding to anything."""
     strays: list[pathlib.Path] = []
     for path in root.rglob("*.schema.json"):
-        if any(part in _SKIP_DIRS for part in path.parts):
+        # Judged below `root`, not on the absolute path: a checkout that merely sits under a
+        # directory named like a skipped one would otherwise have no stray schema anywhere.
+        if any(part in _SKIP_DIRS for part in path.relative_to(root).parts):
             continue
         rel = path.relative_to(root).as_posix()
         if any(rel.startswith(d + "/") for d in _ALLOWED_SCHEMA_DIRS):

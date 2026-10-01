@@ -19,6 +19,19 @@ import subprocess
 import sys
 
 COORDINATION_DOCS = {"PROJECT_STATE.md", "TASKS.md", "MASTER_EXECUTION_ROADMAP.md"}
+# THE THIRD DEFINITION OF "SUBSTANTIVE", declared here because it was the only one that was not.
+# The update law is enforced in three places with three lists:
+#   * config/canonical-update-law.json `substantive_globs` -- per COMMIT, the widest (it also
+#     counts tools/, .github/ and config/), no bypass; tools/check_canonical_sync.py;
+#   * tools/check_coordination.py SUBSTANTIVE_GLOBS -- per PULL REQUEST, narrower, and the law
+#     file's own comment says that difference is deliberate;
+#   * this tuple -- per TURN, the narrowest: the four directories that hold product code.
+# It is narrow on purpose. This hook interrupts a session that is trying to stop, it fails
+# open, and it has an environment bypass; it is the early reminder, not the wall, and a
+# reminder that fires on every tooling edit is one that gets bypassed by habit. What it must
+# never do is CONTRADICT the law -- block on a path the law does not call substantive -- so
+# every entry here has to be covered by the law's globs. tools/test_coordination_stop_guard.py
+# holds that, and it is the only relation between the three lists that anything checks.
 CODE_DIRS = ("apps/", "engine/", "bridge/", "contracts/")
 
 

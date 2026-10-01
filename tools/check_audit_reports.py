@@ -59,8 +59,32 @@ MIN_REPORT_BYTES = 2048
 
 #: The ordinals a round is written with, in order. Matching on words rather than digits because
 #: that is how both documents are written ("the FOURTH independent audit", "FIFTH AUDIT").
+#:
+#: The list stopped at "tenth" while the current round WAS the tenth. `ordinal_of` and
+#: `highest_cited_ordinal` build their patterns from it, so an ELEVENTH banner would simply not
+#: have matched: the first match would have fallen to an older round further down the page, and
+#: check 3b would have reported a correctly filed report as filed under the wrong ordinal. It
+#: runs to twentieth now, and `unknown_ordinal_reports` refuses a report whose filename carries
+#: an ordinal this list does not have -- so the day it runs out, the gate says the list ran out
+#: rather than saying something else.
 ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
-            "ninth", "tenth"]
+            "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth",
+            "sixteenth", "seventeenth", "eighteenth", "nineteenth", "twentieth"]
+
+#: A filename's round word when it LOOKS like an ordinal: `…-twenty-first-audit-…`. Words that
+#: are not ordinals at all (`independent`, `remediation`, `zero-trust`) are not this rule's.
+_ORDINAL_SHAPED = re.compile(
+    r"^\d{4}-\d{2}-\d{2}-((?:[a-z]+-)?(?:first|second|third|[a-z]+th))-audit\b")
+
+
+def unknown_ordinal_reports(names: list[str]) -> list[tuple[str, str]]:
+    """Dated reports whose filename names a round `ORDINALS` cannot rank — pure/testable."""
+    out: list[tuple[str, str]] = []
+    for name in names:
+        m = _ORDINAL_SHAPED.match(name)
+        if m and m.group(1) not in ORDINALS:
+            out.append((name, m.group(1)))
+    return out
 
 
 def relative_links(text: str) -> list[str]:
@@ -273,11 +297,34 @@ def main(argv: list[str] | None = None) -> int:
             f"Either the ledger was not repointed after a round, or a report was filed that nobody "
             f"treats as current — both are how the fifth round's verdict went missing.")
 
+    # 2b. every report's round is one this gate can rank
+    for name, word in unknown_ordinal_reports(reports):
+        failures.append(
+            f"{AUDIT_DIR}/{name} is filed as the `{word}` round, and ORDINALS in "
+            f"tools/check_audit_reports.py ends at `{ORDINALS[-1]}`. Every rule below ranks "
+            f"rounds by that list, so a round it has no word for is invisible to all of them. "
+            f"Extend the list.")
+
     # 3. the two documents agree on which round is current
+    #
+    # A document that announces NO round is a failure of its own, not a reason to skip. The
+    # comparison was `if led and own and led != own`, so a ledger or an OWNER page whose banner
+    # this gate could not read fell through in silence -- and the GREEN line below then said
+    # both "lead with" the newest report.
     led = ordinal_of(ledger_text)
+    if led is None:
+        failures.append(
+            f"{LEDGER} announces no round this gate can read (expected `**<ORDINAL>** "
+            f"independent audit` or `**<ORDINAL> AUDIT`). Without it nothing binds the banner to "
+            f"a filed report.")
+    own = None
     if owner_text:
         own = ordinal_of(owner_text)
-        if led and own and led != own:
+        if own is None:
+            failures.append(
+                f"{OWNER} announces no round this gate can read, so it was not compared with "
+                f"{LEDGER} at all. A page that cannot be compared has not agreed.")
+        elif led and led != own:
             failures.append(
                 f"{LEDGER} leads with the {led.upper()} round and {OWNER} leads with the "
                 f"{own.upper()}. A reader following one to the other gets a contradiction — the "
@@ -357,8 +404,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {f}", file=sys.stderr)
         print(f"\n{len(failures)} problem(s).", file=sys.stderr)
         return 1
-    print(f"GREEN: {checked} audit citation(s) resolve; the ledger and the OWNER page both lead "
-          f"with `{newest}`.")
+    # Say what was COMPARED. This line read "the ledger and the OWNER page both lead with
+    # `<newest>`", and nothing compares the OWNER page with `newest`: the ledger's authoritative
+    # link is (check 2), the two pages' ROUNDS are compared with each other (check 3), and a
+    # repository with no OWNER page at all printed the same sentence.
+    owner_clause = (f"{OWNER} announces the same round ({own.upper()})" if own
+                    else f"{OWNER} is absent, so no second document was compared")
+    print(f"GREEN: {checked} audit citation(s) resolve; {LEDGER} calls `{newest}` authoritative "
+          f"and it is the newest report filed; {owner_clause}.")
     return 0
 
 

@@ -102,14 +102,43 @@ CARRIER_RESOLUTION_TOKENS = {
     "CARRIER_IF_OPEN_GATE": ("carrier_transition", "pre_merge", "gate"),
     "CARRIER_IF_MERGED_GATE": ("carrier_transition", "post_merge", "gate"),
 }
-# a carrier-action / carrier-state phrase that goes STALE the moment PR #33 merges. Any of these near a
-# bare "PR #33" mention, unguarded by an IF-OPEN/IF-MERGED transition marker on the same line, is RED.
-_CARRIER_UNCONDITIONAL = re.compile(
-    r"not( yet)? merged|un-?merged|awaiting[ -]?re-?audit|pending[ -]?re-?audit|"
-    r"→\s*merge|->\s*merge|merge it\b|merge PR ?#?33|"
-    r"re-?audit[^.\n]{0,8}(→|->|then\b)|re-?audit\s+PR ?#?33|PR ?#?33[^.\n]{0,25}re-?audit",
-    re.I)
-_CARRIER_GUARD = re.compile(r"\b(if open|while open|if merged|when open|when merged|if pr ?#?33 is open)\b", re.I)
+# a carrier-action / carrier-state phrase that goes STALE the moment the carrier merges. Any of these
+# near a bare "PR #N" mention of the carrier, unguarded by an IF-OPEN/IF-MERGED transition marker in
+# the same clause, is RED.
+#
+# N IS THE CARRIER THE SNAPSHOT MODELS, not a literal. These three patterns said `PR ?#?33` -- the
+# pull request this rule was written for -- and went on saying it long after #33 merged, so the scan
+# matched nothing in any document and asserted nothing about the live carrier while its five tests
+# stayed green on fixtures that still said #33. `_carrier_patterns` builds them for the number in
+# `current_workflow_pr`, and `_modelled_carrier` says when there is one to scan for.
+def _carrier_patterns(number: int) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
+    """(mention, unconditional phrase, transition guard) for carrier pull request `number`."""
+    pr = rf"PR ?#?{number}\b"
+    mention = re.compile(pr, re.I)
+    unconditional = re.compile(
+        r"not( yet)? merged|un-?merged|awaiting[ -]?re-?audit|pending[ -]?re-?audit|"
+        r"→\s*merge|->\s*merge|merge it\b|merge " + pr + r"|"
+        r"re-?audit[^.\n]{0,8}(→|->|then\b)|re-?audit\s+" + pr + r"|" + pr + r"[^.\n]{0,25}re-?audit",
+        re.I)
+    guard = re.compile(
+        r"\b(if open|while open|if merged|when open|when merged|if pr ?#?" + str(number)
+        + r" is open)\b", re.I)
+    return mention, unconditional, guard
+
+
+def _modelled_carrier(data) -> int | None:
+    """The carrier's number, when the snapshot models a MERGE TRANSITION for it; else None.
+
+    The scan is about a carrier whose state is about to change under the reader -- "not merged",
+    "re-audit then merge" -- which is what `carrier_transition` declares. A snapshot with no such
+    block (a design-audit carrier, or today's settle carriers) makes no claim that could go stale
+    that way, and scanning it would call every "merge PR #N" in a handoff a contradiction.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("carrier_transition"), dict):
+        return None
+    number = (data.get("current_workflow_pr") or {}).get("number") \
+        if isinstance(data.get("current_workflow_pr"), dict) else None
+    return number if isinstance(number, int) and not isinstance(number, bool) else None
 # strong clause boundaries: a sentence end, a blank line, a bullet, a numbered item, or a table pipe.
 # We scope the carrier scan to a single CLAUSE (robust to markdown hard-wrapping), so a guarded
 # transition sentence is fine while a SEPARATE unconditional sentence in the same block is still caught.
@@ -667,6 +696,7 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
         return problems
     data = _load_json(root, CURRENT_STATE_JSON)
     tokens = (data.get("status_tokens") if isinstance(data, dict) else None) or {}
+    carrier = _modelled_carrier(data)
     for doc in STATE_DOCS:
         txt = _read(root, doc)
         if txt is None:
@@ -679,13 +709,14 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
                     problems.append(f"{doc}: CURRENT region calls '{token_key}' pending, but the status "
                                     f"token says complete (contradictory present-tense claim)")
         # the carrier's state/next-action must be described conditionally: any unconditional carrier
-        # sentence (PR #33 not merged / awaiting re-audit / re-audit→merge / merge PR #33) goes stale
+        # sentence (PR #N not merged / awaiting re-audit / re-audit→merge / merge PR #N) goes stale
         # the moment it merges. We scan the PROSE (structured tokens stripped) for a carrier-action
-        # phrase near a bare "PR #33" mention that is NOT guarded by an IF-OPEN/IF-MERGED transition
-        # marker earlier on the SAME line. This catches "next action is re-audit/merge PR #33" phrasings
-        # a proximity "PR #33 … not merged" regex misses.
+        # phrase near a bare "PR #N" mention that is NOT guarded by an IF-OPEN/IF-MERGED transition
+        # marker in the same clause. This catches "next action is re-audit/merge PR #N" phrasings
+        # a proximity "PR #N … not merged" regex misses. N is the modelled carrier; see above.
         prose = _prose_only(region)
-        for m in re.finditer(r"PR ?#?33\b", prose, re.I):
+        mention, unconditional, guard = _carrier_patterns(carrier) if carrier is not None else (None,) * 3
+        for m in (mention.finditer(prose) if mention is not None else ()):
             # the mention's CLAUSE = text between the nearest strong boundaries on each side. A clause
             # that is a transition-aware statement contains an IF-OPEN/IF-MERGED marker; a standalone
             # unconditional sentence is its own clause with no such marker.
@@ -694,8 +725,8 @@ def _check_current_contradictions(root: pathlib.Path) -> list[str]:
             nxt = _STRONG_BOUNDARY.search(prose, m.end())
             clause_end = nxt.start() if nxt else len(prose)
             clause = prose[clause_start:clause_end]
-            if _CARRIER_UNCONDITIONAL.search(clause) and not _CARRIER_GUARD.search(clause):
-                problems.append(f"{doc}: CURRENT region has an unconditional carrier sentence about PR #33 "
+            if unconditional.search(clause) and not guard.search(clause):
+                problems.append(f"{doc}: CURRENT region has an unconditional carrier sentence about PR #{carrier} "
                                 f"(merge / re-audit / not-merged) not guarded by an IF OPEN / IF MERGED "
                                 f"transition marker — make every carrier-current statement transition-aware")
                 break

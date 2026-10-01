@@ -215,15 +215,29 @@ def has_negative_test(source: str, name: str) -> bool:
     by hand — removed the last thing standing between the Security page and a v2 evidence event
     rendered as v1, and both defenses reported green.
 
-    The intervening-attribute clause is deliberate: `#[test]` is often followed by `#[ignore]`,
-    `#[should_panic]` or a `cfg`, and a pattern that demanded them adjacent would be red on correct
-    code — which is how a gate gets switched off (`A-03`).
+    Other attributes may sit beside `#[test]` — `#[should_panic]`, an `#[allow(…)]` — and a
+    pattern that demanded `#[test]` be adjacent to `fn` would be red on correct code, which is
+    how a gate gets switched off (`A-03`).
+
+    **BUT NOT `#[ignore]`, AND NOT A `cfg`.** This paragraph used to name both as tolerated, in
+    the docstring of the check written because "nothing proved the test runs". An `#[ignore]`d
+    test is compiled and not run; a `#[cfg(…)]`-gated one is not even compiled where the
+    condition is false. Either one re-opens `G-02` with the attribute still in place:
+    `#[test] #[ignore] fn rejects_bad_schema_version() {}` was accepted here, `cargo test`
+    skips it, and the discriminator check it guards can be deleted with everything green. So
+    the whole attribute block above the `fn` is read, in whatever order it is written, and it
+    must contain `#[test]` and neither of those.
     """
     if function_body(source, name) is None:
         return False
     live = strip_comments(source)
-    pattern = r"#\[\s*test\s*\]\s*(?:#\[[^\]]*\]\s*)*fn\s+%s\b" % re.escape(name)
-    return re.search(pattern, live) is not None
+    block = re.search(r"((?:#\[[^\]]*\]\s*)+)fn\s+%s\b" % re.escape(name), live)
+    if block is None:
+        return False
+    attributes = [a.strip() for a in re.findall(r"#\[([^\]]*)\]", block.group(1))]
+    if "test" not in attributes:
+        return False
+    return not any(re.match(r"(ignore|cfg|cfg_attr)\b", a) for a in attributes)
 
 
 def compare(name: str, required: set[str], props: set[str], closed: bool,

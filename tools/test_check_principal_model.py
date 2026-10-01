@@ -11,7 +11,10 @@ normative clause being widened by a commit that nobody read as an amendment.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
+import tempfile
 import unittest
 
 import check_principal_model as gate
@@ -58,8 +61,70 @@ class ReadsTheModel(unittest.TestCase):
         self.assertIn("enum Principal", failure)
 
 
+EIGHTH_IN_ENUM = GOOD.replace("    Signer,      // isolated receipt signer\n",
+                              "    Signer,      // isolated receipt signer\n    FloorWriter,\n")
+EIGHTH_EVERYWHERE = EIGHTH_IN_ENUM.replace("[Principal; 7]", "[Principal; 8]").replace(
+    "Principal::Signer,\n", "Principal::Signer, Principal::FloorWriter,\n")
+
+
+class TheVerdictOnTheModel(unittest.TestCase):
+    """`model_problems` -- the gate's REFUSALS, which is what the docstring above promises.
+
+    `RefusesTheDrift` below only shows that `read_model()` parses a drifted source faithfully.
+    The four comparisons that turn that into a refusal lived in `main()`, which reads the
+    shipped file, so no test reached them: deleting all four left 12 of 12 green.
+    """
+
+    def problems(self, source: str) -> list[str]:
+        variants, members, declared, failure = gate.read_model(source)
+        self.assertIsNone(failure)
+        return gate.model_problems(variants, members, declared)
+
+    def test_the_control_has_no_problems(self):
+        self.assertEqual(self.problems(GOOD), [])
+
+    def test_an_eighth_principal_is_refused_BY_NAME_as_an_amendment_to_2_6(self):
+        """The one that matters most. It compiles; the count and the array agree with each
+        other; and it widens a normative clause."""
+        problems = self.problems(EIGHTH_EVERYWHERE)
+        named = [p for p in problems if "FloorWriter" in p and "is not the normative set" in p]
+        self.assertEqual(len(named), 1, problems)
+        self.assertIn("extra ['FloorWriter']", named[0])
+        self.assertIn("§2.6", named[0])
+        self.assertIn("AMENDMENT", named[0])
+        self.assertIn("ratifiable only by the Architect", named[0])
+        self.assertTrue(any("declared [Principal; 8] and the normative count is 7" in p
+                            for p in problems), problems)
+        self.assertTrue(any("not the normative order" in p for p in problems), problems)
+
+    def test_a_variant_the_array_omits_is_refused(self):
+        """The silent one: it compiles, and verify_distinct_principals() iterates the ARRAY."""
+        problems = self.problems(EIGHTH_IN_ENUM)
+        self.assertTrue(any("the enum has 8 variant(s) and the array 7 member(s)" in p
+                            for p in problems), problems)
+        self.assertTrue(any("extra ['FloorWriter']" in p for p in problems), problems)
+
+    def test_a_renamed_principal_keeps_the_count_and_is_still_refused(self):
+        """`[Principal; 7]` pins the COUNT. A rename keeps seven and changes which seven."""
+        problems = self.problems(GOOD.replace("Recorder", "Auditor"))
+        self.assertTrue(any("extra ['Auditor'], missing ['Recorder']" in p for p in problems),
+                        problems)
+
+    def test_a_reordered_array_is_refused_and_nothing_else_is(self):
+        source = GOOD.replace("Principal::Broker, Principal::Authority",
+                              "Principal::Authority, Principal::Broker")
+        problems = self.problems(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("not the normative order", problems[0])
+
+    def test_a_declared_length_that_is_not_seven_is_refused_and_nothing_else_is(self):
+        problems = self.problems(GOOD.replace("[Principal; 7]", "[Principal; 9]"))
+        self.assertEqual(problems, ["RUNTIME_PRINCIPALS is declared [Principal; 9] and the "
+                                    "normative count is 7"])
+
+
 class RefusesTheDrift(unittest.TestCase):
-    """Each arm driven by the source that would trip it, and the good source as the control."""
+    """Each drifted source is PARSED faithfully; `TheVerdictOnTheModel` is where it is refused."""
 
     def verdict(self, source):
         variants, members, declared, failure = gate.read_model(source)
@@ -101,22 +166,111 @@ class RefusesTheDrift(unittest.TestCase):
 
 class TheDocumentsAreHeldToTheSameNumber(unittest.TestCase):
     def test_every_named_document_exists_and_says_seven(self):
+        self.assertEqual(gate.document_problems(gate.ROOT, 7), [])
         for relative in gate.COUNT_CLAIMS:
-            path = gate.ROOT / relative
-            self.assertTrue(path.exists(), relative)
-            claims = gate._UID_CLAIM.findall(path.read_text(encoding="utf-8"))
+            claims = gate.uid_count_claims((gate.ROOT / relative).read_text(encoding="utf-8"))
             self.assertTrue(claims, f"{relative} states no runtime-service-UID count")
-            for word in claims:
-                self.assertEqual(word.lower(), "seven", relative)
 
     def test_the_claim_pattern_does_not_match_seven_of_something_else(self):
-        self.assertFalse(gate._UID_CLAIM.findall("seven refusals hold the gate shut"))
-        self.assertTrue(gate._UID_CLAIM.findall("the SEVEN runtime service UIDs (NORMATIVE)"))
+        self.assertEqual(gate.uid_count_claims("seven refusals hold the gate shut"), [])
+        self.assertEqual(gate.uid_count_claims("the SEVEN runtime service UIDs (NORMATIVE)"),
+                         [("SEVEN", 7)])
+
+    def test_every_way_a_count_is_written_is_read(self):
+        text = ("the **SEVEN** runtime service UIDs, the seven runtime service UIDs, "
+                "8 runtime service UIDs, EIGHT runtime service UIDs, and the distinct "
+                "runtime service UIDs are not a count")
+        self.assertEqual(gate.uid_count_claims(text),
+                         [("SEVEN", 7), ("seven", 7), ("8", 8), ("EIGHT", 8)])
+
+    def _root(self, **docs: str) -> pathlib.Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        for relative in gate.COUNT_CLAIMS:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(docs.get(pathlib.PurePosixPath(relative).name,
+                                     "The SEVEN runtime service UIDs.\n"), encoding="utf-8")
+        return root
+
+    def test_the_control_three_documents_saying_seven_are_green(self):
+        self.assertEqual(gate.document_problems(self._root(), 7), [])
+
+    def test_a_document_that_says_EIGHT_beside_a_surviving_seven_is_refused(self):
+        """The defect. The pattern matched only "seven", then the code asked whether the match
+        was "seven". A second, different number in the same document could not be seen."""
+        root = self._root(**{"SECURITY_MODEL.md":
+                             "The seven runtime service UIDs ... the EIGHT runtime service UIDs."})
+        self.assertEqual(gate.document_problems(root, 7),
+                         ["docs/SECURITY_MODEL.md says 'EIGHT runtime service UIDs' while the "
+                          "code carries 7"])
+
+    def test_the_documents_are_compared_with_the_CODE_not_with_the_word_seven(self):
+        """If the model really had eight, the documents saying seven are what is stale."""
+        problems = gate.document_problems(self._root(), 8)
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(all("'SEVEN runtime service UIDs' while the code carries 8" in p
+                            for p in problems), problems)
+
+    def test_a_document_with_no_count_claim_and_a_missing_document_are_refused(self):
+        root = self._root(**{"SECURITY_MODEL.md": "the runtime service UIDs are distinct\n"})
+        (root / "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md").unlink()
+        problems = gate.document_problems(root, 7)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("docs/SECURITY_MODEL.md states no '<n> runtime service UIDs' claim",
+                      problems[0])
+        self.assertIn("FLOOR_WRITER_SERVICE_DESIGN.md is named as stating the count and does not "
+                      "exist", problems[1])
 
 
 class TheGateItselfRunsGreenOnThisTree(unittest.TestCase):
     def test_main_returns_zero_here(self):
         self.assertEqual(gate.main(), 0)
+
+    def _main_on(self, source: str) -> tuple[int, str]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = pathlib.Path(tmp.name) / "windows_broker.rs"
+        path.write_text(source, encoding="utf-8")
+        original = gate.SOURCE
+        gate.SOURCE = path
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = gate.main()
+        finally:
+            gate.SOURCE = original
+        return code, out.getvalue()
+
+    def test_main_is_red_on_a_drifted_source_and_prints_the_refusal(self):
+        """The exit code CI reads, on a source the real tree does not hold."""
+        code, said = self._main_on(EIGHTH_EVERYWHERE)
+        self.assertEqual(code, 1)
+        self.assertIn("AMENDMENT", said)
+        self.assertIn("FloorWriter", said)
+
+    def test_main_is_red_when_a_document_disagrees_with_the_code(self):
+        """The good source, and a tree whose documents do not all say seven."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        for relative in gate.COUNT_CLAIMS:
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text("The NINE runtime service UIDs.\n", encoding="utf-8")
+        original = gate.ROOT
+        gate.ROOT = root
+        try:
+            code, said = self._main_on(GOOD)
+        finally:
+            gate.ROOT = original
+        self.assertEqual(code, 1)
+        self.assertIn("says 'NINE runtime service UIDs' while the code carries 7", said)
+
+    def test_main_is_red_on_a_source_it_cannot_parse(self):
+        code, said = self._main_on("pub enum Principal { Broker, }")
+        self.assertEqual(code, 1)
+        self.assertIn("RED: no `pub const RUNTIME_PRINCIPALS", said)
 
 
 

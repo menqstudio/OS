@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Full working capability: reads, runs, and changes files inside its scope. Use only when the task is genuinely to change something. Bro picks the tier per task — grant the narrowest one that lets the job finish.
+description: "Full working capability: reads, runs, and changes files inside its scope. Use only when the task is genuinely to change something. Bro picks the tier per task — grant the narrowest one that lets the job finish."
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 
@@ -21,7 +21,8 @@ not widen it yourself.
 
 ## How to work
 
-Read `CLAUDE.md` and `START_HERE.md` before you act. Report evidence, not assurances: what you
+Read every path in `config/canonical-read-manifest.json`, in the order it lists them, before you
+act — that file is the read order, and the only one. Report evidence, not assurances: what you
 changed, what you ran, what it printed. If something cannot be made genuinely true, leave it
 failing and say so. Never weaken a check to make a test pass, and never claim you ran something
 you did not.

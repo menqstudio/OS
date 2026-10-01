@@ -139,9 +139,22 @@ class Budgets(unittest.TestCase):
 
 
 class TheRealCanon(unittest.TestCase):
-    """The gate is expected to be RED on this repository until the canon is cut down.
-    Asserting that is not asserting a defect is fine: it pins the gate to a tree it is
-    known to refuse, so a change that accidentally neuters it cannot pass unnoticed."""
+    """The real declaration, and the real canon against it.
+
+    This docstring said "the gate is expected to be RED on this repository until the canon is
+    cut down" -- and the class never ran the gate, so nothing here could have noticed either
+    way. The canon was cut down; the gate is GREEN; and `test_the_real_canon_is_within_its_
+    budget` now runs it, so the sentence is a test instead of a claim."""
+
+    def test_the_real_canon_is_within_its_budget(self):
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = check_canon_budget.main(ROOT)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("GREEN: canonical read set within budget", out.getvalue())
 
     def test_the_budget_names_exactly_the_manifest(self):
         manifest = json.loads(

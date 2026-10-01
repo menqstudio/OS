@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 from typing import NamedTuple
 
@@ -91,6 +92,60 @@ _AIOS_SOURCE = "apps/desktop/src/theme/aios.css"
 _TOKENS_SOURCE = "apps/desktop/src/theme/tokens.ts"
 
 
+#: The `tokens.ts` constant that carries each theme's `--menq-*` colours.
+_TS_PALETTE_CONST = {"light": "lightColors", "dark": "darkColors"}
+
+
+def _camel(name: str) -> str:
+    """Manifest spelling -> `tokens.ts` key: `accent-text` -> `accentText`."""
+    head, *rest = name.split("-")
+    return head + "".join(part[:1].upper() + part[1:] for part in rest)
+
+
+def tokens_ts_palettes(text: str) -> dict[str, dict[str, str]]:
+    """`{theme: {key: value}}` read out of `lightColors` / `darkColors` in tokens.ts.
+
+    Pure/testable. Values are lower-cased; keys are the TS property names.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for theme, const in _TS_PALETTE_CONST.items():
+        block = re.search(rf"export const {const}\b[^=]*=\s*\{{(.*?)\}};", text, re.S)
+        if not block:
+            raise ContrastError(f"{_TOKENS_SOURCE} has no `export const {const} = {{ … }};` "
+                                f"block; the {theme} palette cannot be verified")
+        out[theme] = {key: value.lower() for key, value in
+                      re.findall(r"^\s*(\w+)\s*:\s*'([^']*)'", block.group(1), re.M)}
+    return out
+
+
+def aios_palettes(css: str) -> dict[str, dict[str, str]]:
+    """`{theme: {--token: value}}` as aios.css resolves them. Pure/testable.
+
+    The bare `:root{…}` block is the base. `:root[data-theme="X"]{…}` restates some tokens
+    for theme X and inherits the rest, so a theme's palette is the base overlaid with its own
+    block — which is what the browser computes, and is why a token the light block does not
+    restate is checked against the base value rather than reported missing.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    base: dict[str, str] | None = None
+    themed: dict[str, dict[str, str]] = {theme: {} for theme in _TS_PALETTE_CONST}
+    for selector, body in re.findall(r"(:root[^{]*)\{(.*?)\}", css, re.S):
+        declared = {key: value.strip().lower() for key, value in
+                    re.findall(r"(--[a-zA-Z0-9-]+)\s*:\s*([^;}]+);", body + ";")}
+        selector = selector.strip()
+        if selector == ":root":
+            if base is None:
+                base = declared
+            continue
+        named = re.fullmatch(r""":root\[data-theme=["']?(\w+)["']?\]""", selector)
+        if named and named.group(1) in themed:
+            themed[named.group(1)].update(declared)
+    if base is None:
+        raise ContrastError(f"{_AIOS_SOURCE} has no bare `:root{{…}}` block; the aios palette "
+                            f"cannot be verified")
+    return {theme: {**base, **override} for theme, override in themed.items()}
+
+
 def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
     """The manifest's palettes must equal the files that ship them — asserted, not trusted.
 
@@ -113,6 +168,13 @@ def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
     made real tokens on 2026-08-29 so the declared pair and the painted background agree, and a
     blanket `endswith("-tint")` rule would quietly hand that guarantee back.
 
+    COMPARED PER TOKEN AND PER THEME. The first version asked whether the manifest's value
+    appeared ANYWHERE in the source file, as a substring of the whole text. So light `bg` and
+    `surface` could be swapped, and light `bg` could carry the DARK theme's `bg`: both values
+    are in the file, both were accepted, and the gate graded contrast for a palette that is
+    not on any screen while its docstring said "must equal". Each entry is now looked up by
+    its own name in its own theme and compared with that one value.
+
     Called from `main`, not from `evaluate`: `evaluate` grades whatever manifest it is handed and the
     unit tests hand it synthetic ones, while this is a precondition about the SHIPPING files.
     """
@@ -121,7 +183,9 @@ def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
         path = root / rel
         if not path.exists():
             raise ContrastError(f"{rel} is missing; the manifest's palettes cannot be verified")
-        sources[rel] = path.read_text(encoding="utf-8").lower()
+        sources[rel] = path.read_text(encoding="utf-8")
+    shipped = {_TOKENS_SOURCE: tokens_ts_palettes(sources[_TOKENS_SOURCE]),
+               _AIOS_SOURCE: aios_palettes(sources[_AIOS_SOURCE])}
 
     problems: list[str] = []
     for theme, palette in palettes.items():
@@ -135,11 +199,24 @@ def _require_palettes_mirror_tokens(palettes: dict, root: pathlib.Path) -> None:
                 # on 2026-08-29 precisely so the declared pair and the painted background agree, and
                 # a blanket `endswith("-tint")` rule would quietly give that guarantee back.
                 continue
-            rel = _AIOS_SOURCE if name.startswith(_AIOS_PREFIX) else _TOKENS_SOURCE
-            if value.lower() not in sources[rel]:
+            if name.startswith(_AIOS_PREFIX):
+                rel, token = _AIOS_SOURCE, "--" + name[len(_AIOS_PREFIX):]
+            else:
+                rel, token = _TOKENS_SOURCE, _camel(name)
+            if theme not in shipped[rel]:
+                problems.append(f"{theme} palette: {rel} ships no `{theme}` theme to mirror")
+                continue
+            actual = shipped[rel][theme].get(token)
+            if actual is None:
                 problems.append(
-                    f"{theme} palette: {name} = {value} appears nowhere in {rel} — the manifest "
-                    f"is grading a colour the app does not ship"
+                    f"{theme} palette: {name} = {value}, and {rel} declares no `{token}` for "
+                    f"the {theme} theme — the manifest is grading a colour the app does not ship"
+                )
+            elif actual != value.lower():
+                problems.append(
+                    f"{theme} palette: {name} = {value}, but {rel} ships `{token}` = {actual} "
+                    f"for the {theme} theme — the manifest is grading a colour the app does "
+                    f"not ship"
                 )
     if problems:
         joined = "\n  - ".join(problems)

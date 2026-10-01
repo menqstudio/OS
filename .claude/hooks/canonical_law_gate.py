@@ -50,9 +50,11 @@ SHELL: WHY THIS IS A PostToolUse CHECK AND NOT A MATCHER CHANGE
 
   WHAT IT IS NOT. It cannot undo the write, and it does not try to: an automatic
   revert of an agent's uncommitted work is data loss with a governance excuse. The
-  engine's PostToolUse path is the same -- `bro_hook.py:148-177` settles a lease and
-  emits `{"decision":"block"}`; there is no revert, no unlink, no restore anywhere in
-  it. So state it exactly: SHELL COVERAGE HERE, AND IN THE ENGINE, IS DETECTION PLUS
+  engine's PostToolUse path is the same -- the `post-tool` branch of `bro_hook.py`
+  settles a lease and hands a red settlement to `_observe_or_block`, which emits
+  `{"decision":"block"}` (or, in shadow mode, only a `[SHADOW] would block` note);
+  there is no revert, no unlink, no restore anywhere in it. So state it exactly:
+  SHELL COVERAGE HERE, AND IN THE ENGINE, IS DETECTION PLUS
   HALTING THE TURN -- NOT CONTAINMENT. The bytes that landed stay landed. What it
   buys is that the violation cannot be silently ridden past: the turn fails, the path
   is named, and it keeps failing while the violation stands.
@@ -61,6 +63,16 @@ SHELL: WHY THIS IS A PostToolUse CHECK AND NOT A MATCHER CHANGE
     - a write outside the repository, or to a git-ignored path (git does not report it);
     - a write that is made and reverted inside one shell call (transient tamper);
     - which of several shell calls in a turn did it -- only that it happened;
+    - a write made AND COMMITTED inside one shell call: the settlement walks the dirty
+      set, and a committed path is clean again. HEAD is not compared, on purpose -- a
+      `git pull` moves HEAD over hundreds of paths the session never wrote, and a
+      report nobody can clear by reverting is a gate that gets switched off;
+    - a write made before the session HAS a baseline. The baseline is taken at
+      SessionStart / SubagentStart; a session whose start hook did not run is baselined
+      by its first shell call instead, so whatever that call wrote is not judged. That
+      call says so in the context -- it is announced, not silent;
+    - a shell call that removes this session's baseline file from the temp directory:
+      the next call re-baselines, with the same announcement and the same blind spot;
     - `CANONICAL_LAW=off`, which disables this exactly as it disables the rest;
     - anything at all in a session whose project root is not this checkout.
 
@@ -108,7 +120,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 # Tools that write files through the harness. Bash is deliberately absent -- see the
 # module docstring's first honest limit.
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # Tools that run a shell. These are NOT added to EDIT_TOOLS: they are not refused in
 # advance (see the docstring -- a reliable PreToolUse shell path-check is not possible),
 # they are settled afterwards against what actually changed on disk.
@@ -358,6 +370,47 @@ def relative(path_str: str) -> str | None:
         return None
 
 
+def _budget_ceilings() -> dict | None:
+    """The per-file ceilings, or None when the budget gate cannot be asked.
+
+    One loader for the pre-tool and the post-tool arm. They were two, and they did not
+    catch the same thing: `check_canon_budget.load_json` raises SystemExit on a missing
+    or invalid budget file, the pre-tool arm caught it, and the post-tool arm caught only
+    Exception -- so the hook died with exit 1 past the FAILED OPEN shout.
+    """
+    import contextlib
+    import io
+    try:
+        import check_canon_budget as budget
+        # load_json PRINTS its `RED:` line before it raises, and a hook's stdout is its
+        # verdict channel -- so the line is swallowed along with the exit.
+        with contextlib.redirect_stdout(io.StringIO()):
+            ceilings = budget.load_json(ROOT, budget.BUDGET_REL).get("per_file_bytes") or {}
+    except (Exception, SystemExit):  # noqa: BLE001 - a missing gate must not wedge the session
+        return None
+    return ceilings if isinstance(ceilings, dict) else None
+
+
+def _edit_delta(tool_input: dict) -> int | None:
+    """Bytes an Edit or a MultiEdit adds (negative: removes), or None if unmeasurable.
+
+    `Edit` carries one `old_string`/`new_string` pair at the top level; `MultiEdit`
+    carries a list of them under `edits`. A shape this cannot read is None, never 0:
+    "could not measure" and "adds nothing" are different answers.
+    """
+    edits = tool_input.get("edits")
+    pairs = edits if isinstance(edits, list) and edits else [tool_input]
+    delta = 0
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            return None
+        old, new = pair.get("old_string"), pair.get("new_string")
+        if not isinstance(old, str) or not isinstance(new, str):
+            return None
+        delta += len(new.encode("utf-8")) - len(old.encode("utf-8"))
+    return delta
+
+
 def canon_budget_problem(rel: str | None, tool: str, tool_input: dict) -> str | None:
     """While a canonical document is over its ceiling, only an edit that SHRINKS it
     is allowed through.
@@ -372,20 +425,16 @@ def canon_budget_problem(rel: str | None, tool: str, tool_input: dict) -> str | 
     write that is smaller than what is there and refuses one that is not. Under
     budget, nothing here fires at all.
 
-    LIMIT, stated rather than hidden: this sees the Edit/Write tools. A shell
+    LIMIT, stated rather than hidden: this sees the harness edit tools. A shell
     redirect appends without passing through here -- the same "SHELL IS NOT GATED"
-    hole this file's own header names -- and `tools/check_canon_budget.py` in CI is
-    the backstop for whatever lands.
+    hole this file's own header names; `shell_path_problem` asks the same question
+    after the fact, and `tools/check_canon_budget.py` in CI is the backstop for
+    whatever lands.
     """
     if rel is None:
         return None
-    try:
-        import check_canon_budget as budget
-    except Exception:  # noqa: BLE001 - a missing gate must not wedge the session
-        return None
-    try:
-        ceilings = budget.load_json(ROOT, budget.BUDGET_REL).get("per_file_bytes") or {}
-    except SystemExit:
+    ceilings = _budget_ceilings()
+    if ceilings is None:
         return None
     cap = ceilings.get(rel)
     if not isinstance(cap, int):
@@ -410,19 +459,24 @@ def canon_budget_problem(rel: str | None, tool: str, tool_input: dict) -> str | 
                 f"history to docs/archive/ and leave the live statement behind, then write "
                 f"again. Run `python tools/check_canon_budget.py` to see the whole set.")
 
-    old = tool_input.get("old_string")
-    new = tool_input.get("new_string")
-    if isinstance(old, str) and isinstance(new, str):
-        delta = len(new.encode("utf-8")) - len(old.encode("utf-8"))
-        if delta < 0:
-            return None
-        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this edit "
-                f"adds {delta:,} more. While a canonical document is over budget the only "
-                f"edit that is accepted is one that makes it smaller -- that is the whole "
-                f"point of the ceiling: this repository has never lacked a rule that says "
-                f"write something, only one that says remove something. Archive the history "
-                f"first. `python tools/check_canon_budget.py` names every file and its overage.")
-    return None
+    delta = _edit_delta(tool_input)
+    if delta is None:
+        # A payload whose size cannot be read (a NotebookEdit, a shape nobody has met yet)
+        # used to fall through to an allow -- and so did MultiEdit, which the matcher has
+        # always named. Over its ceiling a file accepts a SHRINKING edit; one that cannot
+        # be shown to shrink it is not one.
+        return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this {tool} "
+                f"call carries nothing its size can be measured from. While a canonical "
+                f"document is over budget the only edit that is accepted is one that makes "
+                f"it smaller: use Edit or Write, so the change can be measured.")
+    if delta < 0:
+        return None
+    return (f"{rel} is {current:,} bytes against a ceiling of {cap:,}, and this edit "
+            f"adds {delta:,} more. While a canonical document is over budget the only "
+            f"edit that is accepted is one that makes it smaller -- that is the whole "
+            f"point of the ceiling: this repository has never lacked a rule that says "
+            f"write something, only one that says remove something. Archive the history "
+            f"first. `python tools/check_canon_budget.py` names every file and its overage.")
 
 
 def _shell_state_path(sid: str) -> pathlib.Path:
@@ -437,6 +491,79 @@ def _shell_state_path(sid: str) -> pathlib.Path:
     directory = pathlib.Path(tempfile.gettempdir()) / "os-canonical-law" / "shell"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{safe}.json"
+
+
+#: Where the baseline keeps each dirty path's SIZE. Repo-relative paths never start with
+#: a slash, so this key cannot collide with one. The sizes are a second map rather than a
+#: new field inside the fingerprint on purpose: changing the fingerprint's shape would make
+#: every already-dirty path of every live session look changed on its next shell call.
+SIZES_KEY = "/sizes"
+
+
+def _size(rel: str) -> int | None:
+    try:
+        return (ROOT / rel).stat().st_size
+    except OSError:
+        return None
+
+
+def _committed_size(rel: str) -> int | None:
+    """The size of `rel` at HEAD, or None when HEAD has no such blob or git cannot say."""
+    import subprocess
+    try:
+        result = subprocess.run(["git", "-C", str(ROOT), "cat-file", "-s", f"HEAD:{rel}"],
+                                capture_output=True, text=True, timeout=10)
+        return int(result.stdout.strip()) if result.returncode == 0 else None
+    except Exception:  # noqa: BLE001 - no git, no answer
+        return None
+
+
+def _load_shell_state(path: pathlib.Path) -> tuple[dict[str, str], dict[str, int]] | None:
+    """`(fingerprints, sizes)` from a baseline file, or None when there is no baseline."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(raw, dict):
+        return {}, {}
+    sizes = raw.pop(SIZES_KEY, None)
+    sizes = ({k: v for k, v in sizes.items() if isinstance(v, int)}
+             if isinstance(sizes, dict) else {})
+    return {k: v for k, v in raw.items() if isinstance(v, str)}, sizes
+
+
+def _save_shell_state(path: pathlib.Path, fingerprints: dict[str, str],
+                      sizes: dict[str, int]) -> None:
+    try:
+        path.write_text(json.dumps({**fingerprints, SIZES_KEY: sizes}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _sizes_of(rels) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for rel in rels:
+        size = _size(rel)
+        if size is not None:
+            out[rel] = size
+    return out
+
+
+def baseline_shell_state(sid: str) -> None:
+    """Record the session's baseline at its START, unless it already has one.
+
+    The first shell call used to be the baseline, so whatever that call wrote was never
+    judged -- a session could do its out-of-scope write first and be clean ever after.
+    "Unless it already has one" is load-bearing: SubagentStart fires with the parent's
+    session id, and SessionStart fires again on resume and after a compaction; each would
+    otherwise forgive everything written since the real start.
+    """
+    path = _shell_state_path(sid)
+    if path.exists():
+        return
+    now = dirty_fingerprints()
+    if now is not None:
+        _save_shell_state(path, now, _sizes_of(now))
 
 
 def _fingerprint(rel: str) -> str:
@@ -495,12 +622,19 @@ def dirty_fingerprints() -> dict[str, str] | None:
 
 
 def shell_path_problem(rel: str, roadmap, prior_art, sid: str,
-                       before: dict[str, str], now: dict[str, str]) -> str | None:
+                       before: dict[str, str], now: dict[str, str],
+                       before_sizes: dict[str, int] | None = None) -> str | None:
     """The same questions PreToolUse asks about a path, asked after the write.
 
     Deliberately the SAME predicates, not a second weaker copy of them: if the two ever
     disagreed, which tool wrote the file would decide whether the rule applied, which is
     the whole defect being closed.
+
+    `before_sizes` is what makes that true of the budget rule. Until it was passed, this
+    arm said "over its ceiling AND bigger than it was" in a comment and tested only the
+    first half -- so a shell edit that SHRANK an over-budget file was blocked while the
+    same shrink through Edit was accepted, and the stated remedy (revert the path) made
+    the file larger.
     """
     scope = roadmap.scope_problem(ROOT, sid, rel)
     if scope:
@@ -515,24 +649,28 @@ def shell_path_problem(rel: str, roadmap, prior_art, sid: str,
         if not art_ok:
             return art_why
 
-    # Canon budget: over its ceiling AND bigger than it was.
-    try:
-        import check_canon_budget as budget
-        ceilings = budget.load_json(ROOT, budget.BUDGET_REL).get("per_file_bytes") or {}
-    except Exception:  # noqa: BLE001 - a missing gate must not wedge the session
+    # Canon budget: over its ceiling AND not smaller than it was. "Was" is the size the
+    # baseline recorded for a path that was already dirty, and the committed size for one
+    # that was clean -- which is what a clean tracked file's size WAS.
+    ceilings = _budget_ceilings()
+    if ceilings is None:
         return None
     cap = ceilings.get(rel)
     if not isinstance(cap, int):
         return None
-    try:
-        size = (ROOT / rel).stat().st_size
-    except OSError:
+    size = _size(rel)
+    if size is None or size <= cap:
         return None
-    if size <= cap:
+    was = (before_sizes or {}).get(rel)
+    if was is None:
+        was = _committed_size(rel)
+    if was is not None and size < was:
         return None
-    return (f"{rel} is {size:,} bytes against a ceiling of {cap:,}. While a canonical "
-            f"document is over budget the only accepted edit is one that makes it "
-            f"smaller. Archive the history to docs/archive/ and leave the live statement.")
+    grew = (f"it was {was:,} before this shell call" if was is not None
+            else "its previous size could not be established")
+    return (f"{rel} is {size:,} bytes against a ceiling of {cap:,}, and {grew}. While a "
+            f"canonical document is over budget the only accepted edit is one that makes "
+            f"it smaller. Archive the history to docs/archive/ and leave the live statement.")
 
 
 def handle_post_tool(data: dict, roadmap, prior_art, sid: str) -> None:
@@ -548,21 +686,20 @@ def handle_post_tool(data: dict, roadmap, prior_art, sid: str) -> None:
         return
 
     state_path = _shell_state_path(sid)
-    try:
-        before = json.loads(state_path.read_text(encoding="utf-8"))
-        before = before if isinstance(before, dict) else {}
-        first_call = False
-    except Exception:  # noqa: BLE001
-        before, first_call = {}, True
+    loaded = _load_shell_state(state_path)
 
-    if first_call:
+    if loaded is None:
         # Nothing to compare against: baseline whatever is already dirty and allow. A
-        # session that starts on a dirty tree must not be blamed for it.
-        try:
-            state_path.write_text(json.dumps(now), encoding="utf-8")
-        except OSError:
-            pass
+        # session that starts on a dirty tree must not be blamed for it. But say so --
+        # the baseline is normally taken at session start, so arriving here means the
+        # start hook did not run for this session or its baseline file is gone, and
+        # either way whatever THIS call wrote is being forgiven unseen.
+        _save_shell_state(state_path, now, _sizes_of(now))
+        context("PostToolUse", "CANONICAL LAW: this session had no shell baseline, so this "
+                               "call was used as one and was NOT settled against the tree. "
+                               "Anything it wrote is unjudged. Not a pass.")
         return
+    before, before_sizes = loaded
 
     changed = sorted(rel for rel, fp in now.items() if before.get(rel) != fp)
     if not changed:
@@ -575,7 +712,8 @@ def handle_post_tool(data: dict, roadmap, prior_art, sid: str) -> None:
     else:
         problems, violating = [], set()
         for rel in changed:
-            problem = shell_path_problem(rel, roadmap, prior_art, sid, before, now)
+            problem = shell_path_problem(rel, roadmap, prior_art, sid, before, now,
+                                         before_sizes)
             if problem:
                 problems.append(f"{rel}: {problem}")
                 violating.add(rel)
@@ -584,12 +722,12 @@ def handle_post_tool(data: dict, roadmap, prior_art, sid: str) -> None:
     # of the baseline on purpose, so it keeps being reported until it is reverted or the
     # session declares a phase that permits it -- both real, satisfiable actions. A gate
     # that reports a violation once and then forgets it is a notification, not a gate.
-    try:
-        state_path.write_text(
-            json.dumps({rel: fp for rel, fp in now.items() if rel not in violating}),
-            encoding="utf-8")
-    except OSError:
-        pass
+    # Its SIZE record is kept as it was, though: "smaller than it was" must go on meaning
+    # smaller than before the violation, not smaller than the violation.
+    sizes = _sizes_of(rel for rel in now if rel not in violating)
+    sizes.update({rel: before_sizes[rel] for rel in violating if rel in before_sizes})
+    _save_shell_state(state_path,
+                      {rel: fp for rel, fp in now.items() if rel not in violating}, sizes)
 
     if not problems:
         return
@@ -680,6 +818,7 @@ def main() -> int:
     if event in {"session-start", "subagent-start"}:
         hook = "SessionStart" if event == "session-start" else "SubagentStart"
         receipt = receipt_store.record(ROOT, sid)
+        baseline_shell_state(sid)
         open_phase = roadmap.first_open_phase(ROOT)
         structural = roadmap.structural_problems(ROOT)
         header = (

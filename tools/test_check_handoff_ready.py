@@ -390,6 +390,44 @@ class CiCheckout(unittest.TestCase):
         self.assertIsNone(check_handoff_ready.ci_checkout(self.work, {"GITHUB_ACTIONS": "false"}))
 
 
+class PhaseDeclaration(unittest.TestCase):
+    """`check_phase_declared` -- asked only when a session id is given, and then it answers."""
+
+    def _result(self, roadmap_module, session="sid-1"):
+        import types
+        from unittest import mock
+
+        res = check_handoff_ready.Result()
+        stub = roadmap_module
+        if callable(roadmap_module):
+            stub = types.ModuleType("check_roadmap_order")
+            stub.verify_declaration = roadmap_module
+        with mock.patch.dict(sys.modules, {"check_roadmap_order": stub}):
+            check_handoff_ready.check_phase_declared(pathlib.Path("."), session, res)
+        return res.problems
+
+    def test_a_declared_session_is_no_problem(self):
+        self.assertEqual(self._result(lambda root, sid: (True, "declared meta")), [])
+
+    def test_an_undeclared_session_is_a_problem_with_the_command_that_fixes_it(self):
+        problems = self._result(lambda root, sid: (False, "no declaration for sid-1"))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("has not declared its roadmap phase: no declaration for sid-1", problems[0][0])
+        self.assertIn("check_roadmap_order.py --declare", problems[0][1])
+
+    def test_no_session_means_the_question_was_not_asked(self):
+        self.assertEqual(self._result(lambda root, sid: (False, "x"), session=None), [])
+
+    def test_a_gate_that_cannot_be_imported_is_RED_with_a_reason_not_a_silent_pass(self):
+        """`except Exception: return` -- this file's docstring says "I could not check" and
+        "it is fine" are different answers, and check_canon three functions up records the
+        same failure. `None` in sys.modules is how Python spells "this import fails"."""
+        problems = self._result(None)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("the roadmap-order gate could not be imported", problems[0][0])
+        self.assertIn("restore tools/check_roadmap_order.py", problems[0][1])
+
+
 class EntryPointRunsEverything(unittest.TestCase):
     def test_unittest_main_is_the_last_statement(self):
         source = pathlib.Path(__file__).read_text(encoding="utf-8").splitlines()
