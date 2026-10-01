@@ -117,11 +117,11 @@
     "branch": "t146/review-wave1",
     "state": "open",
     "what": "Wave 1 of fixing the whole-repository read: six batches (decision #78 remnants, the engine wall, engine services and CI kits, tests that could not fail, gates and hooks, false documents), each built in its own worktree and re-run by an independent checker.",
-    "note": "wave 1 of the whole-repository read: 405 findings fixed across the engine wall, services, tests, gates and documents; 34 left to the Owner",
+    "note": "wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #314 (t146/review-wave1), task T-145: Wave 1 of fixing the whole-repository read: six batches (decision #78 remnants, the engine wall, engine services and CI kits, tests that could not fail, gates and hooks, false documents), each built in its own worktree and re-run by an independent checker. Next: watch the two kit jobs on this head (the kits changed without a run), then wave 2: Rust (217) and frontend (106)",
+    "current": "PR #314 (t146/review-wave1), task T-145: wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed Next: merge on an all-green exact head, then wave 2: Rust and frontend",
     "_note": "The carrier is current_workflow_pr (#314 on t146/review-wave1). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

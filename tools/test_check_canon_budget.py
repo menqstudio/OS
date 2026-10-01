@@ -60,6 +60,19 @@ class Budgets(unittest.TestCase):
                "total_bytes_max": 20_000, "max_shared_fraction": 0.2})
         self.assertEqual(self.run_gate(), 0)
 
+    def test_a_crlf_checkout_measures_as_the_committed_file(self):
+        # 100 lines, inside the ceiling as committed; the same text checked out with CRLF is
+        # 100 bytes longer on disk and was over it -- on windows-latest only.
+        text = body(100)
+        ceiling = len(text.encode("utf-8")) + 50
+        build(self.dir, {"A.md": text},
+              {"per_file_bytes": {"A.md": ceiling},
+               "total_bytes_max": ceiling, "max_shared_fraction": 0.2})
+        self.assertEqual(self.run_gate(), 0)
+        (self.dir / "A.md").write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        self.assertGreater((self.dir / "A.md").stat().st_size, ceiling)
+        self.assertEqual(self.run_gate(), 0)
+
     def test_a_file_over_its_ceiling_is_red(self):
         """Mutant: delete the per-file comparison ⇒ this goes green."""
         build(self.dir,

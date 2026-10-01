@@ -136,7 +136,11 @@ def main(root: pathlib.Path = ROOT) -> int:
     for rel in paths:
         path = root / rel
         try:
-            size = path.stat().st_size
+            # The budget bounds what a session READS, and a checkout's line endings are not
+            # part of that: on a Windows runner git hands every text file out as CRLF, one
+            # byte a line more, which put a canon that is inside its ceiling over it there
+            # and nowhere else. The size is the committed (LF) form's.
+            size = len(path.read_bytes().replace(b"\r\n", b"\n"))
         except OSError:
             problems.append(f"{rel} is in the read manifest and not on disk")
             continue

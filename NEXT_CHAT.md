@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
 >
-> wave 1 of the whole-repository read: 405 findings fixed across the engine wall, services, tests, gates and documents; 34 left to the Owner
+> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

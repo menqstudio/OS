@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
 >
-> wave 1 of the whole-repository read: 405 findings fixed across the engine wall, services, tests, gates and documents; 34 left to the Owner
+> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-01 | 1490 OK |
+| `tools/` self-tests · 2026-10-01 | 1491 OK |
 | frontend · 2026-10-01 | typecheck clean, 801 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-01 | 2617 OK, 13 skipped |
