@@ -5,8 +5,9 @@
 //! step (rev-30 §5). This module owns the three supervisor-side durable primitives for that:
 //!
 //! 1. **The acceptance ledger** (`governed_turn_acceptance`) — a create-if-absent CAS row per turn
-//!    (three `UNIQUE` constraints: `(install_id,request_nonce)`, `challenge_handle`,
-//!    `execution_attempt_id`) whose `state` moves through the CLOSED 9-value enum
+//!    (FOUR uniqueness constraints: `(install_id,request_nonce)`, `challenge_handle`,
+//!    `execution_attempt_id`, and the unique index on `receipt_id`) whose `state` moves through the
+//!    CLOSED 9-value enum
 //!    (`ACCEPTED_PREPARED → LEASE_READY → EXECUTION_STARTING → EXECUTING → COMPLETED`; terminals
 //!    `BLOCKED`, `FAILED`, `EXPIRED`, `RECOVERY_REQUIRED`; `UNSEEN` = absent/no-row, never stored).
 //!    Every edge is **transition-checked** in Rust (a `WHERE state IN (<legal predecessors>)` guard)
@@ -18,12 +19,38 @@
 //!    terminal governed-turn record (§5 outbox / §6 step 4).
 //!
 //! 3. **The signer-owned durable evidence-head floor CAS** (`governed_evidence_head_floor`, §5
-//!    step 11 / §7 P1-7) — in ONE `BEGIN IMMEDIATE` it reads the current floor for `(install_id,
-//!    task_id)` and, keyed on the re-anchor counter `head_sequence` (the epoch) + `final_event_hash`
-//!    (the chain identity), **refuses a lower head** (`stale_evidence`), **refuses an equal head whose
-//!    content differs** (`evidence_fork`), and otherwise **advances + commits** (strictly-higher head)
-//!    or is an idempotent no-op (equal head + equal content). The floor is committed before any
-//!    envelope would be minted, closing the TOCTOU on the `(install_id,task_id)` PK.
+//!    step 11 / §7 P1-7) — in ONE `BEGIN IMMEDIATE` it reads the highest floor recorded for the
+//!    INSTALL — every task of it, not the `(install_id, task_id)` row alone, which is what this
+//!    header said until the scope was widened; see [`evidence_floor_cas`] for why a per-task scope
+//!    was a scope the attacker chose — and, keyed on the re-anchor counter `head_sequence` (the
+//!    epoch) + `final_event_hash` (the chain identity), **refuses a lower head** (`stale_evidence`),
+//!    **refuses an equal head whose content differs** (`evidence_fork`), and otherwise **advances +
+//!    commits** (strictly-higher head) or is an idempotent no-op (equal head + equal content). The
+//!    floor is committed before any envelope would be minted. The `(install_id,task_id)` row is kept
+//!    as the per-task record and the idempotency key.
+//!
+//! # WHAT IS LIVE, AND WHAT IS ONLY TESTED
+//!
+//! Of the three, only (3) has a caller. Outside this file's own tests the workspace uses
+//! [`create_schema`], [`evidence_floor_cas`], [`EvidenceHead`], [`LedgerError`] and the two lease
+//! constants (`broker/src/main.rs`, `win-live/src/servers.rs`), plus the pure [`lease_launch_gate`]
+//! from the Windows kit. **Nothing calls the acceptance state machine or the outbox**:
+//! [`accept_prepare`], [`advance`], [`gate_and_start`], [`current_state`], [`lease_payload_bytes`],
+//! [`enqueue_terminal`], [`pending_outbox`] and [`mark_published`] are reached only by the tests
+//! below.
+//!
+//! The supervisor that actually runs is Python, and its ledger is the twin of this one:
+//! `engine/runtime/governed_supervisor_ledger.py`, over the same `supervisor_ledger.sql`. The two
+//! are kept in step by hand; a rule changed there is not changed here by anything but a reader
+//! (the launch gate drifted exactly that way, see [`gate_and_start`]). And no code in either
+//! language drains `governed_turn_outbox` — the Rust functions that write it have no caller and
+//! the Python supervisor has no statement touching it.
+//!
+//! Deleting the unreached half, or wiring a Rust supervisor onto it, is a decision about which
+//! implementation is the supervisor. It is not made here; this paragraph exists so the choice is
+//! visible instead of implied by a module that reads as if it were in service. The eight functions
+//! are declared `declared_unreachable` in `config/reachability-declarations.json`, so the
+//! reachability gate turns RED the day one of them gains a caller and has to be re-declared.
 //!
 //! **Testable without the OS trust chain:** every fn takes a `&rusqlite::Connection`; every clock is an
 //! injected `now_ms: i64`. Tests open `Connection::open_in_memory()` and drive the full lifecycle
@@ -248,8 +275,11 @@ pub enum AcceptOutcome {
     Idempotent,
 }
 
-/// CAS insert `absent → ACCEPTED_PREPARED` (§5 step 4). The three `UNIQUE` constraints ARE the CAS:
-/// a reused nonce, challenge, or attempt id collides. On collision this loads the existing row and
+/// CAS insert `absent → ACCEPTED_PREPARED` (§5 step 4). The uniqueness constraints ARE the CAS — the
+/// table's three `UNIQUE`s and the unique index on `receipt_id` — so a reused nonce, challenge,
+/// attempt id or receipt id collides. (A `receipt_id` collision under a fresh nonce is reported as
+/// `challenge_or_attempt_reused`, the same string the Python twin uses for it; the name is narrower
+/// than the case.) On collision this loads the existing row and
 /// returns [`AcceptOutcome::Idempotent`] iff it is byte-identical in every bound field (a genuine
 /// retry of the same accepted turn); any divergence — same nonce/different challenge, same
 /// challenge/different nonce, or a conflicting `run_id`/`task_id`/`workspace_id`/attempt/lease — is
@@ -629,17 +659,35 @@ pub fn lease_launch_gate(now_ms: i64, lease_issued_at_ms: i64, lease_expires_at_
     LaunchGate::Proceed
 }
 
-/// Run the step-8a gate and CAS `LEASE_READY` to its deterministic next state (§5 step 8a/9): on
-/// `Proceed` → `EXECUTION_STARTING` (the launcher may now spawn once); on failure → `EXPIRED` with the
-/// gate reason (no launch). This is the ONE place a `LEASE_READY` row is auto-driven forward, so the
-/// gate cannot be smuggled past. Returns the resulting state.
+/// Run the step-8a gate against the lease window THIS LEDGER PERSISTED at acceptance, and CAS
+/// `LEASE_READY` to its deterministic next state (§5 step 8a/9): on `Proceed` →
+/// `EXECUTION_STARTING` (the launcher may now spawn once); on failure → `EXPIRED` with the gate
+/// reason (no launch). Returns the resulting state; an unknown attempt is [`LedgerError::NotFound`].
+///
+/// The caller supplies ONLY the attempt id. This function used to take `lease_issued_at_ms` and
+/// `lease_expires_at_ms` as arguments while its doc said "the gate cannot be smuggled past": a
+/// caller that picks the expiry it is judged against has been handed the gate. That is audit
+/// F-01/F-23, fixed in the Python twin (`governed_supervisor_ledger.gate_and_start`), which reads
+/// both from the row; the Rust copy kept the defect because nothing calls it.
+///
+/// One thing is still weaker here than in the twin: [`advance`] is `pub`, so
+/// `advance(.., &Advance::ExecutionStarting, ..)` moves a `LEASE_READY` row with no gate at all.
+/// "The ONE place a `LEASE_READY` row is driven forward" is therefore a convention in this file,
+/// not a property of it.
 pub fn gate_and_start(
     conn: &Connection,
     execution_attempt_id: &str,
     now_ms: i64,
-    lease_issued_at_ms: i64,
-    lease_expires_at_ms: i64,
 ) -> Result<AcceptanceState, LedgerError> {
+    let window: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT lease_issued_at_ms, lease_expires_at_ms FROM governed_turn_acceptance \
+             WHERE execution_attempt_id = ?1",
+            params![execution_attempt_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (lease_issued_at_ms, lease_expires_at_ms) = window.ok_or(LedgerError::NotFound)?;
     match lease_launch_gate(now_ms, lease_issued_at_ms, lease_expires_at_ms) {
         LaunchGate::Proceed => advance(conn, execution_attempt_id, &Advance::ExecutionStarting, now_ms),
         LaunchGate::Expired(reason) => advance(
@@ -1362,9 +1410,32 @@ mod tests {
             ("history_handle", |a| a.history_handle = H64.into()),
             ("generation_config_handle", |a| a.generation_config_handle = H64_B.into()),
         ];
-        // Every field of `NewAcceptance` is exercised: if one is added and not listed here, this
-        // count is the tripwire.
-        assert_eq!(mutations.len(), 23, "a NewAcceptance field is missing from the mutation table");
+        // Every field of `NewAcceptance` is exercised, and it is the COMPILER that says "every".
+        // This used to be `assert_eq!(mutations.len(), 23)` — a hand-written table compared with a
+        // hand-written number, which a 24th field changes neither side of. The destructuring below
+        // has no `..`: a field added to the struct does not compile here until it is named, and
+        // once it is named the set comparison fails until the table above has a row for it.
+        macro_rules! every_field {
+            ($($field:ident),+ $(,)?) => {{
+                let NewAcceptance { $($field: _),+ } = new_acceptance("att-shape");
+                [$(stringify!($field)),+]
+            }};
+        }
+        let fields = every_field!(
+            install_id, request_nonce, challenge_handle, run_id, task_id, workspace_id,
+            execution_attempt_id, challenge_accepted_at_ms, challenge_registry_handle,
+            challenge_registry_hash, challenge_registry_epoch, challenge_registry_root_key_id,
+            lease_payload_bytes, lease_id, lease_issued_at_ms, lease_expires_at_ms, receipt_id,
+            supervisor_id, requested_at_ms, request_sha256, system_handle, history_handle,
+            generation_config_handle,
+        );
+        let listed: std::collections::BTreeSet<&str> = mutations.iter().map(|(name, _)| *name).collect();
+        assert_eq!(listed.len(), mutations.len(), "a field is listed twice in the mutation table");
+        assert_eq!(
+            listed,
+            fields.iter().copied().collect::<std::collections::BTreeSet<&str>>(),
+            "the mutation table and NewAcceptance's fields are not the same set"
+        );
 
         for (field, mutate) in mutations {
             let conn = store();
@@ -1432,26 +1503,55 @@ mod tests {
         ));
     }
 
+    /// The window is the ROW's. The fixture stamps every acceptance with its own
+    /// `lease_issued_at_ms` / `lease_expires_at_ms`, and the gate is judged against those —
+    /// there is no argument through which a caller could present a later expiry.
     #[test]
     fn gate_and_start_proceeds_and_expires_deterministically() {
         let conn = store();
-        // Passing gate -> EXECUTION_STARTING.
+        let window = |attempt: &str| -> (i64, i64) {
+            let a = new_acceptance(attempt);
+            (a.lease_issued_at_ms, a.lease_expires_at_ms)
+        };
+
+        // Passing gate, at the last instant the budget allows -> EXECUTION_STARTING.
         accept_prepare(&conn, &new_acceptance("att-ok"), 10).unwrap();
         advance(&conn, "att-ok", &Advance::LeaseReady { lease_handle: "l".into() }, 20).unwrap();
-        let issued = 1_000i64;
-        let expires = issued + LEASE_DURATION_MS;
+        let (_, expires) = window("att-ok");
         assert_eq!(
-            gate_and_start(&conn, "att-ok", expires - MIN_LAUNCH_REMAINING_MS, issued, expires).unwrap(),
+            gate_and_start(&conn, "att-ok", expires - MIN_LAUNCH_REMAINING_MS).unwrap(),
             AcceptanceState::ExecutionStarting
         );
 
         // Failing gate (expired on restart) -> EXPIRED, zero launch.
         accept_prepare(&conn, &new_acceptance("att-exp"), 10).unwrap();
         advance(&conn, "att-exp", &Advance::LeaseReady { lease_handle: "l2".into() }, 20).unwrap();
+        let (_, expires) = window("att-exp");
+        assert_eq!(gate_and_start(&conn, "att-exp", expires + 1).unwrap(), AcceptanceState::Expired);
+        let reason: Option<String> = conn
+            .query_row(
+                "SELECT failure_reason FROM governed_turn_acceptance WHERE execution_attempt_id = 'att-exp'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(reason.as_deref(), Some("lease_expired"));
+
+        // One millisecond short of the budget, and before the lease is valid at all: the two
+        // other arms, each with its own reason, each read from the persisted window.
+        accept_prepare(&conn, &new_acceptance("att-short"), 10).unwrap();
+        advance(&conn, "att-short", &Advance::LeaseReady { lease_handle: "l3".into() }, 20).unwrap();
+        let (issued, expires) = window("att-short");
         assert_eq!(
-            gate_and_start(&conn, "att-exp", expires + 1, issued, expires).unwrap(),
+            gate_and_start(&conn, "att-short", expires - MIN_LAUNCH_REMAINING_MS + 1).unwrap(),
             AcceptanceState::Expired
         );
+        accept_prepare(&conn, &new_acceptance("att-early"), 10).unwrap();
+        advance(&conn, "att-early", &Advance::LeaseReady { lease_handle: "l4".into() }, 20).unwrap();
+        assert_eq!(gate_and_start(&conn, "att-early", issued - 1).unwrap(), AcceptanceState::Expired);
+
+        // An attempt this ledger never accepted has no window to be judged against.
+        assert!(matches!(gate_and_start(&conn, "att-unknown", 1), Err(LedgerError::NotFound)));
     }
 
     // ---- Outbox -----------------------------------------------------------

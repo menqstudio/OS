@@ -308,8 +308,19 @@ pub struct Manifest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     BundleDigestMismatch,
+    /// `manifest.json` is present, hashes to the directory name, and does not
+    /// decode as a manifest. It used to be reported as `FlowUnparseable` — the
+    /// flow had not been opened yet — which is the confusion `GrantUnparseable`
+    /// was added to end for the grant.
+    ManifestUnparseable,
     FileTableIncomplete,
     FileHashMismatch,
+    /// `grant_ref` or `flow_ref` is not a plain path inside the bundle: it is
+    /// absolute, or climbs with `..`. The digest covers the manifest and the
+    /// files the manifest's table lists; a reference that leaves the directory
+    /// names bytes neither covers, so the same digest would go on verifying
+    /// while somebody rewrote the grant it loads.
+    RefOutsideBundle,
     GrantAbsent,
     /// Present, non-empty, and not decodable. NOT the same fact as absent:
     /// mapping both onto `GrantAbsent` made a malformed grant read as a missing
@@ -349,30 +360,47 @@ pub enum Refusal {
     Unreadable,
 }
 
-impl Refusal {
-    /// The stable string that reaches `flow_runs.refusal_reason`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Refusal::BundleDigestMismatch => "bundle_digest_mismatch",
-            Refusal::FileTableIncomplete => "file_table_incomplete",
-            Refusal::FileHashMismatch => "file_hash_mismatch",
-            Refusal::GrantAbsent => "grant_absent",
-            Refusal::GrantUnparseable => "grant_unparseable",
-            Refusal::GrantExpired => "grant_expired",
-            Refusal::GrantFromProse => "grant_from_prose",
-            Refusal::CapabilitiesExceedGrant => "capabilities_exceed_grant",
-            Refusal::CredentialSlotUnbound => "credential_slot_unbound",
-            Refusal::FlowUnparseable => "flow_unparseable",
-            Refusal::StepKindNotExecutable => "step_kind_not_executable",
-            Refusal::CallRefMissing => "call_ref_missing",
-            Refusal::EgressNotGranted => "egress_not_granted",
-            Refusal::EgressNotExpressible => "egress_not_expressible",
-            Refusal::EgressTableUnusable => "egress_table_unusable",
-            Refusal::CredentialBindingMissing => "credential_binding_missing",
-            Refusal::CallTransportUnimplemented => "call_transport_unimplemented",
-            Refusal::Unreadable => "unreadable",
+/// The variants, ONCE. `Refusal::ALL` and `Refusal::as_str` are both generated
+/// from this list, so a variant added to the enum and not to the list is a
+/// non-exhaustive `match` — a compile error — rather than a variant the
+/// distinctness test silently never sees. That test listed 12 of 18 by hand.
+macro_rules! refusal_reasons {
+    ($($variant:ident => $reason:literal),+ $(,)?) => {
+        impl Refusal {
+            /// Every variant, in declaration order.
+            pub const ALL: &'static [Refusal] = &[$(Refusal::$variant),+];
+
+            /// The stable string that reaches `flow_runs.refusal_reason`.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Refusal::$variant => $reason),+
+                }
+            }
         }
-    }
+    };
+}
+
+refusal_reasons! {
+    BundleDigestMismatch => "bundle_digest_mismatch",
+    ManifestUnparseable => "manifest_unparseable",
+    FileTableIncomplete => "file_table_incomplete",
+    FileHashMismatch => "file_hash_mismatch",
+    RefOutsideBundle => "ref_outside_bundle",
+    GrantAbsent => "grant_absent",
+    GrantUnparseable => "grant_unparseable",
+    GrantExpired => "grant_expired",
+    GrantFromProse => "grant_from_prose",
+    CapabilitiesExceedGrant => "capabilities_exceed_grant",
+    CredentialSlotUnbound => "credential_slot_unbound",
+    FlowUnparseable => "flow_unparseable",
+    StepKindNotExecutable => "step_kind_not_executable",
+    CallRefMissing => "call_ref_missing",
+    EgressNotGranted => "egress_not_granted",
+    EgressNotExpressible => "egress_not_expressible",
+    EgressTableUnusable => "egress_table_unusable",
+    CredentialBindingMissing => "credential_binding_missing",
+    CallTransportUnimplemented => "call_transport_unimplemented",
+    Unreadable => "unreadable",
 }
 
 /// A verified bundle. Constructing one is the only way to get its flow and grant,
@@ -415,6 +443,18 @@ fn walk(dir: &Path) -> Result<Vec<String>, Refusal> {
     Ok(out)
 }
 
+/// True when a manifest reference is anything but a plain relative path made of
+/// ordinary components: absolute, `..`, a leading `.`, a Windows prefix, or a
+/// backslash (the file table is slash-separated, so `..\\x` would not be seen as
+/// a parent component on POSIX and must not be let through as a "name").
+fn leaves_the_bundle(reference: &str) -> bool {
+    reference.is_empty()
+        || reference.contains('\\')
+        || !Path::new(reference)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// Load and verify. Every failure is a typed [`Refusal`]; there is no path here
 /// that degrades to a weaker check.
 pub fn verify(dir: &Path, now_epoch: i64) -> Result<VerifiedBundle, Refusal> {
@@ -432,7 +472,7 @@ pub fn verify(dir: &Path, now_epoch: i64) -> Result<VerifiedBundle, Refusal> {
     }
 
     let manifest: Manifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|_| Refusal::FlowUnparseable)?;
+        serde_json::from_slice(&manifest_bytes).map_err(|_| Refusal::ManifestUnparseable)?;
 
     // The file table is TOTAL, checked both ways.
     let on_disk = walk(dir)?;
@@ -449,9 +489,23 @@ pub fn verify(dir: &Path, now_epoch: i64) -> Result<VerifiedBundle, Refusal> {
         }
     }
 
+    // The grant and the flow are opened BY THE NAME THE MANIFEST GIVES, and a name is
+    // covered by the digest only if it is a row of the file table just checked. Joined
+    // unchecked, `grant_ref = "../../outside/grant.json"` loaded a grant no hash in this
+    // bundle described: it could gain a capability or lose its expiry and the digest —
+    // which is all an approval of this bundle names — did not move.
+    //
+    // Two refusals, because they are two facts. A reference that is absolute or climbs
+    // out of the directory is `RefOutsideBundle`. A plain path that is not a row of the
+    // (total) table is a file this bundle does not have, which for the grant is exactly
+    // what `GrantAbsent` has always meant.
+    if leaves_the_bundle(&manifest.grant_ref) || leaves_the_bundle(&manifest.flow_ref) {
+        return Err(Refusal::RefOutsideBundle);
+    }
+
     // An absent grant is a refusal, not "no restrictions".
     let grant_path = dir.join(&manifest.grant_ref);
-    if !grant_path.is_file() {
+    if !declared.contains_key(manifest.grant_ref.as_str()) || !grant_path.is_file() {
         return Err(Refusal::GrantAbsent);
     }
     let grant_bytes = read(&grant_path)?;
@@ -472,6 +526,9 @@ pub fn verify(dir: &Path, now_epoch: i64) -> Result<VerifiedBundle, Refusal> {
         return Err(Refusal::GrantExpired);
     }
 
+    if !declared.contains_key(manifest.flow_ref.as_str()) {
+        return Err(Refusal::Unreadable);
+    }
     let flow: Flow = serde_json::from_slice(&read(&dir.join(&manifest.flow_ref))?)
         .map_err(|_| Refusal::FlowUnparseable)?;
     if flow.steps.len() < 2 || flow.steps.len() as u32 > flow.max_steps {
@@ -540,7 +597,7 @@ pub fn build(store_root: &Path, spec: &BuildSpec) -> Result<String, Refusal> {
     // reader can recompute it with `sha256sum manifest.json` and get the
     // directory name. A digest that depends on how it was serialised is not one.
     let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).map_err(|_| Refusal::FlowUnparseable)?;
+        serde_json::to_vec_pretty(&manifest).map_err(|_| Refusal::ManifestUnparseable)?;
     let digest = sha256_hex(&manifest_bytes);
 
     let dir = store_root.join(&digest);
@@ -922,19 +979,112 @@ mod tests {
 
     /// Every refusal string is distinct and stable: they reach
     /// `flow_runs.refusal_reason`, where a reader compares them.
+    ///
+    /// Over `Refusal::ALL`, which the `refusal_reasons!` list generates together
+    /// with `as_str` — so "every" is the compiler's word, not this test's. The
+    /// hand-written array here covered 12 of 18, and two of the six it left out
+    /// could have shared a string with every test green.
     #[test]
     fn refusal_reasons_are_distinct() {
-        let all = [
-            Refusal::BundleDigestMismatch, Refusal::FileTableIncomplete, Refusal::FileHashMismatch,
-            Refusal::GrantAbsent, Refusal::GrantUnparseable, Refusal::GrantExpired,
-            Refusal::GrantFromProse,
-            Refusal::CapabilitiesExceedGrant, Refusal::CredentialSlotUnbound,
-            Refusal::FlowUnparseable, Refusal::StepKindNotExecutable, Refusal::Unreadable,
-        ];
         let mut seen = std::collections::BTreeSet::new();
-        for r in all {
+        for r in Refusal::ALL {
             assert!(seen.insert(r.as_str()), "duplicate reason {}", r.as_str());
+            assert!(
+                !r.as_str().is_empty()
+                    && r.as_str().chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "a reason is a lowercase token, not prose: {:?}", r.as_str()
+            );
         }
-        assert_eq!(seen.len(), all.len());
+        assert_eq!(seen.len(), Refusal::ALL.len());
+        assert_eq!(Refusal::ALL.len(), 20, "a new reason is a deliberate act; count it here");
+    }
+
+    /// Re-point one manifest field, keep everything else, and rename the
+    /// directory to the new manifest digest — so the name rule and the hash
+    /// rule both pass and only the rule under test can answer.
+    fn rewrite_manifest(
+        root: &std::path::Path,
+        digest: &str,
+        edit: impl FnOnce(&mut Manifest),
+    ) -> std::path::PathBuf {
+        let bundle = root.join(digest);
+        let mut m: Manifest =
+            serde_json::from_slice(&std::fs::read(bundle.join("manifest.json")).unwrap()).unwrap();
+        edit(&mut m);
+        let bytes = serde_json::to_vec_pretty(&m).unwrap();
+        let renamed = root.join(sha256_hex(&bytes));
+        std::fs::rename(&bundle, &renamed).unwrap();
+        std::fs::write(renamed.join("manifest.json"), &bytes).unwrap();
+        renamed
+    }
+
+    /// THE CONTAINMENT RULE. The bundle is intact — every file in the directory
+    /// is in the table and hashes — and its manifest points the grant at a file
+    /// OUTSIDE the directory. That file is a perfectly valid grant, so nothing
+    /// but the containment check can refuse it: before the check this verified,
+    /// and went on verifying under the same digest while the outside file was
+    /// widened and its expiry pushed out.
+    #[test]
+    fn a_grant_ref_that_leaves_the_bundle_is_refused_even_when_the_outside_grant_is_valid() {
+        let (dir, digest) = built(1_000_000);
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::copy(dir.path().join(&digest).join("grant.json"), outside.join("grant.json")).unwrap();
+
+        let renamed = rewrite_manifest(dir.path(), &digest, |m| {
+            m.grant_ref = "../outside/grant.json".into();
+        });
+        // Positive control for the fixture: the path the manifest names really is a file,
+        // so this is not being answered by `GrantAbsent`.
+        assert!(renamed.join("../outside/grant.json").is_file());
+        assert_eq!(verify(&renamed, 1_000_000), Err(Refusal::RefOutsideBundle));
+    }
+
+    /// The same rule for the flow, and for an absolute path rather than `..`.
+    #[test]
+    fn a_flow_ref_that_leaves_the_bundle_is_refused() {
+        let (dir, digest) = built(1_000_000);
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::copy(dir.path().join(&digest).join("flow.json"), outside.join("flow.json")).unwrap();
+        let absolute = outside.join("flow.json").to_string_lossy().to_string();
+
+        let renamed = rewrite_manifest(dir.path(), &digest, |m| m.flow_ref = absolute);
+        assert_eq!(verify(&renamed, 1_000_000), Err(Refusal::RefOutsideBundle));
+    }
+
+    /// A plain name that is not a row of the file table is a file the bundle
+    /// does not have. For the grant that is `GrantAbsent`, as it always was.
+    #[test]
+    fn a_grant_ref_naming_no_row_of_the_file_table_is_absent() {
+        let (dir, digest) = built(1_000_000);
+        let renamed = rewrite_manifest(dir.path(), &digest, |m| m.grant_ref = "other.json".into());
+        assert_eq!(verify(&renamed, 1_000_000), Err(Refusal::GrantAbsent));
+    }
+
+    /// The predicate on its own, because the two tests above each exercise one
+    /// arm of it and a rule with five arms deserves five cases.
+    #[test]
+    fn only_a_plain_relative_path_stays_inside_the_bundle() {
+        for inside in ["grant.json", "sub/grant.json"] {
+            assert!(!leaves_the_bundle(inside), "{inside} is a plain path");
+        }
+        for outside in ["", "/etc/passwd", "../grant.json", "sub/../../grant.json", "./grant.json",
+                        "..\\grant.json"] {
+            assert!(leaves_the_bundle(outside), "{outside:?} must not be read as a bundle file");
+        }
+    }
+
+    /// A manifest that hashes to its directory name and is not a manifest is
+    /// reported as that — not as an unparseable FLOW, which had not been opened.
+    #[test]
+    fn an_unparseable_manifest_is_reported_as_the_manifest() {
+        let (dir, digest) = built(1_000_000);
+        let bundle = dir.path().join(&digest);
+        let bytes = b"{ not a manifest";
+        let renamed = dir.path().join(sha256_hex(bytes));
+        std::fs::rename(&bundle, &renamed).unwrap();
+        std::fs::write(renamed.join("manifest.json"), bytes).unwrap();
+        assert_eq!(verify(&renamed, 1_000_000), Err(Refusal::ManifestUnparseable));
     }
 }

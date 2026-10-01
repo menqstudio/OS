@@ -81,9 +81,10 @@
 //! independently reachable and independently tested, and deleting either one is caught by that half's own
 //! named tests.
 //!
-//! ## DRIVEN IN CI, NOT WIRED IN THE PRODUCT — read this before believing either half
+//! ## DRIVEN IN CI AND WIRED IN THE BROKER, NOT REACHABLE IN THE PRODUCT
 //!
-//! Since 2026-08-12 this loop HAS a caller, and it is worth being exact about which kind.
+//! This loop has TWO callers, both synchronous, and it is worth being exact about which kind each
+//! is. The first, since 2026-08-12:
 //! `core/src/bin/ladder_output_pull.rs` is a **CI proof driver**: `engine/ci/live/run_ladder_turn.sh`
 //! builds it and runs it on a real Linux runner, where it takes the §4.6 frame the real one-shot
 //! sidecar returned for a real governed turn, strict-parses it with [`crate::governed_bridge_result`],
@@ -97,67 +98,29 @@
 //! each other anywhere — §4.10(g)'s submit subprocess deliberately pulls nothing, and an engine test
 //! asserts no output-read protocol appears among its frames.
 //!
-//! That is a proof, not a product path. **Nothing in this tree calls [`pull_output`] in the shipped
-//! app**, and the missing piece is still a HOP rather than a hookup. Two of the three links exist:
+//! The second is the product path: `broker/src/ladder_executor.rs` calls [`pull_output`] from
+//! `LadderChain::pull`, with the `output_stream_id` of the `SignedTurnResult` that
+//! `crate::governed_submit::governed_turn_submit_prepared` returned for the same turn.
 //!
-//!  * The pull needs an `output_stream_id`. §4.10(f) permits exactly one source — the §4.10(e)
-//!    `brops.governed-turn-result.v1` `signed` frame — and that frame now HAS a supervisor-side
-//!    producer: `engine/runtime/governed_acceptance.py::AcceptanceDriver`, which requires an
-//!    `OutputReadService` and puts the minted token in the frame. (It landed in this same tree, from a
-//!    concurrent change, while this module was being written; it was uncommitted at the time of
-//!    writing, so treat the citation as of that moment rather than as a permanent fact.)
-//!  * The supervisor serves the reads. That half shipped first.
+//! (This section used to argue, across some forty lines dated 2026-08-10 and 2026-08-12, that the
+//! loop was caller-less and that the broker read the recorder's output straight off the filesystem
+//! instead of through this egress — and then to retract half of it in place on 2026-09-20. The
+//! superseded text is gone rather than left beside its own retraction; it is in the history of this
+//! file. The async adapter it described, `ai::governed_pull_output`, was deleted on 2026-09-20.)
 //!
-//!  * §4.6's `bridge.governed-turn-result.v1` — the frame in which the sidecar re-frames a §4.10(e)
-//!    result for the desktop, and the ONLY thing that carries `output_stream_id` across the sidecar
-//!    boundary — now exists on BOTH hops (2026-08-10): the re-framer in
-//!    `bridge/governed_turn_result_bridge.py` and the strict parser in
-//!    [`crate::governed_bridge_result`], whose `SignedTurnResult::output_stream_id` is the value
-//!    [`OutputPull::start`] is waiting for.
-//!
-//! **What is missing is one hop further out, and it MOVED on 2026-08-10.** §4.6 is the REPLY to
-//! §4.10(g)'s `bridge.governed-turn-submit.v1`, and §4.10(g)'s SIDECAR half now exists: the submit
-//! branch in `bridge/engine_sidecar.py` and the orchestrator in `bridge/governed_turn_submit.py` drive
-//! §4.10(a0) → §4.10(a)(b)(c) → §4.10(d) inside one one-shot subprocess and re-frame the §4.10(e)
-//! reply, proven end to end against the real supervisor services in
-//! `engine/tests/test_governed_turn_submit_e2e.py`. **Updated 2026-08-12: the PRODUCER of the submit
-//! frame now exists** — `crate::governed_prepare::prepare_governed_turn_v1b` and
-//! `crate::governed_submit::governed_turn_submit_prepared`, which returns exactly the
-//! `SignedTurnResult` whose `output_stream_id` [`OutputPull::start`] is waiting for. This module is
-//! STILL caller-less, and the reason is now two hops rather than one: (1) `governed_turn_submit_prepared`
-//! itself has no caller — the broker's one production `GovernedExecutor`
-//! (`broker/src/chain_executor.rs::ChainExecutor`) drives the same hops over DIRECT AF_UNIX and spawns
-//! the recorder rather than a sidecar; and (2) even given a token, the §4.10(g) step-5 pull loop that
-//! would drive this on the BROKER side does not exist. The only pull adapter in the tree,
-//! `ai::governed_pull_output`, is in the renderer-hosting app crate — the wrong process under §0's
-//! LOCKED terminology binding — and the synchronous broker binary cannot call an `async` `tokio`
-//! function in a crate it does not depend on.
-//!
-//! **RETRACTED 2026-09-20. Both halves of (2) are HISTORY.** The broker-side loop EXISTS and is the
-//! production path: `broker/src/ladder_executor.rs:330` calls [`pull_output`] from
-//! `LadderChain::pull` (:325). And `ai::governed_pull_output` was deleted the same day — it was not
-//! the only pull adapter by then, it was the second one, in the wrong process, with no caller under
-//! any condition. What survives of the caution above is the deployment condition, not the code one:
-//! the ladder is the executor only when `$BROPS_BROKER_CONFIG` resolves, which it does on no shipped
-//! install (`broker/src/main.rs:268-270`). So a PRODUCTION caller written today would still have to
-//! invent a token, which is precisely what §4.10(f) forbids. (The CI driver above invents nothing: it
-//! is handed a real frame carrying a real minted token, which is why a proof was reachable when a
-//! product path was not.)
-//!
-//! A second, larger divergence sits behind that one and would survive fixing it: the broker's Linux
-//! execution reads the recorder's output straight off the local filesystem
-//! (`broker/src/chain_executor.rs::LinuxGovernedExecution`, `std::fs::read(&report_path)`) instead of
-//! through this egress at all, so even a delivered token would not by itself put the pull on the live
-//! path. See the report accompanying this change.
+//! **Wired is not reachable.** The ladder is the broker's executor only when `$BROPS_BROKER_CONFIG`
+//! resolves to a verified deployment, which it does on no shipped install; `build_governed_executor`
+//! otherwise serves `UpstreamBlockedExecutor`. So no user can reach a governed turn, and with it this
+//! pull. That is the deployment condition, and it is the whole of what stands between this loop and
+//! a live turn — not a missing caller.
 //!
 //! The dependency is therefore made **typed** rather than described: [`OutputStreamCapability`] cannot be
 //! built without a verified envelope and a well-formed token, so the day a §4.6 frame delivers one the
 //! compiler names every place it has to reach. `config/reachability-declarations.json` carries the
 //! matching `rust_symbols` entry, which FLIPPED from `declared_unreachable` to `must_have_caller` on
 //! 2026-08-12 — on the gate's own instruction, since it now has a named caller. The flip is not a claim
-//! that the product uses it: what it buys is that the gate turns RED if the CI driver is ever deleted,
-//! i.e. if the one thing that has ever exercised this loop end to end goes away. The two production
-//! blockers above are recorded in that entry's prose rather than deleted with the old expectation.
+//! that a user can reach it: what it buys is that the gate turns RED if every named caller is ever
+//! deleted.
 
 use crate::governed_turn_ipc::TurnReason;
 use crate::governed_verification::ReceiptEnvelope;
@@ -473,13 +436,14 @@ fn parse_read_reply(
 /// One §4.10(f) pull in progress: which read is next, what each reply must satisfy, and the §4.6/§7.1
 /// gate over the finished reassembly.
 ///
-/// It is a DRIVER rather than a loop for one reason, and it is a load-bearing one. The transport under
-/// this hop is a spawned subprocess, so the real adapter is `async`; a closure-driven loop would have
-/// forced that adapter to write its own iteration — and with it its own `eof` check, its own chunk
-/// bookkeeping and its own length/digest gate. Every gate in this file would then have had a second
-/// copy in the crate that actually runs it, which is precisely how two implementations drift until only
-/// the unexercised one is correct. Here the ordering and every check live once; [`pull_output`] is the
-/// synchronous convenience wrapper and the async adapter is the same three lines.
+/// It is a DRIVER rather than a loop so that the ordering and every check live ONCE, whatever drives
+/// the transport: a caller that cannot hand over a blocking closure can step it with
+/// `next_request`/`accept`/`finish` instead of writing its own iteration — and with it its own `eof`
+/// check, chunk bookkeeping and length/digest gate, which is how two implementations drift until only
+/// the unexercised one is correct. This was written for an `async` adapter in the app crate; that
+/// adapter was deleted on 2026-09-20, and both callers today (`LadderChain::pull` in the broker and
+/// the CI driver `core/src/bin/ladder_output_pull.rs`) are synchronous and go through
+/// [`pull_output`], the closure-driven wrapper over this driver.
 ///
 /// Ordering is §7.1's: a pull runs **outside** any DB transaction, and only its `Ok` bytes go on to the
 /// acceptance predicate and the `BEGIN IMMEDIATE` commit.

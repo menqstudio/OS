@@ -1325,8 +1325,8 @@ mod tests {
             Step::SetResGidExec,
             Step::DropBoundingAmbientCaps,
             Step::ClearAllCapSets,
-            Step::VerifyUnprivileged,
             Step::SetNoNewPrivs,
+            Step::VerifyUnprivileged,
             Step::Fexecve,
         ];
         assert_eq!(

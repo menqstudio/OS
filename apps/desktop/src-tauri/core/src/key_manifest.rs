@@ -11,7 +11,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-use crate::governed_message_store::sha256_hex;
+use crate::receipt::sha256_hex;
 
 /// Per-key trust class. Only [`TrustClass::Production`] keys may render production `trusted_verified`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +47,17 @@ pub struct KeyManifest {
 }
 
 impl KeyManifest {
-    /// Canonical bytes the root signs: sorted-key compact JSON (the JCS-ish convention shared with the
-    /// receipt/store side). Deterministic — the same manifest always yields the same bytes.
+    /// Canonical bytes the root signs: compact JSON with the fields in STRUCT-DECLARATION order —
+    /// `manifest_epoch`, `root_key_id`, `keys`, and inside each key the order [`ManifestKey`]
+    /// declares. Deterministic — the same manifest always yields the same bytes.
+    ///
+    /// NOT sorted-key JSON, which is what this doc said. `manifest_epoch` < `root_key_id` < `keys`
+    /// is not alphabetical, and neither is a key's own field order. The declaration order IS the
+    /// signed form: `engine/ci/live/provision_keys.py` writes the manifest by hand in the same
+    /// order ("Field order MUST match struct KeyManifest"), and reordering a field here silently
+    /// invalidates every root signature ever made. `canonical_bytes_are_pinned_to_declaration_order`
+    /// holds the bytes to a literal for that reason.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        // serde_json with sorted keys via a BTreeMap round-trip is overkill; the struct field order is
-        // fixed, so serde_json::to_vec is deterministic for this closed shape.
         serde_json::to_vec(self).expect("KeyManifest serializes")
     }
 
@@ -415,18 +421,46 @@ pub fn check_and_persist(
     Ok(advanced)
 }
 
-/// Temp-file + rename so a crash mid-write cannot leave a truncated floor that reads as absent.
+/// Temp-file + fsync + rename, so a crash mid-write cannot leave a truncated floor that reads as
+/// absent, and a crash just AFTER cannot leave a rename that names bytes still in the page cache.
+///
+/// This used to be `fs::write` then `fs::rename` with no sync at all, under a doc that claimed crash
+/// safety. A rename is atomic with respect to other processes; it says nothing about power loss.
+/// Without the file sync the new name can survive a crash pointing at an empty or partial file —
+/// exactly the "floor that reads as absent" this function exists to rule out. The directory sync
+/// makes the rename itself durable; it is attempted wherever a directory can be opened and its
+/// failure is a refusal, like every other failure here.
 pub fn write_floor_atomically(path: &std::path::Path, bytes: &[u8]) -> Result<(), FloorPersistError> {
+    use std::io::Write as _;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, bytes)
-        .map_err(|e| FloorPersistError::NotPersisted(format!("write {}: {e}", tmp.display())))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| FloorPersistError::NotPersisted(format!("rename {}: {e}", path.display())))?;
+    let refused = |what: &str, at: &std::path::Path, e: std::io::Error| {
+        FloorPersistError::NotPersisted(format!("{what} {}: {e}", at.display()))
+    };
+    let mut file = std::fs::File::create(&tmp).map_err(|e| refused("write", &tmp, e))?;
+    file.write_all(bytes).map_err(|e| refused("write", &tmp, e))?;
+    file.sync_all().map_err(|e| refused("sync", &tmp, e))?;
+    drop(file);
+    std::fs::rename(&tmp, path).map_err(|e| refused("rename", path, e))?;
+    #[cfg(unix)]
+    {
+        let dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => std::path::Path::new("."),
+        };
+        std::fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| refused("sync directory", dir, e))?;
+    }
     Ok(())
 }
 
 // --- tiny hex/base64 helpers (no extra deps; base64 crate is present but keep this module self-checking) -
-fn decode_hex32(s: &str) -> Option<[u8; 32]> {
+
+/// Decode exactly 64 hex characters into 32 bytes; `None` for any other length or any non-hex
+/// character. THE one decoder: `manifest_authority`, the broker's resolver, the Windows kit and the
+/// two Linux proof drivers each carried a byte-for-byte copy of this body, and all of them now call
+/// this.
+pub fn decode_hex32(s: &str) -> Option<[u8; 32]> {
     if s.len() != 64 {
         return None;
     }
@@ -698,16 +732,134 @@ mod tests {
     #[test]
     fn a_floor_that_cannot_be_written_refuses_the_turn() {
         let dir = tempfile::tempdir().unwrap();
-        // A directory where the floor file should be: `rename` onto it fails on every platform, and
-        // so does creating `floor.json.tmp` inside a path component that is itself a file.
+        // The parent directory does not exist, so the TEMP FILE cannot be created. This is the
+        // WRITE branch, and only that: the comment here used to describe a rename failing, which
+        // this fixture never reaches. The rename branch has its own test below.
         let path = dir.path().join("nonexistent-subdir").join("floor.json");
         let prod = signing_key(2);
         let m5 = manifest(5, &prod);
         let floor = AntiRollbackFloor { highest_epoch: 1, highest_hash: "x".into() };
         match check_and_persist(&floor, &m5, &path) {
-            Err(FloorPersistError::NotPersisted(_)) => {}
+            Err(FloorPersistError::NotPersisted(why)) => assert!(why.starts_with("write "), "{why}"),
             other => panic!("an unwritable floor must refuse, got {other:?}"),
         }
+    }
+
+    /// The RENAME branch: the temp file is written and synced, and the final step fails because
+    /// the floor path is a non-empty directory. The turn is refused, and nothing has replaced the
+    /// path — a refusal that left a half-installed floor would be worse than the failure.
+    #[test]
+    fn a_floor_whose_rename_fails_refuses_the_turn_and_replaces_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("floor.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("occupant"), b"x").unwrap();
+        let prod = signing_key(2);
+        let m5 = manifest(5, &prod);
+        let floor = AntiRollbackFloor { highest_epoch: 1, highest_hash: "x".into() };
+        match check_and_persist(&floor, &m5, &path) {
+            Err(FloorPersistError::NotPersisted(why)) => assert!(why.starts_with("rename "), "{why}"),
+            other => panic!("a floor that cannot be renamed into place must refuse, got {other:?}"),
+        }
+        assert!(path.is_dir() && path.join("occupant").is_file(), "the path was not replaced");
+    }
+
+    /// The durable write, read back: what a NEW process would parse is the advanced floor, the
+    /// temp file is gone, and a second write over an existing floor replaces it whole.
+    #[test]
+    fn a_written_floor_is_complete_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("floor.json");
+        let first = AntiRollbackFloor { highest_epoch: 5, highest_hash: "a".repeat(64) };
+        write_floor_atomically(&path, &floor_json_bytes(&first)).unwrap();
+        assert_eq!(parse_floor_json(&std::fs::read(&path).unwrap()), Some(first));
+        let second = AntiRollbackFloor { highest_epoch: 6, highest_hash: "b".repeat(64) };
+        write_floor_atomically(&path, &floor_json_bytes(&second)).unwrap();
+        assert_eq!(parse_floor_json(&std::fs::read(&path).unwrap()), Some(second));
+        assert!(!path.with_extension("json.tmp").exists(), "the temp file was renamed, not copied");
+    }
+
+    /// The bytes the root signs, held to a literal. `canonical_bytes` is `serde_json::to_vec` over
+    /// the struct, so the signed form is the DECLARATION ORDER of `KeyManifest` and `ManifestKey`
+    /// — not sorted keys, whatever the doc used to say. Reordering a field, renaming one, or
+    /// changing an enum's spelling changes these bytes and with them every root signature and
+    /// every anti-rollback hash; this is where that shows up, instead of at a deployment whose
+    /// manifest stopped verifying.
+    #[test]
+    fn canonical_bytes_are_pinned_to_declaration_order() {
+        let m = KeyManifest {
+            manifest_epoch: 7,
+            root_key_id: "root-1".into(),
+            keys: vec![ManifestKey {
+                key_id: "prod-1".into(),
+                public_key_hex: "ab".repeat(32),
+                trust_class: TrustClass::Production,
+                valid_from_ms: 1,
+                valid_to_ms: 2,
+                key_epoch: 3,
+                revoked: false,
+                allowed_protocols: vec!["p.v1".into()],
+            }],
+        };
+        let expected = format!(
+            concat!(
+                r#"{{"manifest_epoch":7,"root_key_id":"root-1","keys":[{{"key_id":"prod-1","#,
+                r#""public_key_hex":"{}","trust_class":"production","valid_from_ms":1,"#,
+                r#""valid_to_ms":2,"key_epoch":3,"revoked":false,"allowed_protocols":["p.v1"]}}]}}"#
+            ),
+            "ab".repeat(32)
+        );
+        assert_eq!(String::from_utf8(m.canonical_bytes()).unwrap(), expected);
+        // Declaration order is NOT sorted order — the claim the doc used to make.
+        let text = String::from_utf8(m.canonical_bytes()).unwrap();
+        assert!(text.find("\"manifest_epoch\"").unwrap() < text.find("\"keys\"").unwrap());
+        assert!(text.find("\"root_key_id\"").unwrap() < text.find("\"keys\"").unwrap());
+    }
+
+    /// NM-SCOPE-04 -- protocol out-of-scope, on the function the broker's resolver calls.
+    ///
+    /// `allowed_protocols` is the audience a key may sign for, and `resolve_production_key` is
+    /// where a protocol outside it is refused: `broker/src/manifest_resolver.rs` resolves both of
+    /// a turn's keys through this function with `RECEIPT_ENVELOPE_ARTIFACT_TYPE`. The row used to
+    /// be bound to a test of `ManifestReceiptKeyAuthority`, a type nothing constructs outside its
+    /// own tests.
+    ///
+    /// The fixture is built around what the scoped key HAS. It is Production, unrevoked and inside
+    /// its validity window — every property a key needs except that this protocol is not one it
+    /// may sign for. A key that was also revoked or expired would leave the protocol check
+    /// untested, since any of those refuses on its own.
+    #[test]
+    fn nm_scope_04_a_key_out_of_protocol_scope_does_not_resolve_with_everything_else_right() {
+        const PROTO: &str = "brops.governed-receipt-envelope.v1";
+        let prod = signing_key(2);
+        let mut m = manifest(5, &prod);
+        let mut scoped = m.keys[0].clone();
+        scoped.key_id = "scoped-1".into();
+        scoped.allowed_protocols = vec!["brops.other.v1".into()];
+        m.keys.push(scoped);
+
+        assert_eq!(
+            resolve_production_key(&m, "scoped-1", PROTO, 5000),
+            Err(ManifestError::ProtocolNotAllowed),
+            "NM-SCOPE-04: a key whose allowed_protocols exclude {PROTO} must not resolve for it"
+        );
+        // The same key DOES resolve for the protocol it is scoped to: it is refused for the
+        // audience, not for anything else about it.
+        assert!(resolve_production_key(&m, "scoped-1", "brops.other.v1", 5000).is_ok());
+        // The positive control, in the same manifest: without it this would pass against a
+        // manifest that had stopped resolving anything at all.
+        assert!(resolve_production_key(&m, "prod-1", PROTO, 5000).is_ok());
+        // An EMPTY audience admits nothing, and a prefix is not a match.
+        m.keys[1].allowed_protocols.clear();
+        assert_eq!(
+            resolve_production_key(&m, "scoped-1", PROTO, 5000),
+            Err(ManifestError::ProtocolNotAllowed)
+        );
+        m.keys[1].allowed_protocols = vec!["brops.governed-receipt-envelope".into()];
+        assert_eq!(
+            resolve_production_key(&m, "scoped-1", PROTO, 5000),
+            Err(ManifestError::ProtocolNotAllowed)
+        );
     }
 
     #[test]

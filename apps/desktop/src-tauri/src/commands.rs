@@ -2013,7 +2013,10 @@ pub async fn stream_run_step(
                     }
                     Gate::Rejected
                 } else if let Some(pending) =
-                    repo::approvals::pending_for(&conn, &s.id).map_err(|e| e.to_string())?
+                    // `undecided_for`, not `pending_for`: a request that was ESCALATED to A3
+                    // is still open, and reading only `pending` made the gate raise a fresh
+                    // A2 request beside it — the escalation was undone by the next attempt.
+                    repo::approvals::undecided_for(&conn, &s.id).map_err(|e| e.to_string())?
                 {
                     Gate::Pending(pending.id)
                 } else {
@@ -2109,8 +2112,9 @@ pub async fn stream_run_step(
     );
     let history = vec![crate::ai::ChatMsg { role: "user".to_string(), content: user }];
 
-    // Helper: a governed/provider failure fails THIS claiming attempt (the grant is NOT restored —
-    // a retry needs a fresh approval) and reports the reason.
+    // Helper: a governed/provider failure fails THIS claiming attempt and reports the reason. The
+    // grant is NOT restored and the step is terminal — see `repo::runs::fail_step_execution`; no
+    // retry of a failed step exists.
     macro_rules! fail_attempt {
         ($msg:expr) => {{
             if let Ok(conn) = locked(&state) {
@@ -2162,7 +2166,7 @@ pub async fn stream_run_step(
 
     // Persist the result under THIS claiming attempt. First re-check the run is still alive (it may have
     // been cancelled/finished while the turn ran) — if so, fail the attempt (don't persist for a dead run;
-    // the grant stays consumed, a retry needs a fresh approval). A stale/duplicate dispatch (different
+    // the grant stays consumed and the failed step is terminal). A stale/duplicate dispatch (different
     // attempt) cannot persist. The gate was enforced + the grant consumed at claim time.
     let outcome = {
         let conn = match locked(&state) {

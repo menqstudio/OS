@@ -210,7 +210,8 @@ session must not read "Supervisor custody domain" as "the supervisor's ledger ta
 `RUNTIME_PRINCIPALS` (`apps/desktop/src-tauri/core/src/windows_broker.rs`) is a fixed array of
 **seven** — Broker, Authority, Sidecar, Supervisor, Recorder, Executor, Signer — and
 `verify_distinct_principals()` requires those seven pairwise-distinct and none equal to the
-interactive login SID. Every one of them is a hop in the **governed turn**. The Floor Writer
+interactive login SID — as a tested predicate that **no start path calls** (`win-broker` re-exports
+it and nothing invokes it; the gate below guards the array it iterates, not its execution). Every one of them is a hop in the **governed turn**. The Floor Writer
 serves the **completion** path, which is a different process family and not a hop in that ladder.
 
 That distinction decides a normative question. `WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md` §2.6

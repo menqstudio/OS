@@ -5,7 +5,8 @@
 //! BroPS is a single-user desktop application. The owner installs it and everything
 //! must already be done: no ceremony, no USB, no key to carry, no annual renewal,
 //! nothing to run by hand, ever. So the trust material the engine's governance chain
-//! requires — an operator-root keypair, the six other authority keypairs, the
+//! requires — an operator-root keypair, a keypair for every other authority in
+//! [`MINTED_AUTHORITIES`] (this said "the six other"; read the list, not a number), the
 //! operator-signed `trusted-key-registry`, the out-of-registry operator-root pin, and
 //! the operator-signed artifacts the residual engine items name — is **minted on the
 //! user's own machine, on first launch, by this module**.

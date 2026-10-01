@@ -193,6 +193,11 @@ fn secret_shaped_and_malformed_values_are_refused() {
         "engine:AKIAIOSFODNN7EXAMPLE",              // an AWS access key id
         "vault:AIzaSyA00000000000000000000",        // a Google API key
         "operator:-----BEGINPRIVATEKEY",            // PEM armor
+        // PEM armor that does NOT start a ':'-segment. The schema-0022 CHECK refuses it
+        // (`NOT GLOB '*-----BEGIN*'`, "wherever it appears"); the Rust copy of the rule
+        // looked only at the start of each segment, so this one passed Rust and came back
+        // as a raw constraint error instead of a `<withheld>` refusal.
+        "engine:x-----BEGINy",
         "engine:naïve/ref",                         // outside the reference alphabet
         "e:x",                                      // too short to be a scheme we know
     ] {
@@ -218,9 +223,17 @@ fn secret_shaped_and_malformed_values_are_refused() {
         );
     }
 
-    // A key-sized blob does not fit at all.
+    // A key-sized blob does not fit at all — and it is the LENGTH rule that says so. A bare
+    // `.is_err()` here was also satisfied by the schema CHECK and by the missing grant, so it
+    // stayed green with the Rust length check deleted.
     let blob = format!("engine:{}", "a".repeat(400));
-    assert!(repo::integrations::set_auth_ref(&c, &created.id, Some(&blob), brops_core::repo::audit::Actor::local_operator()).is_err());
+    match repo::integrations::set_auth_ref(&c, &created.id, Some(&blob), brops_core::repo::audit::Actor::local_operator()) {
+        Err(CoreError::Invalid { field: "auth_ref", value }) => {
+            assert!(value.contains("length"), "refused for the wrong reason: {value}")
+        }
+        Err(other) => panic!("the blob was refused with the wrong error: {other}"),
+        Ok(_) => panic!("a 400-character blob must be refused"),
+    }
 
     // And after all of that, the record still holds nothing.
     assert_eq!(repo::integrations::get(&c, &created.id).unwrap().auth_ref, None);
@@ -265,8 +278,12 @@ fn setting_a_reference_audits_the_event_but_never_the_reference() {
     // about the reference itself.
     let leaked: i64 = c
         .query_row(
+            // EVERY text column of `audit_events`, `payload_json` above all: it is the one
+            // free-form column, and this query used to leave it out while asserting that
+            // "no audit column" held the text.
             "SELECT count(*) FROM audit_events
-              WHERE event_type LIKE ?1 OR actor_id LIKE ?1 OR entity_type LIKE ?1 OR entity_id LIKE ?1",
+              WHERE event_type LIKE ?1 OR actor_type LIKE ?1 OR actor_id LIKE ?1
+                 OR entity_type LIKE ?1 OR entity_id LIKE ?1 OR payload_json LIKE ?1",
             rusqlite::params![format!("%{secret_looking}%")],
             |r| r.get(0),
         )

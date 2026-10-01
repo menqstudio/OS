@@ -443,7 +443,7 @@
       "status": "implemented",
       "under_test": "Protocol out-of-scope",
       "section": "§1.7",
-      "test": "apps/desktop/src-tauri/core/src/manifest_authority.rs::nm_scope_04_a_key_out_of_protocol_scope_is_unavailable_with_everything_else_right"
+      "test": "apps/desktop/src-tauri/core/src/key_manifest.rs::nm_scope_04_a_key_out_of_protocol_scope_does_not_resolve_with_everything_else_right"
     },
     "NM-SCOPE-05": {
       "status": "blocked",

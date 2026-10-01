@@ -40,8 +40,10 @@ pub enum TcbOwner {
 }
 
 /// One pinned TCB artifact: its logical role, on-disk path, expected content digest, and expected owner.
-/// `expected_sha256` is the start-time SHA-256 pin (lowercase hex); for directory-only entries it is not
-/// used, but binaries/configs MUST match exactly.
+/// `expected_sha256` is the start-time SHA-256 pin: exactly 64 lowercase hex characters, compared
+/// for EVERY entry. (This said "for directory-only entries it is not used". There are no
+/// directory-only entries — ancestors are walked from each path, not listed — and a pin that is not
+/// a digest is refused: see `verify_artifact`.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TcbArtifact {
     /// Stable role name (one of [`TCB_REQUIRED_ARTIFACTS`]) — used to name a violation.
@@ -288,6 +290,12 @@ pub fn verify_pinned_role<'m>(
     Ok(art)
 }
 
+/// A content pin is 64 lowercase hex characters, the form `engine/ci/live/build_tcb_pin_manifest.py`
+/// writes. Anything else — empty above all — is not a digest and matches no file.
+fn is_sha256_pin(pin: &str) -> bool {
+    pin.len() == 64 && pin.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn verify_artifact(
     manifest: &TcbPinManifest,
     art: &TcbArtifact,
@@ -327,8 +335,12 @@ fn verify_artifact(
         });
     }
 
-    // Content pin.
-    if facts.sha256 != art.expected_sha256 {
+    // Content pin. The PIN has to be a digest before it can match one. A probe reports the EMPTY
+    // string for a file it could not hash — not regular, not openable, or no longer the inode that
+    // was stat'ed — and `FileFacts::sha256` documents that the floor "treats [that] as a hash
+    // mismatch and refuses". That held only while the pin was non-empty: an entry pinned to ""
+    // compared equal to exactly the files nobody had measured.
+    if !is_sha256_pin(&art.expected_sha256) || facts.sha256 != art.expected_sha256 {
         return Err(TcbViolation::HashMismatch {
             logical_name: art.logical_name.clone(),
             path: art.path.clone(),
@@ -524,6 +536,33 @@ mod tests {
         let err = verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN).unwrap_err();
         assert!(matches!(err, TcbViolation::WritableByUntrusted { .. }));
         assert_eq!(err.logical_name(), "trusted-verifier-broker.bin");
+    }
+
+    /// A pin that is not a digest matches nothing — in particular not the empty digest a probe
+    /// reports for a file it could not hash. Everything else about the artifact is right (owner,
+    /// mode, ancestors), so only the pin-shape check can refuse it.
+    #[test]
+    fn an_empty_or_malformed_pin_never_matches_an_unhashed_file() {
+        for (pin, measured) in [
+            ("", ""),                 // the reported case: empty pin, file the probe could not hash
+            ("abc", "abc"),           // a pin that is not 64 hex, "matched" by the same non-digest
+            (&"A".repeat(64)[..], &"A".repeat(64)[..]), // uppercase is not the form the builder writes
+        ] {
+            let mut m = manifest();
+            let broker = m
+                .artifacts
+                .iter_mut()
+                .find(|a| a.logical_name == "trusted-verifier-broker.bin")
+                .unwrap();
+            broker.expected_sha256 = pin.to_string();
+            let mut fs = clean_fs();
+            fs.files.get_mut(BROKER_PATH).unwrap().sha256 = measured.to_string();
+            let err = verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN).unwrap_err();
+            assert!(matches!(err, TcbViolation::HashMismatch { .. }), "pin {pin:?}: {err:?}");
+            assert_eq!(err.logical_name(), "trusted-verifier-broker.bin");
+        }
+        // Positive control: the same artifact with a real pin and the matching digest passes.
+        assert_eq!(verify_tcb_integrity(&manifest(), &clean_fs(), &runtime_uids(), LOGIN), Ok(()));
     }
 
     #[test]

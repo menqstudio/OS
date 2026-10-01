@@ -42,10 +42,16 @@
 //! latter, because it cannot hold the former: the provisioned set's conductor-session token binds the
 //! CONDUCTOR's identity and the broker is §0 role #2.
 //!
-//! What is still true, and is the honest remaining gap: **nothing CALLS
-//! [`governed_turn_submit_prepared`]**. Giving the writer a transport did not give it a caller —
-//! wiring one would move the shipped broker off its fail-closed executor, which is the owner's
-//! decision. Its `declared_unreachable` entry in `config/reachability-declarations.json` stands.
+//! RETRACTED. This paragraph used to say that "nothing CALLS [`governed_turn_submit_prepared`]" and
+//! that its `declared_unreachable` entry in `config/reachability-declarations.json` "stands". Both
+//! are HISTORY: the writer is called from `LadderChain::run_verified` in
+//! `broker/src/ladder_executor.rs`, and its entry in that file is `must_have_caller`. The same
+//! sentence was retracted in `governed_sidecar.rs` on 2026-09-20 and left standing here.
+//!
+//! What still holds the line is a DEPLOYMENT condition, not a missing caller: the ladder is the
+//! broker's executor only when `$BROPS_BROKER_CONFIG` resolves to a verified deployment, nothing in
+//! the shipped app sets it, and `build_governed_executor` otherwise serves `UpstreamBlockedExecutor`.
+//! Wired is not reachable.
 //!
 //! ## The three checks this module does NOT make, mirroring the consumer
 //!

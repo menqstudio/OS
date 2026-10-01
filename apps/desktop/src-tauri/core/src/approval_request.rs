@@ -140,7 +140,13 @@ pub fn approval_request_document(
 }
 
 /// Read one reply. Nothing here is believed that the reply does not say in the engine's own words.
-pub fn classify(reply: Result<Value, String>) -> ApprovalOutcome {
+///
+/// `sent_request_id` is the id of the request THIS reply is supposed to answer. A reply is
+/// `Recorded` only if it names that id: this function used to take the reply alone and copy
+/// whatever `request_id` it carried — or the empty string, if it carried none — into the outcome,
+/// so a record of some other ask, or of no identifiable ask, was rendered as the answer to this
+/// one. The engine echoes the id on every record it makes, so a real reply always has it.
+pub fn classify(reply: Result<Value, String>, sent_request_id: &str) -> ApprovalOutcome {
     let doc = match reply {
         Ok(doc) => doc,
         Err(e) => {
@@ -232,12 +238,18 @@ pub fn classify(reply: Result<Value, String>) -> ApprovalOutcome {
                 .to_string(),
         };
     }
+    match object.get("request_id").and_then(Value::as_str) {
+        Some(echoed) if !sent_request_id.is_empty() && echoed == sent_request_id => {}
+        _ => {
+            return ApprovalOutcome::Blocked {
+                reason: "the engine reply does not name the request that was sent, so the record \
+                         it describes is not shown as the answer to this ask"
+                    .to_string(),
+            }
+        }
+    }
     ApprovalOutcome::Recorded {
-        request_id: object
-            .get("request_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        request_id: sent_request_id.to_string(),
         sequence,
         entry_sha256: digest.to_string(),
         duplicate: object.get("duplicate").and_then(Value::as_bool).unwrap_or(false),
@@ -249,6 +261,9 @@ pub fn classify(reply: Result<Value, String>) -> ApprovalOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The id the fixture request was sent under, and the one [`reply`] echoes.
+    const SENT: &str = "req-7f2a91c4";
 
     fn doc() -> Value {
         approval_request_document(
@@ -361,7 +376,7 @@ mod tests {
     // --- what may be believed ---------------------------------------------------------------
     #[test]
     fn a_well_formed_record_is_recorded() {
-        match classify(Ok(reply(json!({})))) {
+        match classify(Ok(reply(json!({}))), SENT) {
             ApprovalOutcome::Recorded { sequence, duplicate, adjudicated, .. } => {
                 assert_eq!(sequence, 1);
                 assert!(!duplicate);
@@ -371,23 +386,64 @@ mod tests {
         }
     }
 
+    /// All eight words, written out here and compared with the list, so a word deleted from
+    /// `DECISION_WORDS` fails twice: the list no longer equals this one, and a reply carrying
+    /// that word is believed. The loop used to cover six literals while the list held eight —
+    /// `adjudication` and `signed` could be removed with every test green.
     #[test]
     fn a_reply_claiming_a_decision_is_blocked_even_when_it_says_ok() {
-        for word in ["granted", "disposition", "verdict", "decision", "outcome", "approved"] {
-            let out = classify(Ok(reply(json!({ word: true }))));
-            match out {
-                ApprovalOutcome::Blocked { reason } => {
-                    assert!(reason.contains(word), "{reason}");
+        const EVERY_WORD: [&str; 8] = [
+            "granted", "disposition", "verdict", "decision", "outcome", "approved", "adjudication",
+            "signed",
+        ];
+        assert_eq!(DECISION_WORDS, EVERY_WORD, "a word added or removed is a deliberate act");
+        for word in EVERY_WORD {
+            // `adjudicated` is a field every honest reply carries, and it contains none of the
+            // words; the key under test is the bare word and a decorated form of it.
+            for key in [word.to_string(), format!("owner_{word}_at"), word.to_uppercase()] {
+                let shown = key.clone();
+                let out = classify(Ok(reply(json!({ key: true }))), SENT);
+                match out {
+                    ApprovalOutcome::Blocked { reason } => {
+                        assert!(reason.contains(word), "{reason}");
+                    }
+                    other => panic!("`{shown}` was believed: {other:?}"),
                 }
-                other => panic!("`{word}` was believed: {other:?}"),
             }
         }
+        // Positive control: the same reply without a decision word IS recorded, so the loop
+        // above is not passing because everything is blocked.
+        assert!(matches!(classify(Ok(reply(json!({}))), SENT), ApprovalOutcome::Recorded { .. }));
+    }
+
+    /// The reply must answer the request that was sent. The fixture reply names `req-7f2a91c4`.
+    #[test]
+    fn a_reply_for_another_request_or_for_none_is_not_recorded() {
+        match classify(Ok(reply(json!({}))), SENT) {
+            ApprovalOutcome::Recorded { request_id, .. } => assert_eq!(request_id, SENT),
+            other => panic!("the matching reply must be recorded, got {other:?}"),
+        }
+        let unanswering = [
+            (reply(json!({})), "req-SOMETHING-ELSE"),          // a record of a different ask
+            (reply(json!({ "request_id": Value::Null })), SENT), // a record naming no ask
+            (reply(json!({ "request_id": 7 })), SENT),           // not a string
+            (reply(json!({ "request_id": "" })), ""),            // empty on both sides is not a match
+        ];
+        for (doc, sent) in unanswering {
+            match classify(Ok(doc.clone()), sent) {
+                ApprovalOutcome::Blocked { reason } => assert!(reason.contains("request"), "{reason}"),
+                other => panic!("sent {sent:?}, reply {doc} was believed: {other:?}"),
+            }
+        }
+        let mut missing = reply(json!({}));
+        missing.as_object_mut().unwrap().remove("request_id");
+        assert!(matches!(classify(Ok(missing), SENT), ApprovalOutcome::Blocked { .. }));
     }
 
     #[test]
     fn a_reply_without_adjudicated_false_is_blocked() {
         for value in [json!(true), json!("no"), Value::Null] {
-            match classify(Ok(reply(json!({ "adjudicated": value })))) {
+            match classify(Ok(reply(json!({ "adjudicated": value }))), SENT) {
                 ApprovalOutcome::Blocked { .. } => {}
                 other => panic!("expected Blocked, got {other:?}"),
             }
@@ -400,7 +456,7 @@ mod tests {
         for worn in ["recorded", "sequence", "entry_sha256", "chain_head_sha256"] {
             doc.as_object_mut().unwrap().remove(worn);
         }
-        match classify(Ok(doc)) {
+        match classify(Ok(doc), SENT) {
             ApprovalOutcome::Refused { reason } => assert!(reason.contains("task-9999")),
             other => panic!("expected Refused, got {other:?}"),
         }
@@ -409,7 +465,7 @@ mod tests {
     #[test]
     fn a_refusal_wearing_a_records_clothes_is_blocked() {
         let doc = reply(json!({ "ok": false, "reason": "no", "recorded": false }));
-        match classify(Ok(doc)) {
+        match classify(Ok(doc), SENT) {
             ApprovalOutcome::Blocked { reason } => assert!(reason.contains("recorded")),
             other => panic!("expected Blocked, got {other:?}"),
         }
@@ -418,7 +474,7 @@ mod tests {
     #[test]
     fn a_reply_in_the_wrong_protocol_is_blocked() {
         let doc = reply(json!({ "protocol": APPROVAL_REQUEST_PROTOCOL }));
-        match classify(Ok(doc)) {
+        match classify(Ok(doc), SENT) {
             ApprovalOutcome::Blocked { reason } => assert!(reason.contains("protocol")),
             other => panic!("expected Blocked, got {other:?}"),
         }
@@ -426,7 +482,7 @@ mod tests {
 
     #[test]
     fn a_transport_failure_is_blocked_and_never_refused() {
-        match classify(Err("the sidecar did not start".to_string())) {
+        match classify(Err("the sidecar did not start".to_string()), SENT) {
             ApprovalOutcome::Blocked { reason } => assert!(reason.contains("not reached")),
             other => panic!("expected Blocked, got {other:?}"),
         }
@@ -436,7 +492,7 @@ mod tests {
     fn a_reply_with_no_ok_field_establishes_nothing() {
         let mut doc = reply(json!({}));
         doc.as_object_mut().unwrap().remove("ok");
-        match classify(Ok(doc)) {
+        match classify(Ok(doc), SENT) {
             ApprovalOutcome::Blocked { reason } => assert!(reason.contains("`ok`")),
             other => panic!("expected Blocked, got {other:?}"),
         }
@@ -445,7 +501,7 @@ mod tests {
     #[test]
     fn a_record_without_a_64_hex_digest_is_blocked() {
         for bad in [json!("abc"), json!(""), json!("z".repeat(64)), Value::Null] {
-            match classify(Ok(reply(json!({ "entry_sha256": bad })))) {
+            match classify(Ok(reply(json!({ "entry_sha256": bad }))), SENT) {
                 ApprovalOutcome::Blocked { reason } => assert!(reason.contains("entry_sha256")),
                 other => panic!("expected Blocked, got {other:?}"),
             }
@@ -454,7 +510,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_is_recorded_and_says_so() {
-        match classify(Ok(reply(json!({ "duplicate": true, "sequence": 2 })))) {
+        match classify(Ok(reply(json!({ "duplicate": true, "sequence": 2 }))), SENT) {
             ApprovalOutcome::Recorded { duplicate, sequence, .. } => {
                 assert!(duplicate);
                 assert_eq!(sequence, 2);

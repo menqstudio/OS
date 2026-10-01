@@ -429,6 +429,10 @@ pub fn run() {
             // (crashed) session fail-closed, so a durable claim can never wedge a run.
             // Safe under the single-instance lock above (no live foreign session).
             brops_core::repo::runs::reconcile_abandoned_executions(&conn, commands::process_session_id())?;
+            // The same recovery for produced-agent flow runs: one still `running` here was
+            // claimed by a process that died, and nothing else ever moves that row. Before the
+            // scheduler loop below is spawned, so no live claim exists to mistake for a dead one.
+            brops_core::repo::agent_runs::reconcile_abandoned(&conn)?;
             // Sweep AI sandbox directories left by crashed/killed prior runs.
             ai::cleanup_stale_sandboxes();
             app.manage(AppState { db: Mutex::new(conn), _instance_lock: instance_lock });
@@ -437,7 +441,11 @@ pub fn run() {
             // automation whose interval trigger (`every: <N>{m|h|d}`) is due, running its LOCAL
             // action and logging the run. Only local, non-AI actions ever fire unattended — an
             // AI-reaching action routes through the governed, fail-closed chain, never this loop.
-            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`).
+            // A poisoned DB mutex is skipped (fail-closed, consistent with `locked`) — and SAID,
+            // as is a tick that failed. `run_due` records every tick it can in `scheduler_ticks`,
+            // error included; this result used to be thrown away with `let _ =`, which is the
+            // reason that table exists, and the two cases that cannot leave a row (no connection,
+            // or a database that would not take one) are the two reported here.
             let scheduler_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -449,13 +457,15 @@ pub fn run() {
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(0);
                     if let Some(state) = scheduler_handle.try_state::<AppState>() {
-                        if let Ok(conn) = state.db.lock() {
-                            // Not `let _ =`: a tick that failed used to be indistinguishable
-                            // from a tick with nothing due. `run_due` attempts everything that
-                            // is due and returns the first failure; say it, every tick it holds.
-                            if let Err(e) = brops_core::repo::automations::run_due(&conn, now_ms) {
-                                eprintln!("[brops] scheduler: this tick did not complete: {e}");
+                        match state.db.lock() {
+                            Ok(conn) => {
+                                if let Err(e) = brops_core::repo::automations::run_due(&conn, now_ms) {
+                                    eprintln!("brops: scheduler tick at {now_ms} failed: {e}");
+                                }
                             }
+                            Err(_) => eprintln!(
+                                "brops: scheduler tick at {now_ms} skipped: the database mutex is poisoned"
+                            ),
                         }
                     }
                 }

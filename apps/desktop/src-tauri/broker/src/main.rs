@@ -91,16 +91,10 @@ pub fn init_broker_schema(conn: &Connection) -> Result<(), String> {
 // `broker_turn_id` and the per-turn `request_nonce`. Production uses `brops_core::id()` (UUID v4).
 // ---------------------------------------------------------------------------------------------------
 
-/// Production [`BrokerIds`]: fresh UUID v4 broker-turn ids and request nonces.
-pub struct UuidBrokerIds;
-impl BrokerIds for UuidBrokerIds {
-    fn new_broker_turn_id(&self) -> String {
-        brops_core::id()
-    }
-    fn new_request_nonce(&self) -> String {
-        brops_core::id()
-    }
-}
+/// Production [`BrokerIds`]: fresh UUID v4 broker-turn ids and request nonces. It is
+/// `brops_core::real_ids::RealBrokerIds` — the type whose doc has always called itself "the
+/// production `BrokerIds` impl" while this file shipped a copy under another name.
+pub use brops_core::real_ids::RealBrokerIds;
 
 // ---------------------------------------------------------------------------------------------------
 // Governed executor. The real challenge→authority→supervisor→signer→verification chain is a follow-up
@@ -196,7 +190,7 @@ mod linux {
             EXIT_SOCKET
         })?;
 
-        let ids = UuidBrokerIds;
+        let ids = RealBrokerIds;
         // Config-driven, FAIL-CLOSED executor: if `BROPS_BROKER_CONFIG` points at a valid deployment config
         // with a TCB-root-signed manifest, serve real governed turns through the live chain; otherwise (no
         // config / malformed / no trusted manifest) fall back to the fail-closed default that Blocks every
@@ -1134,7 +1128,7 @@ mod tests {
         let r = run_governed_turn(
             &conn,
             &raw("conv-1", CRID),
-            &UuidBrokerIds,
+            &RealBrokerIds,
             &UpstreamBlockedExecutor,
             1,
         );
@@ -1152,7 +1146,7 @@ mod tests {
         let r = run_governed_turn(
             &conn,
             r#"{"protocol":"nope"}"#,
-            &UuidBrokerIds,
+            &RealBrokerIds,
             &UpstreamBlockedExecutor,
             1,
         );

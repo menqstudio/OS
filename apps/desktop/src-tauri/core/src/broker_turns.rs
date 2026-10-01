@@ -129,10 +129,10 @@ impl From<rusqlite::Error> for StoreError {
 /// [`DurableAcceptanceLedger`]:
 ///
 /// - `governed_accepted_receipts` — every `receipt_id` the broker has ever accepted, `receipt_id` as a
-///   write-once PRIMARY KEY. This is §7.1(c) global uniqueness, and because the row is on disk it holds
+///   write-once PRIMARY KEY. This is §7.1(d) global uniqueness, and because the row is on disk it holds
 ///   ACROSS a broker restart: a signed receipt replayed after a reboot still collides with its own row.
 /// - `governed_consumed_nonces` — every `request_nonce` ever spent, `request_nonce` as a write-once
-///   PRIMARY KEY (§7.1(d) one-time consume), with the accepting `receipt_id` retained for forensics.
+///   PRIMARY KEY (§7.1(c) one-time consume), with the accepting `receipt_id` retained for forensics.
 ///
 /// Neither table is ever UPDATEd or DELETEd by this module: a row, once written, is the permanent proof
 /// that the id was spent. Both use `INSERT OR IGNORE` + `rows_affected` as the compare-and-set, so the
@@ -327,7 +327,7 @@ fn wall_clock_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// The production [`AcceptanceLedger`]: §7.1(c) `receipt_id` global uniqueness and §7.1(d) one-time
+/// The production [`AcceptanceLedger`]: §7.1(d) `receipt_id` global uniqueness and §7.1(c) one-time
 /// `request_nonce` consume, backed by the broker's SQLite database so **both survive a restart**.
 ///
 /// What this replaces matters. Every production call site used to pass
@@ -398,7 +398,7 @@ impl DurableAcceptanceLedger {
     /// The claim body, run INSIDE the owned `BEGIN IMMEDIATE`. Returning `Err` means the caller
     /// ROLLBACKs, so a refusal writes nothing at all.
     fn claim_body(&self, receipt_id: &str, request_nonce: &str, now_ms: i64) -> Result<(), LedgerRefusal> {
-        // §7.1(c). `INSERT OR IGNORE` + rows_affected IS the compare-and-set: 0 rows means the
+        // §7.1(d). `INSERT OR IGNORE` + rows_affected IS the compare-and-set: 0 rows means the
         // PRIMARY KEY already held this receipt_id (or the length CHECK rejected an empty one) — either
         // way this receipt does not get to be accepted again.
         let inserted = self
@@ -413,7 +413,7 @@ impl DurableAcceptanceLedger {
             return Err(LedgerRefusal::ReceiptReplay);
         }
 
-        // §7.1(d). Same CAS on the one-time nonce.
+        // §7.1(c). Same CAS on the one-time nonce.
         let consumed = self
             .conn
             .execute(
@@ -750,7 +750,7 @@ mod tests {
             assert_eq!(l.claim("r-1", "n-1"), Ok(()));
         }
 
-        // Fresh receipt_id, already-spent nonce: only the §7.1(d) one-time consume can catch this,
+        // Fresh receipt_id, already-spent nonce: only the §7.1(c) one-time consume can catch this,
         // and only because it is on disk.
         let mut l = file_ledger(&db);
         assert_eq!(

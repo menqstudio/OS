@@ -752,8 +752,10 @@ pub async fn request_engine_approval(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default();
+    // Kept, not minted inline and dropped: the reply is only believed if it answers THIS id.
+    let request_id = approval::new_request_id();
     let document = match approval::approval_request_document(
-        &approval::new_request_id(),
+        &request_id,
         &task_id,
         &requested_command,
         &expected_task_state,
@@ -768,7 +770,7 @@ pub async fn request_engine_approval(
         Err(reason) => return ApprovalOutcome::Refused { reason },
     };
     let reply = crate::ai::governed_sidecar_approval_request(&document.to_string()).await;
-    approval::classify(reply)
+    approval::classify(reply, &request_id)
 }
 
 #[cfg(test)]

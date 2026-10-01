@@ -2,14 +2,17 @@
 //! P0 delivery invariant: the committed `message.body` is the exact accepted-output bytes, `message_id/
 //! body/trust_state` equal the row the broker verification transaction committed, an in-transaction
 //! re-read that disagrees FAILS CLOSED (`commit_readback_mismatch`), and only the broker writes a
-//! `trusted_verified` row).
+//! committed row).
 //!
-//! This module is the BROKER-side persistence op only. The renderer never holds a handle to this DB; the
-//! `trusted_verified` trust state is enforced by a table CHECK constraint (no other value is representable)
-//! and set ONLY here, so no renderer/generic-chat write path can mint or mutate a verified message.
+//! This module is the BROKER-side persistence op only. The renderer never holds a handle to this DB.
+//! A committed row carries one of TWO trust states — `trusted_verified` or `demonstration_custody`,
+//! whichever the chain actually resolved (see [`create_schema`]) — and the table CHECK constraint
+//! closes the set to those two. This header used to say the CHECK made `trusted_verified` the only
+//! representable value; that stopped being true when custody started being resolved instead of
+//! assumed. The state is set ONLY here, so no renderer/generic-chat write path can mint or mutate a
+//! committed message, and a `demonstration_custody` row can never be read back as `trusted_verified`.
 
 use rusqlite::{params, Connection};
-use sha2::{Digest, Sha256};
 
 use crate::governed_turn_ipc::{CommittedMessage, TurnReason, TRUSTED_VERIFIED};
 
@@ -18,18 +21,11 @@ use crate::governed_turn_ipc::{CommittedMessage, TurnReason, TRUSTED_VERIFIED};
 /// database, a hand-made table) still cannot smuggle an unresolved state past verification.
 const COMMITTABLE_TRUST_STATES: [&str; 2] = [TRUSTED_VERIFIED, "demonstration_custody"];
 
-/// Lowercase-hex SHA-256 of `bytes` (matches the receipt/envelope hashing convention).
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(bytes);
-    let d = h.finalize();
-    let mut s = String::with_capacity(64);
-    for b in d {
-        use std::fmt::Write as _;
-        let _ = write!(s, "{:02x}", b);
-    }
-    s
-}
+/// Lowercase-hex SHA-256 of `bytes`. This IS [`crate::receipt::sha256_hex`], re-exported under the
+/// path the broker, launcher, executor and proof crates already import — it used to be a second
+/// implementation whose doc promised it "matches the receipt/envelope hashing convention", which
+/// nothing checked. One function cannot disagree with itself.
+pub use crate::receipt::sha256_hex;
 
 /// Create the broker committed-message table.
 ///
@@ -103,7 +99,8 @@ pub fn verify_readback(
     }
 }
 
-/// Persist the verified accepted output as the committed `trusted_verified` message, then **re-read the row
+/// Persist the verified accepted output as the committed message — `trusted_verified` or
+/// `demonstration_custody`, per `trust_state` below — then **re-read the row
 /// in the same connection** and fail closed on ANY mismatch (rev-30 P0). Returns the exact broker-produced
 /// immutable projection to hand to the renderer, or a `TurnReason` (never a partial/committed frame on
 /// failure). The pre-persist gate also rejects an accepted body whose recomputed SHA-256 does not equal the
@@ -201,14 +198,16 @@ pub struct CommittedBinding {
 /// claims, re-reading the row and recomputing the digest here.
 ///
 /// WHY this exists, plainly. A driver that wanted to report whether a turn was "bound" used to read
-/// `message.trust_state == TRUSTED_VERIFIED`. That value is a hardcoded constant in
-/// `CommittedMessage::new` — it is `trusted_verified` for every projection ever constructed, so the
-/// comparison could not fail and the reported boolean was decoration. The falsifiable question a caller
-/// holding a projection can still ask is a DELIVERY question: is this projection backed by a durable
-/// `trusted_verified` row, and does the body it is about to display hash to that row's
-/// envelope-committed digest? Everything below can be false — a rolled-back transaction, a projection
-/// for a message that was never committed, a row or a projection altered after the commit, a stored
-/// digest that no longer matches its body.
+/// `message.trust_state == TRUSTED_VERIFIED`. That value WAS a hardcoded constant in
+/// `CommittedMessage::new` — `trusted_verified` for every projection ever constructed, so the
+/// comparison could not fail and the reported boolean was decoration. (It is a parameter now: the
+/// label the committing transaction stored.) The falsifiable question a caller holding a projection
+/// can ask is a DELIVERY question: is this projection backed by a durable committed row, does the
+/// body it is about to display hash to that row's envelope-committed digest, and is the trust state
+/// it is about to render THE ROW'S? Everything below can be false — a rolled-back transaction, a
+/// projection for a message that was never committed, a row or a projection altered after the
+/// commit, a stored digest that no longer matches its body, a projection that says `trusted_verified`
+/// over a row that says `demonstration_custody`.
 ///
 /// LIMIT: this re-verifies delivery, not cryptography. The envelope signature and the
 /// output-length/digest gates are `governed_verification::verify_and_accept`'s job and are NOT redone
@@ -241,6 +240,13 @@ pub fn verify_committed_binding(
     // it (an older DB, a hand-made table) must not pass. The set is closed — an unresolved or
     // invented state is refused here even if some other schema let it be written.
     if !COMMITTABLE_TRUST_STATES.contains(&trust_state.as_str()) {
+        return Err(TurnReason::CommitReadbackMismatch);
+    }
+    // The label the caller will render must be the label the row holds. The membership check above
+    // was the ONLY thing this function did with the row's trust state, and it never read the
+    // projection's — so a projection raised to `trusted_verified` over a `demonstration_custody`
+    // row passed, both values being committable. This is the field the badge is drawn from.
+    if trust_state != message.trust_state {
         return Err(TurnReason::CommitReadbackMismatch);
     }
     if author != message.author || created_at_ms != message.created_at_ms {
@@ -544,6 +550,37 @@ mod tests {
         .unwrap();
         let msg = CommittedMessage::new("m-1".into(), "Bro".into(), "hello world".into(), 7, TRUSTED_VERIFIED.into());
         assert_eq!(verify_committed_binding(&conn, &msg), Err(TurnReason::CommitReadbackMismatch));
+    }
+
+    #[test]
+    fn committed_binding_refuses_a_projection_whose_trust_state_is_not_the_rows() {
+        // The trust-state EQUALITY in isolation. The row is a real `demonstration_custody` commit
+        // and the projection is the one `persist_committed` returned for it, with one field
+        // changed: the label, raised to `trusted_verified`. Both labels are committable, so the
+        // membership check passes; body, digest, author and timestamp are untouched. Only the
+        // comparison of the projection's label with the row's can refuse this.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &demonstration()).unwrap();
+        assert_eq!(msg.trust_state, "demonstration_custody");
+        // Positive control: the honest projection is bound.
+        assert!(verify_committed_binding(&conn, &msg).is_ok());
+
+        let raised = CommittedMessage::new(
+            msg.message_id.clone(), msg.author.clone(), msg.body.clone(), msg.created_at_ms,
+            TRUSTED_VERIFIED.into(),
+        );
+        assert_eq!(verify_committed_binding(&conn, &raised), Err(TurnReason::CommitReadbackMismatch));
+
+        // And the other direction: a production row is not bound to a projection that lowers it.
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+        let msg = persist_committed(&conn, &accepted("hello world"), &production()).unwrap();
+        let lowered = CommittedMessage::new(
+            msg.message_id.clone(), msg.author.clone(), msg.body.clone(), msg.created_at_ms,
+            "demonstration_custody".into(),
+        );
+        assert_eq!(verify_committed_binding(&conn, &lowered), Err(TurnReason::CommitReadbackMismatch));
     }
 
     #[test]

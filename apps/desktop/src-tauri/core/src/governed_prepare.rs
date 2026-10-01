@@ -652,17 +652,21 @@ fn bounded_id(field: &'static str, value: &str) -> Result<(), PrepareError> {
 /// **What this does NOT do, and where it disagrees with the shipped tree.** It does not trim the
 /// history: the frozen `ai::prepare_governed_turn` calls `trim_history`, and that function is
 /// private to the renderer-hosting app crate. §4.10(g) says the prepared object carries "the
-/// canonical trimmed history sent AND hashed", so the caller hands this the already-selected window
-/// — and that caller is `governed_turn_execute` inside the broker, which resolves `system`/`history`
-/// from the message store itself and does not exist yet. Trimming here would put the window rule in
-/// two places.
+/// canonical trimmed history sent AND hashed", so the caller hands this the already-selected window.
+/// That caller exists: `LadderChain::run_verified` in `broker/src/ladder_executor.rs`, which takes
+/// `system`/`history` from its `TurnContent` resolver (`SqliteTurnContent` in production). This
+/// paragraph used to say the caller "does not exist yet". Trimming here would put the window rule
+/// in two places.
 ///
 /// **It mints the nonce, and the shipped broker also mints one.**
 /// `broker_orchestrator::run_governed_turn` takes `request_nonce` from `BrokerIds` and hands it to
 /// the executor BEFORE any preparation happens, while §4.10(g) step 1 makes this function the mint.
-/// Both cannot be the authority. The design is followed here (this function mints); reconciling the
-/// two is a seam named in the report rather than decided locally, because the orchestrator's nonce is
-/// already the key of a durable `broker_turns` row.
+/// Both cannot be the authority. The design is followed here (this function mints), and the seam is
+/// OPEN and recorded, not resolved: `config/spec-conformance.json` carries it as "A NONCE-AUTHORITY
+/// COLLISION", and `LadderChain::run_verified` drops the orchestrator's value on the floor
+/// (`let _orchestrator_nonce = request_nonce;`) with a comment saying why. So the nonce stored in the
+/// durable `broker_turns` row is NOT the nonce that is signed. Choosing one mint is not decided
+/// locally, because the orchestrator's nonce is already the key of that row.
 pub fn prepare_governed_turn_v1b(
     system: &str,
     messages: &[GovernedChatMsg],
@@ -765,7 +769,8 @@ mod tests {
 
     #[test]
     fn the_governed_digest_is_not_the_frozen_raw_string_digest() {
-        // §4.10(g) mandatory test (i). The frozen fixture (`receipt.rs:1215-1219`) hashes the
+        // §4.10(g) mandatory test (i). The frozen fixture (the `generation_config` case of
+        // `receipt.rs::brops_all_formula_parity_matches_python`) hashes the
         // raw-UTF-8 STRING form; this asserts the governed OBJECT form differs, which is the whole
         // reason a second preparation exists. If these ever collided, reusing the frozen path would
         // look correct while being the split authority the Architect flagged.

@@ -60,7 +60,7 @@ mod linux {
     };
     use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, ResolvedTurn, TurnResolver};
 
-    use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
+    use brops_core::broker_orchestrator::run_governed_turn;
     use brops_core::governed_message_store::verify_committed_binding;
     use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest, REQUEST_PROTOCOL};
     use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
@@ -151,19 +151,7 @@ mod linux {
         }
     }
 
-    fn hex32(s: &str) -> Option<[u8; 32]> {
-        if s.len() != 64 {
-            return None;
-        }
-        let b = s.as_bytes();
-        let mut out = [0u8; 32];
-        for i in 0..32 {
-            let hi = (b[2 * i] as char).to_digit(16)?;
-            let lo = (b[2 * i + 1] as char).to_digit(16)?;
-            out[i] = (hi * 16 + lo) as u8;
-        }
-        Some(out)
-    }
+    use brops_core::key_manifest::decode_hex32 as hex32;
 
     fn s(v: &Value, path: &[&str]) -> Option<String> {
         let mut cur = v;
@@ -199,15 +187,7 @@ mod linux {
     }
 
     // Production broker-minted ids (fresh UUID v4 broker_turn_id + one-time request_nonce).
-    struct UuidIds;
-    impl BrokerIds for UuidIds {
-        fn new_broker_turn_id(&self) -> String {
-            brops_core::id()
-        }
-        fn new_request_nonce(&self) -> String {
-            brops_core::id()
-        }
-    }
+    use brops_core::real_ids::RealBrokerIds as UuidIds;
 
     fn init_schema(conn: &Connection) -> Result<(), String> {
         brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;

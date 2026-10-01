@@ -3,15 +3,16 @@
 //! Applies every migration (0001..0026) in order to a fresh SQLite database and
 //! asserts the resulting shape: `SCHEMA_VERSION == 26`, the ledger is contiguous
 //! 1..=26, the key tables/columns exist, and the constraints introduced across
-//! (This header said 0023 / `== 23` / 1..=23 while the assertion 71 lines below
-//! required 24 — the file contradicted itself inside one scroll. That is the
-//! defect START_HERE.md names first: a comment that was true when written.)
 //! the migrations (status-guard triggers, the run_steps position uniqueness, and
 //! the Wave-3a receipt tables' CHECK/PK/one-time-consume invariants) actually
 //! bite. Migrations are forward-only (no down scripts), so the "down/idempotency"
 //! leg here is the forward-only guarantee: re-running `migrate` — in the same
 //! process and across a real file reopen — re-applies nothing and never re-runs
 //! the non-idempotent `ALTER TABLE`s.
+//!
+//! (This header said 0023 / `== 23` / 1..=23 while the assertion 71 lines below
+//! required 24 — the file contradicted itself inside one scroll. That is the
+//! defect START_HERE.md names first: a comment that was true when written.)
 //!
 //! Uses only the crate's public surface (`brops_core::db`) plus raw SQL through
 //! the connection, matching the inline-test conventions in `src/lib.rs`
@@ -510,8 +511,9 @@ fn migrate_is_idempotent_in_process() {
 fn migrate_is_idempotent_across_a_real_file_reopen() {
     // The strongest forward-only check: persist to a file, drop the connection
     // (simulating app close), reopen, and confirm migrate is a clean no-op. If the
-    // non-idempotent `ALTER TABLE`s (0007/0008/0012/0013/0024) re-ran, the reopen would
-    // error ("duplicate column"); a stable version proves they did not.
+    // non-idempotent `ALTER TABLE ... ADD COLUMN`s (0007/0008/0012/0013/0022/0024) re-ran,
+    // the reopen would error ("duplicate column"); a stable version proves they did not.
+    // (0016 also ALTERs, with a RENAME, and would fail the same way for a different reason.)
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("schema.db");
     let path = path.to_str().unwrap();

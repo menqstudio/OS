@@ -17,12 +17,12 @@ use serde_json::{json, Value};
 use brops_broker::chain_executor::{ChainExecutor, CustodyResolver, ExecutionPlan, GovernedChain};
 use brops_broker::chain_hops::{HopConn, HopError, Principal};
 
-use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
+use brops_core::broker_orchestrator::run_governed_turn;
 use brops_core::governed_turn_ipc::REQUEST_PROTOCOL;
 use brops_core::broker_turns::DurableAcceptanceLedger;
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
-    check_and_advance, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
+    resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
     PinnedRoot, RootAnchor, RootProvenance,
 };
 use brops_core::production_trust::{resolve_trust_state, verifying_key_hex, TrustState};
@@ -120,15 +120,7 @@ impl ProofOutcome {
     }
 }
 
-struct UuidIds;
-impl BrokerIds for UuidIds {
-    fn new_broker_turn_id(&self) -> String {
-        brops_core::id()
-    }
-    fn new_request_nonce(&self) -> String {
-        brops_core::id()
-    }
-}
+use brops_core::real_ids::RealBrokerIds as UuidIds;
 
 /// One fresh in-process connection to a core: `send_all` decodes the frame, dispatches to the core, and
 /// buffers the framed reply; `recv_all` returns it. Mirrors the servers' one-frame-per-connection contract.
@@ -264,8 +256,13 @@ where
     let verified_root = verify_manifest_anchored(&manifest, &root_sig, &root_anchor)
         .map_err(|e| format!("verify_manifest: {e:?}"))?;
 
+    // This proof BOOTSTRAPS its floor from the manifest it is about to run: there is no previous
+    // run to order against. A `check_and_advance(&floor, &manifest)?` used to follow this line. It
+    // compared the manifest with a floor built from that same manifest one line earlier — the
+    // predicate `key_manifest`'s own docs single out as one "that cannot fail" — and threw the
+    // advance away. It is gone rather than left reading like an anti-rollback check. The resolver
+    // below persists the floor inside the chain, which is the only place this kit has one.
     let floor = AntiRollbackFloor { highest_epoch: 2, highest_hash: manifest.content_hash() };
-    check_and_advance(&floor, &manifest).map_err(|e| format!("anti_rollback: {e:?}"))?;
     // Keep-alive clone + resolved signer pubkey for the final trust classification (the resolver, below, is
     // the enforcement path that re-verifies the manifest + anti-rollback + resolves keys INSIDE the chain).
     let manifest_for_trust = manifest.clone();

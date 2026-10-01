@@ -38,6 +38,20 @@
 //! dependency runs `brops` → `brops-core`, one way. An authorizer in `src`
 //! would be unreachable from the population that needs it most.
 //!
+//! ## What is reached, and what is only tested
+//!
+//! The produced-agent path uses two entry points and no others: [`EgressGrant::parse_named`]
+//! (from `agent_bundle`, when a grant's table is built and when it is re-read) and
+//! [`EgressGrant::authorize_ref`] (from `repo.rs`'s `StepKind::Call` arm).
+//!
+//! The other half of the public surface is the BUILD agent's — the half a CONNECT listener would
+//! call — and has no caller outside tests: [`EgressGrant::parse`], [`EgressGrant::empty`],
+//! [`EgressGrant::authorize`], [`parse_connect_target`], and every use of [`Population::Build`].
+//! It is real, tested code with nothing to serve. `parse_connect_target` is declared to the
+//! reachability gate (`config/reachability-declarations.json`), so the day a listener calls it the
+//! gate says so; the three methods are not declared, because that gate matches `module::name(` and
+//! would never see `EgressGrant::authorize(`.
+//!
 //! ## Deny by default, and refuse rather than narrow
 //!
 //! An empty grant admits nothing. An entry that states an authority this layer

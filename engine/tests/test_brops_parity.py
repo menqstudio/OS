@@ -225,5 +225,42 @@ class NegativeMatrixParityTests(unittest.TestCase):
         self.assertTrue(signer._is_u64_ms(1 << 53),
                         f"{case}: the Python predicate is wider than MAX_GOVERNED_MS")
 
+class GovernedRefusalReasonParityTests(unittest.TestCase):
+    """The desktop's closed refusal union is the engine's, member for member, in order.
+
+    `apps/desktop/src-tauri/core/src/governed_bridge_result.rs` restates
+    `governed_turn_result.GOVERNED_REFUSAL_REASONS` as a 29-element array and its doc calls the
+    Python tuple "the single definition" -- but the only test on the Rust side asserted
+    `len() == 29` against itself, and no Python file read the Rust one. A reason added, removed
+    or re-ordered on either side would have left both suites green while the desktop refused a
+    verdict the engine issues (or admitted one it does not). This reads the Rust literal.
+    """
+
+    RUST = (ROOT.parent / "apps" / "desktop" / "src-tauri" / "core" / "src"
+            / "governed_bridge_result.rs")
+
+    def _rust_reasons(self):
+        import re
+        text = self.RUST.read_text(encoding="utf-8")
+        m = re.search(
+            r"pub const GOVERNED_REFUSAL_REASONS: \[&str; (\d+)\] = \[(.*?)\n\];", text, re.S)
+        self.assertIsNotNone(m, "the Rust array is no longer where this test reads it")
+        body = "\n".join(line.split("//")[0] for line in m.group(2).splitlines())
+        reasons = re.findall(r'"([a-z_]+)"', body)
+        self.assertEqual(len(reasons), int(m.group(1)), "the reader lost or invented a member")
+        return reasons
+
+    def test_the_rust_closed_union_is_the_python_tuple_in_order(self):
+        import governed_turn_result as gtr
+        self.assertEqual(self._rust_reasons(), list(gtr.GOVERNED_REFUSAL_REASONS))
+
+    def test_the_reader_reads_more_than_one_member(self):
+        # Without this, a regex that matched nothing would compare [] with a tuple and fail
+        # loudly -- but one that matched a single line would not be noticed as partial.
+        reasons = self._rust_reasons()
+        self.assertGreater(len(reasons), 12)
+        self.assertEqual(len(reasons), len(set(reasons)))
+
+
 if __name__ == "__main__":
     unittest.main()

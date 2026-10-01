@@ -618,8 +618,8 @@ pub mod linux {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
     use brops_core::governed_message_store::sha256_hex;
-    use brops_core::ipc_framing::{encode_frame, LENGTH_PREFIX_BYTES, MAX_FRAME_PAYLOAD_BYTES};
-    use std::io::{Read, Write};
+    use brops_core::ipc_framing::{encode_frame, read_one_frame, ReadFrameError};
+    use std::io::Write;
     use std::os::unix::net::UnixStream;
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -662,33 +662,21 @@ pub mod linux {
         }
 
         fn recv_all(&mut self) -> Result<Vec<u8>, HopError> {
-            let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
-            self.stream.read_exact(&mut prefix).map_err(|_| HopError::Io)?;
-            let declared = u32::from_be_bytes(prefix) as usize;
-            if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
-                return Err(HopError::BadReply);
-            }
-            let mut body = vec![0u8; declared];
-            self.stream.read_exact(&mut body).map_err(|_| HopError::Io)?;
-            let mut framed = Vec::with_capacity(LENGTH_PREFIX_BYTES + declared);
-            framed.extend_from_slice(&prefix);
-            framed.extend_from_slice(&body);
-            Ok(framed)
+            // The bound and the zero rule are `ipc_framing`'s, not restated here. The callers of
+            // this trait expect the FRAMED bytes back, so the payload is re-framed with the same
+            // encoder that would have written it.
+            let body = read_one_frame(&mut self.stream).map_err(|e| match e {
+                ReadFrameError::Io(_) => HopError::Io,
+                ReadFrameError::Frame(_) => HopError::BadReply,
+            })?;
+            encode_frame(&body).map_err(|_| HopError::BadReply)
         }
     }
 
     /// Read exactly one length-prefixed reply frame (bounded) from a live AF_UNIX peer; a short/oversize/lost
     /// frame is a closed [`TurnReason`]. Mirrors the servers' 4-byte-big-endian one-frame-per-connection wire.
     fn read_one_reply(stream: &mut UnixStream) -> Result<Vec<u8>, TurnReason> {
-        let mut prefix = [0u8; LENGTH_PREFIX_BYTES];
-        stream.read_exact(&mut prefix).map_err(|_| TurnReason::UpstreamBlocked)?;
-        let declared = u32::from_be_bytes(prefix) as usize;
-        if declared == 0 || declared > MAX_FRAME_PAYLOAD_BYTES {
-            return Err(TurnReason::UpstreamBlocked);
-        }
-        let mut body = vec![0u8; declared];
-        stream.read_exact(&mut body).map_err(|_| TurnReason::UpstreamBlocked)?;
-        Ok(body)
+        read_one_frame(stream).map_err(|_| TurnReason::UpstreamBlocked)
     }
 
     /// The deployment-static remainder the live privileged execution needs beyond the per-turn plan: the

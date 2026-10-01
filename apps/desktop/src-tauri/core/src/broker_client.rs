@@ -4,7 +4,6 @@
 //! unit-tested without a socket; the real AF_UNIX (Linux) / named-pipe (Windows) connection is a thin
 //! platform wrapper that implements [`BrokerConn`].
 
-use crate::governed_turn_ipc::TurnReason;
 use crate::ipc_framing::{decode_one, encode_frame, FrameError};
 
 /// A single-request/single-response connection to the broker (one framed request out, one framed reply in).
@@ -43,11 +42,11 @@ pub fn send_governed_turn(conn: &mut dyn BrokerConn, request_json: &[u8]) -> Res
     Ok(payload.to_vec())
 }
 
-/// Map a transport failure to the closed renderer reason (`upstream_blocked`) — the broker's own
-/// `record_pre_verification_block` is the durable authority; a lost connection is never a committed turn.
-pub fn transport_failure_reason(_e: &TransportError) -> TurnReason {
-    TurnReason::UpstreamBlocked
-}
+// (A `transport_failure_reason(&TransportError) -> TurnReason` used to sit here. It ignored its
+// argument, returned `UpstreamBlocked`, and had no caller: the one consumer of a `TransportError`,
+// `governed_turn_execute` in the app crate, renders its own `BROKER_TRANSPORT_FAILED` text and
+// never produces a `TurnReason` for it, because a lost connection is not a broker verdict. Two
+// mappings of one failure, one of them unused, is how they come to disagree.)
 
 #[cfg(test)]
 mod tests {
@@ -89,7 +88,6 @@ mod tests {
         let mut broker = FakeBroker { received: vec![], reply_payload: vec![], fail_send: true };
         let err = send_governed_turn(&mut broker, b"{}").unwrap_err();
         assert_eq!(err, TransportError::Unavailable);
-        assert_eq!(transport_failure_reason(&err), TurnReason::UpstreamBlocked);
     }
 
     #[test]

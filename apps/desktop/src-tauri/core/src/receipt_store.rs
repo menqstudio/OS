@@ -60,12 +60,13 @@ pub struct ReceiptWire<'a> {
     pub signature_b64: &'a str,
 }
 
-/// Everything needed to verify + record one governed turn's receipt. Bundled so the
-/// entry point stays a two-argument call (and to keep the resolved key + expected
-/// bindings travelling together).
+/// Everything needed to verify + record one governed turn's receipt, bundled so the wire
+/// form and the expected bindings travel together. The entry points take it as their third
+/// argument, after the connection and the [`ReceiptKeyAuthority`].
 ///
-/// No `Debug`: it carries a [`ResolvedManifestKey`], which deliberately has no `Debug`
-/// (it holds key material and keeps a minimal slice-1 surface).
+/// It carries NO resolved key — see the `wire` field — which is why it can derive `Debug`.
+/// (This doc used to say the opposite on both counts: "No `Debug`: it carries a
+/// `ResolvedManifestKey`", directly above the `derive(Debug)`.)
 #[derive(Debug, Clone, Copy)]
 pub struct GovernedTurn<'a> {
     /// The receipt exactly as received (unresolved). The verify transaction strict-
@@ -1881,8 +1882,7 @@ mod tests {
         let short = "sidecar timed out";
         assert_eq!(bounded_reason(short), short, "within budget → verbatim");
 
-        // A multi-megabyte reason ending in a multi-byte char (so a naive byte cut
-        // would split it) must be capped on a char boundary, tagged with the full hash.
+        // A multi-megabyte reason is capped, tagged with the full hash.
         let huge = format!("{}é", "A".repeat(5_000_000));
         let out = bounded_reason(&huge);
         assert!(out.len() <= MAX_REASON_BYTES, "bounded to <= 8 KiB, got {}", out.len());
@@ -1891,5 +1891,36 @@ mod tests {
         assert!(out.contains(&format!("original_bytes={}", huge.len())));
         // The full original is recoverable by hash but never stored inline.
         assert!(out.contains(&crate::receipt::sha256_hex(huge.as_bytes())));
+    }
+
+    /// The CHAR-BOUNDARY rule, which the test above never reached: its one multi-byte character
+    /// was five megabytes past the cut, so the cut fell in a run of ASCII and the boundary loop in
+    /// `bounded_reason` never iterated. Deleting the loop left it green.
+    ///
+    /// Here every character is two bytes, so the cut can land between the halves of one. Whether
+    /// it does depends on the marker's length, which this test does not hard-code: the same text
+    /// is tried at both alignments (bare, and shifted one byte by an ASCII prefix), and exactly
+    /// one of them puts the cut mid-character. A cut left there is not a shorter string — slicing
+    /// a `str` off a char boundary panics.
+    #[test]
+    fn bounded_reason_backs_off_a_cut_that_lands_inside_a_character() {
+        let mut backed_off = 0;
+        for prefix in ["", "A"] {
+            let reason = format!("{prefix}{}", "é".repeat(5_000));
+            let out = bounded_reason(&reason);
+            assert!(out.len() <= MAX_REASON_BYTES);
+            let marker_at = out.find("\n[truncated; sha256=").expect("the marker");
+            let kept = &out[..marker_at];
+            assert!(reason.starts_with(kept), "the visible part is a prefix of the original");
+            assert!(reason.is_char_boundary(kept.len()));
+            // The marker is appended to whatever was kept, so the output is exactly the budget
+            // when the cut fell on a boundary and one byte short when it had to back off.
+            match MAX_REASON_BYTES - out.len() {
+                0 => {}
+                1 => backed_off += 1,
+                n => panic!("the cut backed off {n} bytes; a two-byte character needs at most one"),
+            }
+        }
+        assert_eq!(backed_off, 1, "one of the two alignments must put the cut inside a character");
     }
 }

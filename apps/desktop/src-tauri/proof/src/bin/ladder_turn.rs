@@ -131,7 +131,7 @@ mod linux {
     use brops_broker::ladder_executor::{LadderChain, SqliteTurnContent, UuidTurnIds};
     use brops_broker::manifest_resolver::{KeyResolver, ResolvedKeys};
 
-    use brops_core::broker_orchestrator::{run_governed_turn, BrokerIds};
+    use brops_core::broker_orchestrator::run_governed_turn;
     use brops_core::governed_message_store::verify_committed_binding;
     use brops_core::governed_sidecar::{GovernedSidecar, SidecarPrincipal, SidecarTrust};
     use brops_core::governed_submit::{SubmitTransport, BRIDGE_SUBMIT_PROTOCOL};
@@ -214,19 +214,7 @@ mod linux {
         cur.as_i64()
     }
 
-    fn hex32(value: &str) -> Option<[u8; 32]> {
-        if value.len() != 64 {
-            return None;
-        }
-        let b = value.as_bytes();
-        let mut out = [0u8; 32];
-        for i in 0..32 {
-            let hi = (b[2 * i] as char).to_digit(16)?;
-            let lo = (b[2 * i + 1] as char).to_digit(16)?;
-            out[i] = (hi * 16 + lo) as u8;
-        }
-        Some(out)
-    }
+    use brops_core::key_manifest::decode_hex32 as hex32;
 
     /// The §2.5 owner/mode floor for the root trust anchor file (audit **F-17**), byte-for-byte the
     /// check `live_turn.rs` applies to the same file: a regular, root-owned file with no group/other
@@ -621,15 +609,7 @@ mod linux {
     // Production broker-minted ids (§4.10(g): backend-generated, never renderer-supplied)
     // =============================================================================================
 
-    struct UuidIds;
-    impl BrokerIds for UuidIds {
-        fn new_broker_turn_id(&self) -> String {
-            brops_core::id()
-        }
-        fn new_request_nonce(&self) -> String {
-            brops_core::id()
-        }
-    }
+    use brops_core::real_ids::RealBrokerIds as UuidIds;
 
     fn init_schema(conn: &Connection) -> Result<(), String> {
         brops_core::broker_turns::create_schema(conn).map_err(|e| format!("{e:?}"))?;
