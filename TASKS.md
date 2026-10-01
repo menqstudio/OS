@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #303 · branch `t133/owner-key-wording`** (base `main`, tip `4b25650`, task T-133).
+> **✅ SETTLED — `main` is at `20b9e63`.** The only thing open is PR #304 on `t134/settled-at-20b9e63`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-133: ten texts still said a person holds a key; fixed, the gate now checks prose, and the T-131 design is proposed
+> **Next:** Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D in parallel.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,6 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-133** | **Ten texts still said a person holds a key** — fixed; gate checks prose too ◑ | Bro | In-Progress | `t133/owner-key-wording` |
 | **T-131** | **Broker pin: no holder** — design proposed | Bro | Review | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
@@ -37,7 +36,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **61 merged rows** | **Shipped, and none independently confirmed** — `T-130`·`#301`, `T-128`·`#299`, `T-126`·`#297`, `T-124`·`#295`, `T-123`·`#294`, `T-121`·`#292`, `T-119`·`#290`, `T-117`·`#288`, `T-115`·`#286`, `T-112`·`#284`, `T-111`·`#283`, `T-110`·`#282`, `T-109`·`#281`, `T-108`·`#279`, `T-107`·`#278`, `T-106`·`#277`, `T-105`·`#276`, `T-104`·`#275`, `T-103`·`#274`, `T-102`·`#273`, `T-101`·`#272`, `T-100`·`#271`, `T-088`·`#260`, `T-099`·`#270`, `T-098`·`#269`, `T-097`·`#268`, `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **62 merged rows** | **Shipped, and none independently confirmed** — `T-133`·`#303`, `T-130`·`#301`, `T-128`·`#299`, `T-126`·`#297`, `T-124`·`#295`, `T-123`·`#294`, `T-121`·`#292`, `T-119`·`#290`, `T-117`·`#288`, `T-115`·`#286`, `T-112`·`#284`, `T-111`·`#283`, `T-110`·`#282`, `T-109`·`#281`, `T-108`·`#279`, `T-107`·`#278`, `T-106`·`#277`, `T-105`·`#276`, `T-104`·`#275`, `T-103`·`#274`, `T-102`·`#273`, `T-101`·`#272`, `T-100`·`#271`, `T-088`·`#260`, `T-099`·`#270`, `T-098`·`#269`, `T-097`·`#268`, `T-096`·`#267`, `T-095`·`#266`, `T-094`·`#265`, `T-093`·`#264`, `T-092`·`#263`, `T-091`·`#262`, `T-090`·`#261`, `T-089`·`#259`, `T-087`·`#258`, `T-086`·`#253`, `T-085`·`#252`, `T-084`·`#251`, `T-083`·`#250`, `T-082`·`#249`, `T-081`·`#248`, `T-080`·`#247`, `T-079`·`#246`, `T-078`·`#245`, `T-077`·`#244`, `T-076`·`#243`, `T-075`·`#242`, `T-074`·`#241`, `T-073`·`#239`, `T-072`·`#232`, `T-071`·`#231`, `T-070`·`#230`, `T-069`·`#227`, `T-068`·`#223`, `T-067`·`#222`, `T-066`·`#221`, `T-065`·`#220`, `T-064`·`#217`, `T-063`·`#214`, `T-059`·`#219`, `T-060`·`#219`. Verbatim in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

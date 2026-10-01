@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "4b25650ca610598fe0e51c27c63ebc13a314f323",
+  "settled_at_main_head": "20b9e6351d96bf4700bd43de2c575e509b4eac51",
   "sync": {
-    "baseline_main_head_at_sync": "4b25650ca610598fe0e51c27c63ebc13a314f323",
-    "snapshot_branch": "t133/owner-key-wording",
+    "baseline_main_head_at_sync": "20b9e6351d96bf4700bd43de2c575e509b4eac51",
+    "snapshot_branch": "t134/settled-at-20b9e63",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t133/owner-key-wording"
+    "branch": "t134/settled-at-20b9e63"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 303,
-    "branch": "t133/owner-key-wording",
+    "number": 304,
+    "branch": "t134/settled-at-20b9e63",
     "state": "open",
-    "what": "Corrects Owner-held-key wording in preflight, engine modules and the Phase-10 inventory, extends the ceremony gate to prose, and proposes docs/design/DEBIAN_INSTALL_PROVISIONING.md (T-131).",
-    "note": "T-133: ten texts still said a person holds a key; fixed, the gate now checks prose, and the T-131 design is proposed",
+    "what": "The settle commit: records that main is at 20b9e63 and carries no product change.",
+    "note": "Settling the state anchor at main 20b9e63. Nothing else is open; this pull request is the commit that records it.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #303 (t133/owner-key-wording), task T-133: Corrects Owner-held-key wording in preflight, engine modules and the Phase-10 inventory, extends the ceremony gate to prose, and proposes docs/design/DEBIAN_INSTALL_PROVISIONING.md (T-131). Next: Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D.",
-    "_note": "The carrier is current_workflow_pr (#303 on t133/owner-key-wording). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #304 (t134/settled-at-20b9e63) settles the state at main 20b9e63. Next: Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D in parallel.",
+    "_note": "The carrier is current_workflow_pr (#304 on t134/settled-at-20b9e63). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "4b25650ca610598fe0e51c27c63ebc13a314f323",
+      "head": "20b9e6351d96bf4700bd43de2c575e509b4eac51",
       "conclusion": "success",
-      "run_id": 36827143843,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-01: success at 4b25650, run 36827143843."
+      "run_id": 36829966739,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-01: success at 20b9e63, run 36829966739."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

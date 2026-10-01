@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-01 — 82 pull requests merged (`#219`–`#301`), `main` at
-`c7e6253`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-01 — 84 pull requests merged (`#219`–`#303`), `main` at
+`20b9e63`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide, the Linux kernel, and a broker root the install must mint (`T-131`; nobody
 holds the compiled one, and under #78 nobody ever will — `docs/OWNER_ACTION_REQUIRED.md` §0). The negative matrix reads: **155 implemented · 52 blocked · 35
@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #303 · branch `t133/owner-key-wording`** (base `main`, tip `4b25650`, task T-133).
+> **✅ SETTLED — `main` is at `20b9e63`.** The only thing open is PR #304 on `t134/settled-at-20b9e63`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-133: ten texts still said a person holds a key; fixed, the gate now checks prose, and the T-131 design is proposed
+> **Next:** Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D in parallel.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
