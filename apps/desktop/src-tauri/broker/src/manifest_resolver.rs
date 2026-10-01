@@ -302,7 +302,8 @@ impl KeyPairRefusal {
 /// [`resolve_production_key`], so trust class, revocation, validity window and allowed protocol are
 /// enforced on each, and require the two to be different keys.
 ///
-/// This is the ONE implementation of that step. [`ProductionResolver`]'s `resolve_keys` calls it,
+/// This is the ONE implementation of that step ON LINUX — `win-live/src/resolver.rs` still resolves
+/// the two keys itself and has no distinctness check. [`ProductionResolver`]'s `resolve_keys` calls it,
 /// and so do both proof drivers (`proof/src/bin/{ladder_turn,live_turn}.rs`). It exists because the
 /// step used to be written out in each of them, and the copies drifted: `live_turn` took the
 /// supervisor key with a bare `manifest.keys.iter().find(..)` on the key id, so a revoked, expired
