@@ -13,7 +13,7 @@ These tests pin the three things that changed:
   recorder-signed events the builder wants to forget are still in the store and it cannot
   re-mint them;
 * a high-water mark this deployment cannot establish is a REFUSAL that names the
-  owner-provided key which would close it — never a silent default of zero.
+  install-provisioned anchor which would close it — never a silent default of zero.
 """
 
 import json
@@ -312,7 +312,7 @@ class RollbackTests(HeadBindingFixture):
 
     def test_a_presented_floor_anchor_that_cannot_verify_refuses(self):
         # A presented anchor is never a fallback: one this deployment cannot verify is a
-        # refusal that says what the owner must mint. `evidence-floor-anchor` is now a
+        # refusal that says what is missing. `evidence-floor-anchor` is now a
         # registered artifact type (bro_signature.ARTIFACT_AUTHORITY) bound to the
         # delegated `evidence-floor` authority, so the anchor is signed here by an
         # authority that may NOT sign it — registering the type gave nobody a key, and
@@ -334,7 +334,7 @@ class RollbackTests(HeadBindingFixture):
             with self.assertRaises(CompletionError) as caught:
                 self.check(self.manifest())
         message = str(caught.exception)
-        self.assertIn("does not verify as an owner-signed evidence-floor-anchor", message)
+        self.assertIn("does not verify as a signed evidence-floor-anchor", message)
         self.assertIn("none is compiled in", message)
 
     def test_a_second_signed_head_at_the_same_sequence_is_refused(self):

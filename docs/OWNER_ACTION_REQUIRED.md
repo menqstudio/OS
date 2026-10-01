@@ -341,7 +341,7 @@ always `External` kills both the provenance test and
 `TrustState::Production` by hand kills that same load-bearing one.
 
 **What still gates Phase 1's two rows:** the other 26 prerequisites in `broker/src/preflight.rs` — 13
-installer, 11 machine-admin, 1 offline-root-custodian, 1 platform. None of them is a decision. The table
+installer, 11 machine-admin, 1 platform, and the custody row that no person can meet (it waits on `T-131`, `docs/design/DEBIAN_INSTALL_PROVISIONING.md`). None of them is a decision. The table
 now marks the custody row `met-by-build`.
 
 ---
@@ -354,7 +354,7 @@ Phase 1 has two open Definition-of-Done rows — *"One governed round-trip prove
 That account is true and **incomplete**. Measured at `a94513e`:
 
 `apps/desktop/src-tauri/broker/src/preflight.rs` lists **27** prerequisites for a governed round trip,
-each with the party that can create it: **13 installer · 11 machine-admin · 1 offline-root-custodian ·
+each with the party that can create it: **13 installer · 11 machine-admin · 1 custody row (T-131) ·
 2 not-provisionable-on-a-machine**. The interesting number is the last one. Of those two:
 
 | Requirement | Why no machine can provide it |

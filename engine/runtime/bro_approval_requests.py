@@ -238,6 +238,6 @@ class ApprovalRequestLog:
             # The sentence that keeps a reply from being read as a decision. There is deliberately
             # no `granted`, `disposition`, `verdict` or `state` field to read instead of it.
             "adjudicated": False,
-            "note": ("recorded, not adjudicated: only an owner-signed control-room command decides, "
+            "note": ("recorded, not adjudicated: only a signed owner control-room command decides, "
                      "and this engine has not been asked to issue one"),
         }

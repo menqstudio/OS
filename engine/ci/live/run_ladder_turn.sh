@@ -44,7 +44,7 @@
 # fed it on stdin), which proves the SERVERS and proves nothing about the chain object: no Rust in
 # this tree had ever run `LadderChain` against a real supervisor. That phase is NOT the
 # `brops-broker` binary and its banner says so at length — `build_governed_executor` can only reach
-# the Owner's OFFLINE root pin, so the driver anchors its own `KeyResolver` to the kit's TCB
+# the compiled-in root pin, whose private half nobody holds (#78; T-131), so the driver anchors its own `KeyResolver` to the kit's TCB
 # root-anchor file, whose `kit_generated` provenance can never render `production_verified=true`.
 #
 # WHAT THIS KIT PROVISIONS THAT THE §5 KIT DOES NOT (each is a finding, not a convenience)
@@ -939,11 +939,12 @@ echo "$NEG_OUT"
 #
 # IT IS NOT THE `brops-broker` BINARY, and this banner exists so nobody can cite it as one.
 # `build_governed_executor` can only reach `ProductionResolver::provisioned`, which hard-pins the
-# Owner's OFFLINE root `brops-tcb-root-1` / `3c83c2bc…`; the one constructor that accepts another
-# anchor is `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker` can reach it (measured:
-# `error[E0624]`). Satisfying that pin in CI would need an Owner ceremony with the offline key on
-# every run, or the production signer's private half committed to this repository — which would make
-# forging a production-class §4.9 envelope trivial against every shipped install. So the driver
+# compiled-in root `brops-tcb-root-1` / `3c83c2bc…`, whose private half NO person holds (Owner
+# decision #78; T-131 replaces it with an install-minted root). The one constructor that accepts
+# another anchor is `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker` can reach it
+# (measured: `error[E0624]`). Nothing can satisfy that pin in CI, and committing any production
+# signer's private half to this repository instead would make forging a production-class §4.9
+# envelope trivial against every shipped install. So the driver
 # supplies its OWN `KeyResolver` over the kit's TCB root-anchor FILE, carrying that file's DECLARED
 # provenance, exactly as `proof/src/bin/live_turn.rs` already does. That is honest for one reason
 # and one only: a `kit_generated` anchor may never render `production_verified=true` —
@@ -1418,15 +1419,17 @@ fi
 # at length that it is not this binary. This phase starts `brops-broker` as the broker principal with
 # the variable EXPORTED, sends it one renderer frame, and reads what it did.
 #
-# WHAT IT CAN AND CANNOT PROVE. `build_governed_executor` pins the Owner's OFFLINE production root
-# (`ProductionResolver::provisioned`), and this kit's manifest is signed by a `kit_generated` root.
+# WHAT IT CAN AND CANNOT PROVE. `build_governed_executor` pins the compiled-in production root
+# (`ProductionResolver::provisioned`), whose private half nobody holds (#78), and this kit's manifest is signed by a `kit_generated` root.
 # So the turn is refused — and on the wire every refusal is the same `upstream_blocked`, whether the
 # broker never left `UpstreamBlockedExecutor` or refused at the root signature. The reply cannot tell
 # those apart; the broker's own stderr can. `trusted manifest provisioned - serving the 4.10(g)
 # governed ladder` is printed only after EVERY config gate has passed — the §2.5 floor naming this
 # binary, the key manifest, its signature file, the anti-rollback floor, the authority socket, the
 # conversation source, the sidecar principal and the durable ledger. That line is the proof that
-# what remains between this deployment and a governed turn is the Owner's root and nothing else.
+# what remains between this deployment and a governed turn is the pinned root and nothing else —
+# a root no person holds (Owner decision #78), so the gap closes only when T-131 makes it
+# install-minted.
 echo
 echo "== BROPS-BROKER: the product binary, with \$BROPS_BROKER_CONFIG exported =="
 BROKER_RUN="$LADDER/broker-run"

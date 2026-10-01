@@ -260,7 +260,7 @@ no keys, so verification fell through to the **plaintext** `.head` branch, and t
 rewritten by the ledger's own `append()`. A party who could write the ledger could drop records, recompute
 the chain, rewrite the head, and `verify()` reported the chain intact.
 
-Now: `append()` assembles the anchor payload itself, hands it to the Owner's external signing command, and
+Now: `append()` assembles the anchor payload itself, hands it to the deployment's external signing command, and
 installs the result only after verifying it against the operator-pinned trusted key registry **and** against
 the chain on disk — refusing any document whose payload is not the one the ledger assembled. `verify()` with
 keys REQUIRES that anchor, keyed on the existence of the ledger *file* (an emptied ledger with both sidecars
@@ -272,9 +272,12 @@ mode: for `bro_backup` a key registry that will not load is a refusal, not a dow
 `bro_monitor` reports a three-valued `shadow.anchor.state` (`signed` / `unanchored` / `invalid` /
 `keys-unavailable`); every non-`signed` state is ATTENTION, but the operator is told which.
 
-**What the Owner must provide (deploy-time, not a CI secret).** No key is compiled in and none is invented;
-an anchor signed with a key that lives in the repository would prove nothing, so a signing command resolving
-inside `engine/` is refused by name. The Owner must export, from outside this repository:
+**What the deployment must provide (an install step — not a CI secret, and not a key any person holds).** No
+key is compiled in and none is invented; an anchor signed with a key that lives in the repository would prove
+nothing, so a signing command resolving inside `engine/` is refused by name. Under the Owner's decision of
+2026-08-09 (PR #78) no person holds, mints or exports this key: the signer service mints its own on first start
+(`mint_anchor_key` in `apps/desktop/src-tauri/provision/src/audit_signer.rs`). What is missing is the install
+step that registers that service and sets, from outside this repository:
 
 | Variable | What it is |
 |---|---|
@@ -285,12 +288,12 @@ Until both are set, ledgers are written **UNANCHORED** — the wall keeps runnin
 refuses them by name and prints exactly this list. That is deliberate: a silent green over an unanchored
 ledger is the defect this item exists to remove.
 
-**What this does NOT buy.** It does not defend against a party who can also make the Owner's signing command
+**What this does NOT buy.** It does not defend against a party who can also make the deployment's signing command
 sign arbitrary heads; that boundary is the signer's custody, which is why separate-principal execution and
 signer-side anti-rollback are stated as requirements rather than assumed. The install-side monotonic check in
 `_check_anchor_monotonic` is defence in depth only — a writer who drops a `.head.sig` in directly bypasses it.
 
-**Status stays OPEN** because the Owner's custody is not provisioned, so no deployment is anchored yet.
+**Status stays OPEN** because no install provisions the signer's custody, so no deployment is anchored yet.
 Tests: `engine/tests/test_audit_head_anchor.py` (26 cases, including a ledger that is appended to, has its
 plaintext head rewritten over dropped records, and must be REFUSED — the exact forgery that previously
 verified green).
@@ -321,10 +324,12 @@ verified green).
   consumed by `authorize_conductor_stop` in `engine/runtime/bro_completion.py`
 - **Closure requires:** ~~setting `"require_conductor_session_token": true` in `engine/.bro/policy.json`~~
   **(done)**; ~~tests for the required-and-absent, mismatched-binding and expired branches~~ **(done —
-  `engine/tests/test_conductor_session_token.py`, 17 tests)**. What remains is the half only the Owner can
-  do: a deploy step that mints and rotates the operator-root-signed `conductor-session` artifact and exports
-  `BRO_CONDUCTOR_SESSION_TOKEN` to the harness. **Until then the conductor stop exemption is REFUSED, by
-  design** — see "what the Owner must provide" below.
+  `engine/tests/test_conductor_session_token.py`, 17 tests)**. What remains is deployment wiring, not an
+  Owner act (PR #78: no person holds or mints a key): first-launch provisioning already mints the
+  operator-root-signed `conductor-session` artifact (`conductor_session_payload` in
+  `apps/desktop/src-tauri/provision/src/lib.rs`, called from its `mint`), and `engine_env()` exports
+  `BRO_CONDUCTOR_SESSION_TOKEN`; what is missing is a desktop turn that reaches `authorize_conductor_stop`
+  (see the O-3 row of the table above). **Until then the conductor stop exemption is REFUSED, by design.**
 
 **The defect in full.** The verifier exists and is wired into `authorize_conductor_stop`, but it fails closed
 only when a token is *presented and bad*. With the flag absent from the shipped policy (it is not merely
@@ -348,17 +353,19 @@ audit log, which is what keeps this MEDIUM rather than HIGH.
   `authorize_conductor_stop` writes that word into the append-only ledger instead of a note about the
   environment.
 - The refusal quotes `CONDUCTOR_SESSION_PROVISIONING` verbatim: the exact artifact payload shape, the
-  registry entry, and the env var. Nothing here mints a token and no seed key is shipped — the check can only
-  be satisfied by the Owner's offline operator-root key.
+  registry entry, and the env var. Nothing in `engine/` mints a token and no seed key is shipped — the check can only
+  be satisfied by an artifact signed with the operator root, which first-launch provisioning holds only in
+  memory while it mints the `conductor-session` artifact and then destroys (PR #78: no person holds it).
 - The policy is now read from the `root` passed by the caller, not a module constant, so the requirement is
   testable against a fixture root.
 
-**Consequence, deliberately accepted:** with the shipped policy fail-closed and no Owner artifact deployed,
+**Consequence, deliberately accepted:** with the shipped policy fail-closed and no provisioned artifact reaching it,
 `authorize_conductor_stop` refuses every conductor stop, naming what is missing. That is the honest state of
 an unverifiable identity; it is not a regression to be "fixed" by re-defaulting the flag.
 
-**Why it is still OPEN.** The credential half is the Owner's and is not in the repository. **This item is not
-closeable by any agent.**
+**Why it is still OPEN.** *(Corrected for PR #78: this said "the credential half is the Owner's".)* The
+credential is minted by first-launch provisioning, not by any person; the item stays open because no desktop
+turn reaches `authorize_conductor_stop` yet (the bridge sidecar's real mode is fail-closed until Wave 3b).
 
 **Exactly what Gev must provide.** Mint, offline with the operator-root key, an artifact of the form
 
@@ -431,7 +438,7 @@ a new `_prove_command_actor`. There is no return path for an unproven actor — 
   O-3/M-4 as the new `actor_attestation` argument. It is verified with `verify_artifact` against the
   runtime's trusted-key registry (authority binding, key status, key validity window, Ed25519 signature) and
   must bind `role` and `agent_id` to the claimed actor with an unexpired integer `expires_at_epoch`. Reusing
-  the artifact the Owner already has to mint for O-3 means no new artifact type is invented by the code that
+  the artifact provisioning already mints for O-3 means no new artifact type is invented by the code that
   consumes it.
 - The attestation is judged against the **wall clock**, not the caller-supplied `now_epoch` every other view in that module takes: whether a key and a session credential are live right now is not the caller's question to ask, and a backdated clock would otherwise revive an expired identity.
 - A runtime constructed without trusted keys refuses rather than accepting the claim unverified.
@@ -493,7 +500,7 @@ deleted once and the matching test went red.
 
 
 **Closed in code 2026-08-08.** `_prove_command_actor` now routes by actor: the conductor keeps
-its `conductor-session` credential, and the OWNER must present a `control-room-command` artifact
+its `conductor-session` credential, and an OWNER command must present a `control-room-command` artifact
 bound to this exact command. The difference is deliberate — a session authorises any command in a
 window, and `owner-gev` is the identity that can cancel, recover and retry, so a window is the
 wrong shape for it. A stolen owner artifact replays exactly the command that was already signed.
@@ -509,7 +516,7 @@ test holds that even a flawless artifact signed by an ungranted key still refuse
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Progress:** the manifest-binding half is built and enforced; what remains needs an Owner key (below)
+- **Progress:** the manifest-binding half is built and enforced; what remains is an Owner decision about timing, not an Owner key (below)
 - **Owner secret needed:** no
   *(This has now been "no" → "yes" → "no". The middle value was written when `evidence-floor-anchor`
   was an `operator-root` artifact. It is not any more: `bro_signature.ARTIFACT_AUTHORITY` binds it to
@@ -564,7 +571,7 @@ the head it was taken against, and two different signed heads sharing one sequen
 **What is NOT closed, and why.** A floor that is deleted **and re-provisioned** reads exactly like a task
 being seen for the first time. Nothing the runtime can reach distinguishes them, so a manifest binding a
 re-anchored head (`head_sequence` > 1) with no durable mark behind it is **refused by name** rather than
-defaulted to zero, and the refusal states what the Owner must provide.
+defaulted to zero, and the refusal states what is missing.
 
 `evidence-floor-anchor` is now **registered** in the signature module's authority registry against the
 **delegated `evidence-floor`** authority (2026-08-07) — *not* `operator-root`, which is what this sentence
@@ -572,17 +579,19 @@ said until 2026-08-09. `bro_signature.ARTIFACT_AUTHORITY` binds it to `EVIDENCE_
 `test_the_operator_root_that_signs_the_registry_may_not_sign_an_anchor` asserts that `operator-root`
 signing one is **refused**. Reading this sentence and running that test gave opposite answers.
 That registration was a hard blocker, not a formality: `_parse_key` refuses any registry
-entry naming an unregistered artifact type, so the Owner could not have been given a key for it even
-offline — the registry would not load. **Registering the type provisioned nothing and weakened nothing.**
+entry naming an unregistered artifact type, so no key could have been granted it at all — the registry
+would not load. **Registering the type provisioned nothing and weakened nothing.**
 Authority to sign comes from the per-key `allowed_artifact_types` grant in the operator-signed registry, and
 no key holds it: the committed `engine/config/trusted-keys.json` grants the type to nobody, so presenting
 `BRO_EVIDENCE_FLOOR_ANCHOR` today still **fails closed by name** — including when the document is genuinely
 signed by the deployment's own registry-signing operator key, which is the "type registered, key not pinned"
 case pinned by `test_registered_but_unpinned_the_anchor_is_still_refused` in
 `engine/tests/test_owner_artifact_registration.py`. No key is compiled in, none is generated, and no seed is
-shipped. What remains is the Owner's: mint the anchor offline, grant the type to that key in the
-operator-signed registry, and present the file under a principal the policed account cannot write. The item
-therefore stays **OPEN**.
+shipped. What remains is not a key any person holds (PR #78): provisioning retains the `evidence-floor` key, its
+registry grants that key the type, and `mint_floor_anchor` (`apps/desktop/src-tauri/provision/src/lib.rs`)
+signs with it. What is open is **an Owner decision: when is an anchor minted, and under which account** —
+plus presenting the file under a principal the policed account cannot write. The item therefore stays
+**OPEN**.
 
 ---
 
@@ -631,9 +640,10 @@ Plus one **non-secret** Owner action: paste the updater **public** key into
 `plugins.updater.endpoints` entry, and add the `tauri-plugin-updater` dependency + init. The gate requires
 those four to land together. Step-by-step: `docs/RELEASE_SETUP.md` §3.
 
-And one Owner action for **O-3**: mint an operator-root-signed `conductor-session` artifact and export
-`BRO_CONDUCTOR_SESSION_TOKEN` in the deployment environment (see §1 above). This is a deploy-time step, not a
-CI secret.
+**No Owner action for O-3.** *(Corrected for PR #78: this listed "mint an operator-root-signed
+`conductor-session` artifact" as an Owner action.)* First-launch provisioning mints that artifact
+(`conductor_session_payload` in `apps/desktop/src-tauri/provision/src/lib.rs`) and exports
+`BRO_CONDUCTOR_SESSION_TOKEN`; what O-3 still needs is deployment wiring (see §1 above), not a person's key.
 
 ---
 

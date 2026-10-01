@@ -14,6 +14,9 @@ TWO RULES.
      generator.
   2. No tracked text file outside the history below names them, or names the flags and environment
      variables that existed only to carry an offline root's material into a kit.
+  3. No such file asserts, in prose, that a PERSON holds the root: the phrases below, matched without
+     regard to case. Rule 2 alone missed ten of these in 2026-10 (`preflight.rs`, two engine modules,
+     the Phase-10 inventory) because it matched tool names, not claims.
 
 HISTORY IS EXEMPT, and only history: `docs/archive/`, the audit reports under `apps/desktop/AUDIT/`
 (rewriting audit evidence would be falsifying it), the released CHANGELOG, this gate with its test, and
@@ -60,6 +63,19 @@ FORBIDDEN_TOKENS = (
     "BROPS_ROOT_ANCHOR_PUB_HEX",
 )
 
+#: Rule 3 — prose that asserts a person holds, mints or exports the root. Lowercased before matching.
+#: Narrow on purpose: each is a CLAIM, not a topic, so the honest sentence explaining why the
+#: ceremony is gone ("nobody holds an offline root") does not trip it.
+FORBIDDEN_PHRASES = (
+    "owner's offline",
+    # NOT "offline-root-custodian": it is still the `as_str` of preflight's `OfflineRootCustodian`
+    # variant, whose name T-131 slice C retires — add the phrase back in that change.
+    "owner-provided key",
+    "owner mints a key",
+    "only the owner can make",
+    "the owner must export",
+)
+
 #: Exempt by path prefix: history, and the two files that must name what they forbid.
 EXEMPT_PREFIXES = (
     "docs/archive/",
@@ -104,7 +120,9 @@ def check(root: pathlib.Path) -> tuple[list[str], bool]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        hits = [t for t in FORBIDDEN_TOKENS if t in text]
+        lowered = text.lower()
+        hits = [t for t in FORBIDDEN_TOKENS if t in text] + [
+            f'"{p}"' for p in FORBIDDEN_PHRASES if p in lowered]
         if rel == CONTROL and hits:
             control_seen = True
         if hits and not rel.startswith(EXEMPT_PREFIXES):
@@ -125,7 +143,8 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print(f"GREEN: no Owner-key ceremony in the tree; {len(REMOVED_PATHS)} removed paths absent, "
-          f"{len(FORBIDDEN_TOKENS)} tokens absent outside history; control matched")
+          f"{len(FORBIDDEN_TOKENS)} tokens and {len(FORBIDDEN_PHRASES)} phrases absent outside "
+          "history; control matched")
     return 0
 
 

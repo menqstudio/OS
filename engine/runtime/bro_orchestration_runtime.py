@@ -64,7 +64,7 @@ _HELD_CLAIM_TOKENS: dict[str, str] = {}
 # owner-bound artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no trusted key that
 # could sign one, and no seed is compiled in here to pretend otherwise. An owner-issued
 # lifecycle decision is therefore REFUSED BY NAME, and `OWNER_ACTOR_UNPROVABLE` states
-# exactly what the owner must mint to re-open it. That refusal currently closes
+# exactly what is missing to re-open it. That refusal currently closes
 # `retry_blocked` and `recover_task` outright — which is the honest state of an owner
 # gate nothing can authenticate, not a regression to be papered over with a default.
 #
@@ -76,7 +76,7 @@ _HELD_CLAIM_TOKENS: dict[str, str] = {}
 # --------------------------------------------------------------------------- #
 
 #: The credential a caller-claimed conductor actor must present. Reusing the artifact
-#: the operator already signs for M-4/O-3 is deliberate: one owner-minted credential,
+#: the install already signs for M-4/O-3 is deliberate: one provisioning-minted credential,
 #: one authority binding, and no new artifact type invented by its consumer.
 RUNTIME_ACTOR_ARTIFACT = CONDUCTOR_SESSION_ARTIFACT
 
@@ -99,11 +99,12 @@ ACTOR_ATTESTATION_MISSING = (
 OWNER_ACTOR_UNPROVABLE = (
     "an owner-issued orchestration decision cannot be validated: nothing in this engine "
     "can verify that a caller is the owner, so the claim is refused rather than recorded "
-    "as an owner decision. The OWNER must provide three things, all outside this module: "
+    "as an owner decision. Re-opening it needs three things, all outside this module, "
+    "and none of them a key any person holds (the install mints all trust): "
     "(1) an owner-bound artifact type (e.g. `orchestration-actor`) registered in "
     "bro_signature.ARTIFACT_AUTHORITY against the operator-root authority, (2) an ACTIVE "
     "key entry allowing that artifact type in the operator-signed config/trusted-keys.json, "
-    "and (3) a document minted with that offline key binding {\"role\": \"owner\", "
+    "and (3) a document signed with that install-provisioned key binding {\"role\": \"owner\", "
     "\"agent_id\": \"owner-gev\", \"session_id\": <session>, \"expires_at_epoch\": <int>}, "
     "passed here as `actor_attestation`. This runtime holds no key for it and none is "
     "compiled in, so until that artifact exists every owner-actor path refuses")
@@ -875,7 +876,7 @@ class DurableOrchestrationRuntime:
         interrupted the mutation must not be able to clear it — so the actor is proven
         or the call refuses. No owner-bound artifact type exists to prove it with
         (OWNER_ACTOR_UNPROVABLE), so this path refuses today and stranded tasks stay
-        stranded until the owner mints one. A recovery anybody could sign off by typing
+        stranded until such an artifact exists. A recovery anybody could sign off by typing
         "owner-gev" is not a recovery; the loud refusal is the honest state.
 
         `DurableOrchestrationRuntimeV1.recover_task` overrides this and cannot forward

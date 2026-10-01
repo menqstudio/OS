@@ -179,7 +179,8 @@ enum AnswerProvenance {
     /// A governed turn ran and its receipt verified against a TRUSTED manifest.
     ///
     /// Nothing constructs this yet, and that is correct rather than an omission:
-    /// `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no shipped
+    /// `governed_verification_unconfigured()` returns `Some(...)` on every shipped install, because
+    /// `governed_provisioning_missing` measures all five of its inputs absent, so no shipped
     /// install can reach a trusted verification. It exists so the day one can, the note says so
     /// because the producing site said so — not because a `format!` two hundred lines away
     /// assumed it.
@@ -3067,7 +3068,8 @@ mod tests {
     #[test]
     fn the_governed_prefix_exists_and_is_reachable_only_from_a_trusted_verification() {
         // Constructed HERE and nowhere else in the crate, deliberately.
-        // `governed_verification_unconfigured()` returns `Some(...)` unconditionally, so no
+        // `governed_verification_unconfigured()` returns `Some(...)` on every shipped install,
+        // because `governed_provisioning_missing` measures all five of its inputs absent, so no
         // shipped install can reach a trusted verification and nothing may claim one. The variant
         // exists so that the day one can, the note says so because the PRODUCING site said so —
         // not because a `format!` two hundred lines away assumed it. This test is what keeps it

@@ -78,8 +78,9 @@ pub struct KeyIds {
 /// root. Nothing in the chain was forged; the wrong key was simply asked.
 ///
 /// [`Config::load`] now refuses any config whose `pubs` disagree with the ROOT-SIGNED key manifest
-/// (see [`verify_and_bind_pubs`]). The manifest is signed by the offline root whose private half is
-/// not on the serving box, so this is a cryptographic bind, not another file to protect.
+/// (see [`verify_and_bind_pubs`]). The manifest must be signed by the compiled-in root, whose private
+/// half is on no box and held by no person (Owner decision #78; T-131 makes the root install-minted),
+/// so this is a cryptographic bind, not another file to protect.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Pubs {
     pub challenge: String,
@@ -343,7 +344,8 @@ mod tests {
     //! The `pubs` → root-signed-manifest bind (remediation round 3, finding **P1s-1**).
     //!
     //! These run on the Linux CI runner: the bind is pure over bytes, and the manifest is signed here
-    //! with a root this test generates, so nothing needs the operator's offline key.
+    //! with a root this test generates, so nothing needs the private half of the pinned root (which
+    //! no person holds).
 
     use super::*;
     use brops_core::key_manifest::{ManifestKey, TrustClass};

@@ -134,11 +134,12 @@ fn main() {
         required(&args, "--supervisor-account", "the account that will hold attest.seed");
     let signer_account =
         required(&args, "--signer-account", "the account that will hold signer.seed");
-    // Audit condition 1: the root PRIVATE key is supplied by the OPERATOR from an offline location, never
-    // compiled in and never left on the serving box. It signs the manifest here; only the root PUBLIC key is
-    // pinned in the TCB (crate::tcb). The offline private MUST match that pinned public.
+    // Audit condition 1: the root PRIVATE key is never compiled in and never left on the serving box. It
+    // signs the manifest here; only the root PUBLIC key is pinned in the TCB (crate::tcb), and the supplied
+    // private MUST match that pinned public. No person holds the private half of the production pin (Owner
+    // decision #78), so against that pin this tool cannot complete until T-131 makes the root install-minted.
     let root_key_path = arg(&args, "--root-key").unwrap_or_else(|| {
-        eprintln!("win_provision: --root-key <offline root private seed hex> required");
+        eprintln!("win_provision: --root-key <root private seed hex> required");
         std::process::exit(2);
     });
     // The CUSTODY declaration. Nothing in this tool can tell whether the seed it was just handed came

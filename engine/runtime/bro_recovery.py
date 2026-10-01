@@ -203,11 +203,13 @@ def settle_mutation(task_id: str, tool_use_id: str, *, success: bool, error: str
 
 
 def _verify_recovery_proof(document: Any, root: pathlib.Path, now: int | None) -> dict[str, Any]:
-    """Verify an owner-signed recovery-proof artifact.
+    """Verify a signed recovery-proof artifact (an owner authorisation, not an owner-held key).
 
-    The proof is Ed25519-signed by the owner-held RECOVERY authority (verified against
-    the externally-pinned trusted-key registry), so a policed builder process cannot
-    mint it. verify_artifact refuses any other authority."""
+    The proof is Ed25519-signed under the delegated RECOVERY authority (verified against
+    the externally-pinned trusted-key registry); verify_artifact refuses any other
+    authority. That key is minted and retained by the install (PR #78: no person holds
+    it), so that a policed builder process cannot mint a proof rests on the custody of
+    the install's retained trust directory, not on any person holding a key."""
     from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     if not isinstance(document, dict):
         raise RecoveryError("recovery proof document is required")
@@ -219,11 +221,11 @@ def _verify_recovery_proof(document: Any, root: pathlib.Path, now: int | None) -
 
 def prove_recovery(task_id: str, proof_document: dict[str, Any], root: pathlib.Path = ROOT,
                    now: int | None = None) -> str:
-    """Clear a recovery-required task on a real owner-signed proof, not a hex token.
+    """Clear a recovery-required task on a real signed proof, not a hex token.
 
     The previous implementation accepted any 64-hex string, so the builder that
     interrupted the mutation could clear its own quarantine. The proof is now an
-    owner-signed recovery-proof artifact bound to THIS task, recovery record,
+    signed recovery-proof artifact bound to THIS task, recovery record,
     restored state, effect class and state version, so it cannot be forged or replayed
     onto a different recovery. The whole signed document is persisted alongside its
     hash so a later audit can re-verify it from the record alone."""

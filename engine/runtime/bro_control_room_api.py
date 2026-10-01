@@ -149,7 +149,7 @@ COMMAND_BOUND_FIELDS = ("command_id", "task_id", "command")
 ACTOR_PROVEN_PER_COMMAND = "owner-signed-control-room-command"
 
 #: The credential a conductor-issued command must present. Reusing the artifact the
-#: operator already signs for M-4/O-3 is deliberate: one owner-minted credential, one
+#: install already signs for M-4/O-3 is deliberate: one provisioning-minted credential, one
 #: authority binding, and no new artifact type invented by the code that consumes it.
 CONTROL_ROOM_ACTOR_ARTIFACT = CONDUCTOR_SESSION_ARTIFACT
 
@@ -168,16 +168,19 @@ ACTOR_ATTESTATION_MISSING = (
 #: Kept for the one case that is still unprovable: an owner command presented with NO attestation.
 #: The three changes it used to list are done — `control-room-command` is registered in
 #: `bro_signature.ARTIFACT_AUTHORITY`, this module consumes it, and the schema carries the
-#: signature fields. What remains is not a code gap: the Owner must mint the artifact offline and
-#: pin its key. Saying so precisely is the difference between "we have not built it" and "you have
-#: not signed it", and only one of those is actionable by whoever reads the refusal.
+#: signature fields. What remains is not an engine gap: provisioning retains the `control-room`
+#: key and `provision::mint_control_room_command` can sign one, but nothing in the shipped product
+#: calls it (PR #78: no person holds or mints the key). Saying so precisely is the difference
+#: between "we have not built it" and "nothing has signed it", and only one of those is actionable
+#: by whoever reads the refusal.
 OWNER_ACTOR_UNPROVABLE = (
     "an owner-issued control-room command must present a `control-room-command` artifact signed "
     "under the `control-room` authority and bound to this exact command (command_id, task_id, "
     "command). The engine can verify one: the artifact type is registered, this module consumes "
     "it, and the schema carries `artifact_type`/`key_id`/`signature`. What is missing is the "
-    "artifact itself — mint it with `broctl sign --artifact control-room-command` using a "
-    "`control-room` key and list that key `active` in config/trusted-keys.json. Until then the "
+    "artifact itself — signed with the `control-room` key the install provisions (no person "
+    "holds or mints one; `provision::mint_control_room_command` signs it, and nothing in the "
+    "shipped product calls that yet), with that key `active` in config/trusted-keys.json. Until then the "
     "owner's identity is a claim, and a claim is refused")
 
 
