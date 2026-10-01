@@ -307,7 +307,11 @@ class GateTests(unittest.TestCase):
 
     def test_every_phrase_has_the_sentence_it_was_written_for(self):
         # A phrase added to the gate with no sentence here is a phrase nothing proves can fire.
-        self.assertEqual(sorted(gate.FORBIDDEN_PHRASES), sorted({**ORIGINAL, **SURVIVORS}))
+        # Three tables hold the sentences: the six original phrases, wave 1's, and the custody
+        # wording wave 2 removed from the trust self-test (`CUSTODY_SURVIVORS`, proved by its own
+        # test above). A phrase in none of them fails here.
+        self.assertEqual(sorted(gate.FORBIDDEN_PHRASES),
+                         sorted({**ORIGINAL, **SURVIVORS, **self.CUSTODY_SURVIVORS}))
 
     def test_every_phrase_is_already_prose(self):
         # Phrases are matched against `prose(text)`. One written with a backtick, a `*`, a capital
