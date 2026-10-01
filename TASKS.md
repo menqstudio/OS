@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-145** | **The whole repository, read file by file** — 911 findings a second agent confirmed, in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md); the 2 highs fixed, 909 open ◑ | Bro | In-Progress | — |
+| **T-145** | **The whole repository, read file by file** — 911 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md); 2 highs merged, 29 more struck (decision #78, the engine wall), the rest open ◑ | Bro | In-Progress | `#313` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |

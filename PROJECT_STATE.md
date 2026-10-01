@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-10-01 | typecheck clean, 801 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-10-01 | 2444 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-10-01 | 2487 OK, 14 skipped |
 | Rust, 10 crates · 2026-10-01 | 1288 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
