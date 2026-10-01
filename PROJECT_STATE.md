@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-01 — 92 pull requests merged (`#219`–`#311`), `main` at
-`58b19bb`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-02 — 95 pull requests merged (`#219`–`#314`), `main` at
+`712163a`; six workflows green there and `ci` red on this file's own date line (a squash after midnight). Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
+> **⏭️ CURRENT ACTIVE: PR #315 · branch `t147/state-date`** (base `main`, tip `712163a`, task T-145).
 >
-> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
+> PROJECT_STATE's date line follows the squash that landed after midnight; main's ci is red on that line alone
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
