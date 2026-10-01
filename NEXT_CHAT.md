@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t147/state-date` — `main` @ `712163a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `c6bdb77`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #315 · branch `t147/state-date`** (base `main`, tip `712163a`, task T-145).
+> **✅ SETTLED — `main` is at `c6bdb77`.** The only thing open is PR #316 on `t148/settled-at-c6bdb77`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> PROJECT_STATE's date line follows the squash that landed after midnight; main's ci is red on that line alone
+> **Next:** T-145 wave 2 (Rust, frontend), then the documents second pass.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
