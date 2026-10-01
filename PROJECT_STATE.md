@@ -10,9 +10,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `20b9e63`.** The only thing open is PR #304 on `t134/settled-at-20b9e63`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #305 · branch `t135/deb-postinst`** (base `main`, tip `a705778`, task T-135).
 >
-> **Next:** Owner: approve or reject docs/design/DEBIAN_INSTALL_PROVISIONING.md (approval only, no key). Builder then slices A-D in parallel.
+> T-135: slice A of the approved install design; the .deb runs the installer
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -46,7 +46,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-09-20 | typecheck clean, 794 / 84 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2305 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2318 OK, 14 skipped |
 | Rust, 10 crates · 2026-09-30 | 1222 passed |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

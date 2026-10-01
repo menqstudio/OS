@@ -1,0 +1,56 @@
+#!/bin/sh
+# BroPS .deb post-install hook (docs/design/DEBIAN_INSTALL_PROVISIONING.md, slice A).
+#
+# This script provisions nothing itself: no account, no key, no file. It hands
+# the whole job to the one privileged installer and gives dpkg that installer's
+# verdict unchanged.
+#
+#   installer absent              -> say trust is NOT provisioned, exit 0
+#   installer present, succeeds   -> exit 0
+#   installer present, fails      -> exit with ITS status, so dpkg reports the
+#                                    install failed (design 4.5: never a
+#                                    half-provisioned box that looks provisioned)
+#   present but not a runnable file
+#                                 -> exit 1: the package shipped an installer it
+#                                    cannot run, which is a failed provision
+#
+# BROPS_INSTALL_BIN exists so the tests can name a fake installer without root.
+# dpkg runs this as root; whoever can set a variable in that environment can
+# already run anything as root.
+set -eu
+
+BROPS_INSTALL_BIN="${BROPS_INSTALL_BIN:-/usr/lib/brops/brops-install}"
+
+action="${1:-}"
+
+case "$action" in
+    configure)
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure|triggered)
+        # dpkg is unwinding, or running a trigger: this call provisions nothing.
+        exit 0
+        ;;
+    *)
+        echo "brops postinst: called with unknown argument '$action'" >&2
+        exit 1
+        ;;
+esac
+
+if [ ! -e "$BROPS_INSTALL_BIN" ]; then
+    echo "brops postinst: $BROPS_INSTALL_BIN is not in this package: trust is NOT provisioned, and the governed path stays refused." >&2
+    exit 0
+fi
+
+if [ ! -f "$BROPS_INSTALL_BIN" ] || [ ! -x "$BROPS_INSTALL_BIN" ]; then
+    echo "brops postinst: $BROPS_INSTALL_BIN exists but is not an executable file: trust is NOT provisioned; failing the install." >&2
+    exit 1
+fi
+
+status=0
+"$BROPS_INSTALL_BIN" --user "${SUDO_USER:-}" || status=$?
+
+if [ "$status" -ne 0 ]; then
+    echo "brops postinst: $BROPS_INSTALL_BIN exited $status: trust is NOT provisioned; failing the install." >&2
+fi
+
+exit "$status"
