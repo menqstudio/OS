@@ -1,4 +1,4 @@
-"""`engine/install/brops_install.sh accounts` — the installer's ACCOUNTS step, held to its sources.
+"""`engine/install/brops_install.sh` — the installer's ACCOUNTS and ANCHOR steps, held to their sources.
 
 The installer's account table is a third copy of two things that already exist: the names in the
 `*_USER=` block of `engine/ci/live/run_ladder_turn.sh`, and the uids in `DEFAULT_UIDS` in
@@ -14,11 +14,24 @@ No test needs root and none creates anything. The refusal and idempotence paths 
 `--dry-run` against a passwd/group FILE, and one test reads the real databases through `getent`.
 Nothing here runs `groupadd`/`useradd` or the read-back after them: that is CI's ladder job, as
 root, and it is the only place those lines have ever executed.
+
+THE ANCHOR STEP (T-138). Who the desktop account is, and where its application data directory is,
+are decided under `--dry-run` against a passwd FILE, one test per rule and per refusal. The step's
+REAL run — it executes a tool and passes on its status — is exercised without root too, because
+the step creates nothing itself: `BROPS_INSTALL_ANCHOR_BIN` names a fake tool that records its
+argv and exits as told. Those runs resolve the account through the machine's own database, so
+they name the account running the tests. The REAL `brops_install_anchor` is never run here, and
+neither is `all` as root: the one real `all` run below is a non-root one, which the accounts step
+refuses, and what it proves is that the tool did not run first.
+
+The bundle identifier is the third thing this file refuses to restate: it is read from
+`apps/desktop/src-tauri/tauri.conf.json` and the script's literal is held to it.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import os
 import pathlib
 import re
@@ -32,6 +45,13 @@ SCRIPT = ENGINE / "install" / "brops_install.sh"
 KIT = ENGINE / "ci" / "live" / "run_ladder_turn.sh"
 PROVISION_KEYS = ENGINE / "ci" / "live" / "provision_keys.py"
 CI_YML = REPO / ".github" / "workflows" / "ci.yml"
+TAURI_CONF = REPO / "apps" / "desktop" / "src-tauri" / "tauri.conf.json"
+POSTINST = REPO / "apps" / "desktop" / "src-tauri" / "deb" / "postinst"
+#: The variable the script reads the anchor tool's path from.
+ANCHOR_ENV = "BROPS_INSTALL_ANCHOR_BIN"
+#: Variables the script reads. Scrubbed from every run, so a suite started under `sudo` or with
+#: a real tool installed decides nothing here.
+_READ_BY_THE_SCRIPT = ("SUDO_USER", "PKEXEC_UID", ANCHOR_ENV)
 
 SHELL = "/usr/sbin/nologin"
 #: The one uid no source file states. See the module docstring.
@@ -93,9 +113,11 @@ class InstallerCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = pathlib.Path(self._tmp.name)
 
-    def run_script(self, *args: str) -> subprocess.CompletedProcess:
+    def run_script(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        full = {k: v for k, v in os.environ.items() if k not in _READ_BY_THE_SCRIPT}
+        full.update(env or {})
         return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True,
-                              timeout=60, check=False)
+                              timeout=60, check=False, env=full)
 
     def dry_run(self, passwd: list[str] | None = None,
                 group: list[str] | None = None) -> subprocess.CompletedProcess:
@@ -333,6 +355,449 @@ class TestTheSystemDatabase(InstallerCase):
             self.assertEqual(len(done.stdout.splitlines()), len(script_table()))
             self.assertIn("%d group(s) and %d account(s) would be created" % (need_groups, need_users),
                           done.stderr)
+
+
+def human(name: str, uid: int, shell: str = "/bin/bash", home: str | None = None) -> str:
+    return "%s:x:%d:%d:,,,:%s:%s" % (name, uid, uid, "/home/" + name if home is None else home, shell)
+
+
+def identifier() -> str:
+    return json.loads(TAURI_CONF.read_text(encoding="utf-8"))["identifier"]
+
+
+class AnchorCase(InstallerCase):
+    """The anchor step against a box described by a passwd FILE, under `--dry-run`."""
+
+    def anchor(self, passwd: list[str], *args: str, env: dict[str, str] | None = None,
+               group: list[str] | None = None, step: str | None = "anchor") -> subprocess.CompletedProcess:
+        pfile, gfile = self.tmp / "passwd", self.tmp / "group"
+        pfile.write_text("".join(l + "\n" for l in ["root:x:0:0:root:/root:/bin/bash"] + passwd))
+        gfile.write_text("".join(l + "\n" for l in ["root:x:0:"] + (group or [])))
+        tail = [step] if step else []
+        return self.run_script("--dry-run", "--passwd-file", str(pfile), "--group-file", str(gfile),
+                               *args, *tail, env=env)
+
+    def plan(self, done: subprocess.CompletedProcess) -> dict[str, str]:
+        self.assertEqual(done.returncode, 0, done.stderr)
+        found = {}
+        for line in done.stdout.splitlines():
+            if line.startswith("anchor "):
+                _, key, rest = line.split(" ", 2)
+                self.assertNotIn(key, found)
+                found[key] = rest
+        self.assertEqual(sorted(found), ["app-data", "command", "user"], done.stdout)
+        return found
+
+    def resolved(self, done: subprocess.CompletedProcess) -> str:
+        return self.plan(done)["user"].split(" ")[0]
+
+    def refused(self, done: subprocess.CompletedProcess, *needles: str) -> None:
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("REFUSED", done.stderr)
+        for needle in needles:
+            self.assertIn(needle, done.stderr)
+        self.assertEqual(done.stdout, "", "a refusal prints no plan")
+
+    def fake_tool(self, status: int = 0, name: str = "fake_anchor") -> tuple[pathlib.Path, pathlib.Path]:
+        """A tool that writes its argv, one per line, to a marker file and exits `status`."""
+        tool, mark = self.tmp / name, self.tmp / (name + ".argv")
+        tool.write_text("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s'\necho tool-stdout\nexit %d\n" % (mark, status))
+        tool.chmod(0o755)
+        return tool, mark
+
+
+class TestWhoTheDesktopAccountIs(AnchorCase):
+    BOX = [human("alice", 1000), human("bob", 1001), human("carol", 1002)]
+
+    def test_an_explicit_user_wins_over_everything(self) -> None:
+        done = self.anchor(self.BOX, "--user", "carol", env={"SUDO_USER": "alice", "PKEXEC_UID": "1001"})
+        self.assertEqual(self.plan(done)["user"], "carol (uid 1002; from --user)")
+
+    def test_an_empty_user_falls_to_sudo_user(self) -> None:
+        # Exactly what `postinst` passes: `--user "${SUDO_USER:-}"` may be the empty string.
+        done = self.anchor(self.BOX, "--user", "", env={"SUDO_USER": "alice", "PKEXEC_UID": "1001"})
+        self.assertEqual(self.plan(done)["user"], "alice (uid 1000; from SUDO_USER)")
+
+    def test_no_user_flag_at_all_falls_to_sudo_user(self) -> None:
+        done = self.anchor(self.BOX, env={"SUDO_USER": "bob"})
+        self.assertEqual(self.plan(done)["user"], "bob (uid 1001; from SUDO_USER)")
+
+    def test_pkexec_uid_is_resolved_to_a_name_when_sudo_user_is_empty(self) -> None:
+        done = self.anchor(self.BOX, "--user", "", env={"SUDO_USER": "", "PKEXEC_UID": "1002"})
+        self.assertEqual(self.plan(done)["user"], "carol (uid 1002; from PKEXEC_UID)")
+
+    def test_the_only_human_account_is_used_when_nothing_names_one(self) -> None:
+        done = self.anchor([human("alice", 1000)], "--user", "")
+        self.assertEqual(self.plan(done)["user"],
+                         "alice (uid 1000; from the only human account in the passwd database)")
+
+    def test_one_account_listed_twice_is_still_one_account(self) -> None:
+        # Two sources answering for the same account (files and a directory) enumerate it twice.
+        done = self.anchor([human("alice", 1000), human("alice", 1000)], "--user", "")
+        self.assertEqual(self.resolved(done), "alice")
+
+    def test_several_human_accounts_are_refused_and_named_never_guessed(self) -> None:
+        done = self.anchor(self.BOX, "--user", "")
+        self.refused(done, "3 human accounts", "alice (uid 1000), bob (uid 1001), carol (uid 1002)",
+                     "would be a guess")
+
+    def test_no_human_account_is_refused(self) -> None:
+        self.refused(self.anchor([], "--user", ""), "holds no human account")
+
+    def test_both_ends_of_the_human_range_are_inside_it(self) -> None:
+        self.assertEqual(self.resolved(self.anchor([human("first", 1000)])), "first")
+        self.assertEqual(self.resolved(self.anchor([human("last", 59999)])), "last")
+
+    def test_an_account_below_the_range_is_not_a_human(self) -> None:
+        self.refused(self.anchor([human("daemonish", 999)]), "holds no human account")
+
+    def test_an_account_above_the_range_is_not_a_human(self) -> None:
+        self.refused(self.anchor([human("nobodyish", 60000)]), "holds no human account")
+
+    def test_a_nologin_shell_is_not_a_human(self) -> None:
+        for shell in ("/usr/sbin/nologin", "/sbin/nologin", "nologin"):
+            with self.subTest(shell=shell):
+                self.refused(self.anchor([human("svc", 1001, shell=shell)]), "holds no human account")
+
+    def test_a_false_shell_is_not_a_human(self) -> None:
+        for shell in ("/bin/false", "/usr/bin/false"):
+            with self.subTest(shell=shell):
+                self.refused(self.anchor([human("svc", 1001, shell=shell)]), "holds no human account")
+
+    def test_non_humans_do_not_stop_the_one_human_being_the_only_one(self) -> None:
+        box = [human("alice", 1000), human("svc1", 1001, shell="/usr/sbin/nologin"),
+               human("svc2", 1002, shell="/bin/false"), human("low", 999), human("high", 60000)]
+        self.assertEqual(self.resolved(self.anchor(box)), "alice")
+
+    def test_the_installers_own_accounts_are_never_the_only_human(self) -> None:
+        # Given a login shell on purpose: the shell rule must not be what excludes them.
+        name, uid = script_table()[0]
+        self.assertTrue(1000 <= uid <= 59999, "the table left the human uid range; rewrite this test")
+        self.refused(self.anchor([human(name, uid)]), "holds no human account")
+        self.assertEqual(self.resolved(self.anchor([human(name, uid), human("alice", 1000)])), "alice")
+
+    def test_a_name_on_a_service_uid_is_never_the_only_human(self) -> None:
+        _, uid = script_table()[0]
+        self.refused(self.anchor([human("alias", uid)]), "holds no human account")
+
+
+class TestWhoIsRefused(AnchorCase):
+    BOX = [human("alice", 1000)]
+
+    def test_root_is_refused_from_every_source(self) -> None:
+        for args, env in ((("--user", "root"), {}), (("--user", ""), {"SUDO_USER": "root"}),
+                          (("--user", ""), {"PKEXEC_UID": "0"})):
+            with self.subTest(args=args, env=env):
+                self.refused(self.anchor(self.BOX, *args, env=env), "is root")
+
+    def test_a_refused_name_does_not_fall_through_to_a_later_rule(self) -> None:
+        # SUDO_USER=root with exactly one human on the box: still a refusal, not alice.
+        self.refused(self.anchor(self.BOX, "--user", "", env={"SUDO_USER": "root"}), "from SUDO_USER", "is root")
+
+    def test_uid_zero_under_another_name_is_refused(self) -> None:
+        self.refused(self.anchor(self.BOX + ["toor:x:0:0::/root:/bin/bash"], "--user", "toor"),
+                     "toor (uid 0)", "is root")
+        self.refused(self.anchor(self.BOX + ["toor2:x:00:0::/root:/bin/bash"], "--user", "toor2"), "is root")
+
+    def test_the_name_root_is_refused_whatever_uid_it_holds(self) -> None:
+        pfile, gfile = self.tmp / "passwd", self.tmp / "group"
+        pfile.write_text("root:x:1234:1234::/root:/bin/bash\n")
+        gfile.write_text("")
+        done = self.run_script("--dry-run", "--passwd-file", str(pfile), "--group-file", str(gfile),
+                               "--user", "root", "anchor")
+        self.refused(done, "root (uid 1234)", "is root")
+
+    def test_an_unknown_name_is_refused(self) -> None:
+        self.refused(self.anchor(self.BOX, "--user", "mallory"), "mallory, is not in the passwd database")
+        self.refused(self.anchor(self.BOX, "--user", "", env={"SUDO_USER": "ghost"}),
+                     "from SUDO_USER, ghost, is not in the passwd database")
+
+    def test_a_uid_is_not_accepted_where_a_name_is_asked_for(self) -> None:
+        self.refused(self.anchor(self.BOX, "--user", "1000"), "1000, is not in the passwd database")
+
+    def test_a_pkexec_uid_nobody_holds_is_refused(self) -> None:
+        self.refused(self.anchor(self.BOX, env={"PKEXEC_UID": "4242"}),
+                     "PKEXEC_UID names uid 4242", "no account")
+
+    def test_a_pkexec_uid_that_is_not_a_number_is_refused(self) -> None:
+        self.refused(self.anchor(self.BOX, env={"PKEXEC_UID": "alice"}), "which is not a uid")
+
+    def test_a_service_account_is_refused_by_name(self) -> None:
+        name, uid = script_table()[3]
+        self.refused(self.anchor(self.BOX + [passwd_line(name, uid)], "--user", name),
+                     "%s is one of this installer's own service accounts" % name)
+        # The table decides, not the box: refused whatever uid the box gave that name.
+        self.refused(self.anchor(self.BOX + [human(name, 1500)], "--user", name),
+                     "one of this installer's own service accounts")
+
+    def test_an_account_on_a_service_uid_is_refused(self) -> None:
+        name, uid = script_table()[3]
+        self.refused(self.anchor(self.BOX + [human("alias", uid)], "--user", "alias"),
+                     "alias holds uid %d, which is the service account %s's" % (uid, name))
+
+    def test_a_string_that_is_not_an_account_name_is_refused(self) -> None:
+        for bad in ("-x", "--dry-run", "a b", "a:b", "a/b", "a\\b", "al*"):
+            with self.subTest(name=bad):
+                self.refused(self.anchor(self.BOX, "--user", bad), "is not an account name")
+
+    def test_a_passwd_entry_with_a_uid_that_is_not_a_number_is_refused(self) -> None:
+        self.refused(self.anchor(["odd:x:abc:1000::/home/odd:/bin/bash"], "--user", "odd"),
+                     "a uid that is not a number")
+
+
+class TestWhereTheApplicationDataIs(AnchorCase):
+    def test_the_default_is_the_passwd_home_then_local_share_then_the_bundle_identifier(self) -> None:
+        done = self.anchor([human("alice", 1000, home="/srv/people/alice")], "--user", "alice")
+        plan = self.plan(done)
+        expected = "/srv/people/alice/.local/share/" + identifier()
+        self.assertEqual(plan["app-data"].split(" ")[0], expected)
+        self.assertIn("XDG_DATA_HOME", plan["app-data"], "the limitation is said where the path is printed")
+        self.assertTrue(plan["command"].endswith(" --user alice --app-data " + expected), plan["command"])
+
+    def test_the_session_environment_of_the_caller_decides_nothing(self) -> None:
+        # Root's own XDG_DATA_HOME / HOME are not the desktop account's.
+        done = self.anchor([human("alice", 1000)], "--user", "alice",
+                           env={"XDG_DATA_HOME": "/root/xdg", "HOME": "/root"})
+        self.assertEqual(self.plan(done)["app-data"].split(" ")[0],
+                         "/home/alice/.local/share/" + identifier())
+
+    def test_an_explicit_app_data_overrides_the_default(self) -> None:
+        plan = self.plan(self.anchor([human("alice", 1000)], "--user", "alice", "--app-data", "/xdg/alice/brops"))
+        self.assertEqual(plan["app-data"], "/xdg/alice/brops (from --app-data)")
+        self.assertTrue(plan["command"].endswith(" --user alice --app-data /xdg/alice/brops"))
+
+    def test_an_explicit_app_data_does_not_need_a_usable_home(self) -> None:
+        plan = self.plan(self.anchor([human("alice", 1000, home="")], "--user", "alice", "--app-data", "/xdg/a"))
+        self.assertEqual(plan["app-data"], "/xdg/a (from --app-data)")
+
+    def test_an_app_data_with_more_than_one_spelling_is_refused(self) -> None:
+        for bad in ("relative/dir", "/", "/a/", "/a//b", "/a/./b", "/a/../b", "/a/.."):
+            with self.subTest(path=bad):
+                self.refused(self.anchor([human("alice", 1000)], "--user", "alice", "--app-data", bad),
+                             "--app-data", "binds it as a string")
+
+    def test_a_home_that_cannot_be_built_on_is_refused_and_names_the_override(self) -> None:
+        for bad in ("", "home/alice", "/", "/home/alice/", "/home//alice", "/home/./alice", "/home/../alice"):
+            with self.subTest(home=bad):
+                self.refused(self.anchor([human("alice", 1000, home=bad)], "--user", "alice"),
+                             "the passwd home of alice", "--app-data <dir>")
+
+
+class TestTheIdentifierIsTaurisNotOurs(unittest.TestCase):
+    """Text only, so it runs on every platform."""
+
+    def test_the_scripts_identifier_is_tauri_conf_jsons(self) -> None:
+        text = SCRIPT.read_text(encoding="utf-8")
+        literals = re.findall(r'(?m)^APP_IDENTIFIER="([^"]+)"$', text)
+        self.assertEqual(literals, [identifier()])
+        # The usage text states the default too, and must state the same one.
+        self.assertIn("/.local/share/%s " % identifier(), text)
+
+    def test_postinst_calls_the_stepless_form(self) -> None:
+        # The form `all` was defined to serve. If postinst changes how it calls the installer,
+        # this is where that is noticed.
+        self.assertIn('"$BROPS_INSTALL_BIN" --user "${SUDO_USER:-}"', POSTINST.read_text(encoding="utf-8"))
+
+
+class TestTheDryRun(AnchorCase):
+    def test_it_prints_the_exact_command_and_runs_nothing(self) -> None:
+        tool, mark = self.fake_tool()
+        done = self.anchor([human("alice", 1000)], "--user", "alice", env={ANCHOR_ENV: str(tool)})
+        plan = self.plan(done)
+        self.assertEqual(plan["command"], "%s --user alice --app-data /home/alice/.local/share/%s"
+                         % (tool, identifier()))
+        self.assertFalse(mark.exists(), "a dry run ran the anchor tool")
+        self.assertNotIn("tool-stdout", done.stdout)
+        self.assertIn("the anchor tool was not run", done.stderr)
+
+    def test_the_command_is_quoted_so_it_is_the_command(self) -> None:
+        plan = self.plan(self.anchor([human("alice", 1000)], "--user", "alice", "--app-data", "/x/my data"))
+        self.assertTrue(plan["command"].endswith(" --app-data /x/my\\ data"), plan["command"])
+
+    def test_the_default_tool_is_the_packaged_one(self) -> None:
+        plan = self.plan(self.anchor([human("alice", 1000)], "--user", "alice"))
+        self.assertTrue(plan["command"].startswith("/usr/lib/brops/brops_install_anchor --user "), plan["command"])
+
+    def test_an_absent_tool_is_said_but_does_not_fail_a_dry_run(self) -> None:
+        done = self.anchor([human("alice", 1000)], "--user", "alice", env={ANCHOR_ENV: str(self.tmp / "no-such")})
+        self.plan(done)
+        self.assertIn("is not installed; a real run would REFUSE", done.stderr)
+
+
+class TestAll(AnchorCase):
+    def test_the_stepless_form_is_accounts_then_anchor(self) -> None:
+        table = script_table()
+        done = self.anchor([human("alice", 1000)], "--user", "alice", step=None)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        lines = done.stdout.splitlines()
+        self.assertEqual([l.split(" ")[0] for l in lines[:len(table)]], [name for name, _ in table])
+        self.assertEqual([" ".join(l.split(" ")[:2]) for l in lines[len(table):]],
+                         ["anchor user", "anchor app-data", "anchor command"])
+        self.assertEqual(self.plan(done)["user"], "alice (uid 1000; from --user)")
+
+    def test_the_stepless_form_with_an_empty_user_is_what_postinst_sends(self) -> None:
+        done = self.anchor([human("alice", 1000)], "--user", "", step=None, env={"SUDO_USER": "alice"})
+        self.assertEqual(self.plan(done)["user"], "alice (uid 1000; from SUDO_USER)")
+        self.assertEqual(len(done.stdout.splitlines()), len(script_table()) + 3)
+
+    def test_naming_all_is_the_stepless_form(self) -> None:
+        box = [human("alice", 1000)]
+        stepless = self.anchor(box, "--user", "alice", step=None)
+        named = self.anchor(box, "--user", "alice", step="all")
+        self.assertEqual(named.returncode, 0, named.stderr)
+        self.assertEqual(named.stdout, stepless.stdout)
+
+    def test_no_step_and_no_user_is_a_usage_error_not_all(self) -> None:
+        done = self.anchor([human("alice", 1000)], step=None)
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stdout, "")
+
+    def test_when_accounts_refuses_the_anchor_step_plans_nothing(self) -> None:
+        name, uid = script_table()[0]
+        done = self.anchor([human("alice", 1000), passwd_line(name, 998, gid=uid)], "--user", "alice",
+                           step=None, group=[group_line(name, uid)])
+        self.refused(done, "account %s exists with uid 998" % name)
+
+    def test_an_unresolvable_user_is_refused_before_any_account_is_planned(self) -> None:
+        self.refused(self.anchor([human("alice", 1000)], "--user", "root", step=None), "is root")
+
+    def test_the_accounts_step_alone_takes_no_user_and_no_app_data(self) -> None:
+        for extra in (("--user", "alice"), ("--app-data", "/x")):
+            with self.subTest(extra=extra):
+                done = self.anchor([human("alice", 1000)], *extra, step="accounts")
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn("takes neither", done.stderr)
+                self.assertEqual(done.stdout, "")
+
+    def test_flag_shapes_that_are_usage_errors(self) -> None:
+        box = [human("alice", 1000)]
+        for args, needle in ((("--user", "alice", "--user", "bob"), "--user was given more than once"),
+                             (("--app-data", "/a", "--app-data", "/b"), "--app-data was given more than once"),
+                             (("--app-data", ""), "--app-data needs a directory")):
+            with self.subTest(args=args):
+                done = self.anchor(box, *args)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn(needle, done.stderr)
+                self.assertEqual(done.stdout, "")
+        done = self.anchor(box, "--user", "alice", "anchor", step="all")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("more than one step named", done.stderr)
+        # `--user` as the last word has no value at all — which is not the same as an empty one.
+        done = self.run_script("--dry-run", "anchor", "--user")
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn("--user needs a value", done.stderr)
+
+
+@unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0,
+                 "these run the installer for real and must never do so as root")
+class TestTheRealRun(AnchorCase):
+    """No `--dry-run`, no file seam: the machine's own database, and a FAKE anchor tool."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import pwd
+        try:
+            me = pwd.getpwuid(os.getuid())
+        except KeyError:
+            self.skipTest("the account running the tests is not in the passwd database")
+        table = dict(script_table())
+        if (not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.@-]*", me.pw_name) or me.pw_name in table
+                or me.pw_uid in table.values()):
+            self.skipTest("the account running the tests is not one the installer would accept")
+        self.me = me
+        self.app_data = str(self.tmp / "app-data")
+
+    def real(self, tool: pathlib.Path | str, *args: str) -> subprocess.CompletedProcess:
+        return self.run_script(*args, env={ANCHOR_ENV: str(tool)})
+
+    def test_it_runs_the_tool_with_exactly_user_and_app_data(self) -> None:
+        tool, mark = self.fake_tool(0)
+        done = self.real(tool, "--user", self.me.pw_name, "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(mark.read_text().splitlines(),
+                         ["--user", self.me.pw_name, "--app-data", self.app_data])
+        self.assertIn("tool-stdout", done.stdout, "the tool's own report is passed through")
+        self.assertIn("succeeded for %s" % self.me.pw_name, done.stderr)
+        self.assertFalse(pathlib.Path(self.app_data).exists(), "the script itself created something")
+
+    def test_a_failing_tool_is_the_installers_exit_status(self) -> None:
+        tool, mark = self.fake_tool(7)
+        done = self.real(tool, "--user", self.me.pw_name, "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 7, done.stderr)
+        self.assertTrue(mark.exists())
+        self.assertIn("exited 7: trust is NOT provisioned", done.stderr)
+        self.assertNotIn("succeeded", done.stderr)
+
+    def test_an_absent_tool_is_a_refusal_never_a_success(self) -> None:
+        done = self.real(self.tmp / "no-such-tool", "--user", self.me.pw_name, "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("REFUSED", done.stderr)
+        self.assertIn("is not installed", done.stderr)
+        self.assertEqual(done.stdout, "")
+
+    def test_a_tool_that_is_not_runnable_is_a_refusal(self) -> None:
+        plain = self.tmp / "plain"
+        plain.write_text("#!/bin/sh\nexit 0\n")
+        plain.chmod(0o644)
+        done = self.real(plain, "--user", self.me.pw_name, "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("REFUSED", done.stderr)
+        self.assertIn("not an executable file", done.stderr)
+
+    def test_a_tool_that_is_a_directory_is_a_refusal(self) -> None:
+        folder = self.tmp / "folder"
+        folder.mkdir()
+        done = self.real(folder, "--user", self.me.pw_name, "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("REFUSED", done.stderr)
+        self.assertIn("not an executable file", done.stderr)
+
+    def test_a_refused_user_never_reaches_the_tool(self) -> None:
+        tool, mark = self.fake_tool(0)
+        done = self.real(tool, "--user", "root", "--app-data", self.app_data, "anchor")
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("is root", done.stderr)
+        self.assertFalse(mark.exists(), "the tool ran for a refused account")
+
+    def test_all_runs_accounts_first_and_a_refusal_there_stops_before_the_tool(self) -> None:
+        # Not root, so the accounts step refuses. The stepless form, as postinst calls it.
+        tool, mark = self.fake_tool(0)
+        done = self.real(tool, "--user", self.me.pw_name, "--app-data", self.app_data)
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertIn("must run as root", done.stderr)
+        self.assertFalse(mark.exists(), "the anchor tool ran although the accounts step refused")
+        self.assertEqual(done.stdout, "")
+
+    def test_the_real_database_resolves_this_account_as_python_does(self) -> None:
+        tool, _ = self.fake_tool(0)
+        done = self.real(tool, "--dry-run", "--user", self.me.pw_name, "anchor")
+        home = self.me.pw_dir
+        if not home.startswith("/") or home == "/" or re.search(r"/(\.{0,2})(/|$)", home):
+            self.assertEqual(done.returncode, 1, done.stderr)
+            return
+        plan = self.plan(done)
+        self.assertEqual(plan["user"], "%s (uid %d; from --user)" % (self.me.pw_name, self.me.pw_uid))
+        self.assertEqual(plan["app-data"].split(" ")[0], "%s/.local/share/%s" % (home, identifier()))
+
+    def test_the_only_human_rule_enumerates_the_real_database_as_python_does(self) -> None:
+        import pwd
+        table = dict(script_table())
+        humans = sorted({p.pw_name for p in pwd.getpwall()
+                         if 1000 <= p.pw_uid <= 59999 and p.pw_name not in table
+                         and p.pw_uid not in table.values()
+                         and not re.search(r"(^|/)(nologin|false)$", p.pw_shell)})
+        tool, _ = self.fake_tool(0)
+        done = self.real(tool, "--dry-run", "--app-data", self.app_data, "anchor")
+        self.assertNotIn("unreadable", done.stderr)
+        if len(humans) == 1:
+            self.assertEqual(self.plan(done)["user"],
+                             "%s (uid %d; from the only human account in the passwd database)"
+                             % (humans[0], pwd.getpwnam(humans[0]).pw_uid))
+        else:
+            self.assertEqual(done.returncode, 1, done.stderr)
+            self.assertIn("no human account" if not humans else "%d human accounts" % len(humans), done.stderr)
+            for name in humans:
+                self.assertIn(name, done.stderr)
 
 
 class TestCiRunsTheInstaller(unittest.TestCase):

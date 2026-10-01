@@ -88,7 +88,7 @@
       ]
     },
     "frontend_test_files": {
-      "value": 84,
+      "value": 85,
       "command": "cd apps/desktop && npm test   (the 'Test Files' line)",
       "derive": {
         "glob": "apps/desktop/src/**/*.test.ts|apps/desktop/src/**/*.test.tsx"
@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2340,
+      "value": 2397,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
         "date": "2026-09-30",
-        "head": "377537b",
+        "head": "81736b4",
         "environments": {
+          "Debian 13 (trixie) native, non-root account @ 81736b4 + T-138": {
+            "ran": 2397,
+            "skipped": 14
+          },
           "Debian 13 (trixie) native, non-root account @ 377537b + T-136": {
             "ran": 2340,
             "skipped": 14
@@ -212,13 +216,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 794,
+      "value": 801,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
-        "date": "2026-09-20",
-        "head": "9cc4d2c",
+        "date": "2026-10-01",
+        "head": "81736b4",
         "environments": {
+          "Debian 13 (trixie) native, node 20 (jsdom) @ 81736b4 + T-138": {
+            "ran": 801,
+            "skipped": 0
+          },
           "builder's Windows box (jsdom)": {
             "ran": 794,
             "skipped": 0
@@ -275,7 +283,7 @@
       ]
     },
     "tasks_archive_2026_09_rows": {
-      "value": 64,
+      "value": 65,
       "command": "grep -cE '^\\| \\*\\*T-[0-9]+\\*\\*' docs/archive/TASKS_ARCHIVE_2026-09.md",
       "derive": {
         "line_regex": "docs/archive/TASKS_ARCHIVE_2026-09.md::^\\| \\*\\*T-\\d+\\*\\*"
