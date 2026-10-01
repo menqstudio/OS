@@ -213,12 +213,20 @@ export function RouteView({ route }: { route: RouteId }) {
     seen.current = route;
     navigations.current += 1;
   }
+  // The route key is HERE, below this component, and not on a wrapper above it. The Shell used to
+  // render `<div key={route} className="stage-enter">{children}</div>` around this view, which
+  // remounted RouteView on every navigation: both refs above were re-created, `navigations` was 0
+  // on every route, and `RouteFocus` was never enabled — in the real app focus stayed on the
+  // sidebar link, while this file's own tests (which render RouteView with no Shell) passed.
+  // Keying the element instead still replays the page-enter animation once per navigation.
   return (
-    <RouteErrorBoundary route={route}>
-      <React.Suspense fallback={<div className="screen-loading" aria-busy="true" />}>
-        {Page ? <Page /> : <Generic route={route} />}
-        <RouteFocus route={route} enabled={navigations.current > 0} />
-      </React.Suspense>
-    </RouteErrorBoundary>
+    <div key={route} className="stage-enter">
+      <RouteErrorBoundary route={route}>
+        <React.Suspense fallback={<div className="screen-loading" aria-busy="true" />}>
+          {Page ? <Page /> : <Generic route={route} />}
+          <RouteFocus route={route} enabled={navigations.current > 0} />
+        </React.Suspense>
+      </RouteErrorBoundary>
+    </div>
   );
 }

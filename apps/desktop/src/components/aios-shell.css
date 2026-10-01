@@ -200,7 +200,7 @@
   transform: scale(0.96);
 }
 
-/* stage page-enter: keyed on route in Shell.tsx, so the routed view fades and
+/* stage page-enter: keyed on route in app/routes.tsx (RouteView), so the routed view fades and
    rises once per navigation. Per-view `.reveal` staggers run inside, untouched */
 .stage-enter {
   animation: stageEnter var(--slow) var(--spring) both;

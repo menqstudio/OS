@@ -27,7 +27,11 @@ a { color: var(--brops-accent); text-decoration: none; }
 .skeleton {
   background: linear-gradient(90deg, var(--brops-border) 25%, var(--brops-elevated) 50%, var(--brops-border) 75%);
   background-size: 200% 100%;
-  animation: shimmer 1.2s infinite;
+  animation: skeleton-shimmer 1.2s infinite;
   border-radius: var(--menq-radius-sm);
 }
-@keyframes shimmer { to { background-position: -200% 0; } }
+/* Named for what it drives. It was `shimmer`, and aios.css — imported after this file — defines a
+   `shimmer` of its own for the ambient layer (a translate + scale). A document has one keyframes
+   namespace and the later definition wins, so every loading bar drifted and grew instead of
+   shimmering. `test/debPackage.wiring.test.ts` refuses a second definition of any name. */
+@keyframes skeleton-shimmer { to { background-position: -200% 0; } }

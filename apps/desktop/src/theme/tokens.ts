@@ -2,12 +2,19 @@
  * BroPS semantic design tokens — the single typed source of truth.
  *
  * These values MIRROR apps/desktop/src/theme/tokens.css and
- * apps/desktop/src/theme/contrast-pairs.json exactly. tokens.css keeps the
- * stylesheet self-contained for first paint (no FOUC before React mounts);
- * this module lets TS code + <ThemeProvider> read/apply the same values and is
- * what tools/check_contrast.py validates for WCAG AA. If you edit a color here,
- * edit tokens.css and contrast-pairs.json in the same change — the contrast
- * gate is fail-closed on drift between them.
+ * apps/desktop/src/theme/contrast-pairs.json exactly. tokens.css is what the
+ * app actually paints from; NOTHING AT RUNTIME READS THIS MODULE. Its only
+ * importer is theme/ThemeProvider.tsx, which is a reference implementation and
+ * is intentionally not mounted (its own header says so). What this file is for
+ * is the gates: tools/check_token_parity.py holds it to tokens.css, and
+ * tools/check_contrast.py grades the manifest against it for WCAG AA. If you
+ * edit a color here, edit tokens.css and contrast-pairs.json in the same
+ * change — both gates are fail-closed on drift between them.
+ *
+ * This header used to say tokens.css gives "no FOUC before React mounts". It
+ * did not: with no `data-theme` on <html>, tokens.css resolved LIGHT and
+ * aios.css DARK until AppProvider's effect ran. index.html now carries the
+ * attribute, and test/debPackage.wiring.test.ts holds it to the store's default.
  *
  * Naming: every CSS custom property is `--menq-<group>-<name>`, matching the
  * existing convention in tokens.css / global.css / ui.css.
@@ -228,9 +235,10 @@ const COLOR_VAR: Record<keyof ColorTokens, string> = {
 
 /**
  * Flatten a theme (plus the resolved motion set) into the exact `--menq-*`
- * custom properties tokens.css declares. <ThemeProvider> writes these onto
- * :root so the TS token module is authoritative at runtime while remaining
- * byte-compatible with the stylesheet.
+ * custom properties tokens.css declares. This projection is what
+ * tools/check_token_parity.py reconstructs and compares with the stylesheet.
+ * <ThemeProvider> would write it onto :root, but that provider is not mounted,
+ * so at runtime the stylesheet is the authority and this is its typed mirror.
  */
 export function cssVariables(
   theme: Theme,

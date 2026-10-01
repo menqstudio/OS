@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The service imports `hasBackend` from desktop.ts, which imports the Tauri core module.
 // Mock that boundary so these stay pure unit tests — the dispatch transport is injected.
@@ -16,6 +19,9 @@ import {
   splitLines, validateAssignment,
   type Assignment, type AssignmentInput, type DispatchRequest, type ProbeRequest,
 } from './agentsDispatch';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, '../../../..');
 
 const UUID = '5b1f6a2e-9c3d-4a71-8e0f-2b7d4c9a1e36';
 const genId = () => UUID;
@@ -94,9 +100,21 @@ describe('path grammar — mirrors task-contract.schema.json $defs', () => {
   it('knows when a prohibited entry swallows a scope entry', () => {
     expect(pathCovers('apps', 'apps/desktop')).toBe(true);
     expect(pathCovers('apps', 'apps')).toBe(true);
-    expect(pathCovers('.', 'apps/desktop')).toBe(true);
     expect(pathCovers('apps', 'appsx/y')).toBe(false);
     expect(pathCovers('apps/desktop', 'apps')).toBe(false);
+  });
+
+  it("treats '.' as the root ENTRY, which is what the engine and the schema say it is", () => {
+    // This file used to pin `pathCovers('.', 'apps/desktop') === true`. The engine's
+    // `_pattern_match` returns `path == "."` for the pattern '.', and the schema's own words are
+    // quoted below, so that assertion held the mirror to the opposite of what it mirrors.
+    expect(pathCovers('.', 'apps/desktop')).toBe(false);
+    expect(pathCovers('.', 'engine')).toBe(false);
+    expect(pathCovers('.', '.')).toBe(true);
+    const schema = readFileSync(resolve(REPO_ROOT, 'contracts/task-contract.schema.json'), 'utf8');
+    expect(schema).toContain("'.' alone is the repository root entry itself and grants nothing beneath it");
+    const engine = readFileSync(resolve(REPO_ROOT, 'engine/runtime/bro_security.py'), 'utf8');
+    expect(engine).toMatch(/if not pattern or pattern == "\.":\s*\n\s*return path == "\."/);
   });
 });
 
@@ -119,6 +137,33 @@ describe('capability grant — names a real generated definition', () => {
     expect(a.grant.tier).toBe('reader');
     expect(a.grant.tools).toEqual(TIER_TOOLS.reader);
     expect(a.grant.tierDefinitionPath).toBe('.claude/agents/reader.md');
+  });
+
+  // The assertions above compare the table with literals typed into this file. THIS table is the
+  // one Tasks.tsx and Agents.tsx render, and the only test that reads the generated definitions
+  // (`features/Chat.delegationTiers.guard.test.ts`) checks a second, identical-today copy in
+  // `features/delegation.ts`. Until the two are one export, each is held to the files directly.
+  const AGENTS_DIR = resolve(REPO_ROOT, '.claude/agents');
+  const generated = (['reader', 'runner', 'builder'] as const).every((t) => existsSync(resolve(AGENTS_DIR, `${t}.md`)));
+
+  it.skipIf(!generated)('matches the `tools:` each generated tier definition declares, in order', () => {
+    for (const tier of ['reader', 'runner', 'builder'] as const) {
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(resolve(AGENTS_DIR, `${tier}.md`), 'utf8'));
+      const line = /^tools:\s*(.+)$/m.exec(frontmatter?.[1] ?? '');
+      expect(line, `${tier}.md has no \`tools:\` frontmatter`).not.toBeNull();
+      expect([...TIER_TOOLS[tier]], `TIER_TOOLS.${tier} has drifted from .claude/agents/${tier}.md`)
+        .toEqual(line![1].split(',').map((t) => t.trim()).filter(Boolean));
+    }
+  });
+
+  it.skipIf(!generated)('counts the pack-role definitions the module header says it reads', () => {
+    // The header said 262, which is every file in the directory — including the three tier
+    // definitions the same sentence says are the only enforced ones.
+    const names = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'));
+    const packRoles = names.filter((f) => f.includes('--')).length;
+    expect(names.length - packRoles).toBe(3);
+    const header = readFileSync(resolve(HERE, 'agentsDispatch.ts'), 'utf8');
+    expect(header).toContain(`The ${packRoles} pack-role definitions in \`.claude/agents/\``);
   });
 });
 
@@ -160,6 +205,24 @@ describe('validateAssignment — refuses, never accepts', () => {
       scope: ['apps/desktop/src'], prohibitedScope: ['apps'],
     }));
     expect(problems.some((p) => p.field === 'prohibited_scope' && /permits nothing/.test(p.message))).toBe(true);
+  });
+
+  it("refuses a scope that is only '.': the root entry grants nothing beneath it", () => {
+    const problems = validateAssignment(build({ scope: ['.'], prohibitedScope: [] }));
+    expect(problems.some((p) => p.field === 'scope' && /grants nothing beneath it/.test(p.message))).toBe(true);
+    // '.' beside a real path is not the mistake; the real path is the grant.
+    expect(fields(build({ scope: ['.', 'apps/desktop/src'], prohibitedScope: [] }))).not.toContain('scope');
+  });
+
+  it("still refuses '.' in prohibited_scope over a repo path — and says what it really is", () => {
+    // It was refused before too, as "covers the whole of scope entry … this grant permits
+    // nothing". That is the reverse of the truth: the engine would have prohibited NOTHING.
+    const problems = validateAssignment(build({ scope: ['apps/desktop/src'], prohibitedScope: ['.'] }));
+    const about = problems.filter((p) => p.field === 'prohibited_scope');
+    expect(about).toHaveLength(1);
+    expect(about[0].message).toMatch(/prohibits nothing beneath it/);
+    expect(about[0].message).toContain("'apps/desktop/src'");
+    expect(about[0].message).not.toMatch(/permits nothing/);
   });
 
   it('refuses a mode the default authority record does not grant', () => {

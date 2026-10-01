@@ -4,7 +4,6 @@ import { CommandPalette } from './components/CommandPalette';
 import { ToastProvider, Toaster } from './components/toast';
 import { RouteView } from './app/routes';
 import { Onboarding } from './features/Onboarding';
-import { hasBackend } from './services/desktop';
 
 function AppInner() {
   const { route, t } = useApp();
@@ -14,7 +13,10 @@ function AppInner() {
           the sidebar + topbar straight to the routed screen. Target is the
           <main id="main-content"> rendered by Shell. */}
       <a className="skip-link" href="#main-content">{t('a11y.skipToContent')}</a>
-      {!hasBackend() && <div className="offline-banner" role="status">{t('state.offlineBanner')}</div>}
+      {/* No no-backend banner here. There were two — this one ("Preview mode … Changes will not be
+          saved.") and the Shell's — rendered together with different wording, and the Shell's said
+          each panel shows an error state while the panels show the calm offline one. The Shell
+          keeps the single banner; see the comment there. */}
       <Shell>
         <RouteView route={route} />
       </Shell>

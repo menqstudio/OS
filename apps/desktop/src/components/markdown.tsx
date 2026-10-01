@@ -16,32 +16,48 @@ function escapeHtml(s: string): string {
 
 // Inline formatting. Input MUST already be HTML-escaped.
 //
-// Links and code spans are tokenized to opaque placeholders BEFORE the
+// Code spans and links are tokenized to opaque placeholders BEFORE the
 // bold/italic rules run, then substituted back at the end. That way no inline
 // rule can ever rewrite the inside of an href attribute value or a code span
 // (e.g. `**` inside a URL becoming a <strong> tag inside the attribute).
+//
+// CODE FIRST, and the substitution runs until nothing is left. Links used to be
+// stashed first, so a link written inside backticks became a placeholder, the
+// code rule stashed THAT, and the single substitution pass at the end restored
+// the code span with the link's placeholder still inside it: the reader saw a
+// NUL-delimited index where the text was. A code span is literal — its contents
+// are not link-tokenized at all now. The mirror case, a code span inside link
+// text, still nests one token in another, which is why the final pass repeats.
 function inline(s: string): string {
   const tokens: string[] = [];
   const stash = (html: string) => `\u0000${tokens.push(html) - 1}\u0000`;
   // Reserve the placeholder delimiter: NUL never survives into the output.
   let out = s.replace(/\u0000/g, '');
+  // inline code
+  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(`<code>${code}</code>`));
   // links [text](http…) — href limited to http/https, text kept as-is (escaped).
   // When the visible text differs from the destination, the real URL is
   // disclosed next to it so link text can't misrepresent where it leads.
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, text, url) => {
+  // A destination holding a placeholder is not a link: nothing may be
+  // substituted into an href attribute value.
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)/g, (_m, text, url) => {
     const a = `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
     return stash(text === url ? a : `${a} <span class="muted">(${url})</span>`);
   });
-  // inline code
-  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(`<code>${code}</code>`));
   // bold then italic (bold first so ** isn't eaten by italic)
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   // underscore italics only at word boundaries, so identifiers like
   // some_var_name and __init__ are left untouched.
   out = out.replace(/(^|\W)_([^_\n]+)_(?=\W|$)/g, '$1<em>$2</em>');
-  // substitute the stashed link/code HTML back in
-  return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => tokens[Number(i)]);
+  // Substitute the stashed code/link HTML back in. A token can only hold
+  // placeholders of tokens stashed before it, so this terminates.
+  const placeholder = /\u0000(\d+)\u0000/g;
+  while (placeholder.test(out)) {
+    placeholder.lastIndex = 0;
+    out = out.replace(placeholder, (_m, i) => tokens[Number(i)]);
+  }
+  return out;
 }
 
 /** Render a Markdown subset to a safe HTML string. */

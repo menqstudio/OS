@@ -8,6 +8,8 @@ import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { AmbientLayer, Mark, useIgnition } from './Ambient';
 import { NavIcon } from './NavIcons';
+import { rovingKeydown } from './ui';
+import { readAppIdentity } from '../features/settingsIdentity';
 
 /**
  * Shell — the BroPS AI-OS app frame, ported from the `brops-aios` design mockup.
@@ -20,34 +22,21 @@ import { NavIcon } from './NavIcons';
  */
 
 /**
- * Roving-tabindex keyboard handler for the nav rail: Arrow keys plus Home/End
- * move DOM focus between the `[data-roving]` items. Purely additive — click and
- * Tab behaviour are unchanged; it never navigates on its own.
+ * Write `next` into a field the way typing does, so a React-controlled input hears it.
+ *
+ * `el.value = next` goes through the setter React installs on the INSTANCE to track the value it
+ * last rendered; the tracker then sees no difference between "what React knows" and "what the DOM
+ * holds", and the `input` event that follows is dropped as a no-op — `onChange` never fires, state
+ * is unchanged, and the next render writes the old text back. The prototype's own setter changes
+ * the DOM value without telling the tracker, which is exactly the situation a real keystroke
+ * creates, so the event is delivered.
  */
-function useRovingKeydown(orientation: 'vertical' | 'horizontal') {
-  return useCallback(
-    (e: React.KeyboardEvent<HTMLElement>) => {
-      const nextKey = orientation === 'vertical' ? 'ArrowDown' : 'ArrowRight';
-      const prevKey = orientation === 'vertical' ? 'ArrowUp' : 'ArrowLeft';
-      if (e.key !== nextKey && e.key !== prevKey && e.key !== 'Home' && e.key !== 'End') return;
-      const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[data-roving]')).filter(
-        (el) => !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true',
-      );
-      if (items.length === 0) return;
-      const current = items.indexOf(document.activeElement as HTMLElement);
-      let next = current;
-      if (e.key === nextKey) next = current < 0 ? 0 : (current + 1) % items.length;
-      else if (e.key === prevKey) next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
-      else if (e.key === 'Home') next = 0;
-      else if (e.key === 'End') next = items.length - 1;
-      const target = items[next];
-      if (target) {
-        e.preventDefault();
-        target.focus();
-      }
-    },
-    [orientation],
-  );
+function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, next: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -55,15 +44,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { gateLift, powerOn, gateMarkRef } = useIgnition();
 
   // Real badge counts from the backend; absent (0) when no backend is connected.
-  const approvalsState = useAsync(() => desktop.listApprovals(), []);
-  const notifsState = useAsync(() => desktop.listNotifications(), []);
+  // Re-read on every navigation. With `[]` they were read once at mount, and the Shell never
+  // remounts, so approving the last pending item or reading a notification left the badge at its
+  // startup value for the life of the window — a count that says "1 waiting" beside an empty page.
+  // Leaving the page where the count changed is the moment it is next looked at.
+  const approvalsState = useAsync(() => desktop.listApprovals(), [route]);
+  const notifsState = useAsync(() => desktop.listNotifications(), [route]);
   const pendingApprovals = (approvalsState.data ?? []).filter((a) => a.status === 'pending').length;
   const unread = (notifsState.data ?? []).filter((n) => n.readAt === null).length;
   const badgeFor = (id: string): number =>
     id === 'approvals' ? pendingApprovals : id === 'notifications' ? unread : 0;
 
-  const onNavKeyDown = useRovingKeydown('vertical');
-  const onDockKeyDown = useRovingKeydown('horizontal');
+  // What the running build calls itself, for the footer. Asked, not typed: the footer used to
+  // carry the literal `MENQ OS · v0.9` while the build is BroPS 0.1.0, and a literal can never
+  // notice a release. When the build does not answer, the footer says nothing.
+  const identity = useAsync(() => readAppIdentity(), []);
+
+  // Roving tabindex for the nav rail and the dock — the one handler in components/ui.
+  const onNavKeyDown = (e: React.KeyboardEvent<HTMLElement>) => rovingKeydown(e, 'vertical');
+  const onDockKeyDown = (e: React.KeyboardEvent<HTMLElement>) => rovingKeydown(e, 'horizontal');
   const [dockFocus, setDockFocus] = useState(0);
   // On narrow screens the side rail is an off-canvas drawer; this toggles it.
   const [navOpen, setNavOpen] = useState(false);
@@ -83,6 +82,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
    */
   const [ctxMenu, setCtxMenu] = useState<{
     x: number; y: number; editable: boolean; selection: string;
+    /** The field that was right-clicked, kept because clicking a menu item takes focus off it. */
+    field: HTMLElement | null;
   } | null>(null);
   const onAppContextMenu = (e: React.MouseEvent) => {
     const el = e.target as HTMLElement;
@@ -93,6 +94,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       y: e.clientY,
       editable: field !== null && !(field as HTMLInputElement).readOnly,
       selection: (window.getSelection()?.toString() ?? '').trim(),
+      field,
     });
   };
   /**
@@ -112,6 +114,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
    * paste half, because `execCommand('paste')` is blocked for security in every modern engine.
    * Focus is restored first — the menu button took it when it was clicked, and a copy with nothing
    * selected copies nothing.
+   *
+   * "Restored" used to mean `blur()`, which puts focus on <body>, not back where it was. Paste then
+   * looked for a field in `document.activeElement`, found <body>, and did nothing — in every field,
+   * every time. The field that was right-clicked is remembered when the menu opens and focused
+   * again here; an input keeps its own selection range while blurred, so the caret is still where
+   * the owner left it.
    */
   const runCtx = useCallback((action: 'copy' | 'cut' | 'paste' | 'selectAll') => {
     const menu = ctxMenu;
@@ -119,19 +127,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (!menu) return;
     const active = document.activeElement as HTMLElement | null;
     if (active && 'blur' in active) active.blur();
+    const field = menu.field && menu.field.isConnected ? menu.field : null;
     window.setTimeout(() => {
+      field?.focus();
       if (action === 'paste') {
         void navigator.clipboard.readText().then((text) => {
-          const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
-          if (el && ('value' in el)) {
-            const start = el.selectionStart ?? el.value.length;
-            const end = el.selectionEnd ?? start;
-            el.value = el.value.slice(0, start) + text + el.value.slice(end);
-            // React tracks the value on the DOM node; without an input event the state behind a
-            // controlled field never learns about the paste and the next render wipes it.
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.selectionStart = el.selectionEnd = start + text.length;
+          if (!field) return;
+          if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+            const start = field.selectionStart ?? field.value.length;
+            const end = field.selectionEnd ?? start;
+            setFieldValue(field, field.value.slice(0, start) + text + field.value.slice(end));
+            // Not every input type has a caret (`email`, `number`); those throw here.
+            try { field.setSelectionRange(start + text.length, start + text.length); } catch { /* no caret to place */ }
+            return;
           }
+          // contenteditable: there is no `value`; insert at the caret the focus call restored.
+          field.focus();
+          document.execCommand('insertText', false, text);
         }).catch(() => { /* clipboard unreadable — nothing to paste, and nothing to report */ });
         return;
       }
@@ -279,20 +291,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 </option>
               ))}
             </select>
-            <span className="micro side-ver">MENQ OS · v0.9</span>
+            {identity.data?.state === 'reported' && (
+              <span className="micro side-ver">{identity.data.name} · v{identity.data.version}</span>
+            )}
           </div>
         </aside>
 
         <main id="main-content" className="stage" tabIndex={-1}>
           {/* Outside the Tauri runtime there is NO mock/fixture layer: `services/desktop.ts`
               maps every IPC name to a registered `#[tauri::command]`, so each call simply
-              rejects and each panel renders its own error state. The banner says exactly
-              that — it must never advertise mock data the build does not contain. */}
+              rejects — and `ErrorState` / `Async` in ui.tsx turn that rejection into the calm
+              `state.offline` panel rather than a red error. The banner says exactly that: it
+              must never advertise mock data the build does not contain, and it names the state
+              the panels really show. It is the ONLY no-backend banner; App.tsx used to render a
+              second one above the frame with different wording. */}
           {!hasBackend() && <div className="proto-banner" role="status">◍ {t('state.prototype')}</div>}
-          {/* keyed on route so the stage replays a soft page-enter on each view change */}
-          <div key={route} className="stage-enter">
-            {children}
-          </div>
+          {/* The page-enter wrapper (`.stage-enter`, keyed on route) is rendered by RouteView,
+              not here. Keyed HERE it remounted RouteView on every navigation and reset the
+              counter that tells a navigation from first paint — see app/routes.tsx. */}
+          {children}
         </main>
       </div>
 
@@ -342,7 +359,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       )}
 
       {windowError !== null && (
-        <div className="inline-alert inline-alert--error ctx-window-error" role="alert">
+        // `--danger`, not `--error`: ui.css defines info / success / warning / danger, and a
+        // modifier it does not define is a notice with no tone at all.
+        <div className="inline-alert inline-alert--danger ctx-window-error" role="alert">
           <b>{t('action.windowFailed')}</b>
           <span>{windowError}</span>
           <button type="button" onClick={() => setWindowError(null)} aria-label="Dismiss">✕</button>

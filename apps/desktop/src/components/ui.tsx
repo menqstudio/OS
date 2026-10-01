@@ -159,11 +159,86 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select className="select" {...props} />;
 }
 
+/** Only the topmost modal dialog answers the keyboard: a confirm opened over a form must not have
+ *  its Escape close the form underneath as well. "Topmost" is the one no other modal dialog
+ *  follows in document order — which is also the one painted last — rather than the one mounted
+ *  last, because a dialog rendered INSIDE another runs its effect first. Asked of the document,
+ *  not of a list kept here, so the ⌘K palette (its own dialog, with its own trap) counts too. */
+const isTopmostDialog = (panel: HTMLElement) =>
+  !Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'))
+    .some((other) => other !== panel
+      && (panel.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * What `aria-modal="true"` promises, for every dialog in this file: focus moves in on open, Tab
+ * cannot walk out, Escape closes, and focus goes back to the opener on close.
+ *
+ * This was written once, inside `Drawer`, which nothing renders — while `Modal`, which carries
+ * every create/edit form and every destructive `ConfirmDialog`, declared `aria-modal` and did
+ * none of it: Tab went straight into the page behind the scrim and Escape did nothing. It is one
+ * hook now so the two cannot drift apart again.
+ *
+ * `onClose` is read through a ref and the effect runs ONCE per mount. Callers pass an inline
+ * arrow, so with `[onClose]` as the dependency every keystroke in a form would re-run the effect —
+ * cleanup throwing focus back to the opener and setup pulling it to the first field. Drawer had
+ * that latent; a Modal with a text input would have had it on every character.
+ */
+function useModalDialog(panelRef: React.RefObject<HTMLElement | null>, onClose: () => void) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const focusables = () => Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+    // A child that asked for focus itself (`autoFocus`) already has it; leave it there.
+    if (!panel.contains(document.activeElement)) (focusables()[0] ?? panel).focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!isTopmostDialog(panel)) return;
+      if (e.key === 'Escape') { e.preventDefault(); closeRef.current(); return; }
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      if (items.length === 0) { e.preventDefault(); panel.focus(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      // Focus that has already escaped (a click on the scrim, a programmatic blur) is brought
+      // back rather than allowed to carry on through the page behind.
+      if (!panel.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      else if (e.shiftKey && (active === first || active === panel)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      // Only if it is still in the document. A dialog that closes because its action removed the
+      // row it was opened from leaves a detached opener, and focus() on that is a silent no-op.
+      if (opener && opener.isConnected) opener.focus?.();
+    };
+  }, [panelRef]);
+}
+
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useRef(`modal-${Math.random().toString(36).slice(2)}`).current;
+  useModalDialog(panelRef, onClose);
   return (
     <div className="modal-scrim" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modal-title">{title}</div>
+      <div
+        ref={panelRef}
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <div className="modal-title" id={titleId}>{title}</div>
         {children}
       </div>
     </div>
@@ -272,9 +347,12 @@ export function useEasedCountUp(target: number, animate: boolean): number {
   return shown;
 }
 
-/** Roving-focus keyboard handler over `[data-roving]` descendants (mirrors the
- *  Shell nav/dock pattern). Purely moves DOM focus; never activates. */
-function rovingKeydown(
+/** Roving-focus keyboard handler over `[data-roving]` descendants: Arrow keys plus
+ *  Home/End move DOM focus between the enabled items, wrapping at the ends. Purely
+ *  additive — it never activates, and click and Tab are untouched. The Shell's nav
+ *  rail ('vertical') and dock ('horizontal') call this same function; the Shell
+ *  used to carry a copy of it. */
+export function rovingKeydown(
   e: React.KeyboardEvent<HTMLElement>,
   orientation: 'vertical' | 'horizontal' | 'both',
 ) {
@@ -422,10 +500,11 @@ export function DataTable<T>({
 
 // ── G2 · Drawer ─────────────────────────────────────────────────────────────
 /**
- * Side drawer — a Modal that slides in from an edge. Mirrors `Modal`
- * (`role="dialog"`, `aria-modal="true"`, scrim click closes) and adds what a
- * transient side panel needs: Esc to close, a Tab focus-trap, initial focus on
- * the first focusable inside, and focus restoration to the opener on unmount.
+ * Side drawer — a Modal that slides in from an edge. The same dialog contract
+ * as `Modal` (`role="dialog"`, `aria-modal="true"`, scrim click closes, and the
+ * shared `useModalDialog`: Esc to close, a Tab focus-trap, initial focus on the
+ * first focusable inside, focus restoration to the opener on unmount), plus a
+ * close button and an optional footer.
  */
 export function Drawer({
   title,
@@ -444,33 +523,7 @@ export function Drawer({
   const closeLabel = app ? app.t('action.close') : 'Close';
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useRef(`drawer-${Math.random().toString(36).slice(2)}`).current;
-
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    const focusables = () => Array.from(
-      panelRef.current?.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ) ?? [],
-    );
-    (focusables()[0] ?? panelRef.current)?.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
-      if (e.key !== 'Tab') return;
-      const items = focusables();
-      if (items.length === 0) { e.preventDefault(); return; }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('keydown', onKey, true);
-      opener?.focus?.();
-    };
-  }, [onClose]);
+  useModalDialog(panelRef, onClose);
 
   return (
     <div className="drawer-scrim" onClick={onClose}>

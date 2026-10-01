@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { useState } from 'react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import {
+  Modal,
+  ConfirmDialog,
   Badge,
   StatusPill,
   EmptyState,
@@ -13,6 +16,7 @@ import {
   Skeleton,
 } from './ui';
 import { statusTone, type Tone } from '../domain/enums';
+import { renderMarkdown } from './markdown';
 
 /**
  * Component tests for the shared, presentational UI primitives.
@@ -224,5 +228,188 @@ describe('Skeleton', () => {
   it('renders the requested number of rows', () => {
     const { container } = render(<Skeleton rows={5} />);
     expect(container.querySelectorAll('.skeleton')).toHaveLength(5);
+  });
+});
+
+/**
+ * `Modal` declared `aria-modal="true"` and kept none of what that promises: no accessible name, no
+ * Escape, no focus move, no trap. Every create/edit form and every destructive `ConfirmDialog` is
+ * built on it. The behaviour existed, complete, inside `Drawer` — which nothing renders. These
+ * cases hold the contract on the dialog the app actually opens.
+ */
+describe('Modal — the dialog contract', () => {
+  const confirm = (onCancel = () => {}, onConfirm = () => {}) => (
+    <ConfirmDialog
+      title="Delete note?"
+      message="This cannot be undone."
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
+  );
+
+  it('is named by its title', () => {
+    render(<Modal title="New task" onClose={() => {}}><input aria-label="name" /></Modal>);
+    expect(screen.getByRole('dialog', { name: 'New task' })).toHaveAttribute('aria-modal', 'true');
+  });
+
+  it('moves focus inside on open — to the SAFE button of a destructive confirm', () => {
+    render(confirm());
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  });
+
+  it('takes focus itself when it holds nothing focusable', () => {
+    render(<Modal title="Notice" onClose={() => {}}>read only</Modal>);
+    expect(screen.getByRole('dialog')).toHaveFocus();
+  });
+
+  it('leaves focus on a child that asked for it', () => {
+    render(
+      <Modal title="Rename" onClose={() => {}}>
+        <input aria-label="first" />
+        <input aria-label="second" autoFocus />
+      </Modal>,
+    );
+    expect(screen.getByLabelText('second')).toHaveFocus();
+  });
+
+  it('closes on Escape', () => {
+    const onCancel = vi.fn();
+    render(confirm(onCancel));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('traps Tab at both ends, and pulls back focus that already escaped', () => {
+    render(<><button type="button">behind</button>{confirm()}</>);
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    const del = screen.getByRole('button', { name: 'Delete' });
+    act(() => del.focus());
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(del).toHaveFocus();
+    // A click on the scrim's edge, a programmatic blur: focus is on the page behind the modal.
+    act(() => screen.getByRole('button', { name: 'behind' }).focus());
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+  });
+
+  it('hands focus back to the opener on close, and does not chase one that is gone', () => {
+    function Harness({ open, showOpener }: { open: boolean; showOpener: boolean }) {
+      return (
+        <>
+          {showOpener && <button type="button">opener</button>}
+          {open && confirm()}
+        </>
+      );
+    }
+    const first = render(<Harness open={false} showOpener />);
+    const opener = screen.getByRole('button', { name: 'opener' });
+    act(() => opener.focus());
+    first.rerender(<Harness open showOpener />);
+    expect(opener).not.toHaveFocus();
+    first.rerender(<Harness open={false} showOpener />);
+    expect(opener).toHaveFocus();
+
+    // The action removed the row the dialog was opened from: the opener is detached.
+    first.rerender(<Harness open showOpener />);
+    const chased = vi.spyOn(opener, 'focus');
+    first.rerender(<Harness open showOpener={false} />);
+    first.rerender(<Harness open={false} showOpener={false} />);
+    expect(chased).not.toHaveBeenCalled();
+  });
+
+  it('does not move focus when its parent re-renders with a new onClose', () => {
+    // Every caller passes an inline arrow. Keyed on `onClose`, the effect re-ran on each keystroke
+    // in a form: cleanup sent focus to the opener and setup pulled it to the FIRST field.
+    function Form() {
+      const [open, setOpen] = useState(false);
+      const [text, setText] = useState('');
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>open</button>
+          {open && (
+            <Modal title="New task" onClose={() => setOpen(false)}>
+              <input aria-label="title" />
+              <input aria-label="notes" value={text} onChange={(e) => setText(e.target.value)} />
+            </Modal>
+          )}
+        </>
+      );
+    }
+    render(<Form />);
+    // Opened from a real control, as in the app: that control is what a re-run would refocus.
+    const opener = screen.getByRole('button', { name: 'open' });
+    act(() => opener.focus());
+    fireEvent.click(opener);
+    expect(screen.getByLabelText('title')).toHaveFocus();
+    const notes = screen.getByLabelText('notes');
+    act(() => notes.focus());
+    fireEvent.change(notes, { target: { value: 'typed' } });
+    expect(notes).toHaveValue('typed');
+    expect(notes).toHaveFocus();
+  });
+
+  it('only the topmost dialog answers Escape', () => {
+    const closeForm = vi.fn();
+    const closeConfirm = vi.fn();
+    render(
+      <Modal title="Edit" onClose={closeForm}>
+        <input aria-label="title" />
+        {confirm(closeConfirm)}
+      </Modal>,
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(closeConfirm).toHaveBeenCalledTimes(1);
+    expect(closeForm).not.toHaveBeenCalled();
+  });
+
+  it('still closes on a scrim click and not on an inner one', () => {
+    const onClose = vi.fn();
+    const { container } = render(<Modal title="M" onClose={onClose}><span>inner</span></Modal>);
+    fireEvent.click(screen.getByText('inner'));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(container.querySelector('.modal-scrim') as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The agent-reply renderer. Its output goes to `dangerouslySetInnerHTML`, and it had no test.
+ */
+describe('renderMarkdown — code spans and links do not swallow each other', () => {
+  const NUL = String.fromCharCode(0);
+
+  it('shows a link written inside a code span literally', () => {
+    // Was: `<p>Use <code>\u00000\u0000</code> to link.</p>` — the link was stashed first, the code
+    // rule stashed its placeholder, and one substitution pass left the placeholder on screen.
+    const html = renderMarkdown('Use `[docs](https://example.com/a)` to link.');
+    expect(html).toBe('<p>Use <code>[docs](https://example.com/a)</code> to link.</p>');
+  });
+
+  it('renders a code span inside link text', () => {
+    const html = renderMarkdown('See [`run()`](https://example.com/run).');
+    expect(html).toContain('<a href="https://example.com/run" target="_blank" rel="noopener noreferrer"><code>run()</code></a>');
+    expect(html).not.toContain(NUL);
+  });
+
+  it('never lets a placeholder reach the output, whatever the nesting', () => {
+    for (const src of [
+      '`[a](https://x.example/1)` and [b](https://x.example/2) and `c`',
+      '[`a` and `b`](https://x.example/3)',
+      '**`[a](https://x.example/4)`**',
+      '[a](https://x.example/`b`)',
+    ]) {
+      const html = renderMarkdown(src);
+      expect(html, src).not.toContain(NUL);
+      expect(html, src).not.toMatch(/href="[^"]*</);
+    }
+  });
+
+  it('still escapes source HTML and still limits hrefs to http(s)', () => {
+    expect(renderMarkdown('<img src=x onerror=alert(1)>')).toBe('<p>&lt;img src=x onerror=alert(1)&gt;</p>');
+    expect(renderMarkdown('[x](javascript:alert(1))')).not.toContain('<a ');
   });
 });
