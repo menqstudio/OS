@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
 >
-> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1 (Owner decision)
+> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1; the Approvals route ceiling is 11.5 KB with its reason
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

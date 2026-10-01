@@ -8,6 +8,7 @@
   },
   "//growth-2026-08-07": "Raised 150 -> 156. The index payload is 94 KB gzip of JS and 57 KB of CSS. The JS grew ~7 KB in the phase-1..10 wave, and the cause is structural rather than fat: `services/desktop.ts` is the single typed IPC boundary, and `Shell.tsx` and `CommandPalette.tsx` are eager and import the whole `desktop` object -- so every wrapper added for a lazily-loaded feature lands in the initial chunk. The wave added wrappers for five new commands plus the governed-turn attempt and the ledger reads. FOLLOW-UP, and the real fix: split the boundary so eager shell code imports only what it uses (`hasBackend` and the handful of commands the shell actually calls), letting the rest chunk with the route that needs it. That is a refactor of a deliberately-single boundary, so it is not being done under a CI failure at the end of a long wave. Tighten this back the moment it lands.",
   "//routes": "Per-ROUTE budget: the gzipped bytes the browser fetches when NAVIGATING to that page -- the route chunk plus its transitively-imported chunks and CSS, MINUS whatever the entry already loaded. The route list is the entry's own dynamicImports, so a new page is RED until somebody gives it a ceiling. Added 2026-08-29: the gate had measured the entry and nothing else, leaving 23 chunks and 256.7 KB gzip with no ceiling while Phase 10 asked for a performance gate over all 22 pages. Each ceiling was set at the measured size x 1.25, rounded up to the nearest 0.5 KB (minimum 2.0) -- headroom for ordinary work, not for a rewrite. Lower one when a page gets smaller; raise one only with a reviewed reason, the same rule as entries.",
+  "//growth-2026-10-02": "Approvals raised 10.0 -> 11.5; it measures 10.9 KB gzip. The growth is T-145 wave 2 and none of it is a dependency: the page gained the two statuses it had no case for (`consumed`, `cancelled` -- a spent or cancelled approval was shown as 'Awaiting decision'), the confirm dialog stopped committing on Enter from the Cancel button, and the strings in all three languages now say what the page is (a local ledger, not the engine adjudicating) and what Escalate does. Nothing was trimmable without removing one of those. 11.5 is the measured size plus about 5%, tighter than the x1.25 the other routes were given, so the next growth is seen. Every other route is inside its ceiling.",
   "routes": {
     "Activity": {
       "max_gzip_kb": 14.5
@@ -19,7 +20,7 @@
       "max_gzip_kb": 12.5
     },
     "Approvals": {
-      "max_gzip_kb": 10.0
+      "max_gzip_kb": 11.5
     },
     "Automations": {
       "max_gzip_kb": 23.5

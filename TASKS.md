@@ -6,7 +6,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
 >
-> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1 (Owner decision)
+> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1; the Approvals route ceiling is 11.5 KB with its reason
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): wave 1 merged (405 fixed); wave 2 (Rust, frontend) 275 fixed, 43 open (§9), 42 wait on the Owner (§8); the uncapped second read is running ◑ | Bro | In-Progress | `#317` |
+| **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): wave 1 merged (405 fixed); wave 2 (Rust, frontend) 275 fixed, 43 open (§9), 42 wait on the Owner (§8); second read (uncapped) running ◑ | Bro | In-Progress | `#317` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
