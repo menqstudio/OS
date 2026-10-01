@@ -30,6 +30,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))
 from bro_audit_log import (
     AuditAnchorMissing,
     AuditError,
+    AuditMalformed,
     read_all as read_ledger,
     verify as verify_chain,
 )
@@ -133,6 +134,13 @@ def _shadow(ledger: pathlib.Path | None) -> dict:
     try:
         count = verify_chain(ledger)
         chain_ok = True
+    except AuditMalformed:
+        # A SHAPE the chain walk cannot account for (a record with no `kind`, a head that will
+        # not parse). `verify()` used to let these escape as the raw exceptions named in the
+        # last arm; it raises this typed subclass now, and it has to be caught BEFORE its
+        # parent or a malformed ledger would be reported as merely "chain not ok".
+        return {"records": 0, "by_kind": {}, "chain_ok": False, "readable": False,
+                "anchor": {"state": "unverifiable", "detail": "ledger unreadable"}}
     except AuditError:
         count, chain_ok = len(records), False
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError):

@@ -5,14 +5,101 @@ BROPS_MANIFEST_SIG_IN) and is exempt by path, so the real sweep must find them h
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_no_owner_key_ceremony as gate  # noqa: E402
+
+#: The six phrases the gate had before T-145, each with a sentence of the shape it was written for.
+ORIGINAL = {
+    "owner's offline": "// the private half is the Owner's OFFLINE root\n",
+    "offline-root-custodian": 'Provisioner::X => "offline-root-custodian",\n',
+    "owner-provided key": "the manifest is signed with an Owner-provided key\n",
+    "owner mints a key": "first the Owner mints a key\n",
+    "only the owner can make": "an artifact only the Owner can make\n",
+    "the owner must export": "the Owner must export the pin\n",
+}
+
+#: Every phrase T-145 added, beside the sentence it was added FOR -- copied from the tree as it
+#: stood, line breaks, comment leaders and emphasis included, because that layout is what let
+#: several of them through. Each was GREEN under the six phrases above.
+SURVIVORS = {
+    "your offline root":
+        "| labelled for the custody it has (`trusted_verified` only under your offline root) |\n",
+    "held offline by the operator":
+        'production root whose private half "is held OFFLINE by the operator … never appears in a\n',
+    "root private is held offline":
+        "    // the driver pins only the root PUBLIC key. In production the root private is\n"
+        "    // held offline entirely — nothing about the root private lands on the serving box.\n",
+    "private key is held offline":
+        "which remain yours: the `recovery` private key is held **offline** (the registry\n",
+    "is offline, not on this box":
+        "    // any config whose `pubs` disagree — and the root private that could re-sign the manifest is\n"
+        "    // offline, not on this box.\n",
+    "trusted_verified without the offline root":
+        "/// manifest (e.g. reviving a since-revoked signer key) → `trusted_verified` WITHOUT the\n"
+        "/// offline root. The floor signature therefore only detects ACCIDENTAL corruption\n",
+    "offline operator":
+        "The trusted key registry is signed by the offline operator root key, but the\n",
+    "offline issuer":
+        "    against the operator-signed trusted-key registry, not HMAC. Only the offline\n"
+        "    issuer key can grant execution capabilities; a builder holding the public\n",
+    "owner-held recovery":
+        "   the offline owner-held `recovery` authority, bound to the task/record/before-state/\n",
+    "the owner holds":
+        "        # The Owner holds ONE offline root, so one of two production anchors is undeployable.\n",
+    "only the owner can mint":
+        "  items remain OPEN, three of them waiting on an artifact only the Owner can mint.\n",
+    "only the owner can provide":
+        "the anchor requires signing custody only the Owner can provide, so until it is provisioned\n",
+    "is the owner's step":
+        'signs proves nothing"). Provisioning that signer is the Owner\'s step, tracked as **O-2**.\n',
+    "owner's out-of-band":
+        "the caller is the owner's out-of-band signing command, reached through the signer variable\n",
+    "the owner's ceremony":
+        "    `config/trusted-keys.json`, so on a real deployment an owner command still refuses. That is\n"
+        "    the Owner's ceremony, not a code gap\n",
+    "is the owner's signature":
+        "        following that message would have gone off to build what already existed. What is missing\n"
+        "        now is the Owner's signature, and only one of those two is actionable by whoever hits it.\n",
+    "owner mints the artifact":
+        "    leaves behind; the hand-back behaviour returns — with its own tests — when the\n"
+        "    owner mints the artifact that message names.\n",
+    "owner must mint":
+        "        environment's word — and the refusal names the artifact the owner must\n"
+        "        mint, because nothing in this repository can mint it.\n",
+    "owner has to mint":
+        "        # registry entry the owner has to mint are all named.\n",
+    "signed offline by the owner":
+        "`conductor-session` token — it is signed offline by the owner's operator-root key\n",
+    "the owner has run steps":
+        "  a correctly signed anchor is what Step 3 produces — so until the Owner has run Steps 1, 3 and 4\n",
+    "mint, offline":
+        "**Exactly what Gev must provide.** Mint, offline with the operator-root key, an artifact of the form\n",
+    "anchoring a ledger by hand":
+        "    The out-of-band path, for an operator anchoring a ledger by hand. This module\n",
+}
+
+#: Sentences that are TRUE and in the tree today. A phrase list that reddens one of these would be
+#: fixed by deleting the phrase, so they are held green here.
+HONEST = (
+    "No person holds or carries a root key: the Owner decided on 2026-08-09 (#78) that the install\n"
+    "mints trust.\n",
+    "Nobody holds an offline root; the install mints trust.\n",
+    '"""Verify a signed recovery-proof artifact (an owner authorisation, not an owner-held key).\n',
+    "provisioning mints the `conductor-session` artifact, so **no Owner-minted artifact is needed**\n",
+    "> What is CONFIGURED in the repo vs what the **Owner must provide** (secrets) to cut a signed release\n",
+    "elevated install action — not a key the Owner has to hold.\n",
+    "/// key) generated verifies exactly as well as one signed by an operator's offline root: the arithmetic\n",
+    "# no elevation and no offline root key, so it runs HERE\n",
+)
 
 
 class Tree:
@@ -100,6 +187,105 @@ class GateTests(unittest.TestCase):
         self.t.write(gate.CONTROL, "nothing here\n")
         _, control = gate.check(self.t.root)
         self.assertFalse(control)
+        # ...and the VERDICT is red. Until T-145 this test stopped at the line above: `check`
+        # reported the miss and nothing established that `main` turned it into an exit code, so
+        # `if not control_seen` could be replaced by `if False` with every test still passing.
+        code, out = self.verdict()
+        self.assertEqual(code, 1, out)
+        self.assertIn("never matched its control", out)
+
+    def verdict(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = gate.main(self.t.root)
+        return code, out.getvalue()
+
+    def test_a_problem_makes_the_verdict_red_and_names_the_file(self):
+        self.t.write("docs/HOWTO.md", "export BROPS_MANIFEST_SIG_IN=/media/x\n")
+        code, out = self.verdict()
+        self.assertEqual(code, 1, out)
+        self.assertIn("RED", out)
+        self.assertIn("docs/HOWTO.md names BROPS_MANIFEST_SIG_IN", out)
+
+    def test_a_clean_tree_is_a_green_verdict(self):
+        # The contrast for the two above: `main` can say 0, so its 1 is a decision.
+        self.t.write("docs/README.md", "the install mints trust\n")
+        code, out = self.verdict()
+        self.assertEqual(code, 0, out)
+        self.assertIn("GREEN", out)
+
+    # --- T-145: the phrases, one sentence each ------------------------------------------------
+
+    def test_every_phrase_has_the_sentence_it_was_written_for(self):
+        # A phrase added to the gate with no sentence here is a phrase nothing proves can fire.
+        self.assertEqual(sorted(gate.FORBIDDEN_PHRASES), sorted({**ORIGINAL, **SURVIVORS}))
+
+    def test_every_phrase_is_already_prose(self):
+        # Phrases are matched against `prose(text)`. One written with a backtick, a `*`, a capital
+        # or two spaces could never match anything, and would sit in the list looking like a check.
+        for phrase in gate.FORBIDDEN_PHRASES:
+            self.assertEqual(gate.prose(phrase), phrase)
+
+    def test_each_sentence_is_red_and_green_again_without_its_phrase(self):
+        for n, (phrase, sentence) in enumerate({**ORIGINAL, **SURVIVORS}.items()):
+            rel = f"src/claim_{n}.rs"
+            with self.subTest(phrase=phrase):
+                self.t.write(rel, sentence)
+                problems, _ = gate.check(self.t.root)
+                self.assertTrue(any(p.startswith(rel) and f'"{phrase}"' in p for p in problems),
+                                problems)
+                # Remove THIS phrase and the same sentence must pass: otherwise some other phrase
+                # is doing the work and this one is tested by nothing.
+                without = tuple(p for p in gate.FORBIDDEN_PHRASES if p != phrase)
+                with mock.patch.object(gate, "FORBIDDEN_PHRASES", without):
+                    problems, _ = gate.check(self.t.root)
+                self.assertFalse(any(p.startswith(rel) for p in problems), problems)
+                self.t.write(rel, "nothing\n")
+
+    def test_true_sentences_about_the_decision_stay_green(self):
+        for n, sentence in enumerate(HONEST):
+            self.t.write(f"docs/honest_{n}.md", sentence)
+        problems, _ = gate.check(self.t.root)
+        self.assertEqual(problems, [])
+
+    def test_the_removable_media_path_of_the_deleted_steps_is_red(self):
+        self.t.write("docs/RUNBOOK.md", "# NOT from /media/usb/bro-root/operator-root.json\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(any(p.startswith("docs/RUNBOOK.md names /media/usb/bro-root") for p in problems),
+                        problems)
+
+    # --- T-145: layout does not hide a claim --------------------------------------------------
+
+    def test_a_claim_wrapped_across_comment_lines_is_red_in_every_comment_style(self):
+        for n, leader in enumerate(("// ", "/// ", "//! ", "# ", "> ", "-- ", "")):
+            rel = f"src/wrapped_{n}.txt"
+            with self.subTest(leader=leader):
+                self.t.write(rel, f"    {leader}in production the root private is\n"
+                                  f"    {leader}held offline entirely\n")
+                problems, _ = gate.check(self.t.root)
+                self.assertTrue(any(p.startswith(rel) for p in problems), problems)
+
+    def test_emphasis_inside_a_claim_does_not_hide_it(self):
+        self.t.write("docs/A.md", "the `recovery` private key is held **offline**\n")
+        self.t.write("docs/B.md", "signed by the offline owner-held `recovery` authority\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(any(p.startswith("docs/A.md") for p in problems), problems)
+        self.assertTrue(any(p.startswith("docs/B.md") for p in problems), problems)
+
+    def test_prose_is_the_sentence_and_nothing_else(self):
+        self.assertEqual(gate.prose("  // The Root\n  // is **held**\n\t`here`\n"),
+                         "the root is held here")
+        # A leader is removed only where a line STARTS: a path keeps its slashes, a flag its dashes.
+        self.assertEqual(gate.prose("see a//b and --flag # not a leader"),
+                         "see a//b and --flag # not a leader")
+
+    def test_the_file_kinds_only_the_seed_sweep_used_to_read_are_swept(self):
+        # One extension set for both gates since T-145; `.mjs` and `.xml` were in neither.
+        for rel in ("scripts/build.mjs", "config/app.xml", "deploy/kit.cfg", "deploy/kit.env"):
+            self.t.write(rel, "win_gen_root --out x\n")
+        problems, _ = gate.check(self.t.root)
+        for rel in ("scripts/build.mjs", "config/app.xml", "deploy/kit.cfg", "deploy/kit.env"):
+            self.assertTrue(any(p.startswith(f"{rel} names win_gen_root") for p in problems), problems)
 
 
 if __name__ == "__main__":

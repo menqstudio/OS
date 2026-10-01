@@ -131,8 +131,40 @@ class OwnerAuthorizationE2ETests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     load_mode_grant_from_env(bundle, "sess-e2e", "specialist", root=reg, now=NOW)
 
+    def test_every_grant_carries_its_own_nonce_and_the_ledger_takes_the_second(self):
+        # Both fields defaulted to constants no caller overrode, so every grant carried
+        # the nonce "mode-grant-nonce-000001" and the L-1 ledger — which binds a nonce
+        # to the first grant presenting it — refused the second specialist's grant.
+        import re
+        from bro_contracts import MODE_GRANT_NONCE_RE, bind_mode_grant_nonce
+        task, agent = task_contract(), agent_profile()
+        receipt = build_skill_receipt(task, agent, root=ROOT, now=NOW)
+        first, second = (build_mode_grant_payload(
+            task, agent, receipt, session_id=session, role="specialist", mode="work",
+            head_sha=HEAD, tree_identity=TREE, now=NOW) for session in ("sess-one", "sess-two"))
+        self.assertNotEqual(first["nonce"], second["nonce"])
+        self.assertNotEqual(first["grant_id"], second["grant_id"])
+        schema = json.loads((ROOT / "schemas" / "mode-grant.schema.json").read_text(encoding="utf-8"))
+        grant_id_pattern = schema["properties"]["payload"]["properties"]["grant_id"]["pattern"]
+        for payload in (first, second):
+            self.assertRegex(payload["nonce"], MODE_GRANT_NONCE_RE)
+            self.assertTrue(re.fullmatch(grant_id_pattern, payload["grant_id"]), payload["grant_id"])
+        ledger = pathlib.Path(tempfile.mkdtemp(prefix="bro-e2e-nonce-"))
+        self.addCleanup(shutil.rmtree, ledger, ignore_errors=True)
+        bind_mode_grant_nonce(first, ledger)
+        bind_mode_grant_nonce(second, ledger)          # used to raise: "already consumed"
+        bind_mode_grant_nonce(first, ledger)           # re-presenting the same grant stays idempotent
+        # The ledger still refuses what it exists to refuse: one nonce, two grants.
+        replay = dict(second, nonce=first["nonce"])
+        with self.assertRaisesRegex(ContractError, "already consumed by a different grant"):
+            bind_mode_grant_nonce(replay, ledger)
+        # A caller that names them is still obeyed.
+        named = build_mode_grant_payload(
+            task, agent, receipt, session_id="sess-one", role="specialist", mode="work",
+            head_sha=HEAD, tree_identity=TREE, now=NOW, grant_id="grant-x", nonce="n" * 16)
+        self.assertEqual((named["grant_id"], named["nonce"]), ("grant-x", "n" * 16))
+
     def test_owner_cli_produces_a_loadable_bundle(self):
-        from broctl import generate_key
         reg, issuer = self._registry()
         work = pathlib.Path(tempfile.mkdtemp(prefix="bro-e2e-cli-"))
         self.addCleanup(shutil.rmtree, work, ignore_errors=True)
@@ -140,12 +172,36 @@ class OwnerAuthorizationE2ETests(unittest.TestCase):
         agent_path = work / "agent.json"; agent_path.write_text(json.dumps(agent_profile()), encoding="utf-8")
         key_path = work / "issuer.json"; key_path.write_text(json.dumps(issuer), encoding="utf-8")
         out = work / "bundle"
-        rc = main(["--task", str(task_path), "--agent", str(agent_path), "--issuer-key", str(key_path),
-                   "--session-id", "sess-cli", "--role", "specialist",
-                   "--head-sha", HEAD, "--tree-identity", TREE, "--out-dir", str(out)])
+        # The CLI stamps the bundle with its own clock; pinned to the instant the fixture
+        # registry is valid at, so the loaders below can be asked about the same instant.
+        with patch("bro_authorize_specialist.time.time", return_value=NOW):
+            rc = main(["--task", str(task_path), "--agent", str(agent_path),
+                       "--issuer-key", str(key_path),
+                       "--session-id", "sess-cli", "--role", "specialist",
+                       "--head-sha", HEAD, "--tree-identity", TREE, "--out-dir", str(out)])
         self.assertEqual(rc, 0)
-        for name in ("task-contract.json", "agent-profile.json", "skill-receipt.json", "mode-grant.signed.json"):
+        files = {"BRO_TASK_CONTRACT": "task-contract.json",
+                 "BRO_AGENT_PROFILE": "agent-profile.json",
+                 "BRO_SKILL_RECEIPT": "skill-receipt.json",
+                 "BRO_MODE_GRANT": "mode-grant.signed.json"}
+        for name in files.values():
             self.assertTrue((out / name).is_file(), name)
+        # LOADABLE, as the name says: the four files the CLI wrote go through the same two
+        # runtime loaders the hand-built bundle above does. Four files existing is not that —
+        # a CLI that wrote an unbound or unsigned grant would write four files too.
+        with patch.dict(os.environ, {env: str(out / name) for env, name in files.items()}):
+            bundle = load_contract_bundle_from_env(ROOT, now=NOW)
+            self.assertEqual(bundle.task["task_id"], "task-owner-e2e")
+            with patch("bro_contracts.current_commit", return_value=HEAD), \
+                    patch("bro_contracts.current_tree_identity", return_value=TREE):
+                loaded = load_mode_grant_from_env(bundle, "sess-cli", "specialist",
+                                                  root=reg, now=NOW)
+                self.assertEqual(loaded["mode"], "work")
+                self.assertEqual(loaded["agent_id"], AGENT_ID)
+                # ...and it is bound to the session it was issued for, not to any session.
+                with self.assertRaises(ContractError):
+                    load_mode_grant_from_env(bundle, "sess-other", "specialist",
+                                             root=reg, now=NOW)
 
 
 if __name__ == "__main__":

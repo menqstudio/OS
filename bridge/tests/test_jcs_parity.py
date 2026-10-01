@@ -9,14 +9,22 @@ canonical hash equals the value the matching Rust test asserts; if either side's
 canonicalization drifts, both fail.
 """
 import hashlib
-import json
+import pathlib
+import sys
 import unittest
 
+_ENGINE_RUNTIME = pathlib.Path(__file__).resolve().parents[2] / "engine" / "runtime"
+if str(_ENGINE_RUNTIME) not in sys.path:
+    sys.path.insert(0, str(_ENGINE_RUNTIME))
 
-def jcs(obj: dict) -> bytes:
-    """RFC 8785 JCS for a flat ASCII-keyed string map: sorted keys, no whitespace,
-    standard minimal JSON string escaping, UTF-8 bytes."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+import brops_canonical as bc  # noqa: E402
+from bro_signature import canonical_bytes  # noqa: E402
+
+#: RFC 8785 JCS for a flat ASCII-keyed string map: sorted keys, no whitespace, standard minimal
+#: JSON string escaping, UTF-8 bytes. It is the ENGINE's canonicaliser, imported -- a copy of the
+#: `json.dumps` expression here would pin the copy to the Rust digest and leave the function the
+#: signer actually calls free to drift.
+jcs = canonical_bytes
 
 
 class JcsParityTests(unittest.TestCase):
@@ -36,6 +44,10 @@ class JcsParityTests(unittest.TestCase):
             "requested_at": "1000",
         }
         self.assertEqual(hashlib.sha256(jcs(env)).hexdigest(), self._EXPECTED)
+        # ...and the engine's own `request_sha256` builds that envelope and gets the same digest.
+        self.assertEqual(
+            bc.request_sha256(**{k: v for k, v in env.items() if k != "protocol"}),
+            self._EXPECTED)
 
     def test_key_order_does_not_change_the_hash(self):
         # Canonicalization is order-independent (sorted keys) — same map, any input order.

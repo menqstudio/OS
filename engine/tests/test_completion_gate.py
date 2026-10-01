@@ -76,6 +76,10 @@ class CompletionGateTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("missing BRO_COMPLETION_MANIFEST", reason)
 
+    # Each of the three denials below stubs every LATER gate and names its own refusal. With no
+    # ledger, recovery store or receipt store provisioned here the later gates refuse as well
+    # ("missing external BRO_..."), and a bare CompletionError was satisfied by those with the
+    # gate under test never called.
     def test_dirty_repository_denies_completion(self):
         with (
             patch("bro_completion._signed_env", return_value=manifest()),
@@ -85,8 +89,10 @@ class CompletionGateTests(unittest.TestCase):
             patch("bro_completion.validate_evidence_chain"),
             patch("bro_completion._validate_execution_receipts", return_value=[]),
             patch("bro_completion._clean_repository", side_effect=CompletionError("repository is dirty")),
+            patch("bro_completion._no_pending_execution"),
+            patch("bro_completion._no_pending_recovery"),
         ):
-            with self.assertRaises(CompletionError):
+            with self.assertRaisesRegex(CompletionError, "repository is dirty"):
                 validate_completion(TASK, TASK["agent_id"], ROOT)
 
     def test_pending_or_ambiguous_lease_denies_completion(self):
@@ -99,8 +105,9 @@ class CompletionGateTests(unittest.TestCase):
             patch("bro_completion._validate_execution_receipts", return_value=[]),
             patch("bro_completion._clean_repository"),
             patch("bro_completion._no_pending_execution", side_effect=CompletionError("pending or ambiguous execution lease exists")),
+            patch("bro_completion._no_pending_recovery"),
         ):
-            with self.assertRaises(CompletionError):
+            with self.assertRaisesRegex(CompletionError, "pending or ambiguous execution lease"):
                 validate_completion(TASK, TASK["agent_id"], ROOT)
 
     def test_evidence_link_mismatch_denies_completion(self):
@@ -110,8 +117,12 @@ class CompletionGateTests(unittest.TestCase):
             patch("bro_completion._resolved_keys", return_value={}),
             patch("bro_completion._require_signer_identity"),
             patch("bro_completion.validate_evidence_chain", side_effect=CompletionError("evidence chain linkage mismatch")),
+            patch("bro_completion._validate_execution_receipts", return_value=[]),
+            patch("bro_completion._clean_repository"),
+            patch("bro_completion._no_pending_execution"),
+            patch("bro_completion._no_pending_recovery"),
         ):
-            with self.assertRaises(CompletionError):
+            with self.assertRaisesRegex(CompletionError, "evidence chain linkage mismatch"):
                 validate_completion(TASK, TASK["agent_id"], ROOT)
 
     def test_bad_verifier_verdict_denied(self):
@@ -158,8 +169,9 @@ class ConductorStopTests(unittest.TestCase):
 
         Without one the conductor identity is `BRO_ROLE` plus `BRO_AGENT_ID` and
         nothing else, so the exemption is refused rather than granted on the
-        environment's word — and the refusal names the artifact the owner must
-        mint, because nothing in this repository can mint it.
+        environment's word — and the refusal names the artifact that must be
+        presented, because nothing in this engine can mint it: first-launch
+        provisioning does, and no person holds the key (PR #78).
         """
         allowed, reason = self.authorize(self.conductor())
         self.assertFalse(allowed, reason)

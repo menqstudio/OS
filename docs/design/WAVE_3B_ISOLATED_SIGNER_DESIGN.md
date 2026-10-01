@@ -269,6 +269,14 @@ signature**, a structured `refused{reason}` — never a partial/unsigned success
   // snapshot still == durable floor (re-read in the same tx, §1.7)
   ```
 
+  > **NOT IMPLEMENTED (read 2026-10-01).** `ManifestKey` (`core/src/key_manifest.rs`) has no
+  > `key_usage` field — nor `supervisor_id` or `expires_at` — and `broker/src/manifest_resolver.rs`
+  > resolves BOTH the signer key and the supervisor-attestation key with the same
+  > `RECEIPT_ENVELOPE_ARTIFACT_TYPE`, with no check that the two key ids differ. The "disjoint key
+  > sets by construction" below is therefore the design, not a property of the code: today the
+  > separation rests on the two key ids in operator-provisioned config being different keys. Whether
+  > to build the discriminator or accept that is an open security decision, not taken here.
+
   **Enforced type separation:** the receipt-key resolver **rejects** any key whose
   `key_usage != receipt_signing`, and `resolve_attestation_key` **rejects** any key whose
   `key_usage != supervisor_attestation`. A `receipt_signing` key can therefore **never**

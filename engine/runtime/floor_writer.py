@@ -85,6 +85,8 @@ import stat
 import struct
 import sys
 import threading
+import time
+import traceback
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 
@@ -137,7 +139,21 @@ LENGTH_PREFIX_BYTES = 4
 #: §1.7. A TOTAL wall-clock budget for one exchange, armed at the first read and never re-armed.
 #: A per-recv timeout is not a bound: it restarts on every byte, so a peer dripping one byte per
 #: timeout holds a serial loop forever while never once timing out.
+#:
+#: Until 2026-10-01 that paragraph described a constant the code armed as exactly the per-recv
+#: timeout it warns about -- ``sock.settimeout(CONNECTION_BUDGET_S)`` in the accept loop, and a
+#: ``_recv_exactly`` that looped ``recv`` with no deadline. Measured: a 0.4 s "budget" read a
+#: one-byte-per-0.25 s drip to completion after 3.75 s. It is one monotonic DEADLINE now, taken
+#: where the exchange starts (:func:`serve_connection`, :func:`_exchange`) and charged by every
+#: read and by the reply (:func:`_recv_exactly`, :func:`_arm_remaining`).
 CONNECTION_BUDGET_S = 30.0
+
+#: §1.7's arithmetic says "a 64-bit sequence". The bound that makes that sentence true: without
+#: it a peer on the advance list could commit an integer thousands of characters long that fits
+#: the request frame and whose reply -- which repeats it beside more fields -- does not, so the
+#: floor is committed and no reply can ever be framed for it, on this request or any later
+#: ``floor.get``.
+MAX_HEAD_SEQUENCE = 2 ** 63 - 1
 
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 #: A task id is an identifier, not a path: the mark's file name is derived from it, so a value
@@ -204,6 +220,52 @@ class ServiceConfig:
         return self.marks_root / self.install_id
 
 
+def _read_config_under_custody(path: pathlib.Path) -> bytes:
+    """The config's bytes, read from a descriptor whose custody was decided FIRST.
+
+    The config carries the per-op peer allowlist and the install scope, so whoever can write it
+    decides who may advance a floor. :func:`load_service_config` promised *"custody-unverifiable
+    means raise"* from the day it was written and until 2026-10-01 performed ``path.read_text()``
+    and nothing else: a config owned by, or writable by, any other principal was loaded as readily
+    as the provisioned one.
+
+    The rule is the one this module already applies to its two directories, on the same shape
+    (:func:`open_checked_directory`): open with ``O_NOFOLLOW``, decide on :func:`os.fstat` of the
+    open descriptor, and read from THAT descriptor, so the file that was approved is the file that
+    is parsed. Owner is root or this principal -- provisioning writes it ``root:root 0644`` and the
+    service reads it as its own uid -- it must be a regular file nobody else can write, and every
+    ancestor must pass :func:`require_unswappable_ancestry`.
+    """
+    what = "the Floor Writer config"
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        raise FloorWriterError(
+            "scope_unavailable",
+            f"{what} {path}: custody cannot be verified on {sys.platform!r}, which has no "
+            "POSIX owner to check. Unverifiable is a refusal, not a pass")
+    owner_uid = geteuid()
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise _refuse_custody(what, path, "it is not a regular file")
+        if info.st_uid not in (0, owner_uid):
+            raise _refuse_custody(
+                what, path,
+                f"it is owned by uid {info.st_uid}, which is neither root nor uid {owner_uid}; "
+                "that owner decides this service's peer allowlist")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise _refuse_custody(
+                what, path,
+                f"it is group- or world-writable (mode {stat.S_IMODE(info.st_mode):04o}); a "
+                "config another principal can rewrite is that principal's allowlist")
+        require_unswappable_ancestry(path, owner_uid, what)
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            return handle.read()
+    finally:
+        os.close(fd)
+
+
 def load_service_config(env: Optional[Mapping[str, str]] = None) -> ServiceConfig:
     """Read and validate the config named by ``BROPS_FLOOR_WRITER_CONFIG``.
 
@@ -220,7 +282,7 @@ def load_service_config(env: Optional[Mapping[str, str]] = None) -> ServiceConfi
             "peer allowlist come from its own TCB-owned config and from nowhere else")
     path = pathlib.Path(raw)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(_read_config_under_custody(path).decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise FloorWriterError(
             "scope_unavailable", f"cannot read the Floor Writer config {path}: {exc}") from exc
@@ -553,9 +615,12 @@ def read_floor(config: ServiceConfig, task_id: str,
     if not isinstance(record, dict):
         raise FloorWriterError("mark_corrupt", f"the floor for {task_id} is not an object")
     recorded = record.get("head_sequence")
-    if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0:
+    if (isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0
+            or recorded > MAX_HEAD_SEQUENCE):
         raise FloorWriterError(
-            "mark_corrupt", f"the floor for {task_id} is not a non-negative integer")
+            "mark_corrupt",
+            f"the floor for {task_id} is not a non-negative integer within the 64-bit sequence "
+            "range")
     digest = record.get("evidence_head_sha256")
     if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
         raise FloorWriterError(
@@ -756,6 +821,12 @@ def validate(request: Any) -> Tuple[str, Dict[str, Any]]:
                 "malformed",
                 "head_sequence must be a positive integer; sequence 0 is the absence of a "
                 "measured head and cannot be advanced to")
+        if head > MAX_HEAD_SEQUENCE:
+            # Refused BEFORE anything is committed: see MAX_HEAD_SEQUENCE.
+            raise FloorWriterError(
+                "malformed",
+                f"head_sequence must not exceed {MAX_HEAD_SEQUENCE}; the sequence is 64-bit, and "
+                "a larger one could be committed and then never framed in a reply")
         digest = request["evidence_head_sha256"]
         if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
             raise FloorWriterError(
@@ -884,14 +955,17 @@ def read_peer_uid(sock: "socket.socket") -> int:
     return uid
 
 
-def _read_frame(sock: "socket.socket") -> bytes:
+def _read_frame(sock: "socket.socket", deadline: float) -> bytes:
     """One length-prefixed frame, bounded at :data:`MAX_FLOOR_FRAME_BYTES` (§1.7).
 
     Fail-closed on a short header, a zero or oversize declared length, and a truncated body. A
     frame at exactly the cap is accepted: §7's eighth negative tests the boundary on both sides of
     the number, so the comparison is strictly greater-than.
+
+    ``deadline`` is the exchange's one :func:`time.monotonic` deadline. A peer that starves either
+    read past it gets the same short-read refusal a peer that closed early gets.
     """
-    header = _recv_exactly(sock, LENGTH_PREFIX_BYTES)
+    header = _recv_exactly(sock, LENGTH_PREFIX_BYTES, deadline)
     if len(header) != LENGTH_PREFIX_BYTES:
         raise FloorWriterError("malformed", "short length prefix")
     length = int.from_bytes(header, "big")
@@ -900,17 +974,41 @@ def _read_frame(sock: "socket.socket") -> bytes:
     if length > MAX_FLOOR_FRAME_BYTES:
         raise FloorWriterError(
             "oversize", f"frame length {length} exceeds the bound {MAX_FLOOR_FRAME_BYTES}")
-    body = _recv_exactly(sock, length)
+    body = _recv_exactly(sock, length, deadline)
     if len(body) != length:
         raise FloorWriterError("malformed", "truncated frame body")
     return body
 
 
-def _recv_exactly(sock: "socket.socket", n: int) -> bytes:
+def _arm_remaining(sock: "socket.socket", deadline: float) -> bool:
+    """Arm what is LEFT of the exchange's budget on the socket; ``False`` once it is spent.
+
+    Never arms zero: ``settimeout(0)`` is non-blocking mode, the opposite of a deadline at the
+    exact moment the budget runs out.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.0:
+        return False
+    sock.settimeout(remaining)
+    return True
+
+
+def _recv_exactly(sock: "socket.socket", n: int, deadline: float) -> bytes:
+    """Up to ``n`` bytes, stopping at EOF or when the exchange's deadline passes.
+
+    Returns what arrived; the caller reads a short return as a framing refusal. The timeout is
+    re-armed with the REMAINING budget before every ``recv``, so a drip of one byte per interval
+    shortens the next wait instead of restarting it.
+    """
     chunks = []
     got = 0
     while got < n:
-        chunk = sock.recv(n - got)
+        if not _arm_remaining(sock, deadline):
+            break
+        try:
+            chunk = sock.recv(n - got)
+        except (socket.timeout, TimeoutError):
+            break
         if not chunk:
             break
         chunks.append(chunk)
@@ -918,9 +1016,11 @@ def _recv_exactly(sock: "socket.socket", n: int) -> bytes:
     return b"".join(chunks)
 
 
-def _write_frame(sock: "socket.socket", payload: bytes) -> None:
+def _write_frame(sock: "socket.socket", payload: bytes, deadline: float) -> None:
     if len(payload) > MAX_FLOOR_FRAME_BYTES:
         raise FloorWriterError("internal", "reply exceeds the frame bound")
+    if not _arm_remaining(sock, deadline):
+        raise socket.timeout("the connection budget was spent before the frame could be written")
     sock.sendall(len(payload).to_bytes(LENGTH_PREFIX_BYTES, "big") + payload)
 
 
@@ -931,36 +1031,38 @@ def serve_connection(sock: "socket.socket", config: ServiceConfig) -> Dict[str, 
     is taken from the kernel first, and a socket that cannot say who is on the other end never
     gets to send bytes into the parser.
     """
+    deadline = time.monotonic() + CONNECTION_BUDGET_S
     try:
         peer_uid = read_peer_uid(sock)
     except (FloorWriterError, OSError):
         reply = _refusal("peer_denied", "the peer could not be authenticated")
-        _try_send(sock, reply)
+        _try_send(sock, reply, deadline)
         return reply
     try:
-        payload = _read_frame(sock)
+        payload = _read_frame(sock, deadline)
     except FloorWriterError as exc:
         reply = _refusal(exc.reason, exc.detail)
-        _try_send(sock, reply)
+        _try_send(sock, reply, deadline)
         return reply
     except OSError as exc:
         reply = _refusal("malformed", f"unreadable frame: {exc}")
-        _try_send(sock, reply)
+        _try_send(sock, reply, deadline)
         return reply
     try:
         request = json.loads(payload.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
         reply = _refusal("malformed", f"request is not UTF-8 JSON: {exc}")
-        _try_send(sock, reply)
+        _try_send(sock, reply, deadline)
         return reply
     reply = handle(request, config=config, peer_uid=peer_uid)
-    _try_send(sock, reply)
+    _try_send(sock, reply, deadline)
     return reply
 
 
-def _try_send(sock: "socket.socket", reply: Mapping[str, Any]) -> None:
+def _try_send(sock: "socket.socket", reply: Mapping[str, Any], deadline: float) -> None:
     try:
-        _write_frame(sock, json.dumps(reply, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        _write_frame(sock, json.dumps(reply, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+                     deadline)
     except (FloorWriterError, OSError):
         # The verdict already happened. A peer that hung up does not un-commit a floor, and it
         # does not get a second decision either — its retry is answered `idempotent`, which is
@@ -968,7 +1070,7 @@ def _try_send(sock: "socket.socket", reply: Mapping[str, Any]) -> None:
         pass
 
 
-def serve_forever(server: "socket.socket", config: ServiceConfig) -> None:  # pragma: no cover
+def serve_forever(server: "socket.socket", config: ServiceConfig) -> None:
     """The serial accept loop. §1.9: one writer process, so this loop IS the serialization."""
     require_linux("cannot serve floor advancement")
     while True:
@@ -979,8 +1081,15 @@ def serve_forever(server: "socket.socket", config: ServiceConfig) -> None:  # pr
                 continue
             raise
         try:
-            sock.settimeout(CONNECTION_BUDGET_S)
+            # The budget is `serve_connection`'s own deadline, not a timeout armed here: a socket
+            # timeout restarts on every `recv`.
             serve_connection(sock, config)
+        except Exception:  # noqa: BLE001 - one connection must never kill the loop
+            # `serve_connection` answers every fault it can name, and `handle` catches only
+            # `FloorWriterError`. Anything else -- a bug below `handle`, a store fault of an
+            # unforeseen type -- used to end the ONE writer process this topology has (§1.9), on a
+            # single peer's request. The verdict for that peer is already lost; the service is not.
+            traceback.print_exc(file=sys.stderr)
         finally:
             try:
                 sock.close()
@@ -1004,6 +1113,7 @@ def _exchange(endpoint: pathlib.Path, request: Mapping[str, Any]) -> Dict[str, A
     payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(payload) > MAX_FLOOR_FRAME_BYTES:
         raise FloorWriterError("oversize", "the request exceeds the frame bound")
+    deadline = time.monotonic() + CONNECTION_BUDGET_S
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(CONNECTION_BUDGET_S)
@@ -1014,8 +1124,8 @@ def _exchange(endpoint: pathlib.Path, request: Mapping[str, Any]) -> Dict[str, A
             f"the Floor Writer is unreachable ({exc.strerror}). The floor cannot be advanced, so "
             "this completion is not verified — this is NOT 'no floor required'") from exc
     try:
-        _write_frame(sock, payload)
-        body = _read_frame(sock)
+        _write_frame(sock, payload, deadline)
+        body = _read_frame(sock, deadline)
     except (FloorWriterError, OSError) as exc:
         detail = exc.detail if isinstance(exc, FloorWriterError) else str(exc)
         raise FloorWriterError("scope_unavailable",

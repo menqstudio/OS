@@ -20,6 +20,10 @@ name: release
 # docs/RELEASE_SETUP.md §5 (code-audit GREEN + governed chain running + 3b-2/3b-3). That gate
 # is a human/audit judgement and is enforced before tagging, not by this file.
 
+# `workflow_dispatch` starts this from ANY ref, and the build names the release after
+# `github.ref_name`. The preflight therefore also refuses a run that is not for a `v*` tag
+# (`release_ref_problem` in tools/check_release_signing.py reads GITHUB_REF_TYPE and
+# GITHUB_REF_NAME): dispatch it ON the tag, not from a branch.
 on:
   push:
     tags:
@@ -152,6 +156,14 @@ jobs:
       # unchanged, the mutability is gone. Note upstream has since published `action-v1.0.0`
       # on a different commit; moving to it is a version bump for the Owner to make, not
       # something a pinning change should smuggle in.
+      #
+      # ORDER, stated because the header's "before anything is uploaded" is about the
+      # PREFLIGHT only: this action builds AND uploads to the draft release in one step
+      # (`tagName` + `releaseDraft: true`), and the three verification steps run after it.
+      # A build whose signature check then fails has already left its installers on a draft.
+      # The draft is never published by this file, so nothing reaches a user -- but "verified
+      # before upload" is not what happens. Building without publishing, verifying, and only
+      # then uploading is a change to the release path and is the Owner's to make.
       - name: Build + bundle (signed; the preflight guarantees the material is present)
         id: tauri
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2

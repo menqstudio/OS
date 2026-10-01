@@ -1,6 +1,8 @@
 """Tests for tools/check_capabilities.py — the T-010 capability-inventory CI gate."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import sys
@@ -102,7 +104,10 @@ def _default_cap(grants: dict[str, str]) -> str:
     return json.dumps({"identifier": "default", "windows": ["main"], "permissions": perms})
 
 
-class CheckCapabilitiesTests(unittest.TestCase):
+class _Fixture:
+    """The synthetic tree every class here builds. A mixin, not a TestCase: a class that
+    subclasses a TestCase to borrow its helpers re-runs every test it inherits."""
+
     def _tmp(self) -> pathlib.Path:
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
@@ -140,6 +145,7 @@ class CheckCapabilitiesTests(unittest.TestCase):
         }
         return cmds, grants
 
+class CheckCapabilitiesTests(_Fixture, unittest.TestCase):
     def test_consistent_is_green(self):
         root = self._tmp()
         cmds, grants = self._consistent()
@@ -231,6 +237,190 @@ class CheckCapabilitiesTests(unittest.TestCase):
         (base / "src" / "lib.rs").write_text(_lib_rs(cmds, ungated=partial), encoding="utf-8")
         problems = cc.check(root)
         self.assertTrue(any("stale allowlist" in p for p in problems), problems)
+
+
+class EveryInventoryArm(_Fixture, unittest.TestCase):
+    """One fixture per refusal, each tripping ONLY the arm it names and asserting on that
+    arm's own message. Six of these arms could be deleted with every test above green: the
+    fixtures there never had an invalid tier or grant, and where two arms fired on one
+    fixture the assertion matched whichever message happened to carry the command's name.
+    """
+
+    def _problems(self, mutate) -> list[str]:
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        mutate(root / cc.DESKTOP, cmds, grants)
+        return cc.check(root)
+
+    def _only(self, problems: list[str], needle: str) -> None:
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(needle, problems[0])
+
+    def _edit_policy(self, base: pathlib.Path, edit) -> None:
+        path = base / "command-policy.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        edit(doc["commands"])
+        path.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_an_allowlisted_command_also_declared_under_the_wall_is_a_contradiction(self):
+        """Only the manifest names it, so the three-way equality arms see it too -- but
+        "pick one" is the message that says what is actually wrong."""
+        name = sorted(cc.INTENTIONALLY_UNGATED)[0]
+
+        def mutate(base, cmds, grants):
+            (base / "build.rs").write_text(_build_rs(cmds + [name]), encoding="utf-8")
+
+        problems = self._problems(mutate)
+        self.assertTrue(any("both allowlisted-ungated and declared under the wall" in p
+                            and name in p for p in problems), problems)
+
+    def test_a_command_missing_from_the_policy_alone_is_named_as_that(self):
+        """lib.rs, build.rs and default.json all carry it; only the policy does not."""
+        def mutate(base, cmds, grants):
+            more = cmds + ["list_tasks"]
+            (base / "src" / "lib.rs").write_text(_lib_rs(more), encoding="utf-8")
+            (base / "build.rs").write_text(_build_rs(more), encoding="utf-8")
+            (base / "capabilities" / "default.json").write_text(
+                _default_cap({**grants, "list_tasks": "allow"}), encoding="utf-8")
+
+        self._only(self._problems(mutate), "gated-registered != policy: only-in-lib.rs=['list_tasks']")
+
+    def test_a_capability_grant_for_a_command_nothing_registers_is_named_as_that(self):
+        def mutate(base, cmds, grants):
+            (base / "capabilities" / "default.json").write_text(
+                _default_cap({**grants, "ghost_cmd": "allow"}), encoding="utf-8")
+
+        self._only(self._problems(mutate),
+                   "capability grants != gated-registered: only-in-caps=['ghost_cmd']")
+
+    def test_a_command_with_no_capability_entry_is_named_twice_over(self):
+        """The set arm AND the per-command arm; the second is the one that names the
+        policy's own grant, and it was reachable by nothing."""
+        def mutate(base, cmds, grants):
+            trimmed = {c: g for c, g in grants.items() if c != "list_projects"}
+            (base / "capabilities" / "default.json").write_text(
+                _default_cap(trimmed), encoding="utf-8")
+
+        problems = self._problems(mutate)
+        self.assertIn("list_projects: policy grant 'allow' but no capability entry", problems)
+        self.assertTrue(any("missing-from-caps=['list_projects']" in p for p in problems), problems)
+        self.assertEqual(len(problems), 2, problems)
+
+    def test_an_invalid_tier_is_red(self):
+        def mutate(base, cmds, grants):
+            self._edit_policy(base, lambda c: c["list_projects"].update(tier="Z"))
+
+        self._only(self._problems(mutate), "list_projects: invalid tier 'Z'")
+
+    def test_an_invalid_grant_is_red(self):
+        def mutate(base, cmds, grants):
+            self._edit_policy(base, lambda c: c["list_projects"].update(grant="maybe"))
+
+        self._only(self._problems(mutate), "list_projects: invalid grant 'maybe'")
+
+
+class TheHandlerListIsReadInFull(_Fixture, unittest.TestCase):
+    def test_a_command_registered_with_no_module_prefix_is_seen(self):
+        """`use commands::greet;` then a bare `greet,` in the list. The old pattern needed
+        at least one `mod::`, so this command was registered, ungated, and invisible."""
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        lib = _lib_rs(cmds).replace("        ])", "            greet,\n        ])")
+        (root / cc.LIB_RS).write_text(lib, encoding="utf-8")
+        self.assertIn("greet", cc.registered_commands(root))
+        problems = cc.check(root)
+        self.assertTrue(any("only-in-lib.rs=['greet']" in p for p in problems), problems)
+
+    def test_an_entry_that_is_not_a_command_path_is_refused_not_skipped(self):
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        lib = _lib_rs(cmds).replace(
+            "        ])", "            #[cfg(windows)] commands::only_here,\n        ])")
+        (root / cc.LIB_RS).write_text(lib, encoding="utf-8")
+        with self.assertRaises(SystemExit) as raised:
+            cc.registered_commands(root)
+        self.assertIn("cannot", str(raised.exception))
+
+
+class OneCapabilitySource(_Fixture, unittest.TestCase):
+    """Tauri enables every file under `capabilities/`; the gate read `default.json` alone."""
+
+    def _root(self) -> pathlib.Path:
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        return root
+
+    def test_a_second_capability_file_is_red(self):
+        """The hole: `extra.json` granting `allow-decide-approval` left the gate GREEN."""
+        root = self._root()
+        extra = root / cc.CAPABILITIES_DIR / "extra.json"
+        extra.write_text(json.dumps({"identifier": "extra", "windows": ["main"],
+                                     "permissions": ["allow-decide-approval"]}), encoding="utf-8")
+        problems = cc.check(root)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("capabilities/extra.json", problems[0])
+        self.assertIn("does not read", problems[0])
+
+    def test_a_capability_file_in_a_subdirectory_or_another_format_is_red(self):
+        root = self._root()
+        nested = root / cc.CAPABILITIES_DIR / "desktop"
+        nested.mkdir()
+        (nested / "more.toml").write_text('identifier = "more"\n', encoding="utf-8")
+        self.assertTrue(any("capabilities/desktop/more.toml" in p for p in cc.check(root)))
+
+    def test_a_config_that_names_its_own_capability_list_is_red(self):
+        root = self._root()
+        for name in ("tauri.conf.json", "tauri.linux.conf.json"):
+            with self.subTest(conf=name):
+                conf = root / cc.DESKTOP / name
+                conf.write_text(json.dumps(
+                    {"app": {"security": {"capabilities": ["default"]}}}), encoding="utf-8")
+                problems = cc.check(root)
+                conf.unlink()
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(f"{name} sets app.security.capabilities", problems[0])
+
+    def test_a_config_with_no_capability_list_is_green(self):
+        root = self._root()
+        (root / cc.DESKTOP / "tauri.conf.json").write_text(
+            json.dumps({"app": {"security": {"csp": "default-src 'self'"}}}), encoding="utf-8")
+        self.assertEqual(cc.check(root), [])
+
+    def test_this_repository_has_exactly_one_capability_source(self):
+        repo = pathlib.Path(__file__).resolve().parents[1]
+        self.assertEqual(cc.capability_source_problems(repo), [])
+
+
+class TheExitCode(_Fixture, unittest.TestCase):
+    """CI reads `main()`'s return value, and every test above reads `check()`. Turning
+    `if problems:` into `if False:` left the whole module green."""
+
+    def _main(self, root: pathlib.Path) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cc.main(["--root", str(root)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_consistent_tree_exits_zero_and_says_green(self):
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, grants)
+        code, out, _ = self._main(root)
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_an_inconsistent_tree_exits_one_and_names_the_problem(self):
+        root = self._tmp()
+        cmds, grants = self._consistent()
+        self._write(root, cmds, {**grants, "decide_approval": "allow"})
+        code, out, err = self._main(root)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("decide_approval must be DENIED", err)
 
 
 class TierXProtectionRules(unittest.TestCase):

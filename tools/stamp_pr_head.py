@@ -32,9 +32,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# The gate's own resolver: this tool writes the marker `check_repo_state.py` reads, so the two
+# must be asking about the same repository. See `main()`.
+from check_repo_state import _repo_slug  # noqa: E402
 
 MARKER = re.compile(r"^AUDIT_CANDIDATE_HEAD:\s*[0-9a-f]{40}\s*$", re.M)
 
@@ -53,8 +59,8 @@ def restamp(body: str, sha: str) -> str:
     a micro-optimisation: stripping and re-appending MOVES the marker to the end, so a body with
     anything after it -- this project's pull requests end with an attribution line, after the
     marker -- came back different even though it already said the right thing, and the caller wrote
-    it. A write fires `pull_request: edited`, which ci.yml subscribes to on purpose, so all 22 jobs
-    restarted and the run in flight was cancelled. Measured 2026-09-19: 26 `ci` pull-request runs
+    it. A write fires `pull_request: edited`, which ci.yml subscribes to on purpose, so every job
+    of `ci` restarted and the run in flight was cancelled. Measured 2026-09-19: 26 `ci` pull-request runs
     over 11 heads, 19 of them cancelled, every head with more than one run.
 
     Otherwise every existing marker goes first. Appending without stripping is how a body ends up
@@ -118,8 +124,21 @@ def write_body(repo: str, pr: int, body: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pr", type=int, required=True)
-    ap.add_argument("--repo", default="menqstudio/OS")
+    ap.add_argument("--repo", default=None,
+                    help="owner/name; default: the repository this checkout's remote names")
     args = ap.parse_args()
+
+    # The slug is RESOLVED, not a literal. It was `default="menqstudio/OS"` while the tip two
+    # lines below is read from `git ls-remote origin` -- so in a fork the body would be read from
+    # and written to one repository and the head compared with another's. That literal is the
+    # eighth audit's `H-05`, fixed in check_repo_state.py and in sync_active_pr.py and left
+    # here. No slug, no write: a tool that cannot say which repository it is stamping has not
+    # established what the marker would be about.
+    repo = args.repo or _repo_slug()
+    if not repo:
+        raise SystemExit("RED: could not establish which repository this checkout is (`gh repo "
+                         "view`), and no --repo was given. Nothing has been written.")
+    args.repo = repo
 
     meta = json.loads(run("gh", "pr", "view", str(args.pr), "-R", args.repo,
                           "--json", "body,headRefName"))
@@ -138,8 +157,9 @@ def main() -> int:
 
     # Idempotence is not a nicety here, it is minutes. `.github/workflows/ci.yml` listens for
     # `pull_request: edited` BY DESIGN -- a body edit has to re-run `Repo-state` so the marker is
-    # re-read -- so a PATCH that changes nothing still starts all 21 jobs of `ci` and cancels the
-    # run already in flight. A cancelled run is not a reading of anything, which is the rule this
+    # re-read -- so a PATCH that changes nothing still starts every job of `ci` and cancels the
+    # run already in flight. (This comment said "all 21 jobs" and the docstring above "all 22"
+    # -- two counts for one workflow in one file, one of them wrong. Neither is kept.) A cancelled run is not a reading of anything, which is the rule this
     # repository states about `main` in that same file. Measured 2026-09-19: 26 `ci` runs over 11
     # heads, 19 of them cancelled, every head with more than one run.
     #

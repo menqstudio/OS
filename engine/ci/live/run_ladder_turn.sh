@@ -102,6 +102,8 @@ EXECUTOR_USER=brops-executor
 SIDECAR_USER=brops-sidecar
 
 [ "$(id -u)" = "0" ] || { echo "FAIL: run as root (sudo) — real service accounts + setuid launcher"; exit 1; }
+# The recorder invoker the config pins is this absolute path (provision_keys.SUDO_BIN).
+[ -x /usr/bin/sudo ] || { echo "FAIL: /usr/bin/sudo is not executable; the recorder invoker is pinned to it"; exit 1; }
 for u in "$BROKER_USER" "$CHALLENGE_USER" "$SUPERVISOR_USER" "$RECORDER_USER" "$SIGNER_USER" \
          "$EXECUTOR_USER" "$SIDECAR_USER"; do
   id -u "$u" >/dev/null 2>&1 || { echo "FAIL: the account $u is not provisioned"; exit 1; }
@@ -168,6 +170,9 @@ SUPSTATE="$LIVE/supervisor-state"     # the supervisor's PRIVATE durable ledger 
 RECSTATE="$LIVE/recorder-state"       # the recorder's PRIVATE evidence head counter (F-02), 0750
 STAGING="$LIVE/supervisor-staging"    # the §4.10(a)(b)(c) staging root — supervisor-private, 0700
 LADDER="$LIVE/ladder"                 # this proof's working files + evidence bundle
+# The one directory OUTSIDE $LIVE this kit changes. A variable only so the test can run the
+# host-record / host-restore blocks against a directory that is not the real /opt.
+OPT_DIR=/opt
 rm -rf "$LIVE"
 mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$STAGING" \
          "$LADDER/evidence" "$LIVE/engine" "$LIVE/broker-state"
@@ -290,6 +295,8 @@ policy = {
     "report_dir": ex["report_dir"],
     "evidence_state_dir": ex["evidence_state_dir"],
 }
+# The recorder refuses a relative/traversing/trailing-slash path, so a config that carries one has to
+# fail HERE — loudly, at provisioning — rather than as a puzzling refusal in the middle of a turn.
 for key in ("store_dir", "launcher_path", "executor_path", "lease_path", "report_dir",
             "evidence_state_dir"):
     value = policy[key]
@@ -323,10 +330,16 @@ chmod 0644 "$TCB"/*.ipc-policy.json "$TCB/challenge-key-registry.json" "$LADDER_
 # Same topology as the §5 kit, plus the sidecar in `brops-ipc` (it connects to the supervisor
 # socket and to nothing else — it is deliberately in NEITHER `brops-store` NOR `brops-report`,
 # because §2.4 declares it compromised and it has no business reading a governed reply).
+# IDENTICAL in run_live_turn.sh and run_ladder_turn.sh (`test_live_sudoers_install.py` holds the two
+# copies equal). The member list is SET, not appended to. The two kits share these group names and
+# state different memberships for `brops-report` (the broker in the §5 kit, the supervisor in the
+# ladder kit), and `usermod -aG` only ever added: on a box that ran both, the broker stayed in
+# `brops-report` under a comment calling its absence "the tighter arrangement".
 add_group() {  # <group> <members...>
-  local g="$1"; shift
+  local g="$1" members; shift
   getent group "$g" >/dev/null || groupadd --system "$g" || return 1
-  for m in "$@"; do usermod -aG "$g" "$m" || return 1; done
+  members="$(IFS=,; printf '%s' "$*")"
+  gpasswd -M "$members" "$g" >/dev/null || return 1
 }
 add_group brops-store  "$SUPERVISOR_USER" "$RECORDER_USER" || { echo "FAIL: brops-store group";  exit 1; }
 add_group brops-report "$RECORDER_USER"   "$SUPERVISOR_USER" || { echo "FAIL: brops-report group"; exit 1; }
@@ -469,6 +482,28 @@ cleanup() {
   rm -f "$SUDOERS" "$DRIVER_SUDOERS"
   sudoers_stage_end
   setfacl -x "u:$BROKER_USER" /etc/sudoers.d 2>/dev/null || true
+  # >>> host-restore >>>
+  # IDENTICAL in run_live_turn.sh and run_ladder_turn.sh (`test_live_sudoers_install.py` holds
+  # the two copies equal and runs them). Put back what the kit changed OUTSIDE its own root, and
+  # defuse what it leaves INSIDE it. Until 2026-10-01 neither kit did either: /opt stayed
+  # root:root 0755 with every ACL beneath it stripped, and a setuid-root launcher and the kit
+  # root's PRIVATE key stayed on disk until the next run's `rm -rf`.
+  #
+  # Every variable is read as `${X:-}`. This trap is armed before most of them are assigned, and
+  # an exit that early changed nothing there is to undo.
+  if [ -n "${EVIL_LAUNCHER:-}" ]; then rm -f -- "$EVIL_LAUNCHER"; fi
+  if [ -n "${TCB:-}" ] && [ -f "$TCB/privileged-launcher.bin" ]; then
+    chmod u-s "$TCB/privileged-launcher.bin" 2>/dev/null || true
+  fi
+  if [ -n "${KEYS:-}" ]; then rm -f -- "$KEYS/root.priv"; fi
+  if [ -n "${OPT_DIR:-}" ] && [ -n "${OPT_RESTORE_OWNER:-}" ] && [ -n "${OPT_RESTORE_MODE:-}" ]; then
+    chown "$OPT_RESTORE_OWNER" "$OPT_DIR" 2>/dev/null || true
+    chmod "$OPT_RESTORE_MODE" "$OPT_DIR" 2>/dev/null || true
+    if [ -n "${OPT_RESTORE_ACL:-}" ]; then
+      printf '%s\n' "$OPT_RESTORE_ACL" | setfacl --restore=- 2>/dev/null || true
+    fi
+  fi
+  # <<< host-restore <<<
 }
 trap cleanup EXIT
 
@@ -481,7 +516,10 @@ cfg = json.load(open(sys.argv[1]))
 ex = cfg["execution"]
 invoker_user, recorder_user, out_path = sys.argv[2], sys.argv[3], sys.argv[4]
 command = ex["recorder_command"]
-if command[:1] != ["sudo"] or command[1:4] != ["-n", "-u", recorder_user] or len(command) != 5:
+# The invoker is an ABSOLUTE path to sudo, never the bare word: the caller executes element 0 as
+# given, and a bare name is whatever its $PATH says it is.
+if (not command[:1] or not command[0].startswith("/") or command[0].rsplit("/", 1)[-1] != "sudo"
+        or command[1:4] != ["-n", "-u", recorder_user] or len(command) != 5):
     print("unexpected recorder_command %r" % (command,), file=sys.stderr)
     sys.exit(1)
 recorder_bin = command[4]
@@ -869,8 +907,26 @@ chmod 0644 "$BROKER_ANCHOR_IM" "$BROKER_CONFIG_IM"
 chown 0:0 "$LIVE" "$TCB" "$BIN"; chmod 0755 "$LIVE" "$TCB" "$BIN"
 chown -R 0:0 "$LIVE/engine" "$LIVE/bridge"
 find "$LIVE/engine" "$LIVE/bridge" -type d -exec chmod 0755 {} +
-chown 0:0 /opt; chmod 0755 /opt
-if command -v setfacl >/dev/null 2>&1; then setfacl -Rb /opt "$LIVE" 2>/dev/null || true; fi
+# >>> host-record >>>
+# IDENTICAL in run_live_turn.sh and run_ladder_turn.sh. What $OPT_DIR WAS, recorded before it is
+# touched, so `cleanup` puts it back on every exit path. The kit needs it root-owned 0755 while it
+# runs (the §2.5 floor refuses a writable ancestor); it has no business leaving a machine's /opt
+# different from how it found it.
+OPT_RESTORE_OWNER="$(stat -c '%u:%g' "$OPT_DIR")" || OPT_RESTORE_OWNER=""
+OPT_RESTORE_MODE="$(stat -c '%a' "$OPT_DIR")" || OPT_RESTORE_MODE=""
+OPT_RESTORE_ACL=""
+if command -v getfacl >/dev/null 2>&1; then
+  OPT_RESTORE_ACL="$(getfacl -p "$OPT_DIR" 2>/dev/null)" || OPT_RESTORE_ACL=""
+fi
+chown 0:0 "$OPT_DIR"; chmod 0755 "$OPT_DIR"
+# The mode bits are only the whole truth if there is no ACL beside them, so the ACLs are stripped
+# from $OPT_DIR ITSELF and from the kit's own tree. This was `setfacl -Rb /opt "$LIVE"`: recursive
+# over ALL of /opt, i.e. over every other package installed there, none of which is this kit's.
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -b "$OPT_DIR" 2>/dev/null || true
+  setfacl -Rb "$LIVE" 2>/dev/null || true
+fi
+# <<< host-record <<<
 echo "== TCB ancestor modes =="
 ls -ld / /opt "$LIVE" "$TCB" "$BIN" "$LIVE/bridge" "$LIVE/engine/ci/live" /etc /etc/sudoers.d
 

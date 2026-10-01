@@ -8,7 +8,7 @@ startup:
   * the operator-root trust anchor is pinned from an operator-controlled FILE outside
     the repository (BRO_OPERATOR_ROOT_PUBKEY_FILE) — not the raw CI env var, which a
     process that can set its own environment could also set;
-  * the trusted-key registry authenticates against that pin, carries the owner-held
+  * the trusted-key registry authenticates against that pin, carries the delegated
     recovery authority (blocker 7), binds every builder/verifier key to a subject
     agent id (blocker 6b — an unbound signer is not an identity), and ships no private
     key material;
@@ -46,6 +46,13 @@ from bro_signature import (
 
 # Machine-local ledgers/stores whose value, when configured, must be an absolute path
 # outside the repository so runtime state is never committable.
+#
+# EVERY one the runtime reads, which is what the docstring above promises ("every machine-local
+# ledger/store that is configured"). The list held six until 2026-10-01 and the runtime read
+# ten: the audit ledger, the mode-grant nonce ledger, the session-state directory and the
+# evidence head floor were each enforced at USE by the module that reads them and checked by
+# no preflight. `engine/tests/test_deploy_preflight.py` now derives the set from the runtime's
+# own source, so an eleventh cannot be added there and forgotten here.
 LEDGER_VARS = (
     "BRO_EXECUTION_LEASE_LEDGER",
     "BRO_RECOVERY_STORE",
@@ -53,6 +60,10 @@ LEDGER_VARS = (
     "BRO_EVIDENCE_STORE",
     "BRO_SHADOW_LEDGER",
     "BRO_RELEASE_LEDGER",
+    "BRO_AUDIT_LEDGER",
+    "BRO_MODE_GRANT_NONCE_LEDGER",
+    "BRO_SESSION_STATE_DIR",
+    "BRO_EVIDENCE_HEAD_FLOOR",
 )
 
 

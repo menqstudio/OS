@@ -278,7 +278,12 @@ def check_phase_declared(root: pathlib.Path, session: str | None, res: Result) -
         return
     try:
         import check_roadmap_order as roadmap
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # RED with a reason, as check_canon does for the same failure. This returned in
+        # silence, against this file's own rule: "I could not check" and "it is fine" are
+        # different answers, and a session id was GIVEN, so the question was asked.
+        res.bad(f"the roadmap-order gate could not be imported: {exc}",
+                "restore tools/check_roadmap_order.py")
         return
     ok, why = roadmap.verify_declaration(root, session)
     if not ok:

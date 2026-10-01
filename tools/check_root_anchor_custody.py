@@ -39,6 +39,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from check_no_owner_key_ceremony import TEXT_EXT  # noqa: E402
+
 ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(
     __file__).resolve().parents[1]
 
@@ -51,15 +54,18 @@ TCB_FILES = (
 PRODUCTION_CONST = "ROOT_PUBLIC_KEY_HEX"
 DEMONSTRATION_CONST = "DEMO_ROOT_PUBLIC_KEY_HEX"
 
-#: 64 lowercase hex, delimited so a 128-hex blob is not read as two seeds.
-HEX32 = re.compile(r"(?<![0-9a-fA-F])([0-9a-f]{64})(?![0-9a-fA-F])")
+#: 64 hex in EITHER case, delimited so a 128-hex blob is not read as two seeds. Lowercase-only until
+#: T-145: the same 32 bytes written `AB…` were not a literal, so an uppercase seed was never derived.
+HEX32 = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{64})(?![0-9a-fA-F])")
 
 #: Text the sweep reads. A binary is not where a seed gets pasted by accident, and decoding every
 #: tracked byte would make this gate slow enough to be switched off.
-SWEPT_EXT = {
-    ".rs", ".py", ".ts", ".tsx", ".js", ".json", ".md", ".yml", ".yaml", ".toml", ".sql",
-    ".sh", ".ps1", ".txt", ".cfg", ".ini", ".env", ".html", ".css", ".lock",
-}
+#:
+#: The SAME object as the ceremony gate's set, not a copy of it. This gate kept its own list until
+#: T-145 and the two drifted: that one learned to read suffixless files (`deb/postinst`, the git
+#: hooks) in T-135 and this one never did, so six tracked files were swept for a ceremony
+#: instruction and not for a seed.
+SWEPT_EXT = TEXT_EXT
 
 
 def tracked_files(root: pathlib.Path) -> list[str] | str:
@@ -156,7 +162,7 @@ def main() -> int:
                 literals += 1
                 try:
                     pub = Ed25519PrivateKey.from_private_bytes(
-                        bytes.fromhex(literal)).public_key().public_bytes_raw().hex()
+                        bytes.fromhex(literal.lower())).public_key().public_bytes_raw().hex()
                 except (ValueError, TypeError):
                     continue
                 if pub in wanted and pub not in seen:

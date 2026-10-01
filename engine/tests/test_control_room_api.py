@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from bro_control_room_api import (ACTOR_ATTESTATION_MISSING, ACTOR_PROVEN_BY_SESSION,
                                   ACTOR_PROVEN_PER_COMMAND, CONTROL_ROOM_ACTOR_ARTIFACT,
-                                  CONTROL_ROOM_COMMAND_ARTIFACT,
+                                  CONTROL_ROOM_COMMAND_ARTIFACT, OWNER_ACTOR_UNPROVABLE,
                                   ControlRoomAPIError, ControlRoomAPIV1)
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1
 from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE
@@ -218,11 +218,18 @@ class ControlRoomActorProofTests(unittest.TestCase):
     must present one, verified against the operator-signed trusted-key registry with
     real Ed25519, bound to that role and agent id, and unexpired.
 
-    The owner has no such credential and this change does not invent one: there is no
-    owner-authority artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no signature
-    field in `schemas/control-room-command.schema.json`, and no trusted key that could
-    sign either. An owner-issued command is therefore refused BY NAME, which is the
-    honest state — not validated on its own say-so.
+    The owner is proven PER COMMAND: `control-room-command` is registered in
+    `bro_signature.ARTIFACT_AUTHORITY` under the delegated `control-room` authority, the
+    schema carries `artifact_type` / `key_id` / `signature`, and `_prove_command_actor`
+    verifies the artifact and binds it to this exact command (command_id, task_id, command).
+    An owner command presented with NO artifact, or with one a key the registry does not
+    grant the type to signed, is still refused by name — it is not validated on its own
+    say-so. (This paragraph said the artifact type, the signature fields and the key did not
+    exist, beside tests in this class that present all three and are accepted.)
+
+    What the engine does not have is the artifact on a real deployment: the install
+    provisions the `control-room` key and nothing in the shipped product signs a command
+    with it yet. That is O-4, and it is not a gap in this code.
     """
 
     def setUp(self) -> None:
@@ -331,14 +338,23 @@ class ControlRoomActorProofTests(unittest.TestCase):
 
         It used to list three code changes that would close O-4. All three landed, so a reader
         following that message would have gone off to build what already existed. What is missing
-        now is the Owner's signature, and only one of those two is actionable by whoever hits it.
+        now is the signed artifact — the install provisions the key and nothing in the shipped
+        product calls the mint yet (PR #78) — and only one of those two is actionable by whoever
+        hits it.
         """
         owner = self.command(requested_by_type="owner", requested_by="owner-gev")
         with self.assertRaises(ControlRoomAPIError) as caught:
             self.api.validate_command_intent(owner, now_epoch=self.now + 1,
                                              actor_attestation=None)
         message = str(caught.exception)
-        self.assertIn(ACTOR_ATTESTATION_MISSING, message)
+        # The OWNER's refusal, naming the OWNER's artifact. This asserted
+        # ACTOR_ATTESTATION_MISSING, i.e. that an owner is told to present a
+        # `conductor-session` -- the one artifact `_prove_command_actor` refuses for an owner.
+        self.assertIn(OWNER_ACTOR_UNPROVABLE, message)
+        self.assertIn("control-room-command", message)
+        self.assertNotIn(ACTOR_ATTESTATION_MISSING, message)
+        self.assertNotIn("conductor-session", message)
+        self.assertIn("owner/owner-gev", message)
 
     def test_an_owner_command_bound_to_this_command_is_proven(self) -> None:
         owner = self.command(requested_by_type="owner", requested_by="owner-gev")

@@ -114,7 +114,7 @@ class MarkerPositionTests(unittest.TestCase):
 
     The measured defect: `restamp()` stripped every marker and re-appended at the end, so a body
     whose marker was already right but not LAST came back reordered. The caller then wrote it, and a
-    write fires `pull_request: edited`, which ci.yml subscribes to by design — all 22 jobs restart
+    write fires `pull_request: edited`, which ci.yml subscribes to by design — every job restarts
     and the run in flight is cancelled. 2026-09-19: 26 `ci` pull-request runs over 11 heads, 19
     cancelled, every head with more than one run.
     """
@@ -159,20 +159,25 @@ class WriteDecisionTests(unittest.TestCase):
 
     def setUp(self):
         self.written = []
-        self._run, self._write = st.run, st.write_body
+        self.viewed = []
+        self._run, self._write, self._slug = st.run, st.write_body, st._repo_slug
         st.write_body = lambda repo, pr, body: self.written.append((repo, pr, body))
+        # The resolver asks `gh repo view`. A test must not, and must say which repository it
+        # is pretending to be -- a fork, so a literal `menqstudio/OS` anywhere would show.
+        st._repo_slug = lambda: "someone/fork"
         self.addCleanup(self._restore)
 
     def _restore(self):
-        st.run, st.write_body = self._run, self._write
+        st.run, st.write_body, st._repo_slug = self._run, self._write, self._slug
 
-    def _drive(self, body: str, pushed: str, local: str | None = None):
+    def _drive(self, body: str, pushed: str, local: str | None = None, extra=()):
         """Run main() against a fake GitHub whose body is `body` and whose tip is `pushed`."""
         local = pushed if local is None else local
         import json as _json
 
         def fake_run(*args: str) -> str:
             if args[:2] == ("gh", "pr"):
+                self.viewed.append(args)
                 return _json.dumps({"body": body, "headRefName": "some/branch"})
             if args[:2] == ("git", "ls-remote"):
                 return f"{pushed}\trefs/heads/some/branch\n"
@@ -182,11 +187,30 @@ class WriteDecisionTests(unittest.TestCase):
 
         st.run = fake_run
         argv = sys.argv
-        sys.argv = ["stamp_pr_head.py", "--pr", "230"]
+        sys.argv = ["stamp_pr_head.py", "--pr", "230", *extra]
         try:
             return st.main()
         finally:
             sys.argv = argv
+
+    def test_the_repository_is_the_one_this_checkout_names_not_a_literal(self):
+        """`--repo` defaulted to the literal `menqstudio/OS` while the tip comes from
+        `git ls-remote origin`: in a fork, the body of one repository and the head of another."""
+        self.assertEqual(self._drive("prose", SHA), 0)
+        self.assertIn("someone/fork", self.viewed[0])
+        self.assertEqual([repo for repo, _pr, _body in self.written], ["someone/fork"])
+        self.assertFalse(any("menqstudio/OS" in str(call) for call in self.viewed + self.written))
+
+    def test_an_explicit_repo_wins_over_the_resolved_one(self):
+        self.assertEqual(self._drive("prose", SHA, extra=("--repo", "other/place")), 0)
+        self.assertEqual([repo for repo, _pr, _body in self.written], ["other/place"])
+
+    def test_a_repository_that_cannot_be_established_is_a_refusal_before_any_read(self):
+        st._repo_slug = lambda: None
+        with self.assertRaises(SystemExit) as caught:
+            self._drive("prose", SHA)
+        self.assertIn("could not establish which repository", str(caught.exception))
+        self.assertEqual((self.viewed, self.written), ([], []))
 
     def test_a_real_pr_body_already_at_the_pushed_sha_is_not_rewritten(self):
         """The regression, in the shape a real pull request has: footer AFTER the marker."""

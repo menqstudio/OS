@@ -373,5 +373,96 @@ class ImportOrderingTests(unittest.TestCase):
         self.assertEqual(self._import_the_wall("-B"), set())
 
 
+class FoundationValidatorTests(unittest.TestCase):
+    """`tools/bro_validate.py` must not mint the shadow the wall refuses on.
+
+    It syntax-checked its targets with `py_compile.compile`, which writes
+    `__pycache__/*.pyc` beside every source under runtime/ and tools/ whatever `-B` or
+    PYTHONDONTWRITEBYTECODE say. CI deleted them again in a later step; a local run left
+    them in the tree. (Its reported skill count is tested here too, being the same file.)
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        self.addCleanup(sys.path.remove, str(ROOT / "tools"))
+        import bro_validate
+        self.validate = bro_validate
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-validate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def refused(self, call, *args) -> str:
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
+            call(*args)
+        self.assertEqual(caught.exception.code, 1)
+        self.assertIn("RED:", out.getvalue())
+        return out.getvalue()
+
+    def test_the_syntax_check_writes_no_bytecode(self):
+        for rel in ("runtime/good.py", "tools/also_good.py"):
+            (self.tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.tmp / rel).write_text("x = 1\n", encoding="utf-8")
+        self.validate.check_compiles(self.tmp, ["runtime/good.py", "tools/also_good.py"])
+        self.assertEqual([str(p) for p in self.tmp.rglob("__pycache__")], [])
+        self.assertEqual([str(p) for p in self.tmp.rglob("*.pyc")], [])
+
+    def test_the_syntax_check_still_refuses_a_file_that_does_not_compile(self):
+        (self.tmp / "runtime").mkdir()
+        (self.tmp / "runtime" / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+        self.assertIn("runtime/bad.py does not compile",
+                      self.refused(self.validate.check_compiles, self.tmp, ["runtime/bad.py"]))
+        self.assertIn("cannot read runtime/gone.py",
+                      self.refused(self.validate.check_compiles, self.tmp, ["runtime/gone.py"]))
+
+    def test_running_the_validator_mints_no_bytecode_even_without_dash_B(self):
+        # Whatever the validator concludes in this environment, the question here is
+        # only what it leaves behind: with no -B and no PYTHONDONTWRITEBYTECODE, a run
+        # of the real script must put nothing in the cache it is pointed at.
+        prefix = pathlib.Path(tempfile.mkdtemp(prefix="bro-pycprefix-"))
+        self.addCleanup(shutil.rmtree, prefix, ignore_errors=True)
+        subprocess.run([sys.executable, "tools/bro_validate.py"], cwd=str(ROOT),
+                       capture_output=True, text=True,
+                       env=clean_env(PYTHONPYCACHEPREFIX=str(prefix)))
+        # The standard library caches itself there before any line of ours runs; the
+        # engine's own modules (bro_*, broctl) are the ones under digest roots.
+        self.assertEqual(sorted(p.name for p in prefix.rglob("bro*.pyc")), [])
+
+    def skills_tree(self, ids, *, count=None, entry_ids=None, dirs=None):
+        for skill in (ids if dirs is None else dirs):
+            (self.tmp / "skills" / skill).mkdir(parents=True, exist_ok=True)
+            (self.tmp / "skills" / skill / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+        return {
+            "schema": 2, "count": len(ids) if count is None else count, "skills": list(ids),
+            "entries": [{"id": skill, "path": f"skills/{skill}/SKILL.md"}
+                        for skill in (ids if entry_ids is None else entry_ids)],
+        }
+
+    def test_the_skill_count_is_derived_and_agrees_with_the_shipped_index(self):
+        index = json.loads((ROOT / "skills" / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.validate.count_skills(ROOT, index), len(index["skills"]))
+        self.assertEqual(self.validate.count_skills(self.tmp, self.skills_tree(["a", "b"])), 2)
+
+    def test_a_stored_count_that_disagrees_with_the_list_is_refused(self):
+        # The GREEN line printed this field as fact, and nothing compared it to anything.
+        index = self.skills_tree(["a", "b"], count=7)
+        self.assertIn("count says 7, the list holds 2",
+                      self.refused(self.validate.count_skills, self.tmp, index))
+
+    def test_entries_and_directories_must_describe_the_same_skills(self):
+        index = self.skills_tree(["a", "b"], entry_ids=["a"])
+        self.assertIn("`entries` does not describe exactly",
+                      self.refused(self.validate.count_skills, self.tmp, index))
+        index = self.skills_tree(["a", "b"], dirs=["a", "b", "c"])
+        self.assertIn("present but unlisted ['c']",
+                      self.refused(self.validate.count_skills, self.tmp, index))
+        index = self.skills_tree(["a", "b", "d"], dirs=[])
+        self.assertIn("listed but absent ['d']",
+                      self.refused(self.validate.count_skills, self.tmp, index))
+        index = self.skills_tree(["a", "a"], dirs=[])
+        self.assertIn("more than once", self.refused(self.validate.count_skills, self.tmp, index))
+
+
 if __name__ == "__main__":
     unittest.main()

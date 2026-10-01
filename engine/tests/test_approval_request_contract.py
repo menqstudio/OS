@@ -23,7 +23,12 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sys
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from _prerequisites import CONTRACTS_SOURCE, requires  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
@@ -154,6 +159,7 @@ class TheTwoCopiesAreOneContract(unittest.TestCase):
     """`contracts/` is the source; `engine/schemas/` is vendored. A gate holds them byte-identical and
     this names it, so a tree that loses the gate still fails on the fact."""
 
+    @requires(CONTRACTS_SOURCE)
     def test_the_source_and_the_vendored_copy_are_byte_identical(self):
         self.assertEqual(SOURCE_PATH.read_bytes(), SCHEMA_PATH.read_bytes())
 

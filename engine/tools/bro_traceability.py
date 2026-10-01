@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import json
 import pathlib
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -279,7 +280,12 @@ def verify_law_index_sync(root: pathlib.Path, records: list[dict]) -> None:
     text = index_path.read_text(encoding="utf-8")
     for record in records:
         lid, name = record.get("id"), record.get("name", "")
-        _require(lid in text, f"human view drift: {lid} absent from LAW_INDEX.md")
+        # A whole TOKEN, not a substring. `lid in text` was satisfied for `L1` by `L10`..`L16`,
+        # so an index that had lost (or renumbered) L1 still "contained" it. The id must stand
+        # alone: not preceded or followed by another letter or digit.
+        _require(isinstance(lid, str) and re.search(
+                     r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(lid), text) is not None,
+                 f"human view drift: {lid} absent from LAW_INDEX.md")
         _require(name == "" or name in text, f"human view drift: name of {lid} absent from LAW_INDEX.md")
 
 

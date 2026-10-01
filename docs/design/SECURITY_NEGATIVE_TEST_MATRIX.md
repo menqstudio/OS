@@ -1,6 +1,14 @@
 # Wave 3b-1B — Security Negative Test Matrix · TEST PLAN (design-only, dependency-safe)
 
-> **Status: DESIGN / PLAN ONLY.** No product code, no test code, and no architecture change
+> **Status, corrected 2026-10-01: no longer plan-only.** The 242 rows below are mirrored in
+> `config/negative-matrix.json` and gated by `tools/check_negative_matrix.py` — 155 `implemented`
+> (a test exists and carries the case ID), 52 `blocked`, 35 `unreviewed`. `NM-` IDs are bound in
+> `core/src/tcb_integrity.rs`, `privilege_drop.rs`, `receipt_store.rs` and several engine tests. The
+> harness modules §0.4 planned (`engine/tests/test_governed_turn_negative_matrix.py` and its siblings)
+> were never created; the registry is the binding. The addendum this plan cites is at **rev 30**, not
+> rev 28.
+>
+> **Status as first written: DESIGN / PLAN ONLY.** No product code, no test code, and no architecture change
 > ships under this document. It is the **executable-later** enumeration of the full 3b-1B
 > negative matrix the Architect required (addendum §9 + the per-section "Negative tests"
 > blocks), each row mapped to a **stable Test ID**, the **fault injected**, and the **exact
@@ -11,7 +19,7 @@
 >
 > **Single normative source.** Every contract referenced here lives in
 > [`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`](./WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md)
-> (rev 28). Where this plan and the addendum disagree, **the addendum wins**; this file
+> (rev 28 when this was written; rev 30 today). Where this plan and the addendum disagree, **the addendum wins**; this file
 > re-inlines no schema. Section refs below (`§N`) are addendum sections.
 
 ---
@@ -309,6 +317,14 @@ transport `output_stream_id` is never authority. Hash over **raw** bytes, no nor
 Signer-owned durable `governed_evidence_head_floor` (`0700`/`0600`), keyed on `head_sequence`
 monotonicity + chain-content `(event_count, last_sequence, final_event_hash)`.
 
+> **Not what is built, and not ruled on.** `governed_evidence_head_floor` is a table in the
+> **supervisor's** ledger (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas`
+> in `governed_supervisor_ledger.py`; `engine/runtime/isolated_signer.py` opens no SQLite at all. So
+> NM-EVID-12 and NM-ACL-13 below deny access to a `brops-signer` floor DB that does not exist. Which
+> principal SHOULD own the floor is an open question for the Architect
+> ([`FLOOR_WRITER_SERVICE_DESIGN.md`](./FLOOR_WRITER_SERVICE_DESIGN.md) §0.3 and §9, raised
+> 2026-08-15); until it is answered these two rows cannot be written against a real database.
+
 | Test ID | Case | Fault injected | Expected fail-closed outcome | § ref |
 |---|---|---|---|---|
 | NM-EVID-01 | A | `head_sequence < stored.highest_head_sequence` (stale/rolled-back/truncated head) | **`stale_evidence`** | §7 case A |
@@ -563,4 +579,5 @@ still in place** — i.e. as a refusal/Block/no-render, never by observing a rea
 withheld. The single positive control (§9) is a genuinely-executed record; every other row here
 is a fail-closed negative. This plan is complete when each Test ID has an executable assertion and
 the engine + Linux-isolation exact-head CI is GREEN — **implementation deferred to Architect
-design-GREEN; no code lands under this document.**
+design-GREEN; no code lands under this document.** *(As first written. Tests carrying these IDs have
+landed since; `config/negative-matrix.json` is the count.)*

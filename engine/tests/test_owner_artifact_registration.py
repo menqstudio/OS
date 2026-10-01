@@ -23,10 +23,13 @@ that the distinction holds in the code and not only in a comment:
   signed by that very key;
 * only a genuine Ed25519 signature by a key the operator-signed registry actually grants the
   type to establishes anything, and every corruption of that document refuses;
-* the control-room owner actor is still refused by name even when a perfectly valid
-  `control-room-command` artifact is presented — registering the type opened no path,
-  because nothing consumes it yet. Its closure still needs the schema signature field and
-  the verification call, both outside this change.
+* the control-room path CONSUMES the artifact now: `_prove_command_actor` verifies a
+  `control-room-command` signed under the `control-room` authority and binds it to the exact
+  command, and the schema carries `artifact_type` / `key_id` / `signature`. (This bullet said
+  the opposite — "still refused by name even when a perfectly valid artifact is presented ...
+  nothing consumes it yet" — long after the last class below started proving acceptance.)
+  What still refuses is an artifact signed by a key the registry does not grant the type to,
+  which on a shipped tree is every key.
 
 No key material is invented anywhere here: every key is an ephemeral development key the
 test generates for itself, exactly as the rest of the suite does.
@@ -74,8 +77,9 @@ ENV_FLOOR_ANCHOR = "BRO_EVIDENCE_FLOOR_ANCHOR"
 
 
 class RegistryMayNameTheOwnerTypesTests(unittest.TestCase):
-    """The registry-loading half: a signed registry may now carry these grants, and only
-    under the operator authority."""
+    """The registry-loading half: a signed registry may now carry these grants, and each only
+    under its OWN delegated authority (`control-room`, `evidence-floor`) — never the operator
+    root, and never the other delegation."""
 
     NOW = 1_700_000_000
 
@@ -107,7 +111,7 @@ class RegistryMayNameTheOwnerTypesTests(unittest.TestCase):
         self.assertNotEqual(DELEGATED_AUTHORITY[CONTROL_ROOM_COMMAND],
                             DELEGATED_AUTHORITY[EVIDENCE_FLOOR_ANCHOR])
 
-    def test_an_operator_registry_entry_may_name_each_type(self) -> None:
+    def test_a_registry_entry_for_the_delegated_authority_may_name_each_type(self) -> None:
         """This is the wall that made both closures impossible: before the registration,
         `_parse_key` raised `unknown artifact type` and the whole registry failed to load,
         so the owner could not be given a key even offline."""
@@ -402,8 +406,11 @@ from bro_policy import CANONICAL_CONDUCTOR_ID, CONDUCTOR_ROLE  # noqa: E402
 from test_control_room_api import cancel_command, task_contract  # noqa: E402
 
 
-class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
-    """O-4: the owner path is closed in code, and what remains is the Owner's signature.
+class ControlRoomCommandIsProvenPerCommandTests(unittest.TestCase):
+    """O-4: the owner path is closed in code, and what remains is a provisioned key.
+
+    (Named `ControlRoomCommandTypeOpensNoPathTests` until 2026-10-01, for the state described
+    next — a name that outlived what it named.)
 
     These tests were written when registering `control-room-command` was a prerequisite and
     nothing consumed one, so they asserted that even a flawless artifact was refused. That was
@@ -414,7 +421,8 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
 
     What is NOT closed: no `control-room-command` key is pinned in the shipped
     `config/trusted-keys.json`, so on a real deployment an owner command still refuses. That is
-    the Owner's ceremony, not a code gap, and `test_an_unpinned_key_still_refuses` holds it.
+    provisioning, not a code gap — the install mints the `control-room` key and no person holds
+    one (Owner decision #78) — and `test_an_unpinned_key_still_refuses` holds it.
     """
 
     def setUp(self) -> None:
@@ -494,11 +502,12 @@ class ControlRoomCommandTypeOpensNoPathTests(unittest.TestCase):
         self.assertIn("different command", str(caught.exception))
 
     def test_an_unpinned_key_still_refuses(self) -> None:
-        """The part that is the OWNER's, not the code's.
+        """The part that is the REGISTRY's, not this module's.
 
         Same artifact, same signature, same everything — but signed by a key the operator-signed
         registry does not grant `control-room-command`. It refuses. Registering the artifact type
-        did not open a path; pinning a key is what opens it, and only the Owner can do that.
+        did not open a path; a registry that pins the key is what opens it, and the install is
+        what signs that registry — no person holds the root that does (PR #78).
         """
         command = self.owner_command()
         payload = {

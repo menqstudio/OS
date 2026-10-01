@@ -22,9 +22,10 @@ What this writes, and why each piece cannot be left to the service or to the cal
 * **The TCB-owned config**, ``root:root`` mode ``0644`` in a root-owned directory. The install
   scope and the per-op allowlist are exactly the values a service account must not be able to
   rewrite; if the Floor Writer could edit its own allowlist, the allowlist would be its opinion.
-* **The generation**, minted here and only here: the previous config's value plus one, or 1 when
-  there is none. It never decreases — a decreasing generation would make a re-provisioned floor
-  look OLDER than the one it replaced, which is the confusion §1.10 exists to remove.
+* **The generation**, minted here and only here: one above the HIGHER of the previous config's
+  value and the existing store's own, or 1 when there is neither. It never decreases — a
+  decreasing generation would make a re-provisioned floor look OLDER than the one it replaced,
+  which is the confusion §1.10 exists to remove.
 
 **Re-provisioning discards floors, visibly.** ``--reprovision`` writes a FRESH empty state under a
 NEW generation, and the receipt names every task id it dropped. That is §1.10's *"visibly new
@@ -203,10 +204,52 @@ def read_previous_generation(config_path: pathlib.Path) -> int:
     return previous
 
 
-def mint_generation(config_path: pathlib.Path) -> int:
-    """§1.10. Previous + 1, or 1. Monotonic by construction — there is no argument to override it,
-    because an operator-supplied generation is exactly the hand-written number B6 removes."""
-    return read_previous_generation(config_path) + 1
+def read_state_generation(state_path: pathlib.Path) -> Optional[int]:
+    """The generation the existing authoritative STORE carries, or ``None`` if it cannot say.
+
+    Only called for a state file that exists. ``None`` -- unreadable, unparseable, or carrying
+    no usable number -- is not an error here: ``--reprovision`` exists to discard exactly such a
+    store, and :func:`mint_generation` decides whether the config can stand in for it.
+    """
+    try:
+        document = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    stored = document.get("generation") if isinstance(document, dict) else None
+    if isinstance(stored, bool) or not isinstance(stored, int) or stored < 1:
+        return None
+    return stored
+
+
+def mint_generation(config_path: pathlib.Path,
+                    state_path: Optional[pathlib.Path] = None) -> int:
+    """§1.10. One above the highest generation this deployment has had, or 1.
+
+    Monotonic by construction — there is no argument to override it, because an
+    operator-supplied generation is exactly the hand-written number B6 removes.
+
+    "The highest" is read from BOTH places the number lives: the config and the store. Until
+    2026-10-01 it was read from ``--config`` alone, and that path returns 0 when the file is
+    absent — so re-provisioning with a missing or DIFFERENT ``--config`` over a store at
+    generation 9 minted generation 1, and the floor that replaced it looked eight generations
+    OLDER than the one it discarded: the confusion §1.10 exists to remove, produced by the tool
+    that mints the number. A store that exists and cannot say its generation is tolerated only
+    when the config can; with neither, there is no number to mint above, and that refuses.
+    """
+    previous = read_previous_generation(config_path)
+    if state_path is not None and state_path.exists():
+        stored = read_state_generation(state_path)
+        if stored is None:
+            if previous == 0:
+                raise ProvisionError(
+                    EXIT_CONFIG,
+                    f"an authoritative store exists at {state_path} whose generation cannot be "
+                    f"read, and there is no config at {config_path} to read it from instead. "
+                    "Refusing rather than minting generation 1 over a store whose generation "
+                    "is unknown")
+        else:
+            previous = max(previous, stored)
+    return previous + 1
 
 
 # ---------------------------------------------------------------------------
@@ -316,17 +359,20 @@ def build_plan(args: argparse.Namespace) -> ProvisionPlan:
             "allowlist ever ran. A provisioning that produces an unreachable service is a "
             "misconfiguration, not a posture")
     config_path = pathlib.Path(args.config).resolve()
+    marks_root = pathlib.Path(args.marks_root).resolve()
     return ProvisionPlan(
         install_id=args.install_id,
         service_uid=service_uid,
         service_gid=service_gid,
         caller_gid=caller_gid,
         caller_group_members=reachable,
-        marks_root=pathlib.Path(args.marks_root).resolve(),
+        marks_root=marks_root,
         socket_path=pathlib.Path(args.socket_path).resolve(),
         config_path=config_path,
         peers=peers,
-        generation=mint_generation(config_path),
+        # The same path `ProvisionPlan.state_path` derives: the store this plan would replace.
+        generation=mint_generation(
+            config_path, marks_root / args.install_id / floor_writer.STATE_FILE),
         reprovision=bool(args.reprovision),
     )
 

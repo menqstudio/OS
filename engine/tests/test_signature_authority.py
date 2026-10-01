@@ -254,7 +254,10 @@ class PrimitiveTests(SignatureFixture):
         with self.assertRaises(SignatureError):
             verify_detached({"a": 1}, "nothex", self.keys["issuer"]["public_key"])
 
-    def test_every_artifact_type_has_exactly_one_authority(self):
+    def test_every_artifact_type_is_bound_to_a_known_authority(self):
+        # (Was `..._has_exactly_one_authority`: a dict cannot hold two values for a key, so
+        # "exactly one" was never the thing measured. What is measured is that the one it
+        # names is an authority this suite knows.)
         for artifact, authority in ARTIFACT_AUTHORITY.items():
             self.assertIn(authority, AUTHORITIES, artifact)
 
@@ -262,7 +265,7 @@ class PrimitiveTests(SignatureFixture):
 class CommittedRegistryTests(unittest.TestCase):
     """Phase 1 trust root: the committed config/trusted-keys.json must load and
     verify against its own operator key. A registry that is merely present is not
-    trusted; load_trusted_keys refuses one the offline operator did not sign, so a
+    trusted; load_trusted_keys refuses one the pinned operator root did not sign, so a
     successful load is proof the trust anchor is intact."""
 
     def test_repo_trusted_key_registry_loads(self):
@@ -309,9 +312,19 @@ class OperatorRootPinTests(SignatureFixture):
     def test_registry_payload_is_never_the_pin_source(self):
         # Even with a perfectly self-consistent, correctly-signed registry, if no
         # external pin is set the load must fail — the payload is not a fallback.
+        # Both halves are shown on the SAME registry, which is what separates this from
+        # `test_no_pin_configured_is_hard_denied`: the registry names its own operator key,
+        # that key is the right one, the document loads under it when it arrives from
+        # outside — and the very same document refuses when the only place the key could
+        # come from is the document.
+        document = json.loads(
+            (self.tmp / "config" / "trusted-keys.json").read_text(encoding="utf-8"))
+        self.assertEqual(document["payload"]["operator_public_key"], self.operator_pub)
         with patch_environ_without_pins():
-            with self.assertRaises(SignatureError):
+            self.assertTrue(load_trusted_keys(self.tmp, operator_public_key=self.operator_pub))
+            with self.assertRaises(SignatureError) as caught:
                 load_trusted_keys(self.tmp)
+        self.assertIn("no operator-root pin", str(caught.exception))
 
     # ---- pin resolution rules ------------------------------------------------
     def test_env_pin_resolves(self):

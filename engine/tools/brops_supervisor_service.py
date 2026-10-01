@@ -40,7 +40,7 @@ import brops_socket
 from bro_signature import load_trusted_keys
 from brops_canonical import b64url, containment_evidence_bytes
 from brops_evidence_store import EvidenceStore
-from brops_live_runstate import LiveRunStateProvider
+from brops_live_runstate import HANDLE_COMPONENT, LiveRunStateProvider
 from brops_supervisor_attest import load_attestation_key, produce_sign_request
 
 EVIDENCE_REQUEST_PROTOCOL = "brops.evidence-request.v1"
@@ -83,6 +83,10 @@ class SupervisorService:
             or set(frame) != {"protocol", "run_id", "execution_attempt_id"}
             or not isinstance(frame.get("run_id"), str)
             or not isinstance(frame.get("execution_attempt_id"), str)
+            # The handle names a file in the protected run-state directory. A value that
+            # could name anything else is not a handle (brops_live_runstate.HANDLE_COMPONENT).
+            or not HANDLE_COMPONENT.fullmatch(frame["run_id"])
+            or not HANDLE_COMPONENT.fullmatch(frame["execution_attempt_id"])
         ):
             return _refused("malformed")
 

@@ -425,6 +425,26 @@ class FloorCustodyTests(unittest.TestCase):
                 self.floor if directory is None else directory)
         return str(caught.exception)
 
+    def test_the_suppression_this_class_rests_on_works_in_both_forms(self):
+        """Every refusal in this class is only reachable with the acknowledgement OFF, and
+        ``setUp`` turns it off with ``_self_owned_ack.suppress()``. That helper once removed
+        the acknowledgement through ``.start()`` and not through ``with`` — so it is held to
+        both here: declared, then suppressed either way, then restored."""
+        names = _self_owned_ack.NAMES
+        declared = {name: "declared-for-this-test" for name in names}
+        with unittest.mock.patch.dict(os.environ, declared):
+            with _self_owned_ack.suppress():
+                self.assertEqual([n for n in names if n in os.environ], [])
+            self.assertEqual({n: os.environ.get(n) for n in names}, declared)
+
+            started = _self_owned_ack.suppress()
+            started.start()
+            try:
+                self.assertEqual([n for n in names if n in os.environ], [])
+            finally:
+                started.stop()
+            self.assertEqual({n: os.environ.get(n) for n in names}, declared)
+
     def test_a_floor_this_process_can_write_is_refused_on_every_platform(self):
         """The universal configuration: a directory this very process just created.
 
@@ -592,8 +612,9 @@ class FloorCustodyTests(unittest.TestCase):
 
 
 class HeadFloorConfigurationContradictionTests(unittest.TestCase):
-    """**No floor directory satisfies both halves of the design.** This is a contradiction
-    pinned as executable fact, NOT a regression test for a fix — there is no fix here.
+    """**No LOCAL floor directory satisfies both halves of the design.** This is a
+    contradiction pinned as executable fact about the in-process write path. It is still true
+    of that path, and that path is no longer the only one: see "What resolved it" below.
 
     `_advance_head_floor` writes the mark **in the process the mark polices**, and any write
     failure raises. `_refuse_self_owned_floor` refuses any floor directory that process owns
@@ -604,7 +625,7 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
       `<task>.floor.json.tmp` and renaming it over the mark all need exactly the capability
       custody refuses — the serialization lock added for audit R1 `:271` needs the same write
       capability as the mark it protects, so it neither widens nor narrows this contradiction);
-    * so the only satisfiable posture is the acknowledgement
+    * so the only satisfiable posture FOR THE LOCAL WRITE is the acknowledgement
       (`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE`, or the raw variable under `BRO_ENV=ci`),
       which `bro_custody` describes as short-circuiting **every rule in that module** — the
       operator-root pin, the redirected registry root, the evidence store and this floor. The
@@ -612,13 +633,20 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
       while that variable is present, for exactly that reason.
 
     `_head_floor_dir`'s own docstring offers the escape route "a deployment that can put the
-    marks under a principal the builder cannot write should do exactly that". That deployment
-    cannot be configured: the builder IS the writer.
+    marks under a principal the builder cannot write should do exactly that". On the local path
+    that deployment cannot be configured: the builder IS the writer.
 
-    Closing it needs a second principal to perform the write -- a floor-writer service or a
-    setuid helper. **That is an Owner/Architect decision about where the write happens, not a
-    patch**, so this class states the contradiction rather than hiding it: any change that claims
-    to resolve it has to come here and say which posture now satisfies both rules.
+    **What resolved it.** Closing it needed a second principal to perform the write, and that
+    now exists: `bro_completion.ServiceFloor`, selected by `BRO_EVIDENCE_FLOOR_WRITER`, hands
+    the advance to the Floor Writer service (`runtime/floor_writer.py`), and under that posture
+    no branch reaches `_advance_head_floor` at all. `_floor_posture` is a closed two-state
+    resolver — `ServiceFloor` or `AcknowledgedLocalFloor`, with no fallback from the first to
+    the second — and `TheLocalWriteIsReachableOnlyFromTheAcknowledgedPosture`, further down
+    this file, holds that split. This docstring said "there is no fix here" and "the only
+    satisfiable posture is the acknowledgement" for as long as both of those were in the tree.
+    So what this class pins today is narrower and still worth pinning: under
+    `AcknowledgedLocalFloor` the two rules have no intersection, which is exactly why that
+    posture has to be DISCLOSED rather than chosen by omission.
 
     DO NOT reach for the supervisor's durable ledger. This text used to name it as a candidate,
     on the grounds that it "already holds an equivalent floor written by the supervisor uid".
@@ -853,6 +881,46 @@ class HeadFloorAdvanceIsSerialisedTests(unittest.TestCase):
                 self.assertEqual(
                     self.completion._load_head_floor(self.store, task)[0], sequence)
 
+    def test_a_failure_between_the_mark_and_the_roster_is_repaired_by_the_retry(self):
+        """Two renames, and a `return` that skipped the second whenever the first had already
+        landed. A crash between them left a mark the roster did not name; the retry at the same
+        head returned early; and a task missing from the roster is a task never seen."""
+        original = self.completion._load_floor_index
+        calls = []
+
+        def fail_after_the_mark(directory):
+            calls.append(directory)
+            if len(calls) == 3:      # 1 provisioning, 2 inside _load_head_floor, 3 the enrolment
+                raise OSError("the process died between the two renames")
+            return original(directory)
+
+        with _self_owned_ack.patch(self.store):
+            with unittest.mock.patch.object(
+                    self.completion, "_load_floor_index", fail_after_the_mark):
+                with self.assertRaises(self.completion.CompletionError):
+                    self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            index = self.floor / "_index.json"
+            # The state the crash leaves: the mark landed, the roster did not.
+            self.assertTrue((self.floor / "task-1.floor.json").exists())
+            self.assertEqual(json.loads(index.read_text(encoding="utf-8"))["tasks"], [])
+
+            # The retry, at the SAME head -- the case that used to return before enrolling.
+            self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            self.assertEqual(json.loads(index.read_text(encoding="utf-8"))["tasks"], ["task-1"])
+
+            # ...and so removing the mark is a removed mark again, not a first sighting.
+            (self.floor / "task-1.floor.json").unlink()
+            with self.assertRaises(self.completion.CompletionError) as caught:
+                self.completion._load_head_floor(self.store, "task-1")
+            self.assertIn("the mark was removed", str(caught.exception))
+
+    def test_a_lower_head_never_lowers_the_mark_and_never_enrols_a_task_with_no_mark(self):
+        with _self_owned_ack.patch(self.store):
+            self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
+            self.completion._advance_head_floor(self.store, "task-1", 3, "e" * 64)
+            self.assertEqual(self.completion._load_head_floor(self.store, "task-1"),
+                             (5, self.DIGEST))
+
     def test_every_roster_read_after_the_provisioning_check_is_under_the_lock(self):
         observed = []
         original = self.completion._load_floor_index
@@ -880,6 +948,142 @@ class HeadFloorAdvanceIsSerialisedTests(unittest.TestCase):
                 self.completion._advance_head_floor(self.store, "task-1", 5, self.DIGEST)
         self.assertIn("not provisioned", str(caught.exception))
         self.assertFalse(self.floor.exists())
+
+
+@unittest.skipUnless(sys.platform == "linux",
+                     "the Floor Writer authenticates with SO_PEERCRED, which requires Linux")
+class TheServiceFloorPostureIsDrivenTests(HeadBindingFixture):
+    """``BRO_EVIDENCE_FLOOR_WRITER`` set, and a completion driven through a LIVE Floor Writer.
+
+    Until 2026-10-01 no test, kit, workflow or installer set that variable. The two service
+    branches of ``bro_completion`` -- ``_floor_read`` and ``_commit_head_floor`` under
+    ``ServiceFloor`` -- were covered by an AST shape check (the class below this one) and
+    executed by nothing; ``floor_writer_boundary_proof.sh`` calls ``floor_writer.client_*``
+    directly and never enters ``bro_completion`` at all. So the posture the design calls the
+    real one was the posture nothing had ever run.
+
+    What this is and is not. It IS the real client seam, the real framing, a real AF_UNIX
+    socket, the real ``serve_connection`` and the real committed store. It is NOT a
+    cross-principal proof: the service thread and the completion are one uid here, so the
+    allowlist admits this process's own uid, and "the policed account cannot write the floor"
+    stays the boundary proof's claim (four real accounts, as root), not this class's.
+    """
+
+    INSTALL = "install-svc"
+
+    def setUp(self):
+        super().setUp()
+        import threading
+        import floor_writer
+        self.fw = floor_writer
+        base = self.tmp / "floor-writer"
+        marks_root = base / "marks"
+        socket_dir = base / "sock"
+        base.mkdir(mode=0o755)
+        marks_root.mkdir(mode=0o755)
+        (marks_root / self.INSTALL).mkdir(mode=0o700)
+        socket_dir.mkdir(mode=0o750)
+        # `mkdir(mode=)` is subject to the umask (0o002 here); custody refuses group-writable.
+        for directory, mode in ((base, 0o755), (marks_root, 0o755),
+                                (marks_root / self.INSTALL, 0o700), (socket_dir, 0o750)):
+            directory.chmod(mode)
+        config_path = base / "fw-config.json"
+        config_path.write_text(json.dumps({
+            "install_id": self.INSTALL, "marks_root": str(marks_root),
+            "socket_path": str(socket_dir / "fw.sock"), "generation": 1,
+            "peers": {floor_writer.OP_GET: [os.geteuid()],
+                      floor_writer.OP_ADVANCE: [os.geteuid()]}}), encoding="utf-8")
+        config_path.chmod(0o644)
+        self.fw_config = floor_writer.load_service_config(
+            {floor_writer.ENV_SERVICE_CONFIG: str(config_path)})
+        floor_writer.commit_state(self.fw_config, {
+            "install_id": self.INSTALL, "generation": 1, "roster": [], "floors": {}})
+        self.server = floor_writer.bind(self.fw_config.socket_path)
+        self.server.settimeout(0.2)
+        self.stopping = threading.Event()
+        self.served = 0
+
+        def serve():
+            import socket as _socket
+            while not self.stopping.is_set():
+                try:
+                    sock, _ = self.server.accept()
+                except (_socket.timeout, OSError):
+                    continue
+                self.served += 1     # counted at ACCEPT: the client has its reply before
+                try:                 # `serve_connection` returns to this thread
+                    floor_writer.serve_connection(sock, self.fw_config)
+                finally:
+                    sock.close()
+
+        self.thread = threading.Thread(target=serve, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.stop_service)
+
+        endpoint = unittest.mock.patch.dict(
+            os.environ, {self.completion.ENV_FLOOR_WRITER: str(self.fw_config.socket_path)})
+        endpoint.start()
+        self.addCleanup(endpoint.stop)
+
+    def stop_service(self):
+        if not self.stopping.is_set():
+            self.stopping.set()
+            self.thread.join(timeout=10)
+            self.server.close()
+
+    def service_floor(self, task_id="task-1"):
+        return self.fw.load_state(self.fw_config)["floors"].get(task_id)
+
+    def local_marks(self):
+        return sorted(p.name for p in (self.store / "head-floor").glob("*.floor.json*"))
+
+    def test_the_posture_resolves_to_the_service(self):
+        posture = self.completion._floor_posture()
+        self.assertIsInstance(posture, self.completion.ServiceFloor)
+        self.assertEqual(posture.endpoint, self.fw_config.socket_path)
+
+    def test_a_completion_advances_the_SERVICES_floor_and_writes_no_local_mark(self):
+        self.assertIsNone(self.service_floor())
+        self.check(self.manifest())
+        floor = self.service_floor()
+        self.assertEqual(floor["head_sequence"], 1)
+        self.assertEqual(floor["evidence_head_sha256"], self.binding()["evidence_head_sha256"])
+        self.assertGreaterEqual(self.served, 2, "both floor.get and floor.advance must be asked")
+        # The fixture HAS set the self-owned acknowledgement, and it must not matter: under
+        # ServiceFloor there is no path back to the in-process write.
+        self.assertEqual(self.local_marks(), [],
+                         "the in-process floor was written although the endpoint was set")
+
+    def test_a_rollback_is_refused_by_the_service_and_the_floor_stays_up(self):
+        self.check(self.manifest())
+        self.reseal_head(5)
+        self.check(self.manifest())
+        self.assertEqual(self.service_floor()["head_sequence"], 5)
+        self.reseal_head(1)
+        self.refusal(self.manifest())
+        self.assertEqual(self.service_floor()["head_sequence"], 5,
+                         "a refused rollback must not lower the service's floor")
+
+    def test_an_unreachable_service_is_a_refusal_and_never_no_floor_required(self):
+        self.stop_service()
+        message = self.refusal(self.manifest())
+        self.assertIn("Floor Writer", message)
+        self.assertIn("not verified", message)
+        self.assertEqual(self.local_marks(), [],
+                         "an unreachable service must not fall back to the local write, "
+                         "acknowledgement or not (§1.4)")
+
+    def test_the_service_branch_of_the_commit_is_what_runs(self):
+        """Called directly, so a refactor that routed `_check_manifest` around the resolver
+        could not make this class pass by accident."""
+        digest = self.binding()["evidence_head_sha256"]
+        self.assertEqual(self.completion._floor_read(self.store, "task-9"), (0, None))
+        self.completion._commit_head_floor(self.store, "task-9", 3, digest)
+        self.assertEqual(self.completion._floor_read(self.store, "task-9"), (3, digest))
+        self.assertEqual(self.service_floor("task-9")["head_sequence"], 3)
+        with self.assertRaises(self.completion.CompletionError) as caught:
+            self.completion._commit_head_floor(self.store, "task-9", 2, digest)
+        self.assertIn("not authoritatively advanced", str(caught.exception))
 
 
 class TheLocalWriteIsReachableOnlyFromTheAcknowledgedPosture(unittest.TestCase):

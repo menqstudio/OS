@@ -16,9 +16,10 @@ receive — has had none. Nothing goes red if it is never built, so it loses eve
 contest to work whose finish line a machine can see. Not because it matters less. Because
 "finished" was not measurable for it.
 
-So the gate is written first and left failing. Its RED output is the deliverable: someone
-reading a CI log should be able to answer *"when does a customer see something?"* from these
-five lines and nothing else.
+So the gate was written first and left failing, and its RED output was the deliverable:
+someone reading a CI log could answer *"when does a customer see something?"* from five
+lines and nothing else. That is history now — see the first paragraph — and it is kept
+because it is why the gate has the shape it has.
 
 **A gate that cannot fail yet measures nothing.** The converse is the trap this file is
 walking into deliberately: a gate that cannot *pass* yet measures nothing either. So
@@ -32,29 +33,31 @@ All five must hold. Any one absent is RED.
 
   1. At least one artifact exists in the produced-agent store, with a DEFINED SCHEMA — not a
      row whose ``action`` is the string ``verb: argument``. (``automations.action`` is that
-     string today; ``execute_action`` at ``apps/desktop/src-tauri/core/src/repo.rs`` is
+     string; ``execute_action`` at ``apps/desktop/src-tauri/core/src/repo.rs`` is
      ``split_once(':')`` plus a three-arm match over ``notify`` / ``task`` / ``note``.)
   2. That artifact carries a flow with MORE THAN ONE STEP.
   3. It carries a grant — capabilities, paths, domains — WRITTEN BY THE RUNTIME. A grant that
      is present only in a prompt is prose, and prose is what ``scope``/``prohibited_scope``
      already is. Prose does not enforce.
-  4. ``run_due()`` has invoked it at least once and a run row exists. Today
-     ``apps/desktop/src-tauri/src/lib.rs`` calls it and throws the result away with ``let _``.
-  5. A receipt for that run carries ``enforcement_regime``. A ``grep -rn enforcement_regime``
-     over this tree printed nothing at all on 2026-08-30.
+  4. ``run_due()`` has invoked it at least once and a run row exists.
+     ``apps/desktop/src-tauri/src/lib.rs`` calls it and throws the result away with ``let _``
+     — still, as of 2026-10-01 — so the run ROW is the only record that it ran.
+  5. A receipt for that run carries ``enforcement_regime``. (A ``grep -rn enforcement_regime``
+     over this tree printed nothing at all on 2026-08-30; ``repo.rs`` writes it now.)
 
 HOW IT LOOKS, AND WHY THIS WAY
 ------------------------------
-Nothing it inspects exists yet, so the design question is not *what* to check but *how to
-check for the absence of a thing whose shape nobody has agreed to*. A gate that hardcodes a
-guessed shape gets edited to match whatever gets built, and an edited gate is a mirror rather
-than a check.
+Nothing it inspects existed when it was designed, so the design question was not *what* to
+check but *how to check for the absence of a thing whose shape nobody has agreed to*. A gate
+that hardcodes a guessed shape gets edited to match whatever gets built, and an edited gate
+is a mirror rather than a check.
 
 **This gate hardcodes no shape.** It reads ``config/produced-artifact-contract.json``, which
-declares WHERE each fact lives and WHAT it is called — every locator ships ``null``, meaning
-"the implementation has not decided", and each ``null`` is one of the five RED lines. Filling
-a locator in does not make the gate green; it makes the gate go and look, and an absent thing
-is still RED. The field-level definition of an artifact lives in the JSON Schema the contract
+declares WHERE each fact lives and WHAT it is called. Every locator there shipped ``null`` —
+"the implementation has not decided" — and each ``null`` was one of the five RED lines. They
+are all declared now; a ``null`` today is a regression, and is still RED. Filling a locator
+in never made the gate green; it makes the gate go and look, and an absent thing is still
+RED. The field-level definition of an artifact lives in the JSON Schema the contract
 points at, so this file holds no opinion about it either.
 
 Two controls stop the contract being satisfiable by editing alone:

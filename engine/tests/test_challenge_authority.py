@@ -136,6 +136,45 @@ class ValidateCreatePendingTests(unittest.TestCase):
         self.assertEqual(out["system_sha256"], "a" * 64)
 
 
+    def test_a_digest_field_is_64_hex_DIGITS_and_not_whatever_int_will_parse(self):
+        """`int(value, 16)` takes a `0x` prefix, a sign, whitespace and `_` separators. Each of
+        these is 64 characters long, was admitted as "64 hex characters", and was SIGNED."""
+        not_digests = [
+            " " + "a" * 63, "a" * 63 + " ", "\n" + "a" * 63, "a" * 63 + "\n",
+            "+" + "a" * 63, "-" + "a" * 63, "0x" + "a" * 62, "0X" + "a" * 62,
+            "a" * 31 + "_" + "a" * 32, "g" * 64,
+        ]
+        for field in ("system_sha256", "history_sha256", "generation_config_sha256"):
+            for value in not_digests:
+                with self.subTest(field=field, value=value):
+                    self.assertEqual(len(value), 64, "the fixture must pass the LENGTH rule")
+                    bad = dict(VALID_FIELDS)
+                    bad[field] = value
+                    with self.assertRaises(ChallengeAuthorityError):
+                        validate_create_pending(bad)
+        # The positive control is `test_component_sha256_normalized_lowercase`: real hex, either
+        # case, is still admitted, so this is not a refuse-everything arm.
+
+    def test_the_supervisor_applies_the_same_rule_to_the_same_fields(self):
+        """Two copies of one predicate, in two trust domains that must agree: a digest the
+        authority signs has to be one the supervisor admits, and nothing else may be."""
+        import challenge_authority
+        import governed_supervisor
+        import isolated_signer
+        cases = [
+            "a" * 64, "A" * 64, "0123456789abcdef" * 4, " " + "a" * 63, "+" + "a" * 63,
+            "0x" + "a" * 62, "a" * 31 + "_" + "a" * 32, "\n" + "a" * 63, "a" * 63, "a" * 65, 7, None,
+        ]
+        for value in cases:
+            with self.subTest(value=value):
+                verdict = challenge_authority._is_sha256_hex(value)
+                self.assertEqual(governed_supervisor._is_sha256_hex(value), verdict)
+                if isolated_signer._is_sha256_hex(value):
+                    self.assertTrue(verdict, "the signer's strict rule must never admit MORE")
+        self.assertTrue(challenge_authority._is_sha256_hex("a" * 64))
+        self.assertFalse(challenge_authority._is_sha256_hex("0x" + "a" * 62))
+
+
 class RecomputeRequestSha256Tests(unittest.TestCase):
     def test_recompute_matches_canonical_envelope(self):
         facts = validate_create_pending(VALID_FIELDS)

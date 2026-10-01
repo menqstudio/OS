@@ -132,10 +132,16 @@ class TheAcceptLoopArmsTheBudgetTests(unittest.TestCase):
     """`serve_forever`'s own loop had no bound either, and it is the one the service entry points
     run (`engine/tools/brops_signer_service.py`, `brops_supervisor_service.py`).
 
-    Asserted against the SOURCE because the loop cannot run here: it raises `SocketAclError` off
-    AF_UNIX before the first accept. A source assertion is the only kind that can hold a
-    platform's code to account from a platform that cannot execute it — and it is checked against
-    code with full-line comments stripped, so a comment mentioning the call cannot satisfy it.
+    The ARMING is asserted against the source, because the loop cannot run on every host these
+    tests do: off AF_UNIX it raises `SocketAclError` before the first accept. A source assertion
+    is the only kind that can hold a platform's code to account from a platform that cannot
+    execute it — and it is checked against code with full-line comments stripped, so a comment
+    mentioning the call cannot satisfy it.
+
+    What the armed timeout DOES when it fires is not a source question, and is not asked as one:
+    `_serve_one` takes the connection as an argument, so it is driven with a stand-in that stalls,
+    on any host. (The handler's `except` line also occurs in `recv_exactly_bounded`, so a grep for
+    it was satisfied with `_serve_one`'s own handler deleted.)
     """
 
     @staticmethod
@@ -144,12 +150,29 @@ class TheAcceptLoopArmsTheBudgetTests(unittest.TestCase):
         return "\n".join(l for l in src.splitlines() if not l.strip().startswith("#"))
 
     def test_the_accept_loop_arms_the_connection_budget(self):
-        self.assertIn("conn.settimeout(CONNECTION_BUDGET_S)", self._code())
+        """ONE deadline, taken at accept and charged by every read through `recv_exactly_bounded`.
+
+        This used to assert `conn.settimeout(CONNECTION_BUDGET_S)`, and that line WAS the defect: a
+        socket timeout restarts on every `recv`, so the loop this test called bounded was held for
+        as long as a peer cared to drip. `TheAcceptLoopOnARealSocketTests` below measures it; this
+        source assertion stays for the platforms that cannot run the loop at all.
+        """
+        code = self._code()
+        self.assertIn("deadline = time.monotonic() + CONNECTION_BUDGET_S", code)
+        self.assertNotIn("conn.settimeout(CONNECTION_BUDGET_S)", code,
+                         "a per-recv timeout is not a budget")
+        self.assertNotIn("makefile(\"rb\")\n    try:\n        request", code,
+                         "the server's frame must not be read through an unbudgeted file object")
 
     def test_a_stalled_read_drops_the_connection(self):
         code = self._code()
-        self.assertIn("except (socket.timeout, TimeoutError):", code)
+        self.assertIn("recv_exactly_bounded(", code)
+        self.assertIn("read_frame(_BudgetedReader(conn, deadline))", code)
         self.assertIn("def _serve_one(", code)
+
+    def test_one_connection_cannot_end_the_loop(self):
+        self.assertIn("except Exception:  # noqa: BLE001 - one connection must never kill the loop",
+                      self._code())
 
     def test_the_loop_refuses_an_unusable_socket_path_rather_than_serving(self):
         """Fails CLOSED on a path it cannot bind, on every platform.
@@ -183,6 +206,110 @@ class TheAcceptLoopArmsTheBudgetTests(unittest.TestCase):
             brops_socket.serve_forever(
                 "/definitely/not/a/socket", lambda _f: {}, allowed_peer_uids=None, max_requests=1)
         self.assertIn("AF_UNIX", str(caught.exception))
+
+
+@unittest.skipUnless(sys.platform == "linux" and brops_socket._HAS_AF_UNIX,
+                     "the accept loop needs AF_UNIX and SO_PEERCRED")
+class TheAcceptLoopOnARealSocketTests(unittest.TestCase):
+    """The loop itself, run. `engine/tools/brops_signer_service.py` and
+    `brops_supervisor_service.py` are this loop and nothing else, so what ends it ends them."""
+
+    def setUp(self):
+        import os
+        import tempfile
+        import threading
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = os.path.join(self._tmp.name, "svc.sock")
+        self.uid = os.getuid()
+        self.ready = threading.Event()
+        self.outcome = {}
+
+    def _serve(self, handle, max_requests):
+        import contextlib
+        import io
+        import threading
+        self.stderr = io.StringIO()
+
+        def run():
+            try:
+                with contextlib.redirect_stderr(self.stderr):
+                    brops_socket.serve_forever(
+                        self.path, handle, allowed_peer_uids=frozenset({self.uid}),
+                        ready=self.ready.set, max_requests=max_requests)
+                self.outcome["exit"] = "returned"
+            except BaseException as exc:  # noqa: BLE001 - the test reports how the loop ended
+                self.outcome["exit"] = "RAISED %s" % type(exc).__name__
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.assertTrue(self.ready.wait(10), "the service never became ready")
+        return thread
+
+    def _connect(self):
+        import socket
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.settimeout(10)
+        conn.connect(self.path)
+        return conn
+
+    def test_a_peer_that_hangs_up_before_its_reply_does_not_end_the_service(self):
+        import threading
+        import brops_protocol
+        release = threading.Event()
+
+        def handle(frame):
+            if frame.get("n") == 1:
+                release.wait(10)        # the first caller is gone by the time this returns
+            return {"echo": frame.get("n"), "pad": "x" * 200000}
+
+        thread = self._serve(handle, max_requests=2)
+        first = self._connect()
+        first.sendall(brops_protocol.encode_frame({"n": 1}))
+        first.close()                   # hang up with the request sent and no reply read
+        release.set()
+        self.assertEqual(brops_socket.request(self.path, {"n": 2}, timeout=10)["echo"], 2,
+                         "the service must still answer the NEXT caller")
+        thread.join(10)
+        self.assertEqual(self.outcome.get("exit"), "returned")
+
+    def test_a_raising_handler_does_not_end_the_service(self):
+        def handle(frame):
+            if frame.get("n") == 1:
+                raise RuntimeError("a handler fault")
+            return {"echo": frame.get("n")}
+
+        thread = self._serve(handle, max_requests=2)
+        with self.assertRaises(Exception):
+            brops_socket.request(self.path, {"n": 1}, timeout=10)
+        self.assertEqual(brops_socket.request(self.path, {"n": 2}, timeout=10)["echo"], 2)
+        thread.join(10)
+        self.assertEqual(self.outcome.get("exit"), "returned")
+        self.assertIn("RuntimeError", self.stderr.getvalue(), "the fault is logged, not swallowed")
+
+    def test_a_drip_peer_is_dropped_at_the_budget_and_gets_no_reply(self):
+        import time
+        import brops_protocol
+        original = brops_socket.CONNECTION_BUDGET_S
+        brops_socket.CONNECTION_BUDGET_S = 0.4
+        self.addCleanup(setattr, brops_socket, "CONNECTION_BUDGET_S", original)
+        handled = []
+        thread = self._serve(lambda frame: handled.append(frame) or {"ok": True}, max_requests=1)
+        wire = brops_protocol.encode_frame({"n": 1, "pad": "x" * 40})
+        self.assertGreater(len(wire) * 0.05, 2.0, "the drip must outlast the budget by a margin")
+        conn = self._connect()
+        self.addCleanup(conn.close)
+        started = time.monotonic()
+        try:
+            for byte in wire:           # each byte lands well inside a 0.4 s per-recv timeout
+                conn.sendall(bytes([byte]))
+                time.sleep(0.05)
+        except OSError:
+            pass                        # the service hung up on us, which is the point
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(handled, [], "a starved frame must never reach the handler")
+        self.assertLess(time.monotonic() - started, 2.0)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,10 @@ SUP_ATTEST_KEY_ID = "brops-live-sup-attest-1"  # gitleaks:allow
 RECEIPT_ENVELOPE_ARTIFACT_TYPE = "brops.governed-receipt-envelope.v1"
 
 MANIFEST_EPOCH = 2
+#: The recorder invoker, by absolute path (see `recorder_command` below). Debian and Ubuntu both
+#: install sudo here; both kits assert it is executable before they stage anything.
+SUDO_BIN = "/usr/bin/sudo"
+
 KEY_VALID_FROM_MS = 1
 KEY_VALID_TO_MS = 9_999_999_999_999
 KEY_EPOCH = 2
@@ -187,9 +191,10 @@ def main() -> int:
     # from. It is the supervisor's authority, so run_live_turn.sh chowns it to the supervisor
     # account at mode 0700 and no other uid may read or write it.
     supervisor_state_dir = os.path.join(root, "supervisor-state")
-    # The recorder's PRIVATE state (F-02): its monotonic evidence head-sequence counter. Like the
-    # supervisor ledger this is an authority, not a shared work area — run_live_turn.sh chowns it
-    # to the recorder account at 0700.
+    # The recorder's state (F-02): its monotonic evidence head-sequence counter. Like the
+    # supervisor ledger this is an authority, not a shared work area — but it is NOT 0700:
+    # run_live_turn.sh makes it recorder-owned, SUPERVISOR-group-readable, 0750, because the
+    # supervisor reads each run's evidence chain out of it (audit F-01). No other uid may.
     evidence_state_dir = os.path.join(root, "recorder-state")
     # The broker's own writable state (audit IDX-82). $LIVE itself is root-owned 0755 — the §2.5
     # floor requires that of every ancestor of a pinned artifact — so the broker cannot create its
@@ -268,7 +273,12 @@ def main() -> int:
     generation_config_sha256 = handles["generation_config"]
 
     recorder_bin = args.recorder_bin or os.path.join(bin_dir, "governed_recorder")
-    recorder_command = ["sudo", "-n", "-u", args.sudo_recorder_user, recorder_bin]
+    # An ABSOLUTE invoker. The broker (and, on the ladder kit, the supervisor) executes
+    # `recorder_command[0]` as given; a bare `sudo` is resolved through that process's $PATH,
+    # which is the one thing an invoker prefix out of a TCB-owned config must not depend on.
+    # `write_broker_config.validate_sidecar` refuses a bare sidecar invoker for exactly this
+    # reason, and until 2026-10-01 this vector was required to be the bare word instead.
+    recorder_command = [SUDO_BIN, "-n", "-u", args.sudo_recorder_user, recorder_bin]
 
     # ---- (3b) per-service IPC peer-auth policies (audit F-10) ----
     # These exist so the §2.5 floor's `*.ipc-policy` artifacts have something REAL to measure, and
@@ -290,9 +300,11 @@ def main() -> int:
 
     # ---- (4) the ONE shared config both sides read ----
     config = {
-        # Kept for the Rust broker's own allowlist; the SERVERS no longer read their peer-auth
-        # rule from here (F-10 — see `ipc_policies` below).
-        "allowed_broker_uid": DEFAULT_UIDS["broker"],
+        # There is NO top-level `allowed_broker_uid` here any more. It was written "for the Rust
+        # broker's own allowlist", and no reader of that key exists in any language in this tree:
+        # the servers take their peer-auth rule from their own root-owned `ipc_policies` file
+        # (F-10), and the broker connects OUT and admits nobody. A field nothing reads, in the
+        # one document every service trusts, is a rule that looks enforced and is not.
         "uids": DEFAULT_UIDS,
         # F-10: the interactive login account. The §2.5 floor is evaluated by ROOT (only root can
         # read the whole pinned set — the setuid launcher is 4750 and the sudo allowlist lives in a
@@ -310,9 +322,10 @@ def main() -> int:
             "challenge_priv": os.path.join(keys_dir, "challenge.priv"),
             "challenge_pub_hex": os.path.join(keys_dir, "challenge.pub.hex"),
             "supervisor_attest_priv": os.path.join(keys_dir, "supervisor_attest.priv"),
-            "supervisor_attest_pub_hex": os.path.join(keys_dir, "supervisor_attest.pub.hex"),
             "signer_priv": os.path.join(keys_dir, "signer.priv"),
-            "signer_pub_hex": signer_pub_hex,
+            # The supervisor-attestation verifying key, by VALUE: `run_signer.py` reads it. The
+            # signer's own public key is NOT repeated here -- nothing read `signer_pub_hex`, and a
+            # verifier resolves that key from the root-signed manifest, never from this file.
             "supervisor_attest_pub_hex_value": sup_pub_hex,
         },
         "store_dir": store_dir,
@@ -375,7 +388,8 @@ def main() -> int:
             # F-02: the recorder's OWN durable head-sequence counter. The evidence head has to
             # grow across runs for the supervisor's anti-rollback floor to mean anything, and
             # only durable state can do that — the constant it replaces made every turn of the
-            # deployment claim the same head. Recorder-owned, 0700 (run_live_turn.sh).
+            # deployment claim the same head. Recorder-owned, supervisor-group-readable, 0750
+            # (run_live_turn.sh; not 0700 -- the supervisor reads the chain from here).
             "evidence_state_dir": evidence_state_dir,
         },
         # The facts the EXECUTING CHAIN reports (via `complete-run`), and nothing else.

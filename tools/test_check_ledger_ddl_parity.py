@@ -8,10 +8,13 @@ than merely proven to print GREEN on the real tree.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import tempfile
 import unittest
 
+import check_ledger_ddl_parity
 from check_ledger_ddl_parity import CANONICAL, MIRROR, REQUIRED_CLAUSES, check
 
 # A minimal DDL body that satisfies every REQUIRED_CLAUSES substring. It is DERIVED
@@ -79,6 +82,37 @@ class LedgerDdlParityGateTests(unittest.TestCase):
     def test_the_real_repository_is_green(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         self.assertEqual(check(root), [])
+
+
+class TheExitCode(unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green.
+
+    `main()` takes no root -- it always reads this repository -- so the RED half replaces
+    `check` with one that reports a problem: what is under test is the line that turns a
+    problem into an exit code, not the rules that find one.
+    """
+
+    def _main(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = check_ledger_ddl_parity.main()
+        return code, out.getvalue()
+
+    def test_this_repository_exits_zero(self):
+        code, out = self._main()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_reported_problem_exits_one_and_is_printed(self):
+        from unittest import mock
+
+        with mock.patch.object(check_ledger_ddl_parity, "check",
+                               lambda root: ["the mirror DIVERGED from the canonical DDL"]):
+            code, out = self._main()
+        self.assertEqual(code, 1)
+        self.assertIn("RED: supervisor ledger DDL gate failed", out)
+        self.assertIn("  - the mirror DIVERGED from the canonical DDL", out)
 
 
 if __name__ == "__main__":

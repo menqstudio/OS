@@ -833,6 +833,100 @@ class DeferredEnforcementTests(unittest.TestCase):
         self.assertEqual(rs._deferred_enforcement_failures(repo), [])
 
 
+class NoGhIsOneAnswer(unittest.TestCase):
+    """The docstring promised "Local without an authenticated gh: SKIPPED (exit 0)" and the
+    gate has not been able to do that since the main-CI reading landed. `main()` had no test
+    on this path at all, so nothing noticed the promise and the code part ways."""
+
+    def _main(self, in_ci: bool) -> tuple[int, str, str]:
+        import contextlib
+        import io
+        from unittest import mock
+
+        repo = pathlib.Path(__file__).resolve().parents[1]
+        env = {"GITHUB_ACTIONS": "true"} if in_ci else {}
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(rs, "_have_gh", lambda: False), \
+                mock.patch.dict("os.environ", env, clear=True), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rs.main(["--root", str(repo)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_without_gh_the_gate_is_red_locally_and_in_ci(self):
+        for in_ci, where in ((False, "locally"), (True, "in CI")):
+            with self.subTest(in_ci=in_ci):
+                code, out, err = self._main(in_ci)
+                self.assertEqual(code, 1)
+                self.assertIn(f"gh CLI unavailable {where}", err)
+                self.assertIn("could not resolve the repository to read `main`'s own CI runs", err)
+                self.assertNotIn("SKIPPED", out + err)
+                self.assertNotIn("GREEN", out)
+
+    def test_the_docstring_no_longer_promises_a_local_skip_that_exits_zero(self):
+        self.assertIn("RED, exit 1", rs.__doc__)
+        self.assertIn("no `gh`, no verdict", rs.__doc__)
+
+
+class BranchProtectionReadFailures(unittest.TestCase):
+    """What an unreadable protection state means, by reason. The 403 hint was unreachable --
+    every 403 returns one branch earlier -- and told the reader to add a scope that does not
+    exist; three statements in the file disagreed on whether a 403 refuses or skips."""
+
+    EXPECTED = {"contexts": ["a"], "strict": True}
+
+    def _verify(self, why: str) -> tuple[list[str], str]:
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            problems = rs.verify_branch_protection(self.EXPECTED, None, why)
+        return problems, err.getvalue()
+
+    def test_a_permission_gap_is_a_printed_skip(self):
+        for why in ("HTTP 403: Resource not accessible by integration", "gh: Not Found (HTTP 404)",
+                    "403", "Resource not accessible"):
+            with self.subTest(why=why):
+                problems, err = self._verify(why)
+                self.assertEqual(problems, [])
+                self.assertIn("SKIPPED: branch protection needs admin rights", err)
+
+    def test_an_outage_is_a_refusal_and_carries_its_reason(self):
+        for why in ("HTTP 503", "timed out after 30s", ""):
+            with self.subTest(why=why):
+                problems, err = self._verify(why)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("A check that could not run has not passed.", problems[0])
+                self.assertIn(why or "no reason reported", problems[0])
+                self.assertEqual(err, "")
+
+    def test_no_message_tells_the_reader_to_add_a_scope_that_does_not_exist(self):
+        for why in ("HTTP 403", "HTTP 503", ""):
+            problems, err = self._verify(why)
+            self.assertNotIn("administration: read", " ".join(problems) + err)
+
+
+class OneJobNameExtraction(unittest.TestCase):
+    """`workflow_job_names` was factored out so two rules could not disagree, and
+    `verify_required_contexts_exist` kept its own copy of the loop."""
+
+    def test_the_contexts_rule_uses_the_shared_extraction(self):
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workflows = pathlib.Path(tmp)
+            (workflows / "ci.yml").write_text(
+                "jobs:\n  a:\n    name: Job A\n    runs-on: x\n", encoding="utf-8")
+            self.assertEqual(rs.verify_required_contexts_exist({"contexts": ["Job A"]}, workflows), [])
+            # The population comes from workflow_job_names and from nowhere else: swap it, and
+            # the verdict follows it rather than the file on disk.
+            with mock.patch.object(rs, "workflow_job_names", lambda _dir: {"Something Else"}):
+                problems = rs.verify_required_contexts_exist({"contexts": ["Job A"]}, workflows)
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("requires `Job A`", problems[0])
+
+
 class FileEntryPoint(unittest.TestCase):
     """The file's own entry point must run the whole file -- ninth audit `I-05`.
 
@@ -867,25 +961,56 @@ class FileEntryPoint(unittest.TestCase):
     def test_there_is_exactly_one_entry_point(self):
         self.assertEqual(len(self._index_of(lambda ln: ln == self.ENTRY)), 1)
 
-    def test_both_entry_points_collect_the_same_number_of_tests(self):
-        # The measurement the finding is made of, taken rather than asserted: load the module the
-        # way `-m unittest` does and the way a direct run does, and compare the counts.
-        loader = unittest.TestLoader()
-        module = sys.modules[__name__]
-        from_module = loader.loadTestsFromModule(module).countTestCases()
-        from_names = loader.loadTestsFromNames(
-            [f"{module.__name__}.{n}" for n, o in vars(module).items()
-             if isinstance(o, type) and issubclass(o, unittest.TestCase)]
-        ).countTestCases()
-        self.assertEqual(from_module, from_names)
-        self.assertGreaterEqual(from_module, 88, "the REST second road's 14 must be in the count")
+    def test_the_module_still_holds_the_rest_second_roads_tests(self):
+        # This was `test_both_entry_points_collect_the_same_number_of_tests`, and it compared
+        # `loadTestsFromModule(module)` with `loadTestsFromNames(...)` over `vars(module)` --
+        # the SAME fully imported module, counted twice. The two could not differ, so the
+        # equality proved nothing about a direct run that stops at `unittest.main()`; no direct
+        # run was simulated. Only the floor below could fail, so the floor is what is kept, under
+        # a name that says so. The property itself is the two tests above, and the sweep below.
+        count = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__]).countTestCases()
+        self.assertGreaterEqual(count, 88, "the REST second road's 14 must be in the count")
+
+    def test_every_tools_test_file_ends_with_its_one_entry_point(self):
+        """`I-05` was fixed in this file and guarded in this file, and came back in five others.
+
+        `test_check_reachability`, `test_check_roadmap_order`, `test_check_runbook_snippets`,
+        `test_check_c1_tokens` and `test_check_coordination` each had `unittest.main()` above
+        later test classes: a direct run printed `OK` having dropped 49 tests between them
+        (71/83, 24/26, 11/16, 33/56, 60/67). One guard per file was the design, three files had
+        one, and the five that needed it had none. So it is one sweep, over every file.
+
+        Parsed, not grepped: the entry point must be the LAST top-level statement, which also
+        covers a module-level function or assignment placed after it.
+        """
+        import ast
+
+        tools = pathlib.Path(__file__).resolve().parent
+        files = sorted(tools.glob("test_*.py"))
+        self.assertGreater(len(files), 40, "the sweep found almost no test files")
+        for path in files:
+            with self.subTest(file=path.name):
+                body = ast.parse(path.read_text(encoding="utf-8")).body
+                entries = [
+                    i for i, node in enumerate(body)
+                    if isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                    and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__"
+                ]
+                self.assertEqual(len(entries), 1, f"{path.name}: want exactly one entry point")
+                self.assertEqual(
+                    entries[0], len(body) - 1,
+                    f"{path.name}: `if __name__ == \"__main__\":` is not the last statement, so "
+                    f"a direct run stops before everything defined after line "
+                    f"{body[entries[0]].lineno} and still prints OK")
 
 # Ninth audit `I-05`. This entry point used to sit FOUR LINES ABOVE `class RestSecondRoad`, so
 # `python tools/test_check_repo_state.py` collected the 74 classes defined before it and printed
 # `OK` while silently dropping the 14 the eighth round added -- exactly the tests written because
 # that code had no coverage. CI runs `python -m unittest test_check_repo_state`, which imports the
 # whole module and was never fooled, so the two entry points disagreed and only the quiet one was
-# wrong. Keeping it last is the fix; `test_this_file_has_one_entry_point_and_it_is_last` is what
-# stops it drifting back up the file.
+# wrong. Keeping it last is the fix; `FileEntryPoint.test_the_entry_point_is_the_last_statement_
+# in_the_file` and `test_there_is_exactly_one_entry_point` are what stop it drifting back up this
+# file, and `test_every_tools_test_file_ends_with_its_one_entry_point` does the same for the rest.
+# (This comment named a test that never existed, `test_this_file_has_one_entry_point_and_it_is_last`.)
 if __name__ == "__main__":
     unittest.main()

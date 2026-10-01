@@ -176,6 +176,21 @@ class AuditAnchorMissing(AuditError):
     """
 
 
+class AuditMalformed(AuditError):
+    """The bytes are not a ledger at all: not UTF-8, a record that is not an object or lacks a
+    chain field, a head that will not parse.
+
+    An ``AuditError`` -- so ``verify()``'s "Raises AuditError on any break" holds and a caller
+    that catches only that (``bro_backup``) gets a verdict instead of a traceback -- but its
+    own subclass, because the difference is one a reader acts on. A broken LINK is a chain
+    that was written and then altered; a malformed SHAPE is content the reader cannot account
+    for at all, which ``bro_monitor`` reports as *unreadable* rather than as a chain that
+    failed to verify. Before this class existed those shapes escaped as raw ``KeyError`` /
+    ``AttributeError`` / ``JSONDecodeError``, and the monitor told them apart by catching
+    exactly those.
+    """
+
+
 class AuditAnchorCustodyMissing(AuditError):
     """Anchor-signing custody is absent or half-configured; the deployment must supply it."""
 
@@ -249,7 +264,13 @@ def read_all(path: pathlib.Path) -> list[dict]:
     if not p.exists():
         return []
     records = []
-    for line in p.read_text(encoding="utf-8").splitlines():
+    try:
+        text = p.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # Same rule as the per-line decode below: bytes that are not UTF-8 are a broken
+        # ledger, and a broken ledger is an AuditError, not a raw ValueError subclass.
+        raise AuditMalformed(f"audit ledger is not UTF-8: {exc}") from exc
+    for line in text.splitlines():
         line = line.strip()
         if line:
             try:
@@ -403,9 +424,10 @@ def _sign_anchor(argv: list[str], payload: dict) -> dict:
 
 
 def head_anchor_payload(path, *, key_id: str, now: int) -> dict:
-    """Build the audit-head payload an EXTERNAL recorder/operator signs.
+    """Build the audit-head payload a party OUTSIDE this process signs.
 
-    The out-of-band path, for an operator anchoring a ledger by hand. This module
+    The out-of-band path. No person holds an ``audit-anchor`` key (PR #78): the only
+    party that can sign this payload is the separate signer service. This module
     never signs - the returned payload leaves the process, is signed by the
     ``audit-anchor`` authority, and comes back through ``attach_head_anchor``. The
     chain is structurally verified first so an anchor is never minted over an
@@ -615,17 +637,33 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
     records = read_all(p)
     prev_hash = GENESIS
     for i, rec in enumerate(records):
+        # EVERY malformed shape is an AuditError (its `AuditMalformed` subclass), as the
+        # docstring promises. A line that parses
+        # as JSON but is not an object (`[1,2]`) raised AttributeError from `.get`, and a record
+        # missing `kind` or `payload` raised KeyError from the subscript below -- both escaped
+        # callers that catch AuditError and nothing else (`engine/tools/bro_backup.py`). It was
+        # still a refusal; it was a traceback instead of a verdict.
+        if not isinstance(rec, dict):
+            raise AuditMalformed(f"audit ledger record at index {i} is not an object")
         if rec.get("seq") != i:
             raise AuditError(f"audit ledger sequence break at index {i}")
         if rec.get("prev_hash") != prev_hash:
             raise AuditError(f"audit ledger linkage break at seq {i}")
+        missing = [k for k in ("seq", "prev_hash", "kind", "payload") if k not in rec]
+        if missing:
+            raise AuditMalformed(f"audit ledger record at seq {i} is missing {missing}")
         body = {k: rec[k] for k in ("seq", "prev_hash", "kind", "payload")}
         if _record_hash(prev_hash, body) != rec.get("hash"):
             raise AuditError(f"audit ledger record tampered at seq {i}")
         prev_hash = rec["hash"]
     head_file = _head_path(p)
     if head_file.exists():
-        head = json.loads(head_file.read_text(encoding="utf-8"))
+        try:
+            head = json.loads(head_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:   # JSONDecodeError and UnicodeDecodeError both
+            raise AuditMalformed(f"unreadable audit head: {exc}") from exc
+        if not isinstance(head, dict):
+            raise AuditMalformed("audit head is not an object")
         if head.get("count") != len(records):
             raise AuditError("audit ledger truncated: head count disagrees with chain length")
         if head.get("last_hash") != (records[-1]["hash"] if records else GENESIS):

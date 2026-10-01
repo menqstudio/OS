@@ -80,8 +80,10 @@ class BackupRestoreTests(unittest.TestCase):
         self.assertEqual(_sha(out / "shadow" / "shadow-ledger.jsonl"), _sha(self.ledger))
         self.assertEqual(_sha(out / "recovery" / "nested" / "b.state.json"),
                          _sha(self.store / "nested" / "b.state.json"))
-        # the restored append-only ledger still verifies through its head anchor
-        self.assertEqual(bro_audit_log.verify(out / "shadow" / "shadow-ledger.jsonl"), 2)
+        # the restored append-only ledger still verifies through its head anchor: the KEYED
+        # check, since the unkeyed one is structural and never opens the signed anchor at all
+        self.assertEqual(bro_audit_log.verify(out / "shadow" / "shadow-ledger.jsonl",
+                                              keys=self.custody.trusted), 2)
 
     def test_broken_ledger_chain_refuses_backup(self):
         # tamper a record in the middle of the chain
@@ -91,6 +93,32 @@ class BackupRestoreTests(unittest.TestCase):
         self.ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
         with self.assertRaises(bro_backup.BackupError):
             self._backup()
+
+    def test_a_refused_ledger_leaves_nothing_in_the_destination(self):
+        """"Never archived" (the module docstring). The copy used to come BEFORE the chain
+        check, so the refused ledger -- and every file copied before it -- was left in the
+        destination, and the next run refused that as "not empty"."""
+        lines = self.ledger.read_text(encoding="utf-8").splitlines()
+        rec = json.loads(lines[0]); rec["payload"] = {"reason": "forged"}
+        lines[0] = json.dumps(rec, sort_keys=True)
+        tampered = "\n".join(lines) + "\n"
+        honest = self.ledger.read_text(encoding="utf-8")
+        dest = self.tmp / "archive"
+        # Both orders: the bad ledger first, and after a healthy source has been walked.
+        for order in (("shadow", "recovery"), ("recovery", "shadow")):
+            with self.subTest(order=order):
+                self.ledger.write_text(tampered, encoding="utf-8")
+                sources = {name: self.sources[name] for name in order}
+                with self.assertRaises(bro_backup.BackupError):
+                    bro_backup.backup(sources, dest, now=NOW)
+                leftover = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*")) \
+                    if dest.exists() else []
+                self.assertEqual(leftover, [], "a refused backup wrote into the destination")
+                # ...so the SAME destination takes the next, healthy run.
+                self.ledger.write_text(honest, encoding="utf-8")
+                bro_backup.backup(sources, dest, now=NOW)
+                bro_backup.verify_archive(dest)
+                shutil.rmtree(dest)
 
     def test_tampered_archive_is_caught_before_restore(self):
         archive = self._backup()
@@ -131,7 +159,12 @@ class RestoreTraversalTests(unittest.TestCase):
 
     A restore must never trust the manifest's paths. A crafted archive that names
     an entry `../…`, an absolute path, a symlink, or a duplicate must be rejected
-    BEFORE any byte is written outside the target."""
+    BEFORE any byte is written outside the target.
+
+    Each negative names the refusal it expects. Every one of these archives is also
+    refused further down for an unrelated reason (the payload is not where the hostile
+    path points, so "archived file is missing"), and a bare BackupError is satisfied by
+    that with the path guard removed."""
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-trav-"))
@@ -159,7 +192,7 @@ class RestoreTraversalTests(unittest.TestCase):
     def test_dotdot_traversal_is_rejected_before_write(self):
         archive = self._archive("../escape.txt", place_at=self.tmp / "archive" / "escape.txt")
         target = self.tmp / "target"; target.mkdir()
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, r"unsafe archived path \(traversal\)"):
             bro_backup.restore(archive, {"s": target})
         # nothing was written outside the target
         self.assertFalse((self.tmp / "escape.txt").exists())
@@ -167,12 +200,12 @@ class RestoreTraversalTests(unittest.TestCase):
 
     def test_absolute_path_entry_is_rejected(self):
         archive = self._archive("/tmp/bro-evil.txt", place_at=self.tmp / "archive" / "s" / "x")
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, r"unsafe archived path \(traversal\)"):
             bro_backup.verify_archive(archive)
 
     def test_backslash_path_entry_is_rejected(self):
         archive = self._archive("..\\escape.txt", place_at=self.tmp / "archive" / "s" / "x")
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, "invalid archived path"):
             bro_backup.verify_archive(archive)
 
     def test_symlinked_archive_entry_is_rejected(self):
@@ -238,7 +271,7 @@ class RestoreTraversalTests(unittest.TestCase):
             {"rel": "a.txt", "sha256": h, "bytes": 1, "audit_chain": None},
             {"rel": "./a.txt", "sha256": h, "bytes": 1, "audit_chain": None}]}}}
         (archive / bro_backup.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, "duplicate archived path"):
             bro_backup.verify_archive(archive)
 
     def test_malicious_source_name_is_rejected(self):
@@ -246,7 +279,7 @@ class RestoreTraversalTests(unittest.TestCase):
         manifest = {"schema": 1, "created_at_epoch": 0, "sources": {"../evil": {"kind": "dir", "files": [
             {"rel": "a.txt", "sha256": hashlib.sha256(b"x").hexdigest(), "bytes": 1, "audit_chain": None}]}}}
         (archive / bro_backup.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, "invalid source name in manifest"):
             bro_backup.verify_archive(archive)
 
     def test_windows_drive_rel_is_rejected(self):
@@ -269,7 +302,7 @@ class RestoreTraversalTests(unittest.TestCase):
             {"rel": "C:/Windows/evil.txt", "sha256": hashlib.sha256(b"x").hexdigest(),
              "bytes": 1, "audit_chain": None}]}}}
         (archive / bro_backup.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
-        with self.assertRaises(bro_backup.BackupError):
+        with self.assertRaisesRegex(bro_backup.BackupError, "drive/stream colon"):
             bro_backup.verify_archive(archive)
 
     def test_ordinary_relative_paths_still_accepted(self):

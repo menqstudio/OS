@@ -8,8 +8,24 @@ decorative: it says a Verifier `can_build: false` and a Push Executor may only a
 mode, and nothing enforced either.
 
 So the capability half of the contract lives here, generated from the registries rather than
-hand-written, because 52 packs and 311 roles hand-maintained WILL drift from the registry that
+hand-written, because 52 packs and their roles hand-maintained WILL drift from the registry that
 defines them — and a drifted capability list is worse than none, since it reads as enforcement.
+
+WHAT IT DOES NOT GENERATE, stated because this paragraph used to say "311 roles" and the tool has
+never written that many: it walks `packs[*].roles` — the 259 DECLARED roles — and adds the three
+tiers, 262 files. The engine registers 311 identities, because `registry.json.mandatory_roles`
+appends an `Automation & Flow Engineer` to every one of the 52 packs
+(`engine/runtime/bro_identity.pack_roles()`), and that sixth role has NO definition here and is
+not on any file's "Declared roles" line. `test_generate_agent_definitions.py` pins the 52 by name
+so the gap cannot be forgotten, and it is a gap, not a decision: closing it changes a count that
+`config/counted-claims.json`, `README.md` and the desktop app's prose all carry.
+
+WHAT A TOOL LIST IS NOT. A definition without `Edit`/`Write` is a role that was not HANDED the
+edit tools. It is not a role that cannot write: every list here keeps `Bash`, and a shell can
+write any file. The root wall does not refuse that in advance — `.claude/hooks/
+canonical_law_gate.py` says so under "SHELL IS NOT GATED BEFORE THE FACT" — it detects it after
+the write has landed, and only in a session whose project root is this checkout. The generated
+text says exactly that and no more.
 
 The PATH half stays where it already is: `engine/schemas/task-contract.schema.json` carries
 `scope` and `prohibited_scope` per task, which Bro states when he delegates. Tools are a property
@@ -35,12 +51,27 @@ OUT_DIR = ROOT / ".claude" / "agents"
 #: Tool sets by what the authority policy says a role may DO.
 #:
 #: A builder writes, so it gets the editing tools. A verifier whose whole value is independence
-#: must not be able to edit the thing it is judging — it keeps Bash because verifying means
-#: running builds and tests, and a verifier that cannot run anything can only read and opine.
-#: The release role gets no editing either: its job is to push what others built.
+#: is not handed them — and keeps Bash, because verifying means running builds and tests, and a
+#: verifier that cannot run anything can only read and opine. That is a narrower grant, not an
+#: inability: Bash writes files, so "must not edit what it judges" is carried by `NO_EDIT_NOTE`
+#: as an instruction and by the wall's after-the-fact detection, not by this list.
+#:
+#: The release role gets the same list: its job is to push what others built. There were two
+#: constants here, `TOOLS_VERIFY` and `TOOLS_RELEASE`, holding the same string, which read as two
+#: grants. There is one. What separates a Push Executor from a verifier is its `allowed_modes`
+#: (`release` only), and no tool list expresses a mode — the engine's lease does.
 TOOLS_BUILD = "Read, Edit, Write, Grep, Glob, Bash"
-TOOLS_VERIFY = "Read, Grep, Glob, Bash"
-TOOLS_RELEASE = "Read, Grep, Glob, Bash"
+TOOLS_NO_EDIT = "Read, Grep, Glob, Bash"
+
+#: What a role without the edit tools is told about the shell it still holds.
+NO_EDIT_NOTE = (
+    "You were not given `Edit` or `Write`, and that is deliberate: your value is that you did not "
+    "produce what you are judging or pushing. You keep `Bash` because the work means running "
+    "things. Bash can also write files, and nothing refuses that before it happens — a shell write "
+    "is at best detected afterwards. So that half of the limit rests on you: do not use the shell "
+    "to change the thing you were asked to judge, and if the task cannot be done without changing "
+    "it, say so and stop."
+)
 
 #: Capability TIERS — the choice Bro actually gets to make.
 #:
@@ -63,7 +94,9 @@ TIERS: dict[str, tuple[str, str]] = {
     ),
     "runner": (
         "Read, Grep, Glob, Bash",
-        "Reads and RUNS — builds, tests, git status/diff/log, any inspection — but cannot edit. "
+        "Reads and RUNS — builds, tests, git status/diff/log, any inspection — and holds no Edit "
+        "or Write tool. Bash can still write a file, and nothing refuses that in advance, so not "
+        "changing anything is an instruction here, not an enforced limit. "
         "Use to find out whether something actually works, and whenever the answer must not be "
         "produced by the same hand that could change the thing being measured.",
     ),
@@ -91,7 +124,8 @@ not widen it yourself.
 
 ## How to work
 
-Read `CLAUDE.md` and `START_HERE.md` before you act. Report evidence, not assurances: what you
+Read every path in `config/canonical-read-manifest.json`, in the order it lists them, before you
+act — that file is the read order, and the only one. Report evidence, not assurances: what you
 changed, what you ran, what it printed. If something cannot be made genuinely true, leave it
 failing and say so. Never weaken a check to make a test pass, and never claim you ran something
 you did not.
@@ -106,6 +140,18 @@ tools: {tools}
 
 {body}
 """
+
+
+def render(name: str, description: str, tools: str, body: str) -> str:
+    """One definition file.
+
+    The description goes out as a double-quoted scalar. Plain, `builder.md` was not valid YAML:
+    its description opens "Full working capability: reads, ..." and a `: ` inside a plain scalar
+    starts a nested mapping (PyYAML: "mapping values are not allowed here, line 3, column 37").
+    A JSON string is a YAML double-quoted scalar, so `json.dumps` is the quoting.
+    """
+    return HEADER.format(name=name, description=json.dumps(description, ensure_ascii=False),
+                         tools=tools, body=body)
 
 
 def slug(text: str) -> str:
@@ -133,20 +179,25 @@ def authority_for(authority: dict, pack: dict, role: str) -> tuple[dict, str]:
     Mirrors `authority-policy.json.derivation`: exact overrides win; otherwise the FINAL declared
     role of a pack that requires an independent verifier is the designated verifier; everything
     else takes the default builder authority.
+
+    This is a SECOND derivation: the enforced one is `engine/runtime/bro_authority.py`
+    (`resolve_role_authority`). It stays here because this file also needs to say WHICH rule
+    answered, which the engine does not return — and `test_generate_agent_definitions.py` holds
+    the two to the same record for every pack and role, so they cannot drift apart unseen.
     """
     exact = override_for(authority, pack["id"], role)
     if exact is not None:
         return exact, "exact override"
-    if pack.get("independent_verifier_required") and role == pack["roles"][-1]:
+    if pack.get("independent_verifier_required") is True and role == pack["roles"][-1]:
         return authority["designated_verifier"], "designated verifier (final declared role)"
     return authority["default"], "pack default"
 
 
 def tools_for(record: dict) -> str:
     if record.get("can_release"):
-        return TOOLS_RELEASE
+        return TOOLS_NO_EDIT
     if record.get("can_verify") and not record.get("can_build"):
-        return TOOLS_VERIFY
+        return TOOLS_NO_EDIT
     return TOOLS_BUILD
 
 
@@ -157,10 +208,14 @@ def definition(pack: dict, role: str, record: dict, why: str) -> tuple[str, str]
         label for label, key in (("build", "can_build"), ("verify", "can_verify"),
                                  ("release", "can_release")) if record.get(key)
     ) or "nothing (no authority declared)"
+    # The role's own spelling, not `role.lower()`: this is the text the Task tool reads to pick
+    # an agent, and lowercasing turned it into "needs a sre lead" and "needs a api architect".
     description = (
         f"{role} in the {pack['id']} pack. May {can}. "
-        f"Use when the task is that pack's specialism and needs a {role.lower()}."
+        f"Use when the task is that pack's specialism and calls for the {role}."
     )
+    tools = tools_for(record)
+    no_edit = f"\n\n{NO_EDIT_NOTE}" if tools == TOOLS_NO_EDIT else ""
     body = f"""You are the **{role}** of the `{pack['id']}` pack.
 
 Pack lead: {pack.get('lead', 'n/a')}. Declared roles: {', '.join(pack['roles'])}.
@@ -177,17 +232,18 @@ contract you were spawned under:
 Your tool list above is the capability half of that contract. The PATH half arrives in your task
 prompt as `scope` and `prohibited_scope` — Bro states them when he delegates. Treat anything
 outside `scope` as read-only, and never touch `prohibited_scope`. If the task cannot be done
-inside its scope, say so and stop; do not widen it yourself.
+inside its scope, say so and stop; do not widen it yourself.{no_edit}
 
 ## How to work
 
-Read `CLAUDE.md` and `START_HERE.md` before you act — they are the law you operate under. Report
-back evidence, not assurances: what you changed, what you ran, what it printed. If a check cannot
-be made genuinely true, leave it failing and say so. Never weaken a check to make a test pass, and
-never claim you ran something you did not.
+Read every path in `config/canonical-read-manifest.json`, in the order it lists them, before you
+act — that file is the read order, and the only one, and those documents are the law you operate
+under. Report back evidence, not assurances: what you changed, what you ran, what it printed. If a
+check cannot be made genuinely true, leave it failing and say so. Never weaken a check to make a
+test pass, and never claim you ran something you did not.
 
 You return your result to Bro, who is the conductor. You do not delegate further."""
-    return name, HEADER.format(name=name, description=description, tools=tools_for(record), body=body)
+    return name, render(name, description, tools, body)
 
 
 def build() -> dict[str, str]:
@@ -197,14 +253,12 @@ def build() -> dict[str, str]:
     # The tiers first: they are what Bro chooses between when the work does not belong to a named
     # pack role, which is most conversational work.
     for tier, (tools, blurb) in TIERS.items():
-        out[tier] = HEADER.format(
-            name=tier,
-            description=(
-                f"{blurb} Bro picks the tier per task — grant the narrowest one that lets the "
-                "job finish."
-            ),
-            tools=tools,
-            body=TIER_BODY.format(tier=tier, blurb=blurb),
+        out[tier] = render(
+            tier,
+            f"{blurb} Bro picks the tier per task — grant the narrowest one that lets the "
+            "job finish.",
+            tools,
+            TIER_BODY.format(tier=tier, blurb=blurb),
         )
 
     for pack in packs:
@@ -217,11 +271,11 @@ def build() -> dict[str, str]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
                     help="verify the generated files match the registries; write nothing")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     wanted = build()
     if args.check:

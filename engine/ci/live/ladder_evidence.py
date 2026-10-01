@@ -7,8 +7,10 @@ reads them and decides, independently of every process that produced them:
   * the reply is a §4.6 `bridge.governed-turn-result.v1` frame, checked with the bridge's own
     validator rather than by reading keys;
   * the root-signed key manifest verifies under the anchor in the TCB directory;
-  * the §4.9 envelope's `key_id` resolves to a live, unrevoked `production` key IN that
-    manifest, and the envelope SIGNATURE verifies over the exact `envelope_jcs_b64` bytes;
+  * the §4.9 envelope's `key_id` IS the isolated signer's key this deployment pins
+    (`config.json` `trust.signer_key_id`) and resolves to a live, unrevoked, in-window
+    `production` key IN that manifest, and the envelope SIGNATURE verifies over the exact
+    `envelope_jcs_b64` bytes;
   * §7.1's echo check: every field the transport repeats equals the VERIFIED envelope;
   * the envelope's `request_sha256` equals the canonical request envelope RECOMPUTED from the
     three digests this turn staged — which is what binds the signature to these bytes and not
@@ -24,8 +26,14 @@ Any one of them failing exits non-zero with a named reason. That matters more th
 path: both of this repository's PowerShell harnesses shipped checks that could not fail with
 the sign flipped, and it survived three audit rounds. The negative control in
 `run_ladder_turn.sh` drives this exact tool, in this exact mode, on a deliberately broken
-input and REQUIRES a non-zero exit — so the failing branch is exercised on every run rather
-than reasoned about.
+input and REQUIRES a non-zero exit.
+
+What that control exercises, stated exactly, because this paragraph claimed more until
+2026-10-01: the kit's one negative is a tampered `system`, and it fails in `check_frame`
+(`governed_refusal`) — the FIRST check — so on a kit run the failing branch of every later
+check is not reached at all. Those branches are driven, one broken input and one named reason
+each, by `engine/tests/test_ladder_pull_evidence.py`, which runs on every suite run and needs
+no root.
 
 The evidence bundle it writes is the deliverable Slice 2 asks for by name: the §4.6 frame, the
 envelope, the digests, and the uids that ran each hop.
@@ -42,6 +50,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -53,6 +62,7 @@ import governed_turn_result_bridge as gtb  # noqa: E402
 from governed_supervisor import _canonical_bytes  # noqa: E402
 from isolated_signer import ENVELOPE_ARTIFACT_TYPE  # noqa: E402
 from challenge_authority import recompute_request_sha256  # noqa: E402
+from brops_protocol import ProtocolError, decode_base64url  # noqa: E402
 
 
 class Failed(Exception):
@@ -66,7 +76,12 @@ class Failed(Exception):
 
 
 def unb64u(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    """Strict base64url (no padding), or a named RED. The lenient stdlib decode this used
+    accepts any number of spellings of one value; a verifier should accept one."""
+    try:
+        return decode_base64url(value)
+    except ProtocolError as exc:
+        raise Failed("not_base64url", str(exc))
 
 
 def sha(data: bytes) -> str:
@@ -126,14 +141,30 @@ def check_frame(reply) -> dict:
     return receipt
 
 
-def check_manifest(live_root: str, key_id: str) -> str:
+def check_manifest(live_root: str, key_id: str, now_ms=None) -> str:
     """Verify the root-signed manifest under the TCB anchor and resolve the receipt key.
 
     This is §7.1's trust resolution done by a process that produced none of it. It is
     deliberately NOT satisfied by "the signature verifies under whatever key came with it":
     the anchor is read from the root-owned TCB file, the manifest signature is checked under
     THAT key, and only then is `key_id` looked up inside the verified manifest.
+
+    And it is not satisfied by "some key in the manifest" either. Until 2026-10-01 this
+    resolved WHATEVER `key_id` the envelope named, and the kit's manifest carries two keys
+    with the receipt-envelope protocol — the isolated signer's and the SUPERVISOR's
+    attestation key (`provision_keys.build_manifest` gives both the same `allowed_protocols`).
+    So an envelope signed by the supervisor, the very principal the signer exists to be
+    independent of, verified here. The product's verifier pins it
+    (`governed_verification.rs`: `envelope.key_id != keys.isolated_signer_key_id`); this one
+    now does too, from the same deployment fact, and checks the key's validity window.
     """
+    config = read_json(os.path.join(live_root, "config.json"), "no_config")
+    pinned = (config.get("trust") or {}).get("signer_key_id") if isinstance(config, dict) else None
+    require(isinstance(pinned, str) and bool(pinned), "no_signer_pin",
+            "config.json names no trust.signer_key_id; without it any manifest key would do")
+    require(key_id == pinned, "key_not_the_signer",
+            "the envelope is signed under key_id %r; this deployment's isolated signer is %r"
+            % (key_id, pinned))
     anchor = read_json(os.path.join(live_root, "tcb", "root-anchor.json"), "no_anchor")
     with open(os.path.join(live_root, "manifest.json"), "rb") as fh:
         manifest_bytes = fh.read()
@@ -160,6 +191,12 @@ def check_manifest(live_root: str, key_id: str) -> str:
         require(ENVELOPE_ARTIFACT_TYPE in (entry.get("allowed_protocols") or []),
                 "key_protocol_denied",
                 "%s may not sign %s" % (key_id, ENVELOPE_ARTIFACT_TYPE))
+        now = int(time.time() * 1000) if now_ms is None else now_ms
+        valid_from, valid_to = entry.get("valid_from_ms"), entry.get("valid_to_ms")
+        require(isinstance(valid_from, int) and isinstance(valid_to, int)
+                and not isinstance(valid_from, bool) and not isinstance(valid_to, bool)
+                and valid_from <= now <= valid_to, "key_not_valid_now",
+                "%s is valid %r..%r ms and it is %d" % (key_id, valid_from, valid_to, now))
         return entry["public_key_hex"]
     raise Failed("key_unknown", "the envelope names key_id %r, which the manifest does not carry"
                  % key_id)
@@ -236,17 +273,25 @@ def check_output(envelope: dict, live_root: str, report_path) -> dict:
     require(len(blob) == int(envelope["output_bytes"]), "output_length",
             "the envelope claims %s bytes, the stored blob is %d"
             % (envelope["output_bytes"], len(blob)))
-    captured = None
-    if report_path and os.path.exists(report_path):
+    # The header lists "byte-identical to the reply the recorder captured" as a property whose
+    # failure exits non-zero. Until 2026-10-01 the comparison sat behind `os.path.exists`, so a
+    # report that was ABSENT skipped it, set a bundle flag nothing reads, and left the verdict
+    # green: the one way to pass a byte-identity check was to remove one of the two things
+    # compared.
+    try:
         with open(report_path, "rb") as fh:
             captured = fh.read()
-        require(captured == blob, "capture_divergence",
-                "the recorder's captured reply is not the blob the envelope addresses")
+    except (OSError, TypeError) as exc:
+        raise Failed("no_capture",
+                     "the recorder's captured reply %r cannot be read, so it cannot be compared "
+                     "with the blob the envelope addresses: %s" % (report_path, exc))
+    require(captured == blob, "capture_divergence",
+            "the recorder's captured reply is not the blob the envelope addresses")
     return {
         "output_handle": handle,
         "output_bytes": len(blob),
         "output_utf8_preview": blob[:512].decode("utf-8", "replace"),
-        "recorder_report_matches_store": captured is not None and captured == blob,
+        "recorder_report_matches_store": True,
     }
 
 
@@ -351,8 +396,15 @@ def check_hops(hops: list, uids: dict) -> dict:
             "protocols": sorted({h["protocol"] for h in served})}
 
 
-def check_containment(live_root: str, attempt: str) -> dict:
-    """The recorder's own account of the contained execution, for THIS attempt."""
+def check_containment(live_root: str, attempt: str, uids: dict) -> dict:
+    """The recorder's own account of the contained execution, for THIS attempt.
+
+    `invoker_uid` is the real uid of the process that ran the launcher, as the recorder read
+    it from the kernel (`getuid()` in `governed_recorder.rs`). The header promised it "is the
+    recorder's, not the caller's" from the start and nothing checked it: a report written by a
+    recorder running as the supervisor — the collapse the `sudo -u <recorder>` hop exists to
+    prevent — passed.
+    """
     report_dir = os.path.join(live_root, "report")
     path = os.path.join(report_dir, "ladder-%s.out.containment.json" % attempt)
     document = read_json(path, "no_containment")
@@ -363,6 +415,14 @@ def check_containment(live_root: str, attempt: str) -> dict:
             % document.get("launcher_exit"))
     require(document.get("launcher_gate") == "passed", "launcher_gate",
             "the launcher gate did not pass")
+    recorder = uids.get("recorder") if isinstance(uids, dict) else None
+    require(isinstance(recorder, int) and not isinstance(recorder, bool), "no_uids",
+            "the orchestrator recorded no recorder uid to hold the containment report against")
+    invoker = document.get("invoker_uid")
+    require(isinstance(invoker, int) and not isinstance(invoker, bool) and invoker == recorder,
+            "invoker_principal",
+            "the containment report names invoker_uid %r; the recorder principal is uid %r"
+            % (invoker, recorder))
     return document
 
 
@@ -515,7 +575,8 @@ def main() -> int:
         envelope = check_envelope(receipt, args.live_root)
         check_request_binding(envelope, document)
         ledger = check_ledger(args.live_root, document, challenge_handle)
-        containment = check_containment(args.live_root, ledger["execution_attempt_id"])
+        containment = check_containment(args.live_root, ledger["execution_attempt_id"],
+                                        bundle["uids"])
         output = check_output(
             envelope, args.live_root,
             os.path.join(args.live_root, "report",
@@ -589,9 +650,12 @@ def _dump(bundle_dir: str, name: str, value) -> None:
 def _read_hop_log(path: str) -> list:
     """The supervisor's per-frame record: protocol + the SO_PEERCRED uid the kernel reported.
 
-    Absent or unreadable is recorded as such rather than raising: the hop log is EVIDENCE, and
-    the verdict must not depend on the presence of a convenience file. Every property the
-    verdict rests on is checked against the ledger, the store and the signature instead.
+    Absent or unreadable is RECORDED here rather than raised — as a `hop_log_unavailable`
+    record, so the bundle says why — and it is `check_hops` that turns it into a RED
+    (`no_hops_recorded`): the verdict DOES depend on this log, because the uids that ran each
+    hop are one of the things this tool exists to show. This docstring said the opposite ("the
+    verdict must not depend on the presence of a convenience file") beside a `check_hops` that
+    enforced the dependency.
     """
     records = []
     try:

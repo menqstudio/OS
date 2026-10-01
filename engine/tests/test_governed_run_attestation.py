@@ -35,8 +35,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
-sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs, _acceptance_fixtures
 
+import _acceptance_fixtures  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
 from governed_supervisor import (  # noqa: E402
     ATTESTATION_PROTOCOL,
@@ -48,6 +49,7 @@ from governed_supervisor import (  # noqa: E402
     _canonical_bytes,
     build_run_attestation,
     evidence_from_state,
+    recompute_request_sha256,
 )
 from governed_supervisor_server import (  # noqa: E402
     LENGTH_PREFIX_BYTES,
@@ -89,9 +91,7 @@ def tearDownModule():
 
 
 def _ledger():
-    conn = sqlite3.connect(":memory:", isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    gsl.apply_schema(conn)
+    conn = _acceptance_fixtures.ledger()
     _OPEN.append(conn)
     return conn
 
@@ -164,16 +164,11 @@ def _build_store():
         "challenge_accepted_at_ms": NOW_MS - 3_000,
         "completed_at": NOW_MS - 1_000,
     }
-    request_sha256 = _iso._sha256_hex(_iso._jcs_bytes({
-        "protocol": _iso.REQUEST_PROTOCOL,
-        "workspace_id": like["workspace_id"], "install_id": like["install_id"],
-        "request_nonce": like["request_nonce"],
-        "system_sha256": _iso._sha256_hex(store.read_verified(handles["system_handle"])),
-        "history_sha256": _iso._sha256_hex(store.read_verified(handles["history_handle"])),
-        "generation_config_sha256": _iso._sha256_hex(
-            store.read_verified(handles["generation_config_handle"])),
-        "requested_at": str(NOW_MS - 5_000),
-    }))
+    # The store is content-addressed, so each handle IS the digest of the bytes it names — the
+    # same three digests the challenge commits to. One derivation for the whole file.
+    for field in ("system_handle", "history_handle", "generation_config_handle"):
+        assert _iso._sha256_hex(store.read_verified(handles[field])) == handles[field]
+    request_sha256 = _sha256_of_request(handles, like["request_nonce"])
     handles["record_handle"] = store.put(_chain_docs.canonical(
         _chain_docs.terminal_record(like, request_sha256=request_sha256)))
     handles["execution_receipt_handle"] = store.put(
@@ -421,28 +416,7 @@ class BuildRunAttestationTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class FakeConn:
-    def __init__(self, peer_uid, inbound=b""):
-        self.peer_uid = peer_uid
-        self._in = inbound
-        self.out = b""
-        self.closed = False
-
-    def recv_exactly(self, n):
-        chunk = self._in[:n]
-        self._in = self._in[n:]
-        return chunk
-
-    def send_all(self, data):
-        self.out += data
-
-    def close(self):
-        self.closed = True
-
-    def decoded_reply(self):
-        length = int.from_bytes(self.out[:LENGTH_PREFIX_BYTES], "big")
-        body = self.out[LENGTH_PREFIX_BYTES:LENGTH_PREFIX_BYTES + length]
-        return json.loads(body.decode("utf-8"))
+FakeConn = _acceptance_fixtures.FakeConn
 
 
 def _frame(obj):
@@ -454,41 +428,25 @@ def _noop_verify(_message, _sig):
     return True
 
 
-def _fixed_request_sha256(payload):
-    """The digest the supervisor recomputes at accept-open.
-
-    It used to return a constant `"0" * 64`, which was invisible until the signer started
-    re-verifying the published record against its OWN recompute (audit R3-01): the record then
-    carried the placeholder and the signer's arithmetic did not, and the refusal was correct.
-    A fixture that cannot survive a real check is a fixture that was hiding one.
-    """
-    import isolated_signer as _iso
-
-    return _iso._sha256_hex(_iso._jcs_bytes({
-        "protocol": _iso.REQUEST_PROTOCOL,
-        "workspace_id": payload["workspace_id"],
-        "install_id": payload["install_id"],
-        "request_nonce": payload["request_nonce"],
-        "system_sha256": payload["system_sha256"],
-        "history_sha256": payload["history_sha256"],
-        "generation_config_sha256": payload["generation_config_sha256"],
-        "requested_at": str(payload["requested_at_ms"]),
-    }))
-
-
 def _sha256_of_request(handles, nonce):
-    import isolated_signer as _iso
+    """The `brops.request.v1` digest of this file's fixture turn.
 
-    return _iso._sha256_hex(_iso._jcs_bytes({
-        "protocol": _iso.REQUEST_PROTOCOL,
+    Computed by the PRODUCTION recompute (`governed_supervisor.recompute_request_sha256`), which
+    is also what every `dispatch` call below is handed as its recompute seam. This file used to
+    spell the eight-field envelope out three times and pass its own copy as the seam, so the
+    supervisor's recompute was never the function under test here. That it agrees with the
+    SIGNER's independent recompute is not assumed: the receipt-envelope test below hands the
+    record it produces to the real `IsolatedSigner`, which re-derives the digest itself.
+    """
+    return recompute_request_sha256({
         "workspace_id": "ws-1",
         "install_id": "install-xyz",
         "request_nonce": nonce,
         "system_sha256": handles["system_handle"],
         "history_sha256": handles["history_handle"],
         "generation_config_sha256": handles["generation_config_handle"],
-        "requested_at": str(NOW_MS - 5_000),
-    }))
+        "requested_at_ms": NOW_MS - 5_000,
+    })
 
 
 def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
@@ -507,7 +465,7 @@ def _challenge_doc(handles, nonce="550e8400-e29b-41d4-a716-446655440000"):
             "system_sha256": handles["system_handle"],
             "history_sha256": handles["history_handle"],
             "generation_config_sha256": handles["generation_config_handle"],
-            # Must equal what `_fixed_request_sha256` recomputes, or accept-open refuses — the
+            # Must equal what `recompute_request_sha256` recomputes, or accept-open refuses — the
             # supervisor checks the challenge's digest against its own arithmetic (F-01).
             "request_sha256": _sha256_of_request(handles, nonce),
             "requested_at_ms": NOW_MS - 5_000,
@@ -556,7 +514,7 @@ class AttestRunServerTests(unittest.TestCase):
             request,
             self.config,
             _noop_verify,
-            _fixed_request_sha256,
+            recompute_request_sha256,
             lambda: NOW_MS,
             conn=self.ledger_conn,
             publish_artifact=self.store.put,
@@ -639,7 +597,7 @@ class AttestRunServerTests(unittest.TestCase):
                             "execution_attempt_id": "attempt-1"}),
         )
         reply = handle_connection(
-            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            conn, BROKER_UID, self.config, _noop_verify, recompute_request_sha256,
             lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
             sign_attestation=self.ed.sign_attestation,
             supervisor_attestation_key_id=SUP_KEY_ID,
@@ -655,7 +613,7 @@ class AttestRunServerTests(unittest.TestCase):
             "facts": {"output_handle": "9" * 64},
         }))
         reply = handle_connection(
-            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            conn, BROKER_UID, self.config, _noop_verify, recompute_request_sha256,
             lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
             sign_attestation=self.ed.sign_attestation,
             supervisor_attestation_key_id=SUP_KEY_ID,
@@ -672,15 +630,25 @@ class AttestRunServerTests(unittest.TestCase):
         self.assertNotIn("attestation", reply)
 
     def test_op_unavailable_without_seam_fails_closed(self):
+        # A REAL terminal run first, so the missing seam is the only thing wrong. Asked about an
+        # attempt that never ran, the same frame is refused `no_terminal_run_state` whether or
+        # not the seam guard exists — which is what this test used to measure.
+        attempt = self._run_lifecycle()
         conn = FakeConn(BROKER_UID, inbound=_frame({
-            "op": OP_ATTEST_RUN, "run_id": "run-abc", "execution_attempt_id": "attempt-1",
+            "op": OP_ATTEST_RUN, "run_id": "run-abc", "execution_attempt_id": attempt,
         }))
         reply = handle_connection(
-            conn, BROKER_UID, self.config, _noop_verify, _fixed_request_sha256,
+            conn, BROKER_UID, self.config, _noop_verify, recompute_request_sha256,
             lambda: NOW_MS, ledger_conn=self.ledger_conn, publish_artifact=self.store.put,
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("attestation", reply)
+        self.assertNotIn("evidence_jcs_b64", reply)
+        self.assertIn("sign_attestation", reply["error"])
+        self.assertNotEqual(reply.get("reason"), REFUSE_NO_TERMINAL_RUN)
+        # The control: the same frame WITH the seam is attested, so the run really was terminal.
+        self.assertTrue(self._op({"op": OP_ATTEST_RUN, "run_id": "run-abc",
+                                  "execution_attempt_id": attempt})["ok"])
 
 
 if __name__ == "__main__":

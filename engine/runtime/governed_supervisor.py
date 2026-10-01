@@ -66,6 +66,11 @@ from governed_supervisor_ledger import (
     MIN_LAUNCH_REMAINING_MS,
     AttestationState,
     NewAcceptance,
+    _is_lower_sha256_hex,
+    _is_pos_i63,
+    _is_u64_ms,
+    _nonempty_str,
+    canonical_bytes as _canonical_bytes,
 )
 
 # ---------------------------------------------------------------------------
@@ -202,6 +207,11 @@ REFUSE_MALFORMED = "malformed"
 REFUSE_SIGNATURE_INVALID = "signature_invalid"
 REFUSE_CHALLENGE_EXPIRED = "challenge_expired"
 REFUSE_REQUEST_SHA256_MISMATCH = "request_sha256_mismatch"
+# DECLARED, never returned: ``accept_open`` no longer has a launch gate (it moved to
+# ``governed_supervisor_ledger.gate_and_start``, and the server answers that with its own
+# constant of the same value). It stays because it is part of this module's refusal VOCABULARY,
+# which ``governed_acceptance._ACCEPT_REASONS`` maps in full on purpose -- "total over the
+# constant set rather than over the subset that happens to be reachable today".
 REFUSE_LEASE_EXPIRED = "lease_expired"
 # The challenge names a supervisor that is not this one. Accepting it would let a turn
 # issued for another supervisor be leased and attested here (F-01 hardening).
@@ -281,60 +291,58 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _nonempty_str(value: Any) -> bool:
-    return isinstance(value, str) and len(value) > 0
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
 def _is_sha256_hex(value: Any) -> bool:
+    """Exactly 64 hex DIGITS, either case -- the rule ``challenge_authority._is_sha256_hex``
+    applies to the same fields, so a digest the authority signs is one this module admits.
+
+    A character-set check, not a parse: this was ``int(value, 16)`` until 2026-10-01, which also
+    accepts a ``0x`` prefix, a sign, surrounding whitespace and ``_`` separators, none of which
+    is a digest. The lowercase-strict rule for values that flow verbatim into signed bytes is
+    :func:`_is_lower_sha256_hex`.
+    """
     if not isinstance(value, str) or len(value) != 64:
         return False
-    try:
-        int(value, 16)
-    except ValueError:
-        return False
-    return True
+    return all(c in _HEX_DIGITS for c in value)
 
 
 def _capped_str(value: Any) -> bool:
     """Non-empty string within the fixed §1.9 cap — mirrors
     isolated_signer._capped_str so an id the supervisor attests is one the signer
-    will also accept."""
-    return isinstance(value, str) and 0 < len(value) <= ATTEST_STRING_CAP
-
-
-def _is_lower_sha256_hex(value: Any) -> bool:
-    """64 LOWERCASE hex chars — byte-identical to isolated_signer._is_sha256_hex.
-    Lowercase-strict because the handle value flows verbatim into ``JCS(evidence)``;
-    an uppercased digest would sign different bytes than the signer re-hashes."""
-    if not isinstance(value, str) or len(value) != 64:
+    will also accept. That includes the signer's ENCODABLE clause: a string holding a lone
+    surrogate cannot be turned into the bytes the signer signs, so it is refused here, before
+    it is attested, rather than there."""
+    if not isinstance(value, str) or not 0 < len(value) <= ATTEST_STRING_CAP:
         return False
-    return all(c in "0123456789abcdef" for c in value)
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
-def _is_u64_ms(value: Any) -> bool:
-    # Epoch-ms timestamp; bool excluded (mirrors isolated_signer._is_u64_ms).
-    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2 ** 64
-
-
-def _is_pos_i63(value: Any) -> bool:
-    # Evidence-head counter, strictly positive i63 (mirrors
-    # isolated_signer._is_pos_i63 / the ledger's ``>= 1`` CHECK constraints).
-    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value < 2 ** 63
-
-
-def _canonical_bytes(payload: Mapping[str, Any]) -> bytes:
-    """Deterministic JCS-ish encoding (sorted keys, compact separators) — the EXACT
-    encoding ``challenge_authority.issue_challenge`` signs, so the reassembled bytes
-    the supervisor verifies match the bytes the authority signed.
-
-    This is ALSO byte-identical to ``isolated_signer._canonical_bytes`` over the
-    §4.9 evidence object (both: ``json.dumps(sort_keys=True, separators=(",",":"))``,
-    default ``ensure_ascii=True``; evidence carries only strings/ints so the
-    ``allow_nan`` difference is unobservable). That equality is what makes the
-    ``JCS(evidence)`` the supervisor signs the SAME bytes the signer re-hashes into
-    ``attestation_evidence_sha256`` (and the Rust broker checks in
-    governed_verification.rs)."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+# ``_nonempty_str``, ``_is_lower_sha256_hex``, ``_is_u64_ms``, ``_is_pos_i63`` and
+# ``_canonical_bytes`` are IMPORTED from ``governed_supervisor_ledger`` (top of file). Each was a
+# second, identical body here until 2026-10-01, in a module that already imported the lease
+# constants from that ledger for exactly this reason. What the names mean, kept from the copies:
+#
+#   * ``_is_lower_sha256_hex`` -- 64 LOWERCASE hex chars, the same rule as
+#     ``isolated_signer._is_sha256_hex``. Lowercase-strict because the handle value flows verbatim
+#     into ``JCS(evidence)``; an uppercased digest would sign different bytes than the signer
+#     re-hashes.
+#   * ``_is_u64_ms`` -- epoch-ms timestamp, bool excluded (as ``isolated_signer._is_u64_ms``).
+#   * ``_is_pos_i63`` -- evidence-head counter, strictly positive i63 (as
+#     ``isolated_signer._is_pos_i63`` and the ledger's ``>= 1`` CHECK constraints).
+#   * ``_canonical_bytes`` -- deterministic JCS-ish encoding (sorted keys, compact separators,
+#     default ``ensure_ascii=True``): the EXACT encoding ``challenge_authority.issue_challenge``
+#     signs, so the bytes the supervisor reassembles and verifies are the bytes the authority
+#     signed. It is also byte-identical to ``isolated_signer._canonical_bytes`` over the §4.9
+#     evidence object (evidence carries only strings/ints, so that copy's ``allow_nan=False`` is
+#     unobservable), which is what makes the ``JCS(evidence)`` the supervisor signs the SAME bytes
+#     the signer re-hashes into ``attestation_evidence_sha256`` and the Rust broker checks in
+#     governed_verification.rs. ``test_one_standard_pins`` holds the copies that remain equal.
 
 
 def challenge_handle_for(payload: Mapping[str, Any], sig: str) -> str:
@@ -859,7 +867,9 @@ def evidence_from_state(state: AttestationState, config: SupervisorConfig) -> di
     """Assemble the §4.9 evidence facts from the supervisor's OWN durable terminal run
     state plus its OWN pinned identity config. **This is the F-01 fix.**
 
-    Every one of the 25 fields has exactly one origin, and none of them is the caller:
+    Every one of the ``ATTEST_INPUT_FIELDS`` (28 today; this said "25" after three were added,
+    which is why the number is now beside the name that is its source) has exactly one origin,
+    and none of them is the caller:
 
       * ``run_id``/``execution_attempt_id``/``task_id``/``request_nonce``/``receipt_id``/
         ``workspace_id``/``install_id``/``supervisor_id``/``requested_at``/

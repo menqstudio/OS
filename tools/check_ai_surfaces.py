@@ -57,7 +57,7 @@ _PROVIDER_RE = re.compile(r"(?:crate::)?ai::(generate_stream|generate|governed_t
 # `pub(crate)` and non-pub heads too (audit F-38) closes the "hide the provider call behind a pub(crate) /
 # non-pub helper" evasion — such a helper is now a resolvable one-hop, not an invisible sink whose provider
 # call is silently attributed to the preceding fn's slice.
-_FN_RE = re.compile(r"^\s*(?:pub(?:\(crate\))? )?(?:async )?fn (\w+)\s*\(")
+_FN_RE = re.compile(r"^\s*(?:pub(?:\(crate\))? )?(?:async )?fn (\w+)\s*[<(]")
 # any identifier used in call position `name(` — intersected with known fn names to find
 # same-file helper calls (crate-local helpers appear as `helper(`, `self::helper(`,
 # `crate::...::helper(`; the bare-name match before `(` catches all of these forms).

@@ -71,7 +71,9 @@ def source_files() -> list[pathlib.Path]:
         for path in base.rglob("*"):
             if path.suffix not in SCAN_SUFFIXES:
                 continue
-            if SKIP_PARTS & set(path.parts):
+            # Judged below ROOT, not on the absolute path: a checkout that merely sits under
+            # a directory named `dist` or `target` would otherwise scan no file at all.
+            if SKIP_PARTS & set(path.relative_to(ROOT).parts):
                 continue
             if path.relative_to(ROOT).as_posix() in SKIP_FILES:
                 continue

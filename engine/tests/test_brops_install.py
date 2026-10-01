@@ -36,8 +36,13 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from _prerequisites import CI_WORKFLOW, DESKTOP_PACKAGING, require, requires  # noqa: E402
 
 ENGINE = pathlib.Path(__file__).resolve().parents[1]
 REPO = ENGINE.parent
@@ -362,6 +367,10 @@ def human(name: str, uid: int, shell: str = "/bin/bash", home: str | None = None
 
 
 def identifier() -> str:
+    # The one read of `tauri.conf.json`, so the one place its absence is named: on a tree that
+    # holds engine/ alone every test that needs the identifier skips for that reason (and fails
+    # for it under CI) instead of erroring with FileNotFoundError.
+    require(DESKTOP_PACKAGING)
     return json.loads(TAURI_CONF.read_text(encoding="utf-8"))["identifier"]
 
 
@@ -593,6 +602,7 @@ class TestTheIdentifierIsTaurisNotOurs(unittest.TestCase):
         # The usage text states the default too, and must state the same one.
         self.assertIn("/.local/share/%s " % identifier(), text)
 
+    @requires(DESKTOP_PACKAGING)
     def test_postinst_calls_the_stepless_form(self) -> None:
         # The form `all` was defined to serve. If postinst changes how it calls the installer,
         # this is where that is noticed.
@@ -800,6 +810,7 @@ class TestTheRealRun(AnchorCase):
                 self.assertIn(name, done.stderr)
 
 
+@requires(CI_WORKFLOW)
 class TestCiRunsTheInstaller(unittest.TestCase):
     """CI's accounts are the installer's. An inline `useradd` beside it would be the parallel copy
     this file was written to end: green in CI, and absent from every install."""

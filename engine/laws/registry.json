@@ -73,13 +73,13 @@
         {"module": "bro_contracts", "symbol": "validate_task_contract", "kind": "validator", "path_role": "primary"}
       ],
       "tests": [
-        {"file": "tests/test_bro_contracts.py", "case": "test_registered_base_agent_profile_is_valid", "kind": "allow"},
-        {"file": "tests/test_bro_contracts.py", "case": "test_safe_repository_paths", "kind": "deny"}
+        {"file": "tests/test_bro_contracts.py", "case": "test_task_contract_accepts_an_absolute_scope", "kind": "allow"},
+        {"file": "tests/test_bro_contracts.py", "case": "test_task_contract_still_refuses_a_traversing_scope", "kind": "deny"}
       ],
       "evidence": {"schema": "task-contract", "writer": "runtime/bro_contracts.py", "verifier": "runtime/bro_contracts.py", "retention": "task", "integrity_level": "Unsigned", "trust_source": "Self"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}, {"ver": "1.1", "type": "Editorial", "date": "2026-10-01", "note": "Tests rebound to cases that call validate_task_contract. The two bound before (test_registered_base_agent_profile_is_valid, test_safe_repository_paths) call validate_agent_profile and safe_repo_path, not this law's surface. No behaviour changed."}],
       "runtime_prerequisites": ["python3"]
     },
     {
@@ -91,13 +91,13 @@
         {"module": "bro_contracts", "symbol": "validate_skill_receipt", "kind": "validator", "path_role": "primary"}
       ],
       "tests": [
-        {"file": "tests/test_bro_contracts.py", "case": "test_registered_base_agent_profile_is_valid", "kind": "allow"},
-        {"file": "tests/test_bro_contracts.py", "case": "test_only_push_executor_may_have_push_capability", "kind": "deny"}
+        {"file": "tests/test_bro_contracts.py", "case": "test_produced_receipt_validates", "kind": "allow"},
+        {"file": "tests/test_bro_contracts.py", "case": "test_corrupted_skill_hash_is_rejected", "kind": "deny"}
       ],
       "evidence": {"schema": "skill-receipt", "writer": "runtime/bro_contracts.py", "verifier": "runtime/bro_contracts.py", "retention": "task", "integrity_level": "Unsigned", "trust_source": "Self"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; skill-specific deny coverage is thin (flagged)"}],
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill; skill-specific deny coverage is thin (flagged)"}, {"ver": "1.1", "type": "Editorial", "date": "2026-10-01", "note": "Tests rebound to SkillReceiptProducerTests, which call validate_skill_receipt. The two bound before call validate_agent_profile only. Deny coverage is still one case (a corrupted skill hash). No behaviour changed."}],
       "runtime_prerequisites": ["python3"]
     },
     {

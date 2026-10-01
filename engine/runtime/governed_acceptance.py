@@ -60,13 +60,18 @@ Block: no lease is issued (or no exec occurs), no receipt/evidence/terminal reco
 produced". Faking an execution to make a green path exist is the one thing this seam must not
 do.
 
-**The signer transport (§6.1 steps 11–12 are PARTIAL: the authority exists, the transport
-to it does not).** §6.1 steps 11–12 belong to the isolated signer, a real component
-(``isolated_signer.IsolatedSigner`` behind ``isolated_signer_server``). Its front door
-allowlists ONLY the broker uid (``isolated_signer_server.peer_is_broker``), and the supervisor
-is a different principal, so **there is no supervisor→signer transport in this tree**. The
-seam here is typed to the signer's OWN frozen contract — it is handed a
-``brops.sign-request.v1`` and must return the signer's own
+**The signer transport (§6.1 steps 11–12).** They belong to the isolated signer, a real
+component (``isolated_signer.IsolatedSigner`` behind ``isolated_signer_server``). Its front
+door admits exactly ONE uid, the one its deployment configures — the parameter is still named
+``allowed_broker_uid`` and the predicate ``peer_is_broker``, after the principal that door was
+first built for. The supervisor→signer transport EXISTS:
+``isolated_signer_server.request_sign_result`` is the client, and the CI ladder binds it
+(``engine/ci/live/run_ladder_supervisor.py`` passes it as ``sign_result``, with the signer's
+ipc-policy naming the supervisor uid). This paragraph said "there is no supervisor→signer
+transport in this tree" until 2026-10-01, after both had landed. What is still absent is a
+SHIPPED deployment that provisions that binding: nothing in the packaged product starts the
+signer or writes its ipc-policy. The seam here is typed to the signer's OWN frozen contract —
+it is handed a ``brops.sign-request.v1`` and must return the signer's own
 ``brops.governed-receipt-envelope.v1`` / ``brops.governed-receipt-refusal.v1`` reply — so a
 deployment binds it to the real signer or the turn does not complete. A signer that cannot be
 reached raises :class:`~governed_supervisor.SupervisorError`: §4.10(e) publishes no reason for
@@ -84,10 +89,13 @@ two accounts of one field is strictly worse than one wrong account. It publishes
 exactly the bytes the ledger persisted, identically to the broker path, and the divergence is
 recorded here and in the report rather than papered over.
 
-**Nothing wires this into a live supervisor.** ``engine/ci/live/run_supervisor.py`` constructs
-no ``OpenService``/``StagingService``/``EvidenceRequestService``/``OutputReadService``, so the
-entire sidecar-facing governed surface is unconfigured there and stays that way. This module
-makes the supervisor side CAPABLE; it opens no door.
+**What wires this, and what does not.** ``engine/ci/live/run_ladder_supervisor.py`` — the CI
+ladder kit's supervisor — constructs ``AcceptanceDriver`` together with ``OpenService``,
+``StagingService``, ``EvidenceRequestService`` and ``OutputReadService`` (its
+``build_ladder_services``). ``engine/ci/live/run_supervisor.py``, the older live kit's, still
+constructs none of them, so the sidecar-facing governed surface is unconfigured there and
+stays that way. No shipped deployment constructs the driver at all: this module makes the
+supervisor side CAPABLE, a CI kit exercises it, and it opens no door in the product.
 
 Only the Python standard library is used, and every clock is the injected ``clock_ms``.
 """
@@ -181,6 +189,26 @@ _ACCEPT_REASONS: Mapping[str, str] = {
 _SIGNER_REASONS: Mapping[str, str] = {
     REASON_CHAIN_DISAGREEMENT: "hash_mismatch",
 }
+
+
+def _signer_reason(reason: Any) -> str:
+    """The signer's refusal reason as a §4.5 member (or itself, for the caller to reject).
+
+    The lookup is on the reason's HEAD -- the text before the first ``:``. The one reason this
+    table maps is never emitted bare: ``isolated_signer._verify_chain_handles`` raises
+    ``"<REASON_CHAIN_DISAGREEMENT>:<handle_field>.<field>"`` so an operator is told WHICH account
+    differs. Until 2026-10-01 the lookup was keyed on the whole string, so the mapping above
+    matched nothing the signer could produce: a real chain disagreement stayed outside the closed
+    union and ``turn_result_refused`` raised ``SupervisorError`` instead of answering the typed
+    ``hash_mismatch`` this table promises. The test that covered it stubbed the bare constant.
+
+    Only a head that IS in the table is rewritten. Any other reason is returned whole, so a
+    suffixed string this module has never heard of still fails closed in the result validator
+    rather than being trimmed into a member.
+    """
+    if not isinstance(reason, str):
+        return "malformed"
+    return _SIGNER_REASONS.get(reason.split(":", 1)[0], reason)
 
 #: A durable state that is terminal and is NOT ``COMPLETED`` → the verdict for a trigger that
 #: arrives after it. ``EXPIRED`` is the §5 step-8a gate's deterministic destination, so it
@@ -510,6 +538,14 @@ class AcceptanceDriver:
         row = self._locate(gated)
         if row is None:
             row = self._accept(gated)
+        elif row["state"] in (ledger.ACCEPTED_PREPARED, ledger.LEASE_READY):
+            # A RESUMED pre-launch row meets the same gate a fresh one does. `_accept` consults
+            # the allowlist AFTER the CAS commits the row, in a second commit; a fault between
+            # the two left an `ACCEPTED_PREPARED` row that this branch then carried straight to
+            # `_publish_lease` and the launch without the allowlist ever having been asked.
+            # These two states are exactly `BLOCKED`'s legal predecessors, and nothing has been
+            # launched from either.
+            self._require_allowlisted(row)
 
         state = row["state"]
         if state == ledger.ACCEPTED_PREPARED:
@@ -643,13 +679,22 @@ class AcceptanceDriver:
         # `ACCEPTED_PREPARED` and `LEASE_READY`. There is no acceptance row to block before
         # the CAS, and "no lease is issued, no launch" is satisfied by blocking before
         # `_publish_lease` runs.
+        self._require_allowlisted(row)
+        return row
+
+    def _require_allowlisted(self, row: Any) -> None:
+        """Block a pre-launch row whose generation_config is outside the execution allowlist.
+
+        ONE read of the allowlist, reached from the two places a row can be on its way to a
+        lease: `_accept` (a row this call just prepared) and `_drive` (a pre-launch row a
+        previous call prepared and did not finish).
+        """
         if row["generation_config_handle"] not in self.config.execution_allowlist:
             self._advance(row, ledger.BLOCKED, "model_profile_unknown")
             raise _Refuse("model_profile_unknown",
                           "generation_config cfg-sha256:%s is not in this supervisor's "
                           "execution allowlist" % (row["generation_config_handle"],),
                           row["receipt_id"])
-        return row
 
     def _load_challenge(self, gated: GatedTurn) -> Tuple[bytes, Mapping[str, Any], str]:
         """Re-read the EXACT signed challenge document §4.10(a0) published (§6 step 1).
@@ -920,8 +965,8 @@ class AcceptanceDriver:
         artifact_type = reply.get("artifact_type")
         if artifact_type == REFUSAL_ARTIFACT_TYPE:
             reason = reply.get("reason")
-            raise _Refuse(_SIGNER_REASONS.get(reason, reason if isinstance(reason, str) else "malformed"),
-                          "the isolated signer refused", row["receipt_id"])
+            raise _Refuse(_signer_reason(reason), "the isolated signer refused",
+                          row["receipt_id"])
         if artifact_type != ENVELOPE_ARTIFACT_TYPE or reply.get("status") != "signed":
             raise SupervisorError(
                 "the isolated signer seam returned neither a §4.9 envelope nor a typed refusal")

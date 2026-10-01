@@ -176,9 +176,12 @@ class CustodyControlTests(unittest.TestCase):
         # Every POSIX host has a root-owned directory the test user does not own.
         if os.getuid() == 0:
             self.skipTest("running as root — no directory is foreign to uid 0")
-        outcome, text = prover._control_foreign_dir("/root", "key store")
-        if outcome is not None:  # /root absent on some images
+        # The skip is decided by the HOST, before the control is asked. Deciding it from the
+        # control's own answer turned every regression of the PASS path into a skip.
+        if not os.path.isdir("/root"):  # absent on some images
             self.skipTest("/root is not present on this host")
+        outcome, text = prover._control_foreign_dir("/root", "key store")
+        self.assertIsNone(outcome)
         self.assertIn("owned by uid 0", text)
         self.assertIn("foreign", text)
 

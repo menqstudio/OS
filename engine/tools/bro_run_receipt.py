@@ -131,6 +131,22 @@ def run_and_sign(command: list[str], *, key: dict, task_id: str,
     return sign_payload(key["private_key"], payload), completed
 
 
+def wrapped_command(remainder: list[str]) -> list[str]:
+    """The command an ``argparse.REMAINDER`` argument captured, minus ONE leading ``--``.
+
+    ``tool --opt x -- cmd args`` leaves the separator at the front of the remainder, and that
+    one token is this tool's, not the command's. Every OTHER ``--`` belongs to the command:
+    ``git log -- path`` and ``pytest -- -k name`` mean something different without it. This
+    was a filter that dropped EVERY ``--`` token, in two tools -- here and in
+    ``bro_supervisor`` -- so the command that RAN (and, here, the command the
+    receipt signs) was not the command that was given.
+    """
+    command = list(remainder)
+    if command[:1] == ["--"]:
+        del command[0]
+    return command
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--key", required=True, help="evidence-recorder key")
@@ -141,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
-    command = [a for a in args.command if a != "--"]
+    command = wrapped_command(args.command)
     if not command:
         print("RED: no command given", file=sys.stderr)
         return 2

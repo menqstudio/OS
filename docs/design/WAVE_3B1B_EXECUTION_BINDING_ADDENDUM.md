@@ -119,6 +119,65 @@
 > file (including the 3b-1 map) and this document disagree, THIS document wins and the other
 > is a bug to fix.**
 
+> ### KNOWN DIVERGENCES 2026-10-01 (`T-145`, the whole-repository read) — NON-NORMATIVE, changes no contract
+>
+> A file-by-file read found places where this document disagrees with itself or with the code that
+> implements it. Nothing normative is changed here: every contract sentence is **exactly as rev-30
+> left it**, because amending a normative contract — even to fix a typo — is the Architect's and the
+> Owner's act, not a Builder's.
+>
+> **Status annotations added in place — no contract sentence was changed:**
+> - §5 v2(h) said the live isolation kit "has not been re-run against this protocol"; CI runs it.
+> - §5 v2's closing sentence is annotated: `platform_governed_execution_supported()` is the §0.1 spec
+>   symbol, not a function in the tree. §0.1's own two status sentences are unchanged and read the
+>   same way.
+> - §5's inline `CREATE TABLE` blocks are labelled as the pre-amendment text; the SQL file is normative.
+>
+> **Editorial corrections PROPOSED and NOT applied** — the text below is as rev-30 left it. Each looks
+> like a typo or a stale copy, and each agrees with this document's own §2.1.1 table, its role list
+> and the shipped schema; they are still sentences of a normative contract, so they wait for a
+> revision that the Architect and the Owner make:
+> - §2.7 names the launcher's invoking principal `(#5)`; the nine-role list and the paragraph after
+>   it have the evidence-recorder runner as **#6**.
+> - §2.1 create-pending says the frame cap is 8192 "each way"; §2.1.1's table and the test list cap
+>   the **request** at `AUTHORITY_REQUEST_FRAME_BYTES` (4096) and only the reply at 8192.
+> - Seven places describe the closed renderer command as `{conversation_id, agent?}`; §4.10(g)'s
+>   request frame and `bridge/contracts/renderer-governed-turn.schema.json` also require
+>   `client_request_id`.
+>
+> **Open — each needs a ruling, and none is resolved here:**
+> 1. **Who owns the evidence-head floor.** §7, §2.3, §3 row 8, §6.1 step 11 and Appendix B specify a
+>    durable `brops-signer`-owned floor DB (`0700`/`0600`) the sidecar cannot reach. As built,
+>    `governed_evidence_head_floor` is a table in the **supervisor's** ledger
+>    (`engine/runtime/supervisor_ledger.sql`), advanced by `_evidence_floor_cas` in
+>    `governed_supervisor_ledger.py`, and `isolated_signer.py` opens no SQLite at all; §5 v2(c) puts
+>    the floor in the supervisor's completion transaction. `FLOOR_WRITER_SERVICE_DESIGN.md` §0.3 and
+>    §9 raised it on 2026-08-15. `SECURITY_NEGATIVE_TEST_MATRIX.md`'s NM-EVID-12 and NM-ACL-13 test a
+>    signer-owned database that does not exist.
+> 2. **§4.4's evidence shape.** §4.4 says there is "no `builder_id`" on the governed-model path and
+>    §1 that every timestamp field ends in `_ms`. The signer requires and allowlists `builder_id`,
+>    the evidence carries unsuffixed `requested_at` / `completed_at` (`engine/runtime/isolated_signer.py`,
+>    `governed_supervisor.py`), and §5 v2(e) itself names `builder_id`. `config/spec-conformance.json`
+>    records neither as a deviation.
+> 3. **Two artifact-type names.** §3, §4.7, §4.7b, §6 and §7 use
+>    `brops.governed-turn-execution-receipt.v1` and `brops.governed-turn-containment.v1`, which appear
+>    in no code file. §5 v2(i)/(j) and the code use `brops.execution-receipt.v1` and
+>    `brops.containment-evidence.v1`. Whether the shipped documents ARE the §4.7 schemas under another
+>    name is not stated anywhere.
+> 4. **A fourth bounded-reason prefix.** §6.1 says the three prefixes are disjoint; its routing table
+>    emits `governed_output_read_refused:{reason}` for an output-read refusal, which that rule does
+>    not cover and no code produces.
+> 5. **`file:line` citations.** Roughly eighty-six citations into `ai.rs`, `commands.rs`, `lib.rs`,
+>    `receipt.rs`, `receipt_store.rs` and several Python modules were read at the audited heads and no
+>    longer point at the cited code — `prepare_governed_turn` is not at `ai.rs:1214-1235`,
+>    `stream_reply` is not at `commands.rs:794`, `generate_handler!` is not at `lib.rs:95-166`, and
+>    `receipt_store.rs` now lives under `core/src/`. They are left as the record of what was read;
+>    cite by symbol, not by these numbers.
+> 6. **The state mirror disagrees with this document's status banner.** `config/current_state.json`'s
+>    `design_gate` block still records `last_architect_verdict: GREEN` and "rev-30 = Architect DESIGN
+>    GREEN"; the banner above says no Architect re-audit of rev-30 took place. This document wins by
+>    its own rule; the mirror has not been corrected.
+
 > ### CORRECTION 2026-08-10 (rev-30) — `challenge_handle` covers `{payload, sig}`, NOT the payload alone
 >
 > **This document contradicted itself and one half of it was WRONG.** §3's artifact matrix (row 1),
@@ -2854,7 +2913,10 @@ reply enum literal appears in exactly one routing row.
 > evidence head). It proves the PROTOCOL and the CRYPTO. It does **not** prove the ISOLATION: the
 > OS trust boundary (SO_PEERCRED, the separate uids, key custody modes) and the privileged
 > recorder → setuid launcher → contained executor spawn still require `engine/ci/live/run_live_turn.sh`
-> on a real Linux host, which has **not** been re-run against this protocol.
+> on a real Linux host. *(Status, 2026-10-01: that kit IS now run against this protocol — the
+> `live-governed-turn` job in `.github/workflows/ci.yml` runs it under `sudo` on every pipeline. This
+> sentence said it "has **not** been re-run". What the kit executes is `proof_executor`, a fixture
+> that hashes its inputs; no model is called.)*
 >
 > **(i) F-02, partially — the terminal handles are now supervisor-derived and per-run.**
 > `record_handle`, `lease_handle` and `execution_receipt_handle` have left `produced` entirely.
@@ -2888,13 +2950,26 @@ reply enum literal appears in exactly one routing row.
 > **What this amendment does NOT fix at all.** The request↔output binding (**F-08**), the TCB
 > integrity floor (**F-10**) and the custody defects (**F-07/F-17/F-28**) are untouched.
 > `platform_governed_execution_supported()` stays `false`; `main()` keeps
-> `UpstreamBlockedExecutor`.
+> `UpstreamBlockedExecutor`. *(Read both as the §0.1 SPEC: no function named
+> `platform_governed_execution_supported` exists in the tree, and the broker's `main()` selects its
+> executor from `$BROPS_BROKER_CONFIG`, falling back to `UpstreamBlockedExecutor`. What holds the
+> shipped gate is three real refusals — `governed_verification_unconfigured()`, `connect_broker()` off
+> Linux, and that fallback.)*
 
 A database transaction **cannot** atomically include an external private-key signature and a
 filesystem publish. Acceptance is therefore a **durable state machine with an outbox**, not a
 single "issue-or-prepare" step.
 
 **Acceptance ledger (supervisor-owned durable DB, `0700`):**
+
+> *The `CREATE TABLE` blocks inlined in this section and in §7 are the PRE-AMENDMENT text and have
+> drifted from the schema that runs: per §5 v2(a) the single normative source is
+> [`engine/runtime/supervisor_ledger.sql`](../../engine/runtime/supervisor_ledger.sql). The block below
+> lacks `lease_id`, `lease_issued_at_ms`, `lease_expires_at_ms`, `receipt_id`, `supervisor_id`,
+> `requested_at_ms`, `request_sha256` and the three `*_handle` columns that file carries. Read the
+> file, not this copy; `tools/check_ledger_ddl_parity.py` gates the file and its Rust mirror, not
+> this document.*
+
 ```sql
 CREATE TABLE governed_turn_acceptance (
   install_id                     TEXT NOT NULL,

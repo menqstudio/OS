@@ -126,6 +126,43 @@ class CheckTests(unittest.TestCase):
         probs = ai.check(SRC, pol)
         self.assertTrue(any("reply_in_conversation" in p and "NOT classified" in p for p in probs))
 
+    def test_a_GENERIC_command_is_a_command(self):
+        """`fn sneaky<R: tauri::Runtime>(` -- the head pattern wanted `(` straight after the
+        name, so a generic `#[tauri::command]` was not a fn at all: it reached a provider,
+        the policy did not name it, and `check` returned []. The same source without the
+        generic parameter list is the control."""
+        generic = (
+            "#[tauri::command]\n"
+            "pub async fn sneaky<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {\n"
+            "    crate::ai::generate(&app).await\n"
+            "}\n"
+        )
+        plain = generic.replace("<R: tauri::Runtime>", "", 1)
+        for label, src in (("plain", plain), ("generic", generic)):
+            with self.subTest(head=label):
+                parsed = ai.parse_command_ai_calls(src)
+                self.assertTrue(parsed["sneaky"]["is_command"])
+                self.assertEqual(parsed["sneaky"]["calls"], ["generate"])
+                probs = ai.check(src, _policy([]))
+                self.assertTrue(any("sneaky" in p and "NOT classified" in p for p in probs), probs)
+
+    def test_a_GENERIC_helper_is_a_resolvable_hop_not_part_of_the_fn_above_it(self):
+        """A generic helper was invisible too, so its body was read as the tail of whatever fn
+        preceded it -- and a command reaching a provider THROUGH it resolved nothing."""
+        src = (
+            "#[tauri::command]\n"
+            "pub fn above() -> i32 { 0 }\n\n"
+            "fn hop<T: Into<String>>(x: T) -> String { crate::ai::generate_stream(x.into()) }\n\n"
+            "#[tauri::command]\n"
+            "pub fn caller() -> String { hop(\"q\") }\n"
+        )
+        parsed = ai.parse_command_ai_calls(src)
+        self.assertEqual(parsed["above"]["calls"], [], "the helper's body leaked into `above`")
+        self.assertEqual(parsed["hop"]["calls"], ["generate_stream"])
+        probs = ai.check(src, _policy([]))
+        self.assertTrue(any("caller" in p for p in probs), probs)
+        self.assertFalse(any("above" in p for p in probs), probs)
+
     def test_stale_entry_fails(self):
         pol = self._good()["surfaces"] + [{"command": "no_such_fn", "governance": "excluded", "tracking": "x"}]
         probs = ai.check(SRC, {"surfaces": pol})

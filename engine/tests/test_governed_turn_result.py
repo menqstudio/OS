@@ -17,8 +17,9 @@ The tests are organized as the design's own obligations:
     shipped — so the two cannot drift;
   * no member of that union is REACHABLE as a decision from anything in this tree, and
     ``TheClosedUnionIsNotDecidedHereTests`` says so in its name: every producing gate is a
-    §5/§7 gate and §5 acceptance is **NOT IMPLEMENTED**. What IS proved is that all 29 are
-    constructible by name, which is the whole of what §4.10(e) owns;
+    §5/§7 gate, and those gates live in ``governed_acceptance`` (§5 acceptance landed there
+    on 2026-08-10 as ``AcceptanceDriver``), not in the module under test here. What IS proved
+    is that all 29 are constructible by name, which is the whole of what §4.10(e) owns;
   * the frame cap is proved by CONSTRUCTING the literal maximum instance and printing the
     number into an assertion, which is why no frame-size check exists in the module;
   * ``NothingGovernedIsMintedTests`` reads the module's own import graph: with no clock, no
@@ -27,9 +28,10 @@ The tests are organized as the design's own obligations:
 
 No prerequisite here is optional. Everything is stdlib plus repo modules, imported at
 module scope with no ``try``/``except`` and no ``skipIf``, so a missing prerequisite is an
-unmissable hard error rather than a green run with a quiet skip. (There is no
-``BROPS_TEST_MISSING_PREREQUISITES`` declaration anywhere in this tree, so nothing is
-declared in it and nothing here may be softened.)
+unmissable hard error rather than a green run with a quiet skip. (``BROPS_TEST_MISSING_PREREQUISITES`` is
+not consulted here: that declaration is the Rust `provision` crate's, set for one Windows job
+in ``.github/workflows/ci.yml``, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 
 import ast

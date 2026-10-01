@@ -136,8 +136,10 @@ class VersionParityTests(unittest.TestCase):
         accuse the ONE, not the three. Mutant: report against an arbitrary element of `distinct`
         ⇒ this goes red about half the time, which is why the tie-break is deterministic."""
         root = self._tree("0.2.0")
-        self._set_json(root, vp.CARGO_TOML.replace(vp.CARGO_TOML, vp.PACKAGE_JSON),
-                       lambda d: d.update(version="0.2.0"))
+        # (Two lines stood here that "set" package.json's version to 0.2.0 through
+        # `vp.CARGO_TOML.replace(vp.CARGO_TOML, vp.PACKAGE_JSON)` -- an expression that is just
+        # `vp.PACKAGE_JSON` -- on a tree `_tree("0.2.0")` had already built at 0.2.0. A no-op
+        # written to look like a setup step. The one mutation this test needs is the next one.)
         path = root / vp.CARGO_TOML
         path.write_text(path.read_text(encoding="utf-8").replace(
             'version = "0.2.0"', 'version = "0.1.0"'), encoding="utf-8")

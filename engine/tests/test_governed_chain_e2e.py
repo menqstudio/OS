@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -40,7 +41,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
 
+import _chain_docs  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
 from challenge_authority import (  # noqa: E402
     AuthorityConfig,
@@ -58,6 +61,7 @@ from governed_supervisor_server import (  # noqa: E402
     OP_COMPLETE_RUN,
     OP_EXECUTION_STARTED,
     OP_LAUNCH_GATE,
+    REFUSE_COMPLETION_CONFLICT,
     REFUSE_NO_TERMINAL_RUN,
     ServerError,
     dispatch,
@@ -68,6 +72,7 @@ from isolated_signer import (  # noqa: E402
     ArtifactStore,
     IsolatedSigner,
     SignerConfig,
+    SignerError,
 )
 
 NOW = 1_700_000_000_000
@@ -118,48 +123,9 @@ class _Key:
 
 
 def build_run_evidence(output_bytes, *, head_sequence=7, output_sha256=None):
-    """A recorder evidence chain shaped exactly like `governed_recorder` writes one.
-
-    The supervisor derives the evidence head from this and refuses a completion whose
-    `output_handle` is not the `output-captured` digest (audit F-01), so tests that want to
-    model a lying broker pass an `output_sha256` that does not match the bytes.
-    """
-    import hashlib as _h, json as _j
-
-    def canon(payload):
-        return _j.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-    def sha(data):
-        return _h.sha256(data).hexdigest()
-
-    payloads = [
-        ("lease-validated", {"lease_path": "/tcb/executor.lease", "lease_sha256": sha(b"lease")}),
-        ("execution-launched", {"cgroup": "cg-e2e", "executor_sha256": sha(b"executor")}),
-        ("output-captured", {
-            "launcher_exit": 0,
-            "output_bytes": len(output_bytes),
-            "output_sha256": output_sha256 or sha(output_bytes),
-        }),
-    ]
-    previous, events = None, []
-    for sequence, (event_type, payload) in enumerate(payloads, start=1):
-        event = {
-            "event_type": event_type,
-            "payload": payload,
-            "payload_sha256": sha(canon(payload)),
-            "previous_event_hash": previous,
-            "sequence": sequence,
-        }
-        previous = sha(canon(event))
-        events.append(event)
-    return _j.dumps({
-        "event_count": len(events),
-        "events": events,
-        "final_event_hash": previous,
-        "head_sequence": head_sequence,
-        "last_sequence": len(events),
-        "protocol": "brops.run-evidence-chain.v1",
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """The recorder's evidence chain, from the one shared builder, under this suite's cgroup."""
+    return _chain_docs.run_evidence_chain(
+        output_bytes, head_sequence=head_sequence, output_sha256=output_sha256, cgroup="cg-e2e")
 
 
 class GovernedChainE2E(unittest.TestCase):
@@ -200,6 +166,9 @@ class GovernedChainE2E(unittest.TestCase):
 
         # ---- the supervisor's DURABLE ledger, on a real file (restart-survivable) ----
         self._tmpdir = tempfile.mkdtemp(prefix="brops-e2e-")
+        # Registered first, so it runs LAST: cleanups are LIFO, and the connection must be
+        # closed before its directory goes.
+        self.addCleanup(shutil.rmtree, self._tmpdir, ignore_errors=True)
         self.ledger_path = os.path.join(self._tmpdir, "supervisor-ledger.db")
         self.ledger_conn = self._open_ledger()
         self.addCleanup(self._cleanup)
@@ -470,22 +439,37 @@ class GovernedChainE2E(unittest.TestCase):
             "op": OP_EXECUTION_STARTED, "execution_attempt_id": attempt,
             "process_group_id": "1", "cgroup_id": "c", "execution_started_marker": None,
         })
+        # Everything else about the request is LEGAL: the recorder's chain exists and matches the
+        # reported output, and `produced` carries exactly its three fields. So the smuggled
+        # handle is the only thing there is to refuse, and the refusal has to name it. (The
+        # request used to carry four `evidence_*` keys as well; those are refused on their own,
+        # so the test stayed green with the smuggled field taken out.)
+        output = b"x"
+        self.run_evidence[attempt] = build_run_evidence(output, head_sequence=9)
+        produced = {
+            "output_handle": self.store.put(output),
+            "containment_evidence_handle": self.handles["containment"],
+            "completed_at_ms": NOW,
+        }
         for smuggled in ("record_handle", "lease_handle", "execution_receipt_handle"):
             with self.subTest(field=smuggled):
                 reply = self._supervisor({
                     "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
-                    "produced": {
-                        "output_handle": self.store.put(b"x"),
-                        "containment_evidence_handle": self.handles["containment"],
-                        "completed_at_ms": NOW,
-                        "evidence_final_event_hash": _sha256_hex(b"h"),
-                        "evidence_event_count": 1,
-                        "evidence_last_sequence": 1,
-                        "evidence_head_sequence": 9,
-                        smuggled: "9" * 64,
-                    },
+                    "produced": dict(produced, **{smuggled: "9" * 64}),
                 })
-                self.assertFalse(reply["ok"])
+                self.assertFalse(reply["ok"], reply)
+                self.assertEqual(reply["reason"], "malformed_state")
+                self.assertIn(smuggled, reply["error"])
+        # The positive control: the same request with nothing smuggled completes, and the three
+        # handles in what gets attested are the supervisor's own, none of them the caller's.
+        completed = self._supervisor({
+            "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt, "produced": dict(produced),
+        })
+        self.assertTrue(completed["ok"], completed)
+        evidence = json.loads(_unb64u(self._attest(attempt)["evidence_jcs_b64"]).decode("utf-8"))
+        for field in ("record_handle", "lease_handle", "execution_receipt_handle"):
+            self.assertNotEqual(evidence[field], "9" * 64)
+            self.assertIsNotNone(self.store.read_verified(evidence[field]))
 
     def test_challenge_accepted_at_is_the_supervisors_accept_clock(self):
         """F-27: `challenge_accepted_at_ms` is a SIGNED receipt field documented as the time the
@@ -602,21 +586,24 @@ class GovernedChainE2E(unittest.TestCase):
         attempt, first_handle = self._run_turn()
         attested_before, _ = self._sign(self._attest(attempt))
 
-        # Produce different bytes and try to re-report them for the SAME attempt.
-        other_handle = self.store.put(b"different bytes, same attempt")
+        # Produce different bytes and try to re-report them for the SAME attempt. The recorder
+        # "captured" them too, and `produced` is well-formed -- so nothing refuses this request
+        # before the write-once check does. (It used to carry four `evidence_*` keys the
+        # completion shape no longer admits, and was refused `malformed_state` for those.)
+        other = b"different bytes, same attempt"
+        other_handle = self.store.put(other)
+        self.run_evidence[attempt] = build_run_evidence(
+            other, head_sequence=self.next_head_sequence)
         refusal = self._supervisor({
             "op": OP_COMPLETE_RUN, "execution_attempt_id": attempt,
             "produced": {
                 "output_handle": other_handle,
                 "containment_evidence_handle": self.handles["containment"],
                 "completed_at_ms": NOW,
-                "evidence_final_event_hash": _sha256_hex(b"evidence-head-1"),
-                "evidence_event_count": 3,
-                "evidence_last_sequence": 3,
-                "evidence_head_sequence": 7,
             },
         })
-        self.assertFalse(refusal["ok"])
+        self.assertFalse(refusal["ok"], refusal)
+        self.assertEqual(refusal["reason"], REFUSE_COMPLETION_CONFLICT, refusal)
         attested_after, _ = self._sign(self._attest(attempt))
         self.assertEqual(attested_before, attested_after,
                          "the attested evidence must be immutable once recorded")
@@ -706,7 +693,7 @@ class GovernedChainE2E(unittest.TestCase):
         self.assertFalse(refusal["ok"], refusal)
         self.assertFalse(self._attest(attempt)["ok"])
 
-    def test_a_tampered_output_blob_breaks_the_signed_binding(self):
+    def test_a_missing_output_blob_is_refused_rather_than_signed(self):
         # The signer DERIVES output_sha256/output_bytes from the store bytes, so an envelope
         # can never name output the store does not hold.
         attempt, output_handle = self._run_turn()
@@ -718,6 +705,21 @@ class GovernedChainE2E(unittest.TestCase):
         self.store._blobs.pop(output_handle, None)  # noqa: SLF001 - test reaches into the fake
         _evidence2, refused = self._sign(attn)
         self.assertEqual(refused["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+
+    def test_a_tampered_output_blob_breaks_the_signed_binding(self):
+        """Different bytes under the SAME handle -- the tamper, as opposed to the removal above.
+
+        `ArtifactStore.put` cannot produce this state (it refuses a non-matching handle), so the
+        fake is reached into directly: it stands for a protected directory whose file was
+        rewritten in place. The signer re-hashes what it reads and stops; it neither signs the
+        new bytes under the old digest nor signs a digest the supervisor never attested.
+        """
+        attempt, output_handle = self._run_turn()
+        attn = self._attest(attempt)
+        self.store._blobs[output_handle] = b"not the bytes this handle names"  # noqa: SLF001
+        with self.assertRaises(SignerError) as caught:
+            self._sign(attn)
+        self.assertIn("store corruption", str(caught.exception))
 
     def test_a_challenge_for_another_supervisor_is_refused(self):
         other_authority = AuthorityConfig(

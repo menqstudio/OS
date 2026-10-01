@@ -10,6 +10,7 @@ of the two outcomes: the reader is told no and the log says yes.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -209,8 +210,100 @@ class ApprovalRequestLogTests(unittest.TestCase):
         self.log.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         with self.assertRaises(ApprovalRequestError):
             self.log.verify_chain()
-        with self.assertRaises(ApprovalRequestError):
-            self.record(ask(request_id="req-three"))
+        # The append is stopped, and the caller is TOLD so in a document: `record` always
+        # returns a reply, and a raise here reached the desktop as "the engine is
+        # unreachable" for what is the engine refusing with a reason worth reading.
+        before = self.log.path.read_bytes()
+        reply = self.record(ask(request_id="req-three"))
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn("does not verify", reply["reason"])
+        for absent in ("recorded", "sequence", "entry_sha256", "chain_head_sha256"):
+            self.assertNotIn(absent, reply)
+        self.assertEqual(self.log.path.read_bytes(), before, "a refusal appended to the log")
+
+    def test_a_malformed_line_stops_the_next_append_with_a_refusal(self):
+        self.record()
+        with self.log.path.open("a", encoding="utf-8") as fh:
+            fh.write("{not json\n")
+        before = self.log.path.read_bytes()
+        reply = self.record(ask(request_id="req-two"))
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn("does not verify", reply["reason"])
+        self.assertEqual(self.log.path.read_bytes(), before)
+
+    @unittest.skipUnless(os.name == "posix", "the probe below is flock; Windows is covered by the race")
+    def test_the_log_is_read_and_appended_inside_one_exclusive_lock(self):
+        """Witness the lock where it matters: while `record` is reading what it will chain to.
+
+        A second file description probing with LOCK_NB conflicts with the writer's lock even
+        inside one process, so this needs no second process and no race to be certain.
+        """
+        import fcntl
+
+        self.record()
+        real_entries = self.log.entries
+        held = []
+
+        def probing_entries():
+            with open(self.log.path, "ab") as probe:
+                try:
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    held.append(True)
+                else:
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
+                    held.append(False)
+            return real_entries()
+
+        self.log.entries = probing_entries
+        try:
+            self.assertTrue(self.record(ask(request_id="req-two"))["ok"])
+        finally:
+            del self.log.entries
+        self.assertTrue(held, "record() never read the log")
+        self.assertTrue(all(held), "the log was read with no writer lock held")
+
+    def test_concurrent_asks_do_not_fork_the_chain(self):
+        """Many writers, one chain. Unlocked, two asks read N lines and both write line N+1."""
+        import threading
+
+        writers, each = 8, 25
+        replies, errors = [], []
+
+        def writer(n):
+            log = ApprovalRequestLog(self.dir / "state", ROOT)
+            for i in range(each):
+                try:
+                    replies.append(log.record(ask(request_id=f"req-{n:02d}-{i:03d}"),
+                                              now_epoch=ENGINE_NOW, task_states=TASKS))
+                except Exception as exc:  # noqa: BLE001 -- the assertion below reports it
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=writer, args=(n,)) for n in range(writers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertTrue(all(reply["ok"] for reply in replies), [r for r in replies if not r["ok"]][:1])
+        entries = self.log.entries()
+        self.assertEqual([entry["sequence"] for entry in entries], list(range(1, writers * each + 1)))
+        self.log.verify_chain()
+
+    def test_a_platform_that_cannot_lock_the_log_refuses_rather_than_appending(self):
+        import bro_approval_requests
+
+        self.record()
+        before = self.log.path.read_bytes()
+        original = bro_approval_requests._platform_name
+        bro_approval_requests._platform_name = lambda: "java"
+        try:
+            reply = self.record(ask(request_id="req-two"))
+        finally:
+            bro_approval_requests._platform_name = original
+        self.assertFalse(reply["ok"], reply)
+        self.assertIn("cannot be locked", reply["reason"])
+        self.assertEqual(self.log.path.read_bytes(), before)
 
     def test_a_malformed_line_raises_rather_than_being_skipped(self):
         self.record()

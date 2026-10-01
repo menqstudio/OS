@@ -45,10 +45,20 @@ _PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
 # hidden. The closing quote is an INDEPENDENT optional group, not a backreference to the
 # opener: a value that opens a quote but is never closed (a truncated log/stderr tail,
 # e.g. password="hunter2sekret) would otherwise match nothing and leak the secret verbatim.
+#
+# The key name is matched as a SUFFIX of an identifier, and may itself be quoted. It used
+# to need a word boundary before it and the separator directly after it, which missed the
+# two commonest shapes in a stderr tail: a prefixed environment variable (DB_PASSWORD=...,
+# AWS_SECRET_ACCESS_KEY=... — `_` is a word character, so there is no boundary inside the
+# name) and a serialised JSON object ({"password": "..."} — the key's closing quote sits
+# between the name and the colon). There is deliberately no leading boundary and no
+# prefix group: the name is found wherever it ends an identifier, which costs nothing on
+# a long run of identifier characters where a `[A-Za-z0-9_]*` prefix would backtrack
+# quadratically. A quote may arrive backslash-escaped (JSON inside a JSON string).
 _ASSIGNMENT = re.compile(
-    r"(?i)\b(secret|password|passwd|passphrase|token|api[_-]?key|access[_-]?key|client[_-]?secret)"
-    r"(\s*[=:]\s*)"
-    r"(['\"]?)([^\s'\"]{6,})(['\"]?)"
+    r"(?i)(secret|password|passwd|passphrase|token|api[_-]?key|access[_-]?key|client[_-]?secret)"
+    r"((?:\\?['\"])?\s*[=:]\s*)"
+    r"((?:\\?['\"])?)([^\s'\"]{6,})(['\"]?)"
 )
 
 REDACTION = "[REDACTED:{kind}]"

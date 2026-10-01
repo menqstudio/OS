@@ -30,7 +30,6 @@ CHECKED_MODULES = ("bro_protected", "bro_signature", "bro_audit_log", "bro_compl
 
 # A shell double-quoted string runs to the next unescaped `"`. Anchoring on end-of-line
 # instead — as the first version did — mis-parses any snippet inside a $(...) substitution.
-# to the next double quote, not to end-of-line: a snippet may sit inside $(...)
 SNIPPET = re.compile(r'python3\s+(?:-\w+\s+)*-c\s+"([^"]*)"', re.S)
 
 
@@ -66,17 +65,20 @@ def arity_problem(dotted: str, node: ast.Call) -> str | None:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
         return None
-    positional = [p for p in sig.parameters.values()
-                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-    required = [p for p in positional if p.default is inspect.Parameter.empty]
-    given = len(node.args)
-    kw = {k.arg for k in node.keywords if k.arg}
-    supplied = given + len(kw & set(sig.parameters))
-    if supplied < len(required):
-        return (f"called with {supplied} argument(s); needs {len(required)} "
-                f"({', '.join(p.name for p in required)})")
-    if not any(p.kind is p.VAR_POSITIONAL for p in sig.parameters.values()) and given > len(positional):
-        return f"called with {given} positional argument(s); takes at most {len(positional)}"
+    # `f(*args)` / `f(**kwargs)`: how many arguments that is cannot be read off the page, so
+    # there is nothing to bind. Not a pass -- an answer this gate does not have.
+    if any(isinstance(a, ast.Starred) for a in node.args) or any(k.arg is None for k in node.keywords):
+        return None
+    # BIND the call, exactly as Python will when the line runs. The first version counted:
+    # positionals plus "keywords the signature knows", against the number of REQUIRED
+    # parameters. That let a keyword for an OPTIONAL parameter stand in for a missing required
+    # one -- `f(1, c=2)` against `f(a, b, c=1)` counted 2 and needed 2 -- and never looked at a
+    # keyword the signature does not have at all. Both die with TypeError on the first line,
+    # which is the one thing this gate says it catches.
+    try:
+        sig.bind(*[None] * len(node.args), **{k.arg: None for k in node.keywords})
+    except TypeError as exc:
+        return f"does not match its signature {func_name}{sig}: {exc}"
     return None
 
 
@@ -117,7 +119,18 @@ def check(path: pathlib.Path) -> list[str]:
 #: The first version required backticks and found ONE path in a document that cites a
 #: dozen, then reported GREEN. A checker that under-reports is the defect it is meant
 #: to catch, one level up.
-_TOP = 'engine|docs|tools|apps|bridge|config|schemas|laws|scripts'
+#:
+#: DERIVED from the tree. It was a hand-written list under this same sentence --
+#: `engine|docs|tools|apps|bridge|config|schemas|laws|scripts` -- three of which do not exist
+#: here (`schemas`, `laws`, `scripts`) while `contracts/` and `.github/` were missing, so a
+#: cited `contracts/…` path was simply not looked at. Longest first, so `.github` is not cut
+#: short by a shorter name that happens to be its prefix.
+def top_level_directories(root: pathlib.Path) -> list[str]:
+    names = [p.name for p in root.iterdir() if p.is_dir() and p.name != ".git"]
+    return sorted(names, key=lambda name: (-len(name), name))
+
+
+_TOP = "|".join(re.escape(name) for name in top_level_directories(ROOT))
 CITED_PATH = re.compile(r'(?<![\w/.-])(?:' + _TOP + r')(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z]{1,4}(?![\w-])')
 
 

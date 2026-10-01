@@ -294,7 +294,7 @@ class ExecutionLeaseTests(unittest.TestCase):
 
 class ExecutionLeaseEd25519Tests(unittest.TestCase):
     """Owner Authorization Phase 1: the execution lease is verified with Ed25519
-    against the operator-signed trusted-key registry, not HMAC. Only the offline
+    against the operator-signed trusted-key registry, not HMAC. Only the
     issuer key can grant execution capabilities; a builder holding the public
     registry cannot mint a lease, and a wrong-authority or tampered lease is
     refused."""

@@ -13,11 +13,12 @@ binary."
 only the seed — not the binary. So a source-reading adversary who can also **write the deployment directory**
 recomputes `floor_signing_key()`, signs an arbitrary lowered `{highest_epoch, highest_hash}`, and passes
 `load_verified_floor`. They then replay a previously-root-signed manifest at that lower epoch and a
-since-revoked production key resolves and renders `trusted_verified` — **without the offline root**. The Linux
+since-revoked production key resolves and renders `trusted_verified` — **without ever signing as the root**. The Linux
 broker path (`broker/src/main.rs`) is worse: it reads the floor with **no signature check at all**.
 
 Two independent audit reviewers converged on this (rated P0 / P1). The **central** trust guarantee is
-unaffected — you still cannot forge a *fresh* `trusted_verified` without the offline root; this is a
+unaffected — you still cannot forge a *fresh* `trusted_verified` without the root private, which nobody
+holds (Owner decision #78: the install mints trust, no person carries a key); this is a
 rollback/revocation-revival bypass that requires (a) a prior genuine manifest at a lower epoch and (b) write
 access to the deployment directory.
 
@@ -58,4 +59,7 @@ the whole broker rests on, and it is the honest place the guarantee lives.
    per-deployment key too (today it does not verify — protected only by (1)).
 
 Until (1)+(2)+(3) are in place **and** independently audited **and** Owner-approved, the shipped
-`platform_governed_execution_supported()` stays **false** and the app fails closed. Nothing here fakes trust.
+Windows gate stays **shut** and the app fails closed: `connect_broker()` returns `UnsupportedPlatform`
+off Linux, and chat is refused earlier by `governed_verification_unconfigured()`. *(This sentence named
+`platform_governed_execution_supported()`. No function of that name exists in the tree — it is the
+§0.1 specification symbol.)* Nothing here fakes trust.

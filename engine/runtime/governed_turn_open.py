@@ -610,8 +610,13 @@ def handle_open(
     except staging.Conflict:
         return refused(REFUSE_RETRY_CONFLICT)
     except staging.LedgerError as exc:
-        # A ledger fault (corrupt row, unknown stored state) is still a REFUSAL: an open
-        # the supervisor could not durably record is an open that did not happen.
+        # A ledger fault (corrupt row, unknown stored state) is NOT answered as a §4.10(a0)
+        # refusal: the closed reason set has no member for "the supervisor's own ledger is
+        # broken", and inventing one would put a verdict outside it. It propagates as a
+        # `SupervisorError`, which the front door turns into its out-of-band `{ok:false,error}`
+        # reply (and a traceback on the operator's stderr). The outcome is still fail-closed --
+        # an open the supervisor could not durably record is an open that did not happen --
+        # but this comment used to call it "still a REFUSAL", which the next line is not.
         raise SupervisorError("staging ledger fault: %s" % exc)
 
     # Idempotent re-open re-returns the SAME handle from the durable row, never the freshly

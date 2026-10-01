@@ -3,9 +3,9 @@
 - **Purpose:** Record notable repository changes, most recent first.
 - **Scope:** Documentation and, later, released application changes. Future work is in [MASTER_EXECUTION_ROADMAP.md](../../MASTER_EXECUTION_ROADMAP.md).
 - **Owner:** Gev.
-- **Last updated:** 2026-08-04. Entries below are dated records; read none of them as the current state.
+- **Last updated:** 2026-08-04 (newest entry; the standing corrections below were added 2026-08-09 and amended 2026-10-01). Entries below are dated records; read none of them as the current state.
 
-> **Two standing corrections that apply to every entry below (added 2026-08-09).**
+> **Three standing corrections that apply to every entry below (two added 2026-08-09, the third 2026-10-01).**
 > 1. Entries name `platform_governed_execution_supported()` as the gate that “stays false”. **No function
 >    of that name exists in the tree** — it is the §0.1 specification symbol from
 >    `docs/design/WINDOWS_BROKER_DESIGN.md`, recorded as `partial` in `config/spec-conformance.json`. The
@@ -13,7 +13,14 @@
 >    broker's `UpstreamBlockedExecutor` fallback when `$BROPS_BROKER_CONFIG` is unset. The posture those
 >    entries describe is real; the name is not.
 > 2. The audit verdicts quoted in these entries are **Builder-side**. The standing INDEPENDENT verdict is
->    **RED** — `AUDIT/2026-08-06-remediation-audit.md`, never re-run. See `AUDIT/AUDIT_LEDGER.md`.
+>    **RED**. Which round is current is in `AUDIT/AUDIT_LEDGER.md` and only there — this line named the
+>    2026-08-06 report as "never re-run" while eight later rounds were filed beside it.
+> 3. Entries record an **offline-root ceremony** run by the Owner, the `win_gen_root` tool and a
+>    `CUSTODY_CEREMONY.md` runbook. **All of it is retired.** The Owner decided on 2026-08-09 (#78) that
+>    the install mints trust and no person holds, carries or signs with a key; `T-130` deleted the
+>    runbook, the generator and the offline signer, and `tools/check_no_owner_key_ceremony.py` fails
+>    any change that brings them back. Nobody holds the private half of the root those entries pinned.
+>    They are a record of what was done then, not a procedure — the file they linked no longer exists.
 
 BroPS was intentionally recreated from zero; prior history is not part of this repository. Since the monorepo merge into `menqstudio/OS`, cockpit changes also flow through the OS-level security-remediation waves; the exact live state (branch/PR/blockers) is the root [`NEXT_CHAT.md`](../../NEXT_CHAT.md).
 
@@ -65,7 +72,7 @@ BroPS was intentionally recreated from zero; prior history is not part of this r
 
 On top of the trust chain proven earlier, this cycle graduated custody and hardened the in-app experience. The branch is not merged to `main`, but a tagged **GitHub Release `brops-desktop-v0.1.0`** (published 2026-08-03, target `feat/windows-broker-machineproof`) ships the Windows installer (`BroPS_0.1.0_x64-setup.exe` + `BroPS_0.1.0_x64_en-US.msi`). Production `trusted_verified` for live turns stays fail-closed pending the operator's sidecar infrastructure ([`src-tauri/win-live/WIRING_LIVE_TRUST.md`](src-tauri/win-live/WIRING_LIVE_TRUST.md)); the shipped Windows governed gate (`platform_governed_execution_supported()`) stays false.
 
-- **Production custody graduated** (`1bda438`, `4912d6c`): `win_gen_root` offline root-key ceremony + [`CUSTODY_CEREMONY.md`](src-tauri/win-live/CUSTODY_CEREMONY.md); `tcb::ROOT_PUBLIC_KEY_HEX` is now the operator's key whose private half is offline, with a SEPARATE compiled-in demonstration anchor for the in-process proof/tests (PinnedRoot made injectable in both resolvers). `win_provision` refuses a non-matching root (proven). Nothing in-tree can forge a production manifest.
+- **Production custody graduated** (`1bda438`, `4912d6c`): `win_gen_root` offline root-key ceremony + `CUSTODY_CEREMONY.md` (since removed — standing correction 3); `tcb::ROOT_PUBLIC_KEY_HEX` is now the operator's key whose private half is offline, with a SEPARATE compiled-in demonstration anchor for the in-process proof/tests (PinnedRoot made injectable in both resolvers). `win_provision` refuses a non-matching root (proven). Nothing in-tree can forge a production manifest.
 - **In-app Bro → bounded coding agent with Bash** (`abc0d95`): file tools + Bash in acceptEdits, hard `--disallowedTools` deny-list (never push / delete / install). Owner-authorized.
 - **Fixed the in-app "claude CLI timed out"** (`4008056`): the agent loaded the target repo's `.claude` (CLAUDE.md startup contract + a Stop hook) via `--setting-sources project`; switched to `--setting-sources ""` (no user/project hooks — tools/permission come from CLI flags) and gave the agent a 900s budget vs a chat's 180s.
 - **Chat UX** (`4008056`): a Stop button (cancels the turn, keeps the partial via a per-conversation cancel registry + `cancel_reply`) and type-while-thinking (a follow-up sent mid-turn queues and auto-fires), both in direct and group chat.

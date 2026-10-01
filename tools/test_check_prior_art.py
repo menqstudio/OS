@@ -173,9 +173,30 @@ class PriorArtTests(unittest.TestCase):
         self.assertTrue(prior_art.verify(root, "s1", "tools/a.py")[0])
         self.assertFalse(prior_art.verify(root, "s1", "tools/b.py")[0])
 
-    def test_the_real_repository_gate_overlap_scan_runs(self):
-        overlaps = prior_art.gate_overlaps(REPO_ROOT, "tools/check_canonical_sync.py")
-        self.assertIsInstance(overlaps, dict)
+    def test_the_real_repository_gate_overlap_scan_finds_a_known_overlap(self):
+        """A named gate sharing a named input, so an EMPTY scan goes red.
+
+        This asserted only `assertIsInstance(overlaps, dict)`. `gate_overlaps` is annotated
+        `-> dict` and returns `{}` on both of its early exits, so the test passed whether the
+        scan found everything or nothing -- it proved the call does not raise. And nothing is
+        what it found: for `check_canonical_sync.py`, the gate it was pointed at, the real
+        scan returns `{}` (its one path literal is its own law file, which no other gate
+        names). The test was green on an empty result for as long as it existed.
+
+        The overlap pinned here is real: the budget gate and the read-receipt gate both read
+        the canonical read manifest, and each says so with the same path literal.
+        """
+        overlaps = prior_art.gate_overlaps(REPO_ROOT, "tools/check_canon_budget.py")
+        self.assertIn("tools/check_read_receipt.py", overlaps, sorted(overlaps))
+        self.assertIn("config/canonical-read-manifest.json",
+                      overlaps["tools/check_read_receipt.py"])
+        self.assertNotIn("tools/check_canon_budget.py", overlaps, "a gate overlaps itself")
+
+    def test_a_path_that_is_not_a_gate_has_no_overlaps_to_report(self):
+        """The early exits, named: only `tools/check_*.py` is a gate."""
+        for rel in ("tools/sync_active_pr.py", "docs/check_x.py", "tools/check_x.txt"):
+            with self.subTest(rel=rel):
+                self.assertEqual(prior_art.gate_overlaps(REPO_ROOT, rel), {})
 
 
 if __name__ == "__main__":

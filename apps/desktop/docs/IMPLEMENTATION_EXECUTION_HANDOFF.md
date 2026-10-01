@@ -1,6 +1,14 @@
 # BroPS — Implementation Execution Handoff
 
-Status: implementation contract for `brops-v1-foundation-implementation`
+Status: **historical scaffold contract** for `brops-v1-foundation-implementation`, a branch that is not in this repository. It records what was asked for before the application was built; it does not describe the tree, and nothing below is a present-tense instruction.
+
+> **Where the implementation departed from this contract** (each checked against the code on 2026-10-01):
+> - **Secrets (§8).** There is no "secure secret save/delete/status" command group and no OS keyring integration. The desktop stores **references only** — an `auth_ref` such as `engine:slack/bot-token` or `keychain:brops/github` that the engine or the operator resolves on the other side of the trust boundary. `src-tauri/core/src/credentials.rs`: "nothing in this table, this process, or this repository may ever hold the secret".
+> - **Commands (§14) and CI (§15).** `package.json` has no `lint` script and no ESLint; its scripts are `dev`, `typecheck`, `build`, `test`, `test:a11y`, `test:browser`, `preview`, `tauri`. There is no `desktop-build.yml`; CI is the repository-root `.github/workflows/ci.yml`. The commands to run are in the root `CLAUDE.md` §4.
+> - **Libraries and layout (§3, §5).** TanStack Query and Zustand are not dependencies, and `src/runtime` and `src/state` do not exist.
+> - **Tables (§4).** `command_runs`, `agent_runs`, `memory_items`, `event_log`, `provider_profiles` and `backups` were never created. The real schema is the migrations under `src-tauri/core/schema/`.
+> - **Run status (§4) and budgets (§11).** The code's run statuses are `drafted | queued | planning | awaiting_approval | running | paused | succeeded | failed | cancelled` (`RUN_STATUSES` in `core/src/domain.rs`), not the `waiting_approval` set below. No run, agent or project budget is implemented, so "crossing a budget cancels" describes nothing that runs.
+> - **Navigation (§2).** The nine-item list below is not the sidebar; `src/app/nav.ts` has 23 items.
 Target: runnable Windows desktop application built with React, TypeScript, Vite and Tauri.
 Owner approval required only for merge/release, destructive migration, secret deletion, or material scope change.
 
@@ -439,7 +447,7 @@ React may call only typed Tauri commands through `services/desktop.ts`.
 Required command groups:
 - database initialization and health
 - CRUD repositories
-- secure secret save/delete/status
+- ~~secure secret save/delete/status~~ — not built, and deliberately: the desktop holds secret *references*, never values (see the status block above)
 - file picker/import/export
 - backup create/list/verify/restore
 - notification permission/status/send
@@ -453,7 +461,7 @@ Security:
 - validate all command inputs in Rust
 - normalize/canonicalize paths
 - never log secret values
-- secrets stored through OS credential/keyring integration; DB stores references only
+- ~~secrets stored through OS credential/keyring integration~~; DB stores references only — that half is what was built. The desktop never receives a secret value, so there is nothing for a keyring to hold on this side
 
 ## 9. Backup and restore
 

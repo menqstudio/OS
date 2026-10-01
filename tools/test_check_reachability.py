@@ -979,10 +979,6 @@ class StaleAbsenceProseTests(unittest.TestCase):
         self.assertGreaterEqual(len(reached), 4, reached)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ToolsGateReachabilityTests(GateTestCase):
     """Section 5: a gate no workflow runs is the uncalled-command defect one level up.
 
@@ -1103,3 +1099,91 @@ class ToolsGateReachabilityTests(GateTestCase):
         problems, summary = gate.check(ROOT)
         self.assertEqual([p for p in problems if "workflow" in p], [])
         self.assertGreater(summary["gates"], 10)
+
+
+class SkippedDirectoriesAreJudgedBelowTheRoot(unittest.TestCase):
+    """`SKIP_PARTS & set(path.parts)` read the ABSOLUTE path. A checkout that merely sat under
+    a directory called `dist` or `target` therefore scanned no file, found no command and no
+    symbol, and so found nothing unreachable either -- GREEN about an empty walk."""
+
+    def setUp(self):
+        self.outer = pathlib.Path(tempfile.mkdtemp(prefix="brops-reachgate-skip-")).resolve()
+        self.addCleanup(lambda: shutil.rmtree(self.outer, ignore_errors=True))
+        # Every skipped name sits ABOVE the root; none of them is inside it.
+        self.root = self.outer / "dist" / "target" / "node_modules" / "repo"
+        for rel, text in (
+            ("engine/runtime/thing.py", "def f():\n    return 1\n"),
+            ("apps/desktop/src-tauri/src/commands.rs",
+             "#[tauri::command]\npub fn list_things() -> Result<(), String> { Ok(()) }\n"),
+            ("apps/desktop/src/services/desktop.ts", "export const a = invoke('list_things');\n"),
+        ):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+
+    def rels(self, paths):
+        return [p.relative_to(self.root).as_posix() for p in paths]
+
+    def test_python_files_are_found_under_a_root_named_like_build_output(self):
+        self.assertEqual(self.rels(gate.python_files(self.root)), ["engine/runtime/thing.py"])
+
+    def test_rust_files_are_found_under_a_root_named_like_build_output(self):
+        self.assertEqual(self.rels(gate.rust_files(self.root)),
+                         ["apps/desktop/src-tauri/src/commands.rs"])
+
+    def test_tauri_commands_are_found_under_a_root_named_like_build_output(self):
+        self.assertEqual(gate.defined_commands(self.root),
+                         {"list_things": "apps/desktop/src-tauri/src/commands.rs"})
+
+    def test_frontend_callers_are_found_under_a_root_named_like_build_output(self):
+        production, _ = gate.frontend_callers(self.root, {"list_things"})
+        self.assertEqual(list(production), ["list_things"])
+
+    def test_build_output_INSIDE_the_root_is_still_skipped(self):
+        """The other half: the fix must not turn the skip list off."""
+        for rel in ("engine/__pycache__/thing.py", "engine/node_modules/pkg/x.py",
+                    "apps/desktop/src-tauri/target/debug/build.rs"):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x = 1\n", encoding="utf-8")
+        self.assertEqual(self.rels(gate.python_files(self.root)), ["engine/runtime/thing.py"])
+        self.assertEqual(self.rels(gate.rust_files(self.root)),
+                         ["apps/desktop/src-tauri/src/commands.rs"])
+
+
+class OneGrantParser(unittest.TestCase):
+    """`capability_grants` was written out twice, here and in check_capabilities, next to a
+    function that imports the allowlist because two copies in two gates drift."""
+
+    def test_this_gate_calls_the_capability_gates_parser(self):
+        import check_capabilities
+
+        seen = []
+        original = check_capabilities.grants_from_permissions
+
+        def spy(permissions):
+            seen.append(list(permissions))
+            return original(permissions)
+
+        root = pathlib.Path(tempfile.mkdtemp(prefix="brops-reachgate-grants-")).resolve()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        cap = root / gate.DEFAULT_CAP
+        cap.parent.mkdir(parents=True)
+        cap.write_text(json.dumps({"permissions": ["core:default", "allow-list-dir",
+                                                   "deny-decide-approval"]}), encoding="utf-8")
+        check_capabilities.grants_from_permissions = spy
+        try:
+            grants = gate.capability_grants(root)
+        finally:
+            check_capabilities.grants_from_permissions = original
+        self.assertEqual(grants, {"list_dir": "allow", "decide_approval": "deny"})
+        self.assertEqual(seen, [["core:default", "allow-list-dir", "deny-decide-approval"]])
+
+    def test_a_missing_capability_file_is_no_grants_here(self):
+        root = pathlib.Path(tempfile.mkdtemp(prefix="brops-reachgate-grants-")).resolve()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        self.assertEqual(gate.capability_grants(root), {})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import secrets
 import sys
 import time
 
@@ -40,9 +41,19 @@ def build_mode_grant_payload(
     tree_identity: str,
     now: int,
     ttl_seconds: int = 3600,
-    grant_id: str = "mode-grant-1",
-    nonce: str = "mode-grant-nonce-000001",
+    grant_id: str | None = None,
+    nonce: str | None = None,
 ) -> dict:
+    # Fresh per grant unless the caller names them. Both used to default to constants
+    # ("mode-grant-1" / "mode-grant-nonce-000001") that no caller overrode, so every
+    # grant ever minted carried the same nonce — and the L-1 ledger
+    # (bro_contracts.bind_mode_grant_nonce) binds a nonce to the FIRST grant that
+    # presents it and refuses every other: the second specialist was denied for a
+    # replay nobody attempted, and a nonce that never changes proves nothing.
+    if grant_id is None:
+        grant_id = f"mode-grant-{secrets.token_hex(16)}"
+    if nonce is None:
+        nonce = secrets.token_hex(32)
     return {
         "schema": 1,
         "grant_id": grant_id,

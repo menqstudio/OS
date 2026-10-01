@@ -16,7 +16,11 @@ It lives in tools/ rather than runtime/ for the same reason bro_signature only
 verifies: a component the agent can reach is a component the agent controls.
 
     python tools/bro_supervisor.py run --request req.json --keydir KEYS \\
-        --registry KEYS/trusted-keys.json --workspace . --builder-command "..."
+        --registry-root REGISTRY_ROOT --binding BINDING.json --repository-root . \\
+        [--approval approval.json] [--ttl-seconds N] -- <builder command ...>
+
+REGISTRY_ROOT is the directory holding config/trusted-keys.json; BINDING.json is the
+operator-signed workspace binding (tools/bro_bind_workspace.py).
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from bro_repository_state import RepositoryStateError, resolve_state
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 from bro_stop_controller import register, terminate_group
 
+from bro_run_receipt import wrapped_command
 from broctl import sign_payload
 
 DEFAULT_LEASE_SECONDS = 15 * 60
@@ -560,9 +565,41 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
 
     try:
         issuer_key = json.loads((keydir / "issuer.json").read_text(encoding="utf-8"))
-        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        binding_document = json.loads(binding_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return SupervisorResult(request.task_id, DENIED, f"supervisor state unusable: {exc}")
+    # The binding is an operator-signed `{payload, signature}` artifact — that is what
+    # bro_bind_workspace emits and the only form the runtime accepts
+    # (bro_workspace.load_workspace). This used to index the raw document as a flat
+    # dict: the signed binding crashed here with a KeyError nothing caught, and the
+    # flat one that did not crash was a file anybody could have written, whose
+    # workspace id, repository and control-plane digest went straight into a signed
+    # lease. Every field below is read from the verified payload.
+    try:
+        binding = verify_artifact(binding_document, "workspace-binding", keys, now=moment)
+    except SignatureError as exc:
+        return SupervisorResult(request.task_id, DENIED,
+                                f"workspace binding is not operator-signed: {exc}")
+    for field_name in ("workspace_id", "repository", "control_plane_digest"):
+        if not isinstance(binding.get(field_name), str) or not binding[field_name]:
+            return SupervisorResult(request.task_id, DENIED,
+                                    f"workspace binding missing {field_name}")
+    # A signature says who wrote the binding, not that it is still in force. The runtime
+    # refuses a binding that is inactive, expired or of another schema
+    # (bro_workspace.load_workspace); the supervisor verified the signature only, so a
+    # revoked or expired binding still produced a worktree and an issuer-signed lease.
+    # `verify_artifact` checks the KEY's validity window, never the artifact's own.
+    if binding.get("schema") != 1:
+        return SupervisorResult(request.task_id, DENIED, "unsupported workspace binding schema")
+    if binding.get("active") is not True:
+        return SupervisorResult(request.task_id, DENIED, "workspace binding is not active")
+    expires = binding.get("expires_at_epoch")
+    if not isinstance(expires, int) or isinstance(expires, bool):
+        return SupervisorResult(request.task_id, DENIED,
+                                "workspace binding missing or malformed expires_at_epoch")
+    if int(moment) >= expires:
+        return SupervisorResult(request.task_id, DENIED,
+                                f"workspace binding expired at epoch {expires}")
 
     try:
         worktree, branch = prepare_worktree(repository_root, request.task_id)
@@ -678,7 +715,8 @@ def main(argv: list[str] | None = None) -> int:
         request = TaskRequest.load(json.loads(pathlib.Path(args.request).read_text(encoding="utf-8")))
         approval = (json.loads(pathlib.Path(args.approval).read_text(encoding="utf-8"))
                     if args.approval else None)
-        command = [a for a in args.builder_command if a != "--"]
+        # ONE leading `--` is this tool's separator; every later one is the builder's own.
+        command = wrapped_command(args.builder_command)
         if not command:
             raise SupervisorError("no builder command given")
         result = run_task(

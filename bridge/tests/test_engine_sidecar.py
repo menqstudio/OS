@@ -186,8 +186,10 @@ class EngineSidecarTests(unittest.TestCase):
             (_VALID, [], {k: "x" for k in engine_sidecar._PROVISION_ENV}),  # unaudited
         ):
             doc = _drive(req, argv=argv, env=env)
-            if not doc["ok"]:
-                self.assertIsNone(doc["result"])
+            # Unconditional: each of the three is a FAILURE input, so a reply with `ok: true`
+            # is the fabricated success this sweep exists to catch, not a case to skip.
+            self.assertFalse(doc["ok"], doc)
+            self.assertIsNone(doc["result"])
 
 
 try:

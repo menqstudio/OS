@@ -8,6 +8,16 @@ for the final dedupe milestone"*. Nothing moves in Phase 3. The milestone that m
 
 **Written 2026-08-15.** Every count below was measured, not recalled.
 
+> **§1–§3 are that day's baseline, and three of their statements are false today (re-read 2026-10-01).**
+> `contracts/` is no longer "0 + a README": it holds **six** schemas and `index.json`, as the
+> drift-gated source (M2, below). `approval` as a bare name still does not exist, but
+> **`approval-request`** does — `contracts/approval-request.schema.json`, vendored in
+> `engine/schemas/`, landed in `T-021a` and is audited in [`T-021_SCHEMA_AUDIT.md`](./T-021_SCHEMA_AUDIT.md);
+> `engine/schemas/` now holds 21 schemas. And "there are no duplicate schema files anywhere" stopped
+> being true by design: the six are byte-identical in two places, held so by
+> `tools/check_contracts_single_source.py`. §6's "No new `approval` schema" was this plan's scope, not
+> a standing rule.
+
 ---
 
 ## 1. What is actually there
@@ -18,7 +28,7 @@ Four homes, not two. Counts are of `*.schema.json`; `engine/schemas/` also holds
 |---|---|---|---|
 | `engine/schemas/` | 20 schemas + `registry.json` | Python engine | loaded at runtime by the engine; **hand-mirrored** in Rust |
 | `engine/contracts/` | 3 (`brops-*.v1`) | the signer wire protocol | loaded by the signer/supervisor |
-| `bridge/contracts/` | 4 | the desktop ↔ sidecar bridge | `task-request` is **loaded at runtime by Rust** (`governed_sidecar.rs`) |
+| `bridge/contracts/` | 4 | the desktop ↔ sidecar bridge | `task-request` is read by Rust **in one test only** — `governed_sidecar.rs`'s `#[cfg(test)]` module asserts the schema is `additionalProperties:false` and has no `protocol` property. This cell said "loaded at runtime by Rust"; there is no runtime load and no `include_str!` |
 | `contracts/` | 0 + a README | — | nothing consumes it |
 
 The top-level `contracts/` directory named by the roadmap **holds no schemas at all**. It is a
@@ -39,13 +49,13 @@ with nothing but a doc comment connecting them:
 | `engine/schemas/verifier-receipt.schema.json` | `governance.rs::VerifierReceipt` | a doc comment |
 | `engine/schemas/evidence-event.schema.json` | `governance.rs::EvidenceEvent` | a doc comment |
 | `engine/schemas/task-contract.schema.json` | path rules in `ai.rs` | a doc comment |
-| `bridge/contracts/task-request.schema.json` | `governed_sidecar.rs` | **the file is read at runtime** |
+| `bridge/contracts/task-request.schema.json` | `governed_sidecar.rs` | **one test assertion** (not a runtime read — see §1) |
 | `engine/contracts/brops-sign-result.v1.schema.json` | `governed_bridge_result.rs` | a frozen enum order in a comment |
 
 That distinction changes the fix. Moving files into `contracts/` would relocate the *Python* side and
 leave every Rust mirror exactly as unbound as it is now — motion without progress. The property worth
-buying is **one definition that both sides are held to**, and the only row above that has it today is
-`task-request`, because Rust *reads the file* instead of restating it.
+buying is **one definition that both sides are held to**, and the only row above that comes close is
+`task-request`, where a Rust **test** reads the file — which binds two properties of it, not its shape.
 
 **So the dedupe milestone's real deliverable is a binding, and relocation is only the filing that
 makes the binding convenient.**
@@ -105,15 +115,15 @@ first version could not have produced.
 
 **M2 — one home for the cross-half schemas. ◑ DONE except the relocation, 2026-08-29 —
 `contracts/index.json` + `tools/check_contracts_single_source.py`.**
-The five schemas both halves consume — `verifier-receipt`, `evidence-event`, `task-contract`,
-`execution-lease`, `mode-grant` — now have their **source of record in `contracts/`**, with a
+The six schemas both halves consume — `verifier-receipt`, `evidence-event`, `task-contract`,
+`execution-lease`, `mode-grant` and, since `T-021a`, `approval-request` — now have their **source of record in `contracts/`**, with a
 byte-identical vendored copy in `engine/schemas/` that the engine goes on loading. Editing either
 side alone is RED, naming the file and the direction of drift. The index carries each contract's
 **version** as a JSON Pointer into the schema's own `const`, so a bump has to be made in both places
 in one commit; the split between cross-half and engine-internal is asserted **exhaustive** over
 `engine/schemas/`, so a new schema cannot default into silence; and a `*.schema.json` outside the
 four declared homes is RED, which is the third-copy failure this milestone exists to prevent.
-Seventeen tests, every one a mutation of a green tree.
+Twenty-five tests as of 2026-10-01 (seventeen when this was written), each a mutation of a green tree.
 
 *This is a weaker claim than "only one file exists", and it is said plainly rather than dressed up.*
 What remains is the relocation itself, and the reason it is not a plain Builder change is written

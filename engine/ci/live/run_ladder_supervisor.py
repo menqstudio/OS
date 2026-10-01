@@ -41,7 +41,6 @@ Run AS the supervisor account:
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -58,6 +57,8 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "runtime")))
 
 import ipc_policy  # noqa: E402
+import kit_store  # noqa: E402
+from brops_protocol import decode_base64url  # noqa: E402
 import live_crypto as lc  # noqa: E402
 import isolated_signer_server as iss  # noqa: E402
 import governed_acceptance as gac  # noqa: E402
@@ -76,6 +77,9 @@ from governed_supervisor import SupervisorConfig, recompute_request_sha256  # no
 #: fit inside that one budget. A child allowed the whole 120 s would guarantee the reply misses
 #: it, and the sidecar would read a governed refusal as a transport failure.
 EXECUTION_WAIT_S = 90.0
+#: How long to wait for a child this process has just killed to be reaped. Finite, because the
+#: kill may not have been permitted (see `RecorderExecutor.run`'s timeout path).
+KILL_REAP_S = 5.0
 
 #: The signer round trip (§6.1 steps 11-12). Same reasoning: it shares the §4.10(d) budget.
 SIGNER_TIMEOUT_S = 20.0
@@ -108,41 +112,20 @@ class Store:
     that name.
     """
 
-    #: A blob larger than this is refused rather than read into memory. The three staged
-    #: artifacts are capped by §2.4 (8 MiB for `history`, the largest), and the executor's
-    #: reply and containment report are smaller still.
-    MAX_BLOB_BYTES = 16 << 20
+    #: A blob larger than this is refused rather than read into memory (``kit_store`` says why
+    #: this number). The I/O itself is ``kit_store``'s, shared with the §5 kit's supervisor and
+    #: signer, which each used to carry their own copy of it.
+    MAX_BLOB_BYTES = kit_store.MAX_BLOB_BYTES
 
     def __init__(self, store_dir: str) -> None:
         self.dir = store_dir
 
     def read(self, handle: Any) -> bytes:
-        if not _is_handle(handle):
-            raise LadderError("not a 64-hex content address: %r" % (handle,))
-        path = os.path.join(self.dir, handle)
-        with open(path, "rb") as fh:
-            data = fh.read(self.MAX_BLOB_BYTES + 1)
-        if len(data) > self.MAX_BLOB_BYTES:
-            raise LadderError("store blob %s exceeds %d bytes" % (handle, self.MAX_BLOB_BYTES))
-        if hashlib.sha256(data).hexdigest() != handle:
-            raise LadderError("store corruption: blob digest != handle %s" % handle)
-        return data
+        return kit_store.read_blob(self.dir, handle, error=LadderError,
+                                   max_bytes=self.MAX_BLOB_BYTES)
 
     def publish(self, data: bytes) -> str:
-        handle = hashlib.sha256(data).hexdigest()
-        final = os.path.join(self.dir, handle)
-        if not os.path.exists(final):
-            tmp = final + ".tmp-%d" % os.getpid()
-            with open(tmp, "wb") as fh:
-                fh.write(data)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, final)
-            try:
-                os.chmod(final, 0o644)  # the signer, on its own uid, reads it by handle
-            except OSError:
-                pass
-        return handle
+        return kit_store.publish_blob(self.dir, data)
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +246,32 @@ class RecorderExecutor(gac.ExecutionService):
         try:
             stdout, _ = child.communicate(timeout=EXECUTION_WAIT_S)
         except subprocess.TimeoutExpired:
-            child.kill()
-            child.communicate()
-            raise LadderError("the contained execution exceeded %.0fs" % EXECUTION_WAIT_S)
+            # The child is `sudo`, and `sudo` runs as ROOT: this supervisor uid may not signal
+            # it. `child.kill()` therefore raises `PermissionError` (Popen suppresses only
+            # `ProcessLookupError`), which used to escape from here in place of the
+            # `LadderError` below -- and had the signal been delivered, SIGKILL is the one
+            # signal sudo cannot relay to the recorder, so the contained execution would have
+            # outlived its parent. Either way the wait that followed had no bound of its own.
+            #
+            # So: try, say honestly whether it worked, and never wait unboundedly on a process
+            # this uid could not stop. Terminating the attempt for real needs a root-side path
+            # (sudo's own timeout, or the cgroup) that this kit does not have; what this does
+            # is fail closed -- `LadderError` becomes `RECOVERY_REQUIRED` + `not_completed` --
+            # and record that the attempt may STILL BE RUNNING.
+            stopped = True
+            try:
+                child.kill()
+                child.communicate(timeout=KILL_REAP_S)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                stopped = False
+                self.hop_log("execution.unstoppable", None,
+                             {"attempt": attempt, "pid": child.pid, "error": repr(exc)})
+            raise LadderError(
+                "the contained execution exceeded %.0fs%s" % (
+                    EXECUTION_WAIT_S,
+                    "" if stopped else
+                    "; it could NOT be terminated by this uid (pid %d) and may still be running"
+                    % child.pid))
         text = (stdout or b"").decode("utf-8", "replace")
         self.hop_log("execution.exit", None,
                      {"attempt": attempt, "exit": child.returncode,
@@ -440,8 +446,7 @@ def build_ladder_services(cfg: Mapping[str, Any], ladder: Mapping[str, Any], *,
         than the one the verified snapshot selected.
         """
         try:
-            raw = base64.urlsafe_b64decode(
-                public_key_b64url + "=" * (-len(public_key_b64url) % 4))
+            raw = decode_base64url(public_key_b64url)   # strict: see `lc._unb64url`
             return lc.verify_b64url(lc.load_public_hex(raw.hex()), message, sig)
         except Exception:  # noqa: BLE001 — a seam that raises must fail closed, not escape
             return False
@@ -470,17 +475,7 @@ def build_ladder_services(cfg: Mapping[str, Any], ladder: Mapping[str, Any], *,
         it is a supervisor-minted id, and the supervisor still does not get to assume its own
         inputs. Bounded so a hostile file cannot exhaust this process.
         """
-        if not attempt or not all(c.isalnum() or c in "-_" for c in attempt):
-            return None
-        path = os.path.join(evidence_dir, attempt + ".evidence.json")
-        try:
-            with open(path, "rb") as fh:
-                data = fh.read(MAX_EVIDENCE_BYTES + 1)
-        except OSError:
-            return None
-        if len(data) > MAX_EVIDENCE_BYTES:
-            return None
-        return data
+        return kit_store.read_run_evidence(evidence_dir, attempt, MAX_EVIDENCE_BYTES)
 
     if sign_result is None:
         signer_socket = ladder["signer_socket"]
@@ -610,36 +605,13 @@ def build_ladder_services(cfg: Mapping[str, Any], ladder: Mapping[str, Any], *,
 def load_tcb_json(path: str) -> Any:
     """Read a ROOT-OWNED, non-group/other-writable JSON file, checked on the OPEN descriptor.
 
-    Same rule and same reasoning as ``ipc_policy.load_allowed_peer_uid``: the registry document
-    and the ladder config decide which challenge keys this supervisor accepts and which model
-    profiles it may execute, so a copy a service account could rewrite would authorize whatever
-    it liked. Measured on the descriptor rather than by a second ``stat``, so a swap between the
-    check and the read cannot change what was measured.
-
-    ``O_NOFOLLOW`` is requested when the platform has it, which on the only platform this
-    service SERVES on (Linux — ``bind_listener`` refuses everywhere else) is always. It is
-    looked up rather than named so the module stays importable off Linux, where the four
-    services can still be constructed and driven directly for verification.
+    The registry document and the ladder config decide which challenge keys this supervisor
+    accepts and which model profiles it may execute, so a copy a service account could rewrite
+    would authorize whatever it liked. The rule is ``ipc_policy.read_root_owned_json`` -- this
+    function was a second copy of it until 2026-10-01 -- and every refusal, a file that cannot
+    be opened or parsed included, is a :class:`LadderError`.
     """
-    import stat as _stat
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(path, flags)
-    try:
-        info = os.fstat(fd)
-        if not _stat.S_ISREG(info.st_mode):
-            raise LadderError("%s is not a regular file" % path)
-        if info.st_uid != 0:
-            raise LadderError("%s is owned by uid %d, not root; a config a service account can "
-                              "rewrite authorizes whatever it likes" % (path, info.st_uid))
-        if info.st_mode & (_stat.S_IWGRP | _stat.S_IWOTH):
-            raise LadderError("%s is group/other-writable" % path)
-        with os.fdopen(fd, "r", encoding="utf-8") as fh:
-            fd = -1  # ownership moved to the file object
-            return json.load(fh)
-    finally:
-        if fd >= 0:
-            os.close(fd)
+    return ipc_policy.read_root_owned_json(path, error=LadderError, what="the TCB document")
 
 
 def lease_pins(lease_path: str) -> dict:

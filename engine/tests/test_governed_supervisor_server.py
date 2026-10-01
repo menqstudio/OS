@@ -440,6 +440,48 @@ class FrameBoundTests(unittest.TestCase):
         self.assertEqual(conn.decoded_reply(),
                          {"ok": False, "error": "reply exceeded frame bound"})
 
+    def test_an_unconfigured_staging_door_answers_with_the_staging_modules_own_refusals(self):
+        """One mapping, owned by `governed_staging_upload`. The front door kept a second copy
+        with the three reasons typed in again, under a docstring saying it asked the owner."""
+        import inspect
+        import governed_staging_upload as gsu
+        import governed_supervisor_server as gss
+
+        self.assertEqual(
+            gss._staging_unconfigured({"protocol": gsu.STAGING_OPEN_PROTOCOL}),
+            gsu.staging_open_refused(gsu.REFUSE_PEER_DENIED))
+        self.assertEqual(
+            gss._staging_unconfigured({"protocol": gsu.STAGING_CHUNK_PROTOCOL}),
+            gsu.chunk_refused(gsu._CHUNK_PEER_DENIED, 0))
+        self.assertEqual(
+            gss._staging_unconfigured({"protocol": gsu.STAGING_FINAL_PROTOCOL}),
+            gsu.final_refused(gsu._FINAL_PEER_DENIED))
+        with self.assertRaises(gss.ServerError):
+            gss._staging_unconfigured({"protocol": "brops.something-else.v1"})
+        source = inspect.getsource(gss._staging_unconfigured)
+        code = "\n".join(line for line in source.split("\n") if "REFUSE_" in line)
+        self.assertEqual(code, "", "the front door names a staging refusal reason of its own")
+        # The count the transport comment states is the tuple's own length.
+        self.assertEqual(len(gss.SIDECAR_PROTOCOLS), 6)
+
+    def test_try_write_degrades_instead_of_raising_on_an_unencodable_reply(self):
+        """The three socket servers each carry a copy of this function, and this copy alone
+        let `json.dumps`'s `TypeError`/`ValueError` escape. All three are held to one answer."""
+        import challenge_authority_server as cas
+        import isolated_signer_server as iss
+
+        for bad in ({"ok": True, "value": object()}, {"ok": True, "value": float("nan")},
+                    {"ok": True, "value": {1, 2}}):
+            for name, write in (("supervisor", _try_write), ("authority", cas._try_write),
+                                ("signer", iss._try_write)):
+                with self.subTest(server=name, bad=repr(bad)):
+                    conn = FakeConn(BROKER_UID)
+                    write(conn, bad)             # must not raise, in any of the three
+        # ...and this door still ANSWERS the peer when it can.
+        conn = FakeConn(BROKER_UID)
+        _try_write(conn, {"ok": True, "value": object()})
+        self.assertEqual(conn.decoded_reply(), {"ok": False, "error": "reply exceeded frame bound"})
+
     def test_try_write_swallows_a_dead_peer(self):
         # The other half of the belt: a peer that has gone away must not raise either.
         class DeadConn(FakeConn):
@@ -633,6 +675,31 @@ class LaunchGateDispatchTests(_LifecycleBase):
         self.assertFalse(reply["ok"])
         self.assertEqual(reply["reason"], "lease_expired")
         self.assertEqual(gsl._current_state(self.ledger_conn, attempt), gsl.EXPIRED)
+
+    def _gate_cause(self, cause, now, phrase):
+        """One reason word, three causes. The detail was the same sentence for all three --
+        "remaining lease budget below 180000 ms" -- which is false for two of them. One attempt
+        per test: the gate EXPIRES the attempt it refuses, so a second cause needs a new ledger."""
+        attempt = self._accept()
+        reply = self._op({"op": OP_LAUNCH_GATE, "execution_attempt_id": attempt}, now=now)
+        self.assertFalse(reply["ok"])
+        self.assertEqual(reply["reason"], "lease_expired", "the reason word is ONE")
+        self.assertTrue(reply["detail"].startswith(cause + ": "), reply["detail"])
+        self.assertIn(phrase, reply["detail"])
+        self.assertEqual(
+            gsl.load_acceptance(self.ledger_conn, attempt)["failure_reason"], cause)
+
+    def test_the_gate_reply_names_a_lease_that_is_not_yet_valid(self):
+        self._gate_cause("lease_not_yet_valid", NOW - 1, "before the lease was issued")
+
+    def test_the_gate_reply_names_a_lease_that_has_expired(self):
+        self._gate_cause("lease_expired", NOW + LEASE_DURATION_MS + 1,
+                         "the lease window has passed")
+
+    def test_the_gate_reply_names_an_insufficient_remaining_budget(self):
+        self._gate_cause("insufficient_remaining_budget",
+                         NOW + LEASE_DURATION_MS - gsl.MIN_LAUNCH_REMAINING_MS + 1,
+                         "remaining lease budget below %d ms" % gsl.MIN_LAUNCH_REMAINING_MS)
 
     def test_gate_on_a_fabricated_attempt_is_unknown_attempt(self):
         reply = self._op({"op": OP_LAUNCH_GATE, "execution_attempt_id": "att-fabricated"})
@@ -1041,6 +1108,12 @@ class UnknownOpTests(unittest.TestCase):
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("attestation", reply)
+        # The two assertions above hold for ANY refusal of this request -- run "r" does not
+        # exist, so with the seam injected the same frame is refused `no_terminal_run_state`.
+        # What makes this the config fault is that the reply names the missing seam, and is
+        # not the answer a correctly-configured supervisor gives.
+        self.assertIn("sign_attestation", reply["error"])
+        self.assertNotEqual(reply.get("reason"), REFUSE_NO_TERMINAL_RUN)
 
 
 # ---------------------------------------------------------------------------

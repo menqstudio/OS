@@ -52,8 +52,9 @@ def main() -> int:
     # config and refuses a create-pending that names a different one. It used to arrive on the
     # wire, which made the floor's scope the caller's choice: `install-B / task-FRESH / head 3`
     # bootstrapped the very head `install-A` refused. Same block the desktop reads
-    # (`ladder_desktop.py:108`) and the ladder's own gate reads (`run_ladder_turn.sh:905`), so the
-    # three cannot drift.
+    # (`ladder_desktop.py`, `resolved["install_id"]`) and the ladder's own gate reads
+    # (`INSTALL_ID` in `run_ladder_turn.sh`), so the three cannot drift. Named by symbol: the two
+    # line numbers this comment used to give pointed at other statements within weeks.
     install_id = cfg["resolved"]["install_id"]
 
     with open(cfg["keys"]["challenge_priv"], "rb") as f:

@@ -233,6 +233,44 @@ class PassingReceiptTests(ReceiptFixture):
         self.assertEqual(len(payloads), 2)
 
 
+class WrappedCommandTests(ReceiptFixture):
+    """`--` separates this tool's options from the command it wraps. Both tools that take a
+    wrapped command deleted EVERY `--` token, changing what ran and what the receipt signs."""
+
+    def test_only_the_leading_separator_is_the_tools(self):
+        from bro_run_receipt import wrapped_command
+        self.assertEqual(wrapped_command(["--", "git", "log", "--", "path"]),
+                         ["git", "log", "--", "path"])
+        self.assertEqual(wrapped_command(["git", "log", "--", "path"]),
+                         ["git", "log", "--", "path"])
+        self.assertEqual(wrapped_command(["--", "--", "x"]), ["--", "x"])
+        self.assertEqual(wrapped_command(["--"]), [])
+        self.assertEqual(wrapped_command([]), [])
+
+    def test_the_receipt_cli_runs_and_signs_the_command_it_was_given(self):
+        import bro_run_receipt
+        key_path = self.tmp / "recorder.json"
+        key_path.write_text(json.dumps(self.keys["evidence-recorder"]), encoding="utf-8")
+        out = self.tmp / "receipt.json"
+        # Exits 0 only if the child really received `--` between its two arguments.
+        program = "import sys; sys.exit(0 if sys.argv[1:] == ['a', '--', 'b'] else 7)"
+        rc = bro_run_receipt.main([
+            "--key", str(key_path), "--task-id", "task-1", "--out", str(out),
+            "--root", str(self.repo), "--", sys.executable, "-c", program, "a", "--", "b"])
+        self.assertEqual(rc, 0, "the wrapped command did not receive its own `--`")
+        signed = json.loads(out.read_text(encoding="utf-8"))["payload"]
+        self.assertEqual(signed["command"], [sys.executable, "-c", program, "a", "--", "b"])
+        self.assertEqual(signed["exit_code"], 0)
+
+    def test_both_tools_use_the_one_helper(self):
+        tools = ROOT / "tools"
+        for name in ("bro_run_receipt.py", "bro_supervisor.py"):
+            source = (tools / name).read_text(encoding="utf-8")
+            with self.subTest(tool=name):
+                self.assertNotIn('if a != "--"]', source)
+                self.assertIn("wrapped_command(args.", source)
+
+
 class CatalogTests(ReceiptFixture):
     def test_catalog_digest_tracks_the_file(self):
         before = catalog_sha256(self.repo)

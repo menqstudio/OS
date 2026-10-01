@@ -1,14 +1,14 @@
 - **Purpose:** Define the canonical desktop information architecture for BroPS — the app shell regions, their responsibilities, persistence rules, routing model, keyboard model, layering, and the mapping of every screen into the four navigation sections. This is the Phase 1 UX structural contract that all screen and component specs inherit from.
-- **Scope:** Desktop-first app shell and structural UX. Trilingual product runtime (HY/EN/RU). Visual, motion, and theming rules are owned by [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md); this document must never contradict it. Screen-level state and content are owned by the individual screen specs.
+- **Scope:** Desktop-first app shell and structural UX. Trilingual product runtime (HY/EN/RU). Visual, motion, and theming rules are owned by [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md); this document must never contradict it. Screen-level state and content are owned by the individual screen specs.
 - **Owner:** Gev.
-- **Related:** [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md).
+- **Related:** [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Information Architecture
 
 Status: Draft canonical.
 
-BroPS presents thirteen backend domains ([../ARCHITECTURE.md](../architecture/ARCHITECTURE.md)) as one unified AI Operating System. The app shell is the single, always-present frame that hosts every screen. The sidebar is a projection of the system, not the system itself ([NAVIGATION.md](NAVIGATION.md)); this document defines the frame that holds that projection.
+BroPS presents thirteen backend domains ([../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md)) as one unified AI Operating System. The app shell is the single, always-present frame that hosts every screen. The sidebar is a projection of the system, not the system itself ([NAVIGATION.md](NAVIGATION.md)); this document defines the frame that holds that projection.
 
 ## 1. App shell regions
 
@@ -46,12 +46,12 @@ Left to right:
 4. **Language switch — HY / EN / RU** — segmented control; switches at runtime with no reload, preserving navigation, drawers, filters, and unsaved form values (DESIGN_SYSTEM localization law).
 5. **Theme switch — Dark / Light** — reflects System/Dark/Light preference, applies immediately to every surface.
 6. **Notifications** — bell with unread count; opens the Notification center as a RightDrawer surface.
-7. **Approvals badge** — a distinct, always-visible indicator of pending approvals; opens the Approval drawer. Kept separate from notifications because approvals gate execution and carry authority ([../ARCHITECTURE.md](../architecture/ARCHITECTURE.md) execution model).
+7. **Approvals badge** — a distinct, always-visible indicator of pending approvals; opens the Approval drawer. Kept separate from notifications because approvals gate execution and carry authority ([../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) execution model).
 
 ### 1.3 MainWorkspace
 
 - The only vertically scrolling region; the shell frame itself never scrolls.
-- Renders exactly one active screen from the [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md). Screens own their own internal layout, sub-navigation (e.g. project tabs, task views), and all eight required states (loading, empty, populated, error, offline, permission-denied, destructive-confirmation, success).
+- Renders exactly one active screen from the [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md). Screens own their own internal layout, sub-navigation (e.g. project tabs, task views), and the canonical states defined in [STATES.md](STATES.md) (ten, each where it applies — this line listed eight).
 
 ### 1.4 RightDrawer — optional right context drawer
 
@@ -62,7 +62,7 @@ Left to right:
 ### 1.5 Persistent Bro command access — Ask Bro
 
 - **Ask Bro** is reachable from every screen and every state (DESIGN_SYSTEM: "Persistent Bro command access").
-- Access points: a persistent composer affordance anchored bottom-right of the shell, the palette (`>` command mode), and the global shortcut. It opens as an overlay composer/panel, above the workspace and drawer, so Gev can state intent without leaving the current context ([../ARCHITECTURE.md](../architecture/ARCHITECTURE.md): "Gev states intent").
+- Access points: a persistent composer affordance anchored bottom-right of the shell, the palette (`>` command mode), and the global shortcut. It opens as an overlay composer/panel, above the workspace and drawer, so Gev can state intent without leaving the current context ([../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md): "Gev states intent").
 - The Command workspace (SCREEN_INVENTORY #2) is the full-screen home of this surface; Ask Bro is its always-available overlay projection.
 
 ### 1.6 StatusBar and notification surfaces
@@ -73,7 +73,7 @@ Left to right:
 
 ## 2. Region responsibilities — persist vs reset on navigation
 
-"Navigation" = changing the active route in MainWorkspace. Persistence follows the state layers in [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md) (conversation, workspace, canonical, evidence, memory).
+"Navigation" = changing the active route in MainWorkspace. Persistence follows the state layers in [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) (conversation, workspace, canonical, evidence, memory).
 
 | Region / state | Persists across navigation | Resets on navigation |
 | --- | --- | --- |
@@ -91,6 +91,8 @@ Rule: never silently discard unsaved edits or an in-progress Ask Bro turn on nav
 ## 3. Responsive and desktop breakpoints
 
 Desktop-first (DESIGN_SYSTEM). Breakpoints govern shell collapse, not content redesign.
+
+> **Not reconciled:** three breakpoint tables exist and disagree — [INFORMATION_ARCHITECTURE.md §3](INFORMATION_ARCHITECTURE.md) (1440 / 1200 / 1024 / 768), [UX_UI_SPEC.md](../architecture/UX_UI_SPEC.md) (1280 / 900 / 640) and [DETAILED_UX_UI_SPEC.md](DETAILED_UX_UI_SPEC.md) (900 and 800) — and the stylesheet follows none of them: its `@media` queries use literal widths (560, 1080, 720, 820, 1040, 900, 860 and others), not tokens. Which table is the target has not been decided.
 
 | Breakpoint | Range | LeftNav | RightDrawer | Notes |
 | --- | --- | --- | --- | --- |
@@ -116,7 +118,7 @@ Every workspace, object, and drawer state is a first-class, shareable URL. This 
 /{workspace}/{objectType?}/{objectId?}/{subview?}?{query}#{anchor}
 ```
 
-- **Workspace segment** — one per sidebar item: `home`, `command`, `chat`, `projects`, `tasks`, `agents`, `knowledge`, `memory`, `decisions`, `research`, `library`, `calendar`, `automations`, `approvals`, `activity`, `notifications`, `files`, `integrations`, `analytics`, `security`, `settings`.
+- **Workspace segment** — one per sidebar item (the shipped route ids are `RouteId` in `src/app/nav.ts`, 23 of them, which add `groupChat` and `bridge` to this list): `home`, `command`, `chat`, `projects`, `tasks`, `agents`, `knowledge`, `memory`, `decisions`, `research`, `library`, `calendar`, `automations`, `approvals`, `activity`, `notifications`, `files`, `integrations`, `analytics`, `security`, `settings`.
 - **Objects are addressable** — `project | task | room | thread | decision | approval | agent | file | knowledge | memory | automation | integration` each resolve by id, e.g. `/projects/project/PRJ-142/tasks`, `/chat/room/ROOM-9/thread/TH-3`, `/decisions/decision/DEC-58`.
 - **Sub-view segment** — screen-local tabs and views: project tabs (`overview | chat | tasks | files | knowledge | decisions | agents | timeline | activity | settings`, per [NAVIGATION.md](NAVIGATION.md)); task views (`inbox | today | assigned-me | assigned-agents | waiting-approval | blocked | recurring | completed`).
 
@@ -230,21 +232,21 @@ Every screen in [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md) maps to exactly one s
 | 21 | Security | `/security` |
 | 22 | Settings | `/settings` |
 
-This mapping equals the [NAVIGATION.md](NAVIGATION.md) sidebar (20 sidebar items) plus the two nested surfaces (Command, Group Chat), for all 22 inventoried screens.
+This mapping covers the 22 screens this document inventoried. The shipped sidebar ([NAVIGATION.md](NAVIGATION.md), `src/app/nav.ts`) has 23 items: Command and Group Chat are sidebar items rather than nested surfaces, and Bridge sits in Intelligence after Decisions and is in none of the tables above.
 
 ---
 
 # Հայերեն
 
 - **Նպատակ:** Սահմանել BroPS-ի desktop-ի կանոնական ինֆորմացիոն ճարտարապետությունը՝ app shell-ի տարածքները, դրանց պատասխանատվությունը, պահպանման կանոնները, routing-ի մոդելը, ստեղնաշարի մոդելը, շերտավորումը և բոլոր էկրանների բաշխումը չորս նավիգացիոն բաժինների միջև։ Սա Phase 1 UX-ի կառուցվածքային պայմանագիրն է, որից ժառանգում են բոլոր էկրանների ու կոմպոնենտների սպեցիֆիկացիաները։
-- **Շրջանակ:** Desktop-first app shell և կառուցվածքային UX։ Trilingual runtime (HY/EN/RU)։ Visual, motion և theming կանոնները պատկանում են [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md)-ին. այս փաստաթուղթը երբեք չի հակասում դրան։
+- **Շրջանակ:** Desktop-first app shell և կառուցվածքային UX։ Trilingual runtime (HY/EN/RU)։ Visual, motion և theming կանոնները պատկանում են [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md)-ին. այս փաստաթուղթը երբեք չի հակասում դրան։
 - **Սեփականատեր:** Gev.
-- **Առնչվող:** [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md)։
+- **Առնչվող:** [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [NAVIGATION.md](NAVIGATION.md), [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md)։
 - **Վերջին թարմացում:** 2026-07-19։
 
 Կարգավիճակ՝ Draft canonical.
 
-BroPS-ն օգտագործողին ներկայացնում է տասներեք backend domain-ները ([../ARCHITECTURE.md](../architecture/ARCHITECTURE.md)) որպես մեկ միասնական AI Operating System։ App shell-ը միակ, մշտապես առկա շրջանակն է, որը պահում է յուրաքանչյուր էկրան։ Sidebar-ը համակարգի projection-ն է, ոչ թե ինքը համակարգը ([NAVIGATION.md](NAVIGATION.md))։
+BroPS-ն օգտագործողին ներկայացնում է տասներեք backend domain-ները ([../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md)) որպես մեկ միասնական AI Operating System։ App shell-ը միակ, մշտապես առկա շրջանակն է, որը պահում է յուրաքանչյուր էկրան։ Sidebar-ը համակարգի projection-ն է, ոչ թե ինքը համակարգը ([NAVIGATION.md](NAVIGATION.md))։
 
 ## 1. App shell-ի տարածքները
 
@@ -265,7 +267,7 @@ Shell-ը վեց տարածքից բաղկացած ֆիքսված grid է։ Բո�
 ### 1.3 MainWorkspace
 
 - Միակ ուղղահայաց scroll անող տարածքը. shell-ի շրջանակն ինքը երբեք չի scroll անում։
-- Ցուցադրում է ճիշտ մեկ ակտիվ էկրան [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ից՝ իր ներքին layout-ով, sub-navigation-ով և ութ պարտադիր վիճակներով (loading, empty, populated, error, offline, permission-denied, destructive-confirmation, success)։
+- Ցուցադրում է ճիշտ մեկ ակտիվ էկրան [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ից՝ իր ներքին layout-ով, sub-navigation-ով և [STATES.md](STATES.md)-ի կանոնական վիճակներով (տասը, ամեն մեկը որտեղ կիրառելի է — այս տողը թվարկում էր ութը)։
 
 ### 1.4 RightDrawer — ընտրովի աջ context drawer
 
@@ -286,7 +288,7 @@ Shell-ը վեց տարածքից բաղկացած ֆիքսված grid է։ Բո�
 
 ## 2. Տարածքների պատասխանատվությունը — պահպանվում է vs զրոյացվում է նավիգացիայի ժամանակ
 
-«Նավիգացիա» = MainWorkspace-ի ակտիվ route-ի փոփոխություն։ Պահպանումը հետևում է [../ARCHITECTURE.md](../architecture/ARCHITECTURE.md)-ի state շերտերին։
+«Նավիգացիա» = MainWorkspace-ի ակտիվ route-ի փոփոխություն։ Պահպանումը հետևում է [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md)-ի state շերտերին։
 
 | Տարածք / վիճակ | Պահպանվում է | Զրոյացվում է |
 | --- | --- | --- |
@@ -304,6 +306,8 @@ Shell-ը վեց տարածքից բաղկացած ֆիքսված grid է։ Բո�
 ## 3. Responsive և desktop breakpoint-եր
 
 Desktop-first (DESIGN_SYSTEM)։ Breakpoint-երը կառավարում են shell-ի collapse-ը, ոչ թե բովանդակության վերաձևումը։
+
+> **Համաձայնեցված չի.** breakpoint-ների երեք աղյուսակ կա, ու դրանք չեն համընկնում (այս մեկը, `architecture/UX_UI_SPEC.md`-ը, DETAILED_UX_UI_SPEC.md-ը), իսկ stylesheet-ը ոչ մեկին չի հետևում՝ իր `@media`-ները literal լայնություններ են, ոչ token։ Թե որ աղյուսակն ա թիրախը՝ որոշված չի։
 
 | Breakpoint | Միջակայք | LeftNav | RightDrawer |
 | --- | --- | --- | --- |
@@ -403,4 +407,4 @@ Calendar `/calendar`, Automations `/automations`, Approvals `/approvals`, Activi
 ### System (5) — աղբյուրներ, կապեր և կառավարում
 Files `/files`, Integrations `/integrations`, Analytics `/analytics`, Security `/security`, Settings `/settings`։
 
-Այս բաշխումը հավասար է [NAVIGATION.md](NAVIGATION.md)-ի sidebar-ին (20 item) գումարած երկու nested surface-երը (Command, Group Chat)՝ ընդամենը 22 inventoried էկրան։
+Այս բաշխումը ծածկում ա այս փաստաթղթի 22 inventoried էկրանը։ Shipped sidebar-ը ([NAVIGATION.md](NAVIGATION.md), `src/app/nav.ts`) 23 item ունի. Command-ն ու Group Chat-ը sidebar item են, ոչ թե nested surface, իսկ Bridge-ը Intelligence-ում ա՝ Decisions-ից հետո, ու վերևի աղյուսակներից ոչ մեկում չկա։

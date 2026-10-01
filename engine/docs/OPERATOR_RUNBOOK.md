@@ -17,14 +17,14 @@ Answer this before anything else, because the preflight in §0.1 checks a config
 different deployments produce in two very different ways.
 
 **A. The desktop product (BroPS).** `apps/desktop/src-tauri/provision/` mints the whole set on the
-user's machine at first launch and there is **no operator ceremony at all** — no USB, no key to
+user's machine — at first launch on Windows, **at install time on POSIX** (below) — and there is **no operator ceremony at all** — no USB, no key to
 carry, nothing to renew. It mints one keypair per authority, signs the `trusted-key-registry` and a
 `conductor-session`, and then **destroys the operator-root private half before it returns**. The
 pin (`operator-root.pub`), the anti-rollback floor (`registry-min`), the registry itself
 (`registry/config/trusted-keys.json`) and the provisioning manifest live under a machine-wide
 **trust anchor** the application's own account cannot write:
 
-| | Windows | POSIX (specified, never executed) |
+| | Windows | POSIX (minted by the root installer) |
 | --- | --- | --- |
 | Trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (read `anchor::POSIX_MACHINE_ROOT`) |
 | App-side store (private keys, artifacts) | `%APPDATA%\studio.menq.brops\trust\` | `~/.local/share/studio.menq.brops/trust/` |
@@ -33,16 +33,21 @@ pin (`operator-root.pub`), the anti-rollback floor (`registry-min`), the registr
 Provisioning runs **before the database is opened and aborts startup if it fails**, so an install
 that could not establish its anchor does not run at all. On Windows the anchor is sealed with a
 PROTECTED DACL whose OWNER RIGHTS (`S-1-3-4`) ACE grants read+execute only, applied up to the
-machine root and re-measured against the OS on every launch. **On POSIX `anchor::seal` returns
-`Unsupported`** — an owner may always `chmod` a directory it owns — so a POSIX deployment must have
-the anchor directory created by a **different uid** (root, or a dedicated `brops-anchor` account),
-mode `0755`, ancestors likewise, with provisioning run once as that account by the installer. That
-branch has never executed.
+machine root and re-measured against the OS on every launch. **On POSIX the application never creates the anchor** — an owner may always `chmod` a directory it
+owns, so `anchor::preprovision_refusal` refuses before anything is minted, and an anchor already in
+place is verified and used. The anchor directory is created by a **different uid**: root runs
+`brops_install_anchor` (`apps/desktop/src-tauri/provision/src/posix_install.rs`) once, at install
+time — the `.deb`'s `postinst` calls `/usr/lib/brops/brops-install`, which is
+`engine/install/brops_install.sh` — mode `0755`, ancestors likewise, and it does not report success
+until the application's own launch-time check passes for the desktop account. CI runs that
+installer's end-to-end test as root. *(This paragraph said "`anchor::seal` returns `Unsupported` …
+That branch has never executed"; the refusal moved earlier and the installer exists.)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 
 > **Install ordering, and it is not recoverable.** The registry seals when provisioning returns —
 > the operator root is destroyed at that moment — so the audit signer's published key must be
 > admitted *while the registry is being signed*. **Register the signer service before the app's
-> first launch**, or that machine can never have an audit-head anchor without being re-provisioned.
+> first launch** — on POSIX, **before the install step runs**, because that is where the registry is
+> signed and sealed — or that machine can never have an audit-head anchor without being re-provisioned.
 > Nothing automates this today: the signer's binaries ship in no installer.
 
 **B. An engine-only deployment.** You provide the environment yourself, per §0.1 — and note up
@@ -103,7 +108,7 @@ It exits non-zero — printing each `RED:` reason — unless all of the followin
   key that signed the registry. The raw `BRO_OPERATOR_ROOT_PUBKEY` env var is for CI
   only; a production deployment that relies on it is reported un-hardened.
 - **The registry is hardened.** It authenticates against that pin, carries the
-  owner-held `recovery` authority, and every `builder`/`verifier` key is bound to a
+  delegated `recovery` authority, and every `builder`/`verifier` key is bound to a
   `subject_agent_id`, so its signatures are tied to an agent identity.
 - **Ledgers are external.** Every configured ledger/store
   (`BRO_EXECUTION_LEASE_LEDGER`, `BRO_RECOVERY_STORE`, `BRO_TASK_LOCK_LEDGER`,
@@ -114,11 +119,18 @@ It exits non-zero — printing each `RED:` reason — unless all of the followin
 This is a deployment check, not a CI step: CI legitimately pins via the env var,
 which the preflight — correctly — reports as un-hardened for production.
 
-Two owner responsibilities the preflight cannot check from inside the process, and
-which remain yours: the `recovery` private key is held **offline** (the registry
-ships only its public key), and the runner producing execution-receipt worktree
-snapshots runs under an **OS identity distinct** from the builder, so the snapshot a
-receipt attests cannot be mutated by the process it polices.
+Two custody properties the preflight cannot check from inside the process: the
+`recovery` private key is **out of the policed builder's reach** (the registry ships
+only its public key), and the runner producing execution-receipt worktree snapshots
+runs under an **OS identity distinct** from the builder, so the snapshot a receipt
+attests cannot be mutated by the process it polices.
+
+On the desktop deployment (§0 A) no person holds the `recovery` key: the install mints
+it and RETAINS its private half in the app-side store (`provision::RETAINED_AUTHORITIES`).
+A recovery proof there is therefore **not independent of the account the app runs
+as** — it rests on the custody of that store, exactly as `bro_recovery._verify_recovery_proof`
+says. On an engine-only deployment (§0 B) the separation is yours to configure, and
+it yields a development root.
 
 ## 1. Machine-local state
 
@@ -238,9 +250,10 @@ This is deliberate — an interrupted transaction must be reconciled, not raced.
 2. Restore the worktree to that before-state (e.g. discard the partial change).
 3. Prove recovery — only valid for `REVERSIBLE` / `COMPENSATABLE` effects, and
    only when the live repository state matches the recorded before-state. Recovery
-   now requires an **owner-signed `recovery-proof` artifact** (a document signed by
-   the offline owner-held `recovery` authority, bound to the task/record/before-state/
-   effect-class/state-version), not a bare hex string — obtain that document, then
+   now requires a **signed `recovery-proof` artifact** (a document signed under
+   the delegated `recovery` authority, bound to the task/record/before-state/
+   effect-class/state-version), not a bare hex string. No person holds that key:
+   the desktop install mints and retains it (§0.1). Obtain that document, then
    pass it in:
    ```
    python3 -c "import sys, json; sys.path.insert(0,'runtime'); import bro_recovery as r; \

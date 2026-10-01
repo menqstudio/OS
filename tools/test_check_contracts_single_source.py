@@ -8,6 +8,8 @@ reports the state of its own optimism, which is precisely the ninth audit's `I-1
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import sys
@@ -54,8 +56,25 @@ class AgentWorktreeIsNotAStray(unittest.TestCase):
         self.assertEqual([p.as_posix() for p in cs.stray_schema_files(root)],
                          ["vendor/execution-lease.schema.json"])
 
+    def test_a_stray_is_reported_when_the_CHECKOUT_is_the_agent_worktree(self):
+        """The exclusion read the ABSOLUTE path, so run from inside
+        `.claude/worktrees/<id>/` -- where every agent in this repository works -- every
+        path had `worktrees` in it and the gate could find no stray anywhere.
+        Mutant: test `path.parts` again => red, reporting nothing."""
+        root = self.tmp / "os" / ".claude" / "worktrees" / "agent-abc"
+        stray = root / "vendor"
+        stray.mkdir(parents=True)
+        (stray / "execution-lease.schema.json").write_text("{}", encoding="utf-8")
+        self.assertEqual([p.as_posix() for p in cs.stray_schema_files(root)],
+                         ["vendor/execution-lease.schema.json"])
 
-class ContractsSingleSourceTests(unittest.TestCase):
+
+class _GreenTree:
+    """The repository every test here starts from. A mixin and not a TestCase:
+    `StrayMessagePathSpelling` used to subclass `ContractsSingleSourceTests` to borrow this one
+    helper, and so re-ran all 22 of its tests under a second name -- the module reported 47
+    tests for 25 distinct ones."""
+
     def _tree(self) -> pathlib.Path:
         """A repository in which the gate is GREEN. Every test breaks exactly one thing about it."""
         d = tempfile.TemporaryDirectory()
@@ -91,6 +110,7 @@ class ContractsSingleSourceTests(unittest.TestCase):
         }), encoding="utf-8")
         return root
 
+class ContractsSingleSourceTests(_GreenTree, unittest.TestCase):
     # --- the tree the mutations start from -----------------------------------
     def test_a_consistent_tree_is_green(self):
         self.assertEqual(cs.check(self._tree()), [])
@@ -307,7 +327,7 @@ class ContractsSingleSourceTests(unittest.TestCase):
 # These tests can only FAIL on Windows -- on Linux the separator is `/` either way -- which is
 # exactly why ci.yml now runs the tools suite on windows-latest as well.
 
-class StrayMessagePathSpelling(ContractsSingleSourceTests):
+class StrayMessagePathSpelling(_GreenTree, unittest.TestCase):
     def test_the_stray_message_spells_the_path_with_forward_slashes(self):
         root = self._tree()
         stray = root / "apps" / "desktop" / "src"
@@ -317,6 +337,34 @@ class StrayMessagePathSpelling(ContractsSingleSourceTests):
         self.assertEqual(len(said), 1, said)
         self.assertNotIn("\\", said[0], "the stray message used OS-native separators")
         self.assertIn("apps/desktop/src/execution-lease.schema.json", said[0])
+
+
+class TheExitCode(_GreenTree, unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def _main(self, root):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cs.main(["--root", str(root)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_consistent_tree_exits_zero(self):
+        code, out, err = self._main(self._tree())
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_stray_schema_exits_one_and_is_named(self):
+        root = self._tree()
+        (root / "vendor").mkdir()
+        (root / "vendor" / "execution-lease.schema.json").write_text("{}", encoding="utf-8")
+        code, out, err = self._main(root)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("vendor/execution-lease.schema.json", err)
+
 
 if __name__ == "__main__":
     unittest.main()

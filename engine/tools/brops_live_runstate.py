@@ -23,20 +23,29 @@ authoritative fields, so `produce_sign_request` attests real, proven runs only.
 
 from __future__ import annotations
 
-import base64
 import json
 import pathlib
+import re
 from typing import Any
 
 from bro_evidence import load_head, validate_chain
 from bro_execution_lease import validate_execution_lease
 from bro_receipt import verify_passing_receipt
 from bro_signature import verify_artifact
+from brops_protocol import ProtocolError, decode_base64url
 from brops_supervisor_attest import RunState
 
 
 class RunStateValidationError(Exception):
     """A found run record whose authoritative artifacts did not validate — fail-closed."""
+
+
+#: One component of a run handle, as the file-name component it becomes. The handle is the
+#: CALLER's — it arrives over the supervisor socket — and it used to be interpolated into a
+#: path unexamined: `run_id="../outside/evil"` (or an absolute one, which discards
+#: `state_dir` altogether) made this provider read a record from wherever the caller
+#: pointed. No separator, no leading dot, nothing a file system gives meaning to.
+HANDLE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 # The authoritative fields the record must carry for the RunState (the supervisor's own
@@ -73,8 +82,16 @@ class LiveRunStateProvider:
         self.required_capabilities = required_capabilities
 
     def _record_path(self, run_id: str, execution_attempt_id: str) -> pathlib.Path:
-        safe = f"{run_id}__{execution_attempt_id}.json"
-        return self.state_dir / safe
+        for name, value in (("run_id", run_id), ("execution_attempt_id", execution_attempt_id)):
+            if not isinstance(value, str) or not HANDLE_COMPONENT.fullmatch(value):
+                raise RunStateValidationError(f"{name} is not a well-formed run handle")
+        path = self.state_dir / f"{run_id}__{execution_attempt_id}.json"
+        # The pattern already rules a traversal out; this is the property itself, checked
+        # on what the file system will actually open. It also refuses a record that is a
+        # symlink out of the protected directory.
+        if path.resolve().parent != self.state_dir.resolve():
+            raise RunStateValidationError("run record resolves outside the run-state directory")
+        return path
 
     def terminal_run_state(self, run_id: str, execution_attempt_id: str) -> RunState | None:
         path = self._record_path(run_id, execution_attempt_id)
@@ -174,10 +191,10 @@ class LiveRunStateProvider:
         if not isinstance(containment_evidence, dict):
             raise RunStateValidationError("run record `containment_evidence` must be an object")
         try:
-            policy_bundle = base64.urlsafe_b64decode(
-                record["policy_bundle_b64"] + "=" * (-len(record["policy_bundle_b64"]) % 4)
-            )
-        except Exception as exc:  # noqa: BLE001
+            # The strict decoder: the bundle's DIGEST is what the signer authorizes, so the
+            # bytes decoded must be the bytes sent, not whatever a lenient decode makes of them.
+            policy_bundle = decode_base64url(record.get("policy_bundle_b64"))
+        except ProtocolError as exc:
             raise RunStateValidationError(f"policy_bundle_b64 not decodable: {exc}")
 
         return RunState(

@@ -5,6 +5,8 @@ the §C.1 spec use the real repository, because the exemption is read FROM the r
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import sys
 import tempfile
@@ -126,6 +128,38 @@ class RealRepositoryTests(unittest.TestCase):
         # An allowlist whose entries say nothing is a list of exemptions nobody can review.
         for token, why in dt.ALLOWED.items():
             self.assertGreater(len(why), 40, f"{token}: the reason is too short to be one")
+
+
+class TheExitCode(unittest.TestCase):
+    """CI reads `main()`'s return value, and every other test in this file reads `check()`.
+    Turning main's `if problems:` into `if False:` left this whole module green -- the one
+    line that decides whether a RED tree fails the build was tested only by the real,
+    green repository."""
+
+    def _main(self, css: str):
+        root = _tree(css)
+        # `main` reads the §C.1 exemption from the roadmap under --root and fails closed without
+        # one, so the synthetic tree is given the real specification.
+        (root / dt.ROADMAP).write_bytes((REPO_ROOT / dt.ROADMAP).read_bytes())
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = dt.main(["--root", str(root)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_tree_whose_every_token_is_read_exits_zero(self):
+        # One token that is read, plus every ALLOWED token declared and unread -- the allowlist
+        # is checked from both sides, so a green tree has to carry them.
+        allowed = "".join(f"{name}: 0; " for name in sorted(dt.ALLOWED))
+        code, out, err = self._main(":root { --t145-used: 1; " + allowed + "}\n"
+                                    ".x { width: var(--t145-used); }\n")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("GREEN:"), out)
+
+    def test_a_token_nothing_reads_exits_one_and_is_named(self):
+        code, out, err = self._main(":root { --t145-dead: 2; }\n")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("--t145-dead is declared in app.css and read by nothing", err)
 
 
 if __name__ == "__main__":

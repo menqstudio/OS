@@ -105,10 +105,15 @@ class HookWiringTests(unittest.TestCase):
         the repository root is a path change and nothing more. What is NOT merely a
         path change is that the wall then runs: it denies every tool call until an
         operator-signed workspace binding exists AND engine/ is a git checkout root
-        (bro_workspace.git_config_path raises here today), which the repository's
-        CLAUDE.md defers as a standing owner decision. So the repository root
+        (bro_workspace.git_config_path raises here today). That the root does not run
+        the engine wall is recorded in docs/ARCHITECTURE.md ("The wall" row: the root
+        `.claude/settings.json` is the coordination gate, and the enforcement wall is
+        live only for a session opened at engine/). This docstring used to cite a
+        deferral in CLAUDE.md; that text left CLAUDE.md on 2026-08-29 and survives in
+        docs/archive/CLAUDE_2026-08-29_before_T-045.md. So the repository root
         deliberately does not wire it yet, and this guard only has an opinion once
-        someone does — at which point a half-wired wall is worse than none.
+        someone does — at which point a half-wired wall is worse than none. Until
+        then it SKIPS on every run and asserts nothing; the skip is the open finding.
         """
         path = ROOT.parent / ".claude" / "settings.json"
         if not path.is_file():
@@ -149,7 +154,7 @@ class HookSubprocessTests(unittest.TestCase):
         subprocess anchors trust in the on-disk registry at
         <fixture root>/config/trusted-keys.json plus the external operator pin, and the
         committed dev registry's private key is (correctly) not in the repo —
-        so this fixture stands in for the offline operator: it generates a test
+        so this fixture stands in for the install's provisioning: it generates a test
         operator-root key, swaps in a registry signed by that key for the
         lifetime of the class (byte-exact restore via addClassCleanup), signs
         the binding with the SAME key, and hands the subprocess the matching
@@ -388,21 +393,37 @@ class HookSubprocessTests(unittest.TestCase):
         # shell denial must remain a hard deny — shadow may not become a way to run
         # a mutation under a read-only mode.
         ledger = self.state_dir / "shadow-review.jsonl"
+        shadow = {"BRO_MODE": "review", "BRO_ENFORCEMENT": "shadow",
+                  "BRO_SHADOW_LEDGER": str(ledger)}
+        # A command the capability kernel ADMITS (a plain read), so the refusal that answers
+        # is the review-mode rule this test is named for — the one `_observe` declines to
+        # soften. This test used to send `find . -delete`, which the capability kernel refuses
+        # first; that gate denies outright and never consults shadow, so the review-mode
+        # exemption could be deleted with the test still green.
         result = self.run_hook(
             "pre-tool",
             {"session_id": "hook-shadow-review", "tool_name": "Bash",
-             "tool_input": {"command": "find . -delete"}, "tool_use_id": "toolu_shadow_review"},
-            {"BRO_MODE": "review", "BRO_ENFORCEMENT": "shadow", "BRO_SHADOW_LEDGER": str(ledger)},
+             "tool_input": {"command": "cat README.md"}, "tool_use_id": "toolu_shadow_review"},
+            shadow,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn('"permissionDecision": "deny"', result.stdout)
-        # Named, because the named refusal is NOT the one the test title implies: this
-        # command never reaches the review-mode rule — `find` with `-delete` is refused
-        # earlier, by the capability kernel, as an unknown tool/action. The shadowability
-        # property below still holds, and review-mode shell containment itself is covered
-        # by test_review_containment.test_reproduced_shell_bypasses_are_denied.
-        self.assertIn("tool capability gate RED", result.stdout)
+        self.assertIn("review mode allows only structured read tools", result.stdout)
+        self.assertNotIn("[SHADOW]", result.stdout)
         self.assertFalse(ledger.exists())  # a hard deny is not recorded as a would-block
+
+        # The earlier gate, kept: a mutation is refused by the capability kernel before the
+        # review-mode rule is reached, and shadow does not soften that either.
+        result = self.run_hook(
+            "pre-tool",
+            {"session_id": "hook-shadow-review", "tool_name": "Bash",
+             "tool_input": {"command": "find . -delete"}, "tool_use_id": "toolu_shadow_delete"},
+            shadow,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"permissionDecision": "deny"', result.stdout)
+        self.assertIn("tool capability gate RED", result.stdout)
+        self.assertFalse(ledger.exists())
 
     def test_post_tool_non_push_is_noop(self):
         result = self.run_hook(

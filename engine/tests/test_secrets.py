@@ -1,6 +1,9 @@
+import os
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -47,6 +50,42 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("hunter2sekretvalue", out)
         self.assertIn("[REDACTED:keyed-secret]", out)
 
+    def test_keyed_secret_under_a_quoted_or_prefixed_key_is_redacted(self):
+        # The two commonest shapes in a stderr tail: a serialised JSON object, whose key
+        # carries a closing quote between the name and the colon, and a prefixed
+        # environment variable, whose name has no word boundary before `PASSWORD`. The
+        # old pattern needed `\b<name>` directly followed by `[=:]` and left all of
+        # these verbatim.
+        for text, value in (
+            ('{"password": "hunter2sekret"}', "hunter2sekret"),
+            ("{'api_key': 'ABCDEF123456ghijkl'}", "ABCDEF123456ghijkl"),
+            ("DB_PASSWORD=hunter2sekret", "hunter2sekret"),
+            ("export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCY", "wJalrXUtnFEMIK7MDENGbPxRfiCY"),
+            ("GITHUB_TOKEN: abcdef0123456789", "abcdef0123456789"),
+            # JSON re-serialised inside a JSON string: the quotes arrive escaped.
+            ('{\\"client_secret\\": \\"hunter2sekret\\"}', "hunter2sekret"),
+        ):
+            self.assertTrue(contains_secret(text), text)
+            out = redact(text)
+            self.assertNotIn(value, out, text)
+            self.assertIn("[REDACTED:keyed-secret]", out, text)
+
+    def test_a_key_name_inside_a_longer_word_is_not_a_keyed_secret(self):
+        # The name must END the identifier: `tokens`, `password_file` and `key_id` are
+        # counts, paths and identifiers, and this repository's evidence is full of them.
+        for text in ("max_tokens=1000000", "password_file: /etc/app/pwfile",
+                     "key_id: operator-key-01", "secrets_scanned=1234567"):
+            self.assertEqual(redact(text), text)
+
+    def test_keyed_scan_is_linear_on_a_long_identifier_run(self):
+        # No prefix group: a megabyte of identifier characters with no key name in it
+        # must not backtrack. A quadratic pattern does not finish this in a test run.
+        import time
+        blob = "a1B2_" * 200_000
+        started = time.monotonic()
+        self.assertEqual(redact(blob), blob)
+        self.assertLess(time.monotonic() - started, 5.0)
+
     def test_does_not_redact_sha256_or_git_hashes(self):
         # Precision: ubiquitous, legitimate hashes must survive (no over-redaction).
         digest = "a1b2c3d4" * 8  # 64-hex
@@ -69,11 +108,49 @@ class RedactionTests(unittest.TestCase):
 
 class RecoveryWiringTests(unittest.TestCase):
     def test_recovery_redacts_persisted_error(self):
-        # The recovery module must persist redacted error text, not raw secrets.
+        # The recovery module must persist redacted error text, not raw secrets. Asked of the
+        # journal it writes: `bro_recovery.redact` is only the name it imported, and calling that
+        # says nothing about whether the one place an error is persisted goes through it.
         import bro_recovery
-        redacted = bro_recovery.redact("irreversible failed: bearer abcdefghijklmnopqrstuvwxyz0123")
-        self.assertIn("REDACTED", redacted)
-        self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123", redacted)
+        from bro_contracts import canonical_json_sha256
+
+        store = tempfile.TemporaryDirectory()
+        self.addCleanup(store.cleanup)
+        token = "abcdefghijklmnopqrstuvwxyz0123"
+        before = {"head": "a" * 40, "tree": "b" * 64, "status_hash": "c" * 64}
+        action = {"tool": "Write", "action": "write", "capabilities": ["WRITE_REPOSITORY"],
+                  "targets": ["runtime/x.py"]}
+        prepared = {
+            "schema": 1, "record_id": "recovery-1", "task_id": "task-redact-1",
+            "agent_id": "agt-p01-r01", "session_id": "session-1", "tool_use_id": "toolu_1",
+            "phase": "PREPARED", "effect_class": "IRREVERSIBLE",
+            "action_hash": canonical_json_sha256(action),
+            "capabilities": action["capabilities"], "targets": action["targets"],
+            "before_head": before["head"], "before_tree": before["tree"],
+            "after_head": None, "after_tree": None,
+            "before_status_hash": before["status_hash"], "after_status_hash": None,
+            "recovery_proof_hash": None, "irreversible_effects": [], "state_version": 0,
+            "previous_record_hash": None, "issued_at_epoch": 1000}
+        with patch.dict(os.environ, {"BRO_RECOVERY_STORE": store.name}), \
+                patch("bro_recovery.snapshot", return_value=before), \
+                patch("bro_recovery._signed_record", return_value=prepared):
+            bro_recovery.prepare_mutation(
+                task={"task_id": "task-redact-1"}, agent_id="agt-p01-r01",
+                session_id="session-1", tool_use_id="toolu_1",
+                capabilities=("WRITE_REPOSITORY",), targets=("runtime/x.py",),
+                tool="Write", action_name="write")
+            bro_recovery.settle_mutation(
+                "task-redact-1", "toolu_1", success=False,
+                error=f"irreversible failed: bearer {token}")
+            state = bro_recovery._load_state("task-redact-1")
+            on_disk = "".join(
+                path.read_text(encoding="utf-8", errors="replace")
+                for path in pathlib.Path(store.name).rglob("*") if path.is_file())
+        self.assertEqual(state["phase"], "FAILED_WITH_IRREVERSIBLE_EFFECT")
+        self.assertEqual(len(state["irreversible_effects"]), 1)
+        self.assertIn("REDACTED", state["irreversible_effects"][0])
+        self.assertIn("irreversible failed", state["irreversible_effects"][0])
+        self.assertNotIn(token, on_disk)
 
 
 class RedactionCompletenessTests(unittest.TestCase):

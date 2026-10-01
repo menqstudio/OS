@@ -286,7 +286,7 @@ class TaskRiskCeilingTests(unittest.TestCase):
 
 class ModeGrantEd25519Tests(unittest.TestCase):
     """Owner Authorization Phase 1: the mode grant is verified with Ed25519 against
-    the operator-signed trusted-key registry, not HMAC. Only the offline issuer key
+    the operator-signed trusted-key registry, not HMAC. Only the issuer key
     can authorize a mode; a builder holding the public registry cannot mint one, and
     a wrong-authority or tampered grant is refused."""
 

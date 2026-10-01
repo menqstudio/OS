@@ -1,6 +1,15 @@
 # Phase 2 — Govern the remaining AI surfaces · design proposal (Architect audit requested)
 
-> **STATUS: DESIGN PROPOSAL — NOT IMPLEMENTED. §I change-control (propose → Architect audit → Owner
+> **STATUS, corrected 2026-10-01: §3.1–§3.3 ARE BUILT; only §3.4 is open.** All four surfaces now call
+> `ai::governed_turn` first — `commands.rs` branches on `ai::provider_is_governed()` in `stream_reply`,
+> `stream_run_step`, `stream_ask` and `reply_in_conversation`, and `ai-surface-policy.json` lists
+> `calls: [governed_turn, …]` for each ("now routes through ai::governed_turn"). What is NOT done is
+> §3.4 and the reclassification in §4: every surface keeps its dev-only generic fallthrough
+> (`BROPS_ALLOW_UNGOVERNED`), so all four are still classified `ungoverned_tracked`, not `governed`.
+> The table in §0 is the state this proposal was written against, and its `commands.rs` line numbers
+> are dead — find the four commands by name.
+>
+> **STATUS as first written: DESIGN PROPOSAL — NOT IMPLEMENTED. §I change-control (propose → Architect audit → Owner
 > approve → implement).** This closes the honest security gap tracked in `ai-surface-policy.json`: three of
 > the four model-provider entry points bypass the governance wall entirely. It does **NOT** change the gate
 > logic, does **NOT** expose production "Verified", and preserves fail-closed. No code is routed until this

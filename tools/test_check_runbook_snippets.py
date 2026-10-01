@@ -17,6 +17,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_runbook_snippets as gate  # noqa: E402
@@ -71,7 +72,8 @@ class SnippetGate(unittest.TestCase):
             'import bro_protected as bp\n'
             'bp.assert_no_bytecode_shadow(root)\n'
             '"')
-        self.assertTrue(any("needs 2" in p for p in problems), problems)
+        self.assertTrue(any("missing a required argument: 'manifest'" in p for p in problems),
+                        problems)
 
     def test_too_many_positional_arguments(self):
         problems = self.problems(
@@ -79,7 +81,45 @@ class SnippetGate(unittest.TestCase):
             'import bro_protected as bp\n'
             'bp.assert_no_bytecode_shadow(root, manifest, True)\n'
             '"')
-        self.assertTrue(any("at most" in p for p in problems), problems)
+        self.assertTrue(any("too many positional arguments" in p for p in problems), problems)
+
+    def test_a_keyword_for_an_optional_parameter_does_not_stand_in_for_a_required_one(self):
+        """The counting bug. `sign_json_payload(payload, key_id, private_key, …)` style: one
+        positional plus one OPTIONAL keyword used to add up to "enough arguments"."""
+        import types
+
+        stub = types.ModuleType("bro_completion")
+        stub.f = lambda a, b, c=1: None
+        with mock.patch.dict(sys.modules, {"bro_completion": stub}):
+            call = lambda src: gate.arity_problem(   # noqa: E731
+                "bro_completion.f", gate.ast.parse(src).body[0].value)
+            self.assertIsNone(call("f(1, 2)"))
+            self.assertIsNone(call("f(1, b=2, c=3)"))
+            self.assertIn("missing a required argument: 'b'", call("f(1, c=2)"))
+            self.assertIn("missing a required argument: 'b'", call("f(1)"))
+
+    def test_a_keyword_the_signature_does_not_have_is_reported(self):
+        import types
+
+        stub = types.ModuleType("bro_completion")
+        stub.f = lambda a, b, c=1: None
+        with mock.patch.dict(sys.modules, {"bro_completion": stub}):
+            call = lambda src: gate.arity_problem(   # noqa: E731
+                "bro_completion.f", gate.ast.parse(src).body[0].value)
+            self.assertIn("unexpected keyword argument 'zzz'", call("f(1, 2, zzz=3)"))
+            self.assertIn("multiple values for argument 'a'", call("f(1, 2, a=3)"))
+            # Star-args cannot be counted from the page; that is "unknown", not a problem.
+            self.assertIsNone(call("f(*args)"))
+            self.assertIsNone(call("f(1, **kwargs)"))
+
+    def test_an_unknown_keyword_in_a_real_snippet_is_red(self):
+        problems = self.problems(
+            'python3 -c "\n'
+            'import bro_protected as bp\n'
+            'bp.assert_no_bytecode_shadow(root, manifest, strictly=True)\n'
+            '"')
+        self.assertTrue(any("unexpected keyword argument 'strictly'" in p for p in problems),
+                        problems)
 
     def test_function_that_does_not_exist(self):
         problems = self.problems(
@@ -118,10 +158,6 @@ class SnippetGate(unittest.TestCase):
         self.assertEqual(0, gate.main())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CitedPaths(unittest.TestCase):
     """The path half of the gate. Three wrong paths shipped in one week."""
 
@@ -145,7 +181,28 @@ class CitedPaths(unittest.TestCase):
         """/etc, /opt and /media cannot be checked from a repository, and the gate must not
         imply that it did. Two of this week's three wrong paths were of exactly this kind."""
         self.assertEqual([], self.paths("cat /etc/brops/trusted-keys.json"))
-        self.assertEqual([], self.paths("ls /media/usb/bro-root/operator-root.json"))
+        self.assertEqual([], self.paths("ls /media/usb/trusted-keys.json"))
+
+    def test_the_recognised_top_level_directories_are_the_ones_that_exist(self):
+        """The list was hand-written and named three directories this repository does not
+        have, while `contracts/` and `.github/` -- which it does -- were not looked at."""
+        names = gate.top_level_directories(gate.ROOT)
+        for name in names:
+            self.assertTrue((gate.ROOT / name).is_dir(), name)
+        for present in ("contracts", ".github", "engine", "docs", "tools", "apps"):
+            self.assertIn(present, names)
+        for absent in ("schemas", "laws", "scripts", ".git"):
+            self.assertNotIn(absent, names)
+
+    def test_a_missing_path_under_contracts_or_dot_github_is_reported(self):
+        for cited in ("contracts/no-such.schema.json", ".github/workflows/no-such.yml"):
+            with self.subTest(cited=cited):
+                problems = gate.check_paths(doc(f"cat {cited}"))
+                self.assertTrue(any(f"cites `{cited}`" in p for p in problems), problems)
 
     def test_a_directory_without_an_extension_is_not_treated_as_a_file(self):
         self.assertEqual([], self.paths("discover -s engine/tests -t engine/tests"))
+
+
+if __name__ == "__main__":
+    unittest.main()

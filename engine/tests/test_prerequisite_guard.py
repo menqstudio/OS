@@ -6,8 +6,10 @@ That is only safe while the same call REFUSES to skip on a CI runner, which alwa
 all three. If that half ever broke, the skips would spread silently and the suite would
 keep printing OK -- the exact failure mode this file exists to make impossible.
 
-So: the guard is exercised in both directions, and the three prerequisites are asserted
-to be real facts about this checkout rather than probes that answer True to anything.
+So: the guard is exercised in both directions, and every prerequisite's own probe is driven to
+both answers -- the sibling-tree ones (`_prerequisites.SIBLING_TREE`) over a tree laid out here,
+the git one over every reply git can give -- rather than left as a probe that could answer True
+to anything.
 """
 from __future__ import annotations
 
@@ -21,8 +23,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import _prerequisites  # noqa: E402
-from _prerequisites import (BRIDGE_SIDECAR, DESKTOP_TCB_SOURCE,  # noqa: E402
-                            Prerequisite, require, requires)
+from _prerequisites import Prerequisite, require, requires  # noqa: E402
 
 ABSENT = Prerequisite("fixture prerequisite", lambda: False, "deliberately absent")
 PRESENT = Prerequisite("fixture prerequisite", lambda: True, "deliberately present")
@@ -72,9 +73,21 @@ class PrerequisiteGuardTests(unittest.TestCase):
                 with patch.dict(os.environ, clean, clear=True):
                     self.assertEqual(_prerequisites.running_under_ci(), expected)
 
-    @requires(PRESENT)
     def test_the_decorator_runs_the_body_when_the_prerequisite_holds(self):
-        self.assertTrue(True)
+        ran = []
+
+        class Fixture(unittest.TestCase):
+            @requires(PRESENT)
+            def test_gated(self):
+                ran.append(self)
+
+        result = unittest.TestResult()
+        Fixture("test_gated").run(result)
+        # A decorator that swallowed the body would report a pass just the same, so the pass is
+        # not the evidence: the body's own side effect is.
+        self.assertEqual(len(ran), 1)
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual(result.skipped, [])
 
     def test_the_decorator_reports_through_the_normal_channels(self):
         class Fixture(unittest.TestCase):
@@ -96,26 +109,43 @@ class PrerequisiteGuardTests(unittest.TestCase):
         Both answers are taken from a tree this test lays out, never from the checkout
         it happens to run in: asserting "present" against the real repository would be
         a fresh red on the very deployed box this whole change exists to keep quiet.
+
+        The probes asked are the REAL ones, pointed at that tree by moving the one name
+        they all resolve against. A probe rebuilt here from a prerequisite's name would
+        answer for itself and say nothing about the one the gated tests call.
         """
         import tempfile
-        with tempfile.TemporaryDirectory(prefix="bro-prereq-sib-") as tmp:
-            repo = pathlib.Path(tmp)
-            for name, relative in (
-                (DESKTOP_TCB_SOURCE.name,
-                 ("apps", "desktop", "src-tauri", "core", "src", "tcb_integrity.rs")),
-                (BRIDGE_SIDECAR.name, ("bridge", "engine_sidecar.py")),
-            ):
-                with self.subTest(prerequisite=name):
-                    path = repo.joinpath(*relative)
-                    probe = Prerequisite(name, path.is_file, "fixture")
-                    self.assertFalse(probe.present())
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("x", encoding="utf-8")
-                    self.assertTrue(probe.present())
-                    # A directory of the same name is not the file the tests import.
-                    path.unlink()
-                    path.mkdir()
-                    self.assertFalse(probe.present())
+        for prerequisite in _prerequisites.SIBLING_TREE:
+            with self.subTest(prerequisite=prerequisite.name), \
+                    tempfile.TemporaryDirectory(prefix="bro-prereq-sib-") as tmp:
+                repo = pathlib.Path(tmp)
+                self.assertTrue(prerequisite.files, "a sibling-tree prerequisite names its files")
+                paths = [repo / relative for relative in prerequisite.files]
+                with patch.object(_prerequisites, "REPO_ROOT", repo):
+                    self.assertFalse(prerequisite.present())
+                    for path in paths:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text("x", encoding="utf-8")
+                    self.assertTrue(prerequisite.present())
+                    # Every file it names is needed, and a directory of the same name is
+                    # not the file the tests read.
+                    for path in paths:
+                        with self.subTest(replaced_by_a_directory=path.name):
+                            path.unlink()
+                            path.mkdir()
+                            self.assertFalse(prerequisite.present())
+                            path.rmdir()
+                            path.write_text("x", encoding="utf-8")
+                    self.assertTrue(prerequisite.present())
+
+    def test_every_sibling_tree_prerequisite_is_in_the_set_this_file_drives(self):
+        """A prerequisite added to the module and not to `SIBLING_TREE` would be a probe no test
+        ever asked for its other answer."""
+        declared = {value.name for value in vars(_prerequisites).values()
+                    if isinstance(value, Prerequisite)}
+        driven = {p.name for p in _prerequisites.SIBLING_TREE} | {_prerequisites.GIT_WORKTREE.name}
+        self.assertEqual(declared, driven)
+        self.assertEqual(len(driven), len(_prerequisites.SIBLING_TREE) + 1, "two share a name")
 
     def test_the_git_probe_believes_git_and_nothing_else(self):
         """Every answer git can give, mapped to the verdict it must produce.

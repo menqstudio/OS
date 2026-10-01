@@ -1,7 +1,7 @@
 name: design-gates
 
 # Design-system integrity gates (Phase 4 DoD): fail the PR if the typed design tokens
-# (theme/tokens.ts) drift from the CSS custom properties (theme/aios.css), or if any
+# (theme/tokens.ts) drift from the CSS custom properties (theme/tokens.css), or if any
 # committed token text-pair falls below WCAG AA contrast in either theme. Both checkers
 # are stdlib-only and need no build. This wires the two previously-unenforced checkers
 # (tools/check_token_parity.py, tools/check_contrast.py) into CI so "drift check green"
@@ -36,9 +36,11 @@ jobs:
         working-directory: tools
         run: python -m unittest test_check_token_parity test_check_contrast test_check_i18n_parity test_check_c1_tokens test_check_artwork_geometry
 
-      # Fail-closed: any token that disagrees between tokens.ts and aios.css in either
-      # theme fails the job.
-      - name: Token parity (tokens.ts <-> aios.css)
+      # Fail-closed: any token that disagrees between tokens.ts and tokens.css in either
+      # theme fails the job. (This step and the header named aios.css. The checker has always
+      # compared tokens.css -- tools/check_token_parity.py DEFAULT_CSS -- and aios.css is a
+      # real, different file that the §C.1 step below is the one to gate.)
+      - name: Token parity (tokens.ts <-> tokens.css)
         run: python tools/check_token_parity.py
 
       # Fail-closed: any committed text-pair below WCAG AA in either theme fails the job.

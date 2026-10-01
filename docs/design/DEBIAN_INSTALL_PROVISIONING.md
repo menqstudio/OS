@@ -20,9 +20,12 @@ Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / pr
 
 The Owner decided on 2026-08-09 (#78): *install it, and everything is already done; no keys to carry,
 nothing ever asked again, on any OS.* On Windows the install does it (`provision/`). On Debian nothing
-does, and the code says so in its own words ✅ (`provision/src/anchor.rs:270-277`): *"no shipped tool
-creates it yet — the installer that mints an anchor as another uid is not written, so this platform
-is NOT supported for a first launch today."*
+did when this was written, and the code said so in its own words (`provision/src/anchor.rs`, read at
+`4b25650`): *"no shipped tool creates it yet — the installer that mints an anchor as another uid is
+not written, so this platform is NOT supported for a first launch today."* **That is the pre-`T-137`
+baseline and the quotation is no longer in the file.** Slice D built the installer:
+`preprovision_refusal` now reads *"The tool that creates it is `brops_install_anchor`, run ONCE, AS
+ROOT, at install time"*, and the application still never runs it.
 
 ## 2 · Why the app cannot do it itself (✅, and not negotiable)
 
@@ -176,7 +179,7 @@ no prompt and no key, and its prototype (the CI kit) is already green on every r
   `beforeBundleCommand` stages `brops_install_anchor`. The package is named `bro-ps`; resources
   would land in `/usr/lib/BroPS`, a third spelling beside `/usr/lib/brops`. No `dpkg -i` was run.
 
-### 7.1 Open questions slice A found (2026-10-01), none decided yet
+### 7.1 Open questions slice A found (2026-10-01) — one decided by the Builder, the rest open
 
 * **The user to bind to — DECIDED by the Builder in `T-138`, for the Owner to veto.** An explicit
   `--user`; else `$SUDO_USER`; else `$PKEXEC_UID` (what a graphical install sets); else the ONLY
@@ -218,6 +221,7 @@ Left open, each needing a decision or a later slice:
   the result instead of against the kit.
 * **C — broker root (T-131 proper):** `install_minted` provenance, the anchor-file resolver, the
   custody-floor gate, the relabel negative; retire `ROOT_PUBLIC_KEY_HEX` and `OfflineRootCustodian`.
+  *(As built in `T-140`, `ROOT_PUBLIC_KEY_HEX` was **kept**, not retired — §5.1 above says why.)*
 * **D — engine anchor on POSIX:** `mint` with `brops-anchor` as the anchor owner; O-2's signer
   account and O-1's tree ownership ride on the accounts from B.
 

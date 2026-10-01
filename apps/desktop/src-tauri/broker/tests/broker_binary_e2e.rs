@@ -14,7 +14,8 @@
 //! `UpstreamBlockedExecutor` (`main.rs:268-270`), so every turn here comes back `blocked` /
 //! `upstream_blocked`. That IS the shipped posture on every install, and asserting it is the point: the
 //! refusal has never been demonstrated from outside the process. A committed turn needs the deployment
-//! the six-piece backlog in `docs/OWNER_ACTION_REQUIRED.md` §0 is about.
+//! `preflight::REQUIREMENTS` lists row by row; the installer that would provide it is designed in
+//! `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.
 //!
 //! Linux-only by nature: `SO_PEERCRED` and `std::os::unix::net` do not exist elsewhere, and the binary
 //! itself refuses off Linux with `EXIT_PLATFORM_UNSUPPORTED`.

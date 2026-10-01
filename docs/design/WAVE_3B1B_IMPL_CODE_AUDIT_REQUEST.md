@@ -1,11 +1,32 @@
 # Wave 3b-1B — implementation CODE-AUDIT request (rev-30 design-GREEN → code)
 
-> **STATUS: implementation WIP on `impl/wave-3b1b-core` (PR #46). This requests the Architect CODE-audit —
-> distinct from the rev-30 DESIGN-GREEN gate (already passed + merged via PR #31). Design-green ≠ code-green.
-> `NoTrustedManifest` stays fail-closed; no production `trusted_verified` exists.**
+> **HISTORICAL — a request written for PR #46, which was CLOSED UNMERGED.** The implementation it
+> describes landed later through PR #48 and the pull requests after it; the branch
+> `impl/wave-3b1b-core` is not in this repository. Read the state from
+> [`config/current_state.json`](../../config/current_state.json) and
+> [`NEXT_CHAT.md`](../../NEXT_CHAT.md), not from this page. Three things below are false today and are
+> corrected here rather than in place, so the request stays the record of what was asked:
+>
+> - **The design gate was not an Architect verdict.** This page said the rev-30 design gate had
+>   "already passed" and called the addendum "Architect DESIGN GREEN". The addendum's own status line
+>   says rev-30 was **Owner-approved on 2026-08-10, not Architect-audited** — *"no Architect re-audit
+>   of rev-30 has taken place"* — and `CURRENT_DESIGN_GATE` is `OWNER_APPROVED_NOT_ARCHITECT_AUDITED`.
+>   A code auditor must not read the design as independently passed. (PR #31's squash title carries
+>   the same "Architect DESIGN GREEN" wording; the addendum, which wins by its own rule, denies it.)
+> - **The open items moved.** `[LINUX-RUN-PENDING]` is recorded as proven (`CURRENT_LINUX_E2E =
+>   proven`; the `live-governed-turn` CI job runs the 7-service kit), and 3b-2 is started —
+>   `core/src/key_manifest.rs` and `broker/src/manifest_resolver.rs` exist.
+> - **The module table is of its date.** `core/governed_output_stream.rs` was deleted on 2026-08-10
+>   (the pull lives in `core/src/governed_output_pull.rs`), and the per-module test counts are stale:
+>   recounted `#[test]` attributes on 2026-10-01 give `governed_message_store` 17 (table: 5),
+>   `broker_turns` 22 (10), `fd_lifecycle` 14 (7), `privilege_drop` 17 (6), `windows_broker` 16 (5),
+>   `launcher` 32 (12).
+>
+> **What has not changed:** design approval ≠ code audit, `NoTrustedManifest` stays fail-closed, and no
+> production `trusted_verified` exists.
 
-The rev-30 design addendum (`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`, Architect DESIGN GREEN, on `main`)
-is implemented as the modules below. Every module is compiled + unit-tested (`cargo` / `python -m unittest`
+*As written for PR #46:* the rev-30 design addendum (`WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`, on `main`;
+Owner-approved, not Architect-audited — see above) is implemented as the modules below. Every module is compiled + unit-tested (`cargo` / `python -m unittest`
 / `vitest`) — see the counts. Linux-only syscall paths (`AF_UNIX` `SO_PEERCRED`, setuid, `fexecve`,
 `/proc`) are `#[cfg(target_os="linux")]`-gated so the crates compile cross-platform; their **runtime**
 behaviour is exercised by the Linux CI isolation proof + real deployment, NOT by a host unit test — those
@@ -22,7 +43,7 @@ are called out as **[LINUX-RUN-PENDING]**.
 | §2.7 P1-2/P0-3 FD | `core/fd_lifecycle.rs` — launcher FD-set verifier ({0..6}, inert 0/1/2, RDONLY store 3-5, output 6, no CLOEXEC on data FDs, no fd≥7) | 7 cargo |
 | §2.7 P0-2 privilege | `core/privilege_drop.rs` — drop-sequence order validator + fail-closed final-state verifier | 6 cargo |
 | §2.5 TCB floor | `core/tcb_integrity.rs` — `verify_tcb_integrity` over the EXPANDED `TCB_ARTIFACTS` (broker+authority incl.) via injected `FsProbe` | cargo |
-| §4.10(f) output-stream | `core/governed_output_stream.rs` — LIVE→expired→swept, one-shot token, TTL, FIFO evict | 7 cargo |
+| §4.10(f) output-stream | ~~`core/governed_output_stream.rs` — LIVE→expired→swept, one-shot token, TTL, FIFO evict~~ — **deleted 2026-08-10**; the §4.10(f) pull is `core/src/governed_output_pull.rs` | — |
 | §5 supervisor ledger | `core/supervisor_ledger.rs` — durable acceptance state machine (DB-trigger + Rust guards) + outbox + evidence-head-floor CAS | cargo |
 | §7 verification | `core/governed_verification.rs` — `verify_and_accept` (ed25519 envelope + supervisor attestation + request_sha256 recompute + output-hash + replay/nonce) → `AcceptedOutput` | cargo |
 | §2.1 transport | `core/ipc_framing.rs` — bounded length-prefixed frame + `SO_PEERCRED` peer-auth (allow ONLY broker UID, deny renderer/sidecar) | 6 cargo |

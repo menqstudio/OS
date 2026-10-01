@@ -16,10 +16,11 @@ and an unreadable policy all mean REQUIRED. Only an explicit boolean `false` wai
 the requirement, and it is reported as a waiver so the audit ledger records the
 word rather than a soothing note.
 
-**The refusal names the missing artifact.** Nothing in this repository can mint a
-`conductor-session` token — it is signed offline by the owner's operator-root key
-— so the refusal quotes exactly what the owner must provide. A refusal that does
-not say what is missing is a refusal somebody deletes.
+**The refusal names the missing artifact.** Nothing in this engine can mint a
+`conductor-session` token — first-launch provisioning signs it with the operator
+root it holds only in memory and then destroys; no person holds or mints it
+(PR #78) — so the refusal quotes exactly what must be presented. A refusal that
+does not say what is missing is a refusal somebody deletes.
 """
 from __future__ import annotations
 
@@ -172,12 +173,12 @@ class TokenVerificationTests(unittest.TestCase):
 
     # --- the requirement ------------------------------------------------------------
 
-    def test_required_and_absent_refuses_and_names_what_the_owner_must_provide(self) -> None:
+    def test_required_and_absent_refuses_and_names_what_must_be_presented(self) -> None:
         ok, note = self.verify(None)
         self.assertFalse(ok)
         self.assertIn("no conductor session token presented", note)
         # The refusal must be actionable: the env var, the artifact type and the
-        # registry entry the owner has to mint are all named.
+        # registry entry provisioning mints are all named.
         self.assertIn(CONDUCTOR_SESSION_TOKEN_ENV, note)
         self.assertIn(CONDUCTOR_SESSION_ARTIFACT, note)
         self.assertIn("config/trusted-keys.json", note)

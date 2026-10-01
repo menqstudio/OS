@@ -97,13 +97,21 @@ def summary_owner_secret(text: str) -> dict[str, str]:
     return found
 
 
-def declared_severities(text: str) -> dict[str, str]:
-    """Severities a canonical doc asserts, e.g. `**O-1 (HIGH)**` or `**O-4 / O-5 (LOW)**`."""
-    found: dict[str, str] = {}
+def declared_severities(text: str) -> dict[str, set[str]]:
+    """EVERY severity a canonical doc asserts for each item, e.g. `**O-1 (HIGH)**` or
+    `**O-4 / O-5 (LOW)**`.
+
+    A set per item, not one value. This returned `{item: severity}` and assigned per match,
+    so the LAST occurrence in the document won — and CLAUDE.md states the list twice, in its
+    English section and again in its Armenian one. Downgrading `**O-1 (HIGH)**` to `(LOW)` in
+    the first left this function answering HIGH from the second, and the drift rule GREEN on
+    exactly the drift it exists for.
+    """
+    found: dict[str, set[str]] = {}
     for match in re.finditer(r"\*\*((?:O-[1-5])(?:\s*/\s*O-[1-5])*)\s*\((HIGH|MED|MEDIUM|LOW)\)\*\*", text):
         severity = _SEVERITY_ALIASES[match.group(2).upper()]
         for item in re.findall(r"O-[1-5]", match.group(1)):
-            found[item] = severity
+            found.setdefault(item, set()).add(severity)
     return found
 
 
@@ -212,14 +220,23 @@ def check(root: pathlib.Path) -> list[str]:
                 f"{rel}: no severity asserted for {', '.join(missing)} — this document is a "
                 f"canonical source for the residual items and must keep naming them"
             )
-        for item, severity in sorted(asserted.items()):
+        for item, severities in sorted(asserted.items()):
             declared = sections.get(item, {}).get("Severity", "").upper()
-            if declared and declared != severity:
+            # A document that states an item twice must say the same thing twice. Reported on
+            # its own, because it holds even where the inventory has no severity to compare.
+            if len(severities) > 1:
                 problems.append(
-                    f"severity drift for {item}: {rel} says {severity}, {INVENTORY} says "
-                    f"{declared} — one of them is wrong and a downgraded severity is how an "
-                    f"accepted HIGH quietly stops blocking a release"
+                    f"severity drift for {item}: {rel} disagrees with itself — it says "
+                    f"{' and '.join(sorted(severities))}. A document that states the list more "
+                    f"than once must state it the same way each time"
                 )
+            for severity in sorted(severities):
+                if declared and declared != severity:
+                    problems.append(
+                        f"severity drift for {item}: {rel} says {severity}, {INVENTORY} says "
+                        f"{declared} — one of them is wrong and a downgraded severity is how an "
+                        f"accepted HIGH quietly stops blocking a release"
+                    )
 
     return problems
 

@@ -22,7 +22,7 @@
 # ------------------------------------------
 # Names: the `*_USER=` block of `engine/ci/live/run_ladder_turn.sh`.
 # Uids:  `DEFAULT_UIDS` in `engine/ci/live/provision_keys.py`, which is not a default in any loose
-#        sense — it writes `allowed_broker_uid` and the per-service peer allowlists from those
+#        sense — it writes the per-service peer allowlists (`*.ipc-policy.json`) from those
 #        literals, so an account with another uid is an account the kit's own config refuses.
 #        `brops-sidecar` is NOT in that table (the ladder kit passes its uid on argv from `id -u`);
 #        5003 is the value `ci.yml` used, "the gap in the §0 principal table".

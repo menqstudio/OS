@@ -223,6 +223,11 @@ def _authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id:
     allowed, reason = authorize_classified_action(state, classification, tool_input)
     if not allowed:
         return False, reason
+    # What the allow reason says HAPPENED goes into the audit ledger as the verdict's `detail`
+    # (`authorize_tool` -> `_audit_verdict`), so it has to be true. It used to end
+    # "recovery journal prepared" unconditionally -- for a read, and for a conductor action,
+    # where the block below did not run and nothing was prepared.
+    journal = ""
     if classification.mutating and state.role != "bro":
         prepared = False
         try:
@@ -236,7 +241,8 @@ def _authorize_tool(state: State, tool_name: str, tool_input: dict, tool_use_id:
                 except RecoveryError:
                     return False, f"transaction gate RED: {exc}; prepared recovery journal could not be cancelled"
             return False, f"transaction gate RED: {exc}"
-    return True, f"allowed by capability kernel ({','.join(classification.capabilities)}); recovery journal prepared; {reason}"
+        journal = "recovery journal prepared; "
+    return True, f"allowed by capability kernel ({','.join(classification.capabilities)}); {journal}{reason}"
 
 
 def settle_execution_tool(state: State, tool_name: str, tool_input: dict, tool_use_id: str, *, success: bool, error: str = "") -> tuple[bool, bool, str]:

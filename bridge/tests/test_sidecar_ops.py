@@ -48,6 +48,10 @@ _TASK_REQUEST = {
 
 
 def read_request(surface: str = "decisionLedger", task_id=None, **overrides) -> dict:
+    # Deliberately NOT the engine suites' builder (`engine/tests/test_governance_read.py`): this
+    # one is spelled with the SIDECAR's own two literals, so a request built here is what the
+    # bridge side believes the wire is. `ProtocolDriftTests` below is what holds the two sides
+    # equal; importing the engine's builder would make that agreement true by construction.
     body = {
         "protocol": engine_sidecar.GOVERNANCE_PROTOCOL,
         "op": engine_sidecar.GOVERNANCE_READ_OP,
@@ -75,7 +79,8 @@ class _CleanEnv(unittest.TestCase):
         self._saved = {
             k: os.environ.pop(k, None)
             for k in (*_GOVERNANCE_ENV, *engine_sidecar._PROVISION_ENV,
-                      engine_sidecar._SUPERVISOR_SOCKET_ENV, "BRIDGE_SIDECAR_FAKE")
+                      engine_sidecar._SUPERVISOR_SOCKET_ENV,
+                      engine_sidecar._APPROVAL_LOG_DIR_ENV, "BRIDGE_SIDECAR_FAKE")
         }
 
     def tearDown(self) -> None:
@@ -380,7 +385,10 @@ class ApprovalRequestOpTests(_CleanEnv):
         """Before anything else: an op absent from the table is refused as unknown, and that refusal
         would satisfy every other test in this class for the wrong reason."""
         reply = drive(approval_request())
-        self.assertNotIn("does not serve", str(reply))
+        self.assertNotIn("unsupported bridge op", str(reply))
+        # The unknown-op refusal echoes `op` too, so the echo alone tells nothing apart. What does
+        # is the protocol: an op absent from the table is answered in `bridge.op.v1`.
+        self.assertEqual(reply["protocol"], engine_sidecar.APPROVAL_REPLY_PROTOCOL)
         self.assertEqual(reply["op"], engine_sidecar.APPROVAL_REQUEST_OP)
 
     def test_an_unprovisioned_write_is_refused_and_names_its_own_variable(self):
@@ -398,7 +406,7 @@ class ApprovalRequestOpTests(_CleanEnv):
     def test_a_log_directory_that_does_not_exist_is_refused_rather_than_created(self):
         missing = pathlib.Path(tempfile.mkdtemp(prefix="approval-log-")) / "not-there"
         self.addCleanup(lambda: __import__("shutil").rmtree(missing.parent, ignore_errors=True))
-        os.environ["BROPS_APPROVAL_REQUEST_LOG_DIR"] = str(missing)
+        self.set_env("BROPS_APPROVAL_REQUEST_LOG_DIR", str(missing))
         reply = self.refusal(drive(approval_request()))
         self.assertIn("not an existing directory", reply["reason"])
         self.assertFalse(missing.exists(), "the sidecar created the store it was refusing to trust")
@@ -462,7 +470,7 @@ class ApprovalRequestRecordedTests(_CleanEnv):
 
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="approval-e2e-"))
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
-        os.environ["BROPS_APPROVAL_REQUEST_LOG_DIR"] = str(self.dir)
+        self.set_env("BROPS_APPROVAL_REQUEST_LOG_DIR", str(self.dir))
         self.records = []
         held = self.HELD
         records = self.records

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -40,6 +41,69 @@ GLOBAL_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--con
 # empty targets (audit F-04). `--namespace` (a ref namespace) and `-c`/`--config-env` (config) are
 # intentionally excluded — they are not filesystem locations.
 GLOBAL_PATH_WITH_ARG = {"-C", "--git-dir", "--work-tree"}
+# A read-only git SUBCOMMAND is not a read-only git COMMAND: `git diff --output=<path>`
+# writes a file, `--ext-diff` and `--textconv`/`--filters` run configured programs, and
+# git accepts any unambiguous abbreviation of a long option, so no denylist of spellings
+# is complete. An allowlist again, per subcommand: a flag keeps the command read-only
+# only when it is named here. Anything else makes the invocation mutating — it leaves the
+# READ_LOCAL class, and its whole argument list then faces the mutation scope gate.
+# The lists are what a reader needs (format, selection, limits), not all of git.
+_GIT_DIFF_DISPLAY_FLAGS = frozenset({
+    "-p", "-u", "--patch", "-s", "--no-patch", "--stat", "--numstat", "--shortstat",
+    "--dirstat", "--summary", "--compact-summary", "--name-only", "--name-status", "--raw",
+    "--patch-with-stat", "--patch-with-raw", "-z", "--color", "--no-color", "--color-words",
+    "--word-diff", "--minimal", "--patience", "--histogram", "--diff-algorithm",
+    "-w", "-b", "--ignore-all-space", "--ignore-space-change", "--ignore-space-at-eol",
+    "--ignore-blank-lines", "--ignore-cr-at-eol", "--abbrev", "--full-index", "-M", "-C",
+    "--find-renames", "--find-copies", "--no-renames", "-R", "--unified", "-U", "-W",
+    "--function-context", "--exit-code", "--quiet", "--check", "--diff-filter", "-S", "-G",
+    "--pickaxe-regex", "--pickaxe-all", "--text", "-a", "--no-ext-diff", "--no-textconv",
+})
+_GIT_LOG_FLAGS = _GIT_DIFF_DISPLAY_FLAGS | frozenset({
+    "--oneline", "--graph", "--decorate", "--no-decorate", "--all", "--branches", "--tags",
+    "--remotes", "--format", "--pretty", "--date", "--since", "--until", "--after",
+    "--before", "--author", "--committer", "--grep", "-i", "--regexp-ignore-case",
+    "--invert-grep", "--all-match", "-E", "--extended-regexp", "-F", "--fixed-strings",
+    "-n", "--max-count", "--skip", "--reverse", "--follow", "--first-parent", "--merges",
+    "--no-merges", "--min-parents", "--max-parents", "--abbrev-commit",
+    "--no-abbrev-commit", "--topo-order", "--date-order", "--author-date-order",
+    "--source", "--left-right", "--cherry-pick", "--no-walk", "--full-history",
+    "--simplify-by-decoration", "--ancestry-path", "--boundary", "--parents", "--children",
+    "--notes", "--no-notes", "-g", "--walk-reflogs", "-m", "-c", "--cc",
+})
+READ_ONLY_GIT_FLAGS: dict[str, frozenset[str]] = {
+    "diff": _GIT_DIFF_DISPLAY_FLAGS | frozenset({"--cached", "--staged", "--merge-base", "--no-index"}),
+    "log": _GIT_LOG_FLAGS,
+    "show": _GIT_LOG_FLAGS,
+    "status": frozenset({
+        "-s", "--short", "-b", "--branch", "--porcelain", "--long", "-v", "--verbose", "-u",
+        "--untracked-files", "--ignored", "-z", "--renames", "--no-renames",
+        "--find-renames", "--show-stash", "--ahead-behind", "--no-ahead-behind", "--column",
+        "--no-column", "--ignore-submodules",
+    }),
+    "rev-parse": frozenset({
+        "--abbrev-ref", "--short", "--verify", "-q", "--quiet", "--show-toplevel",
+        "--show-prefix", "--show-cdup", "--git-dir", "--absolute-git-dir",
+        "--git-common-dir", "--is-inside-work-tree", "--is-inside-git-dir",
+        "--is-bare-repository", "--is-shallow-repository", "--symbolic",
+        "--symbolic-full-name", "--show-superproject-working-tree", "--show-object-format",
+        "--default", "--all", "--branches", "--tags", "--remotes", "--git-path", "--sq",
+        "--revs-only", "--no-revs", "--flags", "--no-flags", "--path-format",
+    }),
+    "ls-files": frozenset({
+        "-c", "--cached", "-d", "--deleted", "-m", "--modified", "-o", "--others", "-i",
+        "--ignored", "-s", "--stage", "-u", "--unmerged", "-k", "--killed", "-z", "-t", "-v",
+        "-f", "--full-name", "--error-unmatch", "--exclude-standard", "-x", "--exclude",
+        "--abbrev", "--directory", "--no-empty-directory", "--eol", "--deduplicate",
+        "--recurse-submodules",
+    }),
+    "cat-file": frozenset({
+        "-t", "-s", "-e", "-p", "--batch", "--batch-check", "--batch-all-objects", "--buffer",
+        "--unordered", "--follow-symlinks", "--allow-unknown-type",
+    }),
+}
+# Count/context shorthands that carry their number attached: `-5`, `-n5`, `-U3`.
+_GIT_NUMERIC_FLAG = re.compile(r"^-[nU]?\d+$")
 READ_ONLY_SHELL = {
     "cat", "echo", "get-childitem", "get-content", "ls", "pwd", "select-string",
     "test-path", "type", "where", "where-object", "whoami",
@@ -192,6 +256,23 @@ def _exe(token: str) -> str:
     return pathlib.PurePath(normalized).name.lower().removesuffix(".exe")
 
 
+def _path_qualified(token: str) -> bool:
+    """True when the executable token names a FILE rather than a command to look up.
+
+    `_exe` reduces the token to its basename, which is right for deciding what a
+    command claims to be and wrong for deciding what it is: `./tmp/echo hi` and
+    `/tmp/evil/cat x` run whatever file sits at that path. A token carrying a path
+    separator (either spelling) is therefore never matched against the read-only
+    names; see `analyze_command`.
+    """
+    return "/" in token.strip("\"'").replace("\\", "/")
+
+
+def _git_flag_is_read_only(sub: str, flag: str) -> bool:
+    name = flag.split("=", 1)[0]
+    return name in READ_ONLY_GIT_FLAGS.get(sub, frozenset()) or bool(_GIT_NUMERIC_FLAG.match(flag))
+
+
 def analyze_git(tokens: list[str]) -> CommandInfo:
     i, dangerous = 1, False
     path_targets: list[str] = []
@@ -227,8 +308,25 @@ def analyze_git(tokens: list[str]) -> CommandInfo:
             continue
         raise SecurityError(f"ambiguous git global option: {t}")
     sub = tokens[i].strip("\"'").lower() if i < len(tokens) else None
-    args = tuple(path_targets) + tuple(x.strip("\"'") for x in tokens[i + 1 :])
-    read_only = bool(sub in READ_ONLY_GIT and not dangerous)
+    rest = [x.strip("\"'") for x in tokens[i + 1 :]]
+    unsafe_flag = False
+    if sub in READ_ONLY_GIT:
+        # Everything after a bare `--` is a pathspec, never an option.
+        end = rest.index("--") if "--" in rest else len(rest)
+        for flag in rest[:end]:
+            if not flag.startswith("-"):
+                continue
+            if _git_flag_is_read_only(sub, flag):
+                continue
+            unsafe_flag = True
+            # What an unrecognized option does with its value is unknown, and the
+            # known case writes to it (`--output=<path>`, under any abbreviation git
+            # accepts). Surface the value so the scope gate judges the path itself and
+            # not only the flag token that carries it.
+            if "=" in flag and flag.split("=", 1)[1]:
+                path_targets.append(flag.split("=", 1)[1])
+    args = tuple(path_targets) + tuple(rest)
+    read_only = bool(sub in READ_ONLY_GIT and not dangerous and not unsafe_flag)
     mutating = bool(not read_only)
     return CommandInfo("git", sub, mutating, sub == "push", args, dangerous, read_only)
 
@@ -272,34 +370,59 @@ def analyze_find(tokens: list[str]) -> CommandInfo:
     return CommandInfo("find", None, mutating, False, tuple(paths) or (".",), False, not mutating)
 
 
+def _analyze_named(tokens: list[str], exe: str) -> CommandInfo:
+    """Classify one segment by what its executable is CALLED."""
+    if exe == "git":
+        return analyze_git(tokens)
+    if exe == "find":
+        return analyze_find(tokens)
+    low = [t.strip("\"'").lower() for t in tokens]
+    if exe in SHELL_WRAPPERS:
+        return CommandInfo(exe, low[1] if len(low) > 1 else None, True, False, tuple(), False, False)
+    if exe in READ_ONLY_SHELL:
+        # Read targets are populated (path-taking verbs) so the workspace and
+        # scope gates see what is being read; empty targets made reads invisible
+        # to every containment check.
+        targets = (tuple(t.strip("\"'") for t in tokens[1:] if not t.strip("\"'").startswith("-"))
+                   if exe in READ_TARGET_SHELL else ())
+        return CommandInfo(exe, low[1] if len(low) > 1 else None, False, False, targets, False, True)
+    mutating = exe in SHELL_MUTATORS or exe == "gh" or exe not in READ_ONLY_SHELL
+    targets = tuple(t.strip("\"'") for t in tokens[1:] if not t.startswith("-")) if mutating else ()
+    return CommandInfo(exe, low[1] if len(low) > 1 else None, mutating, False, targets, False, False)
+
+
+def _reached_by_path(token: str, named: CommandInfo) -> CommandInfo:
+    """Re-judge a segment whose executable was named by path.
+
+    The basename says what the file is called, so every name-based verdict that
+    already refuses is kept (a wrapper is still a wrapper, a push is still a push).
+    What is NOT kept is the read-only verdict: nothing reached by path is a
+    recognized read-only builtin, so `./tmp/echo` and `/tmp/evil/cat` leave
+    READ_LOCAL — for the shell verbs that means UNKNOWN, which is denied outright.
+
+    The file itself becomes the first target, because running it is the action being
+    authorized. One exception, and it is the fail-closed one: a segment that was
+    ALREADY mutating with no determinable target (a wrapper, a bare `git commit`) is
+    refused by the scope gate for exactly that reason, and handing it a target here
+    would turn that refusal into a scope match.
+    """
+    if named.mutating and not named.targets:
+        targets = named.targets
+    else:
+        targets = (token.strip("\"'"),) + named.targets
+    return dataclasses.replace(named, mutating=True, recognized_read_only=False, targets=targets)
+
+
 def analyze_command(command: str) -> list[CommandInfo]:
     result = []
     for segment in split_shell(command):
         tokens = _tokens(segment)
         if not tokens:
             continue
-        exe = _exe(tokens[0])
-        if exe == "git":
-            result.append(analyze_git(tokens))
-            continue
-        if exe == "find":
-            result.append(analyze_find(tokens))
-            continue
-        low = [t.strip("\"'").lower() for t in tokens]
-        if exe in SHELL_WRAPPERS:
-            result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, True, False, tuple(), False, False))
-            continue
-        if exe in READ_ONLY_SHELL:
-            # Read targets are populated (path-taking verbs) so the workspace and
-            # scope gates see what is being read; empty targets made reads invisible
-            # to every containment check.
-            targets = (tuple(t.strip("\"'") for t in tokens[1:] if not t.strip("\"'").startswith("-"))
-                       if exe in READ_TARGET_SHELL else ())
-            result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, False, False, targets, False, True))
-            continue
-        mutating = exe in SHELL_MUTATORS or exe == "gh" or exe not in READ_ONLY_SHELL
-        targets = tuple(t.strip("\"'") for t in tokens[1:] if not t.startswith("-")) if mutating else ()
-        result.append(CommandInfo(exe, low[1] if len(low) > 1 else None, mutating, False, targets, False, False))
+        named = _analyze_named(tokens, _exe(tokens[0]))
+        if _path_qualified(tokens[0]):
+            named = _reached_by_path(tokens[0], named)
+        result.append(named)
     return result
 
 
@@ -309,7 +432,10 @@ def validate_exact_push(command: str, branch: str) -> None:
         raise SecurityError("release push must be a single shell segment")
     tokens = _tokens(segments[0])
     normalized = [token.strip("\"'") for token in tokens]
-    if len(normalized) != 4 or _exe(normalized[0]) != "git" or normalized[1].lower() != "push":
+    # A path-qualified `git` is a file somebody named, not the git on PATH, and the
+    # release grant authorizes the latter only.
+    if (len(normalized) != 4 or _path_qualified(normalized[0]) or _exe(normalized[0]) != "git"
+            or normalized[1].lower() != "push"):
         raise SecurityError("release push must be exactly: git push origin HEAD:<branch>")
     if normalized[2] != "origin" or normalized[3] != f"HEAD:{branch}":
         raise SecurityError("release push remote/refspec binding mismatch")

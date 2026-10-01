@@ -324,21 +324,27 @@ class SemanticGateTests(unittest.TestCase):
                             for p in cc.check(root)))
 
     # The ACTUAL long sentences the Owner found escaping the old proximity regex.
+    #
+    # Each runs against a snapshot that MODELS the carrier (`_carrier_state`: #33 with a
+    # carrier_transition). They used to run against the default state, which names no carrier at
+    # all, and passed because "PR #33" was a literal inside the gate.
     def test_rejects_unconditional_reaudit_merge_it(self):
         root = self._tmp()
-        _state_repo(root, next_chat=_doc_mentioning_both(
+        _state_repo(root, current_state=self._carrier_state(), next_chat=_doc_mentioning_both(
             "Next permitted action: finish + re-audit PR #33 (repository truth) → merge it → rebase PR #31."))
         self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
 
     def test_rejects_unconditional_pr33_not_merged(self):
         root = self._tmp()
-        _state_repo(root, project_state="# state\n\n**Last updated:** 2026-08-09\n\n"
+        _state_repo(root, current_state=self._carrier_state(),
+                    project_state="# state\n\n**Last updated:** 2026-08-09\n\n"
                     + _doc_mentioning_both("PR #33 is PENDING re-audit (not merged)."))
         self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
 
     def test_rejects_unconditional_pr33_reaudit_then_merge(self):
         root = self._tmp()
-        _state_repo(root, tasks=f"> tokens {_TOKENS}\n\nCorrect next sequence: PR #33 re-audit → merge.\n\n"
+        _state_repo(root, current_state=self._carrier_state(),
+                    tasks=f"> tokens {_TOKENS}\n\nCorrect next sequence: PR #33 re-audit → merge.\n\n"
                     "| ID | Task | By | Status | PR |\n"
                     f"| **T-017** | wave 3b-1 | me | In-Progress | PR #31 `{BRANCH_31}` + PR #32 `{BRANCH_32}` |\n")
         self.assertTrue(any("unconditional carrier sentence about PR #33" in p for p in cc.check(root)))
@@ -346,7 +352,7 @@ class SemanticGateTests(unittest.TestCase):
     def test_allows_transition_aware_carrier_sentence(self):
         # the corrected transition-aware form (IF OPEN … / IF MERGED …) must NOT be flagged.
         root = self._tmp()
-        _state_repo(root, next_chat=_doc_mentioning_both(
+        _state_repo(root, current_state=self._carrier_state(), next_chat=_doc_mentioning_both(
             "Resolve PR #33 live: IF OPEN → obtain repository-truth GREEN and merge PR #33; "
             "IF MERGED → rebase PR #31 onto main."))
         self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
@@ -354,9 +360,47 @@ class SemanticGateTests(unittest.TestCase):
     def test_carrier_prose_scan_excludes_history(self):
         # the same unconditional sentence inside HISTORY markers must NOT be flagged.
         root = self._tmp()
-        _state_repo(root, next_chat=_doc_mentioning_both()
+        _state_repo(root, current_state=self._carrier_state(), next_chat=_doc_mentioning_both()
                     + "\n<!-- HISTORY_BEGIN -->\nOld: re-audit PR #33 → merge it.\n<!-- HISTORY_END -->\n")
         self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
+    def test_the_scan_follows_the_carrier_the_snapshot_names(self):
+        """The defect: the number was the literal 33. A carrier with any other number was not
+        scanned at all, so the rule asserted nothing about the pull request actually open."""
+        cs = self._carrier_state()
+        cs["current_workflow_pr"]["number"] = 312
+        cs["carrier_transition"]["carrier_pr"] = 312
+        root = self._tmp()
+        _state_repo(root, current_state=cs, next_chat=_doc_mentioning_both(
+            "Next permitted action: re-audit PR #312 → merge it."))
+        problems = cc.check(root)
+        self.assertTrue(any("unconditional carrier sentence about PR #312" in p for p in problems),
+                        problems)
+        # ... and a sentence about the OLD literal is no longer this carrier's business,
+        root = self._tmp()
+        _state_repo(root, current_state=cs, next_chat=_doc_mentioning_both(
+            "History: re-audit PR #33 → merge it."))
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+        # ... nor is a longer number that merely starts with the carrier's digits.
+        root = self._tmp()
+        _state_repo(root, current_state=cs, next_chat=_doc_mentioning_both(
+            "Unrelated: PR #3120 is not merged."))
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+
+    def test_a_snapshot_that_models_no_merge_transition_is_not_scanned(self):
+        """Stated, because it is a limit: with no `carrier_transition` there is no carrier whose
+        state is modelled as about to change, and the handoff's "merge PR #N" is an instruction,
+        not a stale claim."""
+        cs = self._carrier_state()
+        del cs["carrier_transition"]
+        for token in ("CARRIER_IF_OPEN_GATE", "CARRIER_IF_MERGED_GATE"):
+            del cs["status_tokens"][token]
+        root = self._tmp()
+        _state_repo(root, current_state=cs, next_chat=_doc_mentioning_both(
+            "Next: re-audit PR #33 → merge it."))
+        self.assertFalse(any("unconditional carrier sentence" in p for p in cc.check(root)))
+        self.assertIsNone(cc._modelled_carrier(cs))
+        self.assertEqual(cc._modelled_carrier(self._carrier_state()), 33)
 
     def test_manifest_missing_active_doc_is_flagged(self):
         root = self._tmp(); _state_repo(root)
@@ -365,6 +409,178 @@ class SemanticGateTests(unittest.TestCase):
         (root / "config/canonical-read-manifest.json").write_text(
             json.dumps({"paths": ["NEXT_CHAT.md"]}), encoding="utf-8")  # omits the design doc
         self.assertTrue(any("not in the startup read set" in p for p in cc.check(root)))
+
+
+class EveryValidationArm(unittest.TestCase):
+    """One broken field per arm of the offline validation, each asserting on that arm's own
+    message. Nineteen `if`s in check_coordination.py could be replaced by `if False` with all
+    67 tests green: the fixtures never had a missing required field, an invalid merge_state,
+    draft or role, a non-GREEN code_verdict on an RC, a malformed carrier_transition, a stub
+    canonical file or a roadmap with no Status line."""
+
+    def _tmp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return pathlib.Path(d.name)
+
+    def _problems(self, mutate=None, **docs) -> list[str]:
+        root = self._tmp()
+        cs = _default_state()
+        if mutate is not None:
+            cs = mutate(cs) or cs
+        _state_repo(root, current_state=cs, **docs)
+        return cc.check(root)
+
+    def assertReports(self, needle: str, mutate=None, **docs) -> None:
+        problems = self._problems(mutate, **docs)
+        self.assertTrue(any(needle in p for p in problems), f"expected {needle!r} in {problems}")
+
+    def _carrier(self, cs: dict) -> dict:
+        cs["current_workflow_pr"] = {"number": 33, "branch": "chore/truth", "base": "main"}
+        cs["carrier_transition"] = {
+            "pre_merge": {"gate": "PR33_REAUDIT", "carrier_state": "open"},
+            "post_merge": {"gate": "REBASE_PR31", "carrier_state": "merged"},
+        }
+        cs["status_tokens"].update({"CARRIER_IF_OPEN_GATE": "PR33_REAUDIT",
+                                    "CARRIER_IF_MERGED_GATE": "REBASE_PR31"})
+        return cs
+
+    def test_the_control_is_green(self):
+        self.assertEqual(self._problems(), [])
+
+    def test_each_required_top_level_field(self):
+        for field in ("sync", "active", "prs", "waves", "design_gate", "stop_gates",
+                      "next_action_by_carrier"):
+            with self.subTest(field=field):
+                self.assertReports(f"missing required field '{field}'",
+                                   lambda cs, f=field: cs.pop(f) and None)
+
+    def test_an_active_wave_that_is_not_a_wave(self):
+        self.assertReports("active.wave 'nope' is not present in waves{}",
+                           lambda cs: cs["active"].update(wave="nope"))
+
+    def test_a_pr_with_a_merge_state_outside_the_enum(self):
+        self.assertReports("PR #31 merge_state must be one of",
+                           lambda cs: cs["prs"][0].update(merge_state="maybe"))
+
+    def test_a_pr_whose_draft_is_not_a_boolean(self):
+        self.assertReports("PR #31 draft must be true/false",
+                           lambda cs: cs["prs"][0].update(draft="no"))
+
+    def test_a_pr_with_a_role_outside_the_enum(self):
+        self.assertReports("PR #31 role must be one of",
+                           lambda cs: cs["prs"][0].update(role="boss"))
+
+    def test_an_architect_verdict_outside_the_enum(self):
+        self.assertReports("design_gate.last_architect_verdict must be one of",
+                           lambda cs: cs["design_gate"].update(last_architect_verdict="MAYBE"))
+
+    def test_a_release_candidate_whose_code_verdict_is_not_green(self):
+        def mutate(cs):
+            cs["design_gate"]["current_candidate_gate"] = "GREEN"
+            cs["prs"][1].update(is_rc=True, code_verdict="RED")
+        self.assertReports("PR #32 is_rc=true but its code_verdict is not GREEN", mutate)
+
+    def test_a_current_workflow_pr_that_is_not_an_object(self):
+        self.assertReports("current_workflow_pr must be an object",
+                           lambda cs: cs.update(current_workflow_pr="PR 33"))
+
+    def test_a_carrier_transition_that_is_not_an_object(self):
+        self.assertReports("carrier_transition must be an object when present",
+                           lambda cs: self._carrier(cs).update(carrier_transition="soon"))
+
+    def test_a_carrier_transition_missing_one_phase(self):
+        self.assertReports("carrier_transition.post_merge block missing",
+                           lambda cs: self._carrier(cs)["carrier_transition"].pop("post_merge") and None)
+
+    def test_a_carrier_transition_phase_with_the_wrong_carrier_state(self):
+        self.assertReports(
+            "carrier_transition.pre_merge.carrier_state must be 'open'",
+            lambda cs: self._carrier(cs)["carrier_transition"]["pre_merge"].update(carrier_state="merged"))
+
+    def test_a_carrier_transition_phase_with_no_gate(self):
+        self.assertReports(
+            "carrier_transition.post_merge.gate must be a non-empty string",
+            lambda cs: self._carrier(cs)["carrier_transition"]["post_merge"].update(gate="  "))
+
+    def test_a_modelled_transition_needs_both_next_action_branches(self):
+        self.assertReports(
+            "next_action_by_carrier must have both 'open' and 'merged' branches",
+            lambda cs: self._carrier(cs)["next_action_by_carrier"].pop("merged") and None)
+
+    def test_a_state_document_that_does_not_name_an_active_prs_branch(self):
+        self.assertReports(
+            f"NEXT_CHAT.md: does not reference PR #32's branch '{BRANCH_32}'",
+            next_chat=_doc_mentioning_both().replace(BRANCH_32, "some/other-branch"))
+
+    def test_a_missing_state_document_is_named(self):
+        root = self._tmp()
+        _state_repo(root)
+        (root / "TASKS.md").unlink()
+        self.assertIn("missing current-state doc: TASKS.md", cc.check(root))
+
+    def test_a_canonical_file_that_is_a_stub(self):
+        root = self._tmp()
+        _state_repo(root)
+        (root / "OWNERS.md").write_text("todo\n", encoding="utf-8")
+        self.assertIn("canonical file is empty/stub: OWNERS.md", cc.check(root))
+
+    def test_a_roadmap_with_no_status_line(self):
+        root = self._tmp()
+        _state_repo(root)
+        roadmap = root / "MASTER_EXECUTION_ROADMAP.md"
+        roadmap.write_text(roadmap.read_text(encoding="utf-8").replace("**Status: `Active`**", ""),
+                           encoding="utf-8")
+        self.assertIn("MASTER_EXECUTION_ROADMAP.md: no '**Status:' line", cc.check(root))
+
+    def test_the_current_region_is_the_text_minus_its_history_blocks(self):
+        b, e = cc.HISTORY_BEGIN, cc.HISTORY_END
+        self.assertEqual(cc._current_region("no history here"), "no history here")
+        self.assertEqual(cc._current_region(f"a {b}old{e} b {b}older{e} c"), "a  b  c")
+        self.assertEqual(cc._current_region(f"a {b}never closed"), "a ")
+
+    def test_the_git_helper_raises_when_asked_to_and_git_refuses(self):
+        """`check=True` on a directory that is not a repository."""
+        root = self._tmp()
+        with self.assertRaises(subprocess.CalledProcessError):
+            cc._git_utf8(root, "rev-parse", "HEAD", check=True)
+        self.assertNotEqual(cc._git_utf8(root, "rev-parse", "HEAD").returncode, 0)
+
+
+class TheExitCode(unittest.TestCase):
+    """CI reads `main()`'s return value; every other test here reads `check()`."""
+
+    def _main(self, root: pathlib.Path) -> tuple[int, str, str]:
+        import contextlib
+        import io
+        from unittest import mock
+
+        out, err = io.StringIO(), io.StringIO()
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_BASE_REF"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cc.main(["--root", str(root)])
+        return code, out.getvalue(), err.getvalue()
+
+    def _root(self) -> pathlib.Path:
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root = pathlib.Path(d.name)
+        _state_repo(root)
+        return root
+
+    def test_a_consistent_tree_exits_zero(self):
+        code, out, err = self._main(self._root())
+        self.assertEqual(code, 0, err)
+        self.assertIn("GREEN", out)
+
+    def test_an_inconsistent_tree_exits_one_and_names_the_problem(self):
+        root = self._root()
+        (root / "OWNERS.md").unlink()
+        code, out, err = self._main(root)
+        self.assertEqual(code, 1)
+        self.assertIn("missing canonical file: OWNERS.md", err)
+        self.assertNotIn("GREEN", out)
 
 
 class CheckCoordinationTests(unittest.TestCase):
@@ -660,10 +876,6 @@ class SquashReDatingOverRealGitTests(unittest.TestCase):
             cc.subprocess.run = real
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CurrentStateProseTests(unittest.TestCase):
     """The FREE-TEXT fields of config/current_state.json, which nothing read until 2026-08-09.
 
@@ -724,3 +936,7 @@ class CurrentStateProseTests(unittest.TestCase):
                 "Do not cite platform_governed_execution_supported(): no function of that name "
                 "exists in the tree; it is the spec symbol."])
             self.assertFalse(any("without saying no function" in p for p in cc.check(root)))
+
+
+if __name__ == "__main__":
+    unittest.main()

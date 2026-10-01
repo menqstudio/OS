@@ -16,7 +16,8 @@ independently verifies a signed receipt:
 
 ```
 ROOT signing authority
-  └─ signs the key manifest  ──▶ TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)
+  └─ signs the key manifest  ──▶ TCB-pinned ROOT PUBLIC key (Linux broker: read from the floor-pinned
+                                   anchor file; Windows kit: compiled in, win-live/src/tcb.rs)
         challenge-authority ─▶ governed-supervisor (lease + attest) ─▶ isolated-signer (Ed25519)
               └─ receipt {envelope_jcs_b64, signature_b64}  ──▶ DESKTOP verify_and_accept
                     (recompute JCS, verify_strict, bind request+output+attestation, one-time nonce)
@@ -25,8 +26,14 @@ ROOT signing authority
 
 Invariants that HOLD today (verified by the 2026-08-04 builder audit — `apps/desktop/src-tauri/win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md`):
 
-- **No fresh production forgery without the root private half.** The production root pin is compiled in (never
-  read from config); a demonstration-root-signed manifest is rejected; `verify_strict` rejects
+- **No fresh production forgery without the root private half.** The root pin is never read from config.
+  In the Windows kit this audit judged it is compiled in. **The Linux broker no longer compiles one in**
+  (`T-131` slice C, `T-140`): it reads its root from the anchor file the §2.5 pin manifest names under
+  `key-manifest.root-anchor`, after that floor has passed, so an operator who can write the config
+  directory still cannot name a different anchor. The constant left in `broker/src/tcb.rs` is only the
+  one root allowed to *declare* `external`, and nobody holds its private half; the custody a Linux
+  install can reach is the install-minted root, which commits `demonstration_custody` while
+  `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false`. A demonstration-root-signed manifest is rejected; `verify_strict` rejects
   malleable/short signatures; the demo-pinning constructors are `pub(crate)`.
 - **Output→receipt binding is airtight.** The bytes hashed == signed == committed == the executor's stdout.
 - **The root private is never written to the serving box** (`config.json root_seed=""`).
@@ -106,7 +113,8 @@ made on the strength of it.
 **Proofs you can run**, rather than claims to take on trust:
 
 - `apps/desktop/src-tauri/provision/tests/python_verifier.rs` — runs the **real** `bro_signature`,
-  `verify_conductor_session_token` and `bro_deploy_preflight` against the **real** Rust output (29 checks).
+  `verify_conductor_session_token` and `bro_deploy_preflight` against the **real** Rust output (64 checks as of 2026-10-01 — `cargo test -p brops-provision --test
+  python_verifier` prints `GREEN: 64 checks passed against the real engine verifiers`; this line said 29).
   It fails rather than skips when Python or `cryptography` is absent.
 - `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.py` — makes the real
   `engine/runtime/bro_audit_log.py` judge the real signer over the real named pipe. Six cases, including
@@ -236,13 +244,17 @@ is not the production gate opening.
 
 ### 1.3 What is NOT true, stated as prominently as what is
 
-- **This is Windows-only today.** `anchor::seal` returns `ProvisionError::Unsupported` on POSIX by
-  construction — a POSIX owner may always `chmod` a directory it owns and there is no OWNER RIGHTS
-  equivalent — so first-launch provisioning **aborts startup** there. The POSIX path is specified (the anchor
-  created by a different uid at `<POSIX_MACHINE_ROOT>/trust-anchor` (`anchor::POSIX_MACHINE_ROOT`; the
-  literal is being revised — read the constant, not a path copied out of a document), mode 0755,
-  ancestors likewise, provisioning
-  run once as that account by the installer) and **that branch has never executed**.
+- **First-launch self-provisioning is Windows-only; on POSIX a root installer provisions and the app
+  only verifies.** A POSIX owner may always `chmod` a directory it owns and there is no OWNER RIGHTS
+  equivalent, so the application **refuses to create** an anchor there — `anchor::preprovision_refusal`,
+  before anything is minted (it used to fail late, when `anchor::seal` returned `Unsupported`) — and
+  **uses one that is already in place**. `brops_install_anchor` (`provision/src/posix_install.rs`,
+  `T-137`) creates it: run once as root by the `.deb`'s `postinst` (`T-138`), it writes the anchor at
+  `<POSIX_MACHINE_ROOT>/trust-anchor` (`anchor::POSIX_MACHINE_ROOT` — read the constant, not a path
+  copied out of a document), mode 0755, ancestors likewise, and does not report success until the
+  application's own launch-time check passes for the desktop account. CI runs its end-to-end test as
+  root. A machine whose install step did not run still refuses first launch. *(This bullet said "that
+  branch has never executed".)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 - **The provisioned environment now reaches the engine — at one seam, and only there.** *(This bullet said
   "Nothing exports the provisioned environment into the engine" until 2026-08-09. That was true, and it was
   the whole of O-3.)* `Provisioned::engine_env()` returns five variables — `BRO_TRUSTED_REGISTRY_ROOT`
@@ -281,7 +293,9 @@ Production `trusted_verified` is unreachable in the shipped application, by cons
 independent places:
 
 1. `governed_verification_unconfigured()` (`apps/desktop/src-tauri/src/commands.rs`) returns
-   `Some(GOVERNED_VERIFICATION_UNCONFIGURED)` **unconditionally**. It fires after the one-time challenge is
+   `Some(GOVERNED_VERIFICATION_UNCONFIGURED)` **while any of its five compile-time inputs is absent — and
+   all five are**. It is a measurement (`governed_provisioning_missing`), not a hardcoded value: it returns
+   `None` when nothing is missing. It fires after the one-time challenge is
    issued and **before the model is called**, so no prompt is sent for a result that could only be discarded.
    The two policy digests are non-hex sentinels no wire-legal receipt can carry, and both the executor and
    builder rosters are empty.
@@ -414,7 +428,8 @@ All of the following, then an **independent** audit, then **Owner** approval:
 1. **Executor → real model** — the contained executor invokes the model and emits its exact output (today a
    placeholder), then re-provision the pinned executor SHA.
 2. **Wire the live chain into the shipped runtime** — route through the broker/manifest; make
-   `governed_verification_unconfigured()` a real provisioning probe instead of a hardcoded `Some`; retire
+   `governed_verification_unconfigured()` find its five inputs provisioned (it has been a real probe since
+   `T-048`; what is missing is the inputs, not the probe); retire
    `UpstreamBlockedExecutor`; select `GovernedEngine` with a real `ManifestReceiptKeyAuthority`.
 3. **Session-0 isolation** — broker as its own dedicated service account, `CreateProcessAsUser` under a
    restricted token + `STARTUPINFOEX` handle list wired to the output-producing spawn, CNG key custody.

@@ -22,35 +22,56 @@ class IpcPolicyError(RuntimeError):
     pass
 
 
-def load_allowed_peer_uid(path: str, service: str) -> int:
-    """Return the single UID permitted to connect to ``service``.
+def read_root_owned_json(path: str, *, error: type, what: str, label: str = ""):
+    """Parse a ROOT-OWNED, non-group/other-writable JSON file, checked on the OPEN descriptor.
 
-    The §2.5 owner/mode floor is checked on the OPENED descriptor rather than by a second
-    ``stat(path)``, so a swap between the check and the read cannot change what was measured.
+    The ONE implementation of that rule in the live kits. ``run_ladder_supervisor.load_tcb_json``
+    carried a second copy "with the same rule and the same reasoning" (its words), and the two
+    had already diverged: this one named ``os.O_NOFOLLOW`` and wrapped a failed open and a
+    malformed document in its own error, that one looked the flag up and let ``OSError`` and
+    ``JSONDecodeError`` escape raw.
+
+    The §2.5 owner/mode floor is measured with ``fstat`` on the descriptor rather than by a
+    second ``stat(path)``, so a swap between the check and the read cannot change what was
+    measured. ``O_NOFOLLOW``/``O_CLOEXEC`` are looked up rather than named so the module stays
+    importable off Linux, where the services can still be constructed and driven directly; on
+    the only platform they SERVE on, both always exist. Every refusal is ``error``; ``what``
+    describes the file ("the IPC policy") and ``label`` is the caller's prefix ("supervisor: ").
     """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = os.open(path, flags)
     except OSError as exc:
-        raise IpcPolicyError(f"{service}: cannot open the IPC policy {path}: {exc}") from exc
+        raise error(f"{label}cannot open {what} {path}: {exc}") from exc
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
-            raise IpcPolicyError(f"{service}: the IPC policy {path} is not a regular file")
+            raise error(f"{label}{what} {path} is not a regular file")
         if info.st_uid != 0:
-            raise IpcPolicyError(
-                f"{service}: the IPC policy {path} is owned by uid {info.st_uid}, not root; a "
-                "peer-auth rule a service account can rewrite authorizes whatever it likes")
+            raise error(
+                f"{label}{what} {path} is owned by uid {info.st_uid}, not root; a document a service "
+                "account can rewrite authorizes whatever it likes")
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise IpcPolicyError(f"{service}: the IPC policy {path} is group/other-writable")
+            raise error(f"{label}{what} {path} is group/other-writable")
         with os.fdopen(fd, "r", encoding="utf-8") as f:
             fd = -1  # ownership moved to the file object
-            document = json.load(f)
-    except json.JSONDecodeError as exc:
-        raise IpcPolicyError(f"{service}: the IPC policy {path} is malformed: {exc}") from exc
+            return json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise error(f"{label}{what} {path} is malformed: {exc}") from exc
     finally:
         if fd >= 0:
             os.close(fd)
 
+
+def load_allowed_peer_uid(path: str, service: str) -> int:
+    """Return the single UID permitted to connect to ``service``.
+
+    Custody is :func:`read_root_owned_json`'s; what is decided here is the document's meaning.
+    """
+    document = read_root_owned_json(path, error=IpcPolicyError, what="the IPC policy",
+                                    label=f"{service}: ")
+    if not isinstance(document, dict):
+        raise IpcPolicyError(f"{service}: {path} is not a brops.ipc-policy.v1 document")
     if document.get("protocol") != "brops.ipc-policy.v1":
         raise IpcPolicyError(f"{service}: {path} is not a brops.ipc-policy.v1 document")
     if document.get("service") != service:

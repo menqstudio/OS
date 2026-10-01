@@ -55,10 +55,14 @@ def running_under_ci() -> bool:
 class Prerequisite:
     """Something outside the engine tree that a test cannot manufacture for itself."""
 
-    def __init__(self, name: str, probe, reason: str):
+    def __init__(self, name: str, probe, reason: str, files: tuple[str, ...] = ()):
         self.name = name
         self._probe = probe
         self._reason = reason
+        #: For a sibling-tree prerequisite, the repo-relative files its probe asks for. Kept on
+        #: the object so the guard's own test can lay those files out and drive the REAL probe to
+        #: both answers, instead of restating each list and testing its copy.
+        self.files = files
 
     def present(self) -> bool:
         return bool(self._probe())
@@ -107,10 +111,21 @@ GIT_WORKTREE = Prerequisite(
     "and every tree-identity read fails closed (a deployed tree is copied without .git)",
 )
 
-DESKTOP_TCB_SOURCE = Prerequisite(
+def _beside_the_engine(name: str, files: tuple[str, ...], reason: str) -> Prerequisite:
+    """A prerequisite that is a set of FILES in the monorepo, outside `engine/`.
+
+    `REPO_ROOT` is read when the probe runs, not when it is built, which is what lets the guard's
+    test point every one of these at a tree it lays out itself.
+    """
+    return Prerequisite(
+        name, lambda: all((REPO_ROOT / rel).is_file() for rel in files), reason, files)
+
+
+_TAURI = "apps/desktop/src-tauri/"
+
+DESKTOP_TCB_SOURCE = _beside_the_engine(
     "apps/desktop TCB source",
-    lambda: (REPO_ROOT / "apps" / "desktop" / "src-tauri" / "core" / "src"
-             / "tcb_integrity.rs").is_file(),
+    (_TAURI + "core/src/tcb_integrity.rs",),
     "apps/desktop/src-tauri/core/src/tcb_integrity.rs is not present beside the "
     "engine tree (deployment Step 6 copies engine/ only)",
 )
@@ -119,20 +134,17 @@ DESKTOP_TCB_SOURCE = Prerequisite(
 #: `pub const` lines out of these files to hold the Python constants against them: the two
 #: halves are compiled separately and no type-checker ever sees both, so the only thing that can
 #: notice a number moving on one side is a test that reads the other side's source.
-DESKTOP_GOVERNED_SOURCE = Prerequisite(
+DESKTOP_GOVERNED_SOURCE = _beside_the_engine(
     "apps/desktop governed-chain source",
-    lambda: all(
-        (REPO_ROOT / "apps" / "desktop" / "src-tauri" / rel).is_file()
-        for rel in (
-            "core/src/supervisor_ledger.rs",
-            "core/src/governed_prepare.rs",
-            "core/src/ipc_framing.rs",
-            "core/src/receipt.rs",
-            "core/src/governed_verification.rs",
-            "win-live/src/servers.rs",
-            "broker/src/chain_executor.rs",
-        )
-    ),
+    tuple(_TAURI + rel for rel in (
+        "core/src/supervisor_ledger.rs",
+        "core/src/governed_prepare.rs",
+        "core/src/ipc_framing.rs",
+        "core/src/receipt.rs",
+        "core/src/governed_verification.rs",
+        "win-live/src/servers.rs",
+        "broker/src/chain_executor.rs",
+    )),
     "the apps/desktop/src-tauri governed-chain sources are not present beside the "
     "engine tree (deployment Step 6 copies engine/ only)",
 )
@@ -142,26 +154,97 @@ DESKTOP_GOVERNED_SOURCE = Prerequisite(
 #: (`governed_sidecar.rs`). `engine/ci/live/write_broker_config.py` mirrors all three, and
 #: `test_live_broker_config.py` holds the mirrors against these files — so the mirrors are only bound
 #: where the files are present, and this prerequisite is what says so out loud.
-DESKTOP_BROKER_CONTRACT_SOURCE = Prerequisite(
+DESKTOP_BROKER_CONTRACT_SOURCE = _beside_the_engine(
     "apps/desktop broker-config contract source",
-    lambda: all(
-        (REPO_ROOT / "apps" / "desktop" / "src-tauri" / rel).is_file()
-        for rel in (
-            "broker/src/preflight.rs",
-            "core/src/tcb_integrity.rs",
-            "core/src/governed_sidecar.rs",
-        )
-    ),
+    tuple(_TAURI + rel for rel in (
+        "broker/src/preflight.rs",
+        "core/src/tcb_integrity.rs",
+        "core/src/governed_sidecar.rs",
+    )),
     "apps/desktop/src-tauri/{broker/src/preflight.rs, core/src/tcb_integrity.rs, "
     "core/src/governed_sidecar.rs} are not present beside the engine tree (deployment "
     "Step 6 copies engine/ only)",
 )
 
-BRIDGE_SIDECAR = Prerequisite(
+BRIDGE_SIDECAR = _beside_the_engine(
     "bridge sidecar",
-    lambda: (REPO_ROOT / "bridge" / "engine_sidecar.py").is_file(),
+    ("bridge/engine_sidecar.py",),
     "bridge/engine_sidecar.py is not present beside the engine tree (deployment "
     "Step 6 copies engine/ only)",
+)
+
+#: The Rust the live kit's shell scripts are held against: the refusal strings a driver emits and
+#: the stderr line the broker prints are each written once in Rust and once in `run_ladder_turn.sh`,
+#: and `test_live_provisioning_anchor` reads both sides.
+DESKTOP_ANCHOR_REFUSAL_SOURCE = _beside_the_engine(
+    "apps/desktop anchor-refusal source",
+    tuple(_TAURI + rel for rel in (
+        "broker/src/tcb.rs",
+        "broker/src/main.rs",
+        "proof/src/bin/ladder_turn.rs",
+        "proof/src/bin/live_turn.rs",
+        "proof/src/tcb_verify.rs",
+    )),
+    "apps/desktop/src-tauri/{broker/src/tcb.rs, broker/src/main.rs, proof/src/bin/ladder_turn.rs, "
+    "proof/src/bin/live_turn.rs, proof/src/tcb_verify.rs} are not present beside the engine tree "
+    "(deployment Step 6 copies engine/ only)",
+)
+
+#: The desktop crates as a TREE, for the one test that walks every `.rs` file in them rather than
+#: reading named ones. The workspace manifest stands for the tree: a walk over a directory that is
+#: not there finds nothing, and "nothing found" is that test's passing answer.
+DESKTOP_RUST_WORKSPACE = _beside_the_engine(
+    "apps/desktop Rust workspace",
+    (_TAURI + "Cargo.toml",),
+    "apps/desktop/src-tauri/Cargo.toml is not present beside the engine tree (deployment "
+    "Step 6 copies engine/ only)",
+)
+
+#: What the `.deb` is built from. `brops_install.sh` hardcodes the bundle identifier and is called
+#: by the package's `postinst`; `test_brops_install` holds both to these files.
+DESKTOP_PACKAGING = _beside_the_engine(
+    "apps/desktop packaging",
+    (_TAURI + "tauri.conf.json", _TAURI + "deb/postinst"),
+    "apps/desktop/src-tauri/{tauri.conf.json, deb/postinst} are not present beside the engine "
+    "tree (deployment Step 6 copies engine/ only)",
+)
+
+CI_WORKFLOW = _beside_the_engine(
+    "monorepo CI workflow",
+    (".github/workflows/ci.yml",),
+    ".github/workflows/ci.yml is not present above the engine tree (deployment Step 6 copies "
+    "engine/ only)",
+)
+
+SUPPLY_CHAIN_AUDIT_FILTER = _beside_the_engine(
+    "npm audit filter",
+    (".github/supply-chain/npm_audit_filter.py",),
+    ".github/supply-chain/npm_audit_filter.py is not present above the engine tree (deployment "
+    "Step 6 copies engine/ only)",
+)
+
+#: `engine/ci/live/ladder_evidence.py` imports the bridge's §4.6 frame parser at module scope, so
+#: the live kit's verifier — and every test that imports it — loads only where `bridge/` is.
+BRIDGE_TURN_RESULT = _beside_the_engine(
+    "bridge turn-result parser",
+    ("bridge/governed_turn_result_bridge.py",),
+    "bridge/governed_turn_result_bridge.py is not present beside the engine tree (deployment "
+    "Step 6 copies engine/ only)",
+)
+
+#: `contracts/` is the SOURCE of the cross-half schemas; `engine/schemas/` holds the vendored copy.
+CONTRACTS_SOURCE = _beside_the_engine(
+    "contracts source schemas",
+    ("contracts/approval-request.schema.json",),
+    "contracts/approval-request.schema.json is not present beside the engine tree (deployment "
+    "Step 6 copies engine/ only)",
+)
+
+#: Every sibling-tree prerequisite above, for the guard's own test.
+SIBLING_TREE = (
+    DESKTOP_TCB_SOURCE, DESKTOP_GOVERNED_SOURCE, DESKTOP_BROKER_CONTRACT_SOURCE, BRIDGE_SIDECAR,
+    DESKTOP_ANCHOR_REFUSAL_SOURCE, DESKTOP_RUST_WORKSPACE, DESKTOP_PACKAGING, CI_WORKFLOW,
+    SUPPLY_CHAIN_AUDIT_FILTER, BRIDGE_TURN_RESULT, CONTRACTS_SOURCE,
 )
 
 

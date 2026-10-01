@@ -151,8 +151,10 @@ COPIED_FROM_BASE = (
     "uids",
 )
 
-#: `governed_sidecar.rs:311-318`. Mirrored, and bound to those constants by
-#: `test_the_sidecar_rules_are_the_brokers_own`.
+#: The four `pub const`s of `governed_sidecar.rs`. Mirrored, and bound to those constants by
+#: `test_the_sidecar_constants_are_the_brokers_own` -- the CONSTANTS, and only those. The five
+#: rules `validate_sidecar` applies with them are a second implementation of
+#: `SidecarPrincipal::from_config`, and nothing compares the two rule by rule.
 PRINCIPAL_KEY = "principal"
 INVOKER_KEY = "invoker"
 ENV_PROGRAM = "env"
@@ -205,6 +207,12 @@ def validate_sidecar(block):
     Every one of these is already enforced at broker start-up, and every one of them renders there as
     the same observable: a `blocked` reply. Checking them at WRITE time is the difference between an
     operator reading which key is wrong and an operator reading that a turn did not happen.
+
+    This is a RE-IMPLEMENTATION, not the broker's code, and it can drift: a test binds the four
+    constants to the Rust source and nothing binds the rule logic. That is tolerable for exactly
+    one reason, which is the paragraph above -- the broker re-enforces all five, fail-closed, at
+    start-up. A rule that drifted here costs an operator a clear message; it cannot admit a
+    sidecar the broker would refuse. Do not let anything come to RELY on this copy.
     """
     account = block.get(PRINCIPAL_KEY)
     if not isinstance(account, str) or not account.strip():

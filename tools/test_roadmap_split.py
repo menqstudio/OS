@@ -8,12 +8,13 @@ one of the sixteen required sections would pass every other gate and be invisibl
 weeks — `check_coordination` counts sections and `check_roadmap_order` counts checkboxes,
 and both would simply count the smaller number and agree with themselves.
 
-So this compares the assembled text against the document as it stood in git before the
-split, and against the structure the other gates depend on. It is written to keep working
-after the pre-split commit has scrolled out of easy reach: the baseline is found by walking
-back to the last commit whose `MASTER_EXECUTION_ROADMAP.md` still contained the phases, and
-if there is no such commit the byte-comparison skips with a reason while every structural
-assertion still runs.
+So this compares the assembled text against the document as it stood before the split, and
+against the structure the other gates depend on. The baseline is a COMMITTED FILE,
+`tools/fixtures/roadmap-pre-split.md` — not a commit found by walking history. It was found
+that way once (this paragraph went on describing that, and a skip message below went on
+blaming "the last 40 commits"); the walk broke the day the branch was squash-merged, and the
+note above `FIXTURE_REL` records why. A missing fixture is therefore a FAILURE in every test
+that needs it, never a skip: the baseline is not optional.
 
 Each test names the mutation that turns it red. `unittest.main()` is the last statement
 (ninth audit `I-05`).
@@ -216,8 +217,11 @@ class SplitIsLossless(unittest.TestCase):
         """check_roadmap_order counts these. A split that dropped one would make a phase
         look closer to done than it is — in the direction nobody questions."""
         before = pre_split_roadmap()
-        if before is None:
-            self.skipTest("no committed pre-split roadmap reachable in the last 40 commits")
+        # A failure, not a skip. This skipped with "no committed pre-split roadmap reachable in
+        # the last 40 commits" -- the message of the walk-back that no longer exists -- while
+        # the first test in this class treats the very same None as "the baseline is not
+        # optional". One missing fixture, one answer.
+        self.assertIsNotNone(before, f"{FIXTURE_REL} is missing; the baseline is not optional")
         count = lambda t: len(re.findall(r"(?m)^\s*[-*] \[[ xX]\]", t))
         self.assertEqual(count(before), count(self.assembled))
 

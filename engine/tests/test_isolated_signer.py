@@ -24,7 +24,9 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
 
+import _chain_docs  # noqa: E402
 from isolated_signer import (  # noqa: E402
     ATTESTATION_PROTOCOL,
     ENVELOPE_ARTIFACT_TYPE,
@@ -46,6 +48,7 @@ from isolated_signer import (  # noqa: E402
     ArtifactStore,
     IsolatedSigner,
     SignerConfig,
+    SignerError,
     _canonical_bytes,
     _is_u64_ms,
     _jcs_bytes,
@@ -95,9 +98,11 @@ def _build_store(record_overrides=None, receipt_overrides=None):
         handles[field] = store.put(data)
 
     # Built after the inputs, because they name the input handles — exactly as the supervisor
-    # builds them from its own acceptance row plus the completion.
-    record = {
-        "protocol": "brops.governed-turn-record.v1",
+    # builds them from its own acceptance row plus the completion. Built by the SHARED
+    # builders (`_chain_docs`), which hold the 22-key record shape for every suite that seeds a
+    # protected chain: this file used to write all three documents out by hand beside a comment
+    # saying they were "matched to `_chain_docs.terminal_record`".
+    like = {
         "run_id": "run-abc",
         "task_id": "task-1",
         "execution_attempt_id": "attempt-1",
@@ -106,35 +111,21 @@ def _build_store(record_overrides=None, receipt_overrides=None):
         "request_nonce": "550e8400-e29b-41d4-a716-446655440000",
         "receipt_id": "receipt-777",
         "supervisor_id": "sup-1",
-        "request_sha256": _expected_request_sha256(handles),
-        "system_handle": handles["system_handle"],
-        "history_handle": handles["history_handle"],
-        "generation_config_handle": handles["generation_config_handle"],
-        "output_handle": handles["output_handle"],
-        "containment_evidence_handle": handles["containment_evidence_handle"],
-        "decision": "completed",
-        # The 22-key shape, matched to `_chain_docs.terminal_record` and to what
-        # `governed_supervisor.build_terminal_record` emits. Three of these are compared against the
-        # evidence since 2026-09-20 (`requested_at_ms`/`challenge_accepted_at_ms`/`completed_at_ms`),
-        # and three are not because the evidence does not carry them -- `NM-XBIND-01`.
-        "requested_at_ms": NOW_MS - 5_000,
+        # The three times, spelled as the EVIDENCE spells them; the record carries them as
+        # `requested_at_ms` / `challenge_accepted_at_ms` / `completed_at_ms`.
+        "requested_at": NOW_MS - 5_000,
         "challenge_accepted_at_ms": NOW_MS - 3_000,
-        "completed_at_ms": NOW_MS - 1_000,
-        "challenge_handle": "c" * 64,
-        "challenge_registry_hash": "d" * 64,
-        "challenge_registry_epoch": 7,
+        "completed_at": NOW_MS - 1_000,
     }
+    like.update({field: handles[field] for field in (
+        "system_handle", "history_handle", "generation_config_handle", "output_handle",
+        "containment_evidence_handle")})
+    record = _chain_docs.terminal_record(like, request_sha256=_expected_request_sha256(handles))
     record.update(record_overrides or {})
-    receipt = {
-        "protocol": "brops.execution-receipt.v1",
-        "run_id": "run-abc",
-        "execution_attempt_id": "attempt-1",
-        "output_handle": handles["output_handle"],
-    }
-    receipt.update(receipt_overrides or {})
-    handles["record_handle"] = store.put(_canon(record))
-    handles["execution_receipt_handle"] = store.put(_canon(receipt))
-    handles["lease_handle"] = store.put(_canon({"execution_attempt_id": "attempt-1"}))
+    receipt = _chain_docs.execution_receipt(like, **(receipt_overrides or {}))
+    handles["record_handle"] = store.put(_chain_docs.canonical(record))
+    handles["execution_receipt_handle"] = store.put(_chain_docs.canonical(receipt))
+    handles["lease_handle"] = store.put(_chain_docs.canonical(_chain_docs.lease_payload(like)))
     return store, handles
 
 
@@ -341,6 +332,29 @@ class RefusalTest(unittest.TestCase):
 
     # ---- §1.5 step 4: the policy-authorization check must be able to FAIL ------------------
 
+    def test_a_lone_surrogate_in_an_attested_string_is_a_refusal_and_never_a_raise(self):
+        """`sign_result` promises it never raises on hostile input. A lone surrogate passed the
+        type-and-length check, passed attestation (those bytes are `ensure_ascii`-escaped), and
+        then raised `UnicodeEncodeError` where the request envelope is encoded as raw UTF-8."""
+        import governed_supervisor
+        from isolated_signer import _capped_str, REASON_MALFORMED
+
+        signer, _store, handles, recorder = _make_signer()
+        for field in ("workspace_id", "install_id", "request_nonce", "run_id"):
+            with self.subTest(field=field):
+                evidence = _evidence(handles)
+                evidence[field] = "\ud800"
+                result = signer.sign_result(_request(evidence))
+                self.assertEqual(result.get("artifact_type"), REFUSAL_ARTIFACT_TYPE, result)
+                self.assertEqual(result["reason"], REASON_MALFORMED)
+        self.assertEqual(recorder.signed_messages, [])
+        # The supervisor's mirror must refuse the same value BEFORE attesting it.
+        for value in ("\ud800", "ok\udfff", "plain", "\u00e9\u4e2d", ""):
+            with self.subTest(value=value):
+                self.assertEqual(governed_supervisor._capped_str(value), _capped_str(value))
+        self.assertFalse(_capped_str("\ud800"))
+        self.assertTrue(_capped_str("\u00e9\u4e2d"), "real non-ASCII text is still a value")
+
     def _sign_under_policy(self, **config_over):
         store, handles = _build_store()
         signer, _s, _h, _r = _make_signer(prepared=(store, handles))
@@ -409,6 +423,10 @@ class RefusalTest(unittest.TestCase):
         signer, _s, _h, _r = _make_signer(prepared=prepared)
         out = signer.sign_result(_request(_evidence(handles)))
         self.assertEqual(out["artifact_type"], REFUSAL_ARTIFACT_TYPE)
+        # WHICH refusal: the handle resolves to bytes that are not the document it must be, and
+        # the signer says so. Any refusal at all used to satisfy this.
+        self.assertEqual(out["reason"], REASON_HANDLE_MISSING)
+
     def test_nm_oracle_04_bad_attestation_is_refused(self):
         """NM-ORACLE-04 -- attestation forgery: forged supervisor attestation => attestation_invalid, nothing signed."""
         signer, store, handles, recorder = _make_signer()
@@ -840,8 +858,12 @@ class NegativeMatrixOutputBindingTest(unittest.TestCase):
 class StoreTest(unittest.TestCase):
     def test_store_refuses_lying_handle(self):
         store = ArtifactStore()
-        with self.assertRaises(Exception):
+        # The store's OWN refusal, by type and by text: a bare `Exception` here would also be
+        # satisfied by a TypeError from a changed signature.
+        with self.assertRaises(SignerError) as caught:
             store.put(b"real-bytes", handle="0" * 64)
+        self.assertIn("non-matching handle", str(caught.exception))
+        self.assertIsNone(store.read_verified("0" * 64))
 
     def test_validate_sign_request_returns_normalized_pair(self):
         _, handles = _build_store()

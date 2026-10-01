@@ -570,7 +570,7 @@ def load_mode_grant_from_env(bundle: ContractBundle, session_id: str, role: str,
     # Ed25519, not HMAC: the enforcement hook runs in the builder's process, so a
     # symmetric key would let the builder mint its own grant. verify_artifact
     # checks the signature against the operator-signed trusted-key registry, so
-    # only the offline issuer key can authorize a mode.
+    # only a holder of the issuer key can authorize a mode.
     from bro_signature import SignatureError, load_trusted_keys, verify_artifact
     path = os.getenv("BRO_MODE_GRANT")
     if not path:
@@ -602,5 +602,17 @@ def validate_registered_schemas(root: pathlib.Path = ROOT) -> int:
             cls(schema)
         except Exception as exc: raise ContractError(f"invalid registered schema {item.get('id')}: {exc}") from exc
         count+=1
-    if count != len(registry.get("schemas",[])): raise ContractError("schema registry drift")
+    # Drift between the REGISTRY and the DIRECTORY. This line used to compare `count` with the
+    # length of the very list `count` had just been incremented over, so it could not be false:
+    # every failure inside the loop raises first. What it claimed to catch is checked here
+    # instead: a schema file on disk that the registry does not name (validated by nothing), and
+    # a path registered twice. A registered path that is MISSING already raised in the loop.
+    registered = [item["path"] for item in registry.get("schemas", [])]
+    on_disk = sorted("schemas/" + p.name for p in (root / "schemas").glob("*.schema.json"))
+    unregistered = sorted(set(on_disk) - set(registered))
+    duplicated = sorted({p for p in registered if registered.count(p) > 1})
+    if unregistered or duplicated:
+        raise ContractError(
+            "schema registry drift: unregistered schema file(s) %s; path(s) registered more "
+            "than once %s" % (unregistered, duplicated))
     return count

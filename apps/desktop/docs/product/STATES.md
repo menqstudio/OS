@@ -1,14 +1,14 @@
 - **Purpose:** Define the single canonical set of UI state patterns that every BroPS screen and surface inherits, so state behavior is consistent, honest, and reusable across the product.
 - **Scope:** Phase 1 UX. The ten canonical states (loading, empty, populated, error, offline, permission-denied, blocked, awaiting-approval, destructive-confirmation, success) plus the rules and mappings that govern them. Trilingual product surface (HY/EN/RU) in Dark and Light.
 - **Owner:** Gev.
-- **Related:** [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md).
+- **Related:** [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md), [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), [INFORMATION_ARCHITECTURE.md](INFORMATION_ARCHITECTURE.md).
 - **Last updated:** 2026-07-19.
 
 # BroPS Canonical UI State Patterns / Ինտերֆեյսի վիճակների կանոնական օրինաչափություններ
 
 Status: Draft canonical
 
-Every screen and surface listed in [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md) inherits these patterns. A screen may extend a pattern for its content, but it may never replace, contradict, or weaken it. When a screen conflicts with this document, this document wins; when this document conflicts with [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), the Design System wins.
+Every screen and surface listed in [SCREEN_INVENTORY.md](SCREEN_INVENTORY.md) inherits these patterns. A screen may extend a pattern for its content, but it may never replace, contradict, or weaken it. When a screen conflicts with this document, this document wins; when this document conflicts with [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md), the Design System wins.
 
 All visual treatment below is expressed through the semantic token families defined in the Design System (background/surface hierarchy, text hierarchy, borders, primary/secondary/destructive actions, success/warning/danger/information states, and focus/hover/pressed/selected/disabled/loading states). **No state may hard-code a theme color.**
 
@@ -22,7 +22,7 @@ These rules bind every state and every screen. They are not optional.
 2. **Truth over comfort.** A state must never present an ambiguous or unverified result as success. Uncertainty is shown as uncertainty (see `blocked` and `error`), never smoothed over.
 3. **Ownership is always visible where it exists.** When a screen shows work items (tasks, agents, approvals, decisions, runs), the responsible owner or agent is named in every state, including loading placeholders and error states.
 4. **Every state exists in all six combinations.** Each state must be complete and high-quality in HY/RU/EN × Dark/Light. This matches the Design System acceptance gate; a state is not done until verified in all six.
-5. **Semantic tokens only.** Status color, surface, border, and text all come from semantic tokens. Success is `state-success`, warning is `state-warning`, danger/failure is `state-danger`, informational is `state-info`. Never a raw hex or theme-specific literal.
+5. **Semantic tokens only.** Status color, surface, border, and text all come from semantic tokens. Success is `state-success`, warning is `state-warning`, danger/failure is `state-danger`, informational is `state-info`. Never a raw hex or theme-specific literal. *(These four, and `action-destructive` below, are **role names used by this document only** — no token of those names exists. The stylesheet's tokens are `--menq-color-success`, `--menq-color-warning`, `--menq-color-danger` and `--menq-color-info` in `src/theme/tokens.css`; nothing in `src/theme` is named `destructive`, and a destructive confirm takes the danger colour.)*
 6. **Reduced motion is mandatory.** When the user requests reduced motion, animated transitions are replaced by immediate state changes. No information, affordance, or status indicator may be lost in reduced-motion mode. Motion communicates state; it is never the only carrier of state — every animated cue also has a static, text, or iconographic equivalent.
 7. **Motion may never mask state.** Transitions must not delay, obscure, or soften execution status or approval requirements (per Design System motion rules). A skeleton or fade may never outlive the data it stands in for.
 8. **Keyboard and focus.** Every actionable element in every state is reachable by keyboard, has a visible focus indicator, and exposes a translated accessibility label in HY/EN/RU.
@@ -137,7 +137,7 @@ Two severities — the treatment differs.
 
 ## Trilingual state microcopy reference
 
-Canonical short labels every screen reuses. Equal meaning and quality in all three languages; expansion-tolerant per the Design System.
+The draft target for the short labels every screen should reuse. Equal meaning and quality in all three languages; expansion-tolerant per the Design System. **It is not what ships:** the dictionaries in `src/i18n/` and `src/domain/statusLabels.ts` differ on four rows — Offline is `Backend unavailable` / `Backend-ը հասանելի չէ` / `Бэкенд недоступен`, Permission-denied is `Not permitted` / `Թույլատրված չէ` / `Не разрешено`, the Armenian first-run empty label is `Այստեղ դեռ ոչինչ չկա`, and the Russian awaiting-approval label is `Ожидает согласования`.
 
 | State | English (en) | Հայերեն (hy) | Русский (ru) |
 | --- | --- | --- | --- |
@@ -160,7 +160,7 @@ Canonical short labels every screen reuses. Equal meaning and quality in all thr
 
 Կարգավիճակ: Նախնական կանոնական
 
-[SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ում թվարկված յուրաքանչյուր էկրան և մակերես ժառանգում է այս օրինաչափությունները։ Էկրանը կարող է ընդլայնել օրինաչափությունն իր բովանդակության համար, բայց երբեք չի կարող փոխարինել, հակասել կամ թուլացնել այն։ Երբ էկրանը հակասում է այս փաստաթղթին՝ հաղթում է այս փաստաթուղթը. երբ այս փաստաթուղթը հակասում է [../DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md)-ին՝ հաղթում է Design System-ը։
+[SCREEN_INVENTORY.md](SCREEN_INVENTORY.md)-ում թվարկված յուրաքանչյուր էկրան և մակերես ժառանգում է այս օրինաչափությունները։ Էկրանը կարող է ընդլայնել օրինաչափությունն իր բովանդակության համար, բայց երբեք չի կարող փոխարինել, հակասել կամ թուլացնել այն։ Երբ էկրանը հակասում է այս փաստաթղթին՝ հաղթում է այս փաստաթուղթը. երբ այս փաստաթուղթը հակասում է [../architecture/DESIGN_SYSTEM.md](../architecture/DESIGN_SYSTEM.md)-ին՝ հաղթում է Design System-ը։
 
 Ամբողջ վիզուալ մշակումը արտահայտվում է Design System-ի semantic token ընտանիքներով (ֆոն/մակերես, տեքստի հիերարխիա, եզրագծեր, primary/secondary/destructive գործողություններ և success/warning/danger/information վիճակներ)։ **Ոչ մի վիճակ չի կարող կոշտ կոդավորել թեմայի գույն։**
 
@@ -170,7 +170,7 @@ Canonical short labels every screen reuses. Equal meaning and quality in all thr
 2. **Ճշմարտությունը՝ հարմարավետությունից առաջ։** Վիճակը երբեք չի ներկայացնում անորոշ կամ չստուգված արդյունքը որպես հաջողություն։ Անորոշությունը ցուցադրվում է որպես անորոշություն (տես `blocked` և `error`)։
 3. **Սեփականությունը միշտ տեսանելի է, երբ այն կա։** Աշխատանքային տարրեր ցուցադրող էկրանում պատասխանատու սեփականատերը կամ ագենտը նշվում է ամեն վիճակում, ներառյալ loading-ը և error-ը։
 4. **Ամեն վիճակ գոյություն ունի բոլոր վեց համակցություններում։** Յուրաքանչյուր վիճակ պետք է լինի ամբողջական և բարձրորակ HY/RU/EN × Dark/Light-ում՝ համաձայն Design System-ի ընդունման դարպասի։
-5. **Միայն semantic token-ներ։** Success՝ `state-success`, warning՝ `state-warning`, danger/ձախողում՝ `state-danger`, informational՝ `state-info`։ Երբեք raw hex կամ թեմա-կախյալ լիտերալ։
+5. **Միայն semantic token-ներ։** Success՝ `state-success`, warning՝ `state-warning`, danger/ձախողում՝ `state-danger`, informational՝ `state-info`։ *(Այս չորսը ու `action-destructive`-ը **միայն այս փաստաթղթի դերային անուններն են** — այդ անուններով token չկա։ Stylesheet-ի token-ներն են `--menq-color-success`, `--menq-color-warning`, `--menq-color-danger`, `--menq-color-info`՝ `src/theme/tokens.css`-ում. `destructive` անունով ոչինչ չկա։)* Երբեք raw hex կամ թեմա-կախյալ լիտերալ։
 6. **Reduced-motion-ը պարտադիր է։** Երբ օգտատերը պահանջում է reduced motion, անիմացիաները փոխարինվում են ակնթարթային փոփոխություններով՝ առանց տեղեկատվության կամ կարգավիճակի կորստի։ Անիմացիան երբեք վիճակի միակ կրողը չէ։
 7. **Անիմացիան երբեք չի քողարկում վիճակը։** Անցումները չեն ուշացնում կամ մթագնում կատարման կամ հաստատման կարգավիճակը։
 8. **Ստեղնաշար և ֆոկուս։** Ամեն վիճակի ամեն գործող տարր հասանելի է ստեղնաշարով, ունի տեսանելի ֆոկուսի ցուցիչ և թարգմանված accessibility պիտակ HY/EN/RU-ով։

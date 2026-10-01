@@ -218,10 +218,10 @@ def check(root: pathlib.Path) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=".")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     root = pathlib.Path(args.root)
 
     problems = check(root)

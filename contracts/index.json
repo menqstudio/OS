@@ -21,7 +21,8 @@
     "this file exists so the box is not filed under a blocker it never had.",
     "",
     "VERSIONING. version_pointer is a JSON Pointer into the schema itself, resolved by the gate and",
-    "compared with `version`. Four of the five carry `schema: {const: 1}` at the top level; mode-grant",
+    "compared with `version`. Of the six, four carry `schema: {const: 1}` at the top level and",
+    "execution-lease carries `{const: 2}` there (bumped when allowed_egress became required); mode-grant",
     "is a signed envelope, so its version lives at payload.schema. A bump has to be made in the schema",
     "AND here, in one commit, or the gate reports the disagreement."
   ],
@@ -80,9 +81,9 @@
       "version": 1,
       "version_pointer": "/properties/schema/const",
       "crosses": "desktop -> engine",
-      "rust_mirror": null,
+      "rust_mirror": "apps/desktop/src-tauri/core/src/approval_request.rs",
       "why_shared": "the first contract that crosses in THIS direction: the cockpit asks and the engine records. Both halves have to agree on what an ask is allowed to contain, and the answer is enforced structurally -- additionalProperties false, with no key, signature, nonce, lease or verdict field in it at all",
-      "rust_mirror_note": "NONE yet, and deliberately: the desktop command that sends this document does not exist. T-021 is three steps -- this schema audited before it lands, then the engine endpoint, then the Tauri command -- because docs/OWNER_ACTION_REQUIRED.md fixed five contract invariants and the fifth is that the engine schema change is audited BEFORE the transport that carries it. A Rust mirror added here would be a mirror of a message nothing sends. It arrives with the command, and check_schema_mirrors.py's table is where it will be declared"
+      "rust_mirror_note": "The desktop half exists since T-021c: core/src/approval_request.rs BUILDS this document field by field with json! (no struct), the Tauri command `request_engine_approval` (src/governance.rs, registered in src/lib.rs) sends it through `ai::governed_sidecar_approval_request`, and the sidecar dispatches it as the `approval.request` op to engine/runtime/bro_approval_requests.py. This note said 'the desktop command that sends this document does not exist' until 2026-10-01, three steps after it did. STILL NOT DONE, and stated rather than implied: the file named here is a BUILDER, not a struct mirror, and tools/check_schema_mirrors.py's MIRRORS table -- where this note promised the declaration would land -- carries only VerifierReceipt and EvidenceEvent. Nothing mechanical compares the fields the builder writes with this schema's `required`; the engine refuses an extra one at validation time (additionalProperties false) and that is the only binding"
     }
   ],
   "engine_internal": {

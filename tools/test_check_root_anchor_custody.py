@@ -67,7 +67,7 @@ def _rules(text: str) -> list[int]:
 class _Tree:
     """A tracked git tree with two anchor files and one carrier document."""
 
-    def __init__(self, anchors, carrier_seeds=(), prod_const="ROOT_PUBLIC_KEY_HEX"):
+    def __init__(self, anchors, carrier_seeds=(), prod_const="ROOT_PUBLIC_KEY_HEX", extra_files=None):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="anchor-custody-"))
         for rel, (prod, demo) in zip(TCB_PATHS, anchors):
             path = self.dir / rel
@@ -78,6 +78,10 @@ class _Tree:
         notes = self.dir / "NOTES.md"
         body = "# notes\n\n" + "".join(f"a seed: {s}\n" for s in carrier_seeds)
         notes.write_text(body, encoding="utf-8", newline="\n")
+        for rel, text in (extra_files or {}).items():
+            path = self.dir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8", newline="\n")
         self._git("init", "-q")
         self._git("add", "-A")
 
@@ -110,6 +114,15 @@ class TheFixturesThemselves(unittest.TestCase):
     def test_the_offline_shaped_public_is_not_one_of_the_fixture_seeds(self):
         # Otherwise the green case below would be green by accident.
         self.assertNotIn(PUB_OFFLINE, (PUB_A, PUB_B))
+
+
+class TheTwoSweepsReadTheSameFiles(unittest.TestCase):
+    def test_this_gate_reads_the_ceremony_gates_extension_set_not_a_copy(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import check_no_owner_key_ceremony as ceremony
+        import check_root_anchor_custody as custody
+        self.assertIs(custody.SWEPT_EXT, ceremony.TEXT_EXT)
+        self.assertIn("", custody.SWEPT_EXT)
 
 
 class TheGateOnAWellKeptTree(unittest.TestCase):
@@ -145,6 +158,25 @@ class TheGateRefuses(unittest.TestCase):
         self.assertIn("NOTES.md:", out, "a finding that does not say WHERE is a finding nobody can act on")
         self.assertIn("Rotate the root and re-pin, do not delete the line", out)
 
+    def test_rule_3_a_production_seed_in_a_file_the_old_list_skipped_is_found(self):
+        # This gate kept its own extension list until T-145, and it had drifted from the ceremony
+        # gate's: no "" (so `deb/postinst`, a maintainer script, was never read -- the one place an
+        # installer would carry a seed), no `.mjs`, no `.xml`. Each is driven separately: a list that
+        # regains one and loses another must still go red.
+        for rel in ("apps/desktop/src-tauri/deb/postinst", "scripts/build.mjs", "config/app.xml"):
+            with self.subTest(rel=rel):
+                self._case(
+                    _Tree(anchors=[(PUB_B, PUB_A), (PUB_B, PUB_A)], carrier_seeds=[SEED_A],
+                          extra_files={rel: f"seed {SEED_B}\n"}),
+                    expect_rules=[3])
+
+    def test_rule_3_a_production_seed_written_in_uppercase_hex_is_found(self):
+        # The same 32 bytes. The sweep matched lowercase only, so `xxd -u` output or a pasted
+        # fingerprint-style literal was not a literal at all.
+        self._case(
+            _Tree(anchors=[(PUB_B, PUB_A), (PUB_B, PUB_A)], carrier_seeds=[SEED_A, SEED_B.upper()]),
+            expect_rules=[3])
+
     def test_rule_4_a_sweep_that_finds_nothing_refuses_instead_of_reporting_custody(self):
         # No demonstration seed in the tree => the sweep cannot show it works => rule 3's silence
         # establishes nothing, and the gate says exactly that rather than printing GREEN.
@@ -155,7 +187,7 @@ class TheGateRefuses(unittest.TestCase):
         self.assertIn("literals and matched nothing", out)
 
     def test_rule_5_two_files_pinning_different_production_anchors_are_refused(self):
-        # The Owner holds ONE offline root, so one of two production anchors is undeployable.
+        # One root provisions one anchor, so one of two production anchors is undeployable.
         self._case(
             _Tree(anchors=[(PUB_OFFLINE, PUB_A), (PUB_B, PUB_A)], carrier_seeds=[SEED_A]),
             expect_rules=[5])

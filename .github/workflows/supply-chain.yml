@@ -2,7 +2,7 @@ name: supply-chain
 
 # Supply-chain scan gate for menqstudio/OS.
 #
-# TEN INDEPENDENT jobs (one per ecosystem / concern) so a failure in one scanner
+# INDEPENDENT jobs (one per ecosystem / concern) so a failure in one scanner
 # never masks the others and each surfaces its own red X:
 #   cargo-audit      - RustSec advisory scan of the Cargo.lock graph
 #   cargo-deny       - advisories + license/bans/sources policy over the Rust graph
@@ -13,15 +13,23 @@ name: supply-chain
 #   release-signing  - signing key and updater config can only move together
 #   residual-items   - the O-1..O-5 inventory cannot drift from the canonical docs
 #   reachability     - nothing ships implemented-and-uncalled without a written reason
-#   gitleaks         - secret scan of the working tree and (on PRs) the commit range
-# (The count and list above were stale at "Six" while four jobs had already been added —
-#  corrected here rather than left as another claim nothing checks.)
+#   runbook-snippets - Python pasted into a runbook still matches the code it calls
+#   gitleaks         - secret scan of the WORKING TREE only. The PR step below it is named
+#                      for a commit-range scan it does not perform: it passes `--no-git`,
+#                      which makes `--log-opts` a no-op (audit F-20, recorded in the step). A
+#                      secret added and then removed inside one PR is NOT seen.
+# (This header carried a COUNT, and it was wrong twice: "Six" with ten jobs, then "TEN" with
+#  eleven, and the second time under a note saying the count had just been corrected. The
+#  number is gone; the list is the claim, and the `jobs:` keys below are what it is checked
+#  against by reading.)
 #
 # Every job fails closed on HIGH/CRITICAL severity. All third-party actions are
 # pinned by full commit SHA (tag in trailing comment); the shared SHAs match the
 # ones already vetted in .github/workflows/ci.yml. gitleaks is installed from a
-# version-pinned release tarball whose integrity is checked against the release's
-# own signed SHA256SUMS, so nothing depends on a floating tag.
+# version-pinned release tarball checked against the checksums file published in the
+# SAME release, so nothing depends on a floating tag. That is a pin and a transfer
+# check, not a signature: no signature is verified (this header said "signed"), and
+# both files come from one origin, so it does not defend against that origin.
 
 on:
   push:
@@ -62,12 +70,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` in ci.yml.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -103,12 +106,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` in ci.yml.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -225,12 +223,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      # Nine crates rebuilt from zero in every job that touches cargo: no workflow
-      # cached anything, measured with `grep -c "rust-cache|~/.cargo" .github/workflows/*.yml`
-      # returning 0 in all eleven files. Placed AFTER the toolchain step, not after
-      # checkout: the plugin keys its cache on the CURRENT rustc version, so a cache
-      # taken before the toolchain is selected is keyed on the runner's preinstalled
-      # compiler and never hits. That is upstream's own instruction at this sha.
+      # rust-cache AFTER the toolchain step -- the why is written once, at `cockpit-core` in ci.yml.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
@@ -403,8 +396,8 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # Full history so the PR-range secret scan can walk every commit in the
-          # branch, not just the tip tree.
+          # Full history, fetched for a PR-range secret scan that walks every commit in the
+          # branch. That scan does not run yet -- see the F-20 note on the step below.
           fetch-depth: 0
       - name: Install gitleaks (version-pinned, checksum-verified)
         # Download the pinned release tarball AND the release's own SHA256SUMS, then
@@ -435,7 +428,9 @@ jobs:
             --exit-code 0
           echo "--- gitleaks findings (RuleID | File) ---"
           python3 -c "import json,sys;d=json.load(open(sys.argv[1]));[print(x.get('RuleID'),'|',x.get('File'),'| line',x.get('StartLine')) for x in d];sys.exit(1 if d else 0)" "$RUNNER_TEMP/gitleaks.json"
-      - name: Scan the PR commit range for secrets
+      # The NAME used to be "Scan the PR commit range for secrets". It scans no commit range
+      # (see the note inside), so the name now says what the step does.
+      - name: Re-scan the working tree on PRs (the commit-range scan is NOT active - F-20)
         if: ${{ github.event_name == 'pull_request' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

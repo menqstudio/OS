@@ -4,7 +4,8 @@
 Cross-platform where AF_UNIX exists: the framed round-trip and the supervisor's
 "only {run_id, attempt_id}" rejection. Linux-only (SO_PEERCRED): the peer-UID allow-list
 denial. The full four same-login-user denials are machine-proven by the Linux CI job
-`engine-isolation` (dedicated service users) — see `.github/workflows/ci.yml`.
+`signer-isolation` (dedicated service users; it runs `engine/ci/isolation_proof.sh`) — see
+`.github/workflows/ci.yml`.
 """
 
 import json
@@ -19,42 +20,22 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))  # _brops_fixtures
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-import brops_canonical as bc
 import brops_protocol
 import brops_receipt_signer as signer
 import brops_signer_service
 import brops_socket
 from brops_evidence_store import EvidenceStore
-from brops_supervisor_attest import RunState, produce_sign_request
+from brops_supervisor_attest import produce_sign_request
 from brops_supervisor_service import SupervisorService
+
+from _brops_fixtures import keypair as _keypair
+from _brops_fixtures import run_state as _run_state
+from _brops_fixtures import signer_env
 
 _HAS_UNIX = hasattr(socket, "AF_UNIX")
 _HAS_PEERCRED = hasattr(socket, "SO_PEERCRED") and os.name == "posix"
-
-
-def _keypair():
-    p = Ed25519PrivateKey.generate()
-    return (
-        p.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex(),
-        p.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex(),
-    )
-
-
-def _run_state():
-    return RunState(
-        run_id="run-1", execution_attempt_id="attempt-1", lease_id="lease-1",
-        request_nonce="00000000-0000-4000-8000-000000000000",
-        receipt_id="11111111-1111-4111-8111-111111111111", decision="completed",
-        workspace_id="ws-1", install_id="install-1", supervisor_id="sup-1",
-        executor_id="exec-1", builder_id="builder-1", policy_id="policy-1", policy_version="1",
-        requested_at="1000", completed_at="2000", system="s",
-        history=[{"role": "user", "content": "hi"}], output="out", generation_config="{}",
-        containment_evidence={"contained": True}, policy_bundle=b"pb",
-    )
 
 
 @unittest.skipUnless(_HAS_UNIX, "AF_UNIX unavailable on this platform")
@@ -73,19 +54,8 @@ class SignerServiceTests(unittest.TestCase):
         store_dir = self.d / "store"
         self.store = EvidenceStore(str(store_dir))
         self.sock = str(self.d / "sock" / "signer.sock")
-        self.env = {
-            "BROPS_EVIDENCE_STORE_DIR": str(store_dir),
-            "BROPS_RECEIPT_SIGNER_KEYDIR": str(keydir),
-            "BROPS_SUPERVISOR_ATTESTATION_PUBKEY": self.att_pub,
-            "BROPS_SUPERVISOR_ATTESTATION_KEY_ID": "sup-att-1",
-            "BROPS_ALLOWED_EXECUTOR_IDS": "exec-1",
-            "BROPS_ALLOWED_BUILDER_IDS": "builder-1",
-            "BROPS_ALLOWED_SUPERVISOR_IDS": "sup-1",
-            "BROPS_EXPECTED_POLICY_ID": "policy-1",
-            "BROPS_EXPECTED_POLICY_VERSION": "1",
-            "BROPS_EXPECTED_POLICY_BUNDLE_SHA256": bc.policy_bundle_sha256(b"pb"),
-            "BROPS_SIGNER_SOCKET": self.sock,
-        }
+        self.env = signer_env(store_dir=store_dir, keydir=keydir, attestation_pubkey=self.att_pub)
+        self.env["BROPS_SIGNER_SOCKET"] = self.sock
 
     def _request(self):
         return produce_sign_request(
@@ -117,9 +87,14 @@ class SignerServiceTests(unittest.TestCase):
         env["BROPS_ALLOWED_PEER_UIDS"] = "999999"  # not our uid
         self._serve_once(env)
         # A denied peer is dropped without a response: the client sees EOF (ProtocolError)
-        # or a broken pipe / reset (OSError) depending on timing — both mean DENIED.
-        with self.assertRaises((brops_protocol.ProtocolError, OSError)):
+        # or a broken pipe / reset depending on timing — those mean DENIED. A bare `OSError`
+        # is NOT accepted: a timeout or a refused connection is one too, and a service that
+        # hung or never bound has denied nothing (`brops_isolation_prover` calls that case
+        # INCONCLUSIVE for the same reason).
+        with self.assertRaises((brops_protocol.ProtocolError, ConnectionResetError,
+                                BrokenPipeError)) as caught:
             brops_socket.request(self.sock, self._request(), timeout=5)
+        self.assertNotIsInstance(caught.exception, TimeoutError)
 
 
 class SupervisorServiceRejectionTests(unittest.TestCase):
@@ -137,6 +112,33 @@ class SupervisorServiceRejectionTests(unittest.TestCase):
         extra = {"protocol": "brops.evidence-request.v1", "run_id": "r",
                  "execution_attempt_id": "a", "evidence": {}}
         self.assertEqual(svc.handle(extra)["reason"], "malformed")
+
+    def test_supervisor_refuses_a_run_handle_that_could_name_another_path(self):
+        # The handle becomes a file name under the protected run-state directory. The
+        # gate checked only that both parts were strings, so "../outside/evil" and an
+        # absolute path went on to the provider. Refused here, before any state is
+        # touched — the bare service below has none to touch.
+        svc = SupervisorService.__new__(SupervisorService)
+        for run_id, attempt in (("../outside/evil", "a"), ("/etc/passwd", "a"), ("r", "../a"),
+                                ("r\\x", "a"), ("", "a"), (".", "a"), ("r", "a\n")):
+            frame = {"protocol": "brops.evidence-request.v1", "run_id": run_id,
+                     "execution_attempt_id": attempt}
+            self.assertEqual(svc.handle(frame)["reason"], "malformed", frame)
+
+    def test_the_contract_schema_carries_the_same_handle_pattern(self):
+        import json
+        import brops_protocol
+        from brops_live_runstate import HANDLE_COMPONENT
+        schema = json.loads((ROOT / "contracts" / "brops-evidence-request.v1.schema.json")
+                            .read_text(encoding="utf-8"))
+        for field in ("run_id", "execution_attempt_id"):
+            self.assertEqual(schema["properties"][field]["pattern"],
+                             "^" + HANDLE_COMPONENT.pattern + "$")
+        good = {"protocol": "brops.evidence-request.v1", "run_id": "run-1",
+                "execution_attempt_id": "attempt-1"}
+        brops_protocol.validate(good, schema)
+        with self.assertRaises(brops_protocol.ProtocolError):
+            brops_protocol.validate(dict(good, run_id="../outside/evil"), schema)
 
 
 if __name__ == "__main__":

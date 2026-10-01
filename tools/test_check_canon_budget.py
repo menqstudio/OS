@@ -60,6 +60,19 @@ class Budgets(unittest.TestCase):
                "total_bytes_max": 20_000, "max_shared_fraction": 0.2})
         self.assertEqual(self.run_gate(), 0)
 
+    def test_a_crlf_checkout_measures_as_the_committed_file(self):
+        # 100 lines, inside the ceiling as committed; the same text checked out with CRLF is
+        # 100 bytes longer on disk and was over it -- on windows-latest only.
+        text = body(100)
+        ceiling = len(text.encode("utf-8")) + 50
+        build(self.dir, {"A.md": text},
+              {"per_file_bytes": {"A.md": ceiling},
+               "total_bytes_max": ceiling, "max_shared_fraction": 0.2})
+        self.assertEqual(self.run_gate(), 0)
+        (self.dir / "A.md").write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        self.assertGreater((self.dir / "A.md").stat().st_size, ceiling)
+        self.assertEqual(self.run_gate(), 0)
+
     def test_a_file_over_its_ceiling_is_red(self):
         """Mutant: delete the per-file comparison ⇒ this goes green."""
         build(self.dir,
@@ -139,9 +152,22 @@ class Budgets(unittest.TestCase):
 
 
 class TheRealCanon(unittest.TestCase):
-    """The gate is expected to be RED on this repository until the canon is cut down.
-    Asserting that is not asserting a defect is fine: it pins the gate to a tree it is
-    known to refuse, so a change that accidentally neuters it cannot pass unnoticed."""
+    """The real declaration, and the real canon against it.
+
+    This docstring said "the gate is expected to be RED on this repository until the canon is
+    cut down" -- and the class never ran the gate, so nothing here could have noticed either
+    way. The canon was cut down; the gate is GREEN; and `test_the_real_canon_is_within_its_
+    budget` now runs it, so the sentence is a test instead of a claim."""
+
+    def test_the_real_canon_is_within_its_budget(self):
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = check_canon_budget.main(ROOT)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("GREEN: canonical read set within budget", out.getvalue())
 
     def test_the_budget_names_exactly_the_manifest(self):
         manifest = json.loads(

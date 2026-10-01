@@ -298,14 +298,28 @@ class OpenAdmitsATurnTests(_Case):
         self.assertNotIn("lease_id", columns)
         self.assertNotIn("challenge_accepted_at_ms", columns)
 
-    def test_the_admission_clock_read_is_not_persisted_anywhere(self):
-        """§4.10(a0): the resource-admission ``now_ms`` is discarded, never stamped."""
+    def test_the_admission_clock_is_a_row_timestamp_and_never_an_acceptance_time(self):
+        """§4.10(a0): the resource-admission ``now_ms`` is not an ACCEPTANCE time.
+
+        Named `..._is_not_persisted_anywhere` until 2026-10-01, which is not what happens: the
+        clock read IS stored, as the staging row's own `created_at_ms` / `updated_at_ms`. What
+        the design forbids is narrower — no column calls it the time the challenge was
+        accepted, and no acceptance row exists to carry one. Both halves are asserted, so the
+        clock value this test sets is actually looked for.
+        """
         self.clock = 1_700_000_123_456
         self.open()
         row = self.staging_rows()[0]
-        # created/updated are the ledger's own row timestamps; nothing stores it as an
-        # acceptance time, and no column claims to be one.
+        self.assertEqual(row["created_at_ms"], self.clock)
+        self.assertEqual(row["updated_at_ms"], self.clock)
+        # Those two are the ONLY places it went: no other column of the row holds it...
+        self.assertEqual(
+            sorted(key for key in row.keys() if row[key] == self.clock),
+            ["created_at_ms", "updated_at_ms"])
+        # ...no column claims to be an acceptance time, and nothing was accepted.
         self.assertNotIn("challenge_accepted_at_ms", row.keys())
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -867,16 +881,30 @@ class StagingStateMachineTests(_Case):
                 self.assertIn("binding is immutable", str(ctx.exception))
 
     def test_the_two_unique_constraints_exist(self):
-        self._row()
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.conn.execute(
-                "INSERT INTO governed_turn_staging (install_id, request_nonce, challenge_handle,"
-                " run_id, task_id, workspace_id, system_sha256, history_sha256,"
-                " generation_config_sha256, state, challenge_expires_at_ms, created_at_ms,"
-                " updated_at_ms) VALUES ('install-1','nonce-abc-123',?,'r','t','w',?,?,?,"
-                "'VERIFYING',1,1,1)",
-                ("9" * 64, "a" * 64, "b" * 64, "c" * 64),
-            )
+        row = self._row()
+        insert = (
+            "INSERT INTO governed_turn_staging (install_id, request_nonce, challenge_handle,"
+            " run_id, task_id, workspace_id, system_sha256, history_sha256,"
+            " generation_config_sha256, state, challenge_expires_at_ms, created_at_ms,"
+            " updated_at_ms) VALUES (?,?,?,'r','t','w',?,?,?,'VERIFYING',1,1,1)")
+        digests = ("a" * 64, "b" * 64, "c" * 64)
+        cases = (
+            # The staged (install, nonce) under a FRESH handle: only that pair can collide.
+            ("install_id, request_nonce", (row["install_id"], row["request_nonce"], "9" * 64),
+             "governed_turn_staging.install_id, governed_turn_staging.request_nonce"),
+            # A FRESH (install, nonce) under the staged handle: only the handle can collide.
+            # This is the half the name promised and the single INSERT here never reached.
+            ("challenge_handle", ("install-other", "nonce-fresh-999", row["challenge_handle"]),
+             "governed_turn_staging.challenge_handle"),
+        )
+        for constraint, identity, named in cases:
+            with self.subTest(unique=constraint):
+                with self.assertRaises(sqlite3.IntegrityError) as caught:
+                    self.conn.execute(insert, identity + digests)
+                self.assertEqual(str(caught.exception), "UNIQUE constraint failed: " + named)
+        # The control: an insert that collides on NEITHER is accepted, so both refusals above
+        # are the constraints and not something else about the row.
+        self.conn.execute(insert, ("install-other", "nonce-fresh-999", "8" * 64) + digests)
 
     def test_a_corrupt_or_foreign_row_state_is_refused_not_interpreted(self):
         """A stored state outside the closed domain means a corrupt or foreign DB.

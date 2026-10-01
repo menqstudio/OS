@@ -149,7 +149,15 @@ def task_contract(task_id: str, agent_id: str = AGENT) -> dict:
     }
 
 
-class DurableRuntimeTests(unittest.TestCase):
+class _DurableRuntimeFixture(unittest.TestCase):
+    """The runtime, its trusted keys and its evidence store — and no tests.
+
+    `DurableVerificationCompletionTests` used to get this `setUp` by subclassing
+    `DurableRuntimeTests`, which also made it INHERIT that class's eighteen tests: each ran a
+    second time under the subclass's name, after a `setUp` that additionally builds a git
+    repository none of them use. The suite reported eighteen more tests than it had.
+    """
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         base = pathlib.Path(self.temporary.name)
@@ -181,6 +189,8 @@ class DurableRuntimeTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+
+class DurableRuntimeTests(_DurableRuntimeFixture):
     def test_priority_queue_and_exact_agent_claim(self):
         self.runtime.create_task(task_contract("task-background"), queue_class="background", now_epoch=100)
         self.runtime.create_task(task_contract("task-recovery"), queue_class="recovery", now_epoch=101)
@@ -260,8 +270,8 @@ class DurableRuntimeTests(unittest.TestCase):
         """O-4 in the runtime: `owner-gev` was a string the caller typed.
 
         Approving a retry is the OWNER's decision and nothing in this engine can
-        verify that a caller is the owner, so the call refuses and says exactly what
-        the owner must mint. It must not re-queue on a self-assertion, and the task
+        verify that a caller is the owner, so the call refuses and says exactly which
+        artifact is missing. It must not re-queue on a self-assertion, and the task
         must stay where the budget gate left it.
         """
         self.blocked_task()
@@ -488,7 +498,7 @@ def verification_contract(task_id):
     return c
 
 
-class DurableVerificationCompletionTests(DurableRuntimeTests):
+class DurableVerificationCompletionTests(_DurableRuntimeFixture):
     """Blocker 6b: a verification-required task completes only on an independent
     verifier-signed GREEN receipt (builder != verifier), matching the Stop gate.
     complete_task authorizes the manifest + verifier receipt in-process

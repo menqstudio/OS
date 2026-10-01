@@ -9,11 +9,12 @@ separation the cryptography cannot enforce.
 
 Ed25519 fixes that shape. This module only ever verifies, and only ever loads
 public keys. Private keys belong to the issuer, the evidence recorder, the
-verifier and the offline operator, each outside any agent process. Nothing here
+verifier and the operator root, each outside any agent process. Nothing here
 can produce a signature, which is the point: an enforcement point that could sign
 is an enforcement point that could forge.
 
-The trusted key registry is signed by the offline operator root key, but the
+The trusted key registry is signed by the operator root key — minted at install,
+used by provisioning and then destroyed; no person holds it (PR #78) — but the
 registry may NOT name its own anchor: the operator-root public key is pinned from
 outside the tree (BRO_OPERATOR_ROOT_PUBKEY_FILE for production, or
 BRO_OPERATOR_ROOT_PUBKEY for CI). Otherwise an attacker who can write
@@ -869,7 +870,7 @@ def resolve_registry_root(root: pathlib.Path = ROOT,
 def load_trusted_keys(root: pathlib.Path = ROOT,
                       operator_public_key: str | None = None,
                       *, env: Mapping[str, str] | None = None) -> dict[str, TrustedKey]:
-    """Load the registry, refusing it unless the offline operator signed it.
+    """Load the registry, refusing it unless the pinned operator root signed it.
 
     A registry that is merely present is not trusted. The operator-root anchor is
     pinned from OUTSIDE the registry (see ``resolve_operator_root_pin``): without

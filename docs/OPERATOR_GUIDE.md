@@ -4,10 +4,14 @@
 > **BroPS desktop cockpit** (`apps/desktop/`) — the human-facing half of `menqstudio/OS`
 > (Tauri 2 + Rust + SQLite + React 19).
 >
-> **Windows is the only platform the app can currently run on.** Linux still builds and its tests
-> run, but since first-launch trust provisioning landed, the POSIX branch of sealing the trust
-> anchor returns `Unsupported` and **startup aborts**. §2.3 says exactly what a POSIX deployment
-> would have to provide. Do not read the Linux column of any table here as a supported install.
+> **Windows is the only platform on which the app provisions itself.** On Linux the application
+> never creates its trust anchor — `anchor::preprovision_refusal` refuses before anything is minted —
+> and a root installer does it instead: `brops_install_anchor`, run by the `.deb`'s `postinst`
+> (`T-137`, `T-138`) and exercised as root in CI. A Linux machine on which that install step did not
+> run still **refuses first launch**, and the governed path there stays refused for the reasons in
+> §4 and §11. §2.3 says exactly what the POSIX installer provides. This note said "Windows is the
+> only platform the app can currently run on" and that the POSIX branch "aborts startup" until
+> 2026-10-01. *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 >
 > **Honesty contract.** Every section marks what **exists today** vs. what is **PLANNED**. The
 > governed-execution **Windows broker** (services, per-service SIDs, NTFS/CNG DACLs, AppContainer
@@ -42,22 +46,32 @@ ships in no installer, so a stock install runs no service either; see §2.3.
 
 ## 2. Install
 
-### 2.1 From a release installer (Windows — primary)
+### 2.1 From a release installer
 
-The `release` workflow (`apps/desktop/.github/workflows/release.yml`) builds, per tag `v*` or manual
-`workflow_dispatch`:
+The `release` workflow is the repository-root `.github/workflows/release.yml` — the copy under
+`apps/desktop/.github/workflows/` is a vendored subtree file GitHub never runs. Per tag `v*` or manual
+`workflow_dispatch` it builds on three runners — `ubuntu-latest`, `windows-latest`, `macos-latest` —
+with `tauri.conf.json`'s `"targets": "all"`:
 
 - **Windows:** an **NSIS `.exe`** and a **WiX `.msi`** (`src-tauri/target/release/bundle/{nsis,msi}/`)
-- **Linux:** a `.deb` and an `.AppImage`
+- **Linux:** a `.deb` (whose `postinst` runs the trust-anchor installer, §2.3) and an `.AppImage`
+- **macOS:** an `.app` bundle, checked for signature and notarization
 
 Install on Windows by running either the `.exe` or the `.msi`. Both install per-user and place a
 Start-menu / desktop entry for **BroPS**.
 
-> **Code signing — not configured (known gap).** `tauri.conf.json` declares no Windows signing
-> certificate, so the produced installers are **unsigned**. Expect a **SmartScreen / "unknown
-> publisher"** prompt on first run (choose *More info → Run anyway* if you trust the build).
-> Authenticode signing of the installers and TCB binaries is **PLANNED** and is also a prerequisite
-> for the WDAC policy in §7.
+> **Code signing — the release workflow refuses to ship unsigned.** Its `preflight` job runs
+> `tools/check_release_signing.py --require-release-ready` and `build` needs it, so a release stops
+> before `npm ci` when any of the Owner's signing material is absent. On Windows the Authenticode
+> certificate is imported from the Owner's secrets at build time and its thumbprint is merged into
+> the config with `--config`; `tauri.conf.json` itself still declares no certificate, on purpose —
+> a committed thumbprint names a certificate the runner may not hold. **What is unsigned** is a
+> local `npm run tauri build`, which has no secrets: expect a SmartScreen / "unknown publisher"
+> prompt from one of those. Whether the Owner's secrets are configured, and whether any release has
+> been cut by this workflow, is not something this guide can state; `docs/RELEASE_SETUP.md` is the
+> setup record. Authenticode signing of the TCB binaries for the WDAC policy in §7 remains
+> **PLANNED**. *(This note said signing was "not configured" and the installers "unsigned", citing
+> the vendored workflow.)*
 
 ### 2.2 From source (developer / self-build)
 
@@ -101,7 +115,7 @@ working install.
 
 **Where it writes.** Two halves, and the split is the whole security argument:
 
-| Half | Windows | Linux (specified; see the platform warning) | Holds |
+| Half | Windows | Linux (written by the root installer; see the platform warning) | Holds |
 |---|---|---|---|
 | App-side trust store | `%APPDATA%\studio.menq.brops\trust\` | `~/.local/share/studio.menq.brops/trust/` | `keys/` (the 8 retained private halves), `artifacts/conductor-session.json`, `POSTURE.txt` |
 | Machine-wide **trust anchor** | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` | `operator-root.pub` (the pin), `registry-min` (anti-rollback floor), `registry/config/trusted-keys.json`, `PROVISIONING.json`, `CUSTODY.txt` |
@@ -131,16 +145,23 @@ afterwards needs an administrator.
 > without an anchor, and every keyed `bro_audit_log.verify()` then fails closed — which is correct,
 > and is not something to paper over.
 
-> #### ⚠️ Platform: Windows only, today
+> #### ⚠️ Platform: on Linux a root installer provisions, never the app
 >
-> `anchor::seal` returns `Unsupported` on POSIX **by construction** — a POSIX owner may always
-> `chmod` a directory it owns and there is no OWNER RIGHTS equivalent — so **first-launch
-> provisioning aborts startup on Linux**. The POSIX design is written down (the anchor directory
+> A POSIX owner may always `chmod` a directory it owns and there is no OWNER RIGHTS equivalent, so an
+> anchor the application's own uid built would be one it could rewrite. The application therefore
+> **refuses to create one** (`anchor::preprovision_refusal`, before anything is minted — it used to
+> fail three frames down, when `anchor::seal` returned `Unsupported`), and **uses an anchor that is
+> already in place**. What puts it there is `brops_install_anchor` (`provision/src/posix_install.rs`):
+> run once, as root, at install time, it creates the anchor directory
 > created at `<POSIX_MACHINE_ROOT>/trust-anchor` (read `anchor::POSIX_MACHINE_ROOT` for the current
 > literal rather than copying one out of a document), mode `0755`, owned by a **different** uid — root or a
-> dedicated `brops-anchor` account — with every ancestor likewise, and provisioning run once as that
-> account by the installer, before the app runs as its own unprivileged uid) but **that branch has
-> never executed.** Do not treat the Linux column above as a supported install.
+> dedicated `brops-anchor` account — with every ancestor likewise, hands the retained keys to the
+> desktop account, and does not report success until the application's own launch-time check passes
+> **for that account**. The `.deb` runs it from `postinst` through `/usr/lib/brops/brops-install`, and
+> CI runs its end-to-end test as root. A machine whose install step did not run is not supported for
+> a first launch — the refusal is the honest form of that. The install-ordering warning above applies
+> here as **before install**, not before first launch: on POSIX the registry is sealed when the
+> installer returns.
 
 > **Windows data-at-rest gap (honest).** The `0700`/`0600` hardening in steps 2 and 6 is
 > **Unix-only** (`secure_data_dir` / `secure_owner_only_file` have no non-unix branch). On Windows
@@ -162,7 +183,7 @@ afterwards needs an administrator.
 | App-data dir (holds `brops.db`) | `%APPDATA%\studio.menq.brops\` | `~/.local/share/studio.menq.brops/` |
 | SQLite DB | `…\studio.menq.brops\brops.db` | `…/studio.menq.brops/brops.db` |
 | App-side trust store | `…\studio.menq.brops\trust\` | `…/studio.menq.brops/trust/` |
-| Machine-wide trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (never executed) |
+| Machine-wide trust anchor | `%ProgramData%\BroPS\trust-anchor\` | `<POSIX_MACHINE_ROOT>/trust-anchor/` (created by the root installer, not the app) |
 | Files workspace root | `%USERPROFILE%\BroPS\` | `~/BroPS/` |
 
 Exact resolution is Tauri's `app_data_dir()` for the identifier; the table gives the platform
@@ -295,8 +316,8 @@ design §10) passing, **and** an independent audit, **and** the Owner's approval
 > in the tree** — it is a specification symbol, and `config/spec-conformance.json` records §0.1 as
 > `partial`: *"the platform gate as specified; it is a hardcoded false."* The hardcoded false is
 > three real refusals, and those are what to cite:
-> `governed_verification_unconfigured()` (`src/commands.rs`) returns `Some(…)` unconditionally and
-> fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns
+> `governed_verification_unconfigured()` (`src/commands.rs`) returns `Some(…)` while any of its five
+> compile-time inputs is absent — all are — and fires *before the model is called*; `connect_broker()` (`src/governed_turn.rs`) returns
 > `UnsupportedPlatform` on every host but Linux; and the broker's own
 > `build_governed_executor` falls back to `UpstreamBlockedExecutor` unless a complete
 > `BROPS_BROKER_CONFIG` parses.
@@ -360,13 +381,16 @@ command surface.
   full Wave 3b chain **are merged and machine-proven**, on Linux (7 services, real uids, a setuid
   launcher) and on Windows (named pipes, cross-account, distinct service accounts), and CI runs
   both on every PR. What still refuses is the **shipped application**, deliberately:
-  `governed_verification_unconfigured()` returns `Some(…)` unconditionally (before the model is
-  called), `connect_broker()` returns `UnsupportedPlatform` off Linux, and the broker keeps
-  `UpstreamBlockedExecutor`. See §4's naming note.
+  `governed_verification_unconfigured()` returns `Some(…)` while any of its five compile-time inputs
+  is absent — all are — (before the model is called), `connect_broker()` returns `UnsupportedPlatform`
+  off Linux, and the broker keeps `UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a
+  complete deployment config, which nothing in the shipped app sets. See §4's naming note.
 
   **A proof kit that runs is not a shipped guarantee.** Opening the gate needs an independent audit
   of the whole chain **and** the Owner's approval — a green CI run is neither. Five engine residual
-  items remain OPEN, three of them waiting on an artifact only the Owner can mint.
+  items remain OPEN. None of them waits on a key or an artifact from a person: the install mints
+  every authority key (#78), and what blocks them is deployment wiring and a second principal
+  (`docs/PHASE_10_PRODUCTION_ITEMS.md`).
 
 Operationally: do not present governed mode as a working feature to users yet. Live status:
 [`NEXT_CHAT.md`](../NEXT_CHAT.md) and [`config/current_state.json`](../config/current_state.json).
@@ -534,8 +558,8 @@ Known gaps (honest):
   stock install has no audit-head anchor and keyed ledger verification fails closed (§2.3).
 - Windows lacks the Unix `0700`/`0600` data hardening and owner-only sandbox — the retained private
   keys inherit the app-data ACL (Windows equivalents are **PLANNED (broker)**).
-- Installers are **unsigned**; a residual filesystem TOCTOU window is accepted for the single-user
-  threat model.
+- A locally built installer is **unsigned** (the release workflow refuses to produce an unsigned
+  one, §2.1); a residual filesystem TOCTOU window is accepted for the single-user threat model.
 - The boundary is the app's **unelevated token**: on a machine whose user is a local administrator,
   one UAC consent gives full control. Provisioning refuses outright if its token holds
   `SeTakeOwnership` or `SeRestore`, rather than proceeding and claiming an anchor it does not have.

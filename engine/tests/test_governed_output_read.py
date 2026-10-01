@@ -31,21 +31,22 @@ What this file is organized around:
 
 No prerequisite here is optional. Everything is stdlib plus repo modules, imported at module
 scope with no ``try``/``except`` and no ``skipIf``, so a missing prerequisite is an
-unmissable hard error rather than a green run with a quiet skip. (There is no
-``BROPS_TEST_MISSING_PREREQUISITES`` declaration anywhere in this tree, so nothing is
-declared in it and nothing here may be softened.)
+unmissable hard error rather than a green run with a quiet skip. (``BROPS_TEST_MISSING_PREREQUISITES`` is
+not consulted here: that declaration is the Rust `provision` crate's, set for one Windows job
+in ``.github/workflows/ci.yml``, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 
 import base64
 import hashlib
 import json
 import pathlib
-import sqlite3
 import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _acceptance_fixtures
 
 import brops_protocol as bp  # noqa: E402
 import governed_output_read as gor  # noqa: E402
@@ -53,6 +54,8 @@ import governed_output_stream as gos  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
 import governed_supervisor_server as gss  # noqa: E402
 from governed_supervisor import SupervisorError  # noqa: E402
+
+from _acceptance_fixtures import FakeConn, accept, ledger  # noqa: E402
 
 BROKER_UID = 4001
 SIDECAR_UID = 4004
@@ -84,29 +87,6 @@ class Store(dict):
         if hashlib.sha256(data).hexdigest() != handle:
             raise ValueError("store corruption at %s" % handle)
         return data
-
-
-def ledger() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:", isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    gsl.apply_schema(conn)
-    return conn
-
-
-def accept(conn, attempt, *, install_id="inst-1", nonce, receipt_id, handle,
-           now_ms=NOW) -> None:
-    gsl.accept_prepare(conn, gsl.NewAcceptance(
-        install_id=install_id, request_nonce=nonce, challenge_handle=handle,
-        run_id="run-1", task_id="task-1", workspace_id="ws-1",
-        execution_attempt_id=attempt, challenge_accepted_at_ms=now_ms,
-        challenge_registry_handle="d" * 64, challenge_registry_hash="e" * 64,
-        challenge_registry_epoch=7, challenge_registry_root_key_id="root-1",
-        lease_payload_bytes=b"{}", lease_id="lease-1",
-        lease_issued_at_ms=now_ms, lease_expires_at_ms=now_ms + 210_000,
-        receipt_id=receipt_id, supervisor_id="sup-1", requested_at_ms=now_ms - 10,
-        request_sha256="f" * 64, system_handle="1" * 64, history_handle="2" * 64,
-        generation_config_handle="3" * 64,
-    ), now_ms)
 
 
 def b64(data: bytes) -> str:
@@ -303,7 +283,8 @@ class VerdictOrderTests(unittest.TestCase):
 
         The cross-turn case, built out of two real streams rather than a mutated id."""
         f = Fixture(b"turn one")
-        accept(f.conn, "attempt-2", nonce="nonce-2", receipt_id="rcpt-2", handle="9" * 64)
+        accept(f.conn, "attempt-2", nonce="nonce-2", receipt_id="rcpt-2", handle="9" * 64,
+               now_ms=NOW)
         other_handle = f.store.publish(b"turn two")
         _o, other = gos.mint_stream(f.conn, gos.NewStream(
             install_id="inst-1", receipt_id="rcpt-2", execution_attempt_id="attempt-2",
@@ -561,28 +542,6 @@ class FrameFitTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class FakeConn:
-    def __init__(self, peer_uid, inbound: bytes = b""):
-        self.peer_uid = peer_uid
-        self._in = inbound
-        self.out = b""
-
-    def recv_exactly(self, n: int) -> bytes:
-        chunk = self._in[:n]
-        self._in = self._in[n:]
-        return chunk
-
-    def send_all(self, data: bytes) -> None:
-        self.out += data
-
-    def close(self) -> None:
-        pass
-
-    def decoded_reply(self):
-        length = int.from_bytes(self.out[:4], "big")
-        return json.loads(self.out[4:4 + length].decode("utf-8"))
-
-
 def framed(obj) -> bytes:
     body = json.dumps(obj, separators=(",", ":")).encode("utf-8")
     return len(body).to_bytes(4, "big") + body
@@ -637,10 +596,32 @@ class FrameBoundTests(unittest.TestCase):
         """Widening the sidecar's writer must not widen the broker's. An `op` frame reply is
         still framed at 8192, so nothing about the §5 surface moved."""
         self.assertEqual(gss.MAX_FRAME_BYTES, 8192)
+        # The bound the WRITER is handed, per peer. A broker reply is small, so measuring the
+        # reply's length says nothing — a writer widened to the sidecar's bound for every peer
+        # still produces the same short error frame. What is asked is which bound it was given.
+        bounds = []
+        real_write = gss._try_write
+
+        def spy(conn, reply, max_bytes=gss.MAX_FRAME_BYTES):
+            bounds.append(max_bytes)
+            return real_write(conn, reply, max_bytes)
+
+        gss._try_write = spy
+        self.addCleanup(setattr, gss, "_try_write", real_write)
+
         conn = FakeConn(BROKER_UID, framed({"op": "launch-gate", "extra": "x" * 20}))
         gss.handle_connection(conn, BROKER_UID, _config(), lambda m, s: True,
                               lambda p: "0" * 64, lambda: NOW, ledger_conn=ledger())
+        self.assertEqual(bounds, [gss.MAX_FRAME_BYTES])
         self.assertLessEqual(len(conn.out), 8192 + 4)
+
+        # The contrast, so the assertion above is about the BROKER and not about every peer:
+        # the sidecar's writer does get the wider bound.
+        del bounds[:]
+        f = Fixture()
+        front_door(f, f.request(seq=0))
+        self.assertEqual(bounds, [gss.MAX_SIDECAR_FRAME_BYTES])
+        self.assertGreater(gss.MAX_SIDECAR_FRAME_BYTES, gss.MAX_FRAME_BYTES)
 
     def test_an_over_bound_reply_still_degrades_rather_than_killing_the_process(self):
         """The belt behind the braces (audit F-11): a reply that will not frame must not
@@ -764,7 +745,8 @@ class CompletionMintTests(unittest.TestCase):
         store = Store()
         output = b"the model said this"
         handle = store.publish(output)
-        accept(conn, "attempt-1", nonce="nonce-1", receipt_id="rcpt-1", handle="c" * 64)
+        accept(conn, "attempt-1", nonce="nonce-1", receipt_id="rcpt-1", handle="c" * 64,
+               now_ms=NOW)
         gsl.mark_lease_ready(conn, "attempt-1", lease_handle="7" * 64, now_ms=NOW)
         gsl.gate_and_start(conn, "attempt-1", NOW)
         gsl.mark_executing(conn, "attempt-1", process_group_id="pg", cgroup_id="cg",

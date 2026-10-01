@@ -157,6 +157,53 @@ class FrameBoundTests(unittest.TestCase):
             read_frame(conn)
 
 
+class EveryAdmittedRequestHasAFramableReplyTests(unittest.TestCase):
+    """The id cap counted CHARACTERS and the frame cap counts BYTES. A request the validator
+    admitted could produce an issue reply over the frame bound: the row was burned `ISSUED`
+    and nothing was written, on the request or on any replay of it."""
+
+    def create_then_issue(self, fields):
+        store = PendingStore(id_fn=lambda: "pending-abc")
+        created = FakeConn(BROKER_UID, inbound=_frame({"op": OP_CREATE_PENDING, **fields}))
+        reply = handle_connection(created, BROKER_UID, store, _config(), _sign_fn, _clock)
+        if not reply.get("ok"):
+            return store, reply, None
+        issued = FakeConn(BROKER_UID, inbound=_frame(
+            {"op": OP_ISSUE, "pending_challenge_id": reply["pending_challenge_id"]}))
+        handle_connection(issued, BROKER_UID, store, _config(), _sign_fn, _clock)
+        return store, reply, issued
+
+    def test_ids_that_fit_in_characters_but_not_in_bytes_are_refused_before_any_row(self):
+        astral = "\U0001F600" * 128                  # 128 "chars", 512 UTF-8 bytes
+        fields = dict(VALID_FIELDS, run_id=astral, task_id=astral, workspace_id=astral,
+                      request_nonce=astral)
+        store, reply, issued = self.create_then_issue(fields)
+        self.assertFalse(reply["ok"], "an id over the byte bound was admitted")
+        self.assertIsNone(issued)
+        self.assertIsNone(store.get("pending-abc"), "a refused request must burn no row")
+
+    def test_the_largest_ids_the_bound_admits_still_get_their_reply(self):
+        """Worst case UNDER the byte bound: characters `json.dumps` expands the most. A control
+        character is one byte and six once escaped; an astral character is four and twelve."""
+        for name, char in (("control", "\x01"), ("astral", "\U0001F600"), ("two-byte", "\xe9"),
+                           ("ascii", "x")):
+            width = len(char.encode("utf-8"))
+            biggest = char * (128 // width)
+            self.assertEqual(len(biggest.encode("utf-8")), 128)
+            fields = dict(VALID_FIELDS, run_id=biggest, task_id=biggest, workspace_id=biggest,
+                          request_nonce=biggest)
+            with self.subTest(ids=name):
+                _store, reply, issued = self.create_then_issue(fields)
+                self.assertTrue(reply["ok"], reply)
+                self.assertTrue(issued.out, "the issue reply was never written")
+                self.assertLessEqual(len(issued.out) - LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES)
+                self.assertTrue(issued.decoded_reply()["ok"], issued.decoded_reply())
+
+    def test_an_id_that_cannot_be_encoded_is_not_an_id(self):
+        _store, reply, _issued = self.create_then_issue(dict(VALID_FIELDS, run_id="\ud800"))
+        self.assertFalse(reply["ok"])
+
+
 class DispatchTests(unittest.TestCase):
     def test_valid_create_pending_dispatch(self):
         store = PendingStore(id_fn=lambda: "pending-abc")
@@ -443,12 +490,28 @@ class TheConnectionBudgetBoundsOneExchangeTests(unittest.TestCase):
 
     def test_the_bound_comes_from_the_shared_module_rather_than_a_local_copy(self):
         """Five accept loops, two bounds, three of them unbounded — the divergence WAS the defect.
-        One number, one place."""
+        One number, one place.
+
+        Asked of a connection built the way the accept loop builds it, with NO budget passed:
+        every other test here names its own budget, so a local default of a day would pass them
+        all, and comparing `srv.brops_socket.X` with `brops_socket.X` compares a module to itself.
+        """
+        import time
+
         import brops_socket
-        self.assertIs(self.srv.brops_socket.recv_exactly_bounded,
-                      brops_socket.recv_exactly_bounded)
-        self.assertEqual(self.srv.brops_socket.CONNECTION_BUDGET_S,
-                         brops_socket.CONNECTION_BUDGET_S)
+        before = time.monotonic()
+        conn = self.srv.SocketPeerConn(self.FakeSock())
+        after = time.monotonic()
+        self.assertGreaterEqual(conn._deadline, before + brops_socket.CONNECTION_BUDGET_S)
+        self.assertLessEqual(conn._deadline, after + brops_socket.CONNECTION_BUDGET_S)
+        # ...and the read goes through the shared bounded reader, not a local loop.
+        seen = []
+        original = brops_socket.recv_exactly_bounded
+        self.addCleanup(setattr, brops_socket, "recv_exactly_bounded", original)
+        brops_socket.recv_exactly_bounded = (
+            lambda recv, n, **kwargs: seen.append((n, kwargs["deadline"])) or b"")
+        conn.recv_exactly(4)
+        self.assertEqual(seen, [(4, conn._deadline)])
 
 
 if __name__ == "__main__":

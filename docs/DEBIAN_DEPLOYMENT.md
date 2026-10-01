@@ -68,11 +68,20 @@ sudo -u signer rm /var/lib/brops-signer/.probe
 ## Steps 1–5 — deleted, the install does them
 
 They minted an operator root by hand, on removable media, and signed three artifacts with it. The
-app now provisions its own trust material on first launch: `apps/desktop/src-tauri/provision/`
-generates one Ed25519 key per authority the engine knows, signs a `trusted-key-registry` in the
-exact form `bro_signature.load_trusted_keys` accepts, and writes it under the app data directory
-with the operator-root pin outside the registry root, where the anchor rule requires it. Nothing is
-carried, nothing expires, nothing is ever asked of the person who installed it.
+install now mints that material, and **on this platform the install is not the app**. On Debian the
+application never creates its own trust anchor: `anchor::preprovision_refusal` refuses before
+anything is minted, because an anchor the app's own uid built is one that uid could rewrite. A root
+installer does it instead — `brops_install_anchor` (`provision/src/posix_install.rs`), which the
+`.deb` runs from its `postinst` through `/usr/lib/brops/brops-install`. As root it generates one
+Ed25519 key per authority the engine knows, signs a `trusted-key-registry` in the exact form
+`bro_signature.load_trusted_keys` accepts, destroys the operator-root private half, writes the
+anchor (pin, floor, registry, manifest) under `/var/lib/brops-trust-anchor`, has a child running
+**as the desktop account** copy the app-side store into that account's data directory, and does
+not report success until the application's own launch-time check passes for that account. The app
+then only finds and verifies the anchor; on a machine where that install step did not run, first
+launch refuses. Nothing is carried, nothing expires, nothing is ever asked of the person who
+installed it. *(This paragraph said "the app now provisions its own trust material on first
+launch", which is the Windows behaviour and is false on the platform this page is written for.)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 
 What that posture claims is written into the code and worth repeating here, because it is smaller
 than the ceremony's claim: locally-minted trust material defends against an attacker who arrives
@@ -287,11 +296,9 @@ nothing in this repository mints yet, and says so where it stands.
 
   ```bash
   export BRO_ENV=ci
-  # From the PUBLISHED REGISTRY, which is public by construction. NOT from
-  # /media/usb/bro-root/operator-root.json — that file holds the private half too, as this
-  # document says at Step 1, and an earlier version of this line sent whoever ran it straight
-  # into it. Reading a private key to obtain a public one is never necessary and is exactly the
-  # step this runbook keeps telling agents not to take.
+  # From the PUBLISHED REGISTRY, which is public by construction — never from a file that
+  # holds a private half. Reading a private key to obtain a public one is never necessary and
+  # is exactly the step this runbook keeps telling agents not to take.
   export BRO_OPERATOR_ROOT_PUBKEY=$(python3 -c "import json; print(json.load(open('$HOME/OS/engine/config/trusted-keys.json'))['payload']['operator_public_key'])")
   # expect: unknown signing key: 'wrong-key-…'   — the KEY is what was rejected
   ```
@@ -300,10 +307,12 @@ nothing in this repository mints yet, and says so where it stands.
   *accepted*. A negative test with no positive control cannot tell "the check works" from
   "everything is refused".
 
-  ⚠️ **Both halves of this one need the Owner.** The registry above is what Step 4 publishes, and
-  a correctly signed anchor is what Step 3 produces — so until the Owner has run Steps 1, 3 and 4
-  there is no pin to set and no positive control to run. Report this check as **NOT RUN**, not as
-  passed. It is listed here rather than moved because it belongs with the other three
+  ⚠️ **The negative half runs today; its positive control cannot, and no person is what it waits
+  for.** The control needs a correctly signed production evidence-floor anchor, and nothing in this
+  repository mints one: `provision::mint_floor_anchor` exists and no shipped path calls it (O-5 —
+  *when* it is minted is an open design question). The steps that once produced it by hand were
+  deleted (above); no person holds or signs with a root (#78). A negative with no positive control
+  proves nothing, so report this check as **NOT RUN**, not as passed. It is listed here rather than moved because it belongs with the other three
   negatives; what it needs is stated so nobody records a refusal-for-the-wrong-reason as
   evidence.
 

@@ -3,7 +3,7 @@
 - **Severity:** High
 - **Confidence:** High
 - **Files:** `runtime/bro_audit_log.py:115-172` (`append`/`verify`), `tools/bro_backup.py:212-215` (`verify_archive`/`restore`)
-- **Status:** ◑ all three fixes landed in code; **deployment-blocked, not closed.** Tracked outside the engine as **O-2** (`docs/PHASE_10_PRODUCTION_ITEMS.md` §O-2, MEDIUM, OPEN): the anchor requires signing custody only the Owner can provide, so until it is provisioned every ledger is honestly `UNANCHORED` and refused. Verified 2026-08-07 at `0efa99e`; not independently re-audited.
+- **Status:** ◑ all three fixes landed in code; **deployment-blocked, not closed.** Tracked outside the engine as **O-2** (`docs/PHASE_10_PRODUCTION_ITEMS.md` §O-2, MEDIUM, OPEN): the anchor requires signing custody under a second principal — the audit signer service, which mints its own key; no person holds one (Owner decision #78) — and no installer registers that service, so until a deployment does, every ledger is honestly `UNANCHORED` and refused. Verified 2026-08-07 at `0efa99e`; not independently re-audited.
 
 ## Problem
 The audit ledger is a plain **unkeyed** SHA-256 hash chain plus a co-located plaintext `.head` sidecar written by the same unprivileged writer. `verify()` recomputes from `GENESIS` and checks the head — but anyone who can write the ledger (it lives beside the recovery store / session state the agent already writes) drops records, recomputes the chain, and rewrites `.head`; `verify()` returns green. `laws/registry.json` advertises `integrity_level: "Hash-Chained"` but the real property is `trust_source: "Self"`. The **evidence chain** (`bro_evidence.py`) does this correctly with an Ed25519 `evidence-head`; the audit ledger never adopted it.
@@ -44,6 +44,10 @@ Compounding: backup **restore** decides whether to chain-verify a file from the 
   `tests/test_audit_head_anchor.py` and `tests/test_backup_restore.py`.
 
 **Why this ticket is still not closed.** The code is complete but the control is inert without
-custody: `anchor_custody` refuses by name when `BRO_AUDIT_HEAD_SIGNER` / its key id are unset, and it
-refuses a signing command that lives inside the engine (`runtime/bro_audit_log.py` — "an anchor it
-signs proves nothing"). Provisioning that signer is the Owner's step, tracked as **O-2**.
+custody: `anchor_custody` refuses by name when `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID`
+are unset, and it refuses a signing command that lives inside the engine (`runtime/bro_audit_log.py` —
+"an anchor it signs proves nothing"). What is missing is deployment wiring and a second principal,
+not a person's key: an elevated install step that registers the signer service under its own
+account, and something that sets those two variables. Nothing in the shipped product does either.
+Tracked as **O-2**. *(This named a variable that never existed, `BRO_AUDIT_HEAD_SIGNER`, and called
+the provisioning a step for the Owner; both corrected 2026-10-01.)*

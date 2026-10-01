@@ -16,28 +16,14 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
-
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+sys.path.insert(0, str(ROOT / "tests"))  # _brops_fixtures
 
 import brops_canonical as bc
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 import brops_receipt_signer as signer
 from brops_supervisor_attest import RunState, produce_sign_request
 
-
-def _keypair():
-    priv = Ed25519PrivateKey.generate()
-    from cryptography.hazmat.primitives import serialization
-
-    raw_priv = priv.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    raw_pub = priv.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
-    )
-    return raw_priv.hex(), raw_pub.hex()
+from _brops_fixtures import keypair as _keypair
 
 
 def _b64url_decode(text: str) -> bytes:
@@ -231,6 +217,24 @@ class SignerEndToEndTests(unittest.TestCase):
         self.assertEqual(result["status"], "refused")
         self.assertEqual(result["reason"], "attestation_invalid")
 
+    def test_a_non_canonical_spelling_of_a_valid_attestation_signature_is_refused(self):
+        """The lenient stdlib decode skipped characters outside the alphabet, so one valid
+        signature had any number of accepted spellings. Each of these decoded to the same 64
+        bytes and VERIFIED."""
+        state = _run_state()
+        request, signed = self._sign(state)
+        self.assertEqual(signed["status"], "signed")          # the control: as sent, it verifies
+        good = request["attestation"]["sig"]
+        for name, spelling in (("padded", good + "=="), ("newline", good[:10] + "\n" + good[10:]),
+                               ("junk", good[:10] + "!" + good[10:]), ("space", " " + good)):
+            with self.subTest(spelling=name):
+                request["attestation"]["sig"] = spelling
+                result = self._sign_only(request)
+                self.assertEqual(result["status"], "refused", name)
+                self.assertEqual(result["reason"], "attestation_invalid")
+        request["attestation"]["sig"] = good
+        self.assertEqual(self._sign_only(request)["status"], "signed")
+
     def test_wrong_supervisor_key_id_is_refused(self):
         state = _run_state()
         request, _ = self._sign(state)
@@ -318,6 +322,69 @@ class SignerEndToEndTests(unittest.TestCase):
             {"protocol": "brops.sign-request.v1", "evidence": {}},
         )
         self.assertEqual(result["status"], "refused")
+
+
+class StdinEntrypointTests(unittest.TestCase):
+    """`main` documents "Always exits 0", with a refusal frame as the verdict."""
+
+    def run_main(self, env):
+        import io
+        import os
+        from unittest import mock
+
+        import brops_protocol
+        reader, writer = io.BytesIO(b""), io.BytesIO()
+        with mock.patch.dict(os.environ, env, clear=False):
+            rc = signer.main(reader, writer)
+        writer.seek(0)
+        return rc, brops_protocol.read_frame(writer)
+
+    def test_an_unprovisioned_signer_answers_with_a_refusal_frame(self):
+        """A key directory with no key file in it: `FileNotFoundError`, which the `except` did
+        not name, so the caller got a traceback and EOF instead of a frame."""
+        import os
+        store = tempfile.mkdtemp()
+        keydir = tempfile.mkdtemp()
+        os.chmod(store, 0o700)
+        os.chmod(keydir, 0o700)
+        rc, frame = self.run_main({
+            "BROPS_EVIDENCE_STORE_DIR": store,
+            "BROPS_RECEIPT_SIGNER_KEYDIR": keydir,
+            "BROPS_SUPERVISOR_ATTESTATION_PUBKEY": "00" * 32,
+            "BROPS_SUPERVISOR_ATTESTATION_KEY_ID": "sup-att-1",
+            "BROPS_EXPECTED_POLICY_ID": "policy-1",
+            "BROPS_EXPECTED_POLICY_VERSION": "1",
+            "BROPS_EXPECTED_POLICY_BUNDLE_SHA256": "0" * 64,
+        })
+        self.assertEqual(rc, 0)
+        self.assertEqual((frame["status"], frame["reason"]), ("refused", "malformed"))
+        self.assertEqual(frame["protocol"], signer.SIGN_RESULT_PROTOCOL)
+
+
+class TheTwoKeyLoadersAreOneFunctionTests(unittest.TestCase):
+    """`load_receipt_signing_key` and `brops_supervisor_attest.load_attestation_key` are the
+    same body twice, for two principals' keys. They are kept separate and held EQUAL, so a
+    hardening of the custody check cannot land in one and be forgotten in the other."""
+
+    @staticmethod
+    def body(function, filename_constant, noun):
+        import ast
+        import inspect
+        import textwrap
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+        definition = tree.body[0]
+        statements = definition.body[1:]            # drop the docstring
+        text = "\n".join(ast.unparse(node) for node in statements)
+        return text.replace(filename_constant, "KEY_FILENAME").replace(noun, "NOUN")
+
+    def test_the_bodies_differ_only_in_the_filename_and_the_noun(self):
+        import brops_supervisor_attest as attest
+        mine = self.body(signer.load_receipt_signing_key,
+                         "RECEIPT_SIGNER_KEY_FILENAME", "receipt-signer")
+        theirs = self.body(attest.load_attestation_key,
+                           "SUPERVISOR_ATTESTATION_KEY_FILENAME", "attestation")
+        self.assertEqual(mine, theirs)
+        self.assertIn("S_IRWXG", mine, "the fixture must be comparing the custody check itself")
 
 
 if __name__ == "__main__":

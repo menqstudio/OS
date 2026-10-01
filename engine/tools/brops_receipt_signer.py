@@ -36,6 +36,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from bro_signature import canonical_bytes
+from brops_protocol import ProtocolError, decode_base64url
 from brops_canonical import (
     RECEIPT_PROTOCOL,
     b64url,
@@ -111,7 +112,14 @@ def _refuse(reason: str, detail: str = "") -> "SignRefused":
 
 def load_receipt_signing_key(keydir: os.PathLike[str] | str) -> dict[str, str]:
     """Load `{key_id, private_key(hex)}` from the signer's own key dir. On POSIX the dir
-    must be owner-only (mirrors `broctl._require_private_key_dir`)."""
+    must be owner-only (mirrors `broctl._require_private_key_dir`).
+
+    `brops_supervisor_attest.load_attestation_key` is this function again, for the other
+    principal's key: same body, another filename and another noun in the messages. The two
+    stay separate because the two keys belong to two processes that must not share a key
+    directory, and `test_brops_receipt_signer` holds the bodies EQUAL -- so a hardening of this
+    custody check (an owner or a file-mode rule; neither function has one today) cannot land in
+    one and be forgotten in the other."""
     directory = pathlib.Path(keydir).expanduser().resolve()
     if os.name == "posix" and directory.exists():
         mode = directory.stat().st_mode
@@ -144,13 +152,13 @@ def _verify_attestation(
     sig_b64 = attestation.get("sig")
     if not isinstance(sig_b64, str) or not sig_b64:
         raise _refuse("attestation_invalid", "missing attestation signature")
-    # base64url (no pad) → raw 64-byte Ed25519 signature.
+    # base64url (no pad) → raw 64-byte Ed25519 signature, through the ONE strict decoder
+    # (`brops_protocol.decode_base64url`). `base64.urlsafe_b64decode`, which this used, silently
+    # skips characters outside the alphabet, so one signature had unboundedly many accepted
+    # spellings -- with padding, with a newline or a `!` dropped anywhere in it.
     try:
-        padding = "=" * (-len(sig_b64) % 4)
-        import base64
-
-        signature = base64.urlsafe_b64decode(sig_b64 + padding)
-    except Exception as exc:  # noqa: BLE001 — any decode failure is fail-closed
+        signature = decode_base64url(sig_b64)
+    except ProtocolError as exc:
         raise _refuse("attestation_invalid", f"attestation signature not base64url: {exc}")
     try:
         pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(attestation_pubkey_hex))
@@ -421,7 +429,11 @@ def main(reader, writer) -> int:
     now_ms = int(time.time() * 1000)
     try:
         components = load_components()
-    except (KeyError, ValueError, EvidenceStoreError):
+    except (KeyError, ValueError, OSError, EvidenceStoreError):
+        # `OSError` is the unprovisioned signer: a key directory with no key file in it raises
+        # `FileNotFoundError` out of `load_receipt_signing_key`, which the tuple above did not
+        # name -- so "Always exits 0" with a refusal frame was a traceback and NO frame, and the
+        # caller on the other end of the pipe read EOF instead of a verdict.
         brops_protocol.write_frame(writer, _refused_malformed(None))
         return 0
     try:

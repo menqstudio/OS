@@ -190,6 +190,16 @@ ENVELOPE_INTEGER_KEYS = (
 ENVELOPE_PAYLOAD_FIELDS = ENVELOPE_STRING_KEYS + ENVELOPE_INTEGER_KEYS
 
 # Fixed refusal-reason vocabulary (§4.2 tagged union).
+#
+# RESERVED, not emitted: three of these are members of the ratified §4.5 vocabulary that this
+# signer can no longer produce, and they stay defined so the vocabulary here is the ratified one
+# rather than "whatever is reachable this week" (``governed_acceptance`` maps the whole set).
+#   * ``REASON_RUN_BINDING_INVALID`` -- no raise site at all.
+#   * ``REASON_NONCE_MISMATCH``      -- its one raise was removed as unreachable; see
+#                                       ``_check_run_binding``'s docstring.
+#   * ``REASON_HASH_MISMATCH``       -- raised only behind ``ArtifactStore.read_verified``'s own
+#                                       digest guard (``_derive_hashes``, ``pragma: no cover``).
+# A reader looking for where the signer answers one of these should stop here.
 REASON_ATTESTATION_INVALID = "attestation_invalid"
 REASON_NOT_COMPLETED = "not_completed"
 REASON_RUN_BINDING_INVALID = "run_binding_invalid"
@@ -270,7 +280,22 @@ def _is_sha256_hex(value: Any) -> bool:
 
 
 def _capped_str(value: Any) -> bool:
-    return isinstance(value, str) and 0 < len(value) <= STRING_CAP
+    """A non-empty string within the cap that can be ENCODED.
+
+    The last clause is what keeps :meth:`IsolatedSigner.sign_result`'s "never raises on hostile
+    input": a ``str`` holding a lone surrogate (U+D800, say -- which strict JSON decoding of a
+    backslash-u escape for it produces) passes a type-and-length check, survives ``_canonical_bytes``
+    (``ensure_ascii`` escapes it) and so survives attestation, and then raises
+    ``UnicodeEncodeError`` in ``_jcs_bytes`` (``ensure_ascii=False`` + ``encode("utf-8")``),
+    which ``sign_result`` does not catch. Such a string is not a value anything can sign.
+    """
+    if not isinstance(value, str) or not 0 < len(value) <= STRING_CAP:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _is_u64_ms(value: Any) -> bool:
@@ -718,7 +743,17 @@ class IsolatedSigner:
         requested_at = evidence["requested_at"]
         completed_at = evidence["completed_at"]
         challenge_accepted_at = evidence["challenge_accepted_at_ms"]
-        # requested <= challenge-accepted <= completed, and not in the future.
+        # requested <= completed and challenge-accepted <= completed, and not in the future.
+        #
+        # `requested_at` and `challenge_accepted_at_ms` are deliberately NOT compared with each
+        # other, and this comment claimed the full chain "requested <= challenge-accepted <=
+        # completed" until 2026-10-01 while the code never checked its first link. The two are
+        # read from different clocks -- `requested_at` is the BROKER's, taken before the
+        # challenge exists and admitted by the authority with no upper bound; the other is the
+        # supervisor's -- and no component upstream refuses a turn for that ordering (the Rust
+        # signer in `win-live/src/servers.rs` compares each with `completed_at` and nothing
+        # else, as this does). Refusing it HERE, after the run has executed, would be the first
+        # place the rule existed.
         if requested_at > completed_at:
             raise _Refuse(REASON_TIMESTAMP_INVALID)
         if challenge_accepted_at > completed_at:
@@ -750,6 +785,15 @@ class IsolatedSigner:
     #: What each published chain document must AGREE with the attested evidence about
     #: (audit round 3, R3-01). Only fields the document and the evidence both carry; a
     #: document is not required to repeat everything, but where it speaks it must not differ.
+    #:
+    #: THE RUST TWIN HAS DRIFTED, AND NOTHING PINS THE TWO (recorded 2026-10-01, not fixed here).
+    #: ``apps/desktop/src-tauri/win-live/src/servers.rs::CHAIN_AGREEMENT`` calls itself "the Rust
+    #: twin of ``_CHAIN_AGREEMENT``, field-for-field". It is not: its record entry ends at
+    #: ``decision`` -- it has none of the three TIME bindings below, and no mechanism for the
+    #: ``(document_field, evidence_field)`` alias pairs two of them need -- so the Windows signer
+    #: does not compare them; and it carries a FOURTH entry (``containment_evidence_handle``)
+    #: this table does not. A change to either table has to be made in both by hand, and a test
+    #: that reads both sources is what would stop the next drift. Neither exists yet.
     _CHAIN_AGREEMENT = {
         "record_handle": (
             "brops.governed-turn-record.v1",

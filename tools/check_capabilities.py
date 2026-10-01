@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Capability-inventory consistency gate — the CI wall for T-010.
 
-Tauri v2 gates only *plugin* commands by default; an app command registered in
-`generate_handler!` but absent from the app manifest (`build.rs`) is invokable by the
-webview with **no permission entry at all**. T-010 closes that by declaring every
-command in the manifest and granting `allow-*` explicitly (deny-by-default). This
-check keeps the three inventories from drifting apart as commands are added:
+Tauri v2 gates only *plugin* commands by default: while an app declares NO manifest, every
+command in `generate_handler!` is invokable by the webview with no permission entry at all.
+T-010 closes that by declaring an app manifest (`build.rs`) and granting `allow-*`
+explicitly (deny-by-default). This check keeps the three inventories from drifting apart
+as commands are added:
 
     registered commands  (src/lib.rs  generate_handler!)  MINUS the explicit
       INTENTIONALLY_UNGATED allowlist
       == AppManifest commands  (src-tauri/build.rs)
-      == capability-policy inventory  (capabilities/command-policy.json)
+      == capability-policy inventory  (src-tauri/command-policy.json)
+
+It also holds `capabilities/default.json` to being the ONLY capability source. Tauri enables
+every file under `capabilities/` (tauri-build parses `./capabilities/**/*`) unless
+`tauri.conf.json` names a list, and this gate reads one file; a second one would grant
+commands it never looked at.
 
 T-052 adds two rules over the execution/spend tier: every tier-X `allow` command must
 DECLARE a `protection` (`native-confirm` or, honestly, `none`), and a command that claims
@@ -20,9 +25,9 @@ so the policy file cannot award itself a gate it does not have.
 and additionally asserts each policy `grant` matches the actual capability grants in
 `capabilities/default.json` (allow-<cmd> / deny-<cmd>). A command added in one place
 but not the others — or granted against its declared tier — **fails CI**. No manual
-recount, no silently-ungated command: registered_commands() now captures EVERY module
-prefix (not just commands::/files::), so a module-scoped command that is neither declared
-under the wall nor named in INTENTIONALLY_UNGATED (with a reason) fails this check.
+recount, no silently-ungated command: registered_commands() captures EVERY entry of the
+list, under any module prefix or under none, so a command that is neither declared under
+the wall nor named in INTENTIONALLY_UNGATED (with a reason) fails this check.
 
 Usage:  python tools/check_capabilities.py [--root DIR]
 Exit 0 + "GREEN: ..." when consistent; exit 1 + the problems otherwise.
@@ -39,7 +44,8 @@ DESKTOP = pathlib.Path("apps/desktop/src-tauri")
 LIB_RS = DESKTOP / "src" / "lib.rs"
 BUILD_RS = DESKTOP / "build.rs"
 POLICY = DESKTOP / "command-policy.json"
-DEFAULT_CAP = DESKTOP / "capabilities" / "default.json"
+CAPABILITIES_DIR = DESKTOP / "capabilities"
+DEFAULT_CAP = CAPABILITIES_DIR / "default.json"
 REPO_RS = DESKTOP / "core" / "src" / "repo.rs"
 
 # T-052. A tier-X command claiming `"protection": "native-confirm"` is claiming that a
@@ -55,12 +61,22 @@ NATIVE_CONFIRM_ENFORCEMENT = {
     "set_automation_enabled": ("AUTOMATION_ENTITY_TYPE", "AUTOMATION_ENABLED_ACTION_TYPE"),
 }
 
-# Commands deliberately registered OUTSIDE the window capability manifest. Tauri makes an
-# app command that is registered in generate_handler! but absent from the manifest
-# webview-invokable with NO permission entry, so every such command MUST be named here with
-# a reason — this turns what used to be a silent regex blind spot (only commands::/files::
-# were scanned) into an explicit, reviewed, CI-enforced decision. A NEW module-scoped
-# command that is neither declared under the wall nor added here now FAILS this check.
+# Commands deliberately registered OUTSIDE the window capability manifest. Every such
+# command MUST be named here with a reason — this turns what used to be a silent regex blind
+# spot (only commands::/files:: were scanned) into an explicit, reviewed, CI-enforced
+# decision. A NEW command that is neither declared under the wall nor added here FAILS.
+#
+# WHAT THE NAME GETS WRONG. This comment said such a command is "webview-invokable with NO
+# permission entry". That is Tauri's behaviour for an app with no manifest at all; this app
+# has one, and with one the opposite holds. tauri 2.11.5 (the version Cargo.lock pins),
+# `src/webview/mod.rs`: a command is REJECTED when `has_app_acl_manifest && invoke.acl
+# .is_none()`, and a command absent from the manifest resolves no ACL. So these six are not
+# ungated — the window is refused them, and their callers in `src/services/desktop.ts`
+# cannot reach them. Established by reading that source, NOT by running the app.
+# The set is kept, and kept under its old name because `build.rs` and
+# `docs/REACHABILITY_GATE.md` cite it; what it now records is "registered, and deliberately
+# not grantable to the window". Whether to grant them (a manifest entry plus an `allow-*`)
+# or remove their callers is the Owner's decision: it changes what the window may invoke.
 #   - governed_turn_execute: the trusted-broker governed-turn proxy; gated by the broker
 #       lease/challenge system and fails closed ("broker_unavailable") off the supported
 #       path. Whether it should additionally sit under the window policy is an owner gate call.
@@ -79,11 +95,19 @@ INTENTIONALLY_UNGATED = {
 }
 
 
+_HANDLER_ENTRY = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)")
+
+
 def registered_commands(root: pathlib.Path) -> set[str]:
     """Every command fn name inside `generate_handler![ ... ]` in lib.rs, regardless of the
     module path it is registered under (commands::, files::, governance::, governed_turn::,
-    …). Capturing ALL module prefixes — not just commands::/files:: — is what lets the check
-    see module-scoped commands that would otherwise be silently outside the capability wall."""
+    …) — or under none.
+
+    The list is read ENTRY BY ENTRY. The first cut scanned only `commands::`/`files::`; the
+    second matched any `mod::fn` and so still dropped a bare `greet` brought in by a `use`,
+    which is a registered command this gate then never compared with anything. An entry
+    that is not a plain path is refused rather than skipped: a list this cannot read in
+    full is not one it can call consistent."""
     text = (root / LIB_RS).read_text(encoding="utf-8")
     m = re.search(r"generate_handler!\s*\[(.*?)\]", text, re.DOTALL)
     if not m:
@@ -91,8 +115,18 @@ def registered_commands(root: pathlib.Path) -> set[str]:
     body = m.group(1)
     # Strip line comments so commented-out entries don't count.
     body = re.sub(r"//[^\n]*", "", body)
-    # `mod::fn` (one or more module segments) -> capture the final fn identifier.
-    return set(re.findall(r"(?:[a-zA-Z_][a-zA-Z0-9_]*::)+([a-z0-9_]+)", body))
+    names: set[str] = set()
+    for entry in body.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        found = _HANDLER_ENTRY.fullmatch(entry)
+        if not found:
+            raise SystemExit(
+                f"RED: generate_handler![ ... ] in lib.rs holds an entry this gate cannot "
+                f"read as a command path: {entry!r}")
+        names.add(found.group(1))
+    return names
 
 
 def manifest_commands(root: pathlib.Path) -> set[str]:
@@ -115,25 +149,71 @@ def policy_commands(root: pathlib.Path) -> dict[str, dict]:
     return doc["commands"]
 
 
-def capability_grants(root: pathlib.Path) -> dict[str, str]:
-    """command fn name -> 'allow' | 'deny' from capabilities/default.json.
+def grants_from_permissions(permissions: list) -> dict[str, str]:
+    """command fn name -> 'allow' | 'deny' for a capability file's `permissions` list.
 
     Permission ids hyphenate the command name (`list_dir` -> `allow-list-dir`); map
-    back to the underscored fn name so the sets are comparable.
+    back to the underscored fn name so the sets are comparable. `core:default` and plugin
+    permissions (`dialog:allow-open`) open with their plugin's name, not with `allow-`, and
+    are not app commands.
+
+    The ONE place this mapping is written: `check_reachability.capability_grants` calls it
+    rather than carrying its own copy.
     """
-    doc = json.loads((root / DEFAULT_CAP).read_text(encoding="utf-8"))
     grants: dict[str, str] = {}
-    for perm in doc["permissions"]:
+    for perm in permissions:
         for kind in ("allow", "deny"):
             prefix = f"{kind}-"
-            if perm.startswith(prefix) and not perm.startswith("core:"):
+            # No separate `core:` test: a string that opens `allow-` cannot open `core:`.
+            # There was one here, and no input could make it matter.
+            if perm.startswith(prefix):
                 cmd = perm[len(prefix):].replace("-", "_")
                 grants[cmd] = kind
     return grants
 
 
-def check(root: pathlib.Path) -> list[str]:
+def capability_grants(root: pathlib.Path) -> dict[str, str]:
+    """command fn name -> 'allow' | 'deny' from capabilities/default.json."""
+    doc = json.loads((root / DEFAULT_CAP).read_text(encoding="utf-8"))
+    return grants_from_permissions(doc["permissions"])
+
+
+def capability_source_problems(root: pathlib.Path) -> list[str]:
+    """`capabilities/default.json` must be the only place a window grant can come from.
+
+    Tauri does not read "the default capability": tauri-build 2.6.3 parses
+    `./capabilities/**/*` and enables every file it finds, unless `app.security.capabilities`
+    in the Tauri config names a list (which may also carry capabilities INLINE). This gate
+    parses one file, so either of those is a grant it would print GREEN over.
+    """
     problems: list[str] = []
+    directory = root / CAPABILITIES_DIR
+    extra = sorted(p.relative_to(root).as_posix() for p in directory.rglob("*")
+                   if p.is_file() and p != root / DEFAULT_CAP)
+    if extra:
+        problems.append(
+            f"{CAPABILITIES_DIR.as_posix()}/ holds capability file(s) this gate does not read: "
+            f"{extra}. Tauri enables every file there, so each can grant a command unseen. "
+            f"Put the grant in default.json, where it is compared with the policy.")
+    for conf in sorted((root / DESKTOP).glob("tauri*.conf.json")):
+        rel = conf.relative_to(root).as_posix()
+        try:
+            doc = json.loads(conf.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            problems.append(f"{rel} is not valid JSON ({exc}), so whether it names its own "
+                            f"capability list cannot be read")
+            continue
+        security = (doc.get("app") or {}).get("security") if isinstance(doc, dict) else None
+        if isinstance(security, dict) and "capabilities" in security:
+            problems.append(
+                f"{rel} sets app.security.capabilities, which replaces 'every file under "
+                f"capabilities/' with its own list and may hold capabilities inline. This "
+                f"gate reads {DEFAULT_CAP.as_posix()} only; remove the key.")
+    return problems
+
+
+def check(root: pathlib.Path) -> list[str]:
+    problems: list[str] = capability_source_problems(root)
 
     registered = registered_commands(root)
     manifest = manifest_commands(root)
@@ -276,10 +356,10 @@ def check(root: pathlib.Path) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=".")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     root = pathlib.Path(args.root)
 
     problems = check(root)
@@ -300,8 +380,9 @@ def main() -> int:
     confirmed = [c for c in x_allow if policy[c].get("protection") == "native-confirm"]
     print(
         f"GREEN: capability inventory consistent ({n} gated commands; gated-registered == "
-        f"manifest == policy == capability grants; {len(INTENTIONALLY_UNGATED)} explicitly "
-        f"allowlisted-ungated; decide_approval denied, reject_approval granted; "
+        f"manifest == policy == capability grants; default.json is the only capability "
+        f"source; {len(INTENTIONALLY_UNGATED)} registered outside the manifest by name, which "
+        f"the window is refused; decide_approval denied, reject_approval granted; "
         f"{len(x_allow)} tier-X allow commands all declare a protection, "
         f"{len(confirmed)} of them 'native-confirm' backed by the enforcing constants in "
         f"repo.rs)."

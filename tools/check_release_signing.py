@@ -38,13 +38,17 @@ Modes
 
 `python tools/check_release_signing.py --require-release-ready`
     Release preflight (runs inside `release.yml`, before any build step). Additionally
-    requires the updater to be PROVISIONED and every Owner secret to be present and
-    non-empty in the environment. Prints a LOUD, NAMED refusal listing exactly what is
-    missing. Secret NAMES only are printed — never a value, never a prefix of a value.
+    requires the updater to be PROVISIONED, every Owner secret to be present and
+    non-empty in the environment, and the run to be FOR A `v*` TAG (`GITHUB_REF_TYPE` /
+    `GITHUB_REF_NAME`): release.yml also has `workflow_dispatch`, and a run dispatched from
+    a branch would otherwise tag and name the release after the branch. Prints a LOUD,
+    NAMED refusal listing exactly what is missing. Secret NAMES only are printed — never a
+    value, never a prefix of a value.
 
 `python tools/check_release_signing.py --verify-updater-signatures <bundle-dir>`
     Post-build verification. Every updater artifact must have a non-empty sibling `.sig`.
-    An unsigned build fails here; it never warns.
+    An unsigned build fails here; it never warns. WHICH files are updater artifacts depends
+    on `bundle.createUpdaterArtifacts` — see `updater_suffixes`.
 
 Exit 0 = pass. Exit 1 = a violation. No other outcome.
 """
@@ -120,7 +124,22 @@ _PRIVATE_KEY_MARKERS = (
 _THUMBPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
 #: Extensions Tauri emits as UPDATER payloads. Each must be accompanied by `<name>.sig`.
-_UPDATER_SUFFIXES = (
+#:
+#: There are two sets, and which one a build produces is a setting, not a platform:
+#:
+#:   * `bundle.createUpdaterArtifacts: "v1Compatible"` — the Tauri 1 shape: the installer is
+#:     wrapped (`.nsis.zip`, `.msi.zip`, `.AppImage.tar.gz`) and the WRAPPER is signed.
+#:   * `bundle.createUpdaterArtifacts: true` — the Tauri 2 shape: the installer IS the updater
+#:     payload and is signed directly (`-setup.exe`, `.msi`, `.AppImage`); macOS keeps
+#:     `.app.tar.gz`.
+#:
+#: This gate carried only the first set while the app builds with Tauri 2 (`Cargo.toml`:
+#: `tauri = { version = "2" }`). Under a plain `true` the Linux and Windows jobs would have
+#: found no file ending `.zip`/`.tar.gz`, reported "no updater payloads" and refused a
+#: correctly signed release. BASIS, stated because it matters: the Tauri 2 names are from
+#: Tauri's documentation of the updater plugin, not from a build run here — the updater is
+#: unprovisioned and release.yml has never produced an installer. Both sets fail closed.
+_UPDATER_SUFFIXES_V1 = (
     ".app.tar.gz",
     ".AppImage.tar.gz",
     ".nsis.zip",
@@ -128,6 +147,25 @@ _UPDATER_SUFFIXES = (
     ".tar.gz",
     ".zip",
 )
+_UPDATER_SUFFIXES_V2 = (
+    ".app.tar.gz",
+    ".AppImage",
+    ".exe",
+    ".msi",
+)
+#: Kept under its old name for callers that pass nothing: the Tauri 1 set.
+_UPDATER_SUFFIXES = _UPDATER_SUFFIXES_V1
+
+
+def updater_suffixes(create_updater_artifacts: object) -> tuple[str, ...] | None:
+    """The payload suffixes for a `bundle.createUpdaterArtifacts` value, or None when the
+    value requests no updater artifacts at all (absent, false, or something Tauri does not
+    define) — in which case there is nothing a signature check could be about."""
+    if create_updater_artifacts is True:
+        return _UPDATER_SUFFIXES_V2
+    if create_updater_artifacts == "v1Compatible":
+        return _UPDATER_SUFFIXES_V1
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -331,11 +369,22 @@ def check_release_workflow(root: pathlib.Path, problems: list[str]) -> None:
                 f"fail, not warn"
             )
     for name in REQUIRED_OWNER_SECRETS:
-        if name not in text:
+        if not names_secret(text, name):
             problems.append(
                 f"{rel}: Owner secret {name} is required by tools/check_release_signing.py but "
                 f"never referenced by the workflow"
             )
+
+
+def names_secret(text: str, name: str) -> bool:
+    """Does `text` name the secret `name` — as a whole identifier, not as a prefix of another.
+
+    `name not in text` was the test, and three secrets are a PREFIX of their own sibling:
+    `TAURI_SIGNING_PRIVATE_KEY` of `…_PASSWORD`, and the same for `WINDOWS_CERTIFICATE` and
+    `APPLE_CERTIFICATE`. A workflow or a document that dropped the key and kept the password
+    line still "named" the key.
+    """
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", text) is not None
 
 
 def check_release_doc(root: pathlib.Path, problems: list[str]) -> None:
@@ -345,7 +394,7 @@ def check_release_doc(root: pathlib.Path, problems: list[str]) -> None:
         problems.append("docs/RELEASE_SETUP.md: missing — the Owner has nothing to act on")
         return
     for name in REQUIRED_OWNER_SECRETS:
-        if name not in text:
+        if not names_secret(text, name):
             problems.append(
                 f"docs/RELEASE_SETUP.md: does not name the Owner secret {name}, which CI "
                 f"requires — the 'what the Owner must provide' list has drifted"
@@ -361,17 +410,43 @@ def missing_secrets(env: dict[str, str] | None = None) -> list[str]:
     return [name for name in REQUIRED_OWNER_SECRETS if not (source.get(name) or "").strip()]
 
 
-def render_refusal(missing: list[str], state: str) -> str:
+def release_ref_problem(env: dict[str, str] | None = None) -> str | None:
+    """Why this run may not name a release, or None when it is a run for a `v*` tag.
+
+    release.yml is triggered by a `v*` tag push AND by `workflow_dispatch`, and it hands
+    `github.ref_name` to tauri-action as both the tag and the release name. Dispatched from
+    `main`, that is a draft release tagged `main`. GitHub exports the two facts as
+    `GITHUB_REF_TYPE` and `GITHUB_REF_NAME`; a run where they are absent is not a release
+    run, so absent is a refusal too rather than a pass.
+    """
+    source = os.environ if env is None else env
+    ref_type = (source.get("GITHUB_REF_TYPE") or "").strip()
+    ref_name = (source.get("GITHUB_REF_NAME") or "").strip()
+    if ref_type == "tag" and re.fullmatch(r"v.+", ref_name):
+        return None
+    seen = f"{ref_type} {ref_name!r}" if ref_type or ref_name else "no GITHUB_REF_TYPE at all"
+    return (
+        f"this run is not for a `v*` tag (it is for {seen}). A release is named after the "
+        f"ref it runs on, so a `workflow_dispatch` from a branch would publish a draft "
+        f"tagged with the branch name. Push the tag, or dispatch the workflow ON the tag."
+    )
+
+
+def render_refusal(missing: list[str], state: str, ref_problem: str | None = None) -> str:
+    material_absent = bool(missing) or state != "PROVISIONED"
     lines = [
         "",
         "=" * 78,
-        "RELEASE REFUSED — the Owner's signing material is not present.",
+        ("RELEASE REFUSED — the Owner's signing material is not present." if material_absent
+         else "RELEASE REFUSED — this run is not a release."),
         "=" * 78,
         "",
         "This is a fail-closed refusal, not a warning. No installer, no draft release, and",
         "no updater payload is produced. An unsigned build must never leave this workflow.",
         "",
     ]
+    if ref_problem:
+        lines += [f"REF: {ref_problem}", ""]
     if state != "PROVISIONED":
         lines += [
             f"CONFIG state: {state} (required: PROVISIONED)",
@@ -404,7 +479,9 @@ def render_refusal(missing: list[str], state: str) -> str:
 # --------------------------------------------------------------------------------------
 # artifact verification mode
 # --------------------------------------------------------------------------------------
-def unsigned_updater_artifacts(bundle_dir: pathlib.Path) -> tuple[list[str], list[str]]:
+def unsigned_updater_artifacts(
+    bundle_dir: pathlib.Path, suffixes: tuple[str, ...] = _UPDATER_SUFFIXES_V1
+) -> tuple[list[str], list[str]]:
     """Return (updater_artifacts, unsigned) — an updater payload with no non-empty `.sig`."""
     found: list[str] = []
     unsigned: list[str] = []
@@ -412,7 +489,7 @@ def unsigned_updater_artifacts(bundle_dir: pathlib.Path) -> tuple[list[str], lis
         if not path.is_file() or path.suffix == ".sig":
             continue
         name = path.name
-        if not any(name.endswith(suffix) for suffix in _UPDATER_SUFFIXES):
+        if not any(name.endswith(suffix) for suffix in suffixes):
             continue
         found.append(name)
         sig = path.with_name(name + ".sig")
@@ -452,7 +529,21 @@ def main(argv: list[str] | None = None) -> int:
         if not bundle_dir.is_dir():
             print(f"RED: bundle directory {bundle_dir} does not exist — nothing was built")
             return 1
-        found, unsigned = unsigned_updater_artifacts(bundle_dir)
+        conf_problems: list[str] = []
+        conf = _load_json(root / "apps" / "desktop" / "src-tauri" / "tauri.conf.json",
+                          conf_problems) or {}
+        mode = (conf.get("bundle") or {}).get("createUpdaterArtifacts")
+        suffixes = updater_suffixes(mode)
+        if suffixes is None:
+            for p in conf_problems:
+                print(f"  - {p}")
+            print(
+                f"RED: bundle.createUpdaterArtifacts is {mode!r} in tauri.conf.json — the build "
+                f"was never asked for updater payloads (want true or \"v1Compatible\"), so "
+                f"there is nothing under {bundle_dir} a signature check could be about"
+            )
+            return 1
+        found, unsigned = unsigned_updater_artifacts(bundle_dir, suffixes)
         if not found:
             print(
                 f"RED: no updater payloads under {bundle_dir} — the release produced nothing "
@@ -471,10 +562,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.require_release_ready:
         missing = missing_secrets()
-        if missing or state != "PROVISIONED":
+        ref_problem = release_ref_problem()
+        if missing or state != "PROVISIONED" or ref_problem:
             for p in problems:
                 print(f"  - {p}")
-            print(render_refusal(missing, state))
+            print(render_refusal(missing, state, ref_problem))
             return 1
 
     if problems:

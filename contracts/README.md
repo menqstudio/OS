@@ -13,13 +13,15 @@ a README describing that intention and nothing else, while the files lived in `e
 ninth independent audit filed that as `I-13`: the roadmap called the box blocked by the production
 gate, and it was not blocked by anything.
 
-**What is here now.** The five schemas that cross the wall, as the source:
+**What is here now.** The six schemas that cross the wall, as the source:
 
 [`execution-lease`](./execution-lease.schema.json) ·
 [`mode-grant`](./mode-grant.schema.json) ·
 [`task-contract`](./task-contract.schema.json) ·
 [`verifier-receipt`](./verifier-receipt.schema.json) ·
-[`evidence-event`](./evidence-event.schema.json)
+[`evidence-event`](./evidence-event.schema.json) ·
+[`approval-request`](./approval-request.schema.json) — the sixth (`T-021a`), and the first that
+crosses desktop → engine
 
 **What "single source" means here, exactly.** `engine/schemas/` keeps a **byte-identical** copy and
 the engine goes on loading that one. Editing either side alone is RED in CI, naming the file and the
@@ -47,9 +49,12 @@ exists anywhere outside the four declared homes.
 - It said *"Phase 3 extracts them here so both sides consume the same files."* Phase 3's Contracts
   row says the opposite — *reference, do not yet relocate* — and asks for the migration plan for the
   final dedupe milestone, which is **Phase 10**.
-- It listed **`approval`** among the canonical schemas. **There is no `approval` schema**, anywhere
-  in the tree. The approval path across the wall exists on neither side; it is `T-021`, sequenced
-  behind the standing audit.
+- It listed **`approval`** among the canonical schemas. No schema of that bare name exists. What
+  exists since `T-021a`…`T-021d` is [`approval-request`](./approval-request.schema.json) — an *ask*,
+  never a decision — and its path is built on both sides: `core/src/approval_request.rs` builds the
+  document, the `request_engine_approval` command sends it, the sidecar's `approval.request` op
+  hands it to `engine/runtime/bro_approval_requests.py`, which records it and cannot decide it. This
+  bullet said the path "exists on neither side" until 2026-10-01.
 
 `bridge/contracts/` and `engine/contracts/` stay where they are: they are wire protocols between two
 **named processes**, not shared domain objects (M3, recorded as a decision).
@@ -61,7 +66,8 @@ Cockpit-ը (Rust) ու engine-ը (Python) security-relevant object-եր փոխա
 իսկ ֆայլերը `engine/schemas/`-ում էին։ Իններորդ անկախ աուդիտը դա գրանցեց որպես `I-13`՝ roadmap-ը
 այս box-ը ներկայացնում էր որպես production gate-ով փակ, իսկ այն ոչ մի բանով փակ չէր։
 
-**Հիմա այստեղ** պատով անցնող հինգ schema-ն են՝ որպես **աղբյուր**։ `engine/schemas/`-ը պահում ա
+**Հիմա այստեղ** պատով անցնող վեց schema-ն են՝ որպես **աղբյուր** (վեցերորդը `approval-request`-ն ա՝
+առաջինը, որ անցնում ա desktop → engine, ու դա *խնդրանք* ա, երբեք որոշում)։ `engine/schemas/`-ը պահում ա
 **բայթ առ բայթ նույն** պատճենը, ու engine-ը շարունակում ա հենց դա բեռնել։ Մի կողմը փոխելը ու մյուսը
 չփոխելը CI-ում **RED** ա՝ ֆայլի անունով ու շեղման ուղղությամբ։
 

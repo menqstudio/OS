@@ -41,12 +41,19 @@ NORMATIVE_PRINCIPALS = [
     "Broker", "Authority", "Sidecar", "Supervisor", "Recorder", "Executor", "Signer",
 ]
 
-#: Documents that state the count. Each must say seven, in the spelling it uses.
-COUNT_CLAIMS = {
-    "docs/SECURITY_MODEL.md": ("seven", "SEVEN"),
-    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md": ("SEVEN",),
-    "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md": ("SEVEN",),
-}
+#: Documents that state the count. Each must state it at least once, and every time it states
+#: it the number must be the code's.
+COUNT_CLAIMS = (
+    "docs/SECURITY_MODEL.md",
+    "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md",
+    "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md",
+)
+
+#: The words a count is written in. A word outside this map before "runtime service UIDs"
+#: ("the", "distinct") is not a count and is not a claim.
+_COUNT_WORDS = {word: n for n, word in enumerate(
+    ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+     "eleven", "twelve"))}
 
 _ENUM = re.compile(r"pub enum Principal\s*\{(?P<body>.*?)\}", re.S)
 _ARRAY = re.compile(
@@ -56,7 +63,24 @@ _VARIANT = re.compile(r"^\s*([A-Z][A-Za-z0-9]*)\s*,", re.M)
 _MEMBER = re.compile(r"Principal::([A-Z][A-Za-z0-9]*)")
 #: A count claim only counts when it is about the runtime service UIDs, not about seven of
 #: anything else. The word alone would match prose that has nothing to do with the model.
-_UID_CLAIM = re.compile(r"(seven|SEVEN)\s+runtime\s+service\s+UIDs", re.I)
+#:
+#: ANY count word, or digits. The pattern was `(seven|SEVEN)\s+runtime\s+service\s+UIDs`, and
+#: the code then asked whether what it had matched was "seven" -- a comparison that could not
+#: fail, since nothing else could match. A document saying "EIGHT runtime service UIDs" beside
+#: a surviving "seven" passed; only a document with no "seven" left at all went red, and for a
+#: different stated reason.
+_UID_CLAIM = re.compile(r"(?<![A-Za-z0-9])\**([A-Za-z]+|\d+)\**\s+runtime\s+service\s+UIDs", re.I)
+
+
+def uid_count_claims(text: str) -> list[tuple[str, int]]:
+    """Every `<count> runtime service UIDs` in `text`, as (the word as written, its number)."""
+    claims: list[tuple[str, int]] = []
+    for word in _UID_CLAIM.findall(text):
+        if word.isdigit():
+            claims.append((word, int(word)))
+        elif word.lower() in _COUNT_WORDS:
+            claims.append((word, _COUNT_WORDS[word.lower()]))
+    return claims
 
 
 def _strip_comments(text: str) -> str:
@@ -77,19 +101,16 @@ def read_model(source: str):
     return variants, members, int(array.group("count")), None
 
 
-def main() -> int:
-    problems = []
-    try:
-        source = SOURCE.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(f"RED: cannot read {SOURCE.relative_to(ROOT).as_posix()}: {exc}")
-        return 1
+def model_problems(variants: list[str], members: list[str], declared: int) -> list[str]:
+    """Every way the enum, the array and its declared length can disagree with §2.6.
 
-    variants, members, declared, failure = read_model(source)
-    if failure:
-        print(f"RED: {failure}")
-        return 1
-
+    A function of the parsed model, so each arm can be driven by a source the real tree could
+    not hold. It was inline in `main()`, which reads the shipped file: the tests could reach
+    `read_model()` and nothing past it, so all four comparisons below could be deleted with
+    every test green -- including the one this file's docstring calls "the one that matters
+    most", an eighth principal refused by name with §2.6 and the word AMENDMENT.
+    """
+    problems: list[str] = []
     extra = [v for v in variants if v not in NORMATIVE_PRINCIPALS]
     missing = [v for v in NORMATIVE_PRINCIPALS if v not in variants]
     if extra or missing:
@@ -112,25 +133,45 @@ def main() -> int:
         problems.append(
             f"the enum has {len(variants)} variant(s) and the array {len(members)} member(s). A "
             "variant the array omits compiles and is then never asked about")
+    return problems
 
-    for relative, spellings in COUNT_CLAIMS.items():
-        path = ROOT / relative
+
+def document_problems(root: pathlib.Path, count: int) -> list[str]:
+    """Every named document states the count, and every time it states it, it says `count`."""
+    problems: list[str] = []
+    for relative in COUNT_CLAIMS:
+        path = root / relative
         if not path.exists():
             problems.append(f"{relative} is named as stating the count and does not exist")
             continue
-        text = path.read_text(encoding="utf-8")
-        claims = _UID_CLAIM.findall(text)
+        claims = uid_count_claims(path.read_text(encoding="utf-8"))
         if not claims:
             problems.append(
                 f"{relative} states no '<n> runtime service UIDs' claim; this gate is declared to "
                 "hold it to one, so either the document changed or this list is stale")
             continue
-        for word in claims:
-            if word.lower() != "seven":
+        for word, number in claims:
+            if number != count:
                 problems.append(
                     f"{relative} says '{word} runtime service UIDs' while the code carries "
-                    f"{len(members)}")
-        del spellings
+                    f"{count}")
+    return problems
+
+
+def main() -> int:
+    try:
+        source = SOURCE.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"RED: cannot read {SOURCE.relative_to(ROOT).as_posix()}: {exc}")
+        return 1
+
+    variants, members, declared, failure = read_model(source)
+    if failure:
+        print(f"RED: {failure}")
+        return 1
+
+    problems = model_problems(variants, members, declared)
+    problems += document_problems(ROOT, len(members))
 
     if problems:
         print("RED: the principal model and the documents that describe it disagree —")

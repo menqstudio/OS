@@ -120,8 +120,9 @@ STAGING_CLEANUP_DEADLINE_MS = 2 * STAGING_SWEEP_INTERVAL_MS
 CREATED = "created"
 IDEMPOTENT = "idempotent"
 
-#: A 3rd concurrent LIVE row for this install. Surfaced by §4.10(a0) as ``quota_turns``.
-QUOTA_TURNS = "quota_turns"
+# A 3rd concurrent LIVE row for this install is `StagingQuotaExceeded`, surfaced by §4.10(a0)
+# as ``quota_turns``. That WORD is ``governed_turn_open.REFUSE_QUOTA_TURNS``; a second constant
+# for it lived here, exported and read by nothing.
 
 
 class StagingQuotaExceeded(LedgerError):
@@ -709,12 +710,21 @@ def record_chunk(conn: sqlite3.Connection, staging_session_id: str, seq: int,
 
 def mark_session_corrupt(conn: sqlite3.Connection, staging_session_id: str) -> None:
     """Drive UPLOADING -> SESSION_CORRUPT (§2.4 recovery rule b). Terminal and idempotent:
-    a session already corrupt stays corrupt, and the DDL refuses any edge back out."""
+    a session already corrupt stays corrupt, and the DDL refuses any edge back out.
+
+    ``UPLOADING`` is the ONLY state this edge leaves from, and the DDL trigger says so. An
+    ``ARTIFACT_READY`` session is therefore left exactly as it is: its artifact is already
+    published under its content address, and nothing that happens to a staging chunk file
+    afterwards can make those published bytes wrong. Until 2026-10-01 this ran the UPDATE for
+    that state too, the trigger refused it, and the caller -- a replayed chunk against a
+    finished session whose chunk file had gone -- got a raw ``sqlite3.IntegrityError`` instead
+    of its typed ``session_corrupt`` refusal.
+    """
     with _Tx(conn) as tx:
         row = load_session(tx, staging_session_id)
         if row is None:
             raise NotFound("no such staging session")
-        if row["state"] == SESSION_CORRUPT:
+        if row["state"] != SESSION_UPLOADING:
             return
         tx.execute(
             "UPDATE governed_turn_staging_session SET state = ?"
@@ -937,7 +947,6 @@ __all__ = [
     "NewStaging",
     "QUOTA_BYTES",
     "QUOTA_SESSIONS",
-    "QUOTA_TURNS",
     "SESSION_CORRUPT",
     "SESSION_UPLOADING",
     "STAGING_ARTIFACTS",

@@ -32,8 +32,8 @@ the other end of its socket is the one party it has no reason to trust either.
 
   * **`ArithmeticTests`** — every frame constructed at its maximum and measured through the
     transport's own serializer, plus the two numbers that are a CONTRADICTION rather than a
-    fit: the §4.10(d) hop's budget against the 120 s deadline `ai.rs` puts on this whole
-    subprocess.
+    fit: the §4.10(d) hop's budget against the 120 s deadline the desktop
+    (`brops_core::governed_sidecar::SIDECAR_DEADLINE`) puts on this whole subprocess.
 
   * **`DispatchTests`** — the branch in `engine_sidecar`, including the property
     `test_sidecar_ops.ExecutionIsolationTests` protects from the other side: the governed
@@ -41,9 +41,10 @@ the other end of its socket is the one party it has no reason to trust either.
 
 No prerequisite here is optional. Everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is an unmissable
-hard error rather than a green run with a quiet skip. (There is no
-`BROPS_TEST_MISSING_PREREQUISITES` declaration anywhere in this tree, so nothing is declared
-in it and nothing here may be softened.)
+hard error rather than a green run with a quiet skip. (`BROPS_TEST_MISSING_PREREQUISITES` is not
+consulted here: that declaration is the Rust `provision` crate's, set for one Windows job in
+`.github/workflows/ci.yml`, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 from __future__ import annotations
 
@@ -70,6 +71,10 @@ import governed_turn_result as gtr  # noqa: E402
 import governed_turn_result_bridge as gtb  # noqa: E402
 
 _AI_RS = _BRIDGE.parent / "apps" / "desktop" / "src-tauri" / "src" / "ai.rs"
+#: Where the sidecar's spawn, stdout cap and deadline live. `ai.rs::governed_sidecar_call` only
+#: delegates here, and its own 120 s literals belong to the `claude` CLI and the HTTP providers.
+_GOVERNED_SIDECAR_RS = (_BRIDGE.parent / "apps" / "desktop" / "src-tauri" / "core" / "src"
+                        / "governed_sidecar.rs")
 
 GENERATION_CONFIG = {
     "engine_id": "brops.governed-engine.sidecar.v1",
@@ -392,12 +397,19 @@ class IngressTests(unittest.TestCase):
             ({**GENERATION_CONFIG, "temperature": "3.00"}, "over range"),
             ({**GENERATION_CONFIG, "top_p": "1.01"}, "over range, regex passes"),
             ({**GENERATION_CONFIG, "max_output_tokens": 4096}, "a JSON number"),
+            # `$` under `.match` also matches before a TRAILING NEWLINE, so each of these was
+            # accepted as canonical; the Rust authority refuses every one.
+            ({**GENERATION_CONFIG, "max_output_tokens": "256\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "temperature": "1.00\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "top_p": "1.00\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "model": GENERATION_CONFIG["model"] + "\n"}, "trailing newline"),
+            ({**GENERATION_CONFIG, "engine_id": GENERATION_CONFIG["engine_id"] + "\n"},
+             "trailing newline"),
+            ({**GENERATION_CONFIG, "temperature": "\n1.00"}, "leading newline"),
             ({**GENERATION_CONFIG, "seed": "1"}, "unknown field"),
         ):
             with self.subTest(why=why):
                 self.refuses(generation_config=bad)
-        for field in gts.STAGING_ARTIFACTS:  # not the config's fields — see below
-            self.assertIn(field, gts.STAGING_ARTIFACTS)
         for field in bc.GOVERNED_GENERATION_CONFIG_FIELDS:
             missing = {k: v for k, v in GENERATION_CONFIG.items() if k != field}
             with self.subTest(missing=field):
@@ -657,9 +669,6 @@ class UpstreamRefusalTests(unittest.TestCase):
         reachable BY NAME only from a faulty store or tampered durable state, which is where
         `engine/tests/test_governed_staging_upload.py` produces all three of its cases. It is
         still RELAYED correctly if it arrives, which the roll call above covers."""
-        submit = gts.validate_submit_request(submit_frame())
-        for artifact, data in submit.artifact_bytes.items():
-            self.assertEqual(bc.sha256_hex(data), bc.sha256_hex(submit.artifact_bytes[artifact]))
         source = (_ENGINE_RUNTIME.parent / "tests" / "test_governed_staging_upload.py"
                   ).read_text("utf-8")
         self.assertIn("test_handle_not_challenge_when_the_turn_no_longer_commits_to_the_digest",
@@ -919,7 +928,8 @@ class ArithmeticTests(unittest.TestCase):
     def test_the_execution_hop_budget_does_NOT_fit_the_deadline_this_subprocess_runs_under(self):
         """The CONTRADICTION, asserted rather than smoothed over.
 
-        `ai.rs::governed_sidecar_call` kills this subprocess at 120 s. The §4.10(d) round
+        The desktop kills this subprocess at 120 s (`governed_sidecar.rs::SIDECAR_DEADLINE`,
+        which `ai.rs::governed_sidecar_call` runs under). The §4.10(d) round
         trip alone does not answer until §5 acceptance, a contained execution budgeted
         `EXECUTION_TIMEOUT_MS = 120000`, the recorder chain and an isolated-signer round trip
         have all completed — so the trigger's own budget already consumes the entire deadline
@@ -929,7 +939,10 @@ class ArithmeticTests(unittest.TestCase):
         """
         self.assertEqual(gts.EXECUTION_HOP_TIMEOUT_S, 120.0)
         self.assertEqual(gts.SIDECAR_SUBPROCESS_DEADLINE_S, 120.0)
-        self.assertIn("Duration::from_secs(120)", _AI_RS.read_text("utf-8"))
+        self.assertIn(
+            "pub const SIDECAR_DEADLINE: Duration = Duration::from_secs("
+            f"{int(gts.SIDECAR_SUBPROCESS_DEADLINE_S)});",
+            _GOVERNED_SIDECAR_RS.read_text("utf-8"))
         worst_case = gts.EXECUTION_HOP_TIMEOUT_S + 56 * gts.CONTROL_HOP_TIMEOUT_S
         self.assertGreater(worst_case, gts.SIDECAR_SUBPROCESS_DEADLINE_S)
         # Even with every control hop instant, the trigger alone exhausts the deadline.
@@ -944,7 +957,6 @@ class ArithmeticTests(unittest.TestCase):
 class DispatchTests(unittest.TestCase):
 
     def setUp(self):
-        self.saved = dict(sys.modules)
         self.env = {}
         for name in (engine_sidecar._SUPERVISOR_SOCKET_ENV,):
             self.env[name] = __import__("os").environ.pop(name, None)

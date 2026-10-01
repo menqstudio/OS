@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #313 · branch `t145/whole-repo-read`** (base `main`, tip `962743a`, task T-145).
+> **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
 >
-> the whole repository read file by file: 911 confirmed findings recorded, the 2 highs fixed
+> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-145** | **The whole repository, read file by file** — 911 findings a second agent confirmed, in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md); the 2 highs fixed, 909 open ◑ | Bro | In-Progress | — |
+| **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): 2 highs merged, 405 more fixed in wave 1 (Python, docs, gates), 34 wait on the Owner (§8); Rust and frontend unstarted ◑ | Bro | In-Progress | `#314` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |

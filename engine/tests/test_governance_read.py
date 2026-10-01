@@ -60,7 +60,10 @@ EVENT_SCHEMA = json.loads((ROOT / "schemas" / "evidence-event.schema.json").read
 RECEIPT_SCHEMA = json.loads((ROOT / "schemas" / "verifier-receipt.schema.json").read_text(encoding="utf-8"))
 
 
-def read_request(surface: str, task_id: str | None = None, **overrides) -> dict:
+def read_request(surface: str = "decisionLedger", task_id: str | None = None,
+                 **overrides) -> dict:
+    """One `bro.governance-read.v1` request. The one builder for the engine suites:
+    `test_governance_sidecar_route` imports it rather than keeping a second copy."""
     body = {
         "protocol": GOVERNANCE_PROTOCOL,
         "op": GOVERNANCE_OP,

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t145/whole-repo-read` — `main` @ `962743a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t146/review-wave1` — `main` @ `73e5ccb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #313 · branch `t145/whole-repo-read`** (base `main`, tip `962743a`, task T-145).
+> **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
 >
-> the whole repository read file by file: 911 confirmed findings recorded, the 2 highs fixed
+> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2444 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2617 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

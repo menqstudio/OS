@@ -171,9 +171,37 @@ class OverrideBlockTests(unittest.TestCase):
 class GateEvasionTests(unittest.TestCase):
     """fifth audit, A-09: the undeclared-var() half was defeated four ways."""
     def test_a_declaration_inside_a_COMMENT_does_not_count(self):
-        # Comments were stripped on the reference side and not on the declaring side.
-        refs = c1.referenced_tokens({"a.css": ".x{padding:var(--gone)}"})
-        self.assertTrue(c1.undeclared_references(refs, set(), local_ok=set()))
+        """Comments were stripped on the reference side and not on the declaring side.
+
+        This test held a stylesheet with NO comment in it and passed `set()` as the declared
+        tokens, so it asserted that an undeclared token is undeclared and nothing about
+        comments: the stripping could be removed with every test green. It now runs the scan
+        that does the stripping, on a file whose only "declaration" of `--gone` is a comment.
+        """
+        texts = {"a.css": "/* --gone: 4px; was removed */ .x{padding:var(--gone)}"}
+        declared = c1.tokens_set_anywhere(texts, set())
+        self.assertNotIn("--gone", declared)
+        refs = c1.referenced_tokens(texts)
+        self.assertTrue(any("--gone" in p
+                            for p in c1.undeclared_references(refs, declared, local_ok=set())))
+        # The control: the same declaration OUTSIDE a comment does count.
+        live = {"a.css": ":root{ --gone: 4px } .x{padding:var(--gone)}"}
+        self.assertIn("--gone", c1.tokens_set_anywhere(live, set()))
+
+    def test_a_multi_line_comment_does_not_declare_either(self):
+        texts = {"a.css": "/*\n  --gone: 4px;\n  --also: 1px;\n*/\n:root{ --kept: 2px }"}
+        self.assertEqual(c1.tokens_set_anywhere(texts, set()), {"--kept"})
+
+    def test_a_TYPE_annotation_sets_nothing(self):
+        """`type T = { '--x': string }` has the shape of a declaration and is not one."""
+        texts = {"a.ts": "type Vars = { '--typed': string; '--count': number };\n"
+                         "const style = { ['--i']: index, '--real': '4px' };\n"}
+        self.assertEqual(c1.tokens_set_anywhere(texts, set()), {"--i", "--real"})
+
+    def test_a_setProperty_call_and_the_root_block_both_count(self):
+        texts = {"a.ts": "el.style.setProperty('--from-js', value);"}
+        self.assertEqual(c1.tokens_set_anywhere(texts, {"--from-root"}),
+                         {"--from-js", "--from-root"})
 
     def test_uppercase_tokens_are_matched(self):
         refs = c1.referenced_tokens({"a.css": ".x{color:var(--Brand)}"})
@@ -265,10 +293,6 @@ class RealRepositoryTests(unittest.TestCase):
         for i in range(1, 11):
             self.assertIn("--s%d" % i, declared, "--s%d is missing from the ladder again" % i)
         self.assertEqual(c1.compare(expected, declared), [])
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class A03LonghandTests(unittest.TestCase):
@@ -407,3 +431,44 @@ class LadderDirectionTests(unittest.TestCase):
         blocks = [{"--a": "1px", "--b": "9px", "--c": "2px"}]
         out = c1.ladder_monotonic(blocks, ["--a", "--b", "--c"], "made-up scale")
         self.assertTrue(any("no direction" in f for f in out), out)
+
+
+class TheWholeGate(unittest.TestCase):
+    """`main()` end to end. Nothing called it, so the wiring between the scan that decides
+    what is "set anywhere" and the rule that reports an undeclared `var()` was tested by the
+    real tree being green and by nothing else.
+
+    The fixture is the real §C.1 and the real `aios.css`, alone, plus one stylesheet. Alone,
+    `aios.css` is not green -- it reads custom properties the pages set inline from TSX -- so
+    the two runs are compared with each other rather than with zero: the SAME stylesheet,
+    declaring the probe token for real in one and only inside a comment in the other."""
+
+    def problems(self, extra_css: str) -> set[str]:
+        import contextlib
+        import io
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        theme = root / "apps" / "desktop" / "src" / "theme"
+        theme.mkdir(parents=True)
+        for rel in ("MASTER_EXECUTION_ROADMAP.md", "apps/desktop/src/theme/aios.css"):
+            (root / rel).write_bytes((c1.ROOT / rel).read_bytes())
+        (root / "apps" / "desktop" / "src" / "extra.css").write_text(extra_css, encoding="utf-8")
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            c1.main(["--root", str(root)])
+        return {ln for ln in err.getvalue().splitlines() if ln.startswith("  - ")}
+
+    def test_a_token_declared_only_inside_a_comment_is_reported_by_the_gate(self):
+        declared = self.problems(".x{ --t145-probe: 4px; padding:var(--t145-probe) }")
+        commented = self.problems("/* --t145-probe: 4px; */ .x{ padding:var(--t145-probe) }")
+        self.assertFalse(any("--t145-probe" in line for line in declared), declared)
+        added = commented - declared
+        self.assertEqual(len(added), 1, added)
+        self.assertIn("var(--t145-probe) is used in apps/desktop/src/extra.css", added.pop())
+
+
+if __name__ == "__main__":
+    unittest.main()

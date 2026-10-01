@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The root wall does not see Bash. This file proves it, and is the regression guard.
+"""The root wall does not see Bash BEFORE it runs, and settles it after. This file proves
+both halves, and is the regression guard.
 
 Run: python -m unittest test_wall_bash_gap   (from tools/)
 
@@ -9,6 +10,7 @@ There are two `.claude/settings.json` files in this repository and only one of t
 the ROOT wall:
 
     .claude/settings.json         PreToolUse  matcher='Edit|Write|MultiEdit|NotebookEdit'
+                                  PostToolUse matcher='Bash|PowerShell|Shell'   (T-053)
                                   SessionStart / SubagentStart / UserPromptSubmit / Stop
                                   (no matcher, so no tool filter applies to them)
     engine/.claude/settings.json  PreToolUse  matcher='*'          <- DOES see Bash
@@ -17,10 +19,11 @@ the ROOT wall:
                                   SubagentStop / Stop / InstructionsLoaded (no matcher)
 
 So the honest claim is NOT "the wall is bypassable through Bash". The ENGINE's
-enforcement wall matches `*` and does see every Bash call. What is bypassable is the
-ROOT COORDINATION GATE -- `.claude/hooks/canonical_law_gate.py` -- and precisely these
-four protections it provides, each of which this file demonstrates is simply not
-consulted for a shell command:
+enforcement wall matches `*` and does see every Bash call. What is bypassable IN ADVANCE
+is the ROOT COORDINATION GATE -- `.claude/hooks/canonical_law_gate.py` -- and precisely
+these four protections it provides, each of which this file demonstrates is not consulted
+BEFORE a shell command runs (`TheGapDemonstrated`), and is asked afterwards about what the
+command left on disk (`TheContainment`):
 
   1. phase declaration      (has this session declared a roadmap phase at all?)
   2. meta scope             (may a `meta` session write THIS path?)
@@ -36,7 +39,8 @@ at commit and in CI, over whatever landed, however it was written. What had neve
 written down is that the backstop covers a DIFFERENT property -- it asks whether code
 and canon moved together, and cannot ask whether the session had the right to write
 that path. Scope, prior art and the shrink-only budget rule have no CI equivalent,
-because they are properties of the SESSION and CI has no session.
+because they are properties of the SESSION and CI has no session. So for a shell write
+they are: not refused before the fact, detected after it, and backed by nothing in CI.
 
 WHY THE PreToolUse GAP IS PINNED RATHER THAN CLOSED
 ---------------------------------------------------
@@ -54,18 +58,26 @@ session may not write. `TheContainment` below tests it.
 
 Say what it is: DETECTION PLUS HALTING THE TURN, NOT CONTAINMENT. The write has already
 landed and nothing undoes it. The engine's PostToolUse path is the same shape and the same
-limit: `bro_hook.py:148-177` settles a lease and emits `{"decision":"block"}`; there is no
-revert, unlink or restore anywhere in it. A security model that claims containment from
-either one is claiming something neither does.
+limit: the `post-tool` branch of `bro_hook.py` settles a lease and hands a red settlement to
+`_observe_or_block`, which emits `{"decision":"block"}` -- or, in shadow mode, only a
+`[SHADOW] would block` note. There is no revert, unlink or restore anywhere in it. A
+security model that claims containment from either one is claiming something neither does.
+(Cited by name: the line numbers this sentence used to carry were right on the day and
+checked by nothing.)
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
+import uuid
+from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parent
 ROOT = TOOLS.parent
@@ -125,6 +137,39 @@ def run_hook(event: str, payload: dict) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def import_wall():
+    """The root hook as a module, for the tests that call its functions directly."""
+    sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
+    try:
+        import canonical_law_gate as wall
+    finally:
+        sys.path.pop(0)
+    return wall
+
+
+def git(root: pathlib.Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false", *args],
+                   check=True, capture_output=True, text=True, timeout=60)
+
+
+class _AnySession:
+    """A roadmap and a prior-art store that object to nothing, so a test of the budget
+    arm is a test of the budget arm."""
+
+    @staticmethod
+    def verify_declaration(root, sid):
+        return True, "declared"
+
+    @staticmethod
+    def scope_problem(root, sid, rel):
+        return None
+
+    @staticmethod
+    def verify(root, sid, rel):
+        return True, "searched"
+
+
 def decision(stdout: str) -> str | None:
     """The permission decision in a hook's stdout, or None when it did not render one."""
     for line in stdout.splitlines():
@@ -153,7 +198,9 @@ class RootSettingsWiring(unittest.TestCase):
         self.assertEqual(self.settings["PreToolUse"], [ROOT_PRE_TOOL_MATCHER])
 
     def test_bash_is_absent_from_the_pre_tool_use_matcher(self):
-        self.assertNotIn("Bash", ROOT_PRE_TOOL_MATCHER.split("|"))
+        # Read from the settings file. This split the constant defined at the top of
+        # THIS file, so it could not fail whatever `.claude/settings.json` said.
+        self.assertNotIn("Bash", self.settings["PreToolUse"][0].split("|"))
 
     def test_the_session_scoped_events_carry_no_matcher(self):
         # No matcher means no tool filter -- these fire once per session/turn, not per tool,
@@ -238,31 +285,21 @@ class TheHookItself(unittest.TestCase):
 
     def test_the_hooks_own_tool_set_excludes_every_shell(self):
         source = HOOK.read_text(encoding="utf-8")
-        sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
-        try:
-            import canonical_law_gate as wall
-        finally:
-            sys.path.pop(0)
+        wall = import_wall()
         for shell in ("Bash", "PowerShell", "Shell", "BashOutput"):
             with self.subTest(tool=shell):
                 self.assertNotIn(shell, wall.EDIT_TOOLS)
         self.assertIn("SHELL IS NOT GATED", source,
                       "the hook no longer documents its own first honest limit")
 
-    def test_every_tool_the_settings_matcher_names_is_one_the_hook_understands(self):
-        """The direction that must hold: the hook must handle what it is wired for.
-
-        The reverse does NOT hold and is recorded rather than asserted -- `EDIT_TOOLS`
-        also contains `Update`, which the matcher never names, so that entry is dead.
+    def test_the_hooks_edit_tools_are_exactly_what_the_settings_matcher_names(self):
+        """Both directions. The hook must handle what it is wired for, and it must not
+        carry a tool the matcher never delivers: `EDIT_TOOLS` held `Update` for months,
+        an entry no event could reach, recorded here as dead instead of removed.
         """
-        sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
-        try:
-            import canonical_law_gate as wall
-        finally:
-            sys.path.pop(0)
-        for tool in ROOT_PRE_TOOL_MATCHER.split("|"):
-            with self.subTest(tool=tool):
-                self.assertIn(tool, wall.EDIT_TOOLS)
+        wall = import_wall()
+        wired = matchers(load(ROOT_SETTINGS))["PreToolUse"][0].split("|")
+        self.assertEqual(set(wired), wall.EDIT_TOOLS)
 
 
 class TheGapDemonstrated(unittest.TestCase):
@@ -323,15 +360,28 @@ class TheContainment(unittest.TestCase):
     """
 
     def setUp(self):
-        self.sid = f"t053-containment-{os.getpid()}-{self._testMethodName}"
-        subprocess.run([sys.executable, str(TOOLS / "check_read_receipt.py"),
-                        "--session", self.sid, "--record"],
-                       cwd=ROOT, capture_output=True, text=True, timeout=120)
-        subprocess.run([sys.executable, str(TOOLS / "check_roadmap_order.py"),
-                        "--session", self.sid, "--declare", "meta", "--note",
-                        "T-053 self-test of the post-tool shell settlement, driving the "
-                        "real hook against a scratch path in the real tree"],
-                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+        # A uuid, not the pid: the hook keeps a baseline file per session id in the temp
+        # directory, and a REUSED pid inherited the last run's -- which turned the "first
+        # call" below into a second one.
+        self.sid = f"t053-containment-{uuid.uuid4().hex}-{self._testMethodName}"
+        self.sessions = [self.sid]
+        recorded = subprocess.run([sys.executable, str(TOOLS / "check_read_receipt.py"),
+                                   "--session", self.sid, "--record"],
+                                  cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        declared = subprocess.run(
+            [sys.executable, str(TOOLS / "check_roadmap_order.py"),
+             "--session", self.sid, "--declare", "meta", "--note",
+             "T-053 self-test of the post-tool shell settlement, driving the "
+             "real hook against a scratch path in the real tree"],
+            cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertEqual(declared.returncode, 0, declared.stdout + declared.stderr)
+
+    def tearDown(self):
+        wall = import_wall()
+        with mock.patch.object(wall, "ROOT", ROOT):
+            for sid in self.sessions:
+                wall._shell_state_path(sid).unlink(missing_ok=True)
 
     def settle(self, command: str = "ls") -> tuple[int, str]:
         return run_hook("post-tool", {"session_id": self.sid, "tool_name": "Bash",
@@ -404,10 +454,13 @@ class TheContainment(unittest.TestCase):
         self.settle()
         target = ROOT / PROTECTED
         original = target.read_bytes()
-        with target.open("ab") as handle:
-            handle.write(b"\n// T-053 self-test\n")
-        self.settle(f"echo x >> {PROTECTED}")
-        target.write_bytes(original)
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            _, reported = self.settle(f"echo x >> {PROTECTED}")
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(reported), "block", reported)
         _, out = self.settle("ls")
         self.assertEqual(out, "", out)
 
@@ -445,10 +498,11 @@ class TheContainment(unittest.TestCase):
         undeclared session has no scope to test a path against, so EVERY changed path is
         a violation, including one inside `tools/`.
         """
-        sid = f"t053-undeclared-{os.getpid()}"
+        sid = f"t053-undeclared-{uuid.uuid4().hex}"
+        self.sessions.append(sid)
         first = run_hook("post-tool", {"session_id": sid, "tool_name": "Bash",
                                        "tool_input": {"command": "ls"}})[1]
-        self.assertEqual(first, "", "the baseline call should never block")
+        self.assertIsNone(decision(first), "the baseline call should never block")
 
         target = TOOLS / "check_no_lstrip_prefix.py"
         original = target.read_bytes()
@@ -463,7 +517,9 @@ class TheContainment(unittest.TestCase):
         self.assertIn("phase declaration", out)
 
     def test_the_first_shell_call_baselines_a_dirty_tree_rather_than_blaming_it(self):
-        """A session that starts on a dirty tree did not make it dirty."""
+        """A session that starts on a dirty tree did not make it dirty -- and a call
+        that was used as the baseline says it judged nothing, rather than passing in
+        silence: whatever that call itself wrote has just been forgiven unseen."""
         target = ROOT / PROTECTED
         original = target.read_bytes()
         try:
@@ -472,19 +528,51 @@ class TheContainment(unittest.TestCase):
             _, out = self.settle("ls")       # the FIRST call for this session id
         finally:
             target.write_bytes(original)
-        self.assertEqual(out, "", out)
+        self.assertIsNone(decision(out), out)
+        self.assertIn("had no shell baseline", out)
+        self.assertIn("Not a pass.", out)
+
+    def test_a_session_baselined_at_its_START_is_judged_on_its_first_shell_call(self):
+        """The hole the first-call baseline left: write first, be clean ever after.
+
+        The start hook now records the baseline, so the first shell call is compared
+        against the tree the session STARTED on. Driven through the real `subagent-start`
+        event, the same program `.claude/settings.json` wires.
+        """
+        code, _ = run_hook("subagent-start", {"session_id": self.sid})
+        self.assertEqual(code, 0)
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            _, out = self.settle(f"echo x >> {PROTECTED}")   # the FIRST shell call
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(out), "block", out)
+        self.assertIn(PROTECTED, out)
+
+    def test_a_second_start_event_does_not_forgive_what_was_written_since(self):
+        """SubagentStart carries the PARENT's session id, and SessionStart fires again on
+        resume: a start hook that re-baselined would launder every write before it."""
+        run_hook("subagent-start", {"session_id": self.sid})
+        target = ROOT / PROTECTED
+        original = target.read_bytes()
+        try:
+            with target.open("ab") as handle:
+                handle.write(b"\n// T-053 self-test\n")
+            run_hook("subagent-start", {"session_id": self.sid})
+            _, out = self.settle("ls")
+        finally:
+            target.write_bytes(original)
+        self.assertEqual(decision(out), "block", out)
 
 
 class TheContainmentUnits(unittest.TestCase):
     """The pure parts, without driving a subprocess."""
 
     def setUp(self):
-        sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
-        try:
-            import canonical_law_gate as wall
-        finally:
-            sys.path.pop(0)
-        self.wall = wall
+        self.wall = import_wall()
 
     def test_the_shell_tool_set_matches_what_the_settings_wire(self):
         matcher = json.loads(ROOT_SETTINGS.read_text(encoding="utf-8"))
@@ -498,16 +586,39 @@ class TheContainmentUnits(unittest.TestCase):
     def test_dirty_fingerprints_carries_the_porcelain_code(self):
         """`??` is what makes a path new; without the code in the value the gate called
         every edit of a clean tracked file a new file."""
-        state = self.wall.dirty_fingerprints()
-        self.assertIsNotNone(state)
-        for rel, value in state.items():
-            with self.subTest(rel=rel):
-                self.assertRegex(value, r"^.{2}:")
+        # A tree KNOWN to be dirty. This looped over the live checkout's dirty set, which
+        # is empty on a clean tree -- CI's state -- so it asserted nothing where it ran.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            git(root, "init", "-q")
+            (root / "tracked.txt").write_bytes(b"one\n")
+            git(root, "add", "tracked.txt")
+            git(root, "commit", "-q", "-m", "seed")
+            (root / "tracked.txt").write_bytes(b"two\n")
+            (root / "fresh.txt").write_bytes(b"new\n")
+            with mock.patch.object(self.wall, "ROOT", root):
+                state = self.wall.dirty_fingerprints()
+        self.assertEqual(set(state), {"tracked.txt", "fresh.txt"})
+        self.assertRegex(state["tracked.txt"], r"^ M:[0-9a-f]{64}$")
+        self.assertRegex(state["fresh.txt"], r"^\?\?:[0-9a-f]{64}$")
 
     def test_a_tree_git_cannot_be_asked_about_is_not_a_pass(self):
-        """The gate says so in the context rather than staying silent."""
-        source = (ROOT / ".claude" / "hooks" / "canonical_law_gate.py").read_text(encoding="utf-8")
-        self.assertIn("was NOT settled against the tree. Not a pass.", source)
+        """The gate says so in the context rather than staying silent.
+
+        Driven, not grepped: this used to search the hook's SOURCE for the sentence, so
+        deleting the branch and leaving the words in a comment kept it green.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(self.wall, "ROOT", pathlib.Path(tmp)):
+                self.assertIsNone(self.wall.dirty_fingerprints(),
+                                  "a directory that is not a repository produced a dirty set")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.wall.handle_post_tool(
+                        {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+                        _AnySession, _AnySession, f"t053-no-git-{uuid.uuid4().hex}")
+        self.assertIsNone(decision(out.getvalue()))
+        self.assertIn("was NOT settled against the tree. Not a pass.", out.getvalue())
 
     def test_the_docstring_states_the_limit_in_the_required_words(self):
         """The Owner asked for the honest form of this claim in those words; a security
@@ -515,6 +626,164 @@ class TheContainmentUnits(unittest.TestCase):
         source = (ROOT / ".claude" / "hooks" / "canonical_law_gate.py").read_text(encoding="utf-8")
         self.assertIn("A RELIABLE PreToolUse SHELL PATH-CHECK IS NOT POSSIBLE", source)
         self.assertIn("DETECTION PLUS\n  HALTING THE TURN -- NOT CONTAINMENT", source)
+
+
+class TheBudgetRule(unittest.TestCase):
+    """The fourth protection -- the shrink-only rule on an over-budget canonical file --
+    on both sides of the tool call. It had no test on either: `budget` appeared in this
+    file only in the docstring.
+
+    Each case runs in a scratch repository with its own budget file, with the hook's
+    `ROOT` pointed at it, so nothing here depends on the live canon being over budget.
+    """
+
+    DOC = "DOC.md"
+    CAP = 100
+
+    def setUp(self):
+        self.wall = import_wall()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        (self.root / "config").mkdir()
+        (self.root / "config" / "canon-budget.json").write_text(
+            json.dumps({"per_file_bytes": {self.DOC: self.CAP}}), encoding="utf-8")
+        git(self.root, "init", "-q")
+        self.write(300)
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "seed: the document is over its ceiling")
+        patcher = mock.patch.object(self.wall, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.sid = f"t145-budget-{uuid.uuid4().hex}"
+        self.addCleanup(lambda: self.wall._shell_state_path(self.sid).unlink(missing_ok=True))
+
+    def write(self, size: int) -> None:
+        (self.root / self.DOC).write_bytes(b"x" * size)
+
+    def shell(self, before_sizes=None):
+        now = self.wall.dirty_fingerprints()
+        return self.wall.shell_path_problem(self.DOC, _AnySession, _AnySession, self.sid,
+                                            {}, now, before_sizes)
+
+    def post_tool(self) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.wall.handle_post_tool({"tool_name": "Bash", "tool_input": {"command": "x"}},
+                                       _AnySession, _AnySession, self.sid)
+        return out.getvalue()
+
+    # --- after the fact: a shell edit -------------------------------------------------
+
+    def test_a_shell_edit_that_SHRINKS_an_over_budget_file_is_accepted(self):
+        """The defect. The comment said "over its ceiling AND bigger than it was" and the
+        code tested the first half, so the only edit the rule exists to invite was
+        blocked -- and its stated remedy, reverting, made the file larger."""
+        self.write(200)                       # still over the ceiling, smaller than HEAD
+        self.assertIsNone(self.shell())
+
+    def test_a_shell_edit_that_GROWS_an_over_budget_file_is_reported(self):
+        self.write(400)
+        problem = self.shell()
+        self.assertIsNotNone(problem)
+        self.assertIn("it was 300 before this shell call", problem)
+
+    def test_a_shell_rewrite_at_the_same_size_is_not_a_shrink(self):
+        (self.root / self.DOC).write_bytes(b"y" * 300)
+        self.assertIsNotNone(self.shell())
+
+    def test_the_baselines_size_wins_over_the_committed_one(self):
+        """For a path that was ALREADY dirty, "what it was" is what the baseline saw."""
+        self.write(200)
+        self.assertIsNotNone(self.shell({self.DOC: 150}))   # grew from 150, under HEAD's 300
+        self.assertIsNone(self.shell({self.DOC: 250}))
+
+    def test_a_file_whose_previous_size_is_unknown_is_not_waved_through(self):
+        (self.root / "config" / "canon-budget.json").write_text(
+            json.dumps({"per_file_bytes": {"NEW.md": self.CAP}}), encoding="utf-8")
+        (self.root / "NEW.md").write_bytes(b"x" * 200)       # untracked: HEAD has no size
+        now = self.wall.dirty_fingerprints()
+        problem = self.wall.shell_path_problem("NEW.md", _AnySession, _AnySession, self.sid,
+                                               {}, now, {})
+        self.assertIn("previous size could not be established", problem)
+
+    def test_a_file_under_its_ceiling_is_nobodys_business(self):
+        self.write(self.CAP)
+        self.assertIsNone(self.shell())
+
+    def test_a_missing_or_broken_budget_file_does_not_kill_the_hook(self):
+        """`load_json` raises SystemExit, which `except Exception` does not catch: the
+        post-tool arm let it through and the hook exited 1 past its FAILED OPEN shout."""
+        self.write(400)
+        budget = self.root / "config" / "canon-budget.json"
+        for label, damage in (("invalid", lambda: budget.write_text("{", encoding="utf-8")),
+                              ("missing", budget.unlink)):
+            damage()
+            with self.subTest(budget=label):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertIsNone(self.shell())
+                    self.assertIsNone(self.wall.canon_budget_problem(
+                        self.DOC, "Write", {"content": "x" * 500}))
+                self.assertEqual(out.getvalue(), "",
+                                 "the budget loader printed into the hook's verdict channel")
+
+    def test_the_settlement_shrink_then_grow_then_stand(self):
+        """End to end through `handle_post_tool`, including the part the baseline plays:
+        a violating path keeps the size it had BEFORE the violation, so "smaller than it
+        was" cannot be satisfied by shrinking back to just under the violation."""
+        self.wall.baseline_shell_state(self.sid)
+        self.write(200)
+        self.assertEqual(self.post_tool(), "", "a shrinking shell edit was reported")
+        self.write(250)
+        self.assertEqual(decision(self.post_tool()), "block")
+        self.assertEqual(decision(self.post_tool()), "block", "reported once, then forgotten")
+        self.write(220)                       # smaller than the violation, not than before it
+        self.assertEqual(decision(self.post_tool()), "block")
+        self.write(150)
+        self.assertEqual(self.post_tool(), "")
+
+    def test_a_baseline_is_recorded_once_and_never_overwritten(self):
+        self.wall.baseline_shell_state(self.sid)
+        path = self.wall._shell_state_path(self.sid)
+        first = path.read_text(encoding="utf-8")
+        self.write(400)
+        self.wall.baseline_shell_state(self.sid)
+        self.assertEqual(path.read_text(encoding="utf-8"), first)
+
+    # --- before the fact: the harness edit tools --------------------------------------
+
+    def pre(self, tool: str, tool_input: dict):
+        return self.wall.canon_budget_problem(self.DOC, tool, tool_input)
+
+    def test_write_and_edit_are_judged_by_what_they_leave(self):
+        self.assertIsNone(self.pre("Write", {"content": "x" * 250}))
+        self.assertIsNotNone(self.pre("Write", {"content": "x" * 300}))
+        self.assertIsNone(self.pre("Edit", {"old_string": "xxxx", "new_string": "x"}))
+        self.assertIsNotNone(self.pre("Edit", {"old_string": "x", "new_string": "xxxx"}))
+
+    def test_a_MultiEdit_is_summed_over_its_edits(self):
+        """`MultiEdit` is named by the matcher and carries `edits: [...]`, not a top-level
+        pair -- so it fell through to an allow and could grow an over-budget file."""
+        grow = {"edits": [{"old_string": "x", "new_string": "x" * 50},
+                          {"old_string": "xxxxx", "new_string": "x"}]}
+        shrink = {"edits": [{"old_string": "x", "new_string": "xx"},
+                            {"old_string": "x" * 40, "new_string": "x"}]}
+        self.assertIn("adds 45 more", self.pre("MultiEdit", grow))
+        self.assertIsNone(self.pre("MultiEdit", shrink))
+
+    def test_a_payload_that_cannot_be_measured_is_refused_over_budget(self):
+        for tool, tool_input in (("NotebookEdit", {"new_source": "x"}),
+                                 ("MultiEdit", {"edits": [{"old_string": "x"}]}),
+                                 ("MultiEdit", {"edits": ["x"]})):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertIn("nothing its size can be measured from",
+                              self.pre(tool, tool_input))
+
+    def test_under_budget_nothing_fires_whatever_the_shape(self):
+        self.write(self.CAP)
+        self.assertIsNone(self.pre("NotebookEdit", {"new_source": "x" * 999}))
+        self.assertIsNone(self.pre("MultiEdit", {"edits": [{"old_string": "", "new_string": "x" * 999}]}))
 
 
 class TheNamedBackstop(unittest.TestCase):
@@ -534,9 +803,11 @@ class TheNamedBackstop(unittest.TestCase):
 
         `check_roadmap_order.scope_problem` and `check_prior_art.verify` both take a
         session id, and CI has no session -- so a path written outside a session's
-        declared scope, or a new file with no prior-art search, is caught by nothing once
-        the write goes through Bash. This is asserted on the signatures rather than
-        described, so it goes red if either gate ever stops being session-scoped.
+        declared scope, or a new file with no prior-art search, is not refused before a
+        shell write, is detected after it (`TheContainment`), and is backed by nothing in
+        CI: if the session ignores the failed turn, no later gate asks again. This is
+        asserted on the signatures rather than described, so it goes red if either gate
+        ever stops being session-scoped.
         """
         import inspect
 

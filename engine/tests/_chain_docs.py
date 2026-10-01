@@ -12,6 +12,7 @@ drifts, and a drifted fixture tests the drift instead of the protocol.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Mapping
 
@@ -80,3 +81,59 @@ def lease_payload(evidence_like: Mapping[str, Any], **overrides: Any) -> dict:
     document = {"execution_attempt_id": evidence_like["execution_attempt_id"]}
     document.update(overrides)
     return document
+
+
+def run_evidence_chain(output_bytes: bytes, *, head_sequence: int,
+                       output_sha256: str | None = None, cgroup: str = "cg-1") -> bytes:
+    """A `brops.run-evidence-chain.v1` document with the three events `governed_recorder` writes.
+
+    The payload KEYS are the recorder's (`proof/src/bin/governed_recorder.rs`, the `evidence_out`
+    block): `lease-validated` carries `lease_path`/`lease_sha256`, `execution-launched` carries
+    `cgroup` and the path and digest of both the executor and the launcher, `output-captured`
+    carries `launcher_exit`/`output_bytes`/`output_sha256`. The VALUES are fixture values. Two
+    suites each had a copy of this that claimed the recorder's exact shape, and the two copies
+    disagreed with each other and with the recorder; `derive_evidence_from_chain` reads only the
+    `output-captured` payload, which is the one part all three agreed on and the reason nothing
+    noticed.
+
+    The supervisor derives the evidence head from this and refuses a completion whose
+    `output_handle` is not the `output-captured` digest (audit F-01), so a test that wants to
+    model a lying broker or executor passes an `output_sha256` that does not match the bytes.
+    """
+    def sha(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    payloads = [
+        ("lease-validated", {"lease_path": "/tcb/executor.lease", "lease_sha256": sha(b"lease")}),
+        ("execution-launched", {
+            "cgroup": cgroup,
+            "executor_path": "/tcb/executor",
+            "executor_sha256": sha(b"executor"),
+            "launcher_path": "/tcb/launcher",
+            "launcher_sha256": sha(b"launcher"),
+        }),
+        ("output-captured", {
+            "launcher_exit": 0,
+            "output_bytes": len(output_bytes),
+            "output_sha256": output_sha256 or sha(output_bytes),
+        }),
+    ]
+    previous, events = None, []
+    for sequence, (event_type, payload) in enumerate(payloads, start=1):
+        event = {
+            "event_type": event_type,
+            "payload": payload,
+            "payload_sha256": sha(canonical(payload)),
+            "previous_event_hash": previous,
+            "sequence": sequence,
+        }
+        previous = sha(canonical(event))
+        events.append(event)
+    return canonical({
+        "event_count": len(events),
+        "events": events,
+        "final_event_hash": previous,
+        "head_sequence": head_sequence,
+        "last_sequence": len(events),
+        "protocol": "brops.run-evidence-chain.v1",
+    })

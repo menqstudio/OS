@@ -91,11 +91,26 @@ class SupervisorFixture(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "init"],
                        check=True, capture_output=True)
 
+        # Operator-signed, as bro_bind_workspace emits it and as the runtime requires
+        # (bro_workspace.load_workspace). The fixture used to write the flat payload,
+        # which is the one shape no real deployment produces.
         self.binding = self.tmp / "binding.json"
-        self.binding.write_text(json.dumps({
-            "schema": 1, "workspace_id": "bro-test", "repository": "menqstudio/bro",
+        self.binding.write_text(json.dumps(self.signed_binding()), encoding="utf-8")
+
+    def binding_payload(self, **overrides):
+        payload = {
+            "schema": 1, "artifact_type": "workspace-binding",
+            "key_id": self.keys["operator-root"]["key_id"],
+            "workspace_id": "bro-test", "repository": "menqstudio/bro",
             "root": str(self.repo), "control_plane_digest": "a" * 64, "active": True,
-        }), encoding="utf-8")
+            "issued_at_epoch": NOW, "expires_at_epoch": NOW + YEAR,
+        }
+        payload.update(overrides)
+        return payload
+
+    def signed_binding(self, authority="operator-root", **overrides):
+        overrides.setdefault("key_id", self.keys[authority]["key_id"])
+        return sign_payload(self.keys[authority]["private_key"], self.binding_payload(**overrides))
 
     def request(self, task_class="standard-builder", scope=()):
         return TaskRequest("task-1", task_class, "because", tuple(scope))
@@ -251,13 +266,110 @@ class LeaseContainmentTests(SupervisorFixture):
                          "a lease that outlives its builder is a credential on disk")
 
     def test_builder_does_not_inherit_the_supervisor_environment(self):
-        result = self.supervise(
-            self.request(),
-            builder=[sys.executable, "-c",
-                     "import json,os;print('evidence:'+json.dumps(sorted(os.environ)))"])
+        # The variables are PUT in the supervisor's environment first. Asserting the absence of a
+        # name nothing ever set holds just as well for a builder handed all of os.environ.
+        planted = {"BRO_SUPERVISOR_ONLY_SENTINEL": "issuer-side", "BRO_COMPLETION_KEY": "x"}
+        with patch.dict(os.environ, planted):
+            result = self.supervise(
+                self.request(),
+                builder=[sys.executable, "-c",
+                         "import json,os;print('evidence:'+json.dumps(sorted(os.environ)))"])
+        self.assertEqual(result.status, COMPLETED, result.message)
         names = json.loads(result.evidence[0][len("evidence:"):])
-        self.assertNotIn("BRO_TASK_CONTRACT", names)
-        self.assertNotIn("BRO_COMPLETION_KEY", names)
+        for name in planted:
+            self.assertNotIn(name, names)
+        # The positive half: the builder did get the environment the supervisor builds for it.
+        self.assertIn("BRO_EXECUTION_LEASE", names)
+
+
+class UsageTests(unittest.TestCase):
+    def test_the_documented_command_line_is_one_the_parser_accepts(self):
+        # The module docstring showed --registry, --workspace and --builder-command;
+        # the parser defines none of them, so the documented invocation died in
+        # argparse. Every flag the docstring shows is fed back to the real parser.
+        import contextlib
+        import io
+        import re
+        import bro_supervisor
+        flags = sorted(set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", bro_supervisor.__doc__)))
+        self.assertIn("--registry-root", flags)
+        self.assertIn("--binding", flags)
+        argv = ["run"]
+        for flag in flags:
+            argv += [flag, "30" if flag == "--ttl-seconds" else "/nonexistent/bro-usage-test"]
+        argv += ["--", "true"]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                code = bro_supervisor.main(argv)
+            except SystemExit as exc:
+                self.fail(f"argparse rejected the documented flags {flags}: exit {exc.code}: "
+                          f"{stderr.getvalue()}")
+        # Parsed, then refused for the files that do not exist — not for the flags.
+        self.assertEqual(code, 1)
+        self.assertIn("RED:", stderr.getvalue())
+
+
+class BindingTests(SupervisorFixture):
+    """The supervisor reads its workspace binding as the signed artifact it is."""
+
+    def supervise_with(self, document):
+        self.binding.write_text(json.dumps(document), encoding="utf-8")
+        return self.supervise(self.request())
+
+    def test_a_signed_binding_supplies_the_lease_fields(self):
+        result = self.supervise(self.request())
+        self.assertEqual(result.status, COMPLETED, result.message)
+
+    def test_an_unsigned_flat_binding_is_denied_before_anything_is_issued(self):
+        # The shape the supervisor used to index directly: anybody could write it, and
+        # its workspace id, repository and digest went into an issuer-signed lease.
+        result = self.supervise_with(self.binding_payload())
+        self.assertEqual(result.status, DENIED)
+        self.assertIn("not operator-signed", result.message)
+        self.assertEqual(self.worktrees_left(), [])
+
+    def test_a_binding_signed_by_a_non_operator_key_is_denied(self):
+        result = self.supervise_with(self.signed_binding(authority="builder"))
+        self.assertEqual(result.status, DENIED)
+        self.assertIn("not operator-signed", result.message)
+
+    def test_a_binding_altered_after_signing_is_denied(self):
+        document = self.signed_binding()
+        document["payload"]["control_plane_digest"] = "b" * 64
+        result = self.supervise_with(document)
+        self.assertEqual(result.status, DENIED)
+        self.assertIn("not operator-signed", result.message)
+
+    def test_a_signed_binding_missing_a_lease_field_is_denied_by_name(self):
+        payload = self.binding_payload()
+        del payload["control_plane_digest"]
+        result = self.supervise_with(
+            sign_payload(self.keys["operator-root"]["private_key"], payload))
+        self.assertEqual(result.status, DENIED)
+        self.assertIn("control_plane_digest", result.message)
+
+    def test_a_signed_binding_no_longer_in_force_is_denied_before_anything_is_issued(self):
+        # Signed by the operator, and refused by the runtime (bro_workspace.load_workspace):
+        # the supervisor checked the signature alone and issued a lease over each of these.
+        for overrides, said in (
+                ({"active": False}, "not active"),
+                ({"expires_at_epoch": NOW - 1}, "expired"),
+                ({"expires_at_epoch": NOW}, "expired"),
+                ({"expires_at_epoch": None}, "expires_at_epoch"),
+                ({"expires_at_epoch": True}, "expires_at_epoch"),
+                ({"schema": 2}, "schema")):
+            with self.subTest(overrides=overrides):
+                result = self.supervise_with(self.signed_binding(**overrides))
+                self.assertEqual(result.status, DENIED, result.message)
+                self.assertIn(said, result.message)
+                self.assertEqual(self.worktrees_left(), [])
+
+    def worktrees_left(self):
+        listed = subprocess.run(["git", "-C", str(self.repo), "worktree", "list", "--porcelain"],
+                                check=True, capture_output=True, text=True).stdout
+        return [line for line in listed.splitlines()
+                if line.startswith("worktree ") and pathlib.Path(line[9:]).resolve() != self.repo.resolve()]
 
 
 class RunTests(SupervisorFixture):

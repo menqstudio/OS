@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import pathlib
-import py_compile
 import sys
+
+# Before the imports below, which is the point: runtime/ and tools/ are digest roots, and
+# compiled bytecode under one is the shadow `bro_protected.assert_no_bytecode_shadow`
+# refuses on. A validator that mints it leaves the wall refusing for something the
+# validator itself did.
+sys.dont_write_bytecode = True
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -38,6 +43,56 @@ def load_json(rel: str) -> dict:
     if not isinstance(value, dict):
         fail(f"{rel} must contain a JSON object")
     return value
+
+
+def check_compiles(root: pathlib.Path, targets: list[str]) -> None:
+    """Syntax-check every target IN MEMORY.
+
+    This was `py_compile.compile(path, doraise=True)`, which writes
+    `__pycache__/<name>.pyc` beside each source whatever PYTHONDONTWRITEBYTECODE or `-B`
+    say — one for every target, under two digest roots, on every run. CI grew a step to delete
+    them again; a local run had nothing. `compile()` answers the same question and
+    writes nothing.
+    """
+    for rel in targets:
+        path = root / rel
+        try:
+            compile(path.read_bytes(), str(path), "exec", dont_inherit=True)
+        except OSError as exc:
+            fail(f"cannot read {rel}: {exc}")
+        except (SyntaxError, ValueError) as exc:
+            fail(f"{rel} does not compile: {exc}")
+
+
+def count_skills(root: pathlib.Path, index: dict) -> int:
+    """The number of skills, DERIVED, and refused unless every record of it agrees.
+
+    The GREEN line used to print the index's stored `count` field, which nothing compared
+    with anything: a wrong number would have been reported as fact. The list, the stored
+    count, the per-skill entries and the SKILL.md files on disk must all say the same.
+    """
+    skills = index.get("skills")
+    if not isinstance(skills, list) or not all(isinstance(item, str) and item for item in skills):
+        fail("skills/index.json: `skills` must be a list of skill ids")
+    if len(set(skills)) != len(skills):
+        fail("skills/index.json: `skills` lists a skill more than once")
+    if index.get("count") != len(skills):
+        fail(f"skills/index.json: count says {index.get('count')!r}, the list holds {len(skills)}")
+    entries = index.get("entries")
+    if not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries):
+        fail("skills/index.json: `entries` must be a list of objects")
+    if sorted(str(item.get("id")) for item in entries) != sorted(skills):
+        fail("skills/index.json: `entries` does not describe exactly the skills listed")
+    for item in entries:
+        if item.get("path") != f"skills/{item['id']}/SKILL.md":
+            fail(f"skills/index.json: entry {item['id']!r} points at {item.get('path')!r}")
+    on_disk = sorted(path.parent.name for path in (root / "skills").glob("*/SKILL.md"))
+    if on_disk != sorted(skills):
+        missing = sorted(set(skills) - set(on_disk))
+        unlisted = sorted(set(on_disk) - set(skills))
+        fail(f"skills/index.json disagrees with the skill directories: "
+             f"listed but absent {missing}, present but unlisted {unlisted}")
+    return len(skills)
 
 
 def main() -> int:
@@ -171,10 +226,9 @@ def main() -> int:
         "runtime/bro_audit_log.py", "runtime/bro_stop_controller.py",
         "tools/bro_live_validate.py", "tools/bro_backup.py", "tools/bro_monitor.py",
     ]
-    for rel in compile_targets:
-        py_compile.compile(str(ROOT / rel), doraise=True)
+    check_compiles(ROOT, compile_targets)
 
-    skill_count = load_json("skills/index.json").get("count")
+    skill_count = count_skills(ROOT, load_json("skills/index.json"))
     print(
         "GREEN: static foundation validation passed; "
         f"canonical={len(manifest.get('paths', []))}; sst_domains={len(domains)}; "
