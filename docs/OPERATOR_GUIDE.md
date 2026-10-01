@@ -11,7 +11,7 @@
 > run still **refuses first launch**, and the governed path there stays refused for the reasons in
 > §4 and §11. §2.3 says exactly what the POSIX installer provides. This note said "Windows is the
 > only platform the app can currently run on" and that the POSIX branch "aborts startup" until
-> 2026-10-01.
+> 2026-10-01. *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 >
 > **Honesty contract.** Every section marks what **exists today** vs. what is **PLANNED**. The
 > governed-execution **Windows broker** (services, per-service SIDs, NTFS/CNG DACLs, AppContainer

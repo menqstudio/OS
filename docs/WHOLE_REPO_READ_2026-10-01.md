@@ -41,18 +41,6 @@ All open. Grouped by kind; within a kind, by path.
 
 ### security (26)
 
-- **`.claude/agents/runner.md:3`** — 'Cannot edit' for runner, all 43 designated verifiers and the Push Executor rests on a tool list that includes Bash
-  - runner.md: 'Reads and RUNS ... but cannot edit', tools 'Read, Grep, Glob, Bash'. .claude/hooks/canonical_law_gate.py:67-69: 'SHELL IS NOT GATED BEFORE THE FACT ... A session can still write any file through Bash (`>`, `sed -i`, a python one-liner) and the write WILL LAND'.
-  - also: `tools/generate_agent_definitions.py:42 (TOOLS_VERIFY) and :66 (runner blurb); apps/desktop/src/services/agentsDispatch.ts:93 (TIER_CAN_WRITE runner:false)`
-  - fix: Reword the runner/verifier grant as 'has no Edit/Write tool; Bash can still write and is only detected afterwards', or gate Bash for these agents before claiming independence.
-- **`.claude/hooks/canonical_law_gate.py:558`** — PostToolUse shell settlement is skipped by three ordinary spellings its own 'WHAT IT DOES NOT COVER' list omits
-  - Probed in a scratch copy (undeclared session). Control: baseline, then uncommitted write -> block. No output at all for: (A) the write made in the session's FIRST shell call (558-565 baselines it); (B) write + `git commit` in one call (567 walks only dirty paths); (C) write + rm of the /tmp state file.
-  - also: `.claude/hooks/canonical_law_gate.py:60-65 (the list 'listed rather than implied')`
-  - fix: Record the baseline (dirty set plus HEAD) at session-start and compare HEAD as well as the dirty set, or add these three to the limits list. DISCLOSURE: my probe C ran `rm /tmp/os-canonical-law/shell/*.json`, which cleared live sessions' shell baselines; they re-baseline silently on their next shell call.
-- **`.github/workflows/supply-chain.yml:438`** — The 'Scan the PR commit range for secrets' step scans no commit range; the file header says it does
-  - Line 16: 'gitleaks - secret scan of the working tree and (on PRs) the commit range'. Step at 438-461 passes --no-git with --log-opts; its own note (444-446) says '--no-git ... makes --log-opts a no-op, so this step never actually walked the commit range'. A secret added then removed inside a PR is not seen.
-  - also: `.github/workflows/supply-chain.yml:16`
-  - fix: Rename the step and correct the header line to say working-tree only until the history triage is done, or drop --no-git and allowlist the 9 triaged findings.
 - **`apps/desktop/src-tauri/core/src/agent_bundle.rs:453`** — Bundle loader reads grant/flow from outside the digest-named directory: grant_ref/flow_ref are joined with no containment check
   - `dir.join(&manifest.grant_ref)` with no check. Scratch probe run against the real crate: manifest with grant_ref="../../outside/grant.json" verifies; widening that outside grant (added USE_NETWORK, expiry i64::MAX) left the SAME digest and verify() returned Ok long past the original expiry.
   - also: `apps/desktop/src-tauri/core/src/agent_bundle.rs:475 (flow_ref, same join); tools/check_produced_artifact.py:249-253 has the containment guard the Rust loader lacks`
@@ -97,28 +85,9 @@ All open. Grouped by kind; within a kind, by path.
   - is_protected()/is_digest_member() return False for install/brops_install.sh, ci/live/run_ladder_turn.sh, ci/isolation_proof.sh, contracts/brops-sign-result.v1.schema.json. ci.yml:170,179,266 run the first three under sudo. The listed '.github/workflows/**' only matches engine/.github, which GitHub never runs (ci.yml:825).
   - also: `.github/workflows/ci.yml:170,179,266,825`
   - fix: Add ci/**, install/** and contracts/** to protected_roots and digest_roots, and correct the purpose text about which workflows directory is actually covered.
-- **`tools/check_ai_surfaces.py:60`** — A generic #[tauri::command] is invisible to the AI-surface inventory gate
-  - _FN_RE = `fn (\w+)\s*\(` does not match `fn name<R: Runtime>(`. Ran check() on `#[tauri::command] pub async fn sneaky<R: tauri::Runtime>(..){ crate::ai::generate(..) }` with empty policy: returned []. Same source without the generic: 'NOT classified'. No such command in the tree today; 8 generic non-command fns already unseen.
-  - fix: Allow an optional generic parameter list between the fn name and `(` in _FN_RE and add the generic-command case to test_check_ai_surfaces.py.
-- **`tools/check_capabilities.py:42`** — The capability gate reads only default.json; a second file in capabilities/ would grant commands unseen
-  - `DEFAULT_CAP = DESKTOP / "capabilities" / "default.json"` is the only capability file parsed (also check_reachability.py:96). tauri.conf.json sets no `app.security.capabilities`, so Tauri enables every file in capabilities/. An extra.json with allow-decide-approval would leave the gate GREEN.
-  - also: `tools/check_reachability.py:96`
-  - fix: Make the gate fail when capabilities/ holds any file other than default.json (or parse all of them), and add a test that plants a second capability file.
-- **`tools/generate_agent_definitions.py:37`** — Verifier and runner definitions are described as unable to edit, but keep Bash, which writes any file
-  - Generator:37-39 'must not be able to edit the thing it is judging — it keeps Bash'; :66 runner 'but cannot edit'. Slice verifier files line 4: 'tools: Read, Grep, Glob, Bash'. canonical_law_gate.py:68-70: 'A session can still write any file through Bash (`>`, `sed -i` ...) and the write WILL LAND'.
-  - also: `.claude/agents/zero-trust-verification--independent-verifier.md:4; .claude/hooks/canonical_law_gate.py:68; apps/desktop/src-tauri/src/ai.rs:1020`
-  - fix: Reword the tier and verifier text to say the edit tools are withheld but shell writes are only detected after the fact, or run verifiers in a read-only worktree or sandbox.
 
 ### bug (58)
 
-- **`.claude/hooks/canonical_law_gate.py:518`** — The shell-side canon-budget check is not the predicate the Edit-side one is, and MultiEdit skips the Edit-side one
-  - :518 comment 'over its ceiling AND bigger than it was', but :531-535 block whenever `size > cap` (`before`/`now` unused), so a shell edit that shrinks an over-budget file is blocked while an Edit is accepted; :501 claims 'the SAME predicates'. :413-425 read only old_string/new_string, so MultiEdit's `edits` return None. No test: 'ceiling' appears only in test_wall_bash_gap.py's docstring.
-  - also: `.claude/hooks/canonical_law_gate.py:413 ; tools/test_wall_bash_gap.py:28`
-  - fix: Compare against the recorded prior size (store size in the fingerprint) in shell_path_problem, sum deltas over `edits` for MultiEdit, and add a mutation-proven test for each.
-- **`.claude/hooks/canonical_law_gate.py:518`** — Post-tool canon-budget arm blocks a SHRINKING shell edit; comment says 'AND bigger than it was' but nothing compares sizes
-  - L518 comment: 'over its ceiling AND bigger than it was'; code L531 only `if size <= cap: return None`, `before` is unused. Probe in a scratch root: file shrunk to 150 B vs ceiling 100 returned 'only accepted edit is one that makes it smaller'. The stated remedy (revert) makes it larger.
-  - also: `tools/test_wall_bash_gap.py:318 (TheContainment has no test for the budget arm; `grep budget` hits only the docstring)`
-  - fix: Store the size in the baseline and block only when the file is over its ceiling and not smaller than before, then add a TheContainment case for it.
 - **`apps/desktop/src-tauri/broker/src/chain_executor.rs:647`** — Three copies of the AF_UNIX one-frame exchange have drifted: the broker's outbound hop connection has no I/O deadline while its inbound side and the desktop client do
   - UnixHopConn (647-679): `UnixStream::connect(path)` then `read_exact` with no set_read_timeout. main.rs:216-218 arms a deadline on accepted peers (audit F-31: 'loop is strictly serial'); src/governed_turn.rs:284-310 bounds the client (R-38). A stalled principal hangs the serial broker forever. read_one_reply at :682 is a second copy of the same reader.
   - also: `apps/desktop/src-tauri/broker/src/main.rs:216 ; apps/desktop/src-tauri/src/governed_turn.rs:284 ; apps/desktop/src-tauri/broker/src/chain_executor.rs:682`
@@ -251,35 +220,10 @@ All open. Grouped by kind; within a kind, by path.
   - global.css:33 `@keyframes shimmer { to { background-position: -200% 0; } }` drives `.skeleton` (L30). aios.css:205 `@keyframes shimmer{to{transform:translate3d(3vw,-2vh,0) scale(1.06)}}` loads later (styles.css:6) and wins. Only duplicate among 163 names; check_c1_tokens only checks keyword names.
   - also: `apps/desktop/src/theme/aios.css:205`
   - fix: Rename one of the two keyframes (e.g. `skeleton-shimmer`) and make the keyframe gate refuse a name defined twice.
-- **`tools/check_contrast.py:139`** — The 'palettes mirror the tokens' check is a substring test on the whole file, not a per-token comparison
-  - `if value.lower() not in sources[rel]`. Ran _require_palettes_mirror_tokens on the real manifest with light bg/surface swapped (#f5f6f8 <-> #ffffff): accepted. Set light bg to the DARK value: accepted. Docstring l.95 says the palettes 'must equal the files that ship them - asserted'.
-  - fix: Parse each token's light and dark value out of tokens.ts / aios.css by name and compare that value to the manifest entry for the same name and theme.
-- **`tools/check_no_assumptions.py:77`** — EVIDENCE alternatives `reproduc` and `mutat` are dead: the trailing \b stops them matching 'reproduced' or 'mutation'
-  - Pattern is `\b(?:…\|reproduc\|mutat\|…)\b`. Reproduced: EVIDENCE.search('I assume it was reproduced on the box') is None and the line is flagged; 'probably fixed; mutation sweep done' is flagged; only the literal non-words 'reproduc' / 'mutat' match.
-  - fix: Write the stems as `reproduc\w*` and `mutat\w*` (or move them outside the trailing word boundary) and add a test with the real words.
-- **`tools/check_residual_items.py:106`** — Severity-drift gate keeps only the LAST occurrence per document, so a downgrade in CLAUDE.md's English section is invisible
-  - declared_severities does `found[item] = severity` per match. CLAUDE.md asserts O-1..O-5 twice (line 120 English, line 173 Armenian). Reproduced: replacing the first `**O-1 (HIGH)**` with `(LOW)` still yields declared_severities(...)['O-1'] == 'HIGH', so rule 3 stays GREEN.
-  - also: `CLAUDE.md:120 and :173`
-  - fix: Collect every occurrence per item (dict of sets) and report RED when a document disagrees with itself or any occurrence differs from the inventory.
-- **`tools/check_runbook_snippets.py:74`** — Arity check counts a keyword for an OPTIONAL parameter toward the required count, and never flags an unknown keyword
-  - 'supplied = given + len(kw & set(sig.parameters))' compared to len(required). Probe with f(a, b, c=1): call f(1, c=2) returns None (no problem) though b is missing; f(1, 2, zzz=3) also returns None. Both would raise TypeError on the first line, which the docstring says it catches.
-  - fix: Bind the call with inspect.Signature.bind(*placeholders, **keywords) and report the TypeError it raises.
-- **`tools/check_state_fields.py:92`** — The dead-field gate counts a test fixture as a reader, so it is GREEN on a field nothing reads
-  - `product_roadmap` (config/current_state.json:97) appears in no tool, hook or bridge file; only tools/test_check_repo_state.py:224 writes `snap["product_roadmap"]`. Gate run today: `GREEN ... fields=17; declared-unread=0`. READER_DIRS (line 48) also names `runtime`, which does not exist at repo root.
-  - also: `tools/test_check_repo_state.py:224`
-  - fix: Exclude test_*.py from readers_text(), drop or correct the nonexistent `runtime` entry, then give product_roadmap a reader or declare it unread.
-- **`tools/check_state_fields.py:92`** — A state field counts as 'read' on any quoted occurrence of its name; three fields pass with no reader of the mirror
-  - Gate prints 'GREEN ... fields=17; declared-unread=0'. Measured: product_roadmap matches only tools/test_check_repo_state.py:224,442 (a fixture); _comment matches generate_negative_matrix.py:198 and check_reachability.py:570; schema matches MIRRORS keys in check_schema_mirrors.py:50. None reads current_state.json.
-  - also: `tools/check_state_fields.py:48 (READER_DIRS lists 'runtime', which does not exist; .github/workflows is not scanned although the message says 'workflow')`
-  - fix: Exclude tools/test_*.py from the haystack and require the name to appear in a file that also opens current_state.json, or declare these three in state_fields_read_by_nothing.
 - **`tools/generate_agent_definitions.py:117`** — Generator skips the mandatory sixth role: 52 of the engine's 311 identities have no agent definition
   - Generator reads json.load(f)["packs"] and loops pack["roles"] (l.117, 211): 259 roles + 3 tiers = 262 files. registry.json mandatory_roles appends 'Automation & Flow Engineer' to every pack; agents/registry.json agent_count=311. Docstring l.11 says '311 roles'. No *--automation-flow-engineer.md exists.
   - also: `engine/runtime/bro_identity.py:46 (pack_roles docstring: reading packs[*].roles directly is 'one short in each of the 52 packs ... ask for it here rather than re-deriving it')`
   - fix: Derive roles from engine/runtime/bro_identity.pack_roles() (or apply mandatory_roles) so 311 role definitions are generated and each file's 'Declared roles' line lists all six.
-- **`tools/sync_active_pr.py:915`** — Refusals that say "Nothing has been written" fire after config/current_state.json was already rewritten
-  - main(): rewrite_state() at :915 and rewrite_main_ci() at :922 write STATE; live_open_prs() :928, audit_position_sentence() :936 and _bounded() :941 can still SystemExit. Reproduced on a scratch copy with a 1500-char --summary: exit text ends 'Nothing has been written.', state file changed.
-  - also: `tools/sync_active_pr.py:821 (settle() writes STATE, then _bounded/audit_position_sentence at :868-871)`
-  - fix: Build and bound the banner, take the audit sentence and read live_open_prs() before the first write in both main() and settle(), as settle() already does for parked_roles().
 
 ### design-contradiction (65)
 
@@ -459,10 +403,6 @@ All open. Grouped by kind; within a kind, by path.
   - config/current_state.json:22,25 status_tokens CURRENT_DESIGN_GATE / CURRENT_LAST_VERDICT = 'OWNER_APPROVED_NOT_ARCHITECT_AUDITED'; :41,44 design_gate.last_architect_verdict = 'GREEN', current_candidate_gate = 'GREEN'. Gate checks design_gate against GATE_STATES (l.411-416) and tokens only for 'PENDING_REAUDIT' (l.703).
   - also: `config/current_state.json:22-25 vs 41-44`
   - fix: Decide which statement is true, then make _check_current_state require status_tokens.CURRENT_DESIGN_GATE to equal design_gate.current_candidate_gate (and the verdict pair likewise).
-- **`tools/generate_agent_definitions.py:11`** — Generator emits 259 role definitions while the engine registers 311 identities; 52 'Automation & Flow Engineer' roles have no definition
-  - Docstring: '52 packs and 311 roles'. Recount: registry.json roles sum to 259; --check prints 'GREEN: 262' (259 + 3 tiers). bro_identity.py:34 appends the flow role per pack (agent_count 311). Line 211 iterates pack['roles'] directly; no *--automation-flow-engineer.md exists.
-  - also: `engine/runtime/bro_identity.py:44 (pack_roles docstring warns against reading registry roles directly); every slice file line 9 'Declared roles:' omits the sixth role, e.g. .claude/agents/testing-quality--qa-lead.md:9`
-  - fix: Derive roles from bro_identity.pack_roles() so all 311 identities get a definition, or correct the docstring to 259 and state that the flow role is deliberately excluded.
 - **`tools/test_renderer_broker_schemas.py:149`** — Test and wire schema lock committed trust_state to 'trusted_verified'; the broker now projects the stored label (demonstration_custody)
   - Test l.146-150: '# role and trust_state are LOCKED consts' / const == "trusted_verified", docstring 'Kept in lock-step with governed_turn_ipc.rs'. Rust CommittedMessage::new doc: 'It is now the label the committing transaction actually stored, so a demonstration-custody row projects as what it is.'
   - also: `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:225-236 (field doc still says 'Always TRUSTED_VERIFIED'); bridge/contracts/renderer-governed-turn-result.schema.json:51-53`
@@ -470,10 +410,6 @@ All open. Grouped by kind; within a kind, by path.
 
 ### stale-claim (57)
 
-- **`.github/workflows/ci.yml:1203`** — produced-artifact comment says the job is not a required check and is held by a dated deferral; both are false
-  - ci.yml:1203 'It is still ABSENT from config/required-checks.json'; 1210 'it is a DATED entry in config/deferred-enforcement.json'. But required-checks.json contexts contains 'Production half · the five conditions (T-055)' and deferred-enforcement.json has "deferrals": {}.
-  - also: `config/required-checks.json (contexts) and config/deferred-enforcement.json (deferrals)`
-  - fix: Rewrite lines 1203-1213 to state the context is required and the deferral was closed.
 - **`MASTER_EXECUTION_ROADMAP.md:20`** — The roadmap contradicts itself on phase status and on how to run cargo, and names a canonical UI reference that is not in the repository
   - :20 'Phases 2–10: not done' vs board :72-77 'Done' for 2–7. :136 '⚠️ PowerShell, NOT the Bash tool' and '69 tests', :141 '~615 tests' vs :112 '`cargo` runs from an ordinary shell' and 2437. :191/:379 `brops-aios.html` 'Canonical UI Reference' that 'wins on look & feel': no such file; `git log --all -- brops-aios.html` is empty.
   - also: `MASTER_EXECUTION_ROADMAP.md:72 ; MASTER_EXECUTION_ROADMAP.md:136 ; MASTER_EXECUTION_ROADMAP.md:191`
@@ -608,46 +544,6 @@ All open. Grouped by kind; within a kind, by path.
   - Pair is fg `accent-text` on bg `accent` (--menq-*). ui.css:27 paints `.btn--primary { background: var(--brops-accent); color: var(--brops-accent-text) }` = #fff/#04121b on aios --cyan. check_dead_tokens.py:61 lists --menq-color-accent-text as read by nothing. tokens.css:87 records this pair once fell to 3.5:1.
   - also: `apps/desktop/src/components/ui.css:27; apps/desktop/src/theme/tokens.css:86-99`
   - fix: Add brops-accent-text to both palettes and declare the pair against `aios-cyan`, replacing or supplementing the current one.
-- **`tools/check_no_assumptions.py:112`** — Two CI gates have no test at all: check_no_assumptions.py and check_state_fields.py
-  - Of 49 tools/check_*.py these two have no tools/test_<name>.py, and grepping both module names across *.py finds no test importing them. Both run in CI (.github/workflows/ci.yml:935 and :944). CLAUDE.md §7 rule 4 requires each check to be deleted once and seen to go red.
-  - also: `tools/check_state_fields.py:76`
-  - fix: Add test_check_no_assumptions.py and test_check_state_fields.py with a red fixture per rule, and name them on a CI line.
-- **`tools/generate_agent_definitions.py:222`** — Nothing in CI or any test runs `generate_agent_definitions.py --check`; the 259 role files can drift from the registries with everything green
-  - grep for 'generate_agent' in .github/workflows, engine/ci, engine/tests, .claude/hooks, tools/githooks returns nothing; no tools/test_generate_agent_definitions.py. START_HERE.md:128-129 lists it as a manual step. The only automated check (ai.rs:3852) compares the 3 tier files to Rust.
-  - also: `START_HERE.md:129; apps/desktop/src-tauri/src/ai.rs:3852`
-  - fix: Add `python tools/generate_agent_definitions.py --check` as a step in a required CI job.
-- **`tools/generate_agent_definitions.py:226`** — `--check` is not run by any workflow or test; the 259 role definitions can drift from the registries with CI green
-  - grep -rn 'generate_agent_definitions\\|claude/agents' .github engine/tests tools/tests bridge returns nothing. START_HERE.md:128-129 lists it only as a manual pre-PR step. Only the 3 tier files' tools lines are compared, by ai.rs:3853 and Chat.delegationTiers.guard.test.ts. --check is GREEN today (262).
-  - also: `START_HERE.md:129`
-  - fix: Add `python tools/generate_agent_definitions.py --check` to a required CI job.
-- **`tools/test_check_audit_reports.py:98`** — The three A-06 rules can be deleted from the audit-reports gate and all 30 tests stay green
-  - l.98-112 assert only main()==1. Fixtures also trip 3b/3d (FOURTH = '...zero-trust-reaudit...' has no '-fourth-'). Scratch copy with checks 1, 2 and 3 removed (check_audit_reports.py:248-284): 'Ran 30 tests OK'. Docstring l.7-8 says every rule is proved by the repository it refuses.
-  - also: `tools/check_audit_reports.py:248-284`
-  - fix: Assert on the failure text (capture stderr) per rule and build fixtures that trip exactly one rule, e.g. a fourth report whose filename carries '-fourth-'.
-- **`tools/test_check_c1_tokens.py:173`** — The A-09 comment test contains no comment and cannot fail if the fix is removed
-  - test_a_declaration_inside_a_COMMENT_does_not_count passes `set()` as declared and a CSS string with no comment. The fix is inline in main() (check_c1_tokens.py:~708 `live = re.sub(r"/\*.*?\*/"...)`); replacing it with `live = text` gives 'Ran 56 tests OK'. grep 'c1.main' in the test file: 0.
-  - also: `tools/check_c1_tokens.py:708`
-  - fix: Extract the declared-anywhere scan into a function and test it with `/* --gone: 4px */` plus a TS type annotation and a setProperty call.
-- **`tools/test_check_coordination.py:102`** — Nineteen validation arms of check_coordination.py survive deletion
-  - If-mutants surviving all 67 tests, check_coordination.py lines 350, 360, 370, 372, 374, 415, 421, 428, 443, 450, 453, 455, 460, 589, 597, 622, 748, 768 (plus 200, a git helper): missing required field, bad merge_state/draft/role, is_rc code_verdict, carrier_transition shape, stub file, no Status line.
-  - also: `tools/check_coordination.py:350`
-  - fix: Add a parametrised test that breaks one field of _default_state() per arm and asserts the matching message.
-- **`tools/test_check_doc_claims.py:1005`** — Counted-claim shape arms are untested and the reachability test re-implements the rule instead of calling the gate
-  - l.1026 calls m.git(ROOT,'merge-base','--is-ancestor',...) itself; the gate's arm (check_doc_claims.py:472) needs main_ref(), which is None in every tmp-dir fixture, so it never fires in a test. If-mutants at 416, 420, 429, 459, 487 (object/value/derive/head-format/cited_in checks) also survive.
-  - also: `tools/check_doc_claims.py:472`
-  - fix: Build a git fixture with build_git() holding a counted-claims.json whose measured.head is a branch commit and assert counted_claim_failures() reports it; add one case per shape arm.
-- **`tools/test_check_principal_model.py:61`** — The principal-model gate's refusal arms are tested by nothing; the docstring promises a test that does not exist
-  - Docstring l.8-10: 'an eighth principal must be refused by name, with §2.6 and the word AMENDMENT'. No test does; RefusesTheDrift only asserts read_model() output. In a scratch copy I deleted check_principal_model.py:93-114 (all four comparison arms): 'Ran 12 tests OK'. 10 of 10 if-mutants survive.
-  - also: `tools/check_principal_model.py:93-114`
-  - fix: Move the verdict into a function taking source text and assert on its problems for the eight-principal, omitted-variant and reordered-array sources, including the AMENDMENT wording.
-- **`tools/test_check_reachability.py:982`** — unittest.main() sits above test classes in three files; a direct run prints OK while dropping 19 tests
-  - Measured: `python3 -B test_check_reachability.py` Ran 71 vs `-m unittest` Ran 83; test_check_roadmap_order 24 vs 26; test_check_runbook_snippets 11 vs 16. All print OK. This is ninth-audit I-05, guarded only in test_check_repo_state.py (FileEntryPoint).
-  - also: `tools/test_check_roadmap_order.py:209 (class at 213); tools/test_check_runbook_snippets.py:121 (class at 125)`
-  - fix: Move the `if __name__ == "__main__"` block to the end of each file and turn FileEntryPoint's check into one sweep over every tools/test_*.py (test_check_c1_tokens.py and test_check_coordination.py have the same shape).
-- **`tools/test_sync_active_pr.py:735`** — The 'unreadable gh fails SOFT' test is identical to the open-carrier test, and carrier_merge_commit's fail-soft parsing is tested by nothing
-  - l.721-724 and l.735-740 both do `self._patch(None)` then `assertEqual(sap.settled_head_for(self.HEAD, 138), self.HEAD)`. `_patch` replaces sap.carrier_merge_commit with a lambda, and grep finds no other caller in tools/test_*.py, so its returncode!=0 / bad-JSON / non-hex arms never run.
-  - also: `tools/sync_active_pr.py:155-170`
-  - fix: Make the fail-soft test stub subprocess.run (non-zero exit, malformed JSON, non-40-hex oid) and call the real carrier_merge_commit.
 
 ### dead-code (6)
 
@@ -694,7 +590,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 ### security (27)
 
 - `.github/workflows/release.yml:157` — Signature verification runs after tauri-action has already uploaded the installers to the draft release
-- `.github/workflows/supply-chain.yml:23` — Header says gitleaks is verified against a 'signed SHA256SUMS'; no signature is checked
 - `apps/desktop/src-tauri/audit-signer/src/register.rs:315` — apply() accepts a pre-existing signer directory and the service loads any anchor.key already in it (read from code; not run, Windows-only)
 - `apps/desktop/src-tauri/broker/src/chain_executor.rs:647` — Outbound hop sockets have no deadline, so one hung principal wedges the broker's serial accept loop forever
 - `apps/desktop/src-tauri/broker/src/main.rs:170` — An unparsable allowed-uid argument silently becomes the broker's own uid
@@ -715,15 +610,9 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/services/governedTurn.ts:84` — A governed-turn reply is never correlated with the request that produced it
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:91` — Archive keeps the Owner's personal email address that the live CLAUDE.md replaced
 - `engine/runtime/bro_orchestration_runtime.py:646` — Claim-lease expiry is judged against the caller-supplied now_epoch, the exact weakness _prove_actor refuses for credentials
-- `tools/check_capabilities.py:95` — A command registered without a module prefix is not seen, so it can be ungated while the gate prints GREEN
-- `tools/generate_agent_definitions.py:66` — runner/verifier/release definitions say 'cannot edit' while granting Bash, and the root wall does not gate Bash
 
 ### bug (98)
 
-- `.claude/agents/builder.md:3` — builder.md frontmatter is not valid YAML: unquoted description contains ': '
-- `.claude/hooks/canonical_law_gate.py:413` — The pre-tool shrink-only budget rule judges only Write and Edit; MultiEdit and NotebookEdit, both named by the matcher, fall through to allow
-- `.claude/hooks/canonical_law_gate.py:522` — shell_path_problem's `except Exception` does not catch load_json's SystemExit, so a missing or invalid canon-budget.json kills the post-tool hook with exit 1
-- `.github/workflows/release.yml:173` — A manual workflow_dispatch run would name the release after the branch, not a version tag
 - `MASTER_EXECUTION_ROADMAP.md:463` — The evidence move cut five glossary entries in the live roadmap off mid-sentence
 - `apps/desktop/docs/architecture/DATABASE_SCHEMA.md:25` — Schema contract says startup MUST refuse a newer database; migrate() has no such check
 - `apps/desktop/src-tauri/audit-signer/src/relay.rs:142` — Exit code is chosen by substring-matching the error text, which includes server-supplied field names
@@ -775,26 +664,12 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `docs/brand/README.md:42` — Chord formula is written as the half-chord; the expression shown equals 489.5, not 979
 - `docs/roadmap/phase-7.md:14` — The UI/UX page specs every phase calls 'Full §D spec' are cut off mid-clause (24 bullets across phases 1-9)
 - `engine/runtime/bro_control_room_api.py:772` — Historic verdicts and evidence are re-verified against today's clock, so one expired or revoked key blanks the whole surface
-- `tools/check_audit_reports.py:62` — ORDINALS stops at 'tenth' and the current round is the tenth, so the next round breaks the gate
-- `tools/check_audit_reports.py:360` — GREEN claims the OWNER page leads with the newest report, which is never checked and is skipped if the page is missing
-- `tools/check_crypto_surface.py:157` — The waiver gate prints GREEN when its inputs are absent
 - `tools/check_dead_tokens.py:91` — Declarations in .tsx template-literal stylesheets are not scanned, and one dead token is passing today
-- `tools/check_doc_claims.py:310` — known_tickets() ignores the root it is run on, and four of its sources are documents it is checking
-- `tools/check_handoff_ready.py:281` — Phase-declaration check passes silently when check_roadmap_order cannot be imported, against the file's own 'never a silent pass' rule
-- `tools/check_principal_model.py:129` — The document count comparison can never fail: the regex only matches 'seven', then the code tests whether the match is 'seven'
-- `tools/check_reachability.py:252` — Skip-directory filter tests the ABSOLUTE path in three gates, so a checkout under a directory named dist/target/build scans nothing; a sibling gate documents and fixed exactly this
-- `tools/check_release_signing.py:123` — Post-build signature check lists Tauri v1 updater payload names while the app builds with Tauri 2
-- `tools/check_release_signing.py:334` — Owner-secret presence check is a substring test, so three secrets are satisfied by their _PASSWORD sibling alone
-- `tools/check_schema_mirrors.py:225` — has_negative_test accepts an #[ignore]d (or empty) negative test, re-opening the G-02 hole it documents
-- `tools/generate_agent_definitions.py:162` — The description lowercases the role, mangling acronyms in the text the Task tool uses to pick an agent
-- `tools/sync_active_pr.py:831` — settle() computes three values that rewrite_state() then overwrites when --pr/--branch are given
 
 ### design-contradiction (125)
 
 - `.claude/agents/research-analysis--source-verifier.md:4` — A role named Verifier is granted build authority and Edit/Write, against the generator's stated purpose
-- `.claude/agents/sre-reliability--sre-lead.md:27` — Generated definitions carry their own two-file read order, contradicting the 'one read order' law
 - `.claude/agents/zero-trust-verification--recovery-verifier.md:3` — Roles named Verifier or Auditor in the zero-trust-verification pack are builders with Edit and Write and no verify authority
-- `.github/workflows/design-gates.yml:41` — Token-parity step and header name aios.css; the checker compares tokens.css, and the same file says so 8 lines later
 - `.github/workflows/release.yml:99` — The release build uses Node 22 while every CI job, and the recorded toolchain, use Node 20
 - `CLAUDE.md:126` — CLAUDE.md says the repository has no path to a production trust root, while the provision crate signs a registry marked production: true
 - `MASTER_EXECUTION_ROADMAP.md:432` — The roadmap tells a cold session to find its phase checklist 'below', but the phase bodies are in docs/roadmap/ and the file never names that directory
@@ -880,16 +755,9 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/skills/communication-writing-negotiation/SKILL.md:36` — 11 skills hand release/send actions to an 'authorized executor', a role that does not exist; 31 name the Push Executor
 - `engine/tests/catalog.json:4` — catalog declares orphan_tests_forbidden: true but lists 47 of 98 test modules and nothing enforces it
 - `engine/tests/test_governed_acceptance.py:1832` — The design still calls the 2848 envelope cap a machine-checked schema-max derivation; the tree pins the real maximum at 2888
-- `tools/check_repo_state.py:1160` — The documented local 'SKIPPED (exit 0)' path without gh is unreachable; the gate always exits 1 there
-- `tools/generate_agent_definitions.py:184` — Every agent definition states its own two-file read order, against CLAUDE.md's single-manifest law
-- `tools/test_wall_bash_gap.py:535` — The file contradicts itself: the docstrings say a Bash write outside scope is 'caught by nothing', while TheContainment proves it is blocked
 
 ### stale-claim (165)
 
-- `.github/supply-chain/README.md:27` — Supply-chain README says the waiver files are empty and the workflow has six jobs; 21 waivers and 11 jobs exist, and the RustSec list is hand-duplicated
-- `.github/workflows/ci.yml:377` — Job count in the tools-windows comment is wrong again: it says 21 jobs, 17 ubuntu; the file has 22, 18 ubuntu
-- `.github/workflows/ci.yml:775` — windows-broker comment cites platform_governed_execution_supported(), a function that does not exist
-- `.github/workflows/supply-chain.yml:5` — Header says TEN jobs; the file has eleven (runbook-snippets is missing from the list)
 - `CLAUDE.md:98` — CLAUDE.md states two different results for the same `cargo test --workspace` command
 - `CLAUDE.md:98` — CLAUDE.md gives two different pass counts for the same `cargo test --workspace`
 - `CLAUDE.md:128` — 'Not packaged yet' for the POSIX root installer contradicts the .deb bundle config
@@ -955,12 +823,8 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/services/desktop.ts:367` — Comment points at `grantApproval`/`denyApproval` 'below'; neither exists
 - `apps/desktop/src/theme/aios.css:3926` — "every selector below already exists in aios.css" is false for 14 selectors, which match no markup either
 - `apps/desktop/vitest.browser.config.ts:15` — "28 of this app's pages carry their CSS in a template literal" does not match the tree
-- `config/canon-budget.json:37` — The budget file describes a canon that no longer exists and a ceiling rule two of its own numbers break
-- `config/control-invocation.json:119` — Three sentences count the required contexts as 33 and 34; the file they cite holds 35
 - `config/counted-claims.json:118` — engine_tests provenance dates the measurement a day before the head it names existed
 - `config/current_state.json:89` — Three state fields in the machine mirror describe pull requests as open or in progress after they merged
-- `config/produced-artifact-contract.json:3` — The contract says every locator ships null and that enforcement_regime appears nowhere; every locator is filled and the field is in repo.rs
-- `config/spec-conformance.json:16` — Four config records say governed_verification_unconfigured() returns Some(...) unconditionally; the function has a None branch
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:1` — Title and filename say July–August 2026, but the file contains no July entry
 - `docs/archive/roadmap-evidence.md:11` — "Nothing is shortened here. Every line is as it was written" is false for this file
 - `docs/brand/README.md:19` — "What is here" lists 3 PNGs; the directory also holds readme/ with 14 SVG sheets it never mentions
@@ -970,22 +834,9 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/README.md:51` — README inventory says 63 documents; the documentation manifest registers 70
 - `engine/README.md:76` — Engine README 'Start here' step 1 tells the reader to read two files that were removed from engine/
 - `engine/runtime/supervisor_ledger.sql:15` — The DDL header cites 'CLAUDE.md §4' for the build-standalone rule; §4 of the only CLAUDE.md is 'Verify commands'
-- `tools/check_capabilities.py:13` — Checker docstring puts the policy file at capabilities/command-policy.json; it lives one level up
-- `tools/check_produced_artifact.py:54` — Docstring and the contract's own `why` still say every locator ships null and nothing exists yet, while the contract is filled in and the header says the gate is GREEN
-- `tools/check_reachability.py:22` — Module docstring says assert_no_bytecode_shadow 'has never once been called' and that rust_symbols 'is empty'; both are false today
-- `tools/check_runbook_snippets.py:120` — _TOP claims to be 'the top-level directories this repository actually has' but names three that do not exist and omits contracts/
-- `tools/generate_agent_definitions.py:11` — Docstring says '52 packs and 311 roles'; the registry holds 52 packs and 259 roles
-- `tools/stamp_pr_head.py:141` — Two job counts for the same workflow in one file, and a hard-coded repo slug the sibling tool calls a defect
-- `tools/sync_active_pr.py:14` — Module docstring and messages describe mechanisms the code replaced
-- `tools/test_check_canon_budget.py:142` — TheRealCanon docstring says the gate is expected to be RED on this repository; it is GREEN and the class never runs it
-- `tools/test_check_doc_claims.py:253` — A test pins a version exemption whose reason is gone: CLAUDE.md no longer says cargo 1.96
-- `tools/test_check_repo_state.py:888` — Closing comment names a guard test that does not exist
-- `tools/test_check_residual_items.py:204` — Docstring says O-2/O-5 need artifacts '[a phrase gate-refused since #314]'; the inventory and CLAUDE.md say none does, so the test's `yes` branch is dead
-- `tools/test_roadmap_split.py:220` — Module docstring and a skip message still describe the abandoned git walk-back; the baseline is a committed fixture, and one test skips where another fails
 
 ### test-defect (90)
 
-- `.claude/hooks/coordination_stop_guard.py:59` — The Stop guard that CLAUDE.md calls a mechanical block has no test anywhere
 - `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:599` — Registration test still skips with a captured println and a bare return, the pattern its own comment says was removed
 - `apps/desktop/src-tauri/audit-signer/tests/relay_contract.rs:217` — The 'inside the engine's ten second budget' test compares a Rust constant to literals, not to the engine's value
 - `apps/desktop/src-tauri/broker/src/preflight.rs:1607` — the_tcb_roster_is_the_real_constant_not_a_copy cannot detect a copy
@@ -1026,23 +877,9 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/features/writeRecord.test.tsx:152` — Vocabulary guard scans only STR lang-maps; the parameterised copy that reaches the screen is never checked
 - `apps/desktop/src/i18n/strings.parity.test.ts:13` — Per-page parity guard misses a production catalog and silently skips any entry without `en`
 - `apps/desktop/src/services/desktop.writeRecords.test.ts:89` — Two tests assert on the mock's own return value and cannot fail
-- `tools/test_check_audit_actor.py:133` — The exit code CI reads is untested in ten gates: tests call check() and never main() with problems
-- `tools/test_check_c1_tokens.py:269` — unittest.main() sits above later test classes in two files, so a direct run silently drops tests (ninth audit I-05 again)
-- `tools/test_check_capabilities.py:105` — Six refusal arms of the capability-inventory gate have no test that goes red without them
-- `tools/test_check_contracts_single_source.py:310` — Two path-spelling classes subclass a TestCase to borrow a helper, so 27 inherited tests run twice
-- `tools/test_check_prior_art.py:176` — The real-repository overlap test asserts only that a dict is returned
-- `tools/test_check_release_signing.py:216` — Test named '...never_prints_a_value' makes no assertion about values
-- `tools/test_check_repo_state.py:870` — test_both_entry_points_collect_the_same_number_of_tests compares the imported module with itself and cannot detect the defect it names
-- `tools/test_check_version_parity.py:139` — A setup step in the majority-report test is a no-op written as a self-replacing expression
-- `tools/test_wall_bash_gap.py:155` — test_bash_is_absent_from_the_pre_tool_use_matcher checks a constant defined in the test file and cannot fail
-- `tools/test_wall_bash_gap.py:326` — TheContainment keys session state on the PID and never cleans it up, so a reused PID inherits a stale baseline
-- `tools/test_wall_bash_gap.py:401` — test_reverting_the_path_clears_the_report appends to the real apps/desktop/src/App.tsx with no try/finally
-- `tools/test_wall_bash_gap.py:498` — test_dirty_fingerprints_carries_the_porcelain_code asserts nothing on a clean tree, which is CI's state
-- `tools/test_wall_bash_gap.py:507` — The 'git cannot be asked' branch is tested by a string search of the hook source, not by behaviour
 
 ### dead-code (47)
 
-- `.claude/hooks/canonical_law_gate.py:111` — EDIT_TOOLS contains 'Update', which no matcher ever delivers to the hook
 - `apps/desktop/src-tauri/core/src/broker_client.rs:48` — transport_failure_reason has no caller outside its own test and ignores its argument
 - `apps/desktop/src-tauri/core/src/egress_proxy.rs:306` — Half of the egress authorizer's public API has no non-test caller and is not declared to the reachability gate
 - `apps/desktop/src-tauri/core/src/manifest_authority.rs:26` — ManifestReceiptKeyAuthority is constructed only in tests, yet the negative matrix counts its test as an implemented control
@@ -1077,15 +914,9 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/release/registry.json:5` — The release SST is read by nothing; its named validator never opens it and the push pack/role are code literals
 - `engine/schemas/agent-status.schema.json:1` — agent-status and agent-ui schemas describe records nothing produces or validates
 - `engine/tests/test_security_v2.py:251` — HMAC verify_signed_document and legacy consume_nonce are kept alive only by this test
-- `tools/check_coordination.py:688` — The carrier-contradiction scan is hard-coded to PR #33 and can no longer match anything
-- `tools/check_doc_claims.py:185` — A stale exemption lets 'cargo 1.96' back into CLAUDE.md unflagged
-- `tools/check_repo_state.py:724` — Branch-protection permission hint is unreachable and three statements in the file disagree on whether a 403 refuses or skips
-- `tools/generate_agent_definitions.py:43` — TOOLS_RELEASE is identical to TOOLS_VERIFY, so the release branch of tools_for() distinguishes nothing
-- `tools/sync_active_pr.py:428` — Two swaps patch text that is no longer in the state file; an unused local; an orphaned constant comment
 
 ### duplicate (94)
 
-- `.github/workflows/ci.yml:63` — The same 6-line rust-cache comment is pasted 11 times, and its present-tense claim is now false
 - `apps/desktop/AUDIT/2026-08-06-consolidated-index.md:19` — "Duplicates: 0" and the 122 total, while several rows restate another row in the same round
 - `apps/desktop/AUDIT/2026-08-06-independent-audit.md:26` — The "47 surviving findings" count includes the same defect filed two or three times, sometimes at different severities
 - `apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md:118` — Agent profile, delegation, live-run and escalation flows are specified twice, and the two copies already differ
@@ -1136,13 +967,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:22` — The whole narrative half of this archive is also stored verbatim in SESSION_LOG_2026-07_2026-08.md
 - `engine/config/documentation-manifest.json:1` — Docs 'freshness' gate is equality against a literal copy in the tool; all 70 docs claim review on 2026-07-19
 - `engine/runtime/bro_policy.py:275` — Repository-URL normalisation exists three times: two byte-identical copies and a third that returns a different identity for the same remote
-- `tools/check_coordination.py:75` — Three different definitions of 'substantive change' enforce the same update law
-- `tools/check_reachability.py:480` — capability_grants() parsing default.json is written twice, in two gates
-- `tools/check_repo_state.py:945` — Job-name regex was 'factored out' into workflow_job_names() but verify_required_contexts_exist still carries its own copy
-- `tools/generate_agent_definitions.py:130` — Authority derivation is re-implemented in the generator instead of calling the engine's resolver
-- `tools/generate_agent_definitions.py:130` — authority_for() re-implements the engine's resolve_role_authority() derivation instead of calling it
-- `tools/sync_active_pr.py:204` — _rest_open_prs exists twice; sync_active_pr still carries the page-join parse that check_repo_state's own docstring calls BROKEN and replaced
-- `tools/test_wall_bash_gap.py:57` — The line citation `bro_hook.py:148-177` is hard-coded in four places and nothing checks it
 
 ### other (11)
 
@@ -1319,6 +1143,12 @@ The workflow journal is session-local and is **not** in the repository: this fil
 
 Findings a fixing agent confirmed and did **not** change, because the fix widens what is accepted, changes who may do what, or rewrites normative design. Each names the choice and a recommendation. Nothing here is decided.
 
+- **`.claude/agents/research-analysis--source-verifier.md`** — A role named Verifier is granted build authority and Edit/Write
+  - Confirmed, and it is the policy's stated derivation (only the final declared role is the designated verifier); the engine resolver gives the same answer, now held equal by a test. Changing it means exact_overrides in engine/agents/authority-policy.json — who may build and who may verify, in the engine. Recommend the Owner decide per pack; if the names are to stay, say in the policy's `derivation` that a role's name confers nothing.
+- **`.claude/agents/zero-trust-verification--recovery-verifier.md`** — Roles named Verifier or Auditor in the zero-trust-verification pack are builders
+  - Same decision as the source-verifier finding: an authority-policy change in the engine. Not made.
+- **`.github/workflows/release.yml`** — Signature verification runs after tauri-action has already uploaded the installers to the draft
+  - Confirmed by reading, not run. Building without publishing, verifying, then uploading is a change to the release path, which is the Owner's and which I cannot run. I added a comment at the step stating the real order. Recommend splitting build and upload so a failed verification leaves nothing on the draft.
 - **`apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md`** — Agent flows are specified twice, and the two copies already differ
   - Confirmed. §3 (both languages) now says AGENT_FLOWS §2-§6 is the detailed copy and that the two disagree on who may widen an agent's scope (owner only vs Owner/Admin). That is an authority decision; recommend the stricter 'owner or an approved decision'. AGENT_FLOWS' 'renders exactly' is corrected. §3 was not collapsed to a pointer.
 - **`apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md`** — Three incompatible responsive breakpoint tables
@@ -1333,6 +1163,8 @@ Findings a fixing agent confirmed and did **not** change, because the fix widens
   - Not edited: the file is outside this batch's scope, and the fix is a design choice. Options: (a) move floor.json to a broker-owned state directory outside the pinned set, (b) stop pinning its owner/DACL. Recommend (a): it keeps the §2.5 floor strict and gives the per-turn writer its own directory. I did not re-open tcb_floor.rs myself.
 - **`bridge/contracts/renderer-governed-turn-result.schema.json`** — Schema pins committed trust_state to trusted_verified; the broker now commits demonstration_custody
   - Confirmed, not changed. Widening the const to an enum would make the contract accept demonstration_custody, and the renderer rejecting every commit that is not trusted_verified is one of the three refusals holding the production gate. Choice: (a) widen to the two labels the broker can emit, or (b) keep the const and state in the schema that it is the renderer's acceptance contract, not the broker's emission set. Recommend (b). Either way the source is contracts/ (drift-gated) and tools/test_renderer_broker_schemas.py, both outside this batch.
+- **`config/required-checks.json`** — A temporary exclusion whose own condition is met sits in the permanent bucket
+  - Confirmed by reading: `Tools · gate self-tests on Windows (python)` is in deliberately_excluded with 'Require it after one green run on main'. Not changed. The choice: (a) add it to `contexts` and to branch protection, or (b) move it to config/deferred-enforcement.json `deferrals` with a date (max 7 days without sign_off), after which the required Repo-state check goes RED on every PR until it is required. Both change what blocks merges, and required-checks.json is the Owner's file. Recommend (a). I did not re-verify the cited green main run myself.
 - **`docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md`** — Matrix says the evidence-head floor is a brops-signer-owned DB; in code the supervisor owns it
   - Confirmed (table in engine/runtime/supervisor_ledger.sql; isolated_signer.py has zero sqlite references). A note under §10 now says NM-EVID-12 / NM-ACL-13 name a database that does not exist and that the ruling is open (FLOOR_WRITER design §0.3, §9). The choice: amend the design to the supervisor-owned floor as built, or move the floor into a signer-owned DB. Recommend ratifying the supervisor-owned floor (it is in the same transaction as the completion, per §5 v2(c)) and rewriting the two rows against it.
 - **`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`** — Evidence-head floor is specified as signer-owned but implemented as supervisor-owned
@@ -1373,10 +1205,115 @@ Findings a fixing agent confirmed and did **not** change, because the fix widens
   - Confirmed: docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md still states 'envelope_jcs_b64 <= 2848 (... the 4.9 payload at schema max)' as machine-checked, while the test pins the real schema-max envelope at 2888 and the tree refuses 125-char ids (2852) as oversize. Nothing changed: the test already records the contradiction honestly, and resolving it is a design decision in a design document and in runtime/governed_turn_result.py, outside this batch. THE CHOICE: (a) lower the id bound to 124 so the schema can no longer express an envelope the cap refuses; (b) raise the cap to 2888; (c) keep both numbers and only amend 4.6 to say the derivation was wrong for the 23-key signer payload. I recommend (a)+(c): it narrows what is accepted rather than widening it, and it makes 'schema-valid' and 'signable' the same set again. (b) widens a signed-envelope bound and should not be done without the Architect.
 - **`engine/tests/test_security_v2.py`** — HMAC verify_signed_document and legacy consume_nonce are kept alive only by this test
   - Confirmed: verify_signed_document (HMAC) and the legacy consume_nonce are called only from engine/tests/test_security_v2.py, and are imported unused in bro_release_v3.py:22 and bro_recovery.py:14. Removing them is a change to engine/runtime/bro_security.py -- security-perimeter code outside this batch, and a deliberate decision rather than a cleanup. THE CHOICE: (a) delete the HMAC verifier, the legacy nonce helper, the two unused imports and these two tests; or (b) keep them and add them to an absence/retirement guard so nothing new can call them. I recommend (a): an HMAC verifier whose verifying key is the signing key is exactly the shape the Ed25519 path replaced, and keeping it importable keeps it callable. What I DID fix (test-side, in scope): test_signature_and_tamper no longer leaks TEST_KEY into os.environ for the rest of the process -- it is scoped with patch.dict and asserted gone.
+- **`tools/check_capabilities.py`** — The six INTENTIONALLY_UNGATED commands are not ungated: Tauri rejects them
+  - Confirmed by reading tauri 2.11.5 src/webview/mod.rs:1823 (Cargo.lock pins 2.11.5; build.rs wires an AppManifest) — not by running the app. Corrected in this batch: the checker's docstring, the allowlist comment and the GREEN lines of check_capabilities.py and check_reachability.py now say the window is refused these six. Not decided: grant them (manifest entry + allow-*, which widens what the window may invoke) or remove their callers in desktop.ts:353-390,483. Recommend granting the five read-only mirrors + selftest and deciding governed_turn_execute separately. build.rs:4-6 still carries the wrong sentence (outside this batch); the constant keeps its name because build.rs and docs/REACHABILITY_GATE.md cite it.
+- **`tools/check_coordination.py`** — The mirror says both 'Architect GREEN' and 'not Architect audited' for rev-30; the gate never compares the two
+  - Confirmed by reading config/current_state.json. Not changed: requiring status_tokens.CURRENT_DESIGN_GATE == design_gate.current_candidate_gate turns the gate RED on the tree, and the fix is in config/current_state.json, which is the orchestrator's — and first someone has to say which statement is true. docs/OWNER_ACTION_REQUIRED.md:908 says the token exists because it is NOT Architect GREEN, so I recommend correcting design_gate.last_architect_verdict/current_candidate_gate and then adding the equality rule.
+- **`tools/test_renderer_broker_schemas.py`** — Test and wire schema lock committed trust_state to 'trusted_verified'; the broker now projects the stored label
+  - Confirmed. The choice is what the window may be shown as committed: widen the schema to the labels the broker can commit, or have the broker decline to project anything but trusted_verified. Widening is a trust decision; recommend keeping the schema narrow and having the broker not project demonstration_custody over this channel. In this batch only the false 'kept in lock-step' claim in the test docstring and comment is corrected. Not fixed: governed_turn_ipc.rs:225 still says 'Always TRUSTED_VERIFIED'.
 
 ## 7. Closed
 
-Struck from the lists above by the pull request named. ◑ the Builder's claim; a second agent re-ran the suites and a sample of the mutation proofs, nothing here is independent.
+Struck from the lists above by the pull request named. ◑ the Builder's claim; a second agent re-ran the suites and a sample of the mutation proofs, nothing here is independent. Lines are struck by `file:line`, which over-strikes in two known places: `tools/generate_agent_definitions.py:11` carried a second finding that is still open (the generator's role count), and eight §5 sweep findings shared a line with a fixed slice finding and went with it — the next documents pass re-reads all 21 of §5 regardless.
+- `.claude/agents/runner.md:3` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:558` — fixed, #314
+- `.github/workflows/supply-chain.yml:438` — fixed, #314
+- `tools/check_ai_surfaces.py:60` — fixed, #314
+- `tools/check_capabilities.py:42` — fixed, #314
+- `tools/generate_agent_definitions.py:37` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:518` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:518` — fixed, #314
+- `tools/check_contrast.py:139` — fixed, #314
+- `tools/check_no_assumptions.py:77` — fixed, #314
+- `tools/check_residual_items.py:106` — fixed, #314
+- `tools/check_runbook_snippets.py:74` — fixed, #314
+- `tools/check_state_fields.py:92` — fixed, #314
+- `tools/check_state_fields.py:92` — fixed, #314
+- `tools/sync_active_pr.py:915` — fixed, #314
+- `tools/generate_agent_definitions.py:11` — fixed, #314
+- `.github/workflows/ci.yml:1203` — fixed, #314
+- `tools/check_no_assumptions.py:112` — fixed, #314
+- `tools/generate_agent_definitions.py:222` — fixed, #314
+- `tools/generate_agent_definitions.py:226` — fixed, #314
+- `tools/test_check_audit_reports.py:98` — fixed, #314
+- `tools/test_check_c1_tokens.py:173` — fixed, #314
+- `tools/test_check_coordination.py:102` — fixed, #314
+- `tools/test_check_doc_claims.py:1005` — fixed, #314
+- `tools/test_check_principal_model.py:61` — fixed, #314
+- `tools/test_check_reachability.py:982` — fixed, #314
+- `tools/test_sync_active_pr.py:735` — fixed, #314
+- `.github/workflows/supply-chain.yml:23` — fixed, #314
+- `tools/check_capabilities.py:95` — fixed, #314
+- `tools/generate_agent_definitions.py:66` — fixed, #314
+- `.claude/agents/builder.md:3` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:413` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:522` — fixed, #314
+- `.github/workflows/release.yml:173` — fixed, #314
+- `tools/check_audit_reports.py:62` — fixed, #314
+- `tools/check_audit_reports.py:360` — fixed, #314
+- `tools/check_crypto_surface.py:157` — fixed, #314
+- `tools/check_doc_claims.py:310` — fixed, #314
+- `tools/check_handoff_ready.py:281` — fixed, #314
+- `tools/check_principal_model.py:129` — fixed, #314
+- `tools/check_reachability.py:252` — fixed, #314
+- `tools/check_release_signing.py:123` — fixed, #314
+- `tools/check_release_signing.py:334` — fixed, #314
+- `tools/check_schema_mirrors.py:225` — fixed, #314
+- `tools/generate_agent_definitions.py:162` — fixed, #314
+- `tools/sync_active_pr.py:831` — fixed, #314
+- `.claude/agents/sre-reliability--sre-lead.md:27` — fixed, #314
+- `.github/workflows/design-gates.yml:41` — fixed, #314
+- `tools/check_repo_state.py:1160` — fixed, #314
+- `tools/generate_agent_definitions.py:184` — fixed, #314
+- `tools/test_wall_bash_gap.py:535` — fixed, #314
+- `.github/supply-chain/README.md:27` — fixed, #314
+- `.github/workflows/ci.yml:377` — fixed, #314
+- `.github/workflows/ci.yml:775` — fixed, #314
+- `.github/workflows/supply-chain.yml:5` — fixed, #314
+- `config/canon-budget.json:37` — fixed, #314
+- `config/control-invocation.json:119` — fixed, #314
+- `config/produced-artifact-contract.json:3` — fixed, #314
+- `config/spec-conformance.json:16` — fixed, #314
+- `tools/check_capabilities.py:13` — fixed, #314
+- `tools/check_produced_artifact.py:54` — fixed, #314
+- `tools/check_reachability.py:22` — fixed, #314
+- `tools/check_runbook_snippets.py:120` — fixed, #314
+- `tools/generate_agent_definitions.py:11` — fixed, #314
+- `tools/stamp_pr_head.py:141` — fixed, #314
+- `tools/sync_active_pr.py:14` — fixed, #314
+- `tools/test_check_canon_budget.py:142` — fixed, #314
+- `tools/test_check_doc_claims.py:253` — fixed, #314
+- `tools/test_check_repo_state.py:888` — fixed, #314
+- `tools/test_check_residual_items.py:204` — fixed, #314
+- `tools/test_roadmap_split.py:220` — fixed, #314
+- `.claude/hooks/coordination_stop_guard.py:59` — fixed, #314
+- `tools/test_check_audit_actor.py:133` — fixed, #314
+- `tools/test_check_c1_tokens.py:269` — fixed, #314
+- `tools/test_check_capabilities.py:105` — fixed, #314
+- `tools/test_check_contracts_single_source.py:310` — fixed, #314
+- `tools/test_check_prior_art.py:176` — fixed, #314
+- `tools/test_check_release_signing.py:216` — fixed, #314
+- `tools/test_check_repo_state.py:870` — fixed, #314
+- `tools/test_check_version_parity.py:139` — fixed, #314
+- `tools/test_wall_bash_gap.py:155` — fixed, #314
+- `tools/test_wall_bash_gap.py:326` — fixed, #314
+- `tools/test_wall_bash_gap.py:401` — fixed, #314
+- `tools/test_wall_bash_gap.py:498` — fixed, #314
+- `tools/test_wall_bash_gap.py:507` — fixed, #314
+- `.claude/hooks/canonical_law_gate.py:111` — fixed, #314
+- `tools/check_coordination.py:688` — fixed, #314
+- `tools/check_doc_claims.py:185` — fixed, #314
+- `tools/check_repo_state.py:724` — fixed, #314
+- `tools/generate_agent_definitions.py:43` — fixed, #314
+- `tools/sync_active_pr.py:428` — fixed, #314
+- `.github/workflows/ci.yml:63` — fixed, #314
+- `tools/check_coordination.py:75` — fixed, #314
+- `tools/check_reachability.py:480` — fixed, #314
+- `tools/check_repo_state.py:945` — fixed, #314
+- `tools/generate_agent_definitions.py:130` — fixed, #314
+- `tools/generate_agent_definitions.py:130` — fixed, #314
+- `tools/sync_active_pr.py:204` — fixed, #314
+- `tools/test_wall_bash_gap.py:57` — fixed, #314
 - `engine/ci/live/ladder_evidence.py:154` — fixed, #314
 - `engine/ci/live/run_live_turn.sh:476` — fixed, #314
 - `engine/runtime/challenge_authority.py:130` — fixed, #314

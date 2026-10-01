@@ -122,24 +122,28 @@
 > ### KNOWN DIVERGENCES 2026-10-01 (`T-145`, the whole-repository read) — NON-NORMATIVE, changes no contract
 >
 > A file-by-file read found places where this document disagrees with itself or with the code that
-> implements it. The editorial ones are corrected in place and listed. The ones that need a ruling are
-> listed and **left exactly as they were**, because choosing a side of a normative contract is the
-> Architect's and the Owner's act, not a Builder's.
+> implements it. Nothing normative is changed here: every contract sentence is **exactly as rev-30
+> left it**, because amending a normative contract — even to fix a typo — is the Architect's and the
+> Owner's act, not a Builder's.
 >
-> **Corrected in place — typo, copy or status; no contract moved:**
-> - §2.7 named the launcher's invoking principal `(#5)`; the nine-role list and the paragraph after
->   it have the evidence-recorder runner as **#6**.
-> - §2.1 create-pending said the frame cap was 8192 "each way"; §2.1.1's table and the test list cap
->   the **request** at `AUTHORITY_REQUEST_FRAME_BYTES` (4096) and only the reply at 8192.
-> - Seven places described the closed renderer command as `{conversation_id, agent?}`; §4.10(g)'s
->   request frame and `bridge/contracts/renderer-governed-turn.schema.json` also require
->   `client_request_id`. (The three revision-history summaries that use the two-field form — the rev-29 and
->   rev-28 closure banners and Appendix A — are history and are left as written.)
+> **Status annotations added in place — no contract sentence was changed:**
 > - §5 v2(h) said the live isolation kit "has not been re-run against this protocol"; CI runs it.
 > - §5 v2's closing sentence is annotated: `platform_governed_execution_supported()` is the §0.1 spec
 >   symbol, not a function in the tree. §0.1's own two status sentences are unchanged and read the
 >   same way.
 > - §5's inline `CREATE TABLE` blocks are labelled as the pre-amendment text; the SQL file is normative.
+>
+> **Editorial corrections PROPOSED and NOT applied** — the text below is as rev-30 left it. Each looks
+> like a typo or a stale copy, and each agrees with this document's own §2.1.1 table, its role list
+> and the shipped schema; they are still sentences of a normative contract, so they wait for a
+> revision that the Architect and the Owner make:
+> - §2.7 names the launcher's invoking principal `(#5)`; the nine-role list and the paragraph after
+>   it have the evidence-recorder runner as **#6**.
+> - §2.1 create-pending says the frame cap is 8192 "each way"; §2.1.1's table and the test list cap
+>   the **request** at `AUTHORITY_REQUEST_FRAME_BYTES` (4096) and only the reply at 8192.
+> - Seven places describe the closed renderer command as `{conversation_id, agent?}`; §4.10(g)'s
+>   request frame and `bridge/contracts/renderer-governed-turn.schema.json` also require
+>   `client_request_id`.
 >
 > **Open — each needs a ruling, and none is resolved here:**
 > 1. **Who owns the evidence-head floor.** §7, §2.3, §3 row 8, §6.1 step 11 and Appendix B specify a
@@ -227,7 +231,7 @@ recorder (below), holding **no signing key**.
 
 ```
 untrusted RENDERER / LOGIN PROCESS (webview + message handlers; interactive login identity; NO
-      key/store/DB/manifest/trust-state; sends the broker ONLY a closed {conversation_id, agent?, client_request_id})
+      key/store/DB/manifest/trust-state; sends the broker ONLY a closed {conversation_id, agent?})
   → TRUSTED DESKTOP VERIFIER / BROKER SERVICE (dedicated service UID/SID; SEPARATE process from the
       renderer; owns receipt DB + pinned manifest + PreparedGovernedTurnV1B + final verification +
       accepted-output persistence; resolves system/history/config/IDs itself; the ONLY caller of the
@@ -259,7 +263,7 @@ verifier/broker is a distinct principal from the renderer.
 1. **Renderer / session UI** — the webview + its message handlers. Runs under the **interactive login
    identity** (Actors A/B). **Fully untrusted:** owns **no** key, receipt DB, pinned manifest, trust
    state or authority store; **cannot directly reach** the challenge authority, sidecar, supervisor or
-   signer. It may send the broker only a **closed command** (e.g. `{conversation_id, agent?, client_request_id}`) — never
+   signer. It may send the broker only a **closed command** (e.g. `{conversation_id, agent?}`) — never
    `system`/`history`/`config`/hashes/nonces/prepared objects/verdicts/receipt fields.
 2. **Trusted desktop verifier / BROKER** — a **dedicated service UID/SID**, a **separate process from
    the renderer** (the Tauri app is split: the webview is the renderer; the broker is a separate local
@@ -304,7 +308,7 @@ challenge authority, builds the `PreparedGovernedTurnV1B`, runs final verificati
 the committed result, it **DENOTES the trusted desktop verifier/BROKER service (role #2 — a dedicated
 service UID/SID in its OWN process, separate from the renderer)**, and **NEVER** the renderer/login/webview
 process. The renderer/login process (role #1) is a **thin proxy** that may send the broker **only** a
-closed `{conversation_id, agent?, client_request_id}` command and render the broker's committed reply; it owns/accesses **no**
+closed `{conversation_id, agent?}` command and render the broker's committed reply; it owns/accesses **no**
 key, receipt DB, pinned manifest, prepared object, hash, nonce, challenge authority, sidecar/supervisor/
 signer socket, or verification verdict (§4.10(g)). The authenticated challenge-authority IPC allowlists
 **only the broker UID** and **DENIES** the renderer/login UID (§2.1); the signed challenge returns to the
@@ -643,7 +647,7 @@ root/TCB-owned setuid helper, not a persistent runtime UID**. Every field is fix
 - **Binary owner / file owner:** `root` (or the dedicated `brops-admin` TCB principal). The file has
   mode `4750` (setuid, owner `root`/TCB, group = the recorder group, **no** world/other bits), and
   its parent directories up to `/` are TCB-owned + non-writable by any runtime/login UID (§2.5).
-- **Invoking principal:** **only** the `evidence-recorder runner` (#6) may `exec` it; the launcher
+- **Invoking principal:** **only** the `evidence-recorder runner` (#5) may `exec` it; the launcher
   checks its real UID/gid on entry (`getresuid`) and refuses (`tcb_integrity_violation`) unless the
   caller is exactly the recorder. No other principal — sidecar, desktop-UI, supervisor, signer, login
   user — may invoke it (mode `0` for other; group-exec limited to the recorder group).
@@ -817,9 +821,8 @@ The exact current contract (not history):
     broker's, already pre-stored by the broker in `receipt_challenges`, see the pre-store bullet
     below); it returns that `pending_challenge_id`. No signature is produced and no
     `brops.governed-turn-challenge.v1` payload exists yet. Reply
-    `brops.governed-challenge-create-pending-result.v1`. **Reply frame ≤ `AUTHORITY_CHANNEL_FRAME_BYTES`
-    (8192, §2.1.1)** (the same authority-reply cap as the (B) issue reply); the **request** frame is
-    capped at `AUTHORITY_REQUEST_FRAME_BYTES` (4096, §2.1.1) — "each way" was wrong for the request.
+    `brops.governed-challenge-create-pending-result.v1`. **Frame ≤ `AUTHORITY_CHANNEL_FRAME_BYTES`
+    (8192, §2.1.1)** each way (the same authority-reply cap as the (B) issue reply).
   - **(B) `brops.governed-challenge-issue.v1`** (issue / sign — **signs exactly once**). The
     **broker** supplies **ONLY the `pending_challenge_id`** (never facts, never bytes). The authority
     **resolves the row from its OWN protected store**, **constructs the exact
@@ -2502,7 +2505,7 @@ webview re-serialize/reconstruct, re-opening the split-authority — a frontend-
 `system`/`history`/`generation_config` could then differ from the already-pre-stored `request_sha256`
 ⇒ fail-closed Block). Instead 3b-1B adds **exactly one** frontend-exposed governed
 `#[tauri::command]` — a **thin renderer-side proxy** (the sole NEW entry in `generate_handler!`,
-`apps/desktop/src-tauri/src/lib.rs:95-166`) that carries **only** `{conversation_id, agent?, client_request_id}` to the
+`apps/desktop/src-tauri/src/lib.rs:95-166`) that carries **only** `{conversation_id, agent?}` to the
 broker over the renderer↔broker IPC above and owns none of the orchestration — while the **broker-service**
 orchestration **`governed_turn_execute`** it invokes **mirrors the merged single-backend-command shape of
 `stream_reply`** (`commands.rs:794`, which today already does prepare → `issue_challenge` pre-store →
@@ -2595,7 +2598,7 @@ Owning this one object, `governed_turn_execute` performs in order:
    re-supplied by the renderer.
 **No post-prepare webview round-trip (LOCKED):** after step 1, `system`/`history`/`generation_config`/
 its hashes/`context`/`conversation_id`/`run_id` are **never** re-serialized to, or re-accepted from, the
-frontend; the only renderer interactions are the initial **thin-proxy Tauri command** carrying **only** `{conversation_id, agent?, client_request_id}` to the broker (the renderer does **not** invoke `governed_turn_execute` — that is a BROKER-SERVICE operation, §0/§4.10(g); the renderer never names the prepared object, its hashes, nonces or the verdict) and the final broker-emitted committed result, rendered read-only. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
+frontend; the only renderer interactions are the initial **thin-proxy Tauri command** carrying **only** `{conversation_id, agent?}` to the broker (the renderer does **not** invoke `governed_turn_execute` — that is a BROKER-SERVICE operation, §0/§4.10(g); the renderer never names the prepared object, its hashes, nonces or the verdict) and the final broker-emitted committed result, rendered read-only. **Encapsulation enforcement (P0-1 LOCKED):** `PreparedGovernedTurnV1B` fields are **private**;
 no mutable public copy of the object/JCS/context is exposed; every cross-stage read is via a
 **read-only accessor**; and **before submit** the backend asserts
 `SHA256(prepared.generation_config_jcs) == prepared.context.generation_config_sha256` **and**
@@ -3207,7 +3210,7 @@ access.
 
 No output renders before step 14 commits.
 0. **Broker-service governed orchestration (P0-1, §4.10(g)):** the renderer's **thin Tauri proxy** forwards
-   the closed `{conversation_id, agent?, client_request_id}` command to the **broker service** over the renderer↔broker IPC
+   the closed `{conversation_id, agent?}` command to the **broker service** over the renderer↔broker IPC
    (§4.10(g)); the **broker** runs **`governed_turn_execute(conversation_id, agent)`** — the ONLY renderer
    inputs (mirroring `stream_reply(conversation_id, agent, on_event)`); `system`/`history`/`workspace_id`/
    `install_id`/`generation_config`/`run_id`/`task_id` are broker-resolved or -generated, never renderer
@@ -3637,7 +3640,7 @@ the renderer cannot read/write/list the verifier DB or pinned manifest, cannot c
 authority IPC, cannot reach the sidecar/supervisor/signer IPC, cannot supply `system`/`history`/`config`/
 hashes/nonces/receipt fields, and a forged renderer "Verified" event **cannot** create a verified message
 (only the broker's committed verification tx does) — the broker accepts only the closed
-`{conversation_id, agent?, client_request_id}` command and resolves all authoritative inputs itself; (k) Actor C (dedicated
+`{conversation_id, agent?}` command and resolves all authoritative inputs itself; (k) Actor C (dedicated
 **sidecar service UID**, NOT login, NOT broker) attempts to connect the signer socket / read any key or
 store / make an authority sign caller-supplied evidence ⇒ DENIED (peer-auth + ACL); it may only trigger
 a run + relay the final receipt; (l) the seven runtime **service** principals must be pairwise-distinct

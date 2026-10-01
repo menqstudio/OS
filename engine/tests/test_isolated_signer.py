@@ -129,9 +129,6 @@ def _build_store(record_overrides=None, receipt_overrides=None):
     return store, handles
 
 
-def _evidence(handles):    return store, handles
-
-
 def _evidence(handles):
     return {
         "run_id": "run-abc",

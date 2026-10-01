@@ -349,6 +349,22 @@ class BindingTests(SupervisorFixture):
         self.assertEqual(result.status, DENIED)
         self.assertIn("control_plane_digest", result.message)
 
+    def test_a_signed_binding_no_longer_in_force_is_denied_before_anything_is_issued(self):
+        # Signed by the operator, and refused by the runtime (bro_workspace.load_workspace):
+        # the supervisor checked the signature alone and issued a lease over each of these.
+        for overrides, said in (
+                ({"active": False}, "not active"),
+                ({"expires_at_epoch": NOW - 1}, "expired"),
+                ({"expires_at_epoch": NOW}, "expired"),
+                ({"expires_at_epoch": None}, "expires_at_epoch"),
+                ({"expires_at_epoch": True}, "expires_at_epoch"),
+                ({"schema": 2}, "schema")):
+            with self.subTest(overrides=overrides):
+                result = self.supervise_with(self.signed_binding(**overrides))
+                self.assertEqual(result.status, DENIED, result.message)
+                self.assertIn(said, result.message)
+                self.assertEqual(self.worktrees_left(), [])
+
     def worktrees_left(self):
         listed = subprocess.run(["git", "-C", str(self.repo), "worktree", "list", "--porcelain"],
                                 check=True, capture_output=True, text=True).stdout

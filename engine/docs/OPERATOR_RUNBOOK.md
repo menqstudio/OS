@@ -41,7 +41,7 @@ time — the `.deb`'s `postinst` calls `/usr/lib/brops/brops-install`, which is
 `engine/install/brops_install.sh` — mode `0755`, ancestors likewise, and it does not report success
 until the application's own launch-time check passes for the desktop account. CI runs that
 installer's end-to-end test as root. *(This paragraph said "`anchor::seal` returns `Unsupported` …
-That branch has never executed"; the refusal moved earlier and the installer exists.)*
+That branch has never executed"; the refusal moved earlier and the installer exists.)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 
 > **Install ordering, and it is not recoverable.** The registry seals when provisioning returns —
 > the operator root is destroyed at that moment — so the audit signer's published key must be

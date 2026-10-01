@@ -193,7 +193,7 @@ class LiveRunStateProvider:
         try:
             # The strict decoder: the bundle's DIGEST is what the signer authorizes, so the
             # bytes decoded must be the bytes sent, not whatever a lenient decode makes of them.
-            policy_bundle = decode_base64url(record["policy_bundle_b64"])
+            policy_bundle = decode_base64url(record.get("policy_bundle_b64"))
         except ProtocolError as exc:
             raise RunStateValidationError(f"policy_bundle_b64 not decodable: {exc}")
 

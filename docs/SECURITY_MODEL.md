@@ -254,7 +254,7 @@ is not the production gate opening.
   copied out of a document), mode 0755, ancestors likewise, and does not report success until the
   application's own launch-time check passes for the desktop account. CI runs its end-to-end test as
   root. A machine whose install step did not run still refuses first launch. *(This bullet said "that
-  branch has never executed".)*
+  branch has never executed".)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 - **The provisioned environment now reaches the engine — at one seam, and only there.** *(This bullet said
   "Nothing exports the provisioned environment into the engine" until 2026-08-09. That was true, and it was
   the whole of O-3.)* `Provisioned::engine_env()` returns five variables — `BRO_TRUSTED_REGISTRY_ROOT`

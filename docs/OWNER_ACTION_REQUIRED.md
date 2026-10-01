@@ -527,7 +527,7 @@ why the trusted-key registry moved out of the app's reach too.
   `seal` — and an anchor already in place IS used. What puts one there is `brops_install_anchor`
   (`provision/src/posix_install.rs`, `T-137`), run once as root by the `.deb`'s `postinst` (`T-138`)
   and exercised as root in CI. *(This bullet said "`seal` returns `Unsupported` … that branch has never
-  executed".)* A machine whose install step did not run still refuses first launch.
+  executed".)* A machine whose install step did not run still refuses first launch. *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 - **`bro_custody`'s Windows rule still reads one descriptor** and cannot see an ancestor. The
   property holds because *provisioning* walks the chain; the engine alone would accept a sealed leaf
   under a renameable parent. It is a shared rule across the pin, the registry root, the evidence

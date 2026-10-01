@@ -584,6 +584,22 @@ def run_task(request: TaskRequest, *, repository_root: pathlib.Path, keydir: pat
         if not isinstance(binding.get(field_name), str) or not binding[field_name]:
             return SupervisorResult(request.task_id, DENIED,
                                     f"workspace binding missing {field_name}")
+    # A signature says who wrote the binding, not that it is still in force. The runtime
+    # refuses a binding that is inactive, expired or of another schema
+    # (bro_workspace.load_workspace); the supervisor verified the signature only, so a
+    # revoked or expired binding still produced a worktree and an issuer-signed lease.
+    # `verify_artifact` checks the KEY's validity window, never the artifact's own.
+    if binding.get("schema") != 1:
+        return SupervisorResult(request.task_id, DENIED, "unsupported workspace binding schema")
+    if binding.get("active") is not True:
+        return SupervisorResult(request.task_id, DENIED, "workspace binding is not active")
+    expires = binding.get("expires_at_epoch")
+    if not isinstance(expires, int) or isinstance(expires, bool):
+        return SupervisorResult(request.task_id, DENIED,
+                                "workspace binding missing or malformed expires_at_epoch")
+    if int(moment) >= expires:
+        return SupervisorResult(request.task_id, DENIED,
+                                f"workspace binding expired at epoch {expires}")
 
     try:
         worktree, branch = prepare_worktree(repository_root, request.task_id)

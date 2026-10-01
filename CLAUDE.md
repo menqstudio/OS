@@ -82,7 +82,7 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2616 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2617 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
 python3 tools/check_canon_budget.py                              # the read set fits
@@ -125,7 +125,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **There is no path in this repository to a production trust root.** `broctl build-registry` hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses a development registry when the pin comes from the production path. See [`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md).
 
-**On POSIX the app never provisions itself** — a root installer does (`brops_install_anchor`, T-137). Not packaged yet, so first launch still refuses here.
+**On POSIX the app never provisions itself** — a root installer does (`brops_install_anchor`, T-137). The `.deb` declares it as `postinst` (T-138/139); no `dpkg -i` has been run, so first launch still refuses here.
 
 ## 7. Rules for AI sessions
 
@@ -176,7 +176,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 **Production վստահության արմատ սարքելու ճանապարհ այս repo-ում չկա** — `broctl`-ը կոշտ գրում ա `"production": false` ու `--production`-ը մերժում ա։
 
-**POSIX-ում ծրագիրն ինքը չի provision անում** — անում ա root installer-ը (`brops_install_anchor`, T-137), որ դեռ package արած չի։
+**POSIX-ում ծրագիրն ինքը չի provision անում** — անում ա root installer-ը (`brops_install_anchor`, T-137), որը `.deb`-ը հայտարարում ա `postinst`, բայց `dpkg -i` դեռ չի արվել։
 
 ## 5. Կանոններ
 

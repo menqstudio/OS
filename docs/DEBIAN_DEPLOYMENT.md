@@ -81,7 +81,7 @@ not report success until the application's own launch-time check passes for that
 then only finds and verifies the anchor; on a machine where that install step did not run, first
 launch refuses. Nothing is carried, nothing expires, nothing is ever asked of the person who
 installed it. *(This paragraph said "the app now provisions its own trust material on first
-launch", which is the Windows behaviour and is false on the platform this page is written for.)*
+launch", which is the Windows behaviour and is false on the platform this page is written for.)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
 
 What that posture claims is written into the code and worth repeating here, because it is smaller
 than the ceremony's claim: locally-minted trust material defends against an attacker who arrives
