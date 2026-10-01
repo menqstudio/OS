@@ -366,24 +366,36 @@ def _mkdir_owned(directory: pathlib.Path, uid: int, gid: int, mode: int) -> None
 
 
 def _write_owned(path: pathlib.Path, payload: bytes, uid: int, gid: int, mode: int) -> None:
-    """The same publish the service uses: temp in the same directory, fsync, rename, fsync dir.
+    """The publish the service uses, and held to the same rule: every step is ``dir_fd``-relative.
 
-    Provisioning writes the document a crash must never truncate, so it is written the way every
-    other write to that document is written. A provisioner using a plain ``write_text`` would be
-    the one unprotected write to the one file whose integrity the whole service rests on.
+    Provisioning writes the document a crash must never truncate: temp in the same directory,
+    fsync, rename, fsync the directory.
+
+    This runs as ROOT inside a directory the SERVICE ACCOUNT owns, and on ``--reprovision`` that
+    directory already exists and is the service's to write. Until 2026-10-01 the temp was opened
+    by path, with ``O_TRUNC`` and neither ``O_NOFOLLOW`` nor ``O_EXCL``, and then ``fchown``ed to
+    the service: a symlink planted at the predictable temp name made root truncate, overwrite and
+    hand over whatever file it pointed at. So the directory is opened once, refusing a symlink in
+    its place; a stale temp is unlinked, never opened; and the temp is created ``O_EXCL |
+    O_NOFOLLOW``, so anything that reappears under that name is a refusal and not a target.
     """
-    temporary = path.parent / f".{path.name}.provision.tmp"
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    temporary = f".{path.name}.provision.tmp"
+    dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        os.write(fd, payload)
-        os.fsync(fd)
-        os.fchown(fd, uid, gid)
-        os.fchmod(fd, mode)
-    finally:
-        os.close(fd)
-    os.replace(temporary, path)
-    dir_fd = os.open(path.parent, os.O_RDONLY)
-    try:
+        try:
+            os.unlink(temporary, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode,
+                     dir_fd=dir_fd)
+        try:
+            os.write(fd, payload)
+            os.fsync(fd)
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+        os.replace(temporary, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
