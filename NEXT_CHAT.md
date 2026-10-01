@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t146/review-wave1` — `main` @ `73e5ccb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t147/state-date` — `main` @ `712163a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #314 · branch `t146/review-wave1`** (base `main`, tip `73e5ccb`, task T-145).
+> **⏭️ CURRENT ACTIVE: PR #315 · branch `t147/state-date`** (base `main`, tip `712163a`, task T-145).
 >
-> wave 1 of the whole-repository read: 405 findings fixed, 34 left to the Owner; both kit jobs passed
+> PROJECT_STATE's date line follows the squash that landed after midnight; main's ci is red on that line alone
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
