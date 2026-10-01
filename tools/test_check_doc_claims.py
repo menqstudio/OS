@@ -626,25 +626,32 @@ class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
 
     @staticmethod
     def _carried():
-        """The ids the board's one-line statement names, read off that line.
+        """The count the board states, and the ids the ARCHIVE holds.
 
-        This was a hard-coded twelve, and the thirteenth row carried off failed it — the constant was
-        the defect, not the archive. The count and the ids now come from the board itself, so the line
-        that replaced the rows is checked against the rows it replaced, which is the property that
-        makes the replacement honest. A count typed in two places only agrees until one of them moves.
+        The board's line used to carry every id itself -- `T-NNN`.`#NNN`, one pair per merged row --
+        and this read the ids off that line. That was a second copy of the archive, written by hand
+        in one cell, and it grew by seventeen bytes with every merge: on 2026-10-01 it was 1,253 bytes
+        of a 7,000-byte board and pushed the board over its budget three times in one day. The board
+        now states the COUNT and points at the archive; the ids come from the archive's own rows, so
+        there is one list, and the count is what ties the board to it.
         """
         board = (ROOT / "TASKS.md").read_text(encoding="utf-8")
         line = [l for l in board.split("\n") if re.match(r"\| \*\*\d+ merged rows\*\*", l)]
         assert len(line) == 1, f"the board names its carried rows in {len(line)} lines, expected one"
         claimed = int(re.match(r"\| \*\*(\d+) merged rows\*\*", line[0]).group(1))
-        ids = re.findall(r"`(T-\d+)`·`#\d+`", line[0])
+        assert "docs/archive/TASKS_ARCHIVE_2026-09.md" in line[0], \
+            "the board's line no longer says where the rows it counts are"
+        archive = (ROOT / "docs" / "archive" / "TASKS_ARCHIVE_2026-09.md").read_text(encoding="utf-8")
+        ids = [re.match(r"\| \*\*(T-\d+)\*\*", l).group(1)
+               for l in archive.split("\n") if l.startswith("| **T-")]
         return claimed, ids
 
     def test_the_board_line_names_as_many_rows_as_it_claims(self):
-        """The line says a number and then lists ids. Both are written by hand, in one cell."""
+        """The board says a number; the archive holds the rows. They are written in two files."""
         claimed, ids = self._carried()
         self.assertEqual(claimed, len(ids),
-                         f"the board claims {claimed} merged rows and names {len(ids)}")
+                         f"the board claims {claimed} merged rows and the archive holds {len(ids)}")
+        self.assertEqual(len(ids), len(set(ids)), "the archive holds one ticket in two rows")
 
     def test_every_carried_row_is_still_a_known_ticket(self):
         """Each id the board carried off, by name. If a future edit drops one from both the board and
@@ -652,23 +659,19 @@ class ARowCarriedOffTheBoardIsStillATicket(unittest.TestCase):
         nothing, which is the same verdict for a very different cause."""
         known = m.known_tickets()
         _claimed, carried = self._carried()
-        self.assertGreaterEqual(len(carried), 12, "the board's carried-row line lost its ids")
+        self.assertGreaterEqual(len(carried), 12, "the archive lost its rows")
         for tid in carried:
             with self.subTest(ticket=tid):
                 self.assertIn(tid, known, f"{tid} was carried off the board and is now in no "
                                           f"board, ledger or archive")
 
     def test_the_archive_holds_the_rows_and_not_a_summary_of_them(self):
-        """"Moved the history out" has to mean moved, not paraphrased. Every id the board names has a
-        row of its own in the archive with its merged pull request beside it, and the archive holds no
-        row the board does not name."""
+        """"Moved the history out" has to mean moved, not paraphrased. Every row in the archive names
+        the pull request it merged in."""
         archive = (ROOT / "docs" / "archive" / "TASKS_ARCHIVE_2026-09.md").read_text(
             encoding="utf-8")
         rows = [l for l in archive.split("\n") if l.startswith("| **T-")]
-        _claimed, carried = self._carried()
-        self.assertEqual(sorted(re.match(r"\| \*\*(T-\d+)\*\*", r).group(1) for r in rows),
-                         sorted(carried),
-                         "the archive's rows and the board's one-line statement name different sets")
+        self.assertTrue(rows, "the archive holds no rows")
         for row in rows:
             with self.subTest(row=row[:40]):
                 self.assertIn("merged `#", row, "a carried row lost its pull request")

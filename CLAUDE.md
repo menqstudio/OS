@@ -19,7 +19,7 @@
 
 Then start. When Gev says *«գնա ռեպո կարդա ՄԴները»* that phrase **is** this law.
 
-**One read order, both languages.** Until 2026-08-29 there were **five**, and they disagreed: the manifest listed 16 paths, `START_HERE.md` 7, `AGENTS.md` 6, the English law 6, and **the Armenian law 5 — omitting `NEXT_CHAT.md`, the file the manifest itself calls `current_state_pointer`.** The Owner reads the Armenian one.
+**One read order, both languages** — until 2026-08-29 there were five, and they disagreed.
 
 **The read set is now budgeted.** [`tools/check_canon_budget.py`](./tools/check_canon_budget.py) holds every canonical file to a ceiling in `config/canon-budget.json` and the whole set to one context. It reached **1917 KB (~386,000 tokens)** on 2026-08-29, of which the hook could paste a quarter; `NEXT_CHAT.md` and `PROJECT_STATE.md` were the same document — 3037 identical lines from line 2 — and `TASKS.md` was 92% inside `NEXT_CHAT.md`. History lives in [`docs/archive/`](./docs/archive/).
 
@@ -111,7 +111,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **The production gate is SHUT**, and only the Owner opens it after an independent audit — not a green CI run, not the Builder's confidence. Three refusals hold it. There is no `platform_governed_execution_supported()` in the tree; that is the §0.1 spec symbol, and documents citing it are citing a name that does not exist:
 
-1. `governed_verification_unconfigured()` returns `Some(...)` while `governed_provisioning_missing()` finds any of its five inputs absent — all five are, in every build
+1. chat: `governed_verification_unconfigured()` returns `Some(...)` while any of its five compile-time inputs is absent — all are. **It guards chat only**: the Bridge panel reaches `connect_broker` without it, and there the renderer rejects any commit that is not `trusted_verified`
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest verifies under the floor-pinned root anchor** — which nothing in the shipped app sets; then it commits only `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` — the Owner's line
 

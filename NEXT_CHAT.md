@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t140/broker-reads-anchor` — `main` @ `db88c85`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `c7eba6a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #309 · branch `t140/broker-reads-anchor`** (base `main`, tip `db88c85`, task T-140).
+> **✅ SETTLED — `main` is at `c7eba6a`.** The only thing open is PR #310 on `t142/settled-at-c7eba6a`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-140: slice C; the broker reads its root from the floor-pinned anchor, and production stays behind the Owner's constant
+> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
