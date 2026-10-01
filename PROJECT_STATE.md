@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c7eba6a`.** The only thing open is PR #310 on `t142/settled-at-c7eba6a`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #311 · branch `t141/sudoers-install-safety`** (base `main`, tip `4f274ee`, task T-141).
 >
-> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
+> T-141: a kit could break sudo on a real box; fragments are staged, validated, then renamed in
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-10-01 | typecheck clean, 801 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2410 OK, 14 skipped |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2437 OK, 14 skipped |
 | Rust, 10 crates · 2026-10-01 | 1288 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

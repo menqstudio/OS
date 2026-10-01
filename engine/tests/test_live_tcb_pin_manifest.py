@@ -603,7 +603,10 @@ class KitRoleTableTests(unittest.TestCase):
         written = {
             "tcb/executor.lease": first(r'^cat > "\$TCB/executor\.lease"'),
             "tcb/recorder-policy.json": first(r'^chown 0:0 "\$RECORDER_POLICY"'),
-            "<sudoers>": first(r'^chmod 0440 "\$SUDOERS"'),
+            # The line that gives the fragment its pinned NAME. It was `chmod 0440 "$SUDOERS"` while
+            # the kit wrote straight into /etc/sudoers.d; since T-141 the fragment is staged and
+            # validated elsewhere and this rename is the first moment the pinned path exists.
+            "<sudoers>": first(r'^sudoers_install "\$SUDOERS_STAGED" "\$SUDOERS" '),
             "bin/ladder_turn": first(r'^install -m 0755 "\$DRIVER_BIN" "\$BIN/ladder_turn"'),
             "tcb/ladder-driver.json": first(r"<<'PYCFG'"),
             "<unit>": first(r'^install -m 0644 .*run_ladder_turn\.sh" "\$TCB/brops-ladder\.unit"'),

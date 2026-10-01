@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c7eba6a`.** The only thing open is PR #310 on `t142/settled-at-c7eba6a`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #311 · branch `t141/sudoers-install-safety`** (base `main`, tip `4f274ee`, task T-141).
 >
-> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
+> T-141: a kit could break sudo on a real box; fragments are staged, validated, then renamed in
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-141** | **A kit could break sudo on a real box** — fragments are staged, validated, then renamed in ◑ | Bro | In-Progress | `t141/sudoers-install-safety` |
 | **T-143** | **The real-turn gap** — measured: no real executor, one pinned conversation, no service units; the kit must not be ported wholesale (design §10) ◑ | Bro | Review | `#310` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
