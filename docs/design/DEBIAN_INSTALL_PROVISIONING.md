@@ -227,3 +227,46 @@ Merges stay one at a time.
 ## 9 · What needs the Owner
 
 Approval of this design, nothing else. No key, no ceremony, no step on any machine.
+
+## 10 · The real-turn gap — MEASURED 2026-10-01 (`T-143`), not designed
+
+CI now proves `brops-broker` completes a governed turn. Three read-only measurements asked how far
+that is from a turn a person runs from the desktop. Every line below was read at `c7eba6a` by an
+agent that changed nothing; file:line evidence is in the pull request that added this section. ◑.
+
+**The kit must not be ported wholesale.** It stages one proven turn, and a real install is not that.
+
+*Execution.* The contained executor the kit installs is `proof_executor`: it hashes its three inputs
+and writes a report — no model is called, and no real-execution executor exists in the tree. A real
+one needs an egress path and a credential channel; the launcher execs with an empty environment and
+four descriptors, `egress_proxy.rs` says its transport is not implemented, and the launcher's
+cgroup/rlimit step is not performed. And the deployment executes **one conversation**: the
+root-owned lease file pins three request digests, so a turn with a different history is refused
+before spawn (`run_ladder_supervisor.py:215-224`, reproduced in-process). A per-turn lease is minted
+but unsigned and the launcher does not consume it; the code calls lifting that an Architect
+decision. The supervisor that serves the ladder exists only as the CI harness.
+
+*Desktop.* There are TWO governed paths. Chat goes through a sidecar and is closed by five
+compile-time constants; it never reaches the broker. The Bridge panel reaches `connect_broker` and
+never consults those constants — and the renderer rejects any commit that is not `trusted_verified`
+(`governedTurn.ts:95`), so a `demonstration_custody` commit shows as a malformed reply. Nothing
+starts the broker or the three services outside the kit: no systemd unit, nothing creates
+`/run/brops`, the socket's mode is never set, a login-uid peer has never been exercised, and the
+committed message is read by nothing on the desktop side.
+
+*Installer.* The honest port list is: the tree and modes, the staged Python, launcher, recorder,
+`brops-broker`, serving keys, the manifest/registry/anchor from an in-memory root, IPC policies,
+configs, the three groups, one floor, both sudoers fragments made permanent, and the broker pin
+manifest built last. NOT to port: `proof_executor`, `ladder_turn`, every `ladder-driver*.json`, the
+relabelled anchors, the seeded `messages.db`, `keys/root.priv`. Three things an install needs that
+the kit does not have at all: systemd units, `/run/brops`, and a `uids` block naming the sidecar —
+preflight row `principals.tcb_floor_covers_the_sidecar` is NOT MET by the kit today. For
+`install_minted`, the root signs exactly two artifacts (the manifest and the §4.2 registry) in two
+processes, which is the only reason its private half touches disk; an install mint signs both in
+one process and never writes it. Two binaries compile in `/opt/brops-live/...`, so the installer
+cannot relocate the root.
+
+**What this means for the plan.** Slices A–D and the entry point are real and stay. "B's deployment
+step" as §8 wrote it is not one slice: it waits on a real executor, per-turn execution, and a
+shipped supervisor — product work, with an Architect decision inside it — and until those exist an
+installer could only deploy a fixture. That is the next thing to put in front of the Owner.
