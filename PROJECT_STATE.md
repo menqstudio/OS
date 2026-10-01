@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-02 — 97 pull requests merged (`#219`–`#316`), `main` at
-`6b5604c`, all seven of its workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-02 — 98 pull requests merged (`#219`–`#317`), `main` at
+`8a042eb`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #317 · branch `t149/review-wave2`** (base `main`, tip `6b5604c`, task T-145).
+> **✅ SETTLED — `main` is at `8a042eb`.** The only thing open is PR #318 on `t151/settled-at-8a042eb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> wave 2 of the whole-repository read: 275 Rust and frontend findings fixed; rev-30 Amendment A1; the Approvals route ceiling is 11.5 KB with its reason
+> **Next:** T-150 (merge and push gates), then the uncapped second read.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
