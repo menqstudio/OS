@@ -31,10 +31,7 @@ listed with WHY it did not already exist:
    supervisor's OWN state and verifies it under a binary-pinned root anchor; the kit ships no
    such document at all (``challenge_registry_handle`` in the kit config is literally
    ``sha256(pub_hex)``, provenance recorded rather than authority exercised). Signed HERE with
-   the kit's root private key, which only root can read, and written into the TCB directory —
-   or, when the TCB anchor is EXTERNAL, signed offline by that root over the bytes
-   ``--emit-registry`` wrote in phase 1, and verified here under the anchor before anything is
-   written (T-126). The anchor is ``tcb/root-anchor.json`` in both modes: one root, two artifacts.
+   the kit's root private key, which only root can read, and written into the TCB directory.
 
 4. **``supervisor-sidecar.ipc-policy.json``.** ``ipc_policy.load_allowed_peer_uid`` returns
    exactly ONE uid and refuses a file carrying two, and the supervisor front door needs two
@@ -150,9 +147,9 @@ def artifact_bytes() -> dict:
     return data
 
 
-def build_registry_payload(challenge_pub_raw: bytes, root_key_id: str,
-                           challenge_key_id: str) -> dict:
-    """The §4.2 ``brops.challenge-key-registry.v1`` PAYLOAD — the bytes a root signs.
+def build_registry_document(root_priv, challenge_pub_raw: bytes, root_key_id: str,
+                            challenge_key_id: str) -> dict:
+    """A §4.2 ``brops.challenge-key-registry.v1`` document signed by the kit's root key.
 
     The shape is exhaustive in both directions (``additionalProperties:false`` on the
     document, the payload and every key entry), and the revocation invariant is explicit:
@@ -179,73 +176,24 @@ def build_registry_payload(challenge_pub_raw: bytes, root_key_id: str,
         raise SystemExit("the §4.2 payload field set moved; this provisioner is stale")
     if sorted(payload["keys"][0]) != sorted(ckr.REGISTRY_KEY_FIELDS):
         raise SystemExit("the §4.2 key-entry field set moved; this provisioner is stale")
-    return payload
-
-
-def assemble_registry_document(payload: dict, root_sig_b64url: str) -> dict:
-    """The §4.2 document: the payload and a root signature over its canonical bytes."""
-    document = {"payload": payload, "root_sig": root_sig_b64url}
+    document = {
+        "payload": payload,
+        "root_sig": lc.sign_b64url(root_priv, ckr.canonical_bytes(payload)),
+    }
     if sorted(document) != sorted(ckr.REGISTRY_DOC_FIELDS):
         raise SystemExit("the §4.2 document field set moved; this provisioner is stale")
     return document
 
 
-def emit_registry(args) -> int:
-    """PHASE 1 of the external-root ceremony for this kit: the registry bytes, and nothing else."""
-    if not (args.keys_in and args.root_key_id):
-        raise SystemExit("--emit-registry needs --keys-in and --root-key-id")
-    if args.registry_sig_in:
-        raise SystemExit("--registry-sig-in is phase 2; --emit-registry is phase 1")
-    import provision_keys as pk  # the key id the kit config will carry, from its one definition
-    with open(os.path.join(args.keys_in, "challenge.pub.hex"), "r", encoding="ascii") as fh:
-        challenge_pub_raw = bytes.fromhex(fh.read().strip())
-    message = ckr.canonical_bytes(
-        build_registry_payload(challenge_pub_raw, args.root_key_id, pk.CHALLENGE_KEY_ID))
-    out = os.path.abspath(args.emit_registry)
-    if os.path.dirname(out):
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-    write_file(out, message, 0o644)
-    print("PHASE 1 (ladder): the §4.2 registry payload, %d bytes, sha256=%s -> %s"
-          % (len(message), bc.sha256_hex(message), out))
-    print("  Sign it on the airgapped machine exactly as the manifest:")
-    print("    python engine/ci/live/sign_manifest.py --manifest %s \\" % out)
-    print("        --root-seed <root.private.seed> --sig-out <registry.sig> --expect-pub <hex>")
-    return 0
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="Provision the §4.10(g) ladder additions")
     ap.add_argument("--root-dir", required=True, help="the live kit root, e.g. /opt/brops-live")
-    ap.add_argument("--sidecar-uid", type=int)
-    ap.add_argument("--supervisor-uid", type=int)
-    ap.add_argument("--broker-uid", type=int)
-    ap.add_argument("--recorder-user",
+    ap.add_argument("--sidecar-uid", type=int, required=True)
+    ap.add_argument("--supervisor-uid", type=int, required=True)
+    ap.add_argument("--broker-uid", type=int, required=True)
+    ap.add_argument("--recorder-user", required=True,
                     help="the account the SUPERVISOR sudo's to for the recorder spawn")
-    # The external-root ceremony. The §4.2 registry is the SECOND thing the root signs on this kit
-    # — the key manifest is the first — and until T-126 only the kit's own `keys/root.priv` could
-    # sign it, so a kit whose manifest an offline root had signed still could not provision.
-    ap.add_argument("--emit-registry", default=None,
-                    help="PHASE 1: write the canonical §4.2 registry payload bytes the offline root "
-                         "signs, over the challenge key in --keys-in, and stop")
-    ap.add_argument("--keys-in", default=None,
-                    help="with --emit-registry: the keys directory `provision_keys.py "
-                         "--emit-manifest` minted")
-    ap.add_argument("--root-key-id", default=None,
-                    help="with --emit-registry: the offline root's key id, as the manifest names it")
-    ap.add_argument("--registry-sig-in", default=None,
-                    help="PHASE 2: the offline root's detached signature over those bytes, as "
-                         "`sign_manifest.py` writes it (standard base64). Required when the kit's "
-                         "anchor is external; refused when it is not")
     args = ap.parse_args()
-
-    if args.emit_registry:
-        return emit_registry(args)
-    missing = [f for f in ("sidecar_uid", "supervisor_uid", "broker_uid", "recorder_user")
-               if getattr(args, f) is None]
-    if missing:
-        ap.error("required: " + ", ".join("--" + f.replace("_", "-") for f in missing))
-    if args.keys_in or args.root_key_id:
-        ap.error("--keys-in and --root-key-id belong to --emit-registry (phase 1) only")
 
     root = os.path.abspath(args.root_dir)
     tcb = os.path.join(root, "tcb")
@@ -266,54 +214,6 @@ def main() -> int:
         raise SystemExit("§2.6: broker/supervisor/sidecar must be pairwise-distinct uids, got %r"
                          % principals)
 
-    # ---- (3) the §4.2 registry document — FIRST, because it is the step that can refuse ----
-    # An external anchor whose signature does not verify must stop the kit before it writes the
-    # store or re-points the config, so "Nothing was written" is true when it is printed.------------------------------------------
-    with open(cfg["keys"]["challenge_pub_hex"], "r", encoding="ascii") as fh:
-        challenge_pub_raw = bytes.fromhex(fh.read().strip())
-    # ONE anchor for both things the root signs: the TCB file `provision_keys.py` wrote, which
-    # names the root that verified the key manifest and says whose custody it is.
-    with open(os.path.join(tcb, "root-anchor.json"), "r", encoding="utf-8") as fh:
-        anchor = json.load(fh)
-    root_key_id = cfg["supervisor"]["challenge_registry_root_key_id"]
-    if root_key_id != anchor["root_key_id"]:
-        raise SystemExit("the config names registry root %r but the TCB anchor is %r"
-                         % (root_key_id, anchor["root_key_id"]))
-    payload = build_registry_payload(
-        challenge_pub_raw, root_key_id, cfg["supervisor"]["challenge_key_id"])
-    message = ckr.canonical_bytes(payload)
-    if anchor["provenance"] == "external":
-        # The kit holds no root private here and must not sign: the offline root already did, over
-        # bytes phase 1 emitted from these same inputs. Rebuilding them and verifying is the check
-        # that they ARE the same inputs — a signature over another challenge key fails here.
-        if not args.registry_sig_in:
-            raise SystemExit("the TCB anchor is external, so the §4.2 registry must be signed by that "
-                             "root: pass --registry-sig-in (sign the bytes from --emit-registry "
-                             "with sign_manifest.py). Nothing was written.")
-        with open(args.registry_sig_in, "r", encoding="ascii") as fh:
-            sig_std = fh.read().strip()
-        if not lc.verify_b64std(lc.load_public_hex(anchor["public_key_hex"]), message, sig_std):
-            raise SystemExit("--registry-sig-in does not verify over this kit's §4.2 registry payload "
-                             "under the external anchor %s. Nothing was written."
-                             % anchor["public_key_hex"])
-        root_sig = base64.urlsafe_b64encode(base64.b64decode(sig_std, validate=True)) \
-            .rstrip(b"=").decode("ascii")
-    else:
-        if args.registry_sig_in:
-            raise SystemExit("--registry-sig-in given but the TCB anchor is %r, not external: a kit "
-                             "that signs its own manifest signs its own registry"
-                             % anchor["provenance"])
-        with open(os.path.join(root, "keys", "root.priv"), "rb") as fh:
-            root_sig = lc.sign_b64url(lc.load_private(fh.read()), message)
-    registry_document = assemble_registry_document(payload, root_sig)
-    registry_path = os.path.join(tcb, "challenge-key-registry.json")
-    write_file(registry_path,
-               json.dumps(registry_document, separators=(",", ":")).encode("utf-8"), 0o644)
-
-    # The anchor's key material in §4.2's encoding. `RootAnchor` refuses anything but 43
-    # base64url characters, and the kit publishes hex, so the conversion happens once, here.
-    root_pub_b64url = b64url_key(bytes.fromhex(anchor["public_key_hex"]))
-
     # ---- (1) the three artifacts, in the §4.10(g) canonical spellings ----------------
     data = artifact_bytes()
     digests = {}
@@ -330,6 +230,24 @@ def main() -> int:
     cfg["resolved"]["history_sha256"] = digests["history"]
     cfg["resolved"]["generation_config_sha256"] = digests["generation_config"]
     write_file(config_path, json.dumps(cfg, indent=2).encode("utf-8"), 0o644)
+
+    # ---- (3) the §4.2 registry document ----------------------------------------------
+    with open(cfg["keys"]["challenge_pub_hex"], "r", encoding="ascii") as fh:
+        challenge_pub_raw = bytes.fromhex(fh.read().strip())
+    root_priv_path = os.path.join(root, "keys", "root.priv")
+    with open(root_priv_path, "rb") as fh:
+        root_priv = lc.load_private(fh.read())
+    root_key_id = cfg["supervisor"]["challenge_registry_root_key_id"]
+    registry_document = build_registry_document(
+        root_priv, challenge_pub_raw, root_key_id, cfg["supervisor"]["challenge_key_id"])
+    registry_path = os.path.join(tcb, "challenge-key-registry.json")
+    write_file(registry_path,
+               json.dumps(registry_document, separators=(",", ":")).encode("utf-8"), 0o644)
+
+    # The anchor's key material in §4.2's encoding. `RootAnchor` refuses anything but 43
+    # base64url characters, and the kit publishes hex, so the conversion happens once, here.
+    with open(os.path.join(root, "keys", "root.pub.hex"), "r", encoding="ascii") as fh:
+        root_pub_b64url = b64url_key(bytes.fromhex(fh.read().strip()))
 
     # ---- (4)+(5) the two IPC policies -------------------------------------------------
     def ipc_policy(service: str, peer_uid: int) -> str:

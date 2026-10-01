@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `158a174`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t130/no-owner-key-ceremony` — `main` @ `de6ed04`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `158a174`.** The only thing open is PR #300 on `t129/settled-at-158a174`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #301 · branch `t130/no-owner-key-ceremony`** (base `main`, tip `de6ed04`, task T-130).
 >
-> **Next:** Owner: DEBIAN_CUSTODY_CEREMONY.md steps 1-2 (mint the root offline, hand over the public hex).
+> T-130: an Owner-key ceremony contradicted #78; removed, and a gate forbids its return
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2336 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2305 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1222 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py       # the read set fits one context

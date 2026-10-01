@@ -148,27 +148,6 @@ def build_manifest_bytes(signer_pub_hex: str, sup_pub_hex: str) -> bytes:
     return json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def manifest_named_pubs(manifest_bytes: bytes) -> "set[str]":
-    """Every `public_key_hex` a KeyManifest names, lowercased. Empty set if it names none.
-
-    Deliberately tolerant of shape and strict about nothing else: this is used to answer one question
-    — does the manifest the offline root signed actually name the keys this kit is about to serve with
-    — and a manifest that cannot be parsed names nothing, which fails that question closed.
-    """
-    try:
-        doc = json.loads(manifest_bytes.decode("utf-8"))
-        keys = doc.get("keys") or []
-    except (ValueError, UnicodeDecodeError, AttributeError):
-        return set()
-    out = set()
-    for entry in keys:
-        if isinstance(entry, dict):
-            pub = entry.get("public_key_hex")
-            if isinstance(pub, str):
-                out.add(pub.strip().lower())
-    return out
-
-
 def write_file(path: str, data: bytes, mode: int = 0o644) -> None:
     with open(path, "wb") as f:
         f.write(data)
@@ -188,55 +167,12 @@ def main() -> int:
     # key back to the verifier proves custody of nothing — the verifier checks a signature it supplied
     # both sides of. That is fine for exercising the chain, and NOT fine to report as production. So the
     # anchor is written to a TCB file that STATES which of the two it is, and the driver refuses to
-    # print production_verified=true for a kit-generated one. Supplying an external anchor (with the
-    # matching pre-signed manifest) is what makes the claim real.
+    # print production_verified=true for a kit-generated one. There is no other mode: the Owner decided
+    # on 2026-08-09 (#78) that the install mints trust and nobody carries a key, so this kit takes no
+    # outside anchor (T-130).
     ap.add_argument("--login-uid", type=int, default=1000,
                     help="the interactive login account the §2.5 floor treats as untrusted (F-10)")
-    ap.add_argument("--root-anchor-key-id", default=None,
-                    help="EXTERNAL root key id (custody outside this kit); requires the three below")
-    ap.add_argument("--root-anchor-pub-hex", default=None,
-                    help="EXTERNAL root Ed25519 public key, 64 lowercase hex")
-    ap.add_argument("--manifest-in", default=None,
-                    help="pre-built KeyManifest JSON signed by the EXTERNAL root")
-    ap.add_argument("--emit-manifest", default=None,
-                    help="PHASE 1 of the external-root ceremony: mint the serving keys, write the "
-                         "canonical KeyManifest bytes to this path for the offline root to sign, and "
-                         "STOP. Writes no config, no floor, and no root private key.")
-    ap.add_argument("--keys-in", default=None,
-                    help="PHASE 2: reuse the serving keys a previous --emit-manifest run left in this "
-                         "keys directory instead of minting new ones. REQUIRED with an external "
-                         "anchor, because freshly minted keys can never be the ones an "
-                         "already-signed manifest names.")
-    ap.add_argument("--manifest-sig-in", default=None,
-                    help="detached base64 signature over --manifest-in by the EXTERNAL root")
     args = ap.parse_args()
-
-    external = (args.root_anchor_key_id, args.root_anchor_pub_hex, args.manifest_in, args.manifest_sig_in)
-    if any(external) and not all(external):
-        ap.error("an external root anchor needs ALL of --root-anchor-key-id/--root-anchor-pub-hex/"
-                 "--manifest-in/--manifest-sig-in: a public key without the manifest IT signed would "
-                 "leave the kit signing the manifest itself under someone else's name")
-    use_external = all(external)
-    if use_external:
-        pub = args.root_anchor_pub_hex.strip().lower()
-        if len(pub) != 64 or any(c not in "0123456789abcdef" for c in pub):
-            ap.error("--root-anchor-pub-hex must be 64 lowercase hex characters")
-
-    # THE ORDERING IMPOSSIBILITY, refused at the door instead of at run time. `build_manifest_bytes`
-    # names the signer and supervisor-attestation PUBLIC hexes, so a manifest signed offline — before
-    # this command ran — can only name keys that already existed. Minting fresh ones here and serving
-    # that manifest anyway is what made `trusted_verified` unreachable by construction.
-    if args.emit_manifest and any(external):
-        ap.error("--emit-manifest is PHASE 1 and takes no anchor flags: it exists to produce the bytes "
-                 "the offline root has not signed yet")
-    if args.emit_manifest and args.keys_in:
-        ap.error("--emit-manifest MINTS the serving keys and --keys-in REUSES them; asking for both "
-                 "leaves it unsaid which keys the emitted manifest would name")
-    if use_external and not args.keys_in:
-        ap.error("an external root anchor needs --keys-in: the manifest it signed names the signer and "
-                 "supervisor-attestation PUBLIC keys, and keys minted by THIS run cannot be the ones a "
-                 "signature made earlier already names. Run --emit-manifest first, sign those bytes "
-                 "offline, then pass the same keys directory back here")
 
     root = os.path.abspath(args.root_dir)
     keys_dir = os.path.join(root, "keys")
@@ -263,109 +199,29 @@ def main() -> int:
               evidence_state_dir, broker_state_dir):
         os.makedirs(d, exist_ok=True)
 
-    # ---- (1) the three serving keypairs: minted here, or reused from phase 1 ----
-    if args.keys_in:
-        source = os.path.abspath(args.keys_in)
+    # ---- (1) the three serving keypairs ----
+    challenge = lc.gen_private()
+    sup_attest = lc.gen_private()
+    signer = lc.gen_private()
 
-        def _load(name: str):
-            path = os.path.join(source, name + ".priv")
-            try:
-                with open(path, "rb") as f:
-                    raw = f.read()
-            except OSError as exc:
-                ap.error("--keys-in %s: cannot read %s (%s). Phase 1 writes it." % (source, path, exc))
-            if len(raw) != 32:
-                ap.error("--keys-in %s: %s is %d bytes, not a raw 32-byte Ed25519 seed"
-                         % (source, path, len(raw)))
-            return lc.load_private(raw)
+    root_key = lc.gen_private()
 
-        challenge = _load("challenge")
-        sup_attest = _load("supervisor_attest")
-        signer = _load("signer")
-    else:
-        challenge = lc.gen_private()
-        sup_attest = lc.gen_private()
-        signer = lc.gen_private()
-
-    # NO ROOT PRIVATE ON THE SERVING BOX unless the kit is the one signing. This used to be
-    # unconditional: external mode — the mode whose entire purpose is that the root private never
-    # touches this machine — minted a root keypair and wrote `keys/root.priv` anyway.
-    root_key = None if (use_external or args.emit_manifest) else lc.gen_private()
-
-    written = [("challenge", challenge), ("supervisor_attest", sup_attest), ("signer", signer)]
-    if root_key is not None:
-        written.append(("root", root_key))
+    written = [("challenge", challenge), ("supervisor_attest", sup_attest), ("signer", signer),
+               ("root", root_key)]
     for name, k in written:
         write_file(os.path.join(keys_dir, name + ".priv"), lc.priv_raw(k), 0o600)
         write_file(os.path.join(keys_dir, name + ".pub.hex"), lc.pub_hex(k).encode("ascii"), 0o644)
 
     signer_pub_hex = lc.pub_hex(signer)
     sup_pub_hex = lc.pub_hex(sup_attest)
-    root_pub_hex = lc.pub_hex(root_key) if root_key is not None else None
-
-    # ---- (1a) PHASE 1: emit the bytes the offline root will sign, and stop ----
-    if args.emit_manifest:
-        out = os.path.abspath(args.emit_manifest)
-        parent = os.path.dirname(out)
-        if parent:
-            os.makedirs(parent, exist_ok=True)   # `write_file` opens; it does not create the parent
-        manifest_bytes = build_manifest_bytes(signer_pub_hex, sup_pub_hex)
-        write_file(out, manifest_bytes, 0o644)
-        print("PHASE 1 of the external-root ceremony. No config, no floor, no root private key.")
-        print("  keys directory : %s   <- pass this back as --keys-in in phase 2" % keys_dir)
-        print("  manifest bytes : %s (%d bytes, sha256=%s)"
-              % (out, len(manifest_bytes), sha256_hex(manifest_bytes)))
-        print("  signer     pub : %s" % signer_pub_hex)
-        print("  sup-attest pub : %s" % sup_pub_hex)
-        print("")
-        print("  Next, on the AIRGAPPED machine that holds the root private:")
-        print("    python engine/ci/live/sign_manifest.py --manifest %s \\" % out)
-        print("        --root-seed <root.private.seed> --sig-out <manifest.sig>")
-        print("  Then re-run this tool with --keys-in, --manifest-in, --manifest-sig-in and the two")
-        print("  --root-anchor-* flags. It will refuse unless the signature verifies AND the signed")
-        print("  manifest names the two public keys above.")
-        return 0
+    root_pub_hex = lc.pub_hex(root_key)
 
     # ---- (2) root-signed production KeyManifest (+ anti-rollback floor) ----
-    if use_external:
-        # The kit holds no root private key in this mode: it consumes a manifest the external root
-        # already signed. It must not "fix up" the contents — the bytes signed are the bytes served.
-        with open(args.manifest_in, "rb") as f:
-            manifest_bytes = f.read()
-        with open(args.manifest_sig_in, "r", encoding="utf-8") as f:
-            manifest_sig_std = f.read().strip()
-        anchor_key_id = args.root_anchor_key_id
-        anchor_pub_hex = args.root_anchor_pub_hex.strip().lower()
-        anchor_provenance = "external"
-
-        # TWO REFUSALS BEFORE ANYTHING IS WRITTEN, because the kit cannot re-sign what it serves.
-        #
-        # (a) the signature must verify under the anchor the operator named. Without this the only
-        #     thing checked was that two files existed, and a typo in the hex produced a kit that
-        #     looked provisioned and failed at run time as a key-resolution refusal.
-        if not lc.verify_b64std(lc.load_public_hex(anchor_pub_hex), manifest_bytes, manifest_sig_std):
-            print("FAIL: --manifest-sig-in does not verify over --manifest-in under "
-                  "--root-anchor-pub-hex %s. Nothing was written." % anchor_pub_hex, file=sys.stderr)
-            return 3
-        # (b) the signed manifest must NAME the keys this kit will serve with. This is the check the
-        #     ordering impossibility hid: a perfectly valid signature over a manifest about OTHER keys
-        #     is exactly what the old code accepted.
-        named = manifest_named_pubs(manifest_bytes)
-        absent = [("signer", signer_pub_hex), ("supervisor-attestation", sup_pub_hex)]
-        absent = [(role, pub) for role, pub in absent if pub not in named]
-        if absent:
-            print("FAIL: the signed manifest does not name the serving key(s) this kit holds — "
-                  + ", ".join("%s %s" % (role, pub) for role, pub in absent)
-                  + ". It names %s. The manifest has to be signed over the keys phase 1 minted, and "
-                    "--keys-in has to be that same directory. Nothing was written."
-                  % (sorted(named) or "no public keys at all"), file=sys.stderr)
-            return 4
-    else:
-        manifest_bytes = build_manifest_bytes(signer_pub_hex, sup_pub_hex)
-        manifest_sig_std = lc.sign_b64std(root_key, manifest_bytes)
-        anchor_key_id = ROOT_KEY_ID
-        anchor_pub_hex = root_pub_hex
-        anchor_provenance = "kit_generated"
+    manifest_bytes = build_manifest_bytes(signer_pub_hex, sup_pub_hex)
+    manifest_sig_std = lc.sign_b64std(root_key, manifest_bytes)
+    anchor_key_id = ROOT_KEY_ID
+    anchor_pub_hex = root_pub_hex
+    anchor_provenance = "kit_generated"
     manifest_hash = sha256_hex(manifest_bytes)  # == KeyManifest::content_hash()
 
     manifest_path = os.path.join(root, "manifest.json")
@@ -373,8 +229,8 @@ def main() -> int:
     floor_path = os.path.join(root, "floor.json")
     # F-17: the anchor lives in the TCB directory beside the launcher and executor image — root-owned
     # and non-writable — NOT inline in the world-readable shared config the broker also reads its own
-    # knobs from. `provenance` is load-bearing: the driver will not report production_verified=true
-    # unless it says `external`.
+    # knobs from. `provenance` is load-bearing, and this kit only ever writes `kit_generated`: the
+    # drivers refuse `external` for any key but the compiled pin (T-126).
     anchor_path = os.path.join(tcb_dir, "root-anchor.json")
     write_file(
         anchor_path,

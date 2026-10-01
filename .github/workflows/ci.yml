@@ -1277,8 +1277,8 @@ jobs:
       - name: Install the crypto dependency (the gate refuses without it)
         run: pip install --require-hashes -r engine/requirements-ci.txt
       # Every `trusted_verified` this product can render rests on one fact: the private half of
-      # `tcb::ROOT_PUBLIC_KEY_HEX` exists only on the Owner's offline media. Both `tcb.rs` files say so
-      # in a comment, and a comment is not evidence — a seed pasted into a fixture, a runbook snippet or
+      # `tcb::ROOT_PUBLIC_KEY_HEX` is in nobody's reach (nobody holds it; T-131 makes it install-minted).
+      # A comment is not evidence — a seed pasted into a fixture, a runbook snippet or
       # a JSON sample would hand the trust chain to anyone with a clone and nothing here would notice.
       #
       # The CONTRAST is inside the gate and is the reason the result means anything: it must also FIND
@@ -1292,6 +1292,14 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_root_anchor_custody
+      # The Owner decided on 2026-08-09 (#78) that the install mints trust and no person carries a key.
+      # An offline-root ceremony was rebuilt anyway three weeks later; T-130 removed it, and this gate
+      # fails any change that brings its tools, runbooks, flags or variables back outside history.
+      - name: No Owner-held-key ceremony in the tree
+        run: python tools/check_no_owner_key_ceremony.py
+      - name: Ceremony gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_no_owner_key_ceremony
 
   signer-isolation:
     name: Engine · signer isolation proof (linux, dedicated principals)

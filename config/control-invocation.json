@@ -275,6 +275,11 @@
       "blocks": "merge",
       "invoked_by": "Canonical law · read receipt · roadmap order · update law"
     },
+    "tools/check_no_owner_key_ceremony.py": {
+      "kind": "check",
+      "blocks": "merge",
+      "invoked_by": "Trust anchor · no production root private in this tree"
+    },
     "tools/check_root_anchor_custody.py": {
       "kind": "check",
       "blocks": "merge",

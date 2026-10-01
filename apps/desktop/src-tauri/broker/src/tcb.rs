@@ -3,14 +3,14 @@
 //! The production-trust root PUBLIC key is compiled in HERE, never read from the deployment config — an
 //! operator who can write the config directory cannot swap the root, because the broker's production resolver
 //! pins the public key from this module and refuses any manifest not signed by the corresponding private
-//! root. The root PRIVATE key is held OFFLINE by the operator and signs the manifest out-of-band; it never
-//! appears in a deployed binary or on the serving box (mirrors the Windows kit's `crate::tcb`).
+//! root. No person holds or carries that private key (Owner decision, #78); see `ROOT_PUBLIC_KEY_HEX`.
 
 pub const ROOT_KEY_ID: &str = "brops-tcb-root-1"; // gitleaks:allow (public key-id)
 
-/// The TCB-pinned PRODUCTION root PUBLIC key hex — the only root material in the broker binary. The private
-/// half is held OFFLINE by the operator (see the Windows kit's `win_gen_root` + `CUSTODY_CEREMONY.md`) and
-/// never appears in a deployed binary or on the serving box; the manifest is signed offline with it.
+/// The TCB-pinned PRODUCTION root PUBLIC key hex — the only root material in the broker binary. Nobody
+/// holds its private half: the Owner decided on 2026-08-09 (#78) that the install mints trust and no person
+/// carries a key, and he does not hold this one (2026-09-20). So the production path is unreachable until
+/// the pin is replaced by an install-minted root (T-131).
 pub const ROOT_PUBLIC_KEY_HEX: &str =
     "3c83c2bc0e72c068824e2eebf663b6ed4cda337ff806c0b46e534aee19da0df5"; // gitleaks:allow (public key)
 

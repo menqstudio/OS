@@ -58,7 +58,7 @@
   ],
   "claims": {
     "gate_scripts": {
-      "value": 42,
+      "value": 43,
       "command": "ls tools/check_*.py | wc -l",
       "derive": {
         "glob": "tools/check_*.py"
@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2336,
+      "value": 2305,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
         "date": "2026-09-30",
-        "head": "620066e",
+        "head": "de6ed04",
         "environments": {
+          "Debian 13 (trixie) native, non-root account @ de6ed04 + T-130": {
+            "ran": 2305,
+            "skipped": 14
+          },
           "Debian 13 (trixie) native, non-root account @ 620066e + T-126": {
             "ran": 2336,
             "skipped": 14

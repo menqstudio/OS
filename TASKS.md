@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `158a174`.** The only thing open is PR #300 on `t129/settled-at-158a174`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #301 · branch `t130/no-owner-key-ceremony`** (base `main`, tip `de6ed04`, task T-130).
 >
-> **Next:** Owner: DEBIAN_CUSTODY_CEREMONY.md steps 1-2 (mint the root offline, hand over the public hex).
+> T-130: an Owner-key ceremony contradicted #78; removed, and a gate forbids its return
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-130** | **A key ceremony contradicted #78** — removed; a gate forbids it ◑ | Bro | In-Progress | `t130/no-owner-key-ceremony` |
+| **T-131** | **Broker pin: no holder** — install-mint it | — | Todo | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |

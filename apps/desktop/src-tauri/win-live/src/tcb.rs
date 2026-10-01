@@ -5,9 +5,9 @@
 //! cannot swap the root, because the driver builds its `PinnedRoot` from THIS module and refuses any manifest
 //! not signed by it. `config.json`'s `root_pub_hex` is advisory only and is cross-checked against this anchor.
 //!
-//! CUSTODY (production): the PRODUCTION root below ([`ROOT_PUBLIC_KEY_HEX`]) is a real operator-generated key
-//! whose PRIVATE half is held OFFLINE (see `win_gen_root` + `CUSTODY_CEREMONY.md`) and never appears in any
-//! binary or on the serving box. Only that offline private can sign a manifest the driver will accept.
+//! CUSTODY (production): nobody holds the private half of [`ROOT_PUBLIC_KEY_HEX`]. The Owner decided on
+//! 2026-08-09 (#78) that the install mints trust and no person carries a key, so the production path is
+//! unreachable until this pin is replaced by an install-minted root (T-131).
 //!
 //! DEMONSTRATION root ([`DEMO_ROOT_PUBLIC_KEY_HEX`]): a SEPARATE anchor used ONLY by the in-process crypto-chain
 //! proof (`proof::in_process_turn`) and unit tests, so the whole challenge→lease→attest→sign→verify chain can
@@ -22,9 +22,7 @@ use crate::crypto;
 pub const ROOT_KEY_ID: &str = "brops-tcb-root-1"; // gitleaks:allow (public key-id)
 
 /// The TCB-pinned PRODUCTION root PUBLIC key hex — the ONLY root material compiled into the broker (audit
-/// condition 1). The root PRIVATE key is held OFFLINE by the operator and never appears in a deployed binary or
-/// on the serving box; the manifest is signed offline with it (see `win_gen_root` / `win_provision --root-key`).
-/// The driver pins THIS public key and refuses any manifest not signed by the corresponding private root.
+/// condition 1). Nobody holds its private half (see the module doc). The driver pins THIS public key and refuses any manifest not signed by the corresponding private root.
 pub const ROOT_PUBLIC_KEY_HEX: &str =
     "3c83c2bc0e72c068824e2eebf663b6ed4cda337ff806c0b46e534aee19da0df5"; // gitleaks:allow (public key)
 

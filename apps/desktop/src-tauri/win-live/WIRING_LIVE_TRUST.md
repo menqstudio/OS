@@ -1,9 +1,10 @@
 # Wiring a LIVE AI turn to `trusted_verified` — honest design + runbook
 
 This is the map for making the in-app Bro's **live** answers reach a real, honest
-`trusted_verified` — not a demonstration, not a fake green. Read
-[`CUSTODY_CEREMONY.md`](./CUSTODY_CEREMONY.md) first; production custody is the
-prerequisite and is already half-done (the operator's offline root is pinned).
+`trusted_verified` — not a demonstration, not a fake green. **Custody is not a person's job:**
+the Owner decided on 2026-08-09 (#78) that the install mints trust and nobody carries a key. The
+compiled pin `tcb::ROOT_PUBLIC_KEY_HEX` is a key nobody holds, so production is unreachable until
+it is replaced by an install-minted root (`T-131`).
 
 ## Where we are
 
@@ -12,11 +13,11 @@ prerequisite and is already half-done (the operator's offline root is pinned).
   brops-win-live` on any host — it uses the demonstration anchor, so it reports demonstration
   custody, never production). The named-pipe path (`bin/win_live_turn.rs` +
   `win_authority`/`win_supervisor`/`win_signer`) is **built but not reproducibly proven from
-  this tree**: `proof/win_live_proof.ps1` needs the operator's offline root private key, which
-  is deliberately not here, and no CI workflow runs any of it. See
+  this tree**: `proof/win_live_proof.ps1` needs the private half of the compiled pin, which
+  nobody holds, and no CI workflow runs any of it. See
   [`proof/CROSS_ACCOUNT_PROOF.md`](./proof/CROSS_ACCOUNT_PROOF.md).
-- Production **custody** is graduated: `tcb::ROOT_PUBLIC_KEY_HEX` is the operator's key
-  whose private half is offline. Nothing in-tree can forge a production manifest.
+- Production **custody** is not reachable: nobody holds the private half of
+  `tcb::ROOT_PUBLIC_KEY_HEX`. Nothing in-tree can forge a production manifest either.
 - **Live chat still runs fail-closed**: the app uses the ungoverned `claude-cli` provider,
   which emits raw text with no signed receipt, so `resolve_trust_state` returns
   `NoTrustedManifest`. The UI never shows a production green for a live turn. Good.
@@ -59,8 +60,9 @@ still Blocks.
 
 ## Operator runbook (the infrastructure only you can stand up)
 
-1. **Custody** — finish [`CUSTODY_CEREMONY.md`](./CUSTODY_CEREMONY.md): your offline root is
-   already pinned; provision a deployment signing the manifest with your offline private:
+1. **Custody** — NOT runnable for production until `T-131`: `win_provision` compares
+   `--root-key` against the compiled pin, whose private half nobody holds. The shape, for when the
+   pin is install-minted:
    `win_provision --root-dir <deploy> --root-key <offline seed> --root-provenance external
    --allowed-broker-sid <SID> --executor-path <path to the rebuilt win_executor.exe>
    --challenge-account <acct> --supervisor-account <acct> --signer-account <acct>`.

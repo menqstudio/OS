@@ -82,7 +82,7 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2336 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2305 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1222 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 794 tests / 84 files
 python3 tools/check_canon_budget.py                              # the read set fits
@@ -95,9 +95,9 @@ Engine, Rust: 2026-09-30; frontend: 2026-08-31. **Verify before claiming green**
 
 ## 5. Environment
 
-**This is a Debian box.** Until 2026-08-29 five canonical documents said it was a Windows box and that `cargo` must run from PowerShell because Git Bash's `link` shadows MSVC's `link.exe`. That was true of the old machine. Here, `cargo test --workspace` runs from an ordinary shell and passes 1012 tests.
+**This is a Debian box**, not the old Windows one. Here, `cargo test --workspace` runs from an ordinary shell and passes 1012 tests.
 
-- **Toolchain:** cargo 1.97.1 · node 20.20.2 · npm 10.8.2, recorded in [`config/toolchain.json`](./config/toolchain.json), which is what `tools/check_doc_claims.py` checks every document against. *(The documents said cargo 1.96 / node 24 / npm 11.)*
+- **Toolchain:** cargo 1.97.1 · node 20.20.2 · npm 10.8.2, recorded in [`config/toolchain.json`](./config/toolchain.json), which is what `tools/check_doc_claims.py` checks every document against.
 - **Engine tests need `BRO_ENV=ci`** — without it operator-pin gating denies and tests error rather than run.
 - **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **six** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.**
 - **Session-scoped gates cannot see a bare shell.** `check_read_receipt.py` and `check_roadmap_order.py` resolve the session from `CLAUDE_SESSION_ID`, which the hooks set and the Bash tool does not. Pass `--session`, or the RED you get means "could not find the session", not "the gate failed".
@@ -115,11 +115,13 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — which nothing in the shipped app sets
 
-**The standing independent verdict is RED.** TEN rounds; the current one is [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) — RED, no P0, and its reason is three named items rather than unconfirmed claims. *(It said NINE and named the ninth report until 2026-09-21, while the banner in this same file, which READS the round from the ledger, said TENTH; claim history §11.)* The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3); *the Armenian half of this file said 122, and 1+5+13+26 is 45.*
+**The standing independent verdict is RED.** TEN rounds; the current one is [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) — RED, no P0, and its reason is three named items rather than unconfirmed claims. The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3).
 
 **O-1…O-5 are all OPEN and none needs an Owner-minted artifact.** Inventory: [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md). What blocks them is deployment wiring and a second principal. Severities, which `tools/check_residual_items.py` holds identical here, in `docs/SECURITY_MODEL.md` §4 and in the inventory — a severity quietly downgraded in one document is how a production item stops being one: **O-1 (HIGH)** bytecode-shadow, the *read* half — CPython imports an existing `.pyc` before any Python check can run · **O-2 (MED)** audit-head anchor · **O-3 (MED)** conductor session token, fail-closed and set, open until a desktop turn reaches it · **O-4 (LOW)** control-room actor — nothing outside tests mints the artifact `_prove_command_actor` would verify · **O-5 (LOW)** evidence high-water, open deliberately: *when* it is minted is an unanswered design question. The one to know:
 
 > **O-2 — the audit ledger is not tamper-evident against its own writer on any real deployment.** Custody comes from `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` and **nothing in the shipped product sets either**; `tauri.conf.json` declares no `externalBin`, so no signer binary is installed. `append()` writes the record, rewrites a **plaintext** `.head`, and produces no `.head.sig`. Anyone who can write the ledger can drop records, recompute the chain and rewrite the head, and an unkeyed `verify()` reports it intact. On Windows the signer is built and in no installer; **on POSIX it has never run.**
+
+**No person holds a key — Owner decision #78 (2026-08-09).** The install mints trust; never ask him to mint, carry or sign with a root. `tools/check_no_owner_key_ceremony.py` forbids the ceremony T-130 removed; the broker pin has no holder, and making it install-minted is T-131.
 
 **There is no path in this repository to a production trust root.** `broctl build-registry` hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses a development registry when the pin comes from the production path. See [`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md).
 
@@ -154,7 +156,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 Մինչև 2026-08-29 հինգ canonical ֆայլ գրում էր որ սա Windows ա ու `cargo`-ն պիտի PowerShell-ից վազի։ Այստեղ `cargo test --workspace`-ը սովորական shell-ից ա վազում ու 1012 թեստ անցնում։
 
-Toolchain՝ cargo 1.97.1 · node 20.20.2 · npm 10.8.2։ *(Փաստաթղթերը գրում էին 1.96 / 24 / 11։)*
+Toolchain՝ cargo 1.97.1 · node 20.20.2 · npm 10.8.2։
 
 **⚠ Wall-ը բեռնվում ա SESSION-ի project root-ից, ոչ էն repo-ից որ խմբագրում ես։** `.claude/settings.json`-ը միացնում ա **վեց** event։ Ուրիշ տեղից բացված սեսիան, որ հետո աշխատում ա `OS/`-ի ներսում, դրանցից **ոչ մեկը չի ստանում**, ու ոչինչ չի ազդարարում բացակայությունը։ **Բացիր սեսիան հենց այս checkout-ից։**
 
@@ -166,9 +168,11 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 **Production դարպասը ՓԱԿ ա** ու բացում ա միայն Owner-ը՝ անկախ աուդիտից հետո։ Երեք մերժում ա պահում (տես անգլերեն §6)։ `platform_governed_execution_supported()` անունով ֆունկցիա **ծառում չկա** — դա §0.1-ի spec-ի նշանն ա։
 
-**Գործող անկախ վճիռը RED ա** — իններորդ ռաունդ, `main` @ `5cf9b8c`, P0 չկա։ Երկրորդ ռաունդը թողել ա **45** գտածո (1 P0 · 5 P1 · 13 P2 · 26 P3)։ *Այս ֆայլի հայերեն կեսը գրում էր 122, իսկ 1+5+13+26 = 45։*
+**Գործող անկախ վճիռը RED ա** — տասներորդ ռաունդ, P0 չկա։ Երկրորդ ռաունդը թողել ա **45** գտածո (1 P0 · 5 P1 · 13 P2 · 26 P3)։
 
 **O-1…O-5 բոլորը OPEN են ու ոչ մեկին Owner-ի artifact պետք չի։** Ծանրությունները՝ **O-1 (HIGH)** · **O-2 (MED)** · **O-3 (MED)** · **O-4 (LOW)** · **O-5 (LOW)**, ու `tools/check_residual_items.py`-ն պահում ա որ նույնը գրած լինի նաև `docs/SECURITY_MODEL.md` §4-ում ու inventory-ում։ Ամենակարևորը՝ **O-2. audit ledger-ը իր սեփական գրողի դեմ tamper-evident չի ոչ մի իրական deployment-ի վրա** — shipped արտադրանքում ոչինչ չի դնում custody-ի փոփոխականները, signer-ի binary չի տեղադրվում, ու `append()`-ը գրում ա պարզ տեքստով `.head` առանց ստորագրության։ POSIX-ում **երբեք չի վազել**։
+
+**Ոչ մի մարդ key չի պահում — Owner-ի որոշումը, 2026-08-09 (#78)։** Trust-ը install-ն ա ստեղծում. Owner-ին երբեք մի խնդրիր root mint անել, պահել կամ ստորագրել։ Gate-ը՝ `tools/check_no_owner_key_ceremony.py`։
 
 **Production վստահության արմատ սարքելու ճանապարհ այս repo-ում չկա** — `broctl`-ը կոշտ գրում ա `"production": false` ու `--production`-ը մերժում ա։
 

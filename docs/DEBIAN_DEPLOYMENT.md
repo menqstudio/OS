@@ -3,8 +3,8 @@
 Everything here runs **on the Debian machine**, not on the Windows box. That machine plays two
 parts at once, and it is worth naming why each one matters:
 
-- **The offline signer.** The root private key lives there and never touches the machine that
-  serves. If the serving box is taken, the key is not.
+- **Not an offline signer.** No person holds or carries a root key: the Owner decided on 2026-08-09
+  (#78) that the install mints trust. This page's minting steps produce a DEVELOPMENT root only.
 - **The second account.** The audit-log signer runs as a user the app cannot read. That is the
   entire content of O-2 — the app can *ask* for a signature and cannot *produce* one.
 
@@ -273,8 +273,8 @@ that is when you most want to believe the green.
 **Remove the artifact and confirm it refuses.** An item you cannot break is an item you have not
 verified.
 
-Three of these four are runnable by anyone. The fourth needs the Owner's ceremony first and says
-so where it stands.
+Three of these four are runnable by anyone. The fourth needs a production evidence anchor, which
+nothing in this repository mints yet, and says so where it stands.
 
 - unset `BRO_CONDUCTOR_SESSION_TOKEN` → a conductor stop must refuse
 - unset `BRO_AUDIT_ANCHOR_KEY_ID` but keep the signer → refused, loudly
