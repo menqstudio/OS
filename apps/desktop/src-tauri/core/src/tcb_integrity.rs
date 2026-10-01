@@ -80,7 +80,33 @@ impl TcbPinManifest {
             .filter(|req| !self.artifacts.iter().any(|a| a.logical_name == *req))
             .collect()
     }
+
+    /// The ONE artifact this manifest pins under `role`, for a caller that is about to READ it.
+    ///
+    /// [`verify_tcb_integrity`] measures every listed entry and is indifferent to how many share a
+    /// role. A reader is not: "the root anchor" has to be one file. Zero entries is
+    /// [`TcbViolation::MissingRequired`]; two or more is [`TcbViolation::AmbiguousRole`] — refused
+    /// rather than resolved, because "the first one" is a choice the manifest's author did not make
+    /// and a second entry is exactly how a substitute would be introduced beside the real one.
+    pub fn sole_artifact(&self, role: &str) -> Result<&TcbArtifact, TcbViolation> {
+        let mut entries = self.artifacts.iter().filter(|a| a.logical_name == role);
+        let first = entries.next().ok_or_else(|| TcbViolation::MissingRequired {
+            missing: vec![role.to_string()],
+        })?;
+        let rest: Vec<String> = entries.map(|a| a.path.clone()).collect();
+        if !rest.is_empty() {
+            let mut paths = vec![first.path.clone()];
+            paths.extend(rest);
+            return Err(TcbViolation::AmbiguousRole { logical_name: role.to_string(), paths });
+        }
+        Ok(first)
+    }
 }
+
+/// The role under which the pin manifest pins the key-manifest ROOT ANCHOR — the file that says which
+/// root this deployment trusts and what that root's custody is. One of [`TCB_REQUIRED_ARTIFACTS`]
+/// (a test holds that), named here so the readers of that file cannot each spell it themselves.
+pub const ROOT_ANCHOR_ROLE: &str = "key-manifest.root-anchor";
 
 /// The facts a [`FsProbe`] reports about one path. In production these come from an `fstat` of an
 /// `O_NOFOLLOW`-opened `fd` (never a path re-lookup — no TOCTOU) plus an ACL/group scan; in tests they
@@ -147,6 +173,9 @@ pub enum TcbViolation {
     },
     /// An ancestor directory is writable by the login user or a runtime UID (a rename/replace vector).
     AncestorWritable { logical_name: String, ancestor: String },
+    /// A caller asked for THE artifact under a role ([`TcbPinManifest::sole_artifact`]) and the
+    /// manifest pins more than one. Not raised by [`verify_tcb_integrity`], which measures them all.
+    AmbiguousRole { logical_name: String, paths: Vec<String> },
 }
 
 impl TcbViolation {
@@ -165,7 +194,8 @@ impl TcbViolation {
             | TcbViolation::HashMismatch { logical_name, .. }
             | TcbViolation::AncestorMissing { logical_name, .. }
             | TcbViolation::AncestorWrongOwner { logical_name, .. }
-            | TcbViolation::AncestorWritable { logical_name, .. } => logical_name,
+            | TcbViolation::AncestorWritable { logical_name, .. }
+            | TcbViolation::AmbiguousRole { logical_name, .. } => logical_name,
         }
     }
 }
@@ -233,6 +263,29 @@ pub fn verify_tcb_integrity(
         verify_artifact(manifest, art, probe, runtime_uids, login_uid)?;
     }
     Ok(())
+}
+
+/// The §2.5 floor for ONE role: the manifest pins exactly one artifact under `role`, and that
+/// artifact — owner, non-writability, content pin, every ancestor up to `/` — passes the same
+/// per-artifact check [`verify_tcb_integrity`] applies. Returns the artifact, so the caller reads the
+/// path and compares the digest the floor just checked rather than ones it looked up again.
+///
+/// This is NOT the floor and must not be reported as one: it says nothing about the other twenty
+/// artifacts, and it does not run the coverage check. It exists for a reader that needs to know
+/// whether ONE file is the pinned, unwritable one — a proof driver deciding whether an anchor file
+/// that says `install_minted` sits where that word can be earned — when the whole floor is evaluated
+/// elsewhere (by root, before the services start) because the reader's own principal cannot stat
+/// every pinned artifact.
+pub fn verify_pinned_role<'m>(
+    manifest: &'m TcbPinManifest,
+    role: &str,
+    probe: &dyn FsProbe,
+    runtime_uids: &[u32],
+    login_uid: u32,
+) -> Result<&'m TcbArtifact, TcbViolation> {
+    let art = manifest.sole_artifact(role)?;
+    verify_artifact(manifest, art, probe, runtime_uids, login_uid)?;
+    Ok(art)
 }
 
 fn verify_artifact(
@@ -646,6 +699,123 @@ mod tests {
         assert!(gap.contains(&"trusted-verifier-broker.pinned-manifest-config"));
         // The full-coverage `manifest()` has no gap.
         assert!(manifest().missing_required().is_empty());
+    }
+
+    // ---- one role, for a reader: `sole_artifact` and `verify_pinned_role` ----------------------
+
+    const ANCHOR_PATH: &str = "/opt/brops/key-manifest.root-anchor";
+
+    #[test]
+    fn the_root_anchor_role_is_one_the_floor_requires() {
+        // If the roster ever stopped requiring it, a manifest could omit the anchor, pass the floor,
+        // and leave the broker's "read the pinned anchor" with nothing the floor had measured.
+        assert!(TCB_REQUIRED_ARTIFACTS.contains(&ROOT_ANCHOR_ROLE));
+        assert_eq!(ROOT_ANCHOR_ROLE, "key-manifest.root-anchor");
+    }
+
+    #[test]
+    fn sole_artifact_returns_the_one_entry_and_refuses_none_or_several() {
+        let m = manifest();
+        assert_eq!(m.sole_artifact(ROOT_ANCHOR_ROLE).unwrap().path, ANCHOR_PATH);
+
+        let mut none = manifest();
+        none.artifacts.retain(|a| a.logical_name != ROOT_ANCHOR_ROLE);
+        match none.sole_artifact(ROOT_ANCHOR_ROLE).unwrap_err() {
+            TcbViolation::MissingRequired { missing } => {
+                assert_eq!(missing, vec![ROOT_ANCHOR_ROLE.to_string()])
+            }
+            other => panic!("expected MissingRequired, got {other:?}"),
+        }
+
+        // A SECOND entry under the role — the substitute introduced beside the real one. Refused,
+        // not resolved to "the first": both paths are named so the refusal says what it saw.
+        let mut two = manifest();
+        two.artifacts.push(TcbArtifact {
+            logical_name: ROOT_ANCHOR_ROLE.into(),
+            path: "/opt/brops/other-anchor.json".into(),
+            expected_sha256: GENERIC_SHA.into(),
+            expected_owner: TcbOwner::Root,
+        });
+        let err = two.sole_artifact(ROOT_ANCHOR_ROLE).unwrap_err();
+        assert_eq!(err.logical_name(), ROOT_ANCHOR_ROLE);
+        match err {
+            TcbViolation::AmbiguousRole { paths, .. } => {
+                assert_eq!(paths, vec![ANCHOR_PATH.to_string(), "/opt/brops/other-anchor.json".to_string()])
+            }
+            other => panic!("expected AmbiguousRole, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_pinned_role_passes_a_clean_anchor_and_returns_what_the_manifest_pinned() {
+        let m = manifest();
+        let art = verify_pinned_role(&m, ROOT_ANCHOR_ROLE, &clean_fs(), &runtime_uids(), LOGIN)
+            .expect("a clean, pinned anchor passes");
+        assert_eq!(art.path, ANCHOR_PATH);
+        assert_eq!(art.expected_sha256, GENERIC_SHA);
+    }
+
+    #[test]
+    fn verify_pinned_role_applies_every_per_artifact_refusal_to_the_anchor() {
+        let m = manifest();
+        let check = |fs: &FakeFs| verify_pinned_role(&m, ROOT_ANCHOR_ROLE, fs, &runtime_uids(), LOGIN);
+
+        // Owned by the BROKER's own service uid: the party the anchor steers could rewrite it.
+        let mut fs = clean_fs();
+        fs.files.get_mut(ANCHOR_PATH).unwrap().owner_uid = 1001;
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::WrongOwner { .. }));
+
+        // Writable by a login/runtime principal.
+        let mut fs = clean_fs();
+        fs.files.get_mut(ANCHOR_PATH).unwrap().writable_by_login_or_runtime = true;
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::WritableByUntrusted { .. }));
+
+        // Content changed since the pin — the relabel, done after the manifest was built.
+        let mut fs = clean_fs();
+        fs.files.get_mut(ANCHOR_PATH).unwrap().sha256 = "e".repeat(64);
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::HashMismatch { .. }));
+
+        // Absent.
+        let mut fs = clean_fs();
+        fs.files.remove(ANCHOR_PATH);
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::Missing { .. }));
+
+        // A writable ancestor: the rename/replace vector.
+        let mut fs = clean_fs();
+        fs.files.get_mut("/opt/brops").unwrap().writable_by_login_or_runtime = true;
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::AncestorWritable { .. }));
+
+        // ...and an ancestor a runtime principal owns.
+        let mut fs = clean_fs();
+        fs.good_dir("/opt/brops", 1001);
+        assert!(matches!(check(&fs).unwrap_err(), TcbViolation::AncestorWrongOwner { .. }));
+    }
+
+    #[test]
+    fn verify_pinned_role_looks_at_that_role_only_and_refuses_an_ambiguous_one() {
+        // It is deliberately NOT the floor: another artifact being broken does not make it refuse,
+        // which is why its doc forbids reporting it as the floor.
+        let m = manifest();
+        let mut fs = clean_fs();
+        fs.files.remove(BROKER_PATH);
+        assert!(verify_tcb_integrity(&m, &fs, &runtime_uids(), LOGIN).is_err());
+        assert!(verify_pinned_role(&m, ROOT_ANCHOR_ROLE, &fs, &runtime_uids(), LOGIN).is_ok());
+
+        // Two entries under the role, BOTH clean on disk: still refused before either is measured.
+        let mut two = manifest();
+        two.artifacts.push(TcbArtifact {
+            logical_name: ROOT_ANCHOR_ROLE.into(),
+            path: "/opt/brops/other-anchor.json".into(),
+            expected_sha256: GENERIC_SHA.into(),
+            expected_owner: TcbOwner::Root,
+        });
+        let mut fs = clean_fs();
+        fs.good_file("/opt/brops/other-anchor.json", ROOT, GENERIC_SHA);
+        assert_eq!(verify_tcb_integrity(&two, &fs, &runtime_uids(), LOGIN), Ok(()));
+        assert!(matches!(
+            verify_pinned_role(&two, ROOT_ANCHOR_ROLE, &fs, &runtime_uids(), LOGIN).unwrap_err(),
+            TcbViolation::AmbiguousRole { .. }
+        ));
     }
 
     /// Regression for the rev-30 §2.5 coverage fail-open: a manifest that OMITS a required artifact must

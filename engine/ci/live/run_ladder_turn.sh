@@ -43,9 +43,16 @@
 # script drives the ladder from PYTHON (`ladder_desktop.py` writes the frame, `engine_sidecar.py` is
 # fed it on stdin), which proves the SERVERS and proves nothing about the chain object: no Rust in
 # this tree had ever run `LadderChain` against a real supervisor. That phase is NOT the
-# `brops-broker` binary and its banner says so at length — `build_governed_executor` can only reach
-# the compiled-in root pin, whose private half nobody holds (#78; T-131), so the driver anchors its own `KeyResolver` to the kit's TCB
-# root-anchor file, whose `kit_generated` provenance can never render `production_verified=true`.
+# `brops-broker` binary and its banner says so at length — the driver anchors its own `KeyResolver`
+# to the kit's TCB root-anchor file, whose `kit_generated` provenance can never render
+# `production_verified=true`.
+#
+# AND, since T-131 slice C, THE PRODUCT BINARY TAKES A TURN TOO. `brops-broker` used to pin a root
+# compiled into `tcb.rs` whose private half nobody holds (#78), so it refused every kit-signed
+# manifest. It now reads its root from the anchor file its §2.5 pin manifest pins as
+# `key-manifest.root-anchor`, so the last phase of this script expects `brops-broker` to take a turn
+# to a committed row — labelled `demonstration_custody`, never production — and then takes a second
+# one under the same root relabelled `install_minted`, which must commit under that same label.
 #
 # WHAT THIS KIT PROVISIONS THAT THE §5 KIT DOES NOT (each is a finding, not a convenience)
 # ----------------------------------------------------------------------------------------
@@ -451,7 +458,7 @@ mkdir -p "$DRIVERDIR/evidence"; chown 0:0 "$DRIVERDIR/evidence"; chmod 0755 "$DR
 # One evidence directory per run, owned by the principal that writes it (the same "one owner each"
 # discipline audit F-07/F-28 imposed on the rest of this kit).
 for d in positive third-turn rollback rollback-sign-flip floor-unwritable floor-sign-flip \
-         no-authority throwaway-external; do
+         no-authority throwaway-external throwaway-install-minted; do
   mkdir -p "$DRIVERDIR/$d"; chown "$BROKER_USER": "$DRIVERDIR/$d"; chmod 0755 "$DRIVERDIR/$d"
 done
 
@@ -674,6 +681,31 @@ PYTHROW
 chown 0:0 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
 chmod 0644 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
 
+# Variant 5 — THIS kit's own root, relabelled `install_minted` (T-131), in a root-owned TCB file
+# that is NOT the one the §2.5 pin manifest pins. `install_minted` is the one provenance that can
+# ever support a production claim (behind the Owner's INSTALL_MINTED_CUSTODY_ACCEPTED), so the word
+# in a file must not be the claim: `ladder_turn` must refuse it at setup because the anchor it was
+# given is not, byte for byte, the floor-pinned one. Root-owned on purpose — a broker-writable file
+# would be refused one check earlier (`root_anchor_not_root_owned`) and never reach this one.
+DRIVER_CONFIG_THROWAWAY_IM="$TCB/ladder-driver-throwaway-install-minted.json"
+THROWAWAY_ANCHOR_IM="$TCB/root-anchor-throwaway-install-minted.json"
+python3 - "$TCB/root-anchor.json" "$THROWAWAY_ANCHOR_IM" "$DRIVER_CONFIG" "$DRIVER_CONFIG_THROWAWAY_IM" \
+  <<'PYTHROWIM' || { echo "FAIL: could not build the throwaway-install-minted variant"; exit 1; }
+import json, sys
+anchor_in, anchor_out, cfg_in, cfg_out = sys.argv[1:5]
+anchor = json.load(open(anchor_in, encoding="utf-8"))
+if anchor.get("provenance") != "kit_generated":
+    raise SystemExit("the kit anchor is %r; the throwaway variant relabels a kit_generated one"
+                     % anchor.get("provenance"))
+anchor["provenance"] = "install_minted"
+json.dump(anchor, open(anchor_out, "w", encoding="utf-8"))
+cfg = json.load(open(cfg_in, encoding="utf-8"))
+cfg["trust"]["root_anchor_path"] = anchor_out
+json.dump(cfg, open(cfg_out, "w", encoding="utf-8"), indent=2, sort_keys=True)
+PYTHROWIM
+chown 0:0 "$THROWAWAY_ANCHOR_IM" "$DRIVER_CONFIG_THROWAWAY_IM"
+chmod 0644 "$THROWAWAY_ANCHOR_IM" "$DRIVER_CONFIG_THROWAWAY_IM"
+
 # ----- the PRODUCT broker's deployment (OWNER_ACTION_REQUIRED §0 row 5) -------------------------
 # `brops-broker` itself, not the driver: its binary, the `$BROPS_BROKER_CONFIG` document
 # `write_broker_config.py` writes, and — built with the ladder's pin below, before any service
@@ -714,6 +746,35 @@ PYWRONGPIN
 chown 0:0 "$BROKER_CONFIG" "$BROKER_CONFIG_LADDER_PIN"
 chmod 0644 "$BROKER_CONFIG" "$BROKER_CONFIG_LADDER_PIN"
 
+# The RELABEL control's deployment (T-131 slice C): the SAME kit root, in an anchor file that says
+# `install_minted`, with its own `$BROPS_BROKER_CONFIG` document and — derived below, once the
+# product manifest exists — its own §2.5 manifest that pins THAT anchor under
+# `key-manifest.root-anchor`. Unlike variant 5 above this one IS under the floor, so the broker
+# accepts the label; what it must not do is call the turn production. It differs from the product
+# deployment in exactly the anchor's one word, and in the two documents that have to name each other.
+BROKER_ANCHOR_IM="$TCB/root-anchor-install-minted.json"
+BROKER_CONFIG_IM="$TCB/broker-config-install-minted.json"
+BROKER_PIN_IM="$TCB/broker-tcb-pin-manifest-install-minted.json"
+rm -f "$BROKER_PIN_IM"
+python3 - "$TCB/root-anchor.json" "$BROKER_ANCHOR_IM" "$BROKER_CONFIG" "$BROKER_CONFIG_IM" "$BROKER_PIN_IM" \
+  <<'PYBROKERIM' || { echo "FAIL: could not build the install_minted broker deployment"; exit 1; }
+import json, sys
+anchor_in, anchor_out, cfg_in, cfg_out, pin_out = sys.argv[1:6]
+anchor = json.load(open(anchor_in, encoding="utf-8"))
+if anchor.get("provenance") != "kit_generated":
+    raise SystemExit("the kit anchor is %r; this control relabels a kit_generated one"
+                     % anchor.get("provenance"))
+anchor["provenance"] = "install_minted"
+with open(anchor_out, "w", encoding="utf-8") as fh:
+    json.dump(anchor, fh, separators=(",", ":"))
+document = json.load(open(cfg_in, encoding="utf-8"))
+document["trust"]["tcb_pin_manifest_path"] = pin_out
+with open(cfg_out, "w", encoding="utf-8") as fh:
+    json.dump(document, fh, indent=2, sort_keys=True)
+PYBROKERIM
+chown 0:0 "$BROKER_ANCHOR_IM" "$BROKER_CONFIG_IM"
+chmod 0644 "$BROKER_ANCHOR_IM" "$BROKER_CONFIG_IM"
+
 # The §2.5 floor requires every ancestor of a pinned artifact to be root-owned and non-writable — a
 # writable parent is a rename/replace vector. The launcher and the recorder also re-check the
 # custody of their own inputs, and /opt is drwxrwxrwx on the hosted runner image.
@@ -737,6 +798,43 @@ python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit ladder --root-dir "$LIVE" --so
 chown 0:0 "$TCB/tcb-pin-manifest.json"; chmod 0644 "$TCB/tcb-pin-manifest.json"
 python3 "$PYLIVE/build_tcb_pin_manifest.py" --kit broker --broker-config "$BROKER_CONFIG" --root-dir "$LIVE" --source-dir "$REPO_ROOT" --sudoers "$SUDOERS" --unit "$TCB/brops-ladder.unit" --out "$BROKER_PIN" || { echo "FAIL: the brops-broker §2.5 pin manifest"; exit 1; }
 chown 0:0 "$BROKER_PIN"; chmod 0644 "$BROKER_PIN"
+# The relabel control's manifest: the product manifest with exactly THREE entries re-pointed — the
+# root anchor at the relabelled file, and the broker's two config roles at the document that names
+# this manifest. Every other pin is the product's, byte for byte, so the only thing this floor
+# measures differently is the anchor's one word. Derived rather than rebuilt: the builder's role
+# table pins `tcb/root-anchor.json` and has no reason to learn another anchor for a control.
+python3 - "$BROKER_PIN" "$BROKER_PIN_IM" "$BROKER_ANCHOR_IM" "$BROKER_CONFIG_IM" \
+  <<'PYPINIM' || { echo "FAIL: could not derive the install_minted broker pin manifest"; exit 1; }
+import hashlib, json, sys
+pin_in, pin_out, anchor, config = sys.argv[1:5]
+
+def sha256_file(path):
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+manifest = json.load(open(pin_in, encoding="utf-8"))
+repointed = {
+    "key-manifest.root-anchor": anchor,
+    "trusted-verifier-broker.config": config,
+    "trusted-verifier-broker.pinned-manifest-config": config,
+}
+seen = set()
+for artifact in manifest["artifacts"]:
+    path = repointed.get(artifact["logical_name"])
+    if path is None:
+        continue
+    artifact["path"] = path
+    artifact["expected_sha256"] = sha256_file(path)
+    artifact["digest_origin"] = "deployment-measured"
+    seen.add(artifact["logical_name"])
+if seen != set(repointed):
+    raise SystemExit("the product manifest pins no %s" % ", ".join(sorted(set(repointed) - seen)))
+if json.load(open(config, encoding="utf-8"))["trust"]["tcb_pin_manifest_path"] != pin_out:
+    raise SystemExit("%s does not name %s as its pin manifest" % (config, pin_out))
+with open(pin_out, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, separators=(",", ":"))
+PYPINIM
+chown 0:0 "$BROKER_PIN_IM"; chmod 0644 "$BROKER_PIN_IM"
 # THE PRODUCT BROKER MEASURES AS ITSELF, NOT AS ROOT. `ladder_turn --verify-tcb` above runs as root;
 # `brops-broker` evaluates the same floor in its own process, as the broker principal — and two
 # pinned artifacts are deliberately closed to that principal: the recorder sudoers vector (0440 in a
@@ -938,27 +1036,23 @@ echo "$NEG_OUT"
 # one turn through `run_governed_turn`.
 #
 # IT IS NOT THE `brops-broker` BINARY, and this banner exists so nobody can cite it as one.
-# `build_governed_executor` can only reach `ProductionResolver::provisioned`, which hard-pins the
-# compiled-in root `brops-tcb-root-1` / `3c83c2bc…`, whose private half NO person holds (Owner
-# decision #78; T-131 replaces it with an install-minted root). The one constructor that accepts
-# another anchor is `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker` can reach it
-# (measured: `error[E0624]`). Nothing can satisfy that pin in CI, and committing any production
-# signer's private half to this repository instead would make forging a production-class §4.9
-# envelope trivial against every shipped install. So the driver
-# supplies its OWN `KeyResolver` over the kit's TCB root-anchor FILE, carrying that file's DECLARED
-# provenance, exactly as `proof/src/bin/live_turn.rs` already does. That is honest for one reason
-# and one only: a `kit_generated` anchor may never render `production_verified=true` —
-# `resolve_trust_state` will not build a `TrustState::Production` from it — so this phase cannot
-# report production custody however it is read.
+# `build_governed_executor` builds its resolver from a `FloorPinnedAnchor`, a value only the
+# broker's own §2.5 floor can produce (T-131 slice C) and that no binary outside `brops-broker` can
+# construct. So the driver supplies its OWN `KeyResolver` over the anchor FILE its config names,
+# carrying that file's DECLARED provenance, exactly as `proof/src/bin/live_turn.rs` already does.
+# That is honest because a `kit_generated` anchor may never render `production_verified=true` —
+# `resolve_trust_state` will not build a `TrustState::Production` from it — and because the two
+# words that could (`external`, `install_minted`) are both refused for this kit's root: negatives 4
+# and 5 below. So this phase cannot report production custody however it is read. The PRODUCT
+# binary's own turn is the last phase of this script.
 #
 # Four more things it is not: there is no renderer socket and no `SO_PEERCRED` on a renderer→broker
 # hop (the request is built in-process); `$BROPS_BROKER_CONFIG` is never read (the config arrives as
 # `--config`); the §2.5 TCB floor is evaluated once, by root, before the services start — not by
 # this driver's principal and not inside a turn; and the custody resolver that lets `persist_committed`
-# commit is wired by the DRIVER. The shipped broker calls `ChainExecutor::new`, gets
-# `UnresolvedCustody`, and commits nothing. **Nothing in this phase changes that.** No gate is
-# flipped: `governed_verification_unconfigured`, `UpstreamBlockedExecutor` and `connect_broker` are
-# untouched, and nothing here makes any of them reachable in the product.
+# commit is wired by the DRIVER. No gate is flipped: `governed_verification_unconfigured`,
+# `UpstreamBlockedExecutor` and `connect_broker` are untouched, and nothing here makes any of them
+# reachable in the product.
 echo
 echo "================================================================================"
 echo "== LADDER DRIVER: the REAL LadderChain, from Rust — NOT the brops-broker binary =="
@@ -1193,6 +1287,12 @@ run_driver no-authority "$DRIVER_CONFIG_NOAUTH" blocked:hop:challenge_authority:
 run_driver throwaway-external "$DRIVER_CONFIG_THROWAWAY" \
   blocked:setup:root_anchor_external_not_the_pinned_root
 
+# NEGATIVE 5 — a throwaway root cannot say `install_minted` either (T-131). Variant 5 above: this
+# kit's own root in a root-owned anchor file that claims the install minted it, at a path the pin
+# manifest does not pin. Refused at setup, by name, before a hop or a staging session is spent.
+run_driver throwaway-install-minted "$DRIVER_CONFIG_THROWAWAY_IM" \
+  blocked:setup:root_anchor_install_minted_not_floor_pinned
+
 # The two sign flips, and they test DIFFERENT failures of the same comparator.
 #
 #   (a) a run that BLOCKED must not satisfy `--expect committed`. That is the direction that makes a
@@ -1419,17 +1519,25 @@ fi
 # at length that it is not this binary. This phase starts `brops-broker` as the broker principal with
 # the variable EXPORTED, sends it one renderer frame, and reads what it did.
 #
-# WHAT IT CAN AND CANNOT PROVE. `build_governed_executor` pins the compiled-in production root
-# (`ProductionResolver::provisioned`), whose private half nobody holds (#78), and this kit's manifest is signed by a `kit_generated` root.
-# So the turn is refused — and on the wire every refusal is the same `upstream_blocked`, whether the
-# broker never left `UpstreamBlockedExecutor` or refused at the root signature. The reply cannot tell
-# those apart; the broker's own stderr can. `trusted manifest provisioned - serving the 4.10(g)
-# governed ladder` is printed only after EVERY config gate has passed — the §2.5 floor naming this
-# binary, the key manifest, its signature file, the anti-rollback floor, the authority socket, the
-# conversation source, the sidecar principal and the durable ledger. That line is the proof that
-# what remains between this deployment and a governed turn is the pinned root and nothing else —
-# a root no person holds (Owner decision #78), so the gap closes only when T-131 makes it
-# install-minted.
+# WHAT IT PROVES SINCE T-131 SLICE C, AND WHAT IT STILL DOES NOT. `build_governed_executor` used to
+# pin a root compiled into the binary, whose private half nobody holds (#78), so this kit's
+# `kit_generated`-signed manifest was refused and the expected reply here was
+# `blocked/upstream_blocked`. The broker now takes its root from the anchor file its §2.5 pin
+# manifest pins as `key-manifest.root-anchor` — `tcb/root-anchor.json` on this kit — after that
+# floor has passed, and says so on stderr. The kit's manifest verifies under the kit's own anchor,
+# so the PRODUCT BINARY takes a governed turn through the same three services, the same sidecar
+# principal and the same contained execution the driver phase used, and the reply is `committed`.
+#
+# The label on that row is the whole point: `demonstration_custody`, because the anchor says
+# `kit_generated`. It must never be `trusted_verified`. And the same root in an anchor relabelled
+# `install_minted` — pinned, so the floor accepts the file — must commit under that SAME label,
+# because the only provenance that can ever support a production claim does so only behind the
+# Owner's `INSTALL_MINTED_CUSTODY_ACCEPTED`, which ships `false`. A `trusted_verified` reply from
+# that run means somebody flipped the Owner's line.
+#
+# Still not proven: the desktop's own refusals (`governed_verification_unconfigured`,
+# `connect_broker`) are untouched, so no shipped surface reaches this broker; and the renderer here
+# is a Python frame from the broker's own uid, not the desktop.
 echo
 echo "== BROPS-BROKER: the product binary, with \$BROPS_BROKER_CONFIG exported =="
 BROKER_RUN="$LADDER/broker-run"
@@ -1480,20 +1588,76 @@ ok = (r.get("protocol") == "brops.renderer-governed-turn-result.v1"
 sys.exit(0 if ok else 1)
 PYREPLY
 }
+# The committed reply, held to its LABEL. `message.trust_state` is the string the broker re-read out
+# of the row it committed, so this is the durable row's label and not a second opinion. Exactly
+# `demonstration_custody`: `trusted_verified` is the production label and is a RED of its own, named
+# apart, because it is the one outcome this phase exists to make impossible.
+reply_is_committed_demonstration() {  # <label>
+  python3 - "$BROKER_RUN/$1.reply.json" <<'PYCOMMITTED'
+import json, sys
+r = json.load(open(sys.argv[1], encoding="utf-8"))
+message = r.get("message") or {}
+label = message.get("trust_state")
+if label == "trusted_verified":
+    print("  PRODUCTION LABEL: the reply carries trust_state=trusted_verified", file=sys.stderr)
+    sys.exit(3)
+ok = (r.get("protocol") == "brops.renderer-governed-turn-result.v1"
+      and r.get("status") == "committed" and "reason" not in r
+      and label == "demonstration_custody"
+      and isinstance(message.get("body"), str) and message["body"] != "")
+if not ok:
+    print("  the reply is not committed/demonstration_custody: status=%r reason=%r trust_state=%r"
+          % (r.get("status"), r.get("reason"), label), file=sys.stderr)
+sys.exit(0 if ok else 1)
+PYCOMMITTED
+}
+# What the broker said about the anchor it read: the provenance, the pinned path it came from, and
+# that the provenance supports no production claim. One line of its own stderr, matched whole.
+broker_read_anchor() {  # <label> <provenance> <pinned path>
+  grep -qF "provenance=$2 read from the floor-pinned $3; production custody claim supported: false" \
+    "$BROKER_RUN/$1.log"
+}
+# The verdict on ONE completing turn through the product binary, read from what `run_broker` left
+# behind. Four things at once, and each has its own RED: every config gate passed; nothing was
+# refused; the broker named the anchor it read, from the pinned path, with no production claim; and
+# the reply is a committed row labelled `demonstration_custody`.
+broker_expect_committed() {  # <label> <provenance> <pinned anchor path>
+  local label="$1" provenance="$2" anchor="$3" rc
+  if ! grep -qF "$BROKER_PROVISIONED" "$BROKER_RUN/$label.log"; then
+    echo "  BROKER $label: RED — it never reported the trusted manifest provisioned"; BROKER_PRODUCT_RC=1
+  elif grep -q 'REFUSED\|serving fail-closed' "$BROKER_RUN/$label.log"; then
+    echo "  BROKER $label: RED — it reported a refusal as well as provisioning"; BROKER_PRODUCT_RC=1
+  elif ! broker_read_anchor "$label" "$provenance" "$anchor"; then
+    echo "  BROKER $label: RED — it did not report reading a $provenance anchor from the floor-pinned"
+    echo "    $anchor with no production claim"; BROKER_PRODUCT_RC=1
+  else
+    reply_is_committed_demonstration "$label"; rc=$?
+    if [ "$rc" = "0" ]; then
+      echo "  BROKER $label: GREEN — brops-broker took a governed turn to a committed row under the"
+      echo "    $provenance anchor the floor pinned, labelled demonstration_custody and NOT production"
+    elif [ "$rc" = "3" ]; then
+      echo "  BROKER $label: RED — brops-broker labelled a $provenance root trusted_verified."
+      echo "    That is a PRODUCTION claim for a root this kit minted and still holds."
+      BROKER_PRODUCT_RC=1
+    else
+      echo "  BROKER $label: RED — the turn did not commit as demonstration_custody"
+      BROKER_PRODUCT_RC=1
+    fi
+  fi
+}
 
-# POSITIVE: the manifest built for THIS binary. Every gate must pass, and the turn must still be
-# refused — a `committed` here would mean the production pin accepted a kit-signed manifest.
+# POSITIVE: the manifest built for THIS binary, and the anchor it pins. Every gate must pass, the
+# broker must name the `kit_generated` anchor it read from the pinned path, and the turn must
+# COMMIT as `demonstration_custody`. A `blocked` here means the product binary still cannot take
+# the turn the driver takes; a `trusted_verified` means a kit root was called production.
+#
+# A completing turn needs what every completing turn on this install needs — a §2.4 turn slot and
+# three staging sessions — so it waits for them the way the third driver turn does, on the
+# supervisor's own sweep.
+wait_for_turn_slot "brops-broker product" || BROKER_PRODUCT_RC=1
+wait_for_staging_reclaim "brops-broker product" || BROKER_PRODUCT_RC=1
 run_broker product "$BROKER_CONFIG"
-if ! grep -qF "$BROKER_PROVISIONED" "$BROKER_RUN/product.log"; then
-  echo "  BROKER product: RED — it never reported the trusted manifest provisioned"; BROKER_PRODUCT_RC=1
-elif grep -q 'REFUSED\|serving fail-closed' "$BROKER_RUN/product.log"; then
-  echo "  BROKER product: RED — it reported a refusal as well as provisioning"; BROKER_PRODUCT_RC=1
-elif ! reply_is_blocked_upstream product; then
-  echo "  BROKER product: RED — the reply is not blocked/upstream_blocked under a kit_generated root"
-  BROKER_PRODUCT_RC=1
-else
-  echo "  BROKER product: GREEN — every config gate passed, and the kit-signed manifest was still refused"
-fi
+broker_expect_committed product kit_generated "$TCB/root-anchor.json"
 
 # NEGATIVE: the same document naming the LADDER kit's manifest, which pins `bin/ladder_turn` as the
 # broker. The floor must refuse, BY that role, before the key manifest is read.
@@ -1506,6 +1670,18 @@ else
   echo "  BROKER ladder-pin: RED — a manifest pinning ladder_turn was not refused by the identity check"
   BROKER_PRODUCT_RC=1
 fi
+
+# NEGATIVE (the Owner's line): the SAME deployment, the SAME root, with the anchor relabelled
+# `install_minted` and pinned as such. The floor accepts the file — root wrote it into the TCB and
+# the manifest pins it — so the broker reads `install_minted`, the one provenance that can ever
+# support a production claim. It must still commit as `demonstration_custody`:
+# `INSTALL_MINTED_CUSTODY_ACCEPTED` ships `false`. This control goes RED the day that constant is
+# flipped, and it should: a kit that keeps its root private on disk would then be rendering
+# production with one word changed in a file.
+wait_for_turn_slot "brops-broker install-minted" || BROKER_PRODUCT_RC=1
+wait_for_staging_reclaim "brops-broker install-minted" || BROKER_PRODUCT_RC=1
+run_broker install-minted "$BROKER_CONFIG_IM"
+broker_expect_committed install-minted install_minted "$BROKER_ANCHOR_IM"
 
 # ----- evidence out ------------------------------------------------------------------------------
 # Copied into the workspace so CI can upload it and a reader can check the signature without root.
@@ -1521,7 +1697,8 @@ cp -r "$LADDER/driver" "$EVIDENCE_OUT/driver" 2>/dev/null || true
 cp "$DRIVER_CONFIG" "$EVIDENCE_OUT/ladder-driver-config.json" 2>/dev/null || true
 cp "$DRIVER_SUDOERS" "$EVIDENCE_OUT/ladder-driver-sudoers" 2>/dev/null || true
 cp -r "$BROKER_RUN" "$EVIDENCE_OUT/broker-run" 2>/dev/null || true
-cp "$BROKER_CONFIG" "$BROKER_PIN" "$EVIDENCE_OUT/" 2>/dev/null || true
+cp "$BROKER_CONFIG" "$BROKER_PIN" "$BROKER_CONFIG_IM" "$BROKER_PIN_IM" "$BROKER_ANCHOR_IM" \
+   "$TCB/root-anchor.json" "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$LADDER/pulled-output.bin" "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$LADDER"/authority.log "$LADDER"/supervisor.log "$LADDER"/signer.log "$EVIDENCE_OUT/" 2>/dev/null || true
 cp "$TCB/challenge-key-registry.json" "$LADDER_CONFIG" "$EVIDENCE_OUT/" 2>/dev/null || true
@@ -1570,7 +1747,8 @@ if [ "$DRIVER_RC" = "0" ] && [ "$DRIVER_EV_RC" = "0" ] && [ "$DRIVER_DERIVE_RC" 
   echo "  outcome they named."
   echo "  Custody is kit_generated, so production_verified is FALSE by construction — this is a"
   echo "  complete, honestly-labelled chain run and it is NOT a production trust claim. The same"
-  echo "  root relabelled external was refused at setup by the compiled-in pin (T-126)."
+  echo "  root relabelled external was refused at setup by the compiled-in pin (T-126), and"
+  echo "  relabelled install_minted outside the floor-pinned anchor it was refused too (T-131)."
 else
   echo "DRIVER: RED — runs=$DRIVER_RC verifier=$DRIVER_EV_RC derivation=$DRIVER_DERIVE_RC"
   echo "  custody=$DRIVER_CUSTODY_RC"
@@ -1578,13 +1756,18 @@ else
   RC=1
 fi
 
-# The PRODUCT binary, reported on its own: it proves a third thing — that `brops-broker` reads
-# `$BROPS_BROKER_CONFIG` and passes every config gate — and it cannot prove a governed turn.
+# The PRODUCT binary, reported on its own: it proves a third thing — that `brops-broker` itself,
+# reading `$BROPS_BROKER_CONFIG` and the anchor its floor pinned, takes a governed turn to a
+# committed row and labels it for what the anchor is.
 if [ "$BROKER_PRODUCT_RC" = "0" ]; then
   echo "BROPS-BROKER: GREEN — the product binary, with \$BROPS_BROKER_CONFIG exported, passed its §2.5"
-  echo "  floor over a manifest pinning ITSELF and every other config gate, and refused the turn"
-  echo "  because the kit's root is not the Owner's; handed the ladder kit's manifest, it refused at"
-  echo "  the floor by the trusted-verifier-broker.bin role. NOT a governed turn: that needs the root."
+  echo "  floor over a manifest pinning ITSELF, read its root from the anchor that manifest pins,"
+  echo "  and took TWO governed turns to committed rows through the real services: one under the"
+  echo "  kit_generated anchor and one under the same root relabelled install_minted and pinned."
+  echo "  BOTH are labelled demonstration_custody; neither is production (the Owner's"
+  echo "  INSTALL_MINTED_CUSTODY_ACCEPTED is false). Handed the ladder kit's manifest, it refused at"
+  echo "  the floor by the trusted-verifier-broker.bin role. NOT a production trust claim, and not a"
+  echo "  desktop turn: the renderer frame came from this script."
 else
   echo "BROPS-BROKER: RED — see the per-run lines above. Nothing was fabricated."
   RC=1

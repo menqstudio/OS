@@ -68,8 +68,7 @@ FORBIDDEN_TOKENS = (
 #: ceremony is gone ("nobody holds an offline root") does not trip it.
 FORBIDDEN_PHRASES = (
     "owner's offline",
-    # NOT "offline-root-custodian": it is still the `as_str` of preflight's `OfflineRootCustodian`
-    # variant, whose name T-131 slice C retires — add the phrase back in that change.
+    "offline-root-custodian",
     "owner-provided key",
     "owner mints a key",
     "only the owner can make",

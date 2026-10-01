@@ -61,6 +61,23 @@ class GateTests(unittest.TestCase):
         self.assertTrue(any("src/preflight.rs" in p and "owner's offline" in p for p in problems),
                         problems)
 
+    def test_the_retired_provisioner_name_coming_back_is_red(self):
+        # T-131 slice C renamed preflight's provisioner for what it now is (an install-minted root)
+        # and returned its old `as_str` to the phrase list. A report column that names a custodian
+        # is a claim that one exists.
+        self.t.write("src/preflight.rs",
+                     'Provisioner::X => "offline-root-custodian",\n')
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(
+            any("src/preflight.rs" in p and "offline-root-custodian" in p for p in problems),
+            problems)
+        # Case does not hide it, and the CamelCase variant name alone is not the phrase.
+        self.t.write("docs/TABLE.md", "one `Offline-Root-Custodian` row\n")
+        self.t.write("docs/HISTORY.md", "the variant was called OfflineRootCustodian\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(any(p.startswith("docs/TABLE.md") for p in problems), problems)
+        self.assertFalse(any(p.startswith("docs/HISTORY.md") for p in problems), problems)
+
     def test_an_honest_sentence_about_the_removal_is_green(self):
         self.t.write("docs/WHY.md", "Nobody holds an offline root; the install mints trust.\n")
         problems, _ = gate.check(self.t.root)

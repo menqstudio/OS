@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t138/installer-entry-and-package` — `main` @ `81736b4`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t140/broker-reads-anchor` — `main` @ `db88c85`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #308 · branch `t138/installer-entry-and-package`** (base `main`, tip `81736b4`, task T-138).
+> **⏭️ CURRENT ACTIVE: PR #309 · branch `t140/broker-reads-anchor`** (base `main`, tip `db88c85`, task T-140).
 >
-> T-138: the installer is the one entry point postinst calls, and the .deb carries it
+> T-140: slice C; the broker reads its root from the floor-pinned anchor, and production stays behind the Owner's constant
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,8 +48,8 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2397 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1242 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2410 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
@@ -67,10 +67,11 @@ Measured on **Debian**, `cargo` from an ordinary shell; the toolchain numbers co
 **The production gate is SHUT** and only the Owner opens it, after an independent audit.
 Three refusals hold it, and they are the real ones — there is no
 `platform_governed_execution_supported()` in the tree, that is the §0.1 spec symbol:
-`governed_verification_unconfigured()` returns `Some(...)` unconditionally before the
-model is invoked; `connect_broker()` refuses off Linux; and the broker serves
-`UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment config carrying
-a TCB-root-signed manifest, which nothing in the shipped app sets.
+`governed_verification_unconfigured()` returns `Some(...)` while any of five compile-time
+inputs is absent (all are); `connect_broker()` refuses off Linux; and the broker serves
+`UpstreamBlockedExecutor` unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest
+verifies under the floor-pinned root anchor — nothing shipped sets it, and then it commits only
+`demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false`.
 
 **The standing independent verdict is RED.** TEN rounds; the current one is
 [`2026-09-19-tenth-audit-75fca65.md`](apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)

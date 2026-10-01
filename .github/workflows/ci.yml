@@ -1285,7 +1285,8 @@ jobs:
       - name: Install the crypto dependency (the gate refuses without it)
         run: pip install --require-hashes -r engine/requirements-ci.txt
       # Every `trusted_verified` this product can render rests on one fact: the private half of
-      # `tcb::ROOT_PUBLIC_KEY_HEX` is in nobody's reach (nobody holds it; T-131 makes it install-minted).
+      # `tcb::ROOT_PUBLIC_KEY_HEX` is in nobody's reach (nobody holds it; since T-140 the Linux broker
+      # no longer pins it, and `external` is accepted for that key alone).
       # A comment is not evidence — a seed pasted into a fixture, a runbook snippet or
       # a JSON sample would hand the trust chain to anyone with a clone and nothing here would notice.
       #

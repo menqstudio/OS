@@ -32,29 +32,8 @@ pub fn verify_tcb(driver: &str, config_path: &str) -> i32 {
             return 1;
         }
     };
-    // The floor's question is whether any LOGIN or RUNTIME principal can write a TCB artifact.
-    // Root evaluates it, so `getuid()` here is 0 and would be a meaningless "login uid" — the
-    // deployment's real login user is passed in config, and the runtime uids are the service
-    // accounts. Root itself is a TCB owner, not an untrusted principal.
-    let runtime_uids: Vec<u32> = cfg
-        .get("uids")
-        .and_then(|v| v.as_object())
-        .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
-        .unwrap_or_default();
-    let login_uid = cfg
-        .get("login_uid")
-        .and_then(Value::as_u64)
-        .map(|u| u as u32)
-        .unwrap_or(u32::MAX);
-    let mut principals = runtime_uids;
-    if login_uid != u32::MAX && !principals.contains(&login_uid) {
-        principals.push(login_uid);
-    }
-    let manifest_path = cfg
-        .get("trust")
-        .and_then(|t| t.get("tcb_pin_manifest_path"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let (principals, login_uid) = principals(&cfg);
+    let manifest_path = pin_manifest_path(&cfg);
     match brops_broker::tcb_probe::verify_deployment_tcb(
         manifest_path.as_deref(),
         &principals,
@@ -69,5 +48,108 @@ pub fn verify_tcb(driver: &str, config_path: &str) -> i32 {
             println!("RESULT: tcb_integrity_floor REFUSED {why}");
             1
         }
+    }
+}
+
+/// The floor's principal set as the kit's config states it: `(runtime uids + the login uid, the
+/// login uid)`. ONE definition, used by the root-side floor above and by
+/// [`anchor_is_floor_pinned`] below, so the two cannot test against different principals.
+///
+/// The floor's question is whether any LOGIN or RUNTIME principal can write a TCB artifact.
+/// Root evaluates the whole floor, so `getuid()` there is 0 and would be a meaningless "login
+/// uid" — the deployment's real login user is passed in config, and the runtime uids are the
+/// service accounts. Root itself is a TCB owner, not an untrusted principal.
+fn principals(cfg: &Value) -> (Vec<u32>, u32) {
+    let runtime_uids: Vec<u32> = cfg
+        .get("uids")
+        .and_then(|v| v.as_object())
+        .map(|m| m.values().filter_map(|v| v.as_u64().map(|u| u as u32)).collect())
+        .unwrap_or_default();
+    let login_uid = cfg
+        .get("login_uid")
+        .and_then(Value::as_u64)
+        .map(|u| u as u32)
+        .unwrap_or(u32::MAX);
+    let mut principals = runtime_uids;
+    if login_uid != u32::MAX && !principals.contains(&login_uid) {
+        principals.push(login_uid);
+    }
+    (principals, login_uid)
+}
+
+fn pin_manifest_path(cfg: &Value) -> Option<String> {
+    cfg.get("trust")
+        .and_then(|t| t.get("tcb_pin_manifest_path"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Is `anchor_bytes` — the anchor document a driver read from the path ITS CONFIG names — the root
+/// anchor the §2.5 pin manifest pins?
+///
+/// A driver asks this only when the anchor declares `install_minted`
+/// (`brops_broker::tcb::check_declared_install_minted_anchor`). That word is the one provenance
+/// that can ever support a production claim on Linux, so a driver must not take it from a file it
+/// merely found root-owned: the label is earned by where the file sits and who can write it. A
+/// driver cannot run the whole floor in a turn (the reason is at the top of this file), but it CAN
+/// measure this one artifact — owner, writability, digest, every ancestor — because every serving
+/// principal may read the anchor. Nothing here re-implements that check:
+/// `brops_broker::tcb_probe::anchor_bytes_are_floor_pinned` is the one implementation.
+pub fn anchor_is_floor_pinned(cfg: &Value, anchor_bytes: &[u8]) -> Result<(), String> {
+    let (principals, login_uid) = principals(cfg);
+    brops_broker::tcb_probe::anchor_bytes_are_floor_pinned(
+        pin_manifest_path(cfg).as_deref(),
+        &principals,
+        login_uid,
+        anchor_bytes,
+    )
+}
+
+// Compiled into BOTH driver binaries (this file is `#[path]`-included by each), so these run once
+// per binary. They are here because the principal set decides what the floor refuses, and until
+// T-131 slice C nothing tested it: deleting the login uid from it passed every suite.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_login_uid_is_one_of_the_floors_principals_and_is_not_listed_twice() {
+        let cfg = json!({"uids": {"broker": 5001, "signer": 5006}, "login_uid": 1000});
+        let (mut all, login) = principals(&cfg);
+        all.sort_unstable();
+        assert_eq!(login, 1000);
+        assert_eq!(all, vec![1000, 5001, 5006], "the login uid must be a measured principal");
+
+        // A login uid that is ALSO a runtime uid is one principal, not two.
+        let cfg = json!({"uids": {"broker": 5001}, "login_uid": 5001});
+        assert_eq!(principals(&cfg), (vec![5001], 5001));
+    }
+
+    #[test]
+    fn a_config_naming_no_login_uid_adds_no_login_principal() {
+        let (all, login) = principals(&json!({"uids": {"broker": 5001}}));
+        assert_eq!(all, vec![5001]);
+        assert_eq!(login, u32::MAX, "an absent login uid is the sentinel, never uid 0");
+        assert_eq!(principals(&json!({})), (vec![], u32::MAX));
+    }
+
+    #[test]
+    fn the_pin_manifest_is_the_one_the_config_names_or_none() {
+        let cfg = json!({"trust": {"tcb_pin_manifest_path": "/opt/brops-live/tcb/pin.json"}});
+        assert_eq!(pin_manifest_path(&cfg).as_deref(), Some("/opt/brops-live/tcb/pin.json"));
+        assert_eq!(pin_manifest_path(&json!({"trust": {}})), None);
+        assert_eq!(pin_manifest_path(&json!({"trust": {"tcb_pin_manifest_path": 7}})), None);
+    }
+
+    #[test]
+    fn an_anchor_is_not_floor_pinned_when_the_config_names_no_pin_manifest() {
+        // The refusal a driver turns into `root_anchor_install_minted_not_floor_pinned`: with
+        // nothing to measure against, the answer is no — never "nothing to check, so yes".
+        let why = anchor_is_floor_pinned(&json!({"uids": {}}), b"{}").unwrap_err();
+        assert!(why.contains("no TCB pin manifest configured"), "{why}");
+        let cfg = json!({"trust": {"tcb_pin_manifest_path": "/nonexistent/pin.json"}});
+        let why = anchor_is_floor_pinned(&cfg, b"{}").unwrap_err();
+        assert!(why.contains("unreadable or malformed"), "{why}");
     }
 }

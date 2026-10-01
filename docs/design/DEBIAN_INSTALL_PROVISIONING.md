@@ -11,7 +11,9 @@ Status: **APPROVED by the Owner on 2026-10-01** («այո»). Task `T-131`. Slic
 slice B's ACCOUNTS step in `T-136` (`engine/install/brops_install.sh accounts`, which CI's two kit jobs
 now call instead of running `useradd` themselves); slice D's engine anchor in `T-137`
 (`provision::posix_install`, binary `brops_install_anchor`); the installer as the ONE entry point
-and its packaging in `T-138`. Open: B's deployment step (the 24 preflight rows) and slice C. Approval is of the design, not of any slice's code — every slice is ◑.
+and its packaging in `T-138`; slice C in `T-140` (the broker reads the floor-pinned anchor; the
+production label stays behind `INSTALL_MINTED_CUSTODY_ACCEPTED = false`). Open: B's deployment step
+(the 24 preflight rows) and the installer minting the broker root itself. Approval is of the design, not of any slice's code — every slice is ◑.
 Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / proposal.
 
 ## 1 · The decision this serves
@@ -88,8 +90,15 @@ Today the production root is a **compiled** constant, so a config writer cannot 
 * **The rule:** *the label is earned by WHERE the file sits and WHO can write it, never by what the
   file says.* That is the same lesson as T-126, and the throwaway-relabel negative in CI extends to
   it: the kit writes `install_minted` into a broker-writable path and the driver must refuse.
-* The CI kit keeps `kit_generated` and keeps its root private on disk; it can never satisfy the
-  custody floor, so it can never render production.
+* The CI kit keeps `kit_generated` and keeps its root private on disk. **Corrected 2026-10-01
+  (slice C found it):** this page said the kit "can never satisfy the custody floor". That is false.
+  The floor proves WHERE the anchor file sits and who can write it — not that the root private was
+  destroyed. Any root-run provisioner satisfies it by writing one word, and the kit now carries
+  exactly that control: its own root, private half still on disk, relabelled `install_minted` and
+  pinned, and the broker accepts the label. It commits as `demonstration_custody` only because
+  `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false`. So the constant is not a formality: it is the only
+  thing between a root-run kit and a production label, and this belongs in front of the auditor
+  before anyone flips it.
 
 **What this claims, and does not** (the #78 trade, unchanged): it defends against an attacker who
 arrives after install without root. It does not defend against one who owned root at install, and
@@ -113,7 +122,7 @@ builds its `PinnedRoot` from the compiled constants (`broker/src/manifest_resolv
    The product broker therefore completes a turn under a kit root and labels it
    `demonstration_custody` — which CI can then prove end to end with the real binary.
 4. `preflight.rs`'s `OfflineRootCustodian` provisioner and its row are renamed for what they now
-   are (an install-minted root), and `"offline-root-custodian"` returns to the ceremony gate's
+   are (an install-minted root), and the retired provisioner name returns to the ceremony gate's
    phrase list.
 
 **The production label stays behind the Owner's gate — a Builder decision, for the Owner to veto.**
@@ -124,6 +133,15 @@ InstallMinted }`: the whole chain runs and binds, and nothing renders `productio
 Flipping it is one line, and it is the Owner's line, after the independent audit — the same rule
 CLAUDE.md §6 states for the gate as a whole. Building C does not open the gate; it removes the last
 piece that made opening it impossible.
+
+**Built in `T-140`, with these differences from the list above.** `External` still supports a
+production claim (it stays unreachable: `parse_root_anchor` accepts it only for the compiled root
+nobody holds). `ROOT_PUBLIC_KEY_HEX` is kept, not retired — `check_declared_external_anchor` and
+`tools/check_root_anchor_custody.py` use it. The resolver takes a `FloorPinnedAnchor`, a type only
+the floor's verdict can construct, and the anchor bytes it parses must hash to the pinned digest.
+**To do in the same change that flips the constant:** `TrustState::Production` carries no
+provenance and `root_provenance()` answers `External` for it, which would misname an
+install-minted root on that day.
 
 What does NOT change: the desktop's own refusal (`governed_verification_unconfigured`, five
 compile-time absences) and `connect_broker` off Linux. Windows keeps its compiled pin until a

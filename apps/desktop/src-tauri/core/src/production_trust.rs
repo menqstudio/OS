@@ -9,6 +9,7 @@
 
 use crate::key_manifest::{
     resolve_production_key, KeyManifest, ManifestError, RootProvenance, VerifiedManifestRoot,
+    INSTALL_MINTED_CUSTODY_ACCEPTED,
 };
 
 /// The rendered trust state of a verified governed turn.
@@ -18,16 +19,22 @@ use crate::key_manifest::{
 /// compiled-in demonstration root satisfies that exactly, because signature arithmetic cannot
 /// distinguish an operator's offline root from a key that ships in this repository. So a value that
 /// read as production trust was reachable by anyone holding the binary. The anchor's identity and
-/// custody provenance are now part of the value, and only an external anchor produces `Production`.
+/// custody provenance are now part of the value, and only an anchor whose provenance supports a
+/// production claim produces `Production` — `external`, or `install_minted` behind the Owner's
+/// line (`key_manifest::INSTALL_MINTED_CUSTODY_ACCEPTED`, shipped `false`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustState {
     /// A production-class manifest key resolved AND the manifest's root signature was verified under an
-    /// anchor whose custody is EXTERNAL to this build/provisioning kit — a real production
-    /// `trusted_verified`.
+    /// anchor whose provenance SUPPORTS a production claim
+    /// (`RootProvenance::supports_production_claim`): an `external` root today, and an
+    /// `install_minted` one only once the Owner flips `INSTALL_MINTED_CUSTODY_ACCEPTED` — a real
+    /// production `trusted_verified`.
     Production { key_id: String, key_epoch: u64, root_key_id: String },
-    /// Every chain and manifest check passed, but the anchor that verified the manifest is kit-generated
-    /// or a compiled-in demonstration key. The run is real and completely bound; the CUSTODY claim is
-    /// not production, so this must never render as production "Verified".
+    /// Every chain and manifest check passed, but the anchor that verified the manifest does not
+    /// support a production claim: it is kit-generated, a compiled-in demonstration key, or an
+    /// install-minted root while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` (which is how it
+    /// ships). The run is real and completely bound; the CUSTODY claim is not production, so this
+    /// must never render as production "Verified".
     DemonstrationCustody {
         key_id: String,
         key_epoch: u64,
@@ -87,6 +94,14 @@ impl TrustState {
     }
 
     /// The custody provenance of the anchor that verified the manifest, when one did.
+    ///
+    /// KNOWN LIMIT, stated rather than hidden: the `Production` variant does not CARRY its anchor's
+    /// provenance, so this answers `External` for it. That is true of every `Production` value this
+    /// build can produce, because `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false`. The day the Owner
+    /// flips that line, an install-minted root also reaches `Production` and this arm would misname
+    /// it — so the variant has to grow the field in the same change that flips the line. (It did not
+    /// grow it here because the shape is destructured in the Windows kit, which this slice leaves
+    /// alone.) Nothing outside this file's tests calls this method today.
     pub fn root_provenance(&self) -> Option<RootProvenance> {
         match self {
             TrustState::Production { .. } => Some(RootProvenance::External),
@@ -137,6 +152,33 @@ pub fn resolve_trust_state(
     now_ms: i64,
     envelope_verifying_key_hex: &str,
 ) -> TrustState {
+    resolve_trust_state_when(
+        manifest,
+        verified_root,
+        signer_key_id,
+        protocol,
+        now_ms,
+        envelope_verifying_key_hex,
+        INSTALL_MINTED_CUSTODY_ACCEPTED,
+    )
+}
+
+/// [`resolve_trust_state`] with the Owner's line as an ARGUMENT, so both values of the custody rule
+/// are testable without anyone editing `INSTALL_MINTED_CUSTODY_ACCEPTED`.
+///
+/// PRIVATE, and it has to stay private: a `pub` function taking that bool would be a second way to
+/// ask for a production verdict, with the caller supplying the answer to the one question the
+/// Owner reserved. Every caller outside this file goes through [`resolve_trust_state`], which
+/// passes the shipped constant and nothing else.
+fn resolve_trust_state_when(
+    manifest: Option<&KeyManifest>,
+    verified_root: Option<&VerifiedManifestRoot>,
+    signer_key_id: &str,
+    protocol: &str,
+    now_ms: i64,
+    envelope_verifying_key_hex: &str,
+    install_minted_custody_accepted: bool,
+) -> TrustState {
     let manifest = match manifest {
         Some(m) => m,
         None => return TrustState::NoTrustedManifest("no trusted manifest provisioned"),
@@ -186,7 +228,14 @@ pub fn resolve_trust_state(
             // identically-valid signature, and its private half is in the source tree. So the verdict
             // splits on the anchor's provenance, which reached this function inside a token only
             // `verify_manifest_anchored` can mint.
-            if root.provenance().supports_production_claim() {
+            //
+            // An install-minted root passes this gate only when the Owner's line is `true`; it
+            // ships `false`, so such a root lands in the `else` arm below, carrying its own
+            // provenance into the value.
+            if root
+                .provenance()
+                .supports_production_claim_when(install_minted_custody_accepted)
+            {
                 TrustState::Production {
                     key_id: k.key_id,
                     key_epoch: k.key_epoch,
@@ -338,6 +387,123 @@ mod tests {
         assert!(!ts.is_production_verified());
         assert_eq!(ts.root_provenance(), Some(RootProvenance::KitGenerated));
         assert!(ts.is_chain_bound());
+    }
+
+    // ---- install-minted custody: the Owner's line, tested both ways WITHOUT editing it ----------
+
+    fn resolve_install_minted(accepted: bool) -> TrustState {
+        let m = manifest();
+        resolve_trust_state_when(
+            Some(&m),
+            Some(&token(&m, RootProvenance::InstallMinted)),
+            "signer-prod",
+            PROTO,
+            5000,
+            &verifying_key(),
+            accepted,
+        )
+    }
+
+    /// WHAT SHIPS. Through the PUBLIC entry — the one every driver and the broker call — an
+    /// install-minted root is a complete, bound chain run that is NOT production. This test fails
+    /// if `INSTALL_MINTED_CUSTODY_ACCEPTED` is flipped, and it is meant to: that line is the
+    /// Owner's.
+    #[test]
+    fn an_install_minted_root_is_demonstration_custody_while_the_owners_line_is_closed() {
+        let m = manifest();
+        let ts = resolve_trust_state(
+            Some(&m),
+            Some(&token(&m, RootProvenance::InstallMinted)),
+            "signer-prod",
+            PROTO,
+            5000,
+            &verifying_key(),
+        );
+        assert!(!ts.is_production_verified());
+        assert_eq!(
+            ts,
+            TrustState::DemonstrationCustody {
+                key_id: "signer-prod".into(),
+                key_epoch: 4,
+                root_key_id: "root-1".into(),
+                root_provenance: RootProvenance::InstallMinted,
+            }
+        );
+        assert!(ts.is_chain_bound());
+        assert_eq!(ts.committed_label(), Some("demonstration_custody"));
+        assert_ne!(ts.committed_label(), Some(crate::governed_turn_ipc::TRUSTED_VERIFIED));
+        assert_eq!(ts.root_provenance(), Some(RootProvenance::InstallMinted));
+    }
+
+    /// The rule with the line INJECTED closed — the same verdict as the public entry, so the public
+    /// entry is this function at the shipped value and not a second implementation.
+    #[test]
+    fn the_injected_rule_closed_matches_the_public_entry() {
+        let closed = resolve_install_minted(false);
+        assert!(!closed.is_production_verified());
+        assert!(matches!(
+            closed,
+            TrustState::DemonstrationCustody { root_provenance: RootProvenance::InstallMinted, .. }
+        ));
+        let m = manifest();
+        for p in [
+            RootProvenance::External,
+            RootProvenance::InstallMinted,
+            RootProvenance::KitGenerated,
+            RootProvenance::Demonstration,
+        ] {
+            let t = token(&m, p);
+            assert_eq!(
+                resolve_trust_state(Some(&m), Some(&t), "signer-prod", PROTO, 5000, &verifying_key()),
+                resolve_trust_state_when(
+                    Some(&m),
+                    Some(&t),
+                    "signer-prod",
+                    PROTO,
+                    5000,
+                    &verifying_key(),
+                    crate::key_manifest::INSTALL_MINTED_CUSTODY_ACCEPTED,
+                ),
+                "{p:?}"
+            );
+        }
+    }
+
+    /// The rule with the line INJECTED open: what the Owner's flip would do, and ALL it would do.
+    /// Nobody edits the constant to run this.
+    #[test]
+    fn the_injected_rule_open_makes_install_minted_production_and_nothing_else() {
+        let open = resolve_install_minted(true);
+        assert!(open.is_production_verified());
+        assert_eq!(
+            open,
+            TrustState::Production {
+                key_id: "signer-prod".into(),
+                key_epoch: 4,
+                root_key_id: "root-1".into()
+            }
+        );
+        // A kit-generated or demonstration root is not production even with the line open, and
+        // every non-custody refusal still refuses.
+        let m = manifest();
+        for p in [RootProvenance::KitGenerated, RootProvenance::Demonstration] {
+            let ts = resolve_trust_state_when(
+                Some(&m),
+                Some(&token(&m, p)),
+                "signer-prod",
+                PROTO,
+                5000,
+                &verifying_key(),
+                true,
+            );
+            assert!(!ts.is_production_verified(), "{p:?} became production with the line open");
+            assert_eq!(ts.root_provenance(), Some(p));
+        }
+        let t = token(&m, RootProvenance::InstallMinted);
+        assert!(!resolve_trust_state_when(Some(&m), Some(&t), "unknown", PROTO, 5000, &verifying_key(), true)
+            .is_chain_bound());
+        assert!(!resolve_trust_state_when(Some(&m), None, "signer-prod", PROTO, 5000, &verifying_key(), true)
+            .is_chain_bound());
     }
 
     /// The anchor token is REQUIRED, not decorative: a manifest presented without evidence of which
