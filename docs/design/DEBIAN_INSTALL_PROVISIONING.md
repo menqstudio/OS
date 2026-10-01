@@ -10,7 +10,8 @@
 Status: **APPROVED by the Owner on 2026-10-01** («այո»). Task `T-131`. Slice A landed in `T-135`;
 slice B's ACCOUNTS step in `T-136` (`engine/install/brops_install.sh accounts`, which CI's two kit jobs
 now call instead of running `useradd` themselves); slice D's engine anchor in `T-137`
-(`provision::posix_install`, binary `brops_install_anchor`). The rest of B, and C, are open. Approval is of the design, not of any slice's code — every slice is ◑.
+(`provision::posix_install`, binary `brops_install_anchor`); the installer as the ONE entry point
+and its packaging in `T-138`. Open: B's deployment step (the 24 preflight rows) and slice C. Approval is of the design, not of any slice's code — every slice is ◑.
 Every claim below is marked ✅ read in code at `4b25650`, or ◑ inference / proposal.
 
 ## 1 · The decision this serves
@@ -95,6 +96,39 @@ arrives after install without root. It does not defend against one who owned roo
 it cannot prove the root private was destroyed — only that no file on the box holds it, which
 `tools/check_root_anchor_custody.py`'s sweep idea can be extended to check on the installed box.
 
+### 5.1 Slice C in detail (written 2026-10-01, after reading the broker)
+
+What the code already does ✅: `build_governed_executor` runs `verify_broker_tcb` BEFORE it reads
+any trust material (`broker/src/main.rs:321-331`), and that floor already pins the role
+`key-manifest.root-anchor` (`core/src/tcb_integrity.rs:200`) — owner, mode and digest of
+`tcb/root-anchor.json`. But the broker never READS that file: `ProductionResolver::provisioned`
+builds its `PinnedRoot` from the compiled constants (`broker/src/manifest_resolver.rs:93-107`), and
+`root_provenance` answers `External` by key id (`:154-159`). So the change is narrow:
+
+1. `RootProvenance::InstallMinted` (`"install_minted"`) in `core/src/key_manifest.rs`.
+2. After the floor passes, the broker takes the anchor from **the path the pin manifest pinned
+   for `key-manifest.root-anchor`** — never from a config field — and builds the resolver from that
+   file's key and provenance. `external` stays subject to `check_declared_external_anchor`.
+3. `kit_generated` and `demonstration` resolve to `DemonstrationCustody`, as in the drivers today.
+   The product broker therefore completes a turn under a kit root and labels it
+   `demonstration_custody` — which CI can then prove end to end with the real binary.
+4. `preflight.rs`'s `OfflineRootCustodian` provisioner and its row are renamed for what they now
+   are (an install-minted root), and `"offline-root-custodian"` returns to the ceremony gate's
+   phrase list.
+
+**The production label stays behind the Owner's gate — a Builder decision, for the Owner to veto.**
+`install_minted` is the only provenance that CAN support a production claim, but it does so only
+when a compile-time constant, `INSTALL_MINTED_CUSTODY_ACCEPTED`, is `true`. It ships `false`.
+While it is `false` an install-minted root resolves to `DemonstrationCustody { root_provenance:
+InstallMinted }`: the whole chain runs and binds, and nothing renders `production_verified=true`.
+Flipping it is one line, and it is the Owner's line, after the independent audit — the same rule
+CLAUDE.md §6 states for the gate as a whole. Building C does not open the gate; it removes the last
+piece that made opening it impossible.
+
+What does NOT change: the desktop's own refusal (`governed_verification_unconfigured`, five
+compile-time absences) and `connect_broker` off Linux. Windows keeps its compiled pin until a
+Windows slice exists.
+
 ## 6 · Alternatives considered
 
 * **The app mints at first launch on Linux too.** Refused by §2: an anchor the app's account built
@@ -117,14 +151,21 @@ no prompt and no key, and its prototype (the CI kit) is already green on every r
   second install. Acceptable for a one-user product; stated so it is not discovered.
 * `tauri.conf.json` carries the `postinst` script ✅ (`T-135`): `bundle.linux.deb.postInstallScript`
   exists in `tauri-utils` 2.9.3 `src/config.rs:372` (`DebConfig`, `deny_unknown_fields`), and
-  `tauri-build` accepted the config here. ◑ NOT verified: that the bundler installs the script 0755
-  and where `deb.files` lands — only a real `tauri build --bundles deb` + `dpkg-deb -e` settles it.
+  `tauri-build` accepted the config here. ✅ MEASURED in `T-138` on a real `tauri build --debug
+  --bundles deb`: `dpkg-deb -e` shows `postinst` at 0755, byte-identical; `deb.files` is
+  `{destination: source}` with the source relative to `src-tauri` (a path reaching outside it is
+  accepted), and the mode comes from the source. `tauri build` does NOT build workspace bins, so a
+  `beforeBundleCommand` stages `brops_install_anchor`. The package is named `bro-ps`; resources
+  would land in `/usr/lib/BroPS`, a third spelling beside `/usr/lib/brops`. No `dpkg -i` was run.
 
 ### 7.1 Open questions slice A found (2026-10-01), none decided yet
 
-* **No user to bind to under a GUI install.** `postinst` passes `--user "$SUDO_USER"`; under a
-  graphical or `pkexec` install that is empty. `brops-install` must refuse an empty or root user, so
-  such an install fails until debconf (or a first-launch prompt) supplies the name.
+* **The user to bind to — DECIDED by the Builder in `T-138`, for the Owner to veto.** An explicit
+  `--user`; else `$SUDO_USER`; else `$PKEXEC_UID` (what a graphical install sets); else the ONLY
+  human account in the passwd database; otherwise a refusal that names the candidates. Never a
+  guess, never root, never a service account. Still open: an account that lives only in a directory
+  service resolves here through `getent` and is then refused by the anchor tool, which reads
+  `/etc/passwd`; and a session that sets `XDG_DATA_HOME` needs `--app-data`.
 * **rpm and AppImage do not provision.** `bundle.targets` is `"all"`; rpm has its own
   `postInstallScript` key, unwired, and AppImage has no install step at all.
 * **Purge removes nothing.** No `postrm` deletes the anchor or the accounts.
@@ -141,9 +182,10 @@ Left open, each needing a decision or a later slice:
 
 * **Anchor owner is root, not `brops-anchor`** as §4.1 proposed. Both give the property; a dedicated
   account is not built.
-* **`postinst` does not reach it yet.** It calls `/usr/lib/brops/brops-install --user`; this tool is
-  `brops_install_anchor --user --app-data`, and `--app-data` has no safe default (the manifest binds
-  the path, and Tauri's moves with `XDG_DATA_HOME`). Slice B's entry point must supply it.
+* **`postinst` reaches it since `T-138`.** `brops-install --user` (stepless = `all`) resolves the
+  user, runs `accounts`, then runs `brops_install_anchor --user --app-data <passwd home>/.local/share/
+  studio.menq.brops` — Tauri's `app_data_dir()` read from source (`tauri` 2.11.5
+  `src/path/desktop.rs:247-251`). Never run as root end to end: that needs a real install.
 * **A deleted store strands the anchor.** If the user removes `<app_data>/trust`, the root-owned
   anchor stays, the installer refuses it as unverifiable, and the app cannot rename it aside.
 * **Not atomic against power loss**: a run killed after the manifest is written leaves an anchor

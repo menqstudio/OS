@@ -7,7 +7,8 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build",
+    "beforeBundleCommand": "node src-tauri/deb/stage-installer.mjs"
   },
   "app": {
     "windows": [
@@ -45,7 +46,11 @@
     },
     "linux": {
       "deb": {
-        "postInstallScript": "deb/postinst"
+        "postInstallScript": "deb/postinst",
+        "files": {
+          "/usr/lib/brops/brops-install": "../../../engine/install/brops_install.sh",
+          "/usr/lib/brops/brops_install_anchor": "target/deb-stage/brops_install_anchor"
+        }
       }
     }
   }

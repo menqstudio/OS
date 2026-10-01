@@ -284,7 +284,7 @@ fast, so run the command rather than trusting the number.
 
 | Մակերես · Surface | Չափված · Measured | Հրաման · Command |
 | :--- | ---: | :--- |
-| Engine test suite | **2340** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
+| Engine test suite | **2397** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **228** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Gate scripts | **43** | `ls tools/check_*.py \| wc -l` |
@@ -293,11 +293,11 @@ fast, so run the command rather than trusting the number.
 | Jobs in `ci.yml` | **22** | the `jobs` KEY of `.github/workflows/ci.yml`, parsed as YAML — a 2-space-indent regex also catches `push:` under `on:` and answers 23 |
 | Required contexts on `main` | **34** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'` |
 | Specialist definitions | **262** | `ls .claude/agents/*.md \| wc -l` |
-| Cockpit frontend (jsdom) | **794** թեստ · tests, 84 file | `cd apps/desktop && npm ci && npm test` |
+| Cockpit frontend (jsdom) | **801** թեստ · tests, 85 file | `cd apps/desktop && npm ci && npm test` |
 | Cockpit accessibility (axe) | **59** թեստ · tests | `cd apps/desktop && npm ci && npm run test:a11y` |
 | Cockpit in real Chromium | **433** թեստ · tests | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
 
-> **Skip counts are not stated here.** The engine suite RUNS 2340 tests in every environment and
+> **Skip counts are not stated here.** The engine suite RUNS 2397 tests in every environment and
 > SKIPS a different number in each: measured at `9659281` on 2026-09-20, 14 on the ubuntu runner, 82
 > on the windows runner and 97 on the Builder's box. Two Windows environments disagree by fifteen, so
 > a skip count is not a property of the platform either. All three figures, and the command that
