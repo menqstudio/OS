@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `58b19bb`.** The only thing open is PR #312 on `t144/settled-at-58b19bb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #313 · branch `t145/whole-repo-read`** (base `main`, tip `962743a`, task T-145).
 >
-> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
+> the whole repository read file by file: 911 confirmed findings recorded, the 2 highs fixed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-145** | **The whole repository, read file by file** — 911 findings a second agent confirmed, in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md); the 2 highs fixed, 909 open ◑ | Bro | In-Progress | — |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
@@ -43,8 +44,7 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 ## What is not on this board
 
 Waiting on the Owner, not rows: TWO one-line edits (`gitleaks.toml`, and requiring the Windows
-tools job in `config/required-checks.json`), `T-063`'s tag arm, the
-offline root seed, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
+tools job in `config/required-checks.json`), `T-063`'s tag arm, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
 (§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
 ## Status tokens

@@ -255,5 +255,72 @@ class ParentCustody(unittest.TestCase):
         self.assertEqual(caught.exception.code, pfw.EXIT_CUSTODY)
 
 
+@unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                     "symlink planting and dir_fd-relative opens are POSIX")
+class PublishIntoAServiceOwnedDirectory(unittest.TestCase):
+    """``_write_owned`` runs as root inside a directory the service account can write.
+
+    What is tested here is the DECISION -- a name that is not a fresh regular file is never opened
+    -- with this uid standing in for both principals. That root actually refuses is a property of
+    the same syscalls and is not separately proved by this file.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        self.marks = self.root / "marks"
+        self.marks.mkdir()
+        self.target = self.marks / fw.STATE_FILE
+        self.temporary = self.marks / f".{fw.STATE_FILE}.provision.tmp"
+        self.victim = self.root / "victim"
+        self.victim.write_bytes(b"not the provisioner's to touch")
+
+    def _publish(self, payload=b"{}"):
+        pfw._write_owned(self.target, payload, os.getuid(), os.getgid(), 0o600)
+
+    def test_a_symlink_planted_at_the_temp_name_is_removed_and_never_followed(self):
+        os.symlink(self.victim, self.temporary)
+        self._publish(b'{"fresh":true}')
+        self.assertEqual(self.victim.read_bytes(), b"not the provisioner's to touch")
+        self.assertFalse(self.target.is_symlink())
+        self.assertEqual(self.target.read_bytes(), b'{"fresh":true}')
+        self.assertFalse(os.path.lexists(self.temporary))
+
+    def test_a_symlink_at_the_document_is_replaced_and_its_target_left_alone(self):
+        os.symlink(self.victim, self.target)
+        self._publish(b'{"fresh":true}')
+        self.assertEqual(self.victim.read_bytes(), b"not the provisioner's to touch")
+        self.assertFalse(self.target.is_symlink())
+
+    def test_a_temp_that_reappears_after_the_unlink_is_a_refusal(self):
+        real_unlink = os.unlink
+
+        def unlink_then_replant(name, *args, **kwargs):
+            real_unlink(name, *args, **kwargs)
+            os.symlink(self.victim, self.temporary)
+
+        os.symlink(self.victim, self.temporary)
+        with unittest.mock.patch.object(pfw.os, "unlink", unlink_then_replant):
+            with self.assertRaises(FileExistsError):
+                self._publish(b'{"fresh":true}')
+        self.assertEqual(self.victim.read_bytes(), b"not the provisioner's to touch")
+
+    def test_a_symlink_in_place_of_the_directory_is_refused(self):
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        link = self.root / "marks-link"
+        os.symlink(elsewhere, link)
+        with self.assertRaises(OSError):
+            pfw._write_owned(link / fw.STATE_FILE, b"{}", os.getuid(), os.getgid(), 0o600)
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_the_ordinary_publish_lands_with_the_mode_asked_for(self):
+        self._publish(b'{"a":1}')
+        self.assertEqual(self.target.read_bytes(), b'{"a":1}')
+        self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o600)
+        self.assertEqual([p.name for p in self.marks.iterdir()], [fw.STATE_FILE])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -164,6 +164,13 @@ def split_shell(command: str) -> list[str]:
             buf = []
             i += len(op)
             continue
+        # A bare `&` is a command separator too, and the one this list did not carry: `echo hi &
+        # rm -rf src` reached the classifier as ONE segment led by a read-only verb, so the `rm`
+        # was never classified and no scope, lease or recovery gate saw it. It is refused rather
+        # than split, because a backgrounded command also outlives the tool call the post-tool
+        # checks settle. `&&` was consumed above; `>&` and `&>` are refused by the `>` rule.
+        if c == "&":
+            raise SecurityError("shell backgrounding (`&`) is denied")
         buf.append(c)
         i += 1
     if quote:

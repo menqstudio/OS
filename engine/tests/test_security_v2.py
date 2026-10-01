@@ -124,6 +124,29 @@ class SecurityV2Tests(unittest.TestCase):
             with self.assertRaises(SecurityError, msg=command):
                 analyze_command(command)
 
+    def test_a_bare_ampersand_cannot_hide_a_command_behind_a_read_only_verb(self):
+        # `&` separates commands exactly as `;` does. Until 2026-10-01 it was not in the separator
+        # list, so `echo hi & rm -rf src` was ONE segment led by `echo`: classified READ_LOCAL,
+        # not mutating, no targets -- and the `rm` reached no gate at all.
+        for command in (
+            "echo hi & rm -rf src",
+            "echo hi &rm -rf src",
+            "ls& git push origin main",
+            "sleep 5 &",
+            "echo a |& tee b",
+        ):
+            with self.assertRaises(SecurityError, msg=command):
+                analyze_command(command)
+
+    def test_an_ampersand_that_separates_nothing_is_still_text(self):
+        # Quoted or escaped, `&` is an argument; and `&&` stays the separator it was.
+        self.assertEqual(len(analyze_command("echo 'a & b'")), 1)
+        self.assertEqual(len(analyze_command('echo "a & b"')), 1)
+        self.assertEqual(len(analyze_command("echo a \\& b")), 1)
+        infos = analyze_command("echo hi && rm -rf src")
+        self.assertEqual([i.executable for i in infos], ["echo", "rm"])
+        self.assertTrue(infos[1].mutating)
+
     def test_single_quoted_substitution_is_literal(self):
         # Single quotes suppress substitution in the shell, so '$(...)' and
         # backticks are literal text, not a bypass, and must not be rejected.

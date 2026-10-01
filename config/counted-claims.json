@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2437,
+      "value": 2444,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
-        "date": "2026-09-30",
-        "head": "4f274ee",
+        "date": "2026-10-01",
+        "head": "962743a",
         "environments": {
+          "Debian 13 (trixie) native, non-root account @ 962743a + T-145": {
+            "ran": 2444,
+            "skipped": 14
+          },
           "Debian 13 (trixie) native, non-root account @ 4f274ee + T-141": {
             "ran": 2437,
             "skipped": 14
