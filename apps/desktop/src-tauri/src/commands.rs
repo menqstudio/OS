@@ -3137,6 +3137,21 @@ mod tests {
         assert_eq!(preflight.trim(), "return only_a_block(outcome);");
     }
 
+    // The run-step gate asks `undecided_for`. The core test proves that predicate sees an
+    // escalated request; nothing executes the gate itself, so this holds the one line that
+    // matters — with `pending_for` put back, an escalated step is re-raised as a fresh A2 ask
+    // and every suite stayed green.
+    #[test]
+    fn the_run_step_gate_asks_for_any_undecided_request() {
+        let src = include_str!("commands.rs");
+        let production = src.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        assert_eq!(
+            production.matches(concat!("repo::approvals::undecided_", "for(&conn, &s.id)")).count(),
+            1
+        );
+        assert_eq!(production.matches(concat!("approvals::pending_", "for(")).count(), 0);
+    }
+
     // The generic approve verb's refusal names the path that DOES approve. It used to say native
     // confirmation was "not available yet", beside the command that implements it.
     #[test]

@@ -1062,6 +1062,23 @@ mod tests {
         assert_eq!(verify(&renamed, 1_000_000), Err(Refusal::GrantAbsent));
     }
 
+    /// The row check on its own. `other.json` above does not exist, so `is_file()` answers that
+    /// case and the table is never asked. `manifest.json` DOES exist in the directory and is not
+    /// a row of its own file table: only the row check stands between it and being parsed as
+    /// the grant or the flow.
+    #[test]
+    fn a_ref_naming_a_file_that_exists_but_is_no_row_of_the_table_is_refused() {
+        let (dir, digest) = built(1_000_000);
+        let as_grant =
+            rewrite_manifest(dir.path(), &digest, |m| m.grant_ref = "manifest.json".into());
+        assert_eq!(verify(&as_grant, 1_000_000), Err(Refusal::GrantAbsent));
+
+        let (dir, digest) = built(1_000_000);
+        let as_flow =
+            rewrite_manifest(dir.path(), &digest, |m| m.flow_ref = "manifest.json".into());
+        assert_eq!(verify(&as_flow, 1_000_000), Err(Refusal::Unreadable));
+    }
+
     /// The predicate on its own, because the two tests above each exercise one
     /// arm of it and a rule with five arms deserves five cases.
     #[test]

@@ -131,11 +131,10 @@ export function CommandPalette() {
 
   const total = navResults.length + entities.length;
 
-  // Keep the highlighted index within the result set — above it when the set shrank, and below
-  // zero too: an index that went negative while the list was empty must not survive the arrival
-  // of results, or `aria-activedescendant` names a row that does not exist and Enter does nothing.
+  // Keep the highlighted index within the result set when the set shrinks. It cannot go below
+  // zero: ArrowDown floors it (see onKeyDown), which is the one place that could have stored -1.
   useEffect(() => {
-    setActive((a) => (a >= total || a < 0 ? Math.max(0, total - 1) : a));
+    setActive((a) => (a >= total ? Math.max(0, total - 1) : a));
   }, [total]);
 
   if (!paletteOpen) return null;

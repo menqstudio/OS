@@ -348,3 +348,36 @@ describe('both stylesheet layers start in the same theme', () => {
     expect(AIOS).toMatch(/:root\[data-theme="light"\]\{/);
   });
 });
+
+// A FOURTH property of the files, held here for the same reason (the file count is a counted
+// claim): four pages tell the user "Nothing will be removed" (`confirm.deleteDeniedBody`) before
+// a delete the capability file denies. The sentence is true only while it does. Grant one of
+// these commands and the dialog becomes a false statement over a real hard delete — and no page
+// test goes red, because each keeps its `.then` success arm. This does.
+describe('the "nothing will be removed" dialog is true only while the delete is denied', () => {
+  const PAGES: Array<[string, string]> = [
+    ['src/features/Knowledge.tsx', 'deny-delete-knowledge'],
+    ['src/features/Library.tsx', 'deny-delete-library-item'],
+    ['src/features/Research.tsx', 'deny-delete-research-item'],
+    ['src/features/Memory.tsx', 'deny-delete-memory'],
+  ];
+  const capability = JSON.parse(
+    readFileSync(resolve(SRC_TAURI, 'capabilities/default.json'), 'utf8'),
+  ) as { permissions: string[] };
+
+  it.each(PAGES)('%s says it, and %s is in the capability file', (page, deny) => {
+    expect(readFileSync(resolve(DESKTOP, page), 'utf8')).toContain("t('confirm.deleteDeniedBody')");
+    expect(capability.permissions).toContain(deny);
+    expect(capability.permissions).not.toContain(deny.replace(/^deny-/, 'allow-'));
+  });
+
+  it('no other page borrows the sentence without being listed here', () => {
+    const features = resolve(DESKTOP, 'src/features');
+    const users = readdirSync(features)
+      .filter((f) => f.endsWith('.tsx') && !f.includes('.test.'))
+      .filter((f) => readFileSync(resolve(features, f), 'utf8').includes('confirm.deleteDeniedBody'))
+      .map((f) => `src/features/${f}`)
+      .sort();
+    expect(users).toEqual(PAGES.map(([page]) => page).sort());
+  });
+});
