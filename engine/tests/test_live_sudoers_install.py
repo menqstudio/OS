@@ -35,6 +35,7 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if TESTS_DIR not in sys.path:
     sys.path.insert(0, TESTS_DIR)
 
+from _kit_scripts import LIVE_DIR  # noqa: E402
 from _kit_scripts import heredoc as _heredoc  # noqa: E402
 from _kit_scripts import script as _script  # noqa: E402
 from _kit_scripts import shell_function as _shell_function  # noqa: E402

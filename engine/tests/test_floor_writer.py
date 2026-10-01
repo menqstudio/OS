@@ -432,8 +432,9 @@ class FramingBoundary(ServiceFixture):
         self.addCleanup(theirs.close)
         theirs.sendall(declared_length.to_bytes(fw.LENGTH_PREFIX_BYTES, "big") + body)
         theirs.shutdown(socket.SHUT_WR)
-        ours.settimeout(5)
-        return fw._read_frame(ours)
+        import time
+
+        return fw._read_frame(ours, time.monotonic() + 5)
 
     def test_the_cap_is_one_number_and_a_frame_at_exactly_the_cap_is_accepted(self):
         self.assertEqual(fw.MAX_FLOOR_FRAME_BYTES, 4096)

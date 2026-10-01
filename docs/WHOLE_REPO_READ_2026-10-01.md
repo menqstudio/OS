@@ -93,26 +93,10 @@ All open. Grouped by kind; within a kind, by path.
   - Doc: 'receipt-key resolver rejects any key whose key_usage != receipt_signing ... disjoint key sets by construction'. Code: ManifestKey has no key_usage/supervisor_id/expires_at; manifest_resolver.rs:302 and :304 resolve BOTH keys via resolve_production_key(.., RECEIPT_ENVELOPE_ARTIFACT_TYPE, ..).
   - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:302-304; apps/desktop/src-tauri/core/src/key_manifest.rs:26-37`
   - fix: Either add a signed key_usage discriminator to ManifestKey and enforce it in two separate resolvers, or mark §1.6-1.7/§4.5 of the design as NOT IMPLEMENTED and record the gap as an open audit item.
-- **`engine/ci/live/ladder_evidence.py:154`** — The proof's verifier accepts a receipt envelope signed by ANY manifest key, including the supervisor's attestation key
-  - check_manifest() resolves whatever key_id the envelope names (l.154-163) and never compares it to trust.signer_key_id. provision_keys.py:136 gives BOTH keys allowed_protocols=[receipt-envelope]. Rust pins it: governed_verification.rs:906 `envelope.key_id != keys.isolated_signer_key_id`. No validity-window/epoch check either.
-  - also: `engine/ci/live/provision_keys.py:136`
-  - fix: Read trust.signer_key_id from config.json and refuse any other key_id, check valid_from/valid_to, and stop granting the supervisor-attestation key the receipt-envelope protocol.
-- **`engine/ci/live/run_live_turn.sh:476`** — Kit makes persistent host-wide changes it never reverts: recursive ACL strip of all of /opt, chown/chmod /opt, and it leaves a setuid-root debug launcher and root.priv behind
-  - L476 `chown 0:0 /opt; chmod 0755 /opt`; L482 `setfacl -Rb /opt "$LIVE"` (comment says "Strip the ACLs from the pinned tree" but -R on /opt hits every other package). cleanup() L386-390 only kills PIDs and removes the sudoers fragment; $TCB/privileged-launcher.bin (4750 root) and keys/root.priv stay.
-  - also: `engine/ci/live/run_ladder_turn.sh:872`
-  - fix: Limit setfacl to /opt itself (non-recursive) plus $LIVE, and have cleanup remove $LIVE (or at least the setuid bit and root.priv) and the /tmp attacker launcher on every exit path.
 - **`engine/config/protected-control-plane.json:3`** — 'CI-executed surfaces are covered in full' is false: ci/**, install/** and contracts/** are neither protected nor digested
   - is_protected()/is_digest_member() return False for install/brops_install.sh, ci/live/run_ladder_turn.sh, ci/isolation_proof.sh, contracts/brops-sign-result.v1.schema.json. ci.yml:170,179,266 run the first three under sudo. The listed '.github/workflows/**' only matches engine/.github, which GitHub never runs (ci.yml:825).
   - also: `.github/workflows/ci.yml:170,179,266,825`
   - fix: Add ci/**, install/** and contracts/** to protected_roots and digest_roots, and correct the purpose text about which workflows directory is actually covered.
-- **`engine/runtime/challenge_authority.py:130`** — _is_sha256_hex means two different things: the authority/supervisor copy accepts non-hex 64-char strings, the signer copy of the same name is strict
-  - challenge_authority.py:130 and governed_supervisor.py:288 use `int(value, 16)`. Ran validate_create_pending with system_sha256 = ' '+'a'*63, '+'+'a'*63, '0x'+'a'*62, 'a'*31+'_'+'a'*32, '\n'+'a'*63: all ACCEPTED and returned for signing; isolated_signer._is_sha256_hex (line 266) returns False for each.
-  - also: `engine/runtime/governed_supervisor.py:288 (lax copy); engine/runtime/isolated_signer.py:266 (strict copy, same name)`
-  - fix: Replace both lax copies with the charset check (`all(c in '0123456789abcdefABCDEF' ...)` or the strict lowercase one) and keep one shared predicate.
-- **`engine/runtime/floor_writer.py:207`** — load_service_config claims custody verification of the TCB config and performs none
-  - L148-150: 'a config that does not parse or whose custody cannot be verified is a refusal to start'; L210 'custody-unverifiable means raise'. The body only does `json.loads(path.read_text())`; no stat/owner/mode/ancestry check. run_floor_writer.py checks marks_dir and socket dir only. The file carries the peer allowlist and install_id.
-  - also: `engine/runtime/run_floor_writer.py:46-59`
-  - fix: Open the config with the same fstat-on-descriptor owner/mode/ancestry rule (root or service uid, not group/world-writable) before parsing, or delete the custody claim.
 - **`tools/check_ai_surfaces.py:60`** — A generic #[tauri::command] is invisible to the AI-surface inventory gate
   - _FN_RE = `fn (\w+)\s*\(` does not match `fn name<R: Runtime>(`. Ran check() on `#[tauri::command] pub async fn sneaky<R: tauri::Runtime>(..){ crate::ai::generate(..) }` with empty policy: returned []. Same source without the generic: 'NOT classified'. No such command in the tree today; 8 generic non-command fns already unseen.
   - fix: Allow an optional generic parameter list between the fn name and `(` in _FN_RE and add the generic-command case to test_check_ai_surfaces.py.
@@ -267,41 +251,6 @@ All open. Grouped by kind; within a kind, by path.
   - global.css:33 `@keyframes shimmer { to { background-position: -200% 0; } }` drives `.skeleton` (L30). aios.css:205 `@keyframes shimmer{to{transform:translate3d(3vw,-2vh,0) scale(1.06)}}` loads later (styles.css:6) and wins. Only duplicate among 163 names; check_c1_tokens only checks keyword names.
   - also: `apps/desktop/src/theme/aios.css:205`
   - fix: Rename one of the two keyframes (e.g. `skeleton-shimmer`) and make the keyframe gate refuse a name defined twice.
-- **`engine/ci/live/ladder_evidence.py:240`** — The 'captured reply is byte-identical to the store blob' check silently passes when the report file is absent
-  - l.240 `if report_path and os.path.exists(report_path):` guards the only `capture_divergence` require; a missing report just yields recorder_report_matches_store=False in the bundle and the verdict stays ok. Header l.16-17 lists this as a property whose failure 'exits non-zero'.
-  - fix: Raise Failed('no_capture', ...) when the report file is missing instead of skipping the comparison.
-- **`engine/ci/live/run_ladder_turn.sh:872`** — The kit rewrites host-wide state outside its own root and never restores it: chown/chmod of /opt and a recursive ACL strip of all of /opt
-  - l.872 `chown 0:0 /opt; chmod 0755 /opt`; l.873 `setfacl -Rb /opt "$LIVE" 2>/dev/null \|\| true` removes every POSIX ACL under /opt, including other software's. cleanup() (l.467-472) restores none of it. T-141 fixed the same class of problem for /etc/sudoers.d only.
-  - also: `engine/ci/live/run_live_turn.sh:476`
-  - fix: Strip ACLs only on $LIVE and on /opt itself non-recursively (`setfacl -b /opt`), and refuse rather than chmod when /opt is not already root-owned 0755 on a non-CI box.
-- **`engine/runtime/brops_socket.py:219`** — serve_forever has no exception backstop: one peer hang-up kills the signer/supervisor service
-  - Loop is `try: _serve_one(...) finally: conn.close()`; `_serve_one` catches only ProtocolError/timeout. Reproduced: client sends a frame and closes before the reply -> `DIED: BrokenPipeError`, socket unlinked, with max_requests=5. Used by engine/tools/brops_signer_service.py:45 and brops_supervisor_service.py:148.
-  - also: `engine/runtime/floor_writer.py:981 (same try/finally shape; handle() catches only FloorWriterError)`
-  - fix: Wrap the per-connection call in `except Exception` (log to stderr, continue) as challenge_authority_server.serve_forever and governed_supervisor_server already do.
-- **`engine/runtime/brops_socket.py:224`** — The 'single TOTAL socket timeout' in brops_socket.serve_forever is a per-read timeout; a drip-feeding peer holds the loop past the budget
-  - Comment 220-223: 'a single TOTAL socket timeout covers the whole exchange'; code is `conn.settimeout(CONNECTION_BUDGET_S)` then makefile().read. Reproduced with budget patched to 1.0s: peer sending 1 byte/0.6s held the loop 4.8s and still got a reply. challenge_authority_server.py:103 says exactly why this is not enough.
-  - also: `engine/runtime/brops_socket.py:109 (recv_exactly_bounded, the real total budget, unused by this loop)`
-  - fix: Read the frame through recv_exactly_bounded with one deadline, as the other servers do, or correct the comment.
-- **`engine/runtime/brops_socket.py:225`** — brops_socket.serve_forever dies when one peer disconnects before the reply; the other four accept loops catch this, this one does not
-  - Loop is `try: _serve_one(...) finally: conn.close()` with no except; _serve_one only catches ProtocolError/timeout on read. Reproduced in /tmp: allow-listed peer sends a frame and closes -> thread exit 'RAISED BrokenPipeError: [Errno 32] Broken pipe'. Used by brops_signer_service.py:45, brops_supervisor_service.py:148.
-  - also: `engine/runtime/challenge_authority_server.py:330 (the `except Exception` belt the sibling loops have)`
-  - fix: Wrap the per-connection call in `except Exception` (log to stderr, continue) exactly as challenge_authority_server/isolated_signer_server/governed_supervisor_server do.
-- **`engine/runtime/floor_writer.py:140`** — CONNECTION_BUDGET_S is documented as a total budget but is armed as a per-recv timeout, the exact defect its own comment describes
-  - L137-139: 'A TOTAL wall-clock budget... A per-recv timeout is not a bound'. L982 `sock.settimeout(CONNECTION_BUDGET_S)`, L909-918 `_recv_exactly` loops `sock.recv` with no deadline. Reproduced: with a 0.4 s 'budget', a 1-byte-per-0.25 s drip was read to completion after 3.5 s.
-  - also: `engine/runtime/brops_socket.py:220-224 ('a single TOTAL socket timeout covers the whole exchange -- the shape floor_writer already uses')`
-  - fix: Read through brops_socket.recv_exactly_bounded with a monotonic deadline in both loops and correct the two comments.
-- **`engine/runtime/governed_acceptance.py:923`** — Signer's out-of-enum refusal reason is never mapped, because the real reason carries a suffix; the test uses a string the signer never emits
-  - _SIGNER_REASONS.get(reason, reason) is keyed on the bare constant, but isolated_signer.py:837,843 raise '%s:%s.%s' % (REASON_CHAIN_DISAGREEMENT, handle, field). Ran it: 'chain_document_disagrees_with_attested_evidence:record_handle.run_id' stays unmapped and outside GOVERNED_REFUSAL_REASONS, so turn_result_refused raises.
-  - also: `engine/runtime/isolated_signer.py:843; engine/tests/test_governed_acceptance.py:1648-1660; engine/contracts/brops-sign-result.v1.schema.json:47-51`
-  - fix: Map on the prefix before ':' (reason.split(':',1)[0]) and change the test to feed the suffixed reason the signer really produces.
-- **`engine/runtime/governed_staging_upload.py:1058`** — Staging sweep can delete a LIVE session's ACKed chunks (row snapshot taken before the directory listing)
-  - live_dirs is SELECTed (1058) before root.iterdir() (1066). Forced interleave (open+chunk ACK between the two) on a live turn: sweep reported orphan_dirs_removed=1, dir gone, final -> 'session_corrupt'. Docstring 1032 says it never removes a LIVE turn's directory. Sweep runs in its own thread.
-  - also: `engine/ci/live/run_ladder_supervisor.py:736-747`
-  - fix: List the staging root first and query the session rows afterwards (rows commit before mkdir), so a directory absent from the later row set is a true orphan.
-- **`engine/runtime/isolated_signer.py:843`** — The signer's chain-disagreement refusal carries a field suffix, so the supervisor's mapping to hash_mismatch never matches and the turn ends in a SupervisorError
-  - Signer raises _Refuse("%s:%s.%s" % (REASON_CHAIN_DISAGREEMENT, handle_field, field)) (also :837). governed_acceptance._SIGNER_REASONS is keyed on the bare constant. Reproduced: mapped value stays suffixed, turn_result_refused raises SupervisorError 'not in the ... closed set'. The test stubs the bare constant.
-  - also: `engine/runtime/governed_acceptance.py:181 (mapping), :923 (lookup); engine/tests/test_governed_acceptance.py:1655 (stub uses bare constant)`
-  - fix: Map on the prefix before the first ':' in governed_acceptance (or have the signer return a fixed reason plus a separate detail field), and drive the test with a real IsolatedSigner refusal instead of a stub.
 - **`tools/check_contrast.py:139`** — The 'palettes mirror the tokens' check is a substring test on the whole file, not a per-token comparison
   - `if value.lower() not in sources[rel]`. Ran _require_palettes_mirror_tokens on the real manifest with light bg/surface swapped (#f5f6f8 <-> #ffffff): accepted. Set light bg to the DARK value: accepted. Docstring l.95 says the palettes 'must equal the files that ship them - asserted'.
   - fix: Parse each token's light and dark value out of tokens.ts / aios.css by name and compare that value to the manifest entry for the same name and theme.
@@ -354,18 +303,6 @@ All open. Grouped by kind; within a kind, by path.
   - AUDIT_LEDGER.md:101 'the open ones stay here' lists only A-06, A-09 (G-05 struck). Archive still says: :112 B-02 '🔴 OPEN, and deliberately still open'; :180 Windows machine-proof script '⚠️ OPEN'; :183 F-29 '⚠️ OPEN'; :250-252 H-4/H-5/H-6 '⚠️ OPEN'; :917 T-023 '◑ held'.
   - also: `apps/desktop/AUDIT/AUDIT_LEDGER.md:99-107`
   - fix: Either carry every archive row whose mark is OPEN/held into the live table or record in the archive row what closed it, so the two files stop disagreeing about what is open.
-- **`apps/desktop/README.md:49`** — README claims 'no outstanding Critical/High findings' while the standing independent verdict is RED
-  - README:49 'the codebase has been through ten rounds of adversarial review with no outstanding Critical/High findings'. AUDIT/AUDIT_LEDGER.md:11-13: tenth independent audit of main @ 75fca65, 'Verdict: RED'. CHANGELOG.md:15-16 itself says the quoted verdicts are Builder-side and the independent one is RED.
-  - also: `apps/desktop/AUDIT/AUDIT_LEDGER.md:11`
-  - fix: Replace the sentence with a pointer to AUDIT/AUDIT_LEDGER.md and state that the ten rounds were the Builder-side July review and the standing independent verdict is RED.
-- **`apps/desktop/SECURITY.md:67`** — SECURITY.md contradicts itself and the code on ANTHROPIC_API_KEY auto-selection
-  - SECURITY.md:67 table: 'ANTHROPIC_API_KEY — If set (and provider not forced), use the metered Anthropic API'. SECURITY.md:11: 'ambient ANTHROPIC_API_KEY never auto-selects'. ai.rs:451-454: 'an ambient ANTHROPIC_API_KEY must NEVER silently select the remote metered provider'. The same stale line is in ai.rs:5-6 and :14 module doc.
-  - also: `apps/desktop/src-tauri/src/ai.rs:5-6,14`
-  - fix: Change the table row (and the ai.rs module header) to 'used only when BROPS_AI_PROVIDER=anthropic and BROPS_ALLOW_UNGOVERNED=1'.
-- **`apps/desktop/docs/IMPLEMENTATION_EXECUTION_HANDOFF.md:456`** — Docs require the desktop to store secrets via OS keyring; the code forbids secrets in the desktop process
-  - HANDOFF:442,456 'secure secret save/delete/status' / 'secrets stored through OS credential/keyring integration'; DESKTOP_ARCHITECTURE.md:17 'MUST use the OS credential vault/keychain'. credentials.rs:15 'nothing in this table, this process, or this repository may ever hold the secret'. No keyring crate, no secret command in commands.rs.
-  - also: `apps/desktop/src-tauri/core/src/credentials.rs:14 (and apps/desktop/docs/architecture/DESKTOP_ARCHITECTURE.md:17; src-tauri/src/ai.rs:10 'secrets come from the environment')`
-  - fix: Rewrite both secret sections to the reference-only model in credentials.rs (desktop holds auth_ref names, never values) and remove the secret-save command group from the build contract.
 - **`apps/desktop/src-tauri/Cargo.toml:61`** — win-live is declared self-test-only and 'never touches live AI turns', but a window-granted command uses it to run a model and post the reply; that command is absent from the AI-surface inventory
   - Cargo.toml:61-65 'Used solely to run the in-process trust-chain self-test ... It never touches live AI turns'. src/commands.rs:2767 demonstration_verified_reply calls brops_win_live::proof::in_process_turn_produce, spawning `cmd /C $BROPS_SELFTEST_MODEL_CMD` (2641) and posting a Message; Conversations.tsx:461 wires a button.
   - also: `apps/desktop/src-tauri/ai-surface-policy.json:11 (surfaces lists 4 commands; demonstration_verified_reply is not one, because the gate only tracks ai::generate*/governed_turn)`
@@ -466,10 +403,6 @@ All open. Grouped by kind; within a kind, by path.
   - strings.ts:56 'NOT a failure and NOT tampering: the row simply predates the record'; :97 'it was written before the record existed'. local_write_record.rs:156 'written before migration 0021, or written by a path that does not record'. The Rust test (:160) gets Unrecorded from a raw INSERT made AFTER 0021.
   - also: `apps/desktop/src-tauri/core/src/local_write_record.rs:156 ; apps/desktop/src-tauri/core/tests/memory_knowledge_write_records.rs:160`
   - fix: Reword badge comment and detailUnrecorded (en/hy/ru) to say the row has no record - either it predates the ledger or it was inserted outside the app - and stop asserting which; consider counting unrecorded rows in WriteRecordNotice.
-- **`bridge/README.md:88`** — README calls BRO_REGISTRY_ROOT the trusted-key registry; the sidecar says nothing consumes it
-  - README: "`BRO_REGISTRY_ROOT` (trusted-key registry)". engine_sidecar.py:114-117: "`BRO_REGISTRY_ROOT` is NOT the engine's trusted-key registry root — nothing consumes it, and setting it redirects no verification anywhere"; the real one is BRO_TRUSTED_REGISTRY_ROOT.
-  - also: `bridge/engine_sidecar.py:112-126`
-  - fix: State in the README that the five variables are a presence check only and that the registry root is governed by BRO_TRUSTED_REGISTRY_ROOT.
 - **`bridge/contracts/renderer-governed-turn-result.schema.json:53`** — Schema pins committed trust_state to trusted_verified; the broker now commits demonstration_custody
   - Schema: `"trust_state": {"const": "trusted_verified"}`. governed_turn_ipc.rs:232-236: trust_state "used to be the constant TRUSTED_VERIFIED... now the label the committing transaction actually stored"; governed_message_store.rs:19 allows [TRUSTED_VERIFIED, "demonstration_custody"].
   - also: `apps/desktop/src-tauri/core/src/governed_turn_ipc.rs:226-252; tools/test_renderer_broker_schemas.py:148-150 (locks the old const)`
@@ -482,26 +415,6 @@ All open. Grouped by kind; within a kind, by path.
   - :50 "NOT required yet on purpose ... Require it ... after one green run on main." Main run 36851213190 (962743a): `Tools · gate self-tests on Windows (python)` success. deferred-enforcement.json:17-18 says deliberately_excluded is "permanently excluded" and temporary ones go in `deferrals` with a date; deferrals is {}.
   - also: `config/deferred-enforcement.json:17`
   - fix: Move the context into `contexts` (Owner's branch-protection edit) or into deferred-enforcement.json `deferrals` with a deferred_until date.
-- **`docs/ARCHITECTURE.md:92`** — Canonical doc says contracts/ is a placeholder with no schemas; it holds six plus a drift gate
-  - Doc (EN :92, AM :161): "`contracts/` is still a placeholder — a README describing intent, no extracted schemas". `ls contracts/` shows 6 *.schema.json + index.json; contracts/README.md: "The source of record for every schema both halves consume"; CLAUDE.md §2 says the same.
-  - also: `contracts/README.md:1-20 and CLAUDE.md §2 repository map`
-  - fix: Delete the bullet in both languages and state that contracts/ is the drift-gated source (tools/check_contracts_single_source.py).
-- **`docs/BRIDGE_SIDECAR_OP_PROTOCOL.md:142`** — 'Ops are reads' is stated in the doc and twice in the sidecar while _OPS registers a write
-  - Doc :142 'Ops are reads. Nothing dispatched here reaches ... the supervisor socket'; its envelope table (:28-30) lists only governance.read. engine_sidecar.py:22 'Ops are READS', :342 'Every op here is a READ' vs :863 'THE ONLY WRITE IN THIS TABLE' and :907 APPROVAL_REQUEST_OP registered.
-  - also: `bridge/engine_sidecar.py:342`
-  - fix: Change the three sentences to 'every op but approval.request is a read; none reaches the execution path' and add the approval.request row to the doc's envelope table.
-- **`docs/DEBIAN_DEPLOYMENT.md:70`** — Debian runbook says the app provisions its own trust on first launch; on POSIX the app refuses and a root installer does it
-  - Doc: "The app now provisions its own trust material on first launch... writes it under the app data directory". provision/src/anchor.rs:1170-1178 returns `ProvisionError::Unsupported` off Windows; posix_install.rs:1-10: "root mints the trust anchor the application may only find"; CLAUDE.md §6 agrees with the code.
-  - also: `apps/desktop/src-tauri/provision/src/posix_install.rs:1-25`
-  - fix: Replace the paragraph with the POSIX reality: brops_install_anchor run as root (deb postinst) mints the anchor and the app only verifies it.
-- **`docs/OWNER_ACTION_REQUIRED.md:931`** — §2c says all five O-items wait on Owner acts 'with credentials you hold'; §0 of the same page and the inventory say the opposite
-  - L931 'all five are waiting on you'; L953 O-4 'the shipped registry grants the type to nobody'; L954 O-5 'Mint the evidence-floor anchor offline'; L961 'What a Builder can still do here is nothing'. But L9 'Custody needs nothing from you, ever', and PHASE_10 L26 'registry half is done', L42 'wiring and packaging'.
-  - also: `docs/PHASE_10_PRODUCTION_ITEMS.md:23-50 and docs/SECURITY_MODEL.md:355-408`
-  - fix: Rewrite the §2c table from PHASE_10 §0 (O-2 installer step, O-3 Wave 3b, O-4 a shipped caller of mint_control_room_command, O-5 a design decision) and delete the 'credentials you hold' sentence.
-- **`docs/design/CONTRACTS_DEDUPE_PLAN.md:55`** — Dedupe plan says no approval schema exists and contracts/ holds no schemas; both are false and contradict T-021_SCHEMA_AUDIT.md
-  - Line 55 '`approval` does not exist... nowhere in the tree'; line 24 'holds no schemas at all'; line 146 'No new `approval` schema'. contracts/ holds 6 schemas including approval-request.schema.json. Line 108 'five schemas' (index.json has 6), line 116 'Seventeen tests' (25), line 19 '20 schemas' (21).
-  - also: `docs/design/T-021_SCHEMA_AUDIT.md:4 (and contracts/README.md:50 repeats 'There is no approval schema')`
-  - fix: Update sections 1, 3, 5-M2 and 6 (and contracts/README.md) to the six-schema state, and recount the schema and test numbers.
 - **`docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md:309`** — Matrix (and its ACL rows) say the evidence-head floor is a brops-signer-owned DB; in code the supervisor owns it and the signer opens no SQLite
   - Line 309 'Signer-owned durable `governed_evidence_head_floor` (0700/0600)'; NM-EVID-12 and NM-ACL-13 deny access to 'the `brops-signer`... floor DB'. The table is in engine/runtime/supervisor_ledger.sql:168, CAS in governed_supervisor_ledger.py:784; isolated_signer.py has 0 sqlite references. FLOOR_WRITER design 0.3 raised this 2026-08-15; still unresolved.
   - also: `engine/runtime/supervisor_ledger.sql:168 (also apps/desktop/src-tauri/core/src/supervisor_ledger.rs:20 says 'signer-owned')`
@@ -518,14 +431,6 @@ All open. Grouped by kind; within a kind, by path.
   - §7 :3354-3356 'durable brops-signer-owned floor DB', :3423 sidecar 'cannot read or write this brops-signer 0700/0600 DB'. §5 v2(c) :2806-2808: recording a completion 'drives the evidence-head ... floor in the same transaction'. Code: table in supervisor_ledger.sql:168; isolated_signer.py has no sqlite.
   - also: `engine/runtime/governed_supervisor_ledger.py:784 (_evidence_floor_cas); engine/runtime/supervisor_ledger.sql:168`
   - fix: Amend §7, §2.3, §3 row 8, §6.1 step 11 and Appendix B to say which principal actually owns and enforces the floor, or record the supervisor-side floor as an open deviation from the signer-owned design.
-- **`docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:7`** — Audit request asserts rev-30 is 'Architect DESIGN GREEN'; the addendum and the state mirror say no Architect audit of rev-30 ever happened
-  - Request: 'rev-30 design addendum (..., Architect DESIGN GREEN, on main)' and 'rev-30 DESIGN-GREEN gate (already passed ...)'. Addendum line 3-6: 'OWNER-APPROVED 2026-08-10 — rev-30, by the Owner, NOT by an Architect audit ... no Architect re-audit of rev-30 has taken place'. current_state: CURRENT_DESIGN_GATE=OWNER_APPROVED_NOT_ARCHITECT_AUDITED.
-  - also: `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:3 ; config/current_state.json status_tokens.CURRENT_DESIGN_GATE`
-  - fix: Change the request's header and line 7 to 'Owner-approved, not Architect-audited' so a code auditor is not told the design gate was independently passed.
-- **`docs/design/WINDOWS_BROKER_DESIGN.md:214`** — Windows design's principal topology and pipe allowlists contradict the impl plan, the rev-28+ addendum and the shipped predicate
-  - Design: 'Eight Linux principals', challenge pipe allowlist = BropsDesktopUI, supervisor pipe = BropsSidecar only, launcher = 'NT SERVICE\BropsLauncher'. Plan §0.W.4: challenge-authority 'broker only'; launcher 'NOT a runtime SID'; seven SIDs. Code: Pipe::ChallengeAuthority => &[&sids.broker].
-  - also: `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:60 ; apps/desktop/src-tauri/core/src/windows_broker.rs (authorize_pipe_peer, verify_distinct_principals 'seven runtime service SIDs')`
-  - fix: Rewrite WINDOWS_BROKER_DESIGN §1/§2.1/§7.1/§9 to the nine-role / seven-service-SID broker topology, or banner it as superseded by the impl plan.
 - **`docs/roadmap/phase-1.md:47`** — Phase 1 Backend row says slice 2 (Provider::GovernedEngine) is NOT yet implemented; its own DoD and the code say it shipped
   - phase-1.md:47 'Rust (**slice 2, NOT yet implemented**): add `Provider::GovernedEngine` in `ai.rs`'. phase-1.md:102 '[x] Opt-in `Provider::GovernedEngine` ... **transport shipped** (PR #8, slice 2)'. apps/desktop/src-tauri/src/ai.rs:341 'GovernedEngine { python: String, sidecar: String }'.
   - also: `docs/roadmap/phase-1.md:102 ; apps/desktop/src-tauri/src/ai.rs:341`
@@ -546,14 +451,6 @@ All open. Grouped by kind; within a kind, by path.
   - Docstring: "callers that grant a conductor exemption must additionally pass verify_conductor_session_token and audit-log the exemption". Lines 338-341 (delegation) and 361-365 (contract-free bootstrap read) check only is_conductor(state). grep: the token is verified only at bro_completion.py:1322 (Stop).
   - also: `engine/runtime/bro_policy.py:338`
   - fix: Call verify_conductor_session_token (and audit-log) in authorize_classified_action before the delegation and bootstrap exemptions, or correct the docstring and O-3 text to say the token gates Stop only.
-- **`engine/tests/test_live_provisioning_anchor.py:111`** — Three tests ERROR on an engine-only tree, which _prerequisites.py says must never happen
-  - Opens apps/desktop/.../tcb.rs and main.rs with no `requires(...)`. Ran on a copy of engine/ alone: `FAILED (errors=3)`, FileNotFoundError. _prerequisites.py:13-15: "SKIPS with a reason ... Never an error". Line 25-26 also spells REPO_ROOT/engine, the form test_live_tcb_pin_manifest.py:29-33 calls a defect.
-  - also: `engine/tests/_prerequisites.py:13`
-  - fix: Gate the three Rust-reading tests with a _prerequisites Prerequisite and derive PROVISION/LIVE_DIR from the engine root as the sibling files do.
-- **`engine/tests/test_npm_audit_filter.py:31`** — Two modules fail to LOAD on an engine-only tree instead of skipping by name
-  - Module scope exec of REPO_ROOT/.github/supply-chain/npm_audit_filter.py; test_ladder_pull_evidence.py:48 imports from bridge/. On a copy of engine/ alone both gave `ImportError: Failed to import test module` (FileNotFoundError / No module named 'governed_turn_result_bridge'). BRIDGE_SIDECAR prerequisite exists but is unused here.
-  - also: `engine/tests/test_ladder_pull_evidence.py:48`
-  - fix: Move the out-of-tree imports behind a _prerequisites.require() in setUpModule/setUp so the modules skip (or fail under CI) with a named reason.
 - **`tools/check_capabilities.py:72`** — The six 'INTENTIONALLY_UNGATED' commands are not ungated: Tauri rejects them, so their UI callers can never reach them
   - Checker :60 and build.rs:4-6 say a command absent from the manifest is 'webview-invokable with NO permission entry'. tauri-2.11.5 webview/mod.rs:1823 rejects when `has_app_acl_manifest && invoke.acl.is_none()`. default.json has no grant for them; desktop.ts:353-390,483 invoke them. Source-read, not run.
   - also: `apps/desktop/src-tauri/build.rs:4 ; apps/desktop/src-tauri/src/lib.rs:417 ; apps/desktop/src/services/desktop.ts:353 ; prior record: apps/desktop/AUDIT/2026-08-06-independent-audit.md:2202`
@@ -585,30 +482,6 @@ All open. Grouped by kind; within a kind, by path.
   - :313 shape '{task_id, task_class, rationale, protected_scope[]}'; :314 'result non-null iff ok=true and receipt.verified=true'. The schema requires system, history, request; bridge-result.schema.json:4 says 'NEVER a self-asserted `verified` boolean' and :60 'There is no `verified` field'.
   - also: `bridge/contracts/bridge-result.schema.json:4; bridge/contracts/task-request.schema.json:8`
   - fix: Replace both Shape cells with the current required field sets and drop the receipt.verified rule in favour of 'desktop verifies the signature'.
-- **`OWNERS.md:17`** — Three canonical files still say refusal 1 returns Some(...) 'unconditionally'; the code measures five inputs and can return None
-  - OWNERS.md:17, START_HERE.md:43-44 and MASTER_EXECUTION_ROADMAP.md:59-60 say 'returning `Some(...)` unconditionally'. commands.rs:1376-1388: `if missing.is_empty() { return None; }`. README.md:155-156: 'Saying "unconditional" now describes an older tree — and several canonical documents still do.'
-  - also: `START_HERE.md:43 ; MASTER_EXECUTION_ROADMAP.md:59 ; apps/desktop/src-tauri/src/commands.rs:1376`
-  - fix: Use CLAUDE.md §6's wording ('while any of its five compile-time inputs is absent') in all three files.
-- **`README.md:104`** — README says the governed chain is "proven end to end" without saying the execution hop is a hashing fixture
-  - README:104 "The governed chain is proven end to end on Linux and on Windows". Kits install proof_executor (run_live_turn.sh:40, run_ladder_turn.sh:126), which SHA-256s fds 3/4/5. Design s10 (:239): "no model is called, and no real-execution executor exists in the tree". README never says so.
-  - also: `docs/design/DEBIAN_INSTALL_PROVISIONING.md:239`
-  - fix: Qualify README:91 and :104 with the sentence design s10 already carries: the proven chain executes a fixture that hashes its inputs, not a model.
-- **`README.md:327`** — README states the same counts twice with different values, and several match nothing in the tree
-  - Negative matrix table :327-329 says 150/54/38; alt :272 and config/negative-matrix.json say 155/52/35 (recounted). :182 '40 check_*.py' vs :290 '43' (ls: 43). :184 '21 jobs' vs :293 '22' (YAML: 22). :294 '34' required vs :184 '35' (config: 35). :291 '62 — 48 check · 14 tool' vs 63 = 43 + 20. :272 alt '2315 engine tests' vs :287 '2437'.
-  - also: `TASKS.md:29 (T-062 row: '150 / 54 / 38') ; config/negative-matrix.json ; config/control-invocation.json`
-  - fix: Correct the six figures and add the tree block, the matrix table and the alt texts to `cited_in` in config/counted-claims.json so the gate recomputes them.
-- **`README.md:352`** — '31 pull requests, 121 files, 10,599 lines merged since the audited head' is about half of what the printed command returns today
-  - README.md:352-353 shows the commands with '# 31' and '121 files changed, 10599 insertions'. Run today at HEAD 962743a they print 59 and '167 files changed, 20013 insertions(+), 2093 deletions(-)'. PROJECT_STATE.md:59-61 states it as present tense: 'have merged since ... #253–#284'.
-  - also: `PROJECT_STATE.md:59 ; NEXT_CHAT.md:79`
-  - fix: Re-measure `75fca65..main` and declare the three figures in config/counted-claims.json with a derive command so check_doc_claims recomputes them.
-- **`START_HERE.md:59`** — The onboarding page says two audits have run and the second was never re-run; ten rounds are on file
-  - START_HERE.md:59-63 'Two independent audits have run. The second ... has never been re-run on any later head.' apps/desktop/AUDIT/ holds ten reports up to 2026-09-19-tenth-audit-75fca65.md; CLAUDE.md §6 says 'TEN rounds'. Line 9 still gives main = `0a0be37` (2026-08-14) and 'Open pull requests: 1'.
-  - also: `CLAUDE.md:117 (§6, 'TEN rounds')`
-  - fix: Replace the 'Where things stand' block with a pointer to NEXT_CHAT.md's banner and AUDIT_LEDGER.md instead of a second dated narrative.
-- **`START_HERE.md:59`** — START_HERE says only two independent audits ran and the second was never re-run; the ledger records ten
-  - START_HERE.md:59-63: "Two independent audits have run. The second — 2026-08-06-remediation-audit.md ... has never been re-run on any later head. Nothing merged since is independently confirmed." AUDIT_LEDGER.md:11-12 names the TENTH audit at 75fca65; 8 later audit files exist in apps/desktop/AUDIT/.
-  - also: `apps/desktop/CHANGELOG.md:16 ("RED — AUDIT/2026-08-06-remediation-audit.md, never re-run"); START_HERE.md:154 (Armenian: "three audit rounds")`
-  - fix: Rewrite the START_HERE block and CHANGELOG standing-correction 2 to point at the ledger's current assessment (tenth round) instead of naming the 2026-08-06 report as the standing, never-re-run verdict.
 - **`TASKS.md:34`** — T-021 row says the approval-request half 'exists nowhere'; it is built on engine, sidecar and desktop
   - TASKS.md:34 'the request half exists nowhere', Blocked. But engine/runtime/bro_approval_requests.py and engine/schemas/approval-request.schema.json exist (c7a0450 #255, 12d6efb #254), engine_sidecar._OPS serves approval.request, and governance.rs:683 calls governed_sidecar_approval_request.
   - also: `docs/ARCHITECTURE.md:84 ('no approval-request schema in engine/schemas/, no desktop->engine command'); docs/OWNER_ACTION_REQUIRED.md:881 ('21 schemas; none is one' - there are 22 and one is)`
@@ -617,18 +490,6 @@ All open. Grouped by kind; within a kind, by path.
   - TASKS.md:34 'the request half exists nowhere ... \| Blocked'. TASKS.md:22 'T-021d PHASE 2 CLOSED, 11/11', :25 'T-021a The approval-request contract' (#254-#257). contracts/approval-request.schema.json, engine/schemas/approval-request.schema.json and core/src/approval_request.rs exist.
   - also: `docs/archive/TASKS_ARCHIVE_2026-08.md:2646`
   - fix: Rewrite or retire the T-021 row so it says what is still open after #254-#257, instead of the 2026-08-15 wording.
-- **`apps/desktop/README.md:45`** — README says AI uses the local claude CLI by default with Anthropic/Ollama as fallbacks; the code refuses by default and has no fallback
-  - README:17 'Anthropic API key and Ollama are optional fallbacks', :45 'AI uses the local claude binary by default'. ai.rs:446-456: with nothing forced and neither allow flag set, resolve_provider returns Err('no AI provider configured: set BROPS_AI_PROVIDER=governed-engine ... or BROPS_ALLOW_UNGOVERNED=1').
-  - also: `apps/desktop/src-tauri/src/ai.rs:446-456; apps/desktop/SECURITY.md:11 ('no silent governed→ungoverned fallback')`
-  - fix: State that the shipped binary refuses to generate unless BROPS_ALLOW_UNGOVERNED=1 (or the dev-ungoverned feature build) is in effect, and drop the word 'fallbacks'.
-- **`apps/desktop/SECURITY.md:32`** — SECURITY.md describes the claude subprocess as tool-free only; agent mode grants Bash/Edit/Write/Task and is not mentioned
-  - SECURITY.md:32 'Chat is a pure text completion: launched with --tools "" ... cannot read/write files or run commands'. ai.rs:1693 tool_args(agent) pushes 'Read Edit Write Grep Glob Bash Task' + acceptEdits whenever BROPS_PROJECT_DIR is a directory (ai.rs:983); lib.rs:310-326 sets it in dev-ungoverned builds.
-  - also: `apps/desktop/src-tauri/src/ai.rs:1690-1716; apps/desktop/README.md:49 ('the AI subprocess runs tool-free')`
-  - fix: Add an agent-mode section to SECURITY.md stating the grant (file tools, Bash, Task, acceptEdits, cwd = the project repo) and its prefix-match deny-list bounds, and qualify the 'tool-free' sentence in both files as the no-BROPS_PROJECT_DIR case.
-- **`apps/desktop/SECURITY.md:32`** — SECURITY.md says the CLI is launched with `--setting-sources project`; the code passes an empty string
-  - SECURITY.md:32 '`--setting-sources project` (no user hooks/plugins/MCP)'. ai.rs:1753-1758: 'a.push("--setting-sources"); // "" → load NO setting sources: excludes user AND project hooks' then a.push(String::new()). CHANGELOG.md:70 records the switch on 2026-08-03; SECURITY.md was last updated 2026-08-14.
-  - also: `apps/desktop/src-tauri/src/ai.rs:1753-1758; apps/desktop/CHANGELOG.md:70`
-  - fix: Change the flag in SECURITY.md to `--setting-sources ""` (no user or project settings).
 - **`apps/desktop/src-tauri/audit-signer/Cargo.toml:30`** — Cargo.toml says a test enforces that the relay holds no key; that test does not exist
   - Cargo.toml:29-30 'The relay never constructs a key type; that is enforced by tests/relay_contract.rs::the_relay_binary_links_no_signing_key'. grep over the repo finds that name only in this comment. src/bin/relay.rs:9-10 likewise credits relay_contract.rs with running the compiled binary; it never does.
   - also: `apps/desktop/src-tauri/audit-signer/src/bin/relay.rs:9`
@@ -701,78 +562,10 @@ All open. Grouped by kind; within a kind, by path.
   - L78-88 and L155 compute `reported`, `identityReason`, `prefsPersisted`, `sysPill`; none is used in the JSX. L451/454/455 render `<b>MENQ OS</b>` and `v0.9`; L445 still uses `data?.ready ? 'live' : 'off'`. tauri.conf.json says BroPS 0.1.0. No test imports settingsIdentity.
   - also: `apps/desktop/src/features/settingsIdentity.ts:4 and Settings.strings.ts:148 (both say the literals were replaced)`
   - fix: Render `reported.name`/`reported.version` (or the unreported note), `sysPill` and the persistence note in the System and Appearance panels, and add a test that fails if the literals come back.
-- **`bridge/README.md:59`** — README says a missing allow flag falls back to the default provider; the code returns a hard error
-  - README: "Without the allow flag the desktop falls back to its default provider" and legacy paths "byte-for-byte unchanged". ai.rs:420-425: `Err("BROPS_AI_PROVIDER=governed-engine requires BROPS_ALLOW_GOVERNED_ENGINE=1")`; ungoverned providers now need BROPS_ALLOW_UNGOVERNED=1.
-  - also: `apps/desktop/src-tauri/src/ai.rs:396-456; bridge/DESIGN.md:43 (`BROPS_AI_PROVIDER=engine`, a value the resolver rejects as unknown)`
-  - fix: Replace the Activate section with resolve_provider's actual rules (no fallback, ungoverned is the opt-in) and fix the provider name in DESIGN.md.
-- **`bridge/governed_turn_submit.py:123`** — "NOT WIRED" docstrings still state the two blockers that were retracted on 2026-09-20
-  - Says SubmitTransport is a seam "no production code implements" and "nothing calls the helper". Tree: `impl SubmitTransport for GovernedSidecar` core/src/governed_sidecar.rs:792; ladder_executor.rs:389 calls governed_turn_submit_prepared; broker/src/main.rs:554 builds the transport.
-  - also: `bridge/engine_sidecar.py:52-56; bridge/governed_turn_result_bridge.py:131-137; config/reachability-declarations.json (RETRACTED 2026-09-20 entry)`
-  - fix: Rewrite the three docstrings to the retraction's wording: wired through LadderChain, but unreachable while $BROPS_BROKER_CONFIG is absent and the other refusals hold.
 - **`config/current_state.json:107`** — next_action describes PR #219 as frozen and unapproved and the matrix baseline as 182; #219 merged and the baseline is 35
   - "T-020 (#219) is measured and frozen ... NOT approved ... the B/C list lives only in #219's body"; "unreviewed baseline is 182, down from 189". gh: #219 MERGED 2026-09-18 (2a50081). negative-matrix.json unreviewed_baseline has 35 entries. Line 124 gives a different next action (Owner reads design §10).
   - also: `config/current_state.json:124`
   - fix: Replace next_action with the one live instruction that next_action_by_carrier.current carries and move the T-020/T-059/T-060/T-061/T-062 narrative to docs/archive.
-- **`contracts/README.md:50`** — README says five cross-half schemas and that no approval schema or approval path exists; there are six and the path is built
-  - README:16 "The five schemas that cross the wall"; :50-52 "There is no `approval` schema, anywhere in the tree. The approval path across the wall exists on neither side". index.json lists six incl. approval-request; engine/runtime/bro_approval_requests.py and core/src/approval_request.rs exist. index.json:24 also says "Four of the five".
-  - also: `contracts/index.json:78`
-  - fix: List approval-request as the sixth contract in the README and index comment, and replace the 'exists on neither side' paragraph with the T-021a-d state.
-- **`contracts/index.json:83`** — approval-request is declared to have no Rust mirror and no desktop command; both exist
-  - index.json:83-85 `rust_mirror: null` + "the desktop command that sends this document does not exist ... a mirror of a message nothing sends". Tree: core/src/approval_request.rs (APPROVAL_REQUEST_PROTOCOL), ai.rs:2922 governed_sidecar_approval_request, desktop.ts:373 invoke('request_engine_approval').
-  - also: `apps/desktop/src-tauri/core/src/approval_request.rs:1`
-  - fix: Set rust_mirror to apps/desktop/src-tauri/core/src/approval_request.rs, rewrite the note, and declare the mirror in check_schema_mirrors.py MIRRORS as the note itself promises.
-- **`contracts/index.json:85`** — Contract index says no desktop command sends approval-request; the Rust builder and sender exist
-  - rust_mirror_note: "NONE yet, and deliberately: the desktop command that sends this document does not exist ... A Rust mirror added here would be a mirror of a message nothing sends." But apps/desktop/src-tauri/core/src/approval_request.rs builds it (T-021c) and ai.rs:2922 governed_sidecar_approval_request sends it.
-  - also: `apps/desktop/src-tauri/core/src/approval_request.rs:1-40; apps/desktop/src-tauri/src/ai.rs:2908-2922`
-  - fix: Set rust_mirror to core/src/approval_request.rs, declare it in check_schema_mirrors.py's table as the note promises, and rewrite the note.
-- **`docs/ARCHITECTURE.md:82`** — Canonical doc says the approval-request path does not exist; it is built on both sides
-  - Doc: "registers exactly four Tauri commands" (:55), "no `approval-request` schema in `engine/schemas/`, no desktop→engine command" (:84). Tree: engine/schemas/approval-request.schema.json exists; governance.rs:655 `request_engine_approval`, registered lib.rs:395; sidecar `_OPS` has `approval.request`.
-  - also: `apps/desktop/src-tauri/src/governance.rs:77-90 (module doc repeats the same false claim above its own line-655 command)`
-  - fix: Rewrite the paragraph and the 'four commands' sentence to describe the request_engine_approval path as it exists, and fix the governance.rs module doc in the same change.
-- **`docs/BRIDGE_SIDECAR_OP_PROTOCOL.md:142`** — Protocol doc says every op is a read; the sidecar now serves a write op and two protocol-keyed frames it does not list
-  - Doc: "Ops are reads." (:142), "`governance.read` is the first registered op" (:4), three-row envelope table. bridge/engine_sidecar.py:905-908 `_OPS` also has `APPROVAL_REQUEST_OP`; :368 "the one WRITE this dispatch serves". `BROPS_APPROVAL_REQUEST_LOG_DIR` appears in no docs/*.md.
-  - also: `bridge/engine_sidecar.py:342 ("Every op here is a READ") vs :368 in the same file`
-  - fix: Add approval.request, the governed-turn-submit/output-read frames and BROPS_APPROVAL_REQUEST_LOG_DIR to the doc, and fix the sidecar comment at :342.
-- **`docs/EVIDENCE_INDEX.md:66`** — Reviewer-facing index pastes gate output and counts that are all out of date
-  - Doc: "29 implemented, 12 blocked, 201 unreviewed"; gate today prints "155 implemented, 52 blocked, 35 unreviewed". Doc: spec "6/1/16/38", today "7/1/18/37". Doc: "33 contexts" (:89), config has 35. Doc: "Nine rounds" (:31); AUDIT_LEDGER.md:11-12 names the TENTH. ":160 201 of 242... nobody has looked".
-  - also: `docs/EVIDENCE_INDEX.md:109 cites SECURITY_MODEL.md "§166–175" for the three refusals; those lines now describe the Floor Writer`
-  - fix: Re-run the four gates and re-paste, update the round to the tenth, and replace the line-number citation with a section anchor.
-- **`docs/OPERATOR_GUIDE.md:47`** — Install section describes the vendored release workflow GitHub never runs; the live one contradicts its signing claims
-  - Doc cites `apps/desktop/.github/workflows/release.yml` and says installers "are **unsigned**", Authenticode "PLANNED", Windows+Linux only. tools/check_action_pins.py:41: "GitHub never runs those". Live .github/workflows/release.yml: "cannot produce a release artifact unless the Owner's signing material is present"; builds macOS too.
-  - also: `.github/workflows/release.yml:1-21,73-77,113-135`
-  - fix: Point §2.1 at the root release.yml and rewrite the signing note and the §11 'Installers are unsigned' bullet from what that workflow does.
-- **`docs/SECURITY_MODEL.md:19`** — Trust-boundary section still says the broker's production root is compiled in; since T-131/T-140 the broker reads it from the floor-pinned anchor file
-  - L19 'TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)'; L28 'The production root pin is compiled in'. broker/src/tcb.rs:4 'The Linux broker no longer pins a compiled-in root'. OWNER_ACTION L333-335 quotes tcb.rs '[a phrase gate-refused since #314]', text no longer in that file.
-  - also: `docs/OWNER_ACTION_REQUIRED.md:331-338`
-  - fix: Redraw §1.1 around the floor-pinned anchor file and INSTALL_MINTED_CUSTODY_ACCEPTED, and mark the OWNER_ACTION 'What landed' paragraph as superseded by its own §0.
-- **`docs/SECURITY_MODEL.md:239`** — 'Windows-only today' POSIX bullet describes a mechanism the code replaced: the refusal is no longer seal(), an existing anchor is used, and a root installer binary exists
-  - L239-245 'anchor::seal returns ProvisionError::Unsupported on POSIX ... first-launch provisioning aborts startup ... that branch has never executed'. anchor.rs:256-260 says that 'used to' happen; preprovision_refusal now refuses, 'An anchor already in place IS used'; provision/src/bin/brops_install_anchor.rs exists.
-  - also: `docs/OWNER_ACTION_REQUIRED.md:510-513`
-  - fix: Replace both bullets with the current POSIX posture: the app never creates the anchor, brops_install_anchor run as root does, and first launch refuses only when that step did not run.
-- **`docs/TROUBLESHOOTING.md:53`** — Provider fix-it advice names a value the code rejects and omits the flag every ungoverned provider requires
-  - L54-55 'Fix it to `claude` / `anthropic` / `ollama`'. src-tauri/src/ai.rs:427 accepts only "claude-cli" \| "anthropic" \| "ollama" and L428-431 errors "requires BROPS_ALLOW_UNGOVERNED=1 (development only)"; with nothing set, L456 'no AI provider configured'. Neither guide mentions that flag.
-  - also: `docs/USER_GUIDE.md:46-54`
-  - fix: Change the value to `claude-cli`, document BROPS_ALLOW_UNGOVERNED=1 as required and development-only, and stop USER_GUIDE recommending ungoverned providers 'for everyday use' without it.
-- **`docs/USER_GUIDE.md:169`** — User guide describes screens that changed: Research and Library are wired, Decisions has no create control, automations do run on a scheduler, and the Bridge nav item is missing
-  - L169 'Research and Library currently show a plain "Not yet connected" placeholder' but Research.tsx:290 desktop.listResearch(), Library.tsx:176 listLibrary(). L119 'record decisions' but create_decision has no frontend caller. L127 'not yet a background scheduler' but lib.rs:360-378 runs run_due every 60s.
-  - also: `docs/TROUBLESHOOTING.md:134-136 and docs/REACHABILITY_GATE.md:94`
-  - fix: Re-walk nav.ts and each page against the guide and correct §1, §9, §10 and §14, plus TROUBLESHOOTING §6.
-- **`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md:3`** — Floor-writer design still says PROPOSAL / nothing implemented, but the service is in the tree and merged
-  - Line 3: 'Status: PROPOSAL... No product code lands under this document'; line 47: 'Nothing here was implemented'. Tree has engine/runtime/floor_writer.py (MAX_FLOOR_FRAME_BYTES=4096, brops.floor-writer.v1), run_floor_writer.py, provision_floor_writer.py; NEXT_CHAT.md:16 says FW-1 merged as #219.
-  - also: `engine/runtime/floor_writer.py:92`
-  - fix: Rewrite the status block to say FW-1 is built and merged but not Architect-approved, and name which slices (FW-2, FW-3) remain a proposal.
-- **`docs/design/PHASE2_GOVERN_AI_SURFACES_DESIGN.md:3`** — Phase-2 AI-surface design says NOT IMPLEMENTED and lists three surfaces as ungoverned; the code already routes all four through governed_turn
-  - Line 3 'NOT IMPLEMENTED'; lines 19-21 mark stream_run_step/stream_ask/reply_in_conversation 'NO — direct generic provider'. commands.rs:2036, 2234, 2452 call provider_is_governed(); ai-surface-policy.json lists calls [governed_turn, ...] for all four. Cited lines 834/1075/1273/1305 are now 1718/1874/2215/2432.
-  - also: `apps/desktop/src-tauri/ai-surface-policy.json`
-  - fix: Mark sections 3.1-3.3 as built, leave only 3.4 (removing the dev fallthrough and reclassifying to governed) as open, and drop the dead line numbers.
-- **`docs/design/PRODUCTION_HALF_DESIGN.md:1147`** — Production-half status roll-up marks bundles, flow_runs and scheduler_ticks not_implemented, and section 5.5 forbids implementing section 5, while the same document records them as built
-  - Lines 1147-1153 `not_implemented`; line 3 'no schema migration is authored'; line 1091 '§5... may not be implemented'. But core/schema/0025_agent_bundles.sql creates agent_bundles, flow_runs, scheduler_ticks; repo.rs:3007 claim_and_run; the line 936 correction says run_due 'enqueues and dispatches'. Line 1038 still says the tick loses the ability to act.
-  - also: `apps/desktop/src-tauri/core/schema/0025_agent_bundles.sql:19`
-  - fix: Regenerate the section 6 roll-up and the header from the tree, and rewrite 5.4(1) and the T-022 conflict box to match the T-058 correction.
-- **`docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md:7`** — The 2026-08-14 'correction' says PR #31 was superseded and closed; PR #31 is MERGED and its squash commit is on main
-  - Doc (lines 7, 34, 80): '#31 — was superseded and closed'. `gh pr view 31`: state MERGED, mergedAt 2026-07-27. `git merge-base --is-ancestor 9c1b901 main` succeeds; 9c1b901 = 'Wave 3b-1: isolated-signer boundary ... (#31)'. The sibling audit request says 'merged via PR #31'.
-  - also: `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:4 ; apps/desktop/SECURITY.md:15 (repeats 'both were superseded')`
-  - fix: Replace 'superseded and closed' with 'merged 2026-07-27 as 9c1b901' in all three places (and in SECURITY.md).
 - **`docs/roadmap/phase-1.md:30`** — Scope paragraph says the desktop output-pull hop is still open and rust_symbols is empty; both are false
   - phase-1.md:30-33 'What is STILL open is the DESKTOP hop ... The `rust_symbols` section of `config/reachability-declarations.json` is now empty'. phase-1.md:104 'the §4.10(f) pull's DESKTOP hop **exists**'. reachability-declarations.json rust_symbols has 5 entries (pull_output, prepare_governed_turn_v1b, ... reference_of).
   - also: `docs/roadmap/phase-1.md:104 and :114 ; config/reachability-declarations.json (rust_symbols)`
@@ -781,25 +574,10 @@ All open. Grouped by kind; within a kind, by path.
   - phase-6.md:79 'declared free-text register of exactly eight leaves ... T-030's open question is answered'. agentsDispatch.boundary.test.ts:267 'nineteen leaves, not eight', :472 expect(CREDENTIAL_CAPABLE.size).toBe(19). TASKS.md:37 T-030 'register at 19 leaves, not 8' status Todo.
   - also: `apps/desktop/src/services/agentsDispatch.boundary.test.ts:267 ; TASKS.md:37 ; docs/roadmap/phase-9.md:81 (defers to this row)`
   - fix: Rewrite the row to the ninth-audit result (8 unvalidated + 11 pattern-bound = 19 credential-capable leaves, Route 1 open by design) and drop 'T-030's open question is answered'.
-- **`engine/ci/live/ladder_evidence.py:20`** — Docstring promises an invoker_uid check that the code never performs
-  - Header l.20-21: 'the recorder's containment report names a launcher_exit of 0 and an invoker_uid that is the recorder's, not the caller's'. check_containment (l.354-366) checks only protocol, launcher_exit==0 and launcher_gate=='passed'. `grep invoker_uid` hits only l.20; the field exists (governed_recorder.rs:877).
-  - fix: Assert document['invoker_uid'] == uids['recorder'] in check_containment (pass the uids map in), or delete the sentence.
-- **`engine/ci/live/run_live_turn.sh:4`** — Header promises a genuine PRODUCTION trusted_verified; the kit's own green condition is demonstration_custody and says it is not a production claim
-  - L2-10: "LIVE production governed-turn orchestrator ... Assembles ONE genuine production `trusted_verified` ... -> production trust". L728-734: green greps 'demonstration_custody.*bound=true' and prints "NOT a production claim: the root anchor is kit-generated".
-  - also: `engine/ci/live/run_live_turn.sh:728`
-  - fix: Rewrite the header to say the kit demonstrates a chain-bound demonstration_custody turn under a kit-generated root, and drop the words production / trusted_verified from it.
-- **`engine/docs/OPERATOR_RUNBOOK.md:27`** — Runbook still says POSIX provisioning is 'specified, never executed' and happens at first launch
-  - :19-20 'mints the whole set on the user's machine at first launch'; :27 'POSIX (specified, never executed)'; :40 'That branch has never executed'. But posix_install.rs + brops_install_anchor exist, ci.yml:596-601 runs it as root, and tauri.conf.json:51-52 ships it in the .deb.
-  - also: `apps/desktop/src-tauri/provision/src/posix_install.rs:1-10; .github/workflows/ci.yml:596; engine/install/brops_install.sh:44-49`
-  - fix: Update §0.A for POSIX: the root installer (postinst -> brops-install -> brops_install_anchor) mints the anchor at install time, so the signer-ordering note must say 'before install', not 'before first launch'.
 - **`engine/skills/index.json:49`** — All 42 skill index entries carry a stale sha256 and version; nothing reads them
   - I recomputed sha256 for every entries[].path: 42 of 42 mismatch. index says "version": "1.0.0"; all 42 SKILL.md front-matters say `version: 1.1.0`. The index hash for auditing (fbde7413...) equals the blob at e289654 (subtree import); bodies were rewritten in de38cb1. No .py reads `entries`.
   - also: `engine/skills/*/SKILL.md:3 (version: 1.1.0); engine/skills/README.md:5 calls this file the 'canonical 42-skill inventory'`
   - fix: Regenerate entries (version + sha256) from the bodies and add a gate comparing index entries, the skills list and count to the files on disk, or delete the unread entries block.
-- **`engine/tests/test_governed_turn_submit_e2e.py:427`** — "The ladder works and NOTHING RUNS IT" is false today, and the test that declares it cannot notice
-  - Docstring l.22-29: v1b helper "has no caller", "Nor is there a counterparty". But broker/src/ladder_executor.rs:367 calls prepare_governed_turn_v1b in production code, main.rs:259 wires LadderChain, and run_ladder_supervisor.py:553-587 constructs all four services. The test greps only run_supervisor.py.
-  - also: `engine/ci/live/run_ladder_supervisor.py:553; apps/desktop/src-tauri/broker/src/ladder_executor.rs:367; same stale sentence in apps/desktop/src-tauri/core/src/governed_bridge_result.rs:115-133`
-  - fix: Rewrite the module docstring and TheSupervisorIsNotDeployedTests to state what is true (run_supervisor.py stays the §5-only runner; run_ladder_supervisor.py and LadderChain are the counterparty) and rename the class accordingly.
 
 ### test-defect (38)
 
@@ -830,87 +608,6 @@ All open. Grouped by kind; within a kind, by path.
   - Pair is fg `accent-text` on bg `accent` (--menq-*). ui.css:27 paints `.btn--primary { background: var(--brops-accent); color: var(--brops-accent-text) }` = #fff/#04121b on aios --cyan. check_dead_tokens.py:61 lists --menq-color-accent-text as read by nothing. tokens.css:87 records this pair once fell to 3.5:1.
   - also: `apps/desktop/src/components/ui.css:27; apps/desktop/src/theme/tokens.css:86-99`
   - fix: Add brops-accent-text to both palettes and declare the pair against `aios-cyan`, replacing or supplementing the current one.
-- **`bridge/tests/test_governed_output_read_bridge.py:609`** — Bridge tests pin the sidecar's stdout cap and deadline against ai.rs constants that no longer govern the sidecar
-  - Test greps `const MAX_STDOUT_BYTES` in ai.rs; ai.rs:4430 says that one "still bounds the `claude` CLI provider" and the real cap "moved into brops_core::governed_sidecar" (core/src/governed_sidecar.rs:122, SIDECAR_DEADLINE :128). Both tests stay green if the real bound changes.
-  - also: `bridge/tests/test_governed_turn_submit.py:932 (`assertIn("Duration::from_secs(120)", ai.rs)` matches the claude-CLI/HTTP timeouts at ai.rs:2620, 3040, 3072)`
-  - fix: Read MAX_STDOUT_BYTES and SIDECAR_DEADLINE from core/src/governed_sidecar.rs, and correct the `ai.rs::governed_sidecar_call` citations in the three module docstrings.
-- **`bridge/tests/test_sidecar_ops.py:401`** — BROPS_APPROVAL_REQUEST_LOG_DIR leaks between tests, so the 'unprovisioned write' test never runs unprovisioned
-  - os.environ[...] set at :401 and :465 with no cleanup; _CleanEnv (:77) does not pop it. In class order the env at setUp of test_an_unprovisioned_write... was '/tmp/approval-log-*/not-there'. With the unset check in _approval_log deleted in memory: class run 5/5 green, the test alone red.
-  - also: `bridge/engine_sidecar.py:845`
-  - fix: Add engine_sidecar._APPROVAL_LOG_DIR_ENV to the keys _CleanEnv saves and pops, and use self.set_env instead of bare os.environ assignment.
-- **`engine/ci/live/ladder_evidence.py:23`** — Seven of the eight verifier checks have no failing-branch exercise anywhere, despite the claim that the failing branch runs on every run
-  - l.23-28: 'the failing branch is exercised on every run'. The only negative driven (run_ladder_turn.sh:1096-1102) is a tampered system -> check_frame 'governed_refusal'. Only check_pull has a unit test (test_ladder_pull_evidence.py); grep finds no test calling check_manifest/check_envelope/check_output/check_ledger/check_hops/check_containment.
-  - fix: Add unit tests that drive each check with one broken input (bad signature, revoked key, echo mismatch, wrong hop uid, missing ledger row) and require its named reason.
-- **`engine/ci/live/run_live_turn.sh:567`** — Three negatives assert the catch-all reason chain:UpstreamBlocked, so they pass on any chain breakage - the exact defect expect_blocked was written to prevent
-  - L567/697/720 all expect "chain:UpstreamBlocked". broker/src/chain_executor.rs returns TurnReason::UpstreamBlocked on ~40 paths (socket connect L775, spawn L862, read L882...). No honest turn is run after the first negative, so a dead supervisor/signer turns F-08, STORE-CUSTODY and LEASE-BINDING green.
-  - also: `apps/desktop/src-tauri/broker/src/chain_executor.rs:775`
-  - fix: Run an honest positive-control turn after each restore (as the P0 block already does for the recorder) and/or assert a cause-specific marker from the launcher/recorder output rather than the catch-all reason.
-- **`engine/runtime/bro_completion.py:916`** — ServiceFloor posture is selected by an env var nothing sets, and its client branch is run by no test or kit
-  - BRO_EVIDENCE_FLOOR_WRITER appears in code only at bro_completion.py:872; no test, kit, workflow or installer sets it. The service branches (:938-946, :965-972) never execute; the only test is an AST shape check (test_completion_head_binding.py:895-963). The CI proof calls floor_writer.client_* directly.
-  - also: `docs/SECURITY_MODEL.md:165`
-  - fix: Add a test (and a proof step) that sets BRO_EVIDENCE_FLOOR_WRITER and drives validate_evidence_chain through a live Floor Writer, as FLOOR_WRITER_SERVICE_DESIGN.md:425 requires.
-- **`engine/tests/test_backup_restore.py:173`** — Three restore path-safety negatives stay green with the guard they name removed
-  - In-memory mutant, _safe_rel -> identity: only 2 of 13 RestoreTraversalTests fail. backslash (173) and drive-through-verify (265) still pass on 'archived file is missing: s/C:/Windows/evil.txt' because the payload is placed at s/x. _safe_name -> identity: line 244 passes on 'archived file is missing'.
-  - also: `engine/tests/test_backup_restore.py:244 and :265`
-  - fix: Place the payload where the hostile rel/source name resolves and assert the refusal text (e.g. 'invalid archived path', 'invalid source name') instead of bare BackupError.
-- **`engine/tests/test_brops_isolation_prover.py:180`** — The only test of the custody control's PASS path turns a failing control into a skip
-  - `if outcome is not None: self.skipTest("/root is not present on this host")`. Mutant where _control_foreign_dir never returns None for a foreign dir: this test reports skipped, and no other test in the module fails for it (the one red in my run was 'AF_UNIX path too long' from my scratch TMPDIR).
-  - fix: Skip only when os.path.isdir('/root') is false; otherwise assertIsNone(outcome) so a control that stops passing goes red.
-- **`engine/tests/test_brops_socket.py:149`** — test_a_stalled_read_drops_the_connection cannot fail when _serve_one's timeout handler is deleted
-  - It asserts two unrelated substrings of brops_socket.py. 'except (socket.timeout, TimeoutError):' also occurs at runtime/brops_socket.py:133 (recv_exactly_bounded), so replacing the handler at :255 inside _serve_one leaves both assertIn true (verified in memory). Docstring :135 says the loop 'cannot run here'; AF_UNIX exists here.
-  - also: `engine/runtime/brops_socket.py:133 and :255`
-  - fix: Drive _serve_one with a stub conn whose makefile().read raises socket.timeout and assert handle_frame is never called, instead of grepping the source.
-- **`engine/tests/test_challenge_authority_server.py:444`** — 'The bound comes from the shared module' test is a tautology; a local 24-hour budget survives the whole file
-  - It asserts srv.brops_socket.recv_exactly_bounded is brops_socket.recv_exactly_bounded and the same for CONNECTION_BUDGET_S — the same module object on both sides. Mutant 'budget_s: float = 86400.0' in SocketPeerConn.__init__ SURVIVED all 25 tests.
-  - also: `engine/tests/test_isolated_signer_server.py:586`
-  - fix: Construct SocketPeerConn with no budget_s and assert its deadline minus now equals brops_socket.CONNECTION_BUDGET_S (in both server test files).
-- **`engine/tests/test_completion_gate.py:79`** — Three completion-gate denial tests pass with their injected failure removed
-  - Re-ran each with the side_effect replaced by a passing stub: dirty test -> 'missing external BRO_EXECUTION_LEASE_LEDGER'; pending-lease test -> 'missing external BRO_RECOVERY_STORE'; evidence-link test (L106) -> 'missing external BRO_EXECUTION_RECEIPTS'. All use bare assertRaises(CompletionError).
-  - also: `engine/tests/test_completion_gate.py:92`
-  - fix: Assert on each refusal's own message ('repository is dirty', 'pending or ambiguous', 'linkage mismatch') and stub the later gates so only the one under test can refuse.
-- **`engine/tests/test_evidence_chain.py:190`** — The head last_sequence check is tested by nothing: deleting it leaves 365 tests green
-  - In-process mutant removing 'if head.last_sequence != len(event_ids): raise' (bro_evidence.py:166-167) SURVIVED 252 + 113 tests across 11 modules. The test writes final hash 'd'*64 with bare assertRaises, so 'does not end at the signed head' answers for it. A control mutant on the count check was KILLED.
-  - also: `engine/runtime/bro_evidence.py:166`
-  - fix: Write the head with the real final hash and count 4 / last_sequence 9, and assert 'last_sequence disagrees with its own count'.
-- **`engine/tests/test_evidence_chain.py:395`** — The 'evidence store inside the repository' test never reaches the inside-repository refusal
-  - Ran the test body and printed the exception: 'no evidence head floor at .../repo/store/head-floor: ... not provisioned'. An empty dir OUTSIDE the fixture repo gives the same message. _external_dir compares against module ROOT, not the `root` argument, so tmp/repo/store is accepted as external.
-  - also: `engine/runtime/bro_completion.py:193`
-  - fix: Assert on 'must be outside the repository' with a provisioned store placed under the real compared root, and decide whether _external_dir should compare against the `root` it is called for.
-- **`engine/tests/test_governed_chain_e2e.py:464`** — The F-02 'caller cannot name the terminal handles' test passes without the smuggled field
-  - Probe: the same request WITHOUT the smuggled handle is refused identically (malformed_state, unexpected evidence_* fields), and a clean request is refused too because the test never sets run_evidence[attempt]. Only assertFalse(reply['ok']); no positive control. Three subTests prove nothing about record/lease/receipt handles.
-  - also: `engine/runtime/governed_supervisor_server.py:753`
-  - fix: Set a recorder chain, send only the three legal fields plus the one smuggled key, assert the error names that key, and add a positive control that the clean request completes.
-- **`engine/tests/test_governed_chain_e2e.py:601`** — The write-once completion test is refused for a stale field shape and never reaches the write-once check
-  - Probe run of the test's exact request: reason 'malformed_state', "unexpected completion field(s) ['evidence_event_count','evidence_final_event_hash','evidence_head_sequence','evidence_last_sequence']". Only assertFalse(refusal['ok']). With clean fields plus a matching chain the real control answers 'completion_conflict'.
-  - also: `engine/runtime/governed_supervisor_server.py:744`
-  - fix: Drop the four evidence_* keys, give the attempt a recorder chain matching the new bytes, and assert reason == 'completion_conflict'.
-- **`engine/tests/test_governed_supervisor_server.py:1031`** — The attest-run "missing signing seam is a config fault" test passes with the seam check deleted
-  - It attests run "r"/attempt "a" on an empty ledger and asserts only ok==False and no "attestation". Probed: the same request WITH the seam injected returns ok:False reason no_terminal_run_state, satisfying both assertions. So removing governed_supervisor_server.py:855 leaves it green.
-  - also: `engine/runtime/governed_supervisor_server.py:855`
-  - fix: Drive a real COMPLETED attempt first and assert the reply's error names the missing sign_attestation seam.
-- **`engine/tests/test_negative_matrix.py:784`** — `unittest.main()` sits mid-file, so a direct run silently omits three test classes
-  - `if __name__ == "__main__": unittest.main()` is at line 784; NegativeMatrixConcurrencyTests, NegativeMatrixTerminalTests and NegativeMatrixFrameTests are defined after it (793-1076). Measured: `python3 tests/test_negative_matrix.py` -> Ran 35 tests OK; via unittest module -> Ran 46.
-  - fix: Move the `if __name__ == "__main__"` block to the end of the file.
-- **`engine/tests/test_prerequisite_guard.py:93`** — The sibling-tree probe test exercises a probe it builds itself, never the real ones; docstring claims otherwise
-  - L110 'probe = Prerequisite(name, path.is_file, "fixture")' uses only .name of DESKTOP_TCB_SOURCE/BRIDGE_SIDECAR. With both real _probe set to 'lambda: True' the test stayed green. L9-10 says 'the three prerequisites are asserted to be real facts about this checkout'; _prerequisites.py defines five.
-  - also: `engine/tests/_prerequisites.py:110`
-  - fix: Make the probes take a repo root (or patch _prerequisites.REPO_ROOT to the temp tree) and call the real DESKTOP_*/BRIDGE_SIDECAR.present() both ways; correct the count in the docstring.
-- **`engine/tests/test_reconciler.py:213`** — test_recovery_rejects_an_invalid_lease_duration passes with the lease-duration check removed
-  - Only assertRaises(OrchestrationRuntimeError) with lease_seconds=0; recover_task raises the same type for the unprovable owner actor regardless. Replaced V1.recover_task in memory with a version lacking the L229-230 duration check: test stayed green.
-  - also: `engine/runtime/bro_orchestration_runtime_v1.py:229`
-  - fix: Assert 'lease duration invalid' in the message (the owner refusal says 'cannot be validated'), so the two refusals are told apart.
-- **`engine/tests/test_secrets.py:71`** — RecoveryWiringTests asserts on the imported alias, not on what recovery persists
-  - L74 'bro_recovery.redact(...)' is just bro_secrets.redact re-exported by 'from bro_secrets import redact' (bro_recovery.py:13). The single real call site, bro_recovery.py:196 'redact(error)', can be deleted and this test, named test_recovery_redacts_persisted_error, still passes.
-  - also: `engine/runtime/bro_recovery.py:196`
-  - fix: Drive settle_mutation(success=False, error='... bearer <token>') on an IRREVERSIBLE record and assert the token is absent from _load_state()['irreversible_effects'].
-- **`engine/tests/test_skill_evolution.py:18`** — L13's cited 'deny' test asserts on JSON constants, never on the validator
-  - test_promotion_is_not_self_approved loads skills/evolution-policy.json and asserts policy["self_verification_forbidden"] etc. are true. The file never imports bro_skill_evolution; deleting the 'proposer cannot self-verify' check leaves it green. laws/registry.json:265 lists it as the law's deny case.
-  - also: `engine/skills/evolution-policy.json:1-9 (auto_allowed, owner_approval_required, canonical_skill_path are read by no code; bro_learning.py:42-44 only checks the file exists)`
-  - fix: Replace it with tests that feed validate_skill_evolution a self-verified and an unapproved-promotion proposal and expect SkillEvolutionError.
-- **`engine/tests/test_supervisor.py:253`** — test_builder_does_not_inherit_the_supervisor_environment cannot fail
-  - Asserts only that BRO_TASK_CONTRACT and BRO_COMPLETION_KEY are absent; the test never puts either in the supervisor env, and BRO_COMPLETION_KEY appears nowhere else in the repo. Ran it with Popen patched to pass {**os.environ, **env} to the builder: wasSuccessful True.
-  - also: `engine/tools/bro_supervisor.py:438`
-  - fix: Set a sentinel variable in the supervisor's environment with patch.dict and assert the builder's environment does not contain it.
 - **`tools/check_no_assumptions.py:112`** — Two CI gates have no test at all: check_no_assumptions.py and check_state_fields.py
   - Of 49 tools/check_*.py these two have no tools/test_<name>.py, and grepping both module names across *.py finds no test importing them. Both run in CI (.github/workflows/ci.yml:935 and :944). CLAUDE.md §7 rule 4 requires each check to be deleted once and seen to go red.
   - also: `tools/check_state_fields.py:76`
@@ -1017,10 +714,7 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:471` — The real DACL probe fails open: a failed ACL read yields 'no writers'
 - `apps/desktop/src/services/governedTurn.ts:84` — A governed-turn reply is never correlated with the request that produced it
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:91` — Archive keeps the Owner's personal email address that the live CLAUDE.md replaced
-- `engine/ci/live/run_live_turn.sh:369` — Sudoers rule is described as pinning ONE argument vector, but sudoers wildcards also match across argument boundaries, not only '/'
 - `engine/runtime/bro_orchestration_runtime.py:646` — Claim-lease expiry is judged against the caller-supplied now_epoch, the exact weakness _prove_actor refuses for credentials
-- `engine/runtime/bro_workspace.py:231` — Repository-binding check reads only `url =` lines, so pushurl and url.<base>.insteadOf redirect a push without being seen
-- `engine/runtime/governed_staging_upload.py:718` — An empty chunk from the untrusted sidecar raises SupervisorError instead of a typed refusal, and leaves a stray chunk file
 - `tools/check_capabilities.py:95` — A command registered without a module prefix is not seen, so it can be ungated while the gate prints GREEN
 - `tools/generate_agent_definitions.py:66` — runner/verifier/release definitions say 'cannot edit' while granting Bash, and the root wall does not gate Bash
 
@@ -1075,40 +769,12 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/features/groupChatConsensus.ts:76` — A lower- or mixed-case echo of the stance menu is counted as a YES vote
 - `apps/desktop/src/features/writeRecord.tsx:347` — useMemo in WriteRecordNotice can never hit: both callers pass a fresh one-shot iterator every render
 - `apps/desktop/src/theme/aios.css:335` — A token holding duration+easing is used where only an easing fits, and an easing token is used as a whole transition
-- `bridge/README.md:65` — The documented manual smoke command fails, and its documented output shows a signature the self-test never produces
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:3784` — All 20 relative markdown links are broken since the text moved from the repository root to docs/archive/
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:2624` — All seven relative links are dead since the board was moved from the repo root to docs/archive/
 - `docs/archive/roadmap-evidence.md:553` — Glossary definitions are filed as "Phase 10 — Task checklist" evidence
 - `docs/brand/README.md:42` — Chord formula is written as the half-chord; the expression shown equals 489.5, not 979
 - `docs/roadmap/phase-7.md:14` — The UI/UX page specs every phase calls 'Full §D spec' are cut off mid-clause (24 bullets across phases 1-9)
-- `engine/ci/live/run_ladder_supervisor.py:266` — Timeout path cannot kill the contained execution: the child is `sudo`, which the supervisor uid may not signal
-- `engine/runtime/bro_audit_log.py:628` — verify() leaks raw JSONDecodeError/KeyError/AttributeError on a tampered ledger, which its callers do not catch
-- `engine/runtime/bro_authority.py:33` — _json reports paths relative to the module ROOT, so a missing policy under any other root raises plain ValueError, not AuthorityError
-- `engine/runtime/bro_completion.py:846` — A failure between the mark write and the roster write is never repaired, reopening the R-06 reset
-- `engine/runtime/bro_contracts.py:605` — The 'schema registry drift' check can never fail
-- `engine/runtime/bro_contracts.py:605` — 'schema registry drift' check in validate_registered_schemas can never fail
-- `engine/runtime/bro_control_plane.py:239` — Every allow is recorded as 'recovery journal prepared', including reads and conductor actions where nothing was prepared
 - `engine/runtime/bro_control_room_api.py:772` — Historic verdicts and evidence are re-verified against today's clock, so one expired or revoked key blanks the whole surface
-- `engine/runtime/bro_control_room_api.py:823` — An owner command with no attestation is told to present a conductor-session, which the owner path refuses; the owner refusal constant is never used
-- `engine/runtime/brops_canonical.py:254` — Governed generation_config regexes use `$` + .match, so a trailing newline is accepted as canonical; the Rust authority rejects it
-- `engine/runtime/challenge_authority.py:130` — _is_sha256_hex accepts strings that are not 64 hex characters, and the authority signs them
-- `engine/runtime/challenge_authority_server.py:172` — A valid create-pending can produce an issue reply over the 8192 frame bound; the row is burned ISSUED and nothing is written
-- `engine/runtime/floor_writer.py:753` — head_sequence has no upper bound, so an authorised advance can commit a floor whose reply cannot be framed
-- `engine/runtime/governed_acceptance.py:646` — execution_allowlist gate is skipped when an ACCEPTED_PREPARED row is resumed
-- `engine/runtime/governed_staging_ledger.py:719` — mark_session_corrupt on an ARTIFACT_READY session hits the DDL trigger and leaks a raw sqlite3.IntegrityError
-- `engine/runtime/governed_supervisor.py:288` — _is_sha256_hex accepts strings that are not hex digests (int(value, 16) tolerates 0x, sign, whitespace, underscore)
-- `engine/runtime/governed_supervisor_server.py:666` — launch-gate reply flattens three distinct gate verdicts into 'lease_expired / remaining lease budget below 180000 ms'
-- `engine/runtime/isolated_signer.py:537` — sign_result promises it never raises on hostile input, but a lone surrogate in an attested string field raises UnicodeEncodeError
-- `engine/runtime/isolated_signer.py:721` — _check_timestamps documents requested <= challenge-accepted <= completed but never compares requested_at with challenge_accepted_at_ms
-- `engine/runtime/provision_floor_writer.py:206` — The generation is 'previous config + 1', read only from the --config path, so reprovisioning with a missing or different config mints generation 1 over a store at a higher one
-- `engine/tests/_self_owned_ack.py:75` — suppress() suppresses only via .start(); used as a context manager it leaves the acknowledgement set
-- `engine/tests/test_governed_chain_e2e.py:202` — setUp's mkdtemp directory is never removed; every test leaks a /tmp/brops-e2e-* directory
-- `engine/tests/test_isolated_signer_server.py:589` — `if __name__ == "__main__": unittest.main()` sits above the helper every fixture needs; running the file directly errors 15 of 23 tests
-- `engine/tests/test_signer_envelope_v49.py:281` — unittest.main() runs before _publish_chain is defined, so running the file directly errors every test
-- `engine/tools/bro_backup.py:182` — Backup copies a ledger into the archive before verifying its chain, contradicting 'never archived'
-- `engine/tools/bro_run_receipt.py:144` — Every `--` token is stripped from the wrapped command, changing what runs and what the receipt signs
-- `engine/tools/bro_traceability.py:282` — LAW_INDEX drift check is a substring test, so L1 is satisfied by L10–L16
-- `engine/tools/brops_receipt_signer.py:424` — stdin entrypoint says it always exits 0 with a refusal frame, but a missing key file escapes the except
 - `tools/check_audit_reports.py:62` — ORDINALS stops at 'tenth' and the current round is the tenth, so the next round breaks the gate
 - `tools/check_audit_reports.py:360` — GREEN claims the OWNER page leads with the newest report, which is never checked and is skipped if the page is missing
 - `tools/check_crypto_surface.py:157` — The waiver gate prints GREEN when its inputs are absent
@@ -1132,7 +798,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `.github/workflows/release.yml:99` — The release build uses Node 22 while every CI job, and the recorded toolchain, use Node 20
 - `CLAUDE.md:126` — CLAUDE.md says the repository has no path to a production trust root, while the provision crate signs a registry marked production: true
 - `MASTER_EXECUTION_ROADMAP.md:432` — The roadmap tells a cold session to find its phase checklist 'below', but the phase bodies are in docs/roadmap/ and the file never names that directory
-- `START_HERE.md:81` — Four different 'read these files' lists remain beside the manifest that CLAUDE.md calls the only read order
 - `apps/desktop/AUDIT/2026-08-06-consolidated-index.md:5` — The verdict forbids flipping a function that the index's own round-3 row says has no implementation
 - `apps/desktop/AUDIT/2026-08-06-independent-audit.md:47` — F-01's status row says the verification gate is filled and the fix landed, but its gate is blank, and the header says no file was changed
 - `apps/desktop/AUDIT/2026-08-06-independent-audit.md:138` — F-03 and F-05 survive as P1 on a premise the same record refutes twice (Part 3 and F-43)
@@ -1156,22 +821,12 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:772` — Round 9 intro claims every row carries the tenth round's verdict; the nine promotion rows carry none
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:864` — The record says the third audit's promotions are 'not applied in this file yet' while the same file carries them applied
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:872` — The third audit's A-01 headline sits under the SECOND audit's 'Prior assessment', followed by 'That audit's target ... 219c763'
-- `apps/desktop/README.md:45` — README names provider value `claude`; the code and SECURITY.md accept only `claude-cli`
-- `apps/desktop/docs/architecture/AI_RUNTIME_CONTRACTS.md:16` — Run lifecycle and budget behaviour are specified three different ways
 - `apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md:95` — Three incompatible responsive breakpoint tables
-- `apps/desktop/docs/product/NAVIGATION.md:11` — Four different primary-navigation lists, none matching the sidebar in nav.ts
-- `apps/desktop/docs/product/SCREEN_INVENTORY.md:52` — The mandatory per-screen state set is 7, 8 or 10 states depending on the document
-- `apps/desktop/docs/product/STATES.md:2` — STATES defines ten mandatory states; SCREEN_INVENTORY requires eight, and WORKSPACE_FLOWS exempts screens from one of those eight
-- `apps/desktop/docs/product/STATES.md:25` — The 'semantic tokens' STATES mandates by name exist nowhere in the Design System or the code
-- `apps/desktop/docs/product/STATES.md:87` — STATES forbids hiding a denied action; PROJECT_TASK_FLOWS specifies hiding it
-- `apps/desktop/docs/product/STATES.md:140` — 'Canonical short labels every screen reuses' do not match the shipped dictionaries
-- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:99` — Automations: disable is 'always one action away' and also requires a destructive-confirmation
 - `apps/desktop/src-tauri/broker/src/chain_executor.rs:771` — supervisor_op is a second, weaker reply parser although two docs say there is exactly one
 - `apps/desktop/src-tauri/capabilities/default.json:7` — The capability covers 'bro-win-*' windows, while its own description, command-policy.json and the design doc say it is the single 'main' window
 - `apps/desktop/src-tauri/capabilities/default.json:80` — delete_automation is an irreversible hard delete that is granted, by classifying it X instead of L2
 - `apps/desktop/src-tauri/command-policy.json:77` — delete_automation is a hard delete granted to the window with protection 'none', escaping the L2 rule every other delete is held to
 - `apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json:5` — Schema says no host and no URL appears anywhere in a bundle and claims agent_bundle.rs implements it; grant.json carries https destinations and the loader enforces none of the schema
-- `apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json:8` — Shipped manifest shape contradicts the design's 'normative fields': refs are bare strings with no hash, and credentials_ref is absent though the design calls it required
 - `apps/desktop/src-tauri/core/src/governed_prepare.rs:660` — Two request_nonce mints per turn; the durable broker_turns nonce is not the one that is signed
 - `apps/desktop/src-tauri/core/src/governed_verification.rs:647` — The spec letters for the two replay defences are swapped inside the same file
 - `apps/desktop/src-tauri/core/src/key_manifest.rs:50` — canonical_bytes is documented as sorted-key JSON but is struct-declaration order, which the root signature depends on
@@ -1195,9 +850,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/services/agentsDispatch.ts:176` — pathCovers treats '.' as covering the whole repo; the engine says '.' matches only the root itself
 - `apps/desktop/src/theme/tokens.css:6` — The two stylesheet layers have opposite defaults when data-theme is absent
 - `apps/desktop/src/theme/tokens.ts:231` — tokens.ts says ThemeProvider makes it authoritative at runtime; ThemeProvider says it is intentionally not mounted, and nothing imports either
-- `bridge/engine_sidecar.py:342` — "Every op here is a READ" in the same file that registers the approval.request WRITE
-- `docs/ARCHITECTURE.md:46` — CI cell contradicts itself and its Armenian twin on check and exclusion counts
-- `docs/PHASE_10_PRODUCTION_ITEMS.md:418` — O-4 gives two incompatible reasons for being OPEN inside one file
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:45` — Armenian audit banner contradicts itself: nine audits ran, yet the second was 'never repeated'
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:52` — Armenian audit banner gives a finding total its own breakdown does not add up to
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:104` — Repository map calls contracts/ and bridge/ placeholder READMEs while the roadmap table in the same file says they hold real content
@@ -1215,35 +867,19 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `docs/archive/TASKS_ARCHIVE_2026-09.md:8` — The paragraph's own self-correction misstates the interval: two days, not three weeks
 - `docs/archive/TASKS_ARCHIVE_2026-09.md:35` — A row with status Todo and an open arm sits in the archive that says every row shipped
 - `docs/archive/roadmap-evidence.md:232` — One record both corrects a sentence and still asserts it
-- `docs/design/PRODUCTION_HALF_DESIGN.md:849` — Credential fields are specified as lease 'schema: 2', but schema 2 is already taken by allowed_egress, which the document still marks not_implemented
 - `docs/design/T-021_SCHEMA_AUDIT.md:97` — T-021 names its five transport obligations O-1..O-5, the same labels as the five open production items, so TASKS.md reads both 'discharged' and 'all OPEN'
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:591` — Launcher invoking principal is cited by the wrong role number
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:765` — Create-pending request frame cap is stated as 8192 'each way' and as 4096 in the same section
 - `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:1702` — Two artifact types are named differently in the schema sections than in the section 5 v2 amendment and the code
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2449` — The closed renderer command is described as carrying ONLY {conversation_id, agent?} in seven places, while the request frame requires client_request_id
 - `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2745` — Routing table introduces a fourth bounded-reason prefix that the 'three disjoint prefixes' rule and the classification list do not cover
-- `docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md:86` — Threat scope the design says would be copied into SECURITY.md is the opposite of what SECURITY.md states
 - `docs/design/WINDOWS_BROKER_DESIGN.md:104` — Design contradicts itself on whether the launcher is a service, and on how many services exist
 - `docs/roadmap/phase-10.md:13` — Phase 10 targets a Windows-first signed build while the governed path and the installer are Linux-only
-- `engine/ci/live/ladder_evidence.py:592` — One file states the hop log both is and is not something the verdict depends on
-- `engine/ci/live/run_live_turn.sh:68` — Recorder state directory is described as PRIVATE 0700 in three places and provisioned 0750 recorder:supervisor
-- `engine/ci/live/run_live_turn.sh:256` — Group membership only ever accumulates across the two kits, which share /opt/brops-live and the same group names but state opposite membership for brops-report
-- `engine/ci/live/run_live_turn.sh:404` — Recorder invoker is required to be a bare PATH-resolved `sudo`, while the sidecar invoker is refused unless absolute for exactly that reason
 - `engine/config/runtime-dependencies.json:14` — Dependency SST forbids a bare 'python' token in hook wiring; both hook wirings start with one
 - `engine/laws/meta-layer.json:91` — LAW_INDEX.md is declared 'derived, not hand-written' but no generator exists and the drift check is substring-only
 - `engine/runtime/bro_audit_log.py:215` — Audit ledger uses the O_EXCL lock file that bro_completion rejects as a self-inflicted permanent denial
-- `engine/runtime/brops_socket.py:4` — Module docstring promises an owner-only 0700 socket directory; the code makes the directory 0755 and the socket 0666
-- `engine/runtime/governed_supervisor_ledger.py:414` — The _BOUND_FIELDS 'rolled-back registry epoch' fix guards accept_prepare, which no production code calls; the front door's reuse_or_prepare still answers IDEMPOTENT
-- `engine/runtime/governed_turn_open.py:613` — Comment says a staging ledger fault 'is still a REFUSAL'; the code raises SupervisorError
-- `engine/runtime/isolated_signer_server.py:459` — The signer server says it admits only the broker uid, yet ships the supervisor's client as 'the production binding', while governed_acceptance says no such transport exists
 - `engine/runtime/supervisor_ledger.sql:21` — The DDL header says write-once completion and the anti-rollback floor are enforced in the DB; neither table has a trigger, and a plain UPDATE rewrites both
 - `engine/schemas/execution-lease.schema.json:36` — Lease and mode-grant schemas disagree with the procedural validators on nonce, lease_id and max_tool_calls
 - `engine/skills/communication-writing-negotiation/SKILL.md:36` — 11 skills hand release/send actions to an 'authorized executor', a role that does not exist; 31 name the Push Executor
 - `engine/tests/catalog.json:4` — catalog declares orphan_tests_forbidden: true but lists 47 of 98 test modules and nothing enforces it
-- `engine/tests/test_brops_install.py:47` — Tests in this slice ERROR on an engine-only tree, against the rule _prerequisites.py states
 - `engine/tests/test_governed_acceptance.py:1832` — The design still calls the 2848 envelope cap a machine-checked schema-max derivation; the tree pins the real maximum at 2888
-- `engine/tests/test_reconciler.py:167` — Two different OWNER_ACTOR_UNPROVABLE constants; the test pins the one that says no owner artifact type exists
-- `engine/tools/bro_deploy_preflight.py:49` — Preflight claims to check every configured ledger/store but its list omits three the runtime reads
 - `tools/check_repo_state.py:1160` — The documented local 'SKIPPED (exit 0)' path without gh is unreachable; the gate always exits 1 there
 - `tools/generate_agent_definitions.py:184` — Every agent definition states its own two-file read order, against CLAUDE.md's single-manifest law
 - `tools/test_wall_bash_gap.py:535` — The file contradicts itself: the docstrings say a Bash write outside scope is 'caught by nothing', while TheContainment proves it is blocked
@@ -1257,7 +893,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `CLAUDE.md:98` — CLAUDE.md states two different results for the same `cargo test --workspace` command
 - `CLAUDE.md:98` — CLAUDE.md gives two different pass counts for the same `cargo test --workspace`
 - `CLAUDE.md:128` — 'Not packaged yet' for the POSIX root installer contradicts the .deb bundle config
-- `README.md:182` — README repository map says 40 check_*.py gates; the same README and START_HERE say 43, and 43 exist
 - `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:21` — The verdict's operative gate, platform_governed_execution_supported(), was only a doc comment at the audited commit
 - `apps/desktop/AUDIT/2026-08-06-remediation-audit.md:2607` — §5.3 reports `cargo test -p brops-core` as '16 passed' while the crate held 257 #[test] attributes at that commit
 - `apps/desktop/AUDIT/2026-08-17-seventh-audit-491f923.md:27` — The reconstructed seventh report sends the reader to AUDIT_LEDGER.md for the G-01..G-15 confirmations; they are in the archive
@@ -1266,20 +901,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:273` — Desktop-sweep heading counts 12 closed findings; the table under it has 15 rows
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:884` — The archive cites a 'Staleness sweep' section and a 'sweep table below' that exist in neither ledger file
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:938` — The file tells the reader to use a legend 'above' / 'at the top of this file' that is not in this file
-- `apps/desktop/CHANGELOG.md:15` — Standing correction in the CHANGELOG header names the wrong audit as current and says it was 'never re-run'
-- `apps/desktop/README.md:16` — README schema version and core test count are stale
-- `apps/desktop/README.md:62` — README links to docs/AGENTS.md twice, including as the 'read first' contributor contract; the file does not exist
-- `apps/desktop/SECURITY.md:13` — SECURITY.md says 4 L2 hard-delete commands are denied; the capability file denies six and records that 'four' was wrong
-- `apps/desktop/SECURITY.md:61` — Configuration table omits the variables that decide whether any provider runs and calls the default 'auto'
-- `apps/desktop/docs/IMPLEMENTATION_EXECUTION_HANDOFF.md:607` — The 'commands that must be run' and CI contract name scripts, workflows, libraries and a branch that do not exist
-- `apps/desktop/docs/architecture/ARCHITECTURE.md:45` — ARCHITECTURE.md says the persisted schema is 'intentionally not specified yet' and DATA_MODEL.md is still to be written
-- `apps/desktop/docs/architecture/DATABASE_SCHEMA.md:7` — Three incompatible table lists: DATABASE_SCHEMA.md, HANDOFF section 4, and the real 26-migration schema
-- `apps/desktop/docs/architecture/DATA_MODEL.md:43` — DATA_MODEL 'Canonical enums' disagree with the code that says it mirrors them
-- `apps/desktop/docs/product/PROJECT_TASK_FLOWS.md:74` — Citations to sections and files that do not exist
-- `apps/desktop/docs/product/WORKSPACES.md:1` — WORKSPACES.md claims to specify every workspace surface but omits Bridge, a routed sidebar page
-- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:11` — Link labels name paths that do not exist (targets are correct)
-- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:187` — Claims to satisfy a 'Roadmap Phase 1' criterion that exists in no roadmap in the tree
-- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:187` — Coverage note says Home has a flow in USER_FLOWS.md; USER_FLOWS.md never mentions Home
 - `apps/desktop/src-tauri/README.md:20` — src-tauri README describes a tree that no longer exists: 69 tests, schema path, 'host never compiled', two-crate layout
 - `apps/desktop/src-tauri/audit-signer/src/register.rs:7` — Module doc headed 'The order matters' gives the install order the code deliberately does not use
 - `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.py:571` — The pin-rewrite and registry-resign narratives say the registry is app-writable and really is re-signed; the code asserts the OS refuses the write
@@ -1334,70 +955,21 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/services/desktop.ts:367` — Comment points at `grantApproval`/`denyApproval` 'below'; neither exists
 - `apps/desktop/src/theme/aios.css:3926` — "every selector below already exists in aios.css" is false for 14 selectors, which match no markup either
 - `apps/desktop/vitest.browser.config.ts:15` — "28 of this app's pages carry their CSS in a template literal" does not match the tree
-- `bridge/README.md:28` — README documents a verify_receipt callback and a pending verify-seam that the adapter removed
-- `bridge/engine_sidecar.py:48` — Sidecar docstring says a submit is 8 to 57 round trips; the orchestrator and its test say the floor is 10
-- `bridge/engine_sidecar.py:370` — Comment names the wrong test class as the guard for the approval protocol literals
 - `config/canon-budget.json:37` — The budget file describes a canon that no longer exists and a ceiling rule two of its own numbers break
 - `config/control-invocation.json:119` — Three sentences count the required contexts as 33 and 34; the file they cite holds 35
 - `config/counted-claims.json:118` — engine_tests provenance dates the measurement a day before the head it names existed
 - `config/current_state.json:89` — Three state fields in the machine mirror describe pull requests as open or in progress after they merged
 - `config/produced-artifact-contract.json:3` — The contract says every locator ships null and that enforcement_regime appears nowhere; every locator is filled and the field is in repo.rs
 - `config/spec-conformance.json:16` — Four config records say governed_verification_unconfigured() returns Some(...) unconditionally; the function has a None branch
-- `contracts/README.md:16` — 'Five cross-half schemas' is stated in three places; contracts/ holds six
-- `docs/ARCHITECTURE.md:34` — Docs say governed_verification_unconfigured() returns Some unconditionally; the code is conditional on five constants
-- `docs/OPERATOR_GUIDE.md:7` — Guide says POSIX provisioning was never built or run; a tested root installer and .deb postinst now exist
-- `docs/OWNER_ACTION_REQUIRED.md:360` — A record labelled 'kept verbatim' and 'Measured at a94513e' was edited in #309 and now states a split true at no head
-- `docs/PHASE_10_PRODUCTION_ITEMS.md:654` — Inventory carries several facts that are false today: contracts/ placeholder, anchor test count, policy default, T-005's meaning
-- `docs/REACHABILITY_GATE.md:96` — The gate's normative note documents three Rust declarations for a module that no longer exists; the declarations file holds five different symbols
-- `docs/SECURITY_MODEL.md:109` — The cross-language proof is documented as "29 checks"; the run prints 64
-- `docs/SECURITY_MODEL.md:283` — Three slice documents still say the chat gate returns Some(...) 'unconditionally'; the code measures five inputs and CLAUDE.md was already corrected
-- `docs/TROUBLESHOOTING.md:171` — Developer section claims CI runs clippy and a release build; no workflow does, and §7 calls the Windows broker 'not implemented' while §2 says the chain is proven on Windows
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:1` — Title and filename say July–August 2026, but the file contains no July entry
 - `docs/archive/roadmap-evidence.md:11` — "Nothing is shortened here. Every line is as it was written" is false for this file
 - `docs/brand/README.md:19` — "What is here" lists 3 PNGs; the directory also holds readme/ with 14 SVG sheets it never mentions
-- `docs/design/CONTRACTS_DEDUPE_PLAN.md:21` — Plan says task-request.schema.json is loaded at runtime by Rust and is the one bound row; the only Rust read is inside a test module
-- `docs/design/DEBIAN_INSTALL_PROVISIONING.md:23` — Section 1 quotes anchor.rs as saying no installer is written, marked as read in code; that text is gone and the code now names the installer
-- `docs/design/PRODUCTION_HALF_DESIGN.md:855` — Section 4.5 conflicts 1 and 2 describe defects that are already fixed, and the repo.rs line references have all moved
-- `docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md:14` — Matrix header pins the addendum at rev 28 and says no test code exists and nothing lands before design-GREEN; the addendum is rev 30 and the IDs are already bound in code and a gate
 - `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2291` — The file:line citations into ai.rs, commands.rs, lib.rs, receipt.rs and receipt_store.rs no longer point at the cited code
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2856` — Amendment says the live isolation kit has not been re-run against the section 5 v2 protocol; CI runs it on every pipeline
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2890` — Addendum states platform_governed_execution_supported() 'stays false' and main() keeps UpstreamBlockedExecutor; the function does not exist and main() is config-driven
-- `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:3` — Audit request's status and open-items are false today: PR #46 is closed unmerged, Linux E2E is recorded proven, 3b-2 manifest code exists
-- `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:25` — Module table directs the auditor to a deleted file and carries test counts that no longer match
-- `docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md:53` — The 'implementation index' names lease/receipt functions and contracts that exist nowhere in the code
-- `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:4` — Plan header and pipe matrix carry three statements that are false today
-- `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:135` — Plan describes a Windows arm of platform_governed_execution_supported() as existing and tested; no such function or probe exists
-- `docs/roadmap/phase-1.md:105` — CI job count and required-context count in Phase 1 are both stale
 - `engine/AUDIT/tickets/C-1-find-readonly-bypass.md:6` — Three tickets point to a '◑ legend' in AUDIT/README.md that does not exist
 - `engine/AUDIT/tickets/H-6-protected-set-gaps.md:6` — H-5, H-6, MEDIUM and LOW tickets still read 'Proposed patch' with every criterion unticked although fixes are in the tree
 - `engine/README.md:51` — README inventory says 63 documents; the documentation manifest registers 70
 - `engine/README.md:76` — Engine README 'Start here' step 1 tells the reader to read two files that were removed from engine/
-- `engine/ci/live/run_authority.py:55` — Cross-references by line number and count that are false today
-- `engine/ci/live/run_signer.py:42` — Signer docstring still says the output blob is broker-written; the broker was removed from the store and the recorder publishes it
-- `engine/docs/REPOSITORY_LAYOUT.md:4` — Repository layout omits seven tracked engine directories and still calls the root 'Bro/'
-- `engine/runtime/bro_control_room_api.py:117` — O-4 header says an owner command is REFUSED and no artifact type exists; the same file registers and accepts one
-- `engine/runtime/governed_acceptance.py:63` — Module docstring says no supervisor->signer transport exists and nothing wires the driver; both exist in the tree
-- `engine/runtime/governed_supervisor.py:862` — Stale counts and cross-references in comments: '25 fields' is 28; constants said to 'mirror governed_supervisor.py' are imported from the ledger; line refs point at the wrong lines
-- `engine/runtime/governed_supervisor_server.py:6` — Module docstring says the front door allowlists ONLY the broker and DENIES the sidecar; the code admits the sidecar for six protocols
-- `engine/runtime/governed_supervisor_server.py:571` — _staging_unconfigured's docstring says the reply comes from the protocol's own handler; the code hand-assembles it with hard-coded reasons
-- `engine/runtime/isolated_signer_server.py:383` — The comment names governed_verification.rs as the decoder of the flattened op reply; the decoder is the broker's chain_executor.rs
-- `engine/runtime/isolated_signer_server.py:463` — request_sign_result says brops_socket is imported lazily so the module stays importable without AF_UNIX, but the module imports it at the top
 - `engine/runtime/supervisor_ledger.sql:15` — The DDL header cites 'CLAUDE.md §4' for the build-standalone rule; §4 of the only CLAUDE.md is 'Verify commands'
-- `engine/schemas/task-contract.schema.json:5` — $comment cites a test class RealContractValidatesAgainstSchemaTests that does not exist
-- `engine/tests/test_brops_services.py:7` — Docstring and a sidecar runtime message cite a CI job `engine-isolation` that does not exist
-- `engine/tests/test_completion_head_binding.py:595` — 'No floor directory satisfies both halves ... there is no fix here' is false since the Floor Writer posture exists
-- `engine/tests/test_control_room_api.py:221` — Class docstring says no owner artifact type exists; the same class proves an owner via control-room-command
-- `engine/tests/test_governed_acceptance.py:2118` — The 'no production construction site, opens no door' claim checks one runner while a sibling runner wires the driver and all four services
-- `engine/tests/test_governed_evidence_request.py:23` — Module docstring says the desktop hop of the §4.10(f) output pull is still unbuilt
-- `engine/tests/test_governed_output_read.py:35` — "No BROPS_TEST_MISSING_PREREQUISITES declaration anywhere in this tree" is false
-- `engine/tests/test_governed_staging_upload.py:1059` — Docstring says the §2.4 sweep is NOT IMPLEMENTED; the same file tests the implemented sweep
-- `engine/tests/test_governed_turn_result.py:20` — Module docstring says §5 acceptance is NOT IMPLEMENTED; the same file's class docstring says it landed
-- `engine/tests/test_hooks_subprocess.py:101` — The root-wiring guard skips on every run and justifies itself with a CLAUDE.md deferral that CLAUDE.md does not contain
-- `engine/tests/test_hooks_subprocess.py:109` — Always-skipped wall-wiring test cites a CLAUDE.md deferral that is not in CLAUDE.md
-- `engine/tests/test_isolated_signer_server.py:3` — Docstring says "no keys" and "Ed25519 signing ... are stubs"; the fixture generates a real key and verifies a real signature
-- `engine/tests/test_live_broker_config.py:13` — "Every refusal is exercised. The writer refuses fourteen ways" is false on both counts
-- `engine/tests/test_negative_matrix.py:922` — NM-FRAME docstring describes a matrix state that no longer exists
-- `engine/tests/test_owner_artifact_registration.py:26` — Module docstring and class name say a valid control-room-command is still refused; the same file proves it is accepted
 - `tools/check_capabilities.py:13` — Checker docstring puts the policy file at capabilities/command-policy.json; it lives one level up
 - `tools/check_produced_artifact.py:54` — Docstring and the contract's own `why` still say every locator ships null and nothing exists yet, while the contract is filled in and the header says the gate is GREEN
 - `tools/check_reachability.py:22` — Module docstring says assert_no_bytecode_shadow 'has never once been called' and that rust_symbols 'is empty'; both are false today
@@ -1454,41 +1026,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/features/writeRecord.test.tsx:152` — Vocabulary guard scans only STR lang-maps; the parameterised copy that reaches the screen is never checked
 - `apps/desktop/src/i18n/strings.parity.test.ts:13` — Per-page parity guard misses a production catalog and silently skips any entry without `en`
 - `apps/desktop/src/services/desktop.writeRecords.test.ts:89` — Two tests assert on the mock's own return value and cannot fail
-- `bridge/tests/test_engine_sidecar.py:189` — The failure sweep only asserts when ok is already false, so a fabricated success passes it
-- `bridge/tests/test_governed_turn_submit.py:660` — Two assertions compare a value with itself, and one setUp snapshot is never used
-- `bridge/tests/test_sidecar_ops.py:379` — test_the_op_is_served_rather_than_refused_by_name stays green when approval.request is removed from _OPS
-- `bridge/tests/test_task_request_contract.py:66` — The two 'signer recompute' tests compare the test's own helper to itself and call no production code
-- `engine/ci/live/ipc_policy.py:25` — The root-owned custody loaders and the ladder service graph are tested by nothing; the injection seam is never called
-- `engine/laws/registry.json:94` — L4 (skill loading) and L3 (task contracts) are bound to tests that do not exercise their enforcement surface
-- `engine/tests/test_backup_restore.py:84` — Round-trip test claims the restored ledger 'verifies through its head anchor' but runs the unkeyed check
-- `engine/tests/test_brops_isolation.py:246` — Permanently skipped placeholder test with a reason that is false on this host
-- `engine/tests/test_brops_isolation.py:246` — Permanently skipped placeholder test whose reason is false on the hosts that run it
-- `engine/tests/test_brops_services.py:121` — Peer-UID denial test accepts any OSError, so a hung or unreachable service also reads as DENIED
-- `engine/tests/test_challenge_handle_agreement.py:307` — The 'superseded formula cannot tell them apart' assertion compares an expression to itself
-- `engine/tests/test_control_plane_digest.py:225` — test_security_scope_may_not_be_a_pattern cannot fail: the exact-path membership check answers for the pattern check
-- `engine/tests/test_floor_writer.py:359` — The frame-cap boundary test never calls the code and cannot fail on the boundary
-- `engine/tests/test_floor_writer_durability.py:255` — The kill-injection meta-control cannot detect a kill that landed before any write
-- `engine/tests/test_governed_acceptance.py:851` — NM-CRASH-04's 'published exactly once' assertion counts a key in a dict, and the test reuses NM-CRASH-03's cut
-- `engine/tests/test_governed_acceptance.py:2114` — Closing loop asserts membership of a set that was built by filtering that same collection
-- `engine/tests/test_governed_chain_e2e.py:709` — The test named 'a tampered output blob breaks the signed binding' deletes the blob and never tampers with it
-- `engine/tests/test_governed_evidence_request.py:362` — Tautological assertion; the five labelled outcomes are never checked
-- `engine/tests/test_governed_output_read.py:636` — test_the_broker_write_bound_is_unchanged cannot detect a widened broker write bound
-- `engine/tests/test_governed_output_stream.py:70` — Default challenge_handle derives from the per-process randomised hash()
-- `engine/tests/test_governed_run_attestation.py:674` — test_op_unavailable_without_seam_fails_closed passes with the seam guard deleted
-- `engine/tests/test_governed_staging_upload.py:397` — "Both sides of the same boundary" tests two different artifacts' ceilings
-- `engine/tests/test_governed_staging_upload.py:962` — Rule-(a) adoption test claims 'same file, no rewrite' but compares only file size
-- `engine/tests/test_governed_supervisor_ledger.py:530` — Two "malformed value" subtests are refused for being extra keys, so derived-field validation is untested here
-- `engine/tests/test_governed_turn_open.py:301` — "The admission clock read is not persisted anywhere" sets a clock and then asserts only that a column is absent; the clock IS stored
-- `engine/tests/test_governed_turn_open.py:869` — test_the_two_unique_constraints_exist exercises one of the two
-- `engine/tests/test_hooks_subprocess.py:386` — test_review_shell_deny_is_not_shadowable never reaches the review-mode rule it is named for
-- `engine/tests/test_isolated_signer.py:404` — Two signer tests accept any failure: a refusal with no reason asserted, and assertRaises(Exception)
-- `engine/tests/test_ladder_pull_evidence.py:367` — The contract the class says it pins (main skips check_pull when no documents) is not tested
-- `engine/tests/test_law_traceability.py:140` — Assertion that cannot fail
-- `engine/tests/test_live_broker_config.py:478` — Trust-claim test skips with raw skipTest, bypassing the fail-under-CI rule
-- `engine/tests/test_live_broker_config.py:479` — Path-existence skips that bypass the `_prerequisites` counter, so a moved path skips silently in CI
-- `engine/tests/test_one_standard_pins.py:52` — Module cannot be loaded by dotted name: imports _prerequisites without putting tests/ on sys.path
-- `engine/tests/test_owner_authorization_e2e.py:134` — test_owner_cli_produces_a_loadable_bundle never loads the bundle
-- `engine/tests/test_prerequisite_guard.py:77` — `test_the_decorator_runs_the_body_when_the_prerequisite_holds` asserts `assertTrue(True)`
 - `tools/test_check_audit_actor.py:133` — The exit code CI reads is untested in ten gates: tests call check() and never main() with problems
 - `tools/test_check_c1_tokens.py:269` — unittest.main() sits above later test classes in two files, so a direct run silently drops tests (ninth audit I-05 again)
 - `tools/test_check_capabilities.py:105` — Six refusal arms of the capability-inventory gate have no test that goes red without them
@@ -1534,17 +1071,10 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/services/desktop.ts:275` — memoryWriteRecords / knowledgeWriteRecords (record history) are exposed end to end and nothing in the UI calls them
 - `apps/desktop/src/services/desktop.ts:498` — Renderer wrappers and exports that no production code calls
 - `apps/desktop/src/theme/aios.css:421` — 55 of the 132 @keyframes in aios.css are referenced by nothing
-- `bridge/engine_sidecar.py:274` — _GovernedOutcome is never instantiated; _real_callables raises on every path
-- `docs/DEBIAN_LINUX_CONTINUATION.md:1` — Paste-as-first-message prompt points a new session at a branch that does not exist and at work already done
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:1` — The archived brain is named by no file in the repository
 - `docs/archive/roadmap-evidence.md:3` — Nothing in the tree links to roadmap-evidence.md, so the checkboxes cannot reach their own evidence
-- `docs/design/PR32_REBASE_MAP_REV28.md:229` — PR #32 rebase map is an orphan: superseded by its own rule, referenced by nothing, and it states it was never written into the repository
 - `engine/.bro/policy.json:10` — Mode permission blocks in the protected policy file are read by nothing
-- `engine/ci/live/provision_keys.py:295` — config.json carries fields nothing reads, one with a comment naming a reader that does not exist
 - `engine/release/registry.json:5` — The release SST is read by nothing; its named validator never opens it and the push pack/role are code literals
-- `engine/runtime/bro_completion.py:575` — The floor custody rule is unreachable in production, and its docstrings still say no floor-writer exists
-- `engine/runtime/governed_supervisor_ledger.py:1137` — Exported symbols nothing reaches: load_lease, TERMINAL_STATES, staging QUOTA_TURNS, core REFUSE_LEASE_EXPIRED, two empty COMPLETION_* tuples
-- `engine/runtime/isolated_signer.py:195` — Three refusal-reason constants can never be produced by the signer
 - `engine/schemas/agent-status.schema.json:1` — agent-status and agent-ui schemas describe records nothing produces or validates
 - `engine/tests/test_security_v2.py:251` — HMAC verify_signed_document and legacy consume_nonce are kept alive only by this test
 - `tools/check_coordination.py:688` — The carrier-contradiction scan is hard-coded to PR #33 and can no longer match anything
@@ -1559,8 +1089,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/2026-08-06-consolidated-index.md:19` — "Duplicates: 0" and the 122 total, while several rows restate another row in the same round
 - `apps/desktop/AUDIT/2026-08-06-independent-audit.md:26` — The "47 surviving findings" count includes the same defect filed two or three times, sometimes at different severities
 - `apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md:118` — Agent profile, delegation, live-run and escalation flows are specified twice, and the two copies already differ
-- `apps/desktop/docs/product/USER_FLOWS.md:57` — The global flow rule is written three times and its Armenian text has already drifted
-- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:40` — Memory write flow copied from AI_RUNTIME with the last stage dropped
 - `apps/desktop/src-tauri/audit-signer/tests/anchor_end_to_end.rs:56` — resolve_python is copied into four test files, eleven lines below a comment saying a second copy is a second policy
 - `apps/desktop/src-tauri/broker/src/ladder_executor.rs:263` — hop() and the create-pending / issue request builders are written twice
 - `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:250` — now_ms() with unwrap_or(0) is copied nine times, contradicting the 'fail-closed, not zero' clock rule recorded in the same crate
@@ -1602,44 +1130,12 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src/test/computedStyle.ts:294` — Two contrast measurers that disagree on the sRGB knee and on what they can parse
 - `apps/desktop/src/theme/aios.css:2883` — Two page-local danger pills re-implement `.pill.bad` under comments saying the foundation has none; one has drifted and is unused
 - `apps/desktop/src/theme/aios.css:3674` — The Settings theme-preview tile hard-codes palette values and still shows the pre-retune light cyan
-- `bridge/tests/test_task_request_contract.py:23` — The JCS canonicaliser is hand-copied into two bridge tests instead of calling the engine's canonical_bytes
-- `docs/DESIGN_SYSTEM.md:49` — Colour table duplicates tokens.css and has drifted on eight values; each file names the other as source
 - `docs/archive/CLAUDE_2026-08-29_before_T-045.md:71` — The 'single normative source' paragraph appears twice, verbatim, six lines apart
 - `docs/archive/SESSION_LOG_2026-07_2026-08.md:9` — Header says the archive keeps ONE copy of the three-file log, but TASKS_ARCHIVE_2026-08.md beside it repeats about 188 KB of it
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:7` — Archive described as 'closed rows' carries seven rows that are still open on the live board, with diverged text
 - `docs/archive/TASKS_ARCHIVE_2026-08.md:22` — The whole narrative half of this archive is also stored verbatim in SESSION_LOG_2026-07_2026-08.md
-- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2899` — Section 5 still inlines a governed_turn_acceptance DDL that has drifted from the SQL file the same section declares the single normative source
-- `engine/ci/live/run_ladder_supervisor.py:610` — Live-kit helpers copied between launchers: the root-owned-file loader, read_run_evidence and the atomic publish
-- `engine/ci/live/run_ladder_supervisor.py:610` — The root-owned/non-writable descriptor check is written twice and has already diverged
-- `engine/ci/live/run_ladder_turn.sh:275` — The recorder-policy generator (a root-owned TCB document) is copy-pasted in both kit scripts with nothing holding the copies equal
-- `engine/ci/live/run_live_turn.sh:171` — The two kits copy the recorder-policy generator, the sudoers-vector generator and add_group; only the sudoers-install block is test-pinned as identical
-- `engine/ci/live/run_live_turn.sh:171` — Recorder-policy and sudoers-vector heredocs, add_group and expect_blocked are duplicated in run_ladder_turn.sh with no identity check; only the sudoers-install block is bound by a test
-- `engine/ci/live/run_signer.py:56` — File-backed content-addressed store is implemented twice and has already drifted: the live signer reads a blob unbounded, the ladder copy caps it
-- `engine/ci/live/run_supervisor.py:118` — publish_artifact, read_run_evidence, MAX_EVIDENCE_BYTES, verify_sig and sign_attestation are copy-pasted between the live and ladder supervisor runners
-- `engine/ci/live/write_broker_config.py:202` — validate_sidecar re-implements SidecarPrincipal::from_config's five rules; the test named 'the sidecar rules are the brokers own' binds only four constants
 - `engine/config/documentation-manifest.json:1` — Docs 'freshness' gate is equality against a literal copy in the tool; all 70 docs claim review on 2026-07-19
-- `engine/runtime/bro_completion.py:366` — Two store scanners discriminate chain events separately, and the docstring has their strictness backwards
-- `engine/runtime/bro_control_room_api.py:158` — ACTOR_PROVEN_BY_SESSION is re-spelled locally right after a comment saying the basis vocabulary is never re-spelled
 - `engine/runtime/bro_policy.py:275` — Repository-URL normalisation exists three times: two byte-identical copies and a third that returns a different identity for the same remote
-- `engine/runtime/brops_canonical.py:158` — The brops.request.v1 envelope hash is hand-written four times while brops_canonical calls itself the single source of truth
-- `engine/runtime/brops_protocol.py:124` — Five lenient base64url decoders remain beside the 'one strict implementation'; the receipt signer decodes the attestation signature with the lenient one
-- `engine/runtime/brops_socket.py:34` — Three SO_PEERCRED readers and three length-prefix codecs remain after the 2026-09-20 consolidation; the comment counting them is stale
-- `engine/runtime/challenge_authority_server.py:141` — Framing and connection layer copied across three socket servers; the 2026-09-20 de-duplication moved only read_peercred_uid/bind_listener, and _try_write has drifted
-- `engine/runtime/governed_supervisor.py:284` — Five validators and the canonical encoder are written twice, in a module that already imports from the other copy
-- `engine/runtime/governed_supervisor.py:325` — JSON canonicalisation is written nine times in three byte-incompatible variants, kept in sync only by docstrings
-- `engine/tests/test_brops_isolation.py:70` — RunState/_keypair/signer-env fixtures copied across three suites, the drift _chain_docs.py warns about
-- `engine/tests/test_governance_read.py:63` — The governance read_request envelope builder is copied into three test modules
-- `engine/tests/test_governed_chain_e2e.py:120` — build_run_evidence is written twice; both copies claim the recorder's exact shape and neither has it
-- `engine/tests/test_governed_evidence_request.py:61` — Staging fixture copied between the evidence-request and staging-upload test files
-- `engine/tests/test_governed_output_read.py:89` — ledger()/accept() acceptance fixture duplicated between the output-read and output-stream tests
-- `engine/tests/test_governed_run_attestation.py:467` — brops.request.v1 digest re-typed three times in one test file, and the copy replaces the production recompute
-- `engine/tests/test_isolated_signer.py:99` — The terminal record, execution receipt and lease documents are hand-written here beside the shared _chain_docs builders that exist to prevent exactly that
-- `engine/tests/test_live_provisioning_anchor.py:217` — Shell-script parsing helpers copied between two test modules, already diverging
-- `engine/tests/test_live_tcb_pin_manifest.py:41` — Two extractors for Rust TCB_REQUIRED_ARTIFACTS, and one lacks the comment guard the other is tested for
-- `engine/tests/test_orchestration_runtime.py:491` — Subclassing a TestCase to reuse setUp re-runs all 18 parent tests a second time
-- `engine/tests/test_runtime_atomicity.py:229` — Delete-pending and persistent-EACCES tests are written twice against one function
-- `engine/tests/test_signature_authority.py:309` — test_registry_payload_is_never_the_pin_source repeats test_no_pin_configured_is_hard_denied; another test's name overstates it
-- `engine/tools/brops_receipt_signer.py:112` — Receipt-signer and attestation key loaders are the same function written twice
 - `tools/check_coordination.py:75` — Three different definitions of 'substantive change' enforce the same update law
 - `tools/check_reachability.py:480` — capability_grants() parsing default.json is written twice, in two gates
 - `tools/check_repo_state.py:945` — Job-name regex was 'factored out' into workflow_job_names() but verify_required_contexts_exist still carries its own copy
@@ -1775,12 +1271,6 @@ As the readers reported it, verbatim.
 
 `doc-vs-doc` and `doc-vs-code` returned on the second run: **21 more findings** a second agent confirmed, all open. They overlap the slices' findings above and were not de-duplicated against them.
 
-- **`README.md:327`** (medium, stale-claim) — README and TASKS state the negative matrix as 150/54/38; the gate prints 155/52/35, and README disagrees with itself on four more counts
-  - README.md:327-329 "150 / 54 / 38" and TASKS.md:30 "150 / 54 / 38" vs README.md:272 alt-text and PROJECT_STATE.md:8 "155 · 52 · 35"; check_negative_matrix.py prints 155/52/35. README also :182 "40 check_*.py" vs :290 "43"; :184 "21 jobs" vs :293 "22"; :294 "34" vs :184 "35".
-  - fix: Set the README table and T-062 row to 155/52/35 and the tree block to 43 gate scripts, 22 jobs, 35 contexts, and add these lines to config/counted-claims.json so the gate recounts them.
-- **`apps/desktop/README.md:49`** (medium, stale-claim) — Desktop README claims no outstanding Critical/High findings while the standing verdict is RED and O-1 is an open HIGH
-  - :49 "ten rounds of adversarial review with no outstanding Critical/High findings" vs NEXT_CHAT.md:76 "The standing independent verdict is RED" and CLAUDE.md section 6 "O-1 (HIGH)" OPEN. Same file :42 "69 tests"; :45 BROPS_AI_PROVIDER `claude` where ai.rs:427 accepts only `claude-cli`.
-  - fix: Replace the sentence with the standing RED verdict and a pointer to AUDIT_LEDGER.md, and correct the provider name to claude-cli.
 - **`config/current_state.json:110`** (medium, stale-claim) — The machine mirror names the NINTH round as the standing verdict and phases 2-10 as not done; the canon says TENTH round and phases 2-7 done
   - :110 stop_gates "verdict is RED -- the NINTH round, ...2026-08-19-ninth-audit-5cf9b8c.md"; :50 "The NINTH round" beside :49's tenth-audit path; :101 "phases_2_to_10": "not_done". NEXT_CHAT.md:76 "TEN rounds"; PROJECT_STATE.md:30-35 phases 2-7 Done. START_HERE.md:59 "Two independent audits have run".
   - fix: Point stop_gates[1] and last_independent_audit_note at the tenth round, replace phases_2_to_10 with per-phase status, and cut START_HERE's 2026-08-14 'where things stand' block down to a pointer.
@@ -1796,27 +1286,15 @@ As the readers reported it, verbatim.
 - **`docs/ARCHITECTURE.md:32`** (medium, design-contradiction) — 'CI runs the Windows cross-account named-pipe proof on every PR' contradicts WIRING_LIVE_TRUST, CROSS_ACCOUNT_PROOF and the workflow
   - ARCHITECTURE:32 'machine-proven end to end ... on Windows (named pipes, cross-account, distinct service accounts), and CI runs both on every PR'. WIRING_LIVE_TRUST:15-17: named-pipe path 'built but not reproducibly proven from this tree ... no CI workflow runs any of it'. ci.yml:786-814 runs cargo tests and '-SelfTest' only.
   - fix: State that on Windows CI runs the in-process chain tests, same-account pipe tests and harness self-tests, and that the cross-account run is an unreproducible operator narrative.
-- **`docs/OPERATOR_GUIDE.md:7`** (medium, stale-claim) — Four documents say provisioning is Windows-only and the POSIX path is unbuilt/unpackaged; the root installer exists and the .deb ships it
-  - OPERATOR_GUIDE:7 'Windows is the only platform the app can currently run on'; SECURITY_MODEL:245 'that branch has never executed'; CLAUDE.md:128 'Not packaged yet'. Tree: provision/src/posix_install.rs, bin/brops_install_anchor.rs, tauri.conf.json:51-52 ships both installers, deb/postinst:22 calls brops-install.
-  - fix: Replace the 'Windows-only / never executed / not packaged' text with the current state: the app still refuses to self-provision on POSIX, but a root installer exists, is packaged in the .deb and is called by postinst.
 - **`docs/OPERATOR_GUIDE.md:186`** (medium, stale-claim) — Provider configuration documented wrongly: 'claude' is not an accepted value, Anthropic is never auto-selected, and there is no default provider
   - OPERATOR_GUIDE:186 'Force `claude` \| anthropic \| ollama'; :189 'If set (and provider not forced), selects the metered Anthropic API'; ai.rs:3-6 says the same. resolve_provider (ai.rs:405-458) accepts only 'claude-cli', returns Err for 'claude', never picks Anthropic without BROPS_AI_PROVIDER=anthropic, and Errs when nothing is set.
   - fix: Correct the table and the ai.rs header to the real rules: values governed-engine\|claude-cli\|anthropic\|ollama, ungoverned ones need BROPS_ALLOW_UNGOVERNED=1, no auto-selection of Anthropic, nothing set is a refusal.
-- **`docs/OWNER_ACTION_REQUIRED.md:931`** (medium, design-contradiction) — The page of record says all five O-items wait on the Owner; the inventory and CLAUDE.md say none does
-  - :931 "O-1 ... O-5 - all five are waiting on you", :954 "Mint the evidence-floor anchor offline", :962 "credentials you hold" vs :9 "Custody needs nothing from you, ever" and PHASE_10 :42 "not credentials but wiring and packaging". OPERATOR_GUIDE.md:369 still says "three ... [a phrase gate-refused since #314]".
-  - fix: Rewrite section 2c (and OPERATOR_GUIDE :369) from the PHASE_10 section 0 table: per item, the wiring or packaging that blocks it, with no Owner act and no offline mint.
 - **`docs/SECURITY_MODEL.md:28`** (medium, stale-claim) — Security model says the production root pin is compiled into the broker; since T-140 the broker reads its root from the floor-pinned anchor file
   - :19 "TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)", :28 "production root pin is compiled in (never read from config)" vs OWNER_ACTION_REQUIRED.md:305 "The Linux broker no longer pins a compiled root ... reads its root from the anchor file" and broker/src/tcb.rs:8-10.
   - fix: Update section 1.1's diagram and first invariant to the floor-pinned anchor file plus INSTALL_MINTED_CUSTODY_ACCEPTED=false, and say the compiled constant now only gates the 'external' label.
-- **`docs/SECURITY_MODEL.md:239`** (medium, stale-claim) — Four documents say POSIX provisioning has never executed and the app is Windows-only; the root installer is built, run in CI and wired into the .deb
-  - SECURITY_MODEL:245 "that branch has never executed"; OPERATOR_GUIDE:7 "Windows is the only platform the app can currently run on"; PROJECT_STATE:78 "Provisioning is Windows-only" vs DEBIAN_INSTALL_PROVISIONING.md:193 "Built and run as root here and in CI" (ci.yml:599). CLAUDE.md:128 "Not packaged yet" vs tauri.conf.json:49-52.
-  - fix: Replace 'Windows-only / never executed' with the measured state: brops_install_anchor mints the POSIX anchor as root (T-137), postinst calls it (T-138), and no dpkg -i has been run end to end.
 - **`docs/SECURITY_MODEL.md:284`** (medium, design-contradiction) — Refusal 1 is still called unconditional in nine places, and the security model lists as future work the probe T-048 already built
   - :284 "returns Some(...) **unconditionally**" and :417 "make governed_verification_unconfigured() a real provisioning probe instead of a hardcoded Some" vs README.md:151 "was an unconditional Some(...) until T-048 made it a measurement" and commands.rs:1376-1388 (returns None when nothing is missing).
   - fix: Use CLAUDE.md's wording everywhere ('while any of its five compile-time inputs is absent', chat only) and strike section 5 item 2's probe clause as done.
-- **`docs/SECURITY_MODEL.md:19`** (medium, stale-claim) — Trust-boundary section says the broker's root pin is compiled in; the Linux broker no longer pins a compiled root
-  - SECURITY_MODEL:19 'TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)', :28 'The production root pin is compiled in (never read from config)' under 'Invariants that HOLD today'. broker/src/tcb.rs:4: 'The Linux broker no longer pins a compiled-in root (T-131 slice C)' - it reads the floor-pinned anchor file.
-  - fix: Rewrite section 1.1's diagram and first invariant to say the Linux broker takes its root from the floor-pinned anchor file and the compiled constant only gates the 'external' label.
 - **`docs/SECURITY_MODEL.md:161`** (medium, design-contradiction) — Floor posture selection described as two variables with the env acknowledgement selecting the local floor; code honours that env only in CI and has a third (file) variable
   - SECURITY_MODEL:161 'Two variables, and nothing else, select the posture'; :168 'BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged selects AcknowledgedLocalFloor'. bro_custody.py:151-163 raises unless BRO_ENV=ci ('honoured only in CI'), and :131-143 accepts BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE instead.
   - fix: Rewrite section 1.3a to name the _FILE form as the production selector and say the raw env form is refused outside BRO_ENV=ci.
@@ -1826,15 +1304,9 @@ As the readers reported it, verbatim.
 - **`docs/ARCHITECTURE.md:156`** (low, design-contradiction) — The English and Armenian halves of the CI cell disagree on the check count and on how many jobs are excluded
   - EN :46 "38 checks report on a pull request ... Four pull-request jobs are excluded ... and a fifth never reports" (then names two) vs HY :156 "37 ստուգում ... Բացառված են ուղիղ երկուսը" (exactly two). config/required-checks.json lists 5 deliberately_excluded. EN also says "the 34 required" then "35 ... required".
   - fix: Make both halves name all five excluded jobs from required-checks.json with one check count, and have the HY half point at the EN cell rather than restate numbers.
-- **`docs/ARCHITECTURE.md:92`** (low, stale-claim) — contracts/ described as a README-only placeholder (both languages); it holds six schemas, and other docs say five
-  - ARCHITECTURE:92 'contracts/ is still a placeholder - a README describing intent, no extracted schemas' (also :161). contracts/ holds 6 *.schema.json plus index.json listing six ids incl. approval-request. CLAUDE.md:62 and contracts/README.md say 'the five schemas'; index.json comment says 'Four of the five'.
-  - fix: Delete the placeholder bullet in both halves of ARCHITECTURE and change 'five' to six (or list them) in CLAUDE.md, contracts/README.md and the index.json comment.
 - **`docs/SECURITY_MODEL.md:284`** (low, stale-claim) — governed_verification_unconfigured() described as returning Some 'unconditionally' / 'a hardcoded Some'; it is computed from five constants and has a None branch
   - SECURITY_MODEL:284 'returns Some(GOVERNED_VERIFICATION_UNCONFIGURED) unconditionally', :417 'instead of a hardcoded Some'. commands.rs:1376-1388 calls governed_provisioning_missing(...) over five consts and 'if missing.is_empty() { return None; }'. CLAUDE.md:114 and PROJECT_STATE:29 describe it correctly.
   - fix: Say it returns Some while any of its five compile-time inputs is absent (all are today), matching CLAUDE.md.
-- **`docs/design/FLOOR_WRITER_SERVICE_DESIGN.md:3`** (low, stale-claim) — Floor Writer design status says no product code lands under it; the service is implemented
-  - FLOOR_WRITER_SERVICE_DESIGN:3 'Status: PROPOSAL. Not Architect-audited. No product code lands under this document.' Tree: engine/runtime/floor_writer.py (1088 lines), run_floor_writer.py, provision_floor_writer.py. SECURITY_MODEL:233 'Implementation exists and is not Architect-approved; the design merged as PR #112 and this is the build'.
-  - fix: Update the status line to say an implementation exists under R1-R5 and is not Architect-approved.
 - **`docs/design/WINDOWS_BROKER_DESIGN.md:605`** (low, design-contradiction) — Broker design and operator guide say eight runtime principals; the code and the normative clause say seven, and the gate does not read these two documents
   - WINDOWS_BROKER_DESIGN:160 'All eight runtime SIDs', :605 'verify_distinct_principals() - resolve all eight runtime SIDs'; OPERATOR_GUIDE:273 'Eight distinct principals' (then lists 6 services + 1 executor). windows_broker.rs:39 'RUNTIME_PRINCIPALS: [Principal; 7]'. check_principal_model.py COUNT_CLAIMS covers three other docs only.
   - fix: Correct both documents to seven (naming the same seven as the enum) and add them to COUNT_CLAIMS so the gate holds them.
@@ -1843,9 +1315,354 @@ As the readers reported it, verbatim.
 
 The workflow journal is session-local and is **not** in the repository: this file is the durable copy. A finding is closed by the pull request that fixes it, which strikes its line here.
 
+## 8. Not the Builder's to decide
+
+Findings a fixing agent confirmed and did **not** change, because the fix widens what is accepted, changes who may do what, or rewrites normative design. Each names the choice and a recommendation. Nothing here is decided.
+
+- **`apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md`** — Agent flows are specified twice, and the two copies already differ
+  - Confirmed. §3 (both languages) now says AGENT_FLOWS §2-§6 is the detailed copy and that the two disagree on who may widen an agent's scope (owner only vs Owner/Admin). That is an authority decision; recommend the stricter 'owner or an approved decision'. AGENT_FLOWS' 'renders exactly' is corrected. §3 was not collapsed to a pointer.
+- **`apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md`** — Three incompatible responsive breakpoint tables
+  - Confirmed; the stylesheet's @media widths (560, 1080, 720, 820, 1040, 900, 860 ...) match none. All three documents now carry a 'not reconciled' note. Choosing the target table is a design decision; recommend the INFORMATION_ARCHITECTURE table, then tokenising the stylesheet to it.
+- **`apps/desktop/src-tauri/capabilities/default.json`** — delete_automation is an irreversible hard delete that is granted by classifying it X
+  - Confirmed present (tier X, allow, protection none). Not edited: outside scope, and it is a capability decision. Options: hold any row-deleting command to the L2 rule, or record the exemption. Recommend native-confirm for delete_automation.
+- **`apps/desktop/src-tauri/command-policy.json`** — Four registered, allow-granted commands have no caller
+  - Confirmed present for set_run_step_status. Not edited: outside scope, and flipping a grant changes what the webview may do. Recommend deny for set_run_step_status and post_message, as config/reachability-declarations.json itself suggests.
+- **`apps/desktop/src-tauri/command-policy.json`** — delete_automation is a hard delete granted with protection 'none'
+  - Same issue as capabilities/default.json:80. Not edited: outside scope and a capability decision. Recommend native-confirm.
+- **`apps/desktop/src-tauri/win-live/WINDOWS_ANTIROLLBACK_HARDENING.md`** — The stated anti-rollback boundary (broker-writable floor.json) is a state the §2.5 floor refuses
+  - Not edited: the file is outside this batch's scope, and the fix is a design choice. Options: (a) move floor.json to a broker-owned state directory outside the pinned set, (b) stop pinning its owner/DACL. Recommend (a): it keeps the §2.5 floor strict and gives the per-turn writer its own directory. I did not re-open tcb_floor.rs myself.
+- **`bridge/contracts/renderer-governed-turn-result.schema.json`** — Schema pins committed trust_state to trusted_verified; the broker now commits demonstration_custody
+  - Confirmed, not changed. Widening the const to an enum would make the contract accept demonstration_custody, and the renderer rejecting every commit that is not trusted_verified is one of the three refusals holding the production gate. Choice: (a) widen to the two labels the broker can emit, or (b) keep the const and state in the schema that it is the renderer's acceptance contract, not the broker's emission set. Recommend (b). Either way the source is contracts/ (drift-gated) and tools/test_renderer_broker_schemas.py, both outside this batch.
+- **`docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md`** — Matrix says the evidence-head floor is a brops-signer-owned DB; in code the supervisor owns it
+  - Confirmed (table in engine/runtime/supervisor_ledger.sql; isolated_signer.py has zero sqlite references). A note under §10 now says NM-EVID-12 / NM-ACL-13 name a database that does not exist and that the ruling is open (FLOOR_WRITER design §0.3, §9). The choice: amend the design to the supervisor-owned floor as built, or move the floor into a signer-owned DB. Recommend ratifying the supervisor-owned floor (it is in the same transaction as the completion, per §5 v2(c)) and rewriting the two rows against it.
+- **`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`** — Evidence-head floor is specified as signer-owned but implemented as supervisor-owned
+  - Confirmed. Normative text NOT changed; listed as open item 1 in a new NON-NORMATIVE 'KNOWN DIVERGENCES 2026-10-01' block. Same choice and recommendation as the negative-matrix item.
+- **`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`** — §4.4 says no builder_id and only _ms timestamps; the signer and the code disagree
+  - Confirmed (isolated_signer.py requires builder_id; EVIDENCE_TS_FIELDS has requested_at/completed_at). Normative text NOT changed; open item 2 in the divergence block. Choice: amend §4.4 to the exchanged shape, or record both as deviations in config/spec-conformance.json. Recommend amending §4.4, since §5 v2(e) already names builder_id.
+- **`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`** — Two artifact types are named differently in the schema sections than in §5 v2 and the code
+  - Reproduced by grep. Normative text NOT changed; open item 3 in the divergence block. Recommend adopting the names the code uses and stating whether the shipped documents are the §4.7 schemas.
+- **`docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`** — Routing table introduces a fourth bounded-reason prefix
+  - Reproduced (the prefix is in no code file). Normative text NOT changed; open item 4. Recommend routing an output-read refusal to governed_verdict_refused: rather than adding a prefix.
+- **`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md`** — Design's key_usage type separation does not exist in the implemented manifest
+  - Confirmed: ManifestKey has no key_usage; manifest_resolver.rs resolves both keys with RECEIPT_ENVELOPE_ARTIFACT_TYPE and no distinctness check. The design section is now marked NOT IMPLEMENTED. The security choice is not mine: build the signed key_usage discriminator with two resolvers, or accept config-level separation. Recommend building it (or at minimum a refusal when the two key ids are equal).
+- **`docs/design/WINDOWS_BROKER_DESIGN.md`** — Design contradicts itself on whether the launcher is a service and how many services exist
+  - The contradictions are listed in the new 'superseded in part' note. §1, §1.2, §4.1, §8.1 and §10 were NOT made to agree: that is a design rewrite. Recommend the plan's model (TCB-owned launcher binary invoked only by the recorder; seven service SIDs).
+- **`engine/config/protected-control-plane.json`** — 'CI-executed surfaces are covered in full' is false: ci/**, install/** and contracts/** are neither protected nor digested
+  - The purpose string now says what is NOT covered. protected_roots / digest_roots were NOT changed: widening the engine's protected perimeter changes who may touch what. Recommend adding ci/**, install/** and contracts/** to both lists, on an audited engine branch.
+- **`engine/config/runtime-dependencies.json`** — Dependency SST forbids a bare 'python' token in hook wiring; both wirings start with one
+  - Confirmed (engine/.claude/settings.json starts `python -B ... \|\| python3 -B ... \|\| py -3 -B ...`). Not changed: rewording the MUST to match the wiring relaxes a stated rule, and the wiring is a prohibited file. Options: reorder the wiring to python3 first, or record the H-3 fallback chain in the note. Recommend python3 first.
+- **`engine/laws/registry.json`** — Law L5 names bro_receipt.verify_receipt_set as its PRIMARY execution surface, but nothing calls it
+  - Confirmed (only the def and test_execution_receipts.py reference it; bro_completion calls bro_receipt.verify_receipt in its own loop). Not changed: which function is a law's primary surface is the law's owner's call. Options: route the completion path through verify_receipt_set (security code), or repoint L5 at bro_receipt.verify_receipt and retire the unused function. Recommend the second; it leaves audited code untouched.
+- **`engine/runtime/bro_audit_log.py`** — Audit ledger uses the O_EXCL lock file that bro_completion rejects as a self-inflicted permanent denial
+  - Confirmed, not changed. The audit ledger's docstring states the stale-lock denial as its deliberate contract; moving to an advisory lock would make a state that refuses today allow, in audited security code. Choice: (a) keep the O_EXCL contract and reconcile the two modules' comments, or (b) use the kernel advisory lock as _floor_write_lock does. Recommend (b): a crashed holder currently turns every allow into a deny until someone deletes a file by hand.
+- **`engine/runtime/bro_control_room_api.py`** — Historic verdicts and evidence are re-verified against today's clock, so one expired or revoked key blanks the whole surface
+  - Confirmed by reading, not changed. Verifying persisted records at a past time widens what is accepted (a signature under a now-expired or revoked key), and the current-clock choice is stated as deliberate. Choice: (a) keep it, (b) verify at a past time and report key status separately. Recommend (b) for expired keys only, timed from the hash-chained transition rather than the payload's own issued_at_epoch (which a revoked key's holder could backdate), and keep refusing revoked keys.
+- **`engine/runtime/bro_policy.py`** — is_conductor's docstring says every conductor exemption must also pass verify_conductor_session_token; the pre-tool path grants two exemptions on env vars alone
+  - Confirmed by reading: authorize_classified_action grants conductor delegation and the contract-free Read/Glob/Grep bootstrap on is_conductor(state) alone; verify_conductor_session_token is called only from bro_completion.authorize_conductor_stop. NOT changed, code or docstring. The choice: (a) call verify_conductor_session_token before both exemptions. engine/.bro/policy.json ships require_conductor_session_token=true, so this denies conductor delegation and bootstrap reads on every session that presents no conductor-session artifact, which today is every session outside a provisioned desktop engine child; it turns O-3 from a Stop-only control into a pre-tool one. (b) correct the docstring to say the token gates Stop only, which is what docs/SECURITY_MODEL.md O-3 already says ('called from bro_completion'). I recommend (a) as the end state because mutation is already denied to the conductor and the exemptions are exactly what an env-only identity claim buys, but landed together with the O-3 wiring, not before it; until then (b) so the docstring stops claiming a control that is absent. Either changes who may do what, so it is not mine.
+- **`engine/runtime/bro_policy.py`** — Repository-URL normalisation exists three times: two byte-identical copies and a third that returns a different identity for the same remote
+  - Confirmed. Done: the two identical copies are one function, bro_workspace.normalize_repository_reference, imported by bro_policy and bro_release_v3, with NO behaviour change (compared against both originals on 14 inputs: zero differences). NOT done: making it agree with normalize_remote. Today `ssh://git@github.com/o/r` and `git@github.com:o/r` compare unequal in the grant bindings (a refusal), and a bare `owner/repo` never equals a URL. The strict normaliser cannot be dropped in: a task's full_name is a bare owner/repo, which it rejects. Folding the spellings makes grants match that are refused today, i.e. it widens what a signed grant binds to. Choice: keep the lenient comparison (now documented and pinned by test), or define one identity `owner/repo` for both and accept that more spellings match. I recommend the second, with non-GitHub hosts refused, as its own reviewed change.
+- **`engine/runtime/bro_skill_evolution.py`** — Law L13's primary enforcement surface validate_skill_evolution has no caller and no test
+  - Confirmed. The 'no test' half is done: engine/tests/test_skill_evolution.py now calls the validator (allow and deny cases), including from the deny case laws/registry.json cites. The 'no caller' half is not mine: no skill-promotion flow exists, and laws/registry.json still records L13 as fail-closed/MUST with this module as writer. Choice: wire the validator into a real promotion path, or downgrade L13's record. Recommend downgrading the record until a promotion flow exists.
+- **`engine/schemas/agent-status.schema.json`** — agent-status and agent-ui schemas describe records nothing produces or validates
+  - Not changed; I did not re-run the producer search. Removing two schemas from the engine registry (and from contracts/index.json engine_internal) or building their producer is a product decision. Recommend removal unless a producer is planned.
+- **`engine/schemas/execution-lease.schema.json`** — Lease and mode-grant schemas disagree with the procedural validators
+  - Not changed. Aligning needs either security code (make the lease validator as strict as the schema) or loosening a contract, and the lease schema is byte-compared with contracts/. Recommend tightening the validators to the schema, with an agreement test like ContractSchemaAgreementTests.
+- **`engine/tests/catalog.json`** — catalog declares orphan_tests_forbidden: true but lists 47 of 98 test modules and nothing enforces it
+  - Confirmed: engine/tests/catalog.json declares orphan_tests_forbidden: true, lists about half of the test modules, and nothing reads the field (bro_validate.py only checks listed paths exist; bro_receipt.py:58 hashes the file as the test-catalog binding). Not changed: either fix alters a file whose hash is a receipt binding, and one of them adds a gate to engine/tools. THE CHOICE: (a) make bro_validate fail on any tests/test_*.py absent from the catalog and add the missing modules with their 'covers' ids; or (b) delete the orphan_tests_forbidden field. I recommend (a): the catalog hash is what a receipt binds as 'the tests', and a catalog naming half the suite binds half of it -- but writing ~50 truthful 'covers' lists is a review task in itself, so if that is not going to be done, (b) is the honest fallback. Note for whoever does (a): this batch added four non-test helper modules (_kit_scripts, _brops_fixtures, _staging_fixtures, _acceptance_fixtures), which a test_*.py rule would correctly ignore.
+- **`engine/tests/test_governed_acceptance.py`** — The design still calls the 2848 envelope cap a machine-checked schema-max derivation; the tree pins the real maximum at 2888
+  - Confirmed: docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md still states 'envelope_jcs_b64 <= 2848 (... the 4.9 payload at schema max)' as machine-checked, while the test pins the real schema-max envelope at 2888 and the tree refuses 125-char ids (2852) as oversize. Nothing changed: the test already records the contradiction honestly, and resolving it is a design decision in a design document and in runtime/governed_turn_result.py, outside this batch. THE CHOICE: (a) lower the id bound to 124 so the schema can no longer express an envelope the cap refuses; (b) raise the cap to 2888; (c) keep both numbers and only amend 4.6 to say the derivation was wrong for the 23-key signer payload. I recommend (a)+(c): it narrows what is accepted rather than widening it, and it makes 'schema-valid' and 'signable' the same set again. (b) widens a signed-envelope bound and should not be done without the Architect.
+- **`engine/tests/test_security_v2.py`** — HMAC verify_signed_document and legacy consume_nonce are kept alive only by this test
+  - Confirmed: verify_signed_document (HMAC) and the legacy consume_nonce are called only from engine/tests/test_security_v2.py, and are imported unused in bro_release_v3.py:22 and bro_recovery.py:14. Removing them is a change to engine/runtime/bro_security.py -- security-perimeter code outside this batch, and a deliberate decision rather than a cleanup. THE CHOICE: (a) delete the HMAC verifier, the legacy nonce helper, the two unused imports and these two tests; or (b) keep them and add them to an absence/retirement guard so nothing new can call them. I recommend (a): an HMAC verifier whose verifying key is the signing key is exactly the shape the Ed25519 path replaced, and keeping it importable keeps it callable. What I DID fix (test-side, in scope): test_signature_and_tamper no longer leaks TEST_KEY into os.environ for the rest of the process -- it is scoped with patch.dict and asserted gone.
+
 ## 7. Closed
 
 Struck from the lists above by the pull request named. ◑ the Builder's claim; a second agent re-ran the suites and a sample of the mutation proofs, nothing here is independent.
+- `engine/ci/live/ladder_evidence.py:154` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:476` — fixed, #314
+- `engine/runtime/challenge_authority.py:130` — fixed, #314
+- `engine/runtime/floor_writer.py:207` — fixed, #314
+- `engine/ci/live/ladder_evidence.py:240` — fixed, #314
+- `engine/ci/live/run_ladder_turn.sh:872` — fixed, #314
+- `engine/runtime/brops_socket.py:219` — fixed, #314
+- `engine/runtime/brops_socket.py:224` — fixed, #314
+- `engine/runtime/brops_socket.py:225` — fixed, #314
+- `engine/runtime/floor_writer.py:140` — fixed, #314
+- `engine/runtime/governed_acceptance.py:923` — fixed, #314
+- `engine/runtime/governed_staging_upload.py:1058` — fixed, #314
+- `engine/runtime/isolated_signer.py:843` — fixed, #314
+- `apps/desktop/README.md:49` — fixed, #314
+- `apps/desktop/SECURITY.md:67` — fixed, #314
+- `apps/desktop/docs/IMPLEMENTATION_EXECUTION_HANDOFF.md:456` — fixed, #314
+- `bridge/README.md:88` — fixed, #314
+- `docs/ARCHITECTURE.md:92` — fixed, #314
+- `docs/BRIDGE_SIDECAR_OP_PROTOCOL.md:142` — fixed, #314
+- `docs/DEBIAN_DEPLOYMENT.md:70` — fixed, #314
+- `docs/OWNER_ACTION_REQUIRED.md:931` — fixed, #314
+- `docs/design/CONTRACTS_DEDUPE_PLAN.md:55` — fixed, #314
+- `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:7` — fixed, #314
+- `docs/design/WINDOWS_BROKER_DESIGN.md:214` — fixed, #314
+- `engine/tests/test_live_provisioning_anchor.py:111` — fixed, #314
+- `engine/tests/test_npm_audit_filter.py:31` — fixed, #314
+- `OWNERS.md:17` — fixed, #314
+- `README.md:104` — fixed, #314
+- `README.md:327` — fixed, #314
+- `README.md:352` — fixed, #314
+- `START_HERE.md:59` — fixed, #314
+- `START_HERE.md:59` — fixed, #314
+- `apps/desktop/README.md:45` — fixed, #314
+- `apps/desktop/SECURITY.md:32` — fixed, #314
+- `apps/desktop/SECURITY.md:32` — fixed, #314
+- `bridge/README.md:59` — fixed, #314
+- `bridge/governed_turn_submit.py:123` — fixed, #314
+- `contracts/README.md:50` — fixed, #314
+- `contracts/index.json:83` — fixed, #314
+- `contracts/index.json:85` — fixed, #314
+- `docs/ARCHITECTURE.md:82` — fixed, #314
+- `docs/BRIDGE_SIDECAR_OP_PROTOCOL.md:142` — fixed, #314
+- `docs/EVIDENCE_INDEX.md:66` — fixed, #314
+- `docs/OPERATOR_GUIDE.md:47` — fixed, #314
+- `docs/SECURITY_MODEL.md:19` — fixed, #314
+- `docs/SECURITY_MODEL.md:239` — fixed, #314
+- `docs/TROUBLESHOOTING.md:53` — fixed, #314
+- `docs/USER_GUIDE.md:169` — fixed, #314
+- `docs/design/FLOOR_WRITER_SERVICE_DESIGN.md:3` — fixed, #314
+- `docs/design/PHASE2_GOVERN_AI_SURFACES_DESIGN.md:3` — fixed, #314
+- `docs/design/PRODUCTION_HALF_DESIGN.md:1147` — fixed, #314
+- `docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md:7` — fixed, #314
+- `engine/ci/live/ladder_evidence.py:20` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:4` — fixed, #314
+- `engine/docs/OPERATOR_RUNBOOK.md:27` — fixed, #314
+- `engine/tests/test_governed_turn_submit_e2e.py:427` — fixed, #314
+- `bridge/tests/test_governed_output_read_bridge.py:609` — fixed, #314
+- `bridge/tests/test_sidecar_ops.py:401` — fixed, #314
+- `engine/ci/live/ladder_evidence.py:23` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:567` — fixed, #314
+- `engine/runtime/bro_completion.py:916` — fixed, #314
+- `engine/tests/test_backup_restore.py:173` — fixed, #314
+- `engine/tests/test_brops_isolation_prover.py:180` — fixed, #314
+- `engine/tests/test_brops_socket.py:149` — fixed, #314
+- `engine/tests/test_challenge_authority_server.py:444` — fixed, #314
+- `engine/tests/test_completion_gate.py:79` — fixed, #314
+- `engine/tests/test_evidence_chain.py:190` — fixed, #314
+- `engine/tests/test_evidence_chain.py:395` — fixed, #314
+- `engine/tests/test_governed_chain_e2e.py:464` — fixed, #314
+- `engine/tests/test_governed_chain_e2e.py:601` — fixed, #314
+- `engine/tests/test_governed_supervisor_server.py:1031` — fixed, #314
+- `engine/tests/test_negative_matrix.py:784` — fixed, #314
+- `engine/tests/test_prerequisite_guard.py:93` — fixed, #314
+- `engine/tests/test_reconciler.py:213` — fixed, #314
+- `engine/tests/test_secrets.py:71` — fixed, #314
+- `engine/tests/test_skill_evolution.py:18` — fixed, #314
+- `engine/tests/test_supervisor.py:253` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:369` — fixed, #314
+- `engine/runtime/bro_workspace.py:231` — fixed, #314
+- `engine/runtime/governed_staging_upload.py:718` — fixed, #314
+- `bridge/README.md:65` — fixed, #314
+- `engine/ci/live/run_ladder_supervisor.py:266` — fixed, #314
+- `engine/runtime/bro_audit_log.py:628` — fixed, #314
+- `engine/runtime/bro_authority.py:33` — fixed, #314
+- `engine/runtime/bro_completion.py:846` — fixed, #314
+- `engine/runtime/bro_contracts.py:605` — fixed, #314
+- `engine/runtime/bro_contracts.py:605` — fixed, #314
+- `engine/runtime/bro_control_plane.py:239` — fixed, #314
+- `engine/runtime/bro_control_room_api.py:823` — fixed, #314
+- `engine/runtime/brops_canonical.py:254` — fixed, #314
+- `engine/runtime/challenge_authority.py:130` — fixed, #314
+- `engine/runtime/challenge_authority_server.py:172` — fixed, #314
+- `engine/runtime/floor_writer.py:753` — fixed, #314
+- `engine/runtime/governed_acceptance.py:646` — fixed, #314
+- `engine/runtime/governed_staging_ledger.py:719` — fixed, #314
+- `engine/runtime/governed_supervisor.py:288` — fixed, #314
+- `engine/runtime/governed_supervisor_server.py:666` — fixed, #314
+- `engine/runtime/isolated_signer.py:537` — fixed, #314
+- `engine/runtime/isolated_signer.py:721` — fixed, #314
+- `engine/runtime/provision_floor_writer.py:206` — fixed, #314
+- `engine/tests/_self_owned_ack.py:75` — fixed, #314
+- `engine/tests/test_governed_chain_e2e.py:202` — fixed, #314
+- `engine/tests/test_isolated_signer_server.py:589` — fixed, #314
+- `engine/tests/test_signer_envelope_v49.py:281` — fixed, #314
+- `engine/tools/bro_backup.py:182` — fixed, #314
+- `engine/tools/bro_run_receipt.py:144` — fixed, #314
+- `engine/tools/bro_traceability.py:282` — fixed, #314
+- `engine/tools/brops_receipt_signer.py:424` — fixed, #314
+- `START_HERE.md:81` — fixed, #314
+- `apps/desktop/README.md:45` — fixed, #314
+- `apps/desktop/docs/architecture/AI_RUNTIME_CONTRACTS.md:16` — fixed, #314
+- `apps/desktop/docs/product/NAVIGATION.md:11` — fixed, #314
+- `apps/desktop/docs/product/SCREEN_INVENTORY.md:52` — fixed, #314
+- `apps/desktop/docs/product/STATES.md:2` — fixed, #314
+- `apps/desktop/docs/product/STATES.md:25` — fixed, #314
+- `apps/desktop/docs/product/STATES.md:87` — fixed, #314
+- `apps/desktop/docs/product/STATES.md:140` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:99` — fixed, #314
+- `apps/desktop/src-tauri/core/schema/agent-bundle-manifest.schema.json:8` — fixed, #314
+- `bridge/engine_sidecar.py:342` — fixed, #314
+- `docs/ARCHITECTURE.md:46` — fixed, #314
+- `docs/PHASE_10_PRODUCTION_ITEMS.md:418` — fixed, #314
+- `docs/design/PRODUCTION_HALF_DESIGN.md:849` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:591` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:765` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2449` — fixed, #314
+- `docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md:86` — fixed, #314
+- `engine/ci/live/ladder_evidence.py:592` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:68` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:256` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:404` — fixed, #314
+- `engine/runtime/brops_socket.py:4` — fixed, #314
+- `engine/runtime/governed_supervisor_ledger.py:414` — fixed, #314
+- `engine/runtime/governed_turn_open.py:613` — fixed, #314
+- `engine/runtime/isolated_signer_server.py:459` — fixed, #314
+- `engine/tests/test_brops_install.py:47` — fixed, #314
+- `engine/tests/test_reconciler.py:167` — fixed, #314
+- `engine/tools/bro_deploy_preflight.py:49` — fixed, #314
+- `README.md:182` — fixed, #314
+- `apps/desktop/CHANGELOG.md:15` — fixed, #314
+- `apps/desktop/README.md:16` — fixed, #314
+- `apps/desktop/README.md:62` — fixed, #314
+- `apps/desktop/SECURITY.md:13` — fixed, #314
+- `apps/desktop/SECURITY.md:61` — fixed, #314
+- `apps/desktop/docs/IMPLEMENTATION_EXECUTION_HANDOFF.md:607` — fixed, #314
+- `apps/desktop/docs/architecture/ARCHITECTURE.md:45` — fixed, #314
+- `apps/desktop/docs/architecture/DATABASE_SCHEMA.md:7` — fixed, #314
+- `apps/desktop/docs/architecture/DATA_MODEL.md:43` — fixed, #314
+- `apps/desktop/docs/product/PROJECT_TASK_FLOWS.md:74` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACES.md:1` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:11` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:187` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:187` — fixed, #314
+- `bridge/README.md:28` — fixed, #314
+- `bridge/engine_sidecar.py:48` — fixed, #314
+- `bridge/engine_sidecar.py:370` — fixed, #314
+- `contracts/README.md:16` — fixed, #314
+- `docs/ARCHITECTURE.md:34` — fixed, #314
+- `docs/OPERATOR_GUIDE.md:7` — fixed, #314
+- `docs/OWNER_ACTION_REQUIRED.md:360` — fixed, #314
+- `docs/PHASE_10_PRODUCTION_ITEMS.md:654` — fixed, #314
+- `docs/REACHABILITY_GATE.md:96` — fixed, #314
+- `docs/SECURITY_MODEL.md:109` — fixed, #314
+- `docs/SECURITY_MODEL.md:283` — fixed, #314
+- `docs/TROUBLESHOOTING.md:171` — fixed, #314
+- `docs/design/CONTRACTS_DEDUPE_PLAN.md:21` — fixed, #314
+- `docs/design/DEBIAN_INSTALL_PROVISIONING.md:23` — fixed, #314
+- `docs/design/PRODUCTION_HALF_DESIGN.md:855` — fixed, #314
+- `docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md:14` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2856` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2890` — fixed, #314
+- `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:3` — fixed, #314
+- `docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md:25` — fixed, #314
+- `docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md:53` — fixed, #314
+- `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:4` — fixed, #314
+- `docs/design/WINDOWS_BROKER_IMPL_PLAN.md:135` — fixed, #314
+- `docs/roadmap/phase-1.md:105` — fixed, #314
+- `engine/ci/live/run_authority.py:55` — fixed, #314
+- `engine/ci/live/run_signer.py:42` — fixed, #314
+- `engine/docs/REPOSITORY_LAYOUT.md:4` — fixed, #314
+- `engine/runtime/bro_control_room_api.py:117` — fixed, #314
+- `engine/runtime/governed_acceptance.py:63` — fixed, #314
+- `engine/runtime/governed_supervisor.py:862` — fixed, #314
+- `engine/runtime/governed_supervisor_server.py:6` — fixed, #314
+- `engine/runtime/governed_supervisor_server.py:571` — fixed, #314
+- `engine/runtime/isolated_signer_server.py:383` — fixed, #314
+- `engine/runtime/isolated_signer_server.py:463` — fixed, #314
+- `engine/schemas/task-contract.schema.json:5` — fixed, #314
+- `engine/tests/test_brops_services.py:7` — fixed, #314
+- `engine/tests/test_completion_head_binding.py:595` — fixed, #314
+- `engine/tests/test_control_room_api.py:221` — fixed, #314
+- `engine/tests/test_governed_acceptance.py:2118` — fixed, #314
+- `engine/tests/test_governed_evidence_request.py:23` — fixed, #314
+- `engine/tests/test_governed_output_read.py:35` — fixed, #314
+- `engine/tests/test_governed_staging_upload.py:1059` — fixed, #314
+- `engine/tests/test_governed_turn_result.py:20` — fixed, #314
+- `engine/tests/test_hooks_subprocess.py:101` — fixed, #314
+- `engine/tests/test_hooks_subprocess.py:109` — fixed, #314
+- `engine/tests/test_isolated_signer_server.py:3` — fixed, #314
+- `engine/tests/test_live_broker_config.py:13` — fixed, #314
+- `engine/tests/test_negative_matrix.py:922` — fixed, #314
+- `engine/tests/test_owner_artifact_registration.py:26` — fixed, #314
+- `bridge/tests/test_engine_sidecar.py:189` — fixed, #314
+- `bridge/tests/test_governed_turn_submit.py:660` — fixed, #314
+- `bridge/tests/test_sidecar_ops.py:379` — fixed, #314
+- `bridge/tests/test_task_request_contract.py:66` — fixed, #314
+- `engine/ci/live/ipc_policy.py:25` — fixed, #314
+- `engine/laws/registry.json:94` — fixed, #314
+- `engine/tests/test_backup_restore.py:84` — fixed, #314
+- `engine/tests/test_brops_isolation.py:246` — fixed, #314
+- `engine/tests/test_brops_isolation.py:246` — fixed, #314
+- `engine/tests/test_brops_services.py:121` — fixed, #314
+- `engine/tests/test_challenge_handle_agreement.py:307` — fixed, #314
+- `engine/tests/test_control_plane_digest.py:225` — fixed, #314
+- `engine/tests/test_floor_writer.py:359` — fixed, #314
+- `engine/tests/test_floor_writer_durability.py:255` — fixed, #314
+- `engine/tests/test_governed_acceptance.py:851` — fixed, #314
+- `engine/tests/test_governed_acceptance.py:2114` — fixed, #314
+- `engine/tests/test_governed_chain_e2e.py:709` — fixed, #314
+- `engine/tests/test_governed_evidence_request.py:362` — fixed, #314
+- `engine/tests/test_governed_output_read.py:636` — fixed, #314
+- `engine/tests/test_governed_output_stream.py:70` — fixed, #314
+- `engine/tests/test_governed_run_attestation.py:674` — fixed, #314
+- `engine/tests/test_governed_staging_upload.py:397` — fixed, #314
+- `engine/tests/test_governed_staging_upload.py:962` — fixed, #314
+- `engine/tests/test_governed_supervisor_ledger.py:530` — fixed, #314
+- `engine/tests/test_governed_turn_open.py:301` — fixed, #314
+- `engine/tests/test_governed_turn_open.py:869` — fixed, #314
+- `engine/tests/test_hooks_subprocess.py:386` — fixed, #314
+- `engine/tests/test_isolated_signer.py:404` — fixed, #314
+- `engine/tests/test_ladder_pull_evidence.py:367` — fixed, #314
+- `engine/tests/test_law_traceability.py:140` — fixed, #314
+- `engine/tests/test_live_broker_config.py:478` — fixed, #314
+- `engine/tests/test_live_broker_config.py:479` — fixed, #314
+- `engine/tests/test_one_standard_pins.py:52` — fixed, #314
+- `engine/tests/test_owner_authorization_e2e.py:134` — fixed, #314
+- `engine/tests/test_prerequisite_guard.py:77` — fixed, #314
+- `bridge/engine_sidecar.py:274` — fixed, #314
+- `docs/DEBIAN_LINUX_CONTINUATION.md:1` — fixed, #314
+- `docs/design/PR32_REBASE_MAP_REV28.md:229` — fixed, #314
+- `engine/ci/live/provision_keys.py:295` — fixed, #314
+- `engine/runtime/bro_completion.py:575` — fixed, #314
+- `engine/runtime/governed_supervisor_ledger.py:1137` — fixed, #314
+- `engine/runtime/isolated_signer.py:195` — fixed, #314
+- `apps/desktop/docs/product/USER_FLOWS.md:57` — fixed, #314
+- `apps/desktop/docs/product/WORKSPACE_FLOWS.md:40` — fixed, #314
+- `bridge/tests/test_task_request_contract.py:23` — fixed, #314
+- `docs/DESIGN_SYSTEM.md:49` — fixed, #314
+- `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md:2899` — fixed, #314
+- `engine/ci/live/run_ladder_supervisor.py:610` — fixed, #314
+- `engine/ci/live/run_ladder_supervisor.py:610` — fixed, #314
+- `engine/ci/live/run_ladder_turn.sh:275` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:171` — fixed, #314
+- `engine/ci/live/run_live_turn.sh:171` — fixed, #314
+- `engine/ci/live/run_signer.py:56` — fixed, #314
+- `engine/ci/live/run_supervisor.py:118` — fixed, #314
+- `engine/ci/live/write_broker_config.py:202` — fixed, #314
+- `engine/runtime/bro_completion.py:366` — fixed, #314
+- `engine/runtime/bro_control_room_api.py:158` — fixed, #314
+- `engine/runtime/brops_canonical.py:158` — fixed, #314
+- `engine/runtime/brops_protocol.py:124` — fixed, #314
+- `engine/runtime/brops_socket.py:34` — fixed, #314
+- `engine/runtime/challenge_authority_server.py:141` — fixed, #314
+- `engine/runtime/governed_supervisor.py:284` — fixed, #314
+- `engine/runtime/governed_supervisor.py:325` — fixed, #314
+- `engine/tests/test_brops_isolation.py:70` — fixed, #314
+- `engine/tests/test_governance_read.py:63` — fixed, #314
+- `engine/tests/test_governed_chain_e2e.py:120` — fixed, #314
+- `engine/tests/test_governed_evidence_request.py:61` — fixed, #314
+- `engine/tests/test_governed_output_read.py:89` — fixed, #314
+- `engine/tests/test_governed_run_attestation.py:467` — fixed, #314
+- `engine/tests/test_isolated_signer.py:99` — fixed, #314
+- `engine/tests/test_live_provisioning_anchor.py:217` — fixed, #314
+- `engine/tests/test_live_tcb_pin_manifest.py:41` — fixed, #314
+- `engine/tests/test_orchestration_runtime.py:491` — fixed, #314
+- `engine/tests/test_runtime_atomicity.py:229` — fixed, #314
+- `engine/tests/test_signature_authority.py:309` — fixed, #314
+- `engine/tools/brops_receipt_signer.py:112` — fixed, #314
+- `README.md:327` — fixed, #314
+- `apps/desktop/README.md:49` — fixed, #314
+- `docs/OPERATOR_GUIDE.md:7` — fixed, #314
+- `docs/OWNER_ACTION_REQUIRED.md:931` — fixed, #314
+- `docs/SECURITY_MODEL.md:239` — fixed, #314
+- `docs/SECURITY_MODEL.md:19` — fixed, #314
+- `docs/ARCHITECTURE.md:92` — fixed, #314
+- `docs/design/FLOOR_WRITER_SERVICE_DESIGN.md:3` — fixed, #314
 - `docs/PHASE_10_PRODUCTION_ITEMS.md:370` — fixed, #314
 - `engine/runtime/bro_secrets.py:48` — fixed, #314
 - `engine/runtime/bro_security.py:183` — fixed, #314

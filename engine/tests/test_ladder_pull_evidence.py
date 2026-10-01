@@ -404,7 +404,7 @@ class TheVerifierIsNotOptionalTests(_PullCase):
                 mock.patch.object(le, "check_envelope", lambda receipt, root: envelope()), \
                 mock.patch.object(le, "check_request_binding", lambda env, document: None), \
                 mock.patch.object(le, "check_ledger", lambda root, document, handle: ledger), \
-                mock.patch.object(le, "check_containment", lambda root, attempt: {}), \
+                mock.patch.object(le, "check_containment", lambda root, attempt, uids: {}), \
                 mock.patch.object(le, "check_output", lambda env, root, report: {}), \
                 mock.patch.object(le, "check_hops", lambda hops, uids: {}), \
                 mock.patch.object(le, "check_pull",
