@@ -208,7 +208,8 @@ where
     let signer_key_id = "brops-live-signer-1".to_string(); // gitleaks:allow (fake public key-id)
     // Root anchor is the DEMONSTRATION key (tcb::DEMO_*), NOT the production anchor: this in-process proof
     // signs with an in-code private to exercise the whole crypto chain host-independently. Production trust is
-    // pinned to tcb::ROOT_PUBLIC_KEY_HEX alone (operator's offline root), which this proof never touches.
+    // pinned to tcb::ROOT_PUBLIC_KEY_HEX alone (a root whose private half no person holds — #78; T-131),
+    // which this proof never touches.
     let root_key_id = tcb::DEMO_ROOT_KEY_ID.to_string();
     let supervisor_id = "brops-supervisor".to_string();
     let executor_id = "brops-executor".to_string();

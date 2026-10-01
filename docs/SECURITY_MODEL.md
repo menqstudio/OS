@@ -318,7 +318,7 @@ demonstration anchor**, so neither can render production `trusted_verified`:
 > reads, with a test that runs on both CI platforms. The sentence and the defect had the same cause:
 > nobody re-read either after the second path was added.
 
-**Production custody has been proven once, locally** (2026-08-04): the operator's real offline root signed a
+**Production custody has been proven once, locally** (2026-08-04, before the Owner's decision of 2026-08-09 in PR #78 that no person holds a key — so this is history, not a path to repeat): the operator's real offline root signed a
 manifest the TCB pin accepted, and a full `win_live_turn` over real named pipes reached
 `trusted_verified … production_verified=true bound=true` under the real root. That is the honest graduation from
 demonstration custody — but it is a local proof, **not** the shipped badge.

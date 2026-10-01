@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c7e6253`.** The only thing open is PR #302 on `t132/settled-at-c7e6253`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #303 · branch `t133/owner-key-wording`** (base `main`, tip `4b25650`, task T-133).
 >
-> **Next:** Builder: T-131, design an install-minted broker root. Nothing waits on the Owner for custody.
+> T-133: ten texts still said a person holds a key; fixed, the gate now checks prose, and the T-131 design is proposed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-131** | **Broker pin: no holder** — install-mint it | — | Todo | — |
+| **T-133** | **Ten texts still said a person holds a key** — fixed; gate checks prose too ◑ | Bro | In-Progress | `t133/owner-key-wording` |
+| **T-131** | **Broker pin: no holder** — design proposed | Bro | Review | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |

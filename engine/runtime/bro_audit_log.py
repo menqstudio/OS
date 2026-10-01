@@ -20,8 +20,9 @@ that does not reproduce that signed head exactly.
 
 WHO SIGNS (custody). This module holds no private key and cannot sign - an
 enforcement point that could sign is an enforcement point that could forge. The
-signature comes from an OWNER-PROVIDED signing command named by
-``BRO_AUDIT_ANCHOR_SIGNER``, which lives outside this engine, runs under a
+signature comes from a signing command the DEPLOYMENT installs and names in
+``BRO_AUDIT_ANCHOR_SIGNER`` (no person holds, mints or exports its key - the
+signer service mints its own on first start), which lives outside this engine, runs under a
 principal that cannot write the ledger, and holds the private half of the
 ``BRO_AUDIT_ANCHOR_KEY_ID`` key registered under the dedicated ``audit-anchor``
 authority - a type this repository never mints, so its private half can only be
@@ -43,7 +44,7 @@ both private halves in the ledger writer's own store, and the writer could simpl
 a fresh anchor for the truncation it had just made.
 
 WHAT IT STILL DOES NOT BUY. Two things, both named rather than left to be discovered.
-(1) It does not defend against a party who can make the owner's signing command sign
+(1) It does not defend against a party who can make the deployment's signing command sign
 arbitrary heads; that boundary belongs to the signer's custody, which is required to run
 as a separate principal and to REFUSE any anchor whose count is below the last one it
 signed. ``previous_anchor_sha256`` is carried in the payload so such a signer can chain
@@ -56,7 +57,8 @@ signed with. ``verify_signed_payload`` resolves the anchor's ``key_id`` through
 floor, and anchor anything. On a deployment where the application provisions its own
 trust root, that party IS the ledger's writer, and no authority list in this module can
 separate a principal from itself. It is closed only by an operator root the ledger's
-writer does not hold - an offline root, or one held by another principal. The
+writer does not hold - one held by another principal (under PR #78 a separate service
+account the install provisions, never a person). The
 acknowledgement ``BRO_OPERATOR_ROOT_PIN_SELF_OWNED=acknowledged`` is exactly a
 deployment saying it has no such separation to offer.
 
@@ -119,7 +121,8 @@ ANCHOR_PAYLOAD_FIELDS = frozenset({
     "artifact_type", "key_id", "ledger", "count", "last_hash",
     "previous_anchor_sha256", "issued_at_epoch",
 })
-# Owner-provided custody. Deliberately two variables: a path with no key id (or a
+# Deployment-provided custody (installed and configured by the install, never held by
+# a person). Deliberately two variables: a path with no key id (or a
 # key id with no path) is a HALF-configuration and is refused loudly rather than
 # silently degrading to an unanchored ledger.
 SIGNER_ENV = "BRO_AUDIT_ANCHOR_SIGNER"
@@ -138,8 +141,8 @@ _LOCK_POLL = 0.01
 CUSTODY_REFUSAL = (
     "Audit-head anchor custody is NOT configured. No signing key is compiled into "
     "this engine and none will be invented: an anchor signed with a key the "
-    "ledger's own writer can reach proves nothing. The OWNER must provide, from "
-    "outside this repository:\n"
+    "ledger's own writer can reach proves nothing. The DEPLOYMENT must provide, from "
+    "outside this repository (an install step, not a key any person holds):\n"
     "  1. " + SIGNER_ENV + " - an absolute path to a signing command (or a JSON "
     "argv array whose first element is that path). It reads one canonical "
     "audit-head payload as JSON on stdin and writes a "
@@ -174,7 +177,7 @@ class AuditAnchorMissing(AuditError):
 
 
 class AuditAnchorCustodyMissing(AuditError):
-    """Anchor-signing custody is absent or half-configured; the owner must supply it."""
+    """Anchor-signing custody is absent or half-configured; the deployment must supply it."""
 
 
 def _canonical(obj) -> str:
@@ -260,11 +263,11 @@ def read_all(path: pathlib.Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Anchor custody - owner-provided, never compiled in
+# Anchor custody - deployment-provided, never compiled in
 # ---------------------------------------------------------------------------
 
 def anchor_custody_configured(env=None) -> bool:
-    """True when the owner has named anchor custody at all.
+    """True when the deployment has configured anchor custody at all.
 
     Either variable counts: a half-configuration must reach ``anchor_custody`` and
     become a loud refusal, not silently leave the ledger unanchored because of a
@@ -311,10 +314,10 @@ def _signer_argv(raw: str) -> list[str]:
 
 
 def anchor_custody(env=None) -> tuple[list[str], str]:
-    """Resolve the owner-provided (signing argv, key id), or refuse by name.
+    """Resolve the deployment-provided (signing argv, key id), or refuse by name.
 
     Never falls back to any built-in key: the refusal names both variables and
-    states exactly what the owner must provide.
+    states exactly what the deployment must provide.
     """
     source = os.environ if env is None else env
     signer_raw = (source.get(SIGNER_ENV) or "").strip()

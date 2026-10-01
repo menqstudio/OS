@@ -183,8 +183,8 @@ def main() -> int:
         print("RED: root anchor custody could not be established\n")
         for p in problems:
             print(f"  - {p}")
-        print("\nThe production anchor's private half belongs on the Owner's offline media and nowhere")
-        print("else. This gate does the arithmetic instead of trusting the comment that says so.")
+        print("\nThe production anchor's private half must exist in no file in this tree (nobody holds")
+        print("it; T-131). This gate does the arithmetic instead of trusting the comment that says so.")
         return 1
 
     print(f"GREEN: root anchor custody holds — {len(distinct)} production anchor "

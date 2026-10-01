@@ -126,12 +126,12 @@ builder's own unverified claim*. Never promote your own work to ✅.
 > is the job to watch, along with `python tools/check_contrast.py`.
 
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check`. **42 `check_*.py` files exist; 41 are invoked
+`python tools/generate_agent_definitions.py --check`. **43 `check_*.py` files exist; 42 are invoked
 by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by
-design). *(Measured at `ace8c1a` on 2026-09-21 with `for f in tools/check_*.py; do grep -rqF
+design). *(Measured at `4b25650` on 2026-10-01 with `for f in tools/check_*.py; do grep -rqF
 "$(basename $f)" .github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 —
 the ninth audit filed it as `I-10` — and then said 40/39 while the tree held 42/41, so the method is
-written down here rather than the number alone.)* Three of the 42 need arguments and print usage
+written down here rather than the number alone.)* Three of the 43 need arguments and print usage
 instead of a verdict when that loop runs them bare:
 `check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
 Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
@@ -161,7 +161,7 @@ rather than run.
 *builder-ի սեփական չստուգված պնդում*։ Երբեք սեփական գործդ ✅ մի դարձրու։
 
 **PR բացելուց առաջ վազեցրու gate-երը։** `for g in tools/check_*.py; do python "$g"; done` գումարած
-`python tools/generate_agent_definitions.py --check` — **40 `check_*.py` ֆայլ կա; 39-ը workflow-ներում
+`python tools/generate_agent_definitions.py --check` — **43 `check_*.py` ֆայլ կա; 42-ը workflow-ներում
 կանչված են ուղիով**, չկանչվածը `check_prior_art.py`-ն ա (դիզայնով session-side)։ Դրանցից **երեքը**
 արգումենտ են ուզում ու bare վազելիս verdict-ի փոխարեն usage են տպում՝ `check_canonical_sync.py`,
 `check_prior_art.py`, `check_read_receipt.py`; **երկուսը** RED են չկառուցված մեքենայի վրա՝

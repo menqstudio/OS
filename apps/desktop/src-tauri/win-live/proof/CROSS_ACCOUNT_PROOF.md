@@ -108,8 +108,9 @@ Where the evidence for each layer actually stands:
    It signs with the compiled-in DEMONSTRATION anchor, so it reports **demonstration custody**, never
    production; that is the honest outcome of a fixture root, not a shortfall. *(Caveat: this command
    is in no CI workflow, so nothing runs it automatically.)*
-2. **Real named pipes, same-account** (3 processes) — `win_live_proof.ps1`. **Requires the operator's
-   offline root private key**; without it the script fails loudly and produces nothing. It is
+2. **Real named pipes, same-account** (3 processes) — `win_live_proof.ps1`. **Requires the private half
+   of the compiled pin, which no person holds** (Owner decision #78; T-131), so today the script
+   fails loudly and produces nothing. It is
    same-account by construction, so it demonstrates the peer-SID gate in both directions and does
    **not** demonstrate cross-account isolation or pipe-squat resistance.
 3. **Cross-account** (3 distinct service-account servers) — this document, as an operator's narrative

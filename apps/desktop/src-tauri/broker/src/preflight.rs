@@ -15,11 +15,13 @@
 //!
 //! # What it deliberately does not do
 //!
-//! * **It does not provision.** Twelve of the requirements below can only be created by a machine
+//! * **It does not provision.** Eleven of the requirements below can only be created by a machine
 //!   administrator (service accounts, a setuid launcher, a sudoers vector, root-owned TCB material),
-//!   one only by the holder of the offline TCB root private key, and one not on a machine at all.
-//!   An installer that "provisioned" the other thirteen would produce a config that still ends in
-//!   `fail_closed()` — with the gap now hidden behind a file that looks complete.
+//!   one is a signature under the compiled-in TCB root whose private half NO person holds (Owner
+//!   decision #78; unmeetable until T-131 makes that root install-minted), one is not on a machine at
+//!   all, and one the shipped build already provides. An installer that "provisioned" the other
+//!   thirteen would produce a config that still ends in `fail_closed()` — with the gap now hidden
+//!   behind a file that looks complete.
 //! * **It does not weaken anything.** A requirement this machine cannot meet is reported as not met.
 //!   There is no "close enough" status and no way to pass a check by declaring it inapplicable.
 //! * **It is not a proof that a turn would complete.** Every requirement here is necessary; the set
@@ -52,9 +54,11 @@ pub enum Provisioner {
     /// Only a machine administrator (root, or an installer elevated to it) can create this: OS
     /// accounts, setuid bits, a sudoers vector, root-owned files under a root-owned directory.
     MachineAdministrator,
-    /// Only the holder of the OFFLINE TCB root private key, in a signing ceremony. The public half is
-    /// compiled into this binary (`crate::tcb`); the private half is deliberately not on any machine
-    /// that runs the product.
+    /// A signature under the TCB root whose PUBLIC half is compiled into this binary
+    /// (`crate::tcb::ROOT_PUBLIC_KEY_HEX`). No person holds or carries its private half — the Owner
+    /// decided on 2026-08-09 (#78) that the install mints all trust — so nothing and nobody can meet
+    /// a row of this kind today. It stays unmeetable until T-131 replaces the pin with an
+    /// install-minted root. (The variant name is historical; it does not name a real custodian.)
     OfflineRootCustodian,
     /// Nothing on any machine can create it — it is a property of the shipped BINARY, and changing it
     /// is a code change behind the Owner's gate.
@@ -140,7 +144,8 @@ pub struct Requirement {
 /// Every prerequisite, in the order `build_governed_executor` would meet them.
 ///
 /// `Provisioner` is the column that matters: thirteen `installer`, eleven `machine-admin`, one
-/// `offline-root-custodian`, two `not-provisionable`.
+/// `offline-root-custodian` (a root nobody holds — see [`Provisioner::OfflineRootCustodian`]), one
+/// `not-provisionable`, one `met-by-build`.
 pub const REQUIREMENTS: &[Requirement] = &[
     // ---- platform + OS topology -------------------------------------------------------------
     Requirement {
@@ -322,8 +327,9 @@ pub const REQUIREMENTS: &[Requirement] = &[
     // ---- custody ------------------------------------------------------------------------------
     Requirement {
         name: "custody.tcb_root_manifest_signature",
-        what: "the key manifest verifies under the root PINNED IN THIS BINARY — whose private half is \
-               the Owner's offline root, held on no machine that runs the product",
+        what: "the key manifest verifies under the root PINNED IN THIS BINARY — whose private half no \
+               person holds (Owner decision #78), so this is unmeetable until T-131 makes the root \
+               install-minted",
         provisioner: Provisioner::OfflineRootCustodian,
         refusal: "ProductionResolver::provisioned pins crate::tcb::ROOT_KEY_ID; a manifest under any \
                   other root resolves UnknownRoot / RootSignatureInvalid",
@@ -1252,8 +1258,9 @@ fn check_root_custody(host: &dyn Host, cfg: &Cfg) -> Status {
         )),
         Err(e) => Status::not_met(format!(
             "the manifest names root `{}` and does not verify under the root pinned in this binary \
-             (`{}`): {e:?}. The private half of that root is the Owner's OFFLINE key; no \
-             provisioning step on this machine can produce this signature",
+             (`{}`): {e:?}. No person holds the private half of that root (Owner decision #78) \
+             and no provisioning step on this machine can produce this signature; it stays \
+             unmeetable until T-131 replaces the pin with an install-minted root",
             manifest.root_key_id,
             crate::tcb::ROOT_KEY_ID
         )),
@@ -1695,15 +1702,15 @@ mod tests {
             .iter()
             .map(|f| f.requirement.name)
             .filter(|n| {
-                // ONE custody row is the honest residue now: the offline key. The other was a code
-                // decision, the Owner took it on 2026-09-19, and the build provides it — so a
-                // provisioned deployment that still could not commit is no longer a thing this table
-                // describes.
+                // ONE custody row is the honest residue now: the pinned root, whose private half
+                // nobody holds (#78; T-131 makes it install-minted). The other was a code decision,
+                // the Owner took it on 2026-09-19, and the build provides it — so a provisioned
+                // deployment that still could not commit is no longer a thing this table describes.
                 *n != "custody.tcb_root_manifest_signature"
             })
             .collect();
         assert!(unexpected.is_empty(), "unexpectedly not met: {unexpected:?}\n{}", report.render());
-        // …and the two that remain are exactly the two whose provisioner is not a machine.
+        // …and the one that remains is exactly the row whose root nobody holds.
         assert_eq!(report.not_met().len(), 1);
         for f in report.not_met() {
             assert!(matches!(f.requirement.provisioner, Provisioner::OfflineRootCustodian));
@@ -2062,7 +2069,7 @@ mod tests {
         let r = evaluate(&provisioned(), None);
         let d = status_of(&r, "custody.tcb_root_manifest_signature").detail();
         assert!(d.contains("brops-live-root-1"), "{d}");
-        assert!(d.contains("OFFLINE"), "{d}");
+        assert!(d.contains("T-131"), "{d}");
         assert!(d.contains(crate::tcb::ROOT_KEY_ID), "{d}");
     }
 

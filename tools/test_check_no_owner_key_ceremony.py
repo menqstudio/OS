@@ -55,6 +55,17 @@ class GateTests(unittest.TestCase):
         self.assertTrue(any(p.startswith("docs/HOWTO.md names BROPS_MANIFEST_SIG_IN") for p in problems),
                         problems)
 
+    def test_prose_claiming_a_person_holds_the_root_is_red_whatever_its_case(self):
+        self.t.write("src/preflight.rs", "// the private half is the Owner's OFFLINE root\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertTrue(any("src/preflight.rs" in p and "owner's offline" in p for p in problems),
+                        problems)
+
+    def test_an_honest_sentence_about_the_removal_is_green(self):
+        self.t.write("docs/WHY.md", "Nobody holds an offline root; the install mints trust.\n")
+        problems, _ = gate.check(self.t.root)
+        self.assertEqual(problems, [])
+
     def test_history_is_exempt(self):
         self.t.write("docs/archive/OLD.md", "win_gen_root --out root.private.seed\n")
         self.t.write("apps/desktop/AUDIT/2026-08-06-x.md", "sign_manifest.py\n")

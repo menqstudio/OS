@@ -297,14 +297,14 @@ if (-not $RootKey) {
   Fail-Loudly @(
     "-RootKey was not supplied.",
     "",
-    "This proof provisions a deployment whose key manifest must be signed by the OFFLINE root private",
-    "key matching the TCB-pinned public in src-tauri/win-live/src/tcb.rs (ROOT_PUBLIC_KEY_HEX). That",
-    "key is deliberately NOT in this repository and NOT on this machine -- if it were, the pinning would",
-    "be worthless.",
+    "This proof provisions a deployment whose key manifest must be signed by the root private key",
+    "matching the TCB-pinned public in src-tauri/win-live/src/tcb.rs (ROOT_PUBLIC_KEY_HEX). That key is",
+    "NOT in this repository and NOT on this machine, and no person holds it (Owner decision #78); the pin",
+    "is replaced by an install-minted root in T-131.",
     "",
-    "To run:  .\win_live_proof.ps1 -RootKey <path to the offline root private seed hex>",
+    "To run:  .\win_live_proof.ps1 -RootKey <path to the root private seed hex>",
     "",
-    "If you do not hold that key, this harness CANNOT produce a production trusted_verified, and no",
+    "Without that key this harness CANNOT produce a production trusted_verified, and no",
     "document should cite it as though it had. The host-independent chain proof that anyone can",
     "reproduce is:  cargo test -p brops-win-live"
   )

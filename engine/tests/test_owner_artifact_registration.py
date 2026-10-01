@@ -305,7 +305,7 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
         self.wipe_floor()
         self.restrict_registry()
         message = self.refuse(self.anchor())
-        self.assertIn("does not verify as an owner-signed evidence-floor-anchor", message)
+        self.assertIn("does not verify as a signed evidence-floor-anchor", message)
         self.assertIn("unknown signing key", message)
         self.assertIn("none is compiled in", message)
 
@@ -318,7 +318,7 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
         """
         self.wipe_floor()
         message = self.refuse(self.anchor(authority="operator-root"))
-        self.assertIn("does not verify as an owner-signed", message)
+        self.assertIn("does not verify as a signed evidence-floor-anchor", message)
         self.assertIn("(operator-root) may not sign evidence-floor-anchor", message)
 
     def test_an_anchor_from_any_other_authority_is_refused(self) -> None:
@@ -328,13 +328,13 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
                 self.setUp()
                 self.wipe_floor()
                 message = self.refuse(self.anchor(authority=authority))
-                self.assertIn("does not verify as an owner-signed", message)
+                self.assertIn("does not verify as a signed evidence-floor-anchor", message)
                 self.assertIn(f"({authority}) may not sign", message)
 
     def test_a_tampered_anchor_is_refused(self) -> None:
         self.wipe_floor()
         message = self.refuse(self.anchor(tamper=True))
-        self.assertIn("does not verify as an owner-signed", message)
+        self.assertIn("does not verify as a signed evidence-floor-anchor", message)
 
     def test_an_anchor_for_another_task_is_refused(self) -> None:
         self.wipe_floor()
@@ -359,7 +359,7 @@ class EvidenceFloorAnchorTests(HeadBindingFixture):
     def test_an_artifact_of_another_type_may_not_stand_in(self) -> None:
         self.wipe_floor()
         message = self.refuse(self.anchor(artifact_type="workspace-binding"))
-        self.assertIn("does not verify as an owner-signed", message)
+        self.assertIn("does not verify as a signed evidence-floor-anchor", message)
 
     # ---- the closure the registration makes possible -----------------------------------
 

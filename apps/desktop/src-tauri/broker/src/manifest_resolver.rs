@@ -509,7 +509,8 @@ mod tests {
     }
 
     // The DEMONSTRATION root the tests pin — never the production anchor. Its private is the in-code seed
-    // below; production trust pins tcb::ROOT_PUBLIC_KEY_HEX (the operator's offline root) alone.
+    // below; production trust pins tcb::ROOT_PUBLIC_KEY_HEX alone — a root whose private half no
+    // person holds (Owner decision #78; T-131 makes it install-minted).
     fn demo_pin() -> PinnedRoot {
         PinnedRoot {
             root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),

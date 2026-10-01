@@ -16,11 +16,12 @@
 //! not cosmetic and each one is here because the binary genuinely cannot be driven in CI:
 //!
 //!  * `build_governed_executor` is not called, and cannot be. It reaches only
-//!    `ProductionResolver::provisioned`, which hard-pins the Owner's offline root
-//!    `brops-tcb-root-1` / `3c83c2bc…`; the one constructor that accepts another anchor is
-//!    `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker` can reach it (measured:
-//!    `error[E0624]`). Satisfying it in CI would mean an Owner ceremony with the offline key on
-//!    every run, or committing the production signer's private half — which would make forging a
+//!    `ProductionResolver::provisioned`, which hard-pins the compiled-in root
+//!    `brops-tcb-root-1` / `3c83c2bc…` — a root whose private half NO person holds (Owner
+//!    decision #78; T-131 replaces it with an install-minted root). The one constructor that
+//!    accepts another anchor is `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker`
+//!    can reach it (measured: `error[E0624]`). So nothing can satisfy the pin in CI, and
+//!    committing any production signer's private half instead would make forging a
 //!    production-class §4.9 envelope trivial against every shipped install. This driver therefore
 //!    supplies its OWN `KeyResolver` over the kit's TCB root-anchor file, carrying that file's
 //!    DECLARED provenance. That is honest for exactly one reason, and it is the same reason

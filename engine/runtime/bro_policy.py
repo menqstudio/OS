@@ -115,11 +115,14 @@ CONDUCTOR_SESSION_POLICY_KEY = "require_conductor_session_token"
 
 # Every refusal names this. A refusal that does not say what is missing is a
 # refusal somebody eventually "fixes" by deleting the check, and this particular
-# check can only be satisfied by an artifact the owner holds the key for. Nothing
-# in this repository can mint it, and nothing here ships a seed that would let a
-# process satisfy its own identity requirement.
+# check can only be satisfied by an artifact signed by the operator root. No person
+# holds that key (PR #78): first-launch provisioning mints the artifact
+# (`provision::conductor_session_payload`) with the in-memory operator root before
+# destroying it. Nothing in this engine can mint it, and nothing here ships a seed
+# that would let a process satisfy its own identity requirement.
 CONDUCTOR_SESSION_PROVISIONING = (
-    "the owner must mint an operator-root-signed `conductor-session` artifact "
+    "present an operator-root-signed `conductor-session` artifact, minted by "
+    "first-launch provisioning (no person holds or mints it) "
     "({\"payload\": {\"artifact_type\": \"conductor-session\", \"key_id\": <operator key>, "
     "\"session_id\": <this session>, \"agent_id\": \"" + CANONICAL_CONDUCTOR_ID + "\", "
     "\"role\": \"" + CONDUCTOR_ROLE + "\", \"expires_at_epoch\": <int>}, \"signature\": <ed25519 hex>}), "
@@ -178,8 +181,9 @@ def verify_conductor_session_token(state: State, root: pathlib.Path = ROOT) -> t
       policy now says it is. That file lives inside the protected control-plane
       digest, unlike the environment, so the requirement cannot be switched off
       by unsetting an env var — and an absent key no longer reads as "off".
-    - The requirement can therefore only be satisfied by an artifact the owner
-      signs offline: see CONDUCTOR_SESSION_PROVISIONING, which is quoted verbatim
+    - The requirement can therefore only be satisfied by an operator-root-signed
+      artifact, which first-launch provisioning mints (no person holds the root;
+      PR #78): see CONDUCTOR_SESSION_PROVISIONING, which is quoted verbatim
       in the refusal so the missing artifact is named rather than guessed at.
     """
     try:

@@ -296,9 +296,11 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 #: The environment variable that would name an operator-signed statement of a task's evidence
 #: high-water mark — the one thing that can tell a genuinely new task apart from a floor that was
 #: deleted and re-provisioned. Nothing in the shipped trusted-key registry can sign one: the
-#: artifact type below is deliberately NOT registered here, because registering it without an
-#: owner-held key would mean inventing an authority. Presenting the variable therefore fails
-#: closed with a message naming exactly what the owner must supply.
+#: committed registry grants the artifact type below to no key, and no seed is compiled in.
+#: Under PR #78 no person holds such a key either - the install mints and retains the
+#: delegated ``evidence-floor`` key; WHEN an anchor is minted is an open Owner decision.
+#: Presenting the variable without a verifying anchor fails closed with a message naming
+#: exactly what is missing.
 ENV_FLOOR_ANCHOR = "BRO_EVIDENCE_FLOOR_ANCHOR"
 FLOOR_ANCHOR_ARTIFACT = "evidence-floor-anchor"
 
@@ -388,17 +390,21 @@ def _require_store_agrees_with_head(task_id: str, store: pathlib.Path, keys: dic
 
 
 def _signed_floor_anchor(task_id: str, root: pathlib.Path, now: int | None) -> int | None:
-    """The owner-signed high-water statement for ``task_id``, if the deployment has one.
+    """The signed high-water statement for ``task_id``, if the deployment has one.
 
     Returns ``None`` only when the deployment presents nothing. A presented anchor that does
     not verify is a refusal — never a fallback.
 
     ``evidence-floor-anchor`` IS registered in ``bro_signature.ARTIFACT_AUTHORITY`` (it was
     absent when this was written, which made the check unusable rather than merely
-    unprovisioned). So an anchor can verify here — once the owner mints a key under the
-    ``evidence-floor`` authority and lists it ``active`` in ``config/trusted-keys.json`` with
-    the type among its ``allowed_artifact_types``. The shipped registry grants it to nobody, and
-    no seed is compiled in to pretend otherwise: registering a type opens no path on its own.
+    unprovisioned). So an anchor can verify here — once one is minted with a key under the
+    ``evidence-floor`` authority that is listed ``active`` in the registry with the type among
+    its ``allowed_artifact_types``. Under PR #78 no person holds that key: first-launch
+    provisioning mints and retains it, and ``provision::mint_floor_anchor`` signs with it. What
+    is undecided is WHEN an anchor is minted and under which account — an Owner decision about
+    timing, not an Owner-held key. The committed ``engine/config/trusted-keys.json`` grants the
+    type to nobody, and no seed is compiled in to pretend otherwise: registering a type opens
+    no path on its own.
 
     The authority is ``evidence-floor`` and no longer ``operator-root``. Stating a task's
     evidence high-water mark is a routine act; signing the trusted-key registry is not, and a
@@ -419,10 +425,11 @@ def _signed_floor_anchor(task_id: str, root: pathlib.Path, now: int | None) -> i
                                   load_trusted_keys(root), now=now)
     except SignatureError as exc:
         raise CompletionError(
-            f"{ENV_FLOOR_ANCHOR} is set but does not verify as an owner-signed "
-            f"{FLOOR_ANCHOR_ARTIFACT}: {exc}. The owner must mint this artifact with a "
-            f"key held under the '{EVIDENCE_FLOOR}' authority and register "
-            f"'{FLOOR_ANCHOR_ARTIFACT}' against that authority in the operator-signed "
+            f"{ENV_FLOOR_ANCHOR} is set but does not verify as a signed "
+            f"{FLOOR_ANCHOR_ARTIFACT}: {exc}. It must be minted with a key held under the "
+            f"'{EVIDENCE_FLOOR}' authority (the install mints and retains that key; no person "
+            "holds one) and that key must be granted "
+            f"'{FLOOR_ANCHOR_ARTIFACT}' in the operator-signed "
             "registry; this runtime holds no key for it and none is compiled in") from exc
     if payload.get("task_id") != task_id:
         raise CompletionError(
@@ -457,10 +464,12 @@ def _require_establishable_mark(task_id: str, declared: int | None, recorded: in
         f"binds head_sequence {declared}, but this deployment holds no durable mark for the "
         "task. A floor that was deleted and re-provisioned is indistinguishable from a first "
         "sighting, so this refuses rather than defaulting to zero. Closing it needs an "
-        f"owner-provided key: mint an '{FLOOR_ANCHOR_ARTIFACT}' artifact (task_id + "
-        f"head_sequence) with a key held under the '{EVIDENCE_FLOOR}' authority, present it at "
-        f"{ENV_FLOOR_ANCHOR} under a principal the policed account cannot write, and list that "
-        "key active in the operator-signed trusted-key registry. The authority is delegated and "
+        f"'{FLOOR_ANCHOR_ARTIFACT}' artifact (task_id + head_sequence) minted with a key "
+        f"held under the '{EVIDENCE_FLOOR}' authority (the install provisions that key; no "
+        "person holds or mints one, and WHEN the anchor is minted, under which account, is an "
+        "open Owner decision), presented at "
+        f"{ENV_FLOOR_ANCHOR} under a principal the policed account cannot write, with that "
+        "key listed active in the operator-signed trusted-key registry. The authority is delegated and "
         "deliberately NOT operator-root: the key that signs the registry must not have to be "
         "online to state a high-water mark. No key is invented here and none is compiled in")
 
@@ -526,7 +535,7 @@ def _head_floor_dir(store: pathlib.Path) -> pathlib.Path:
        4. It cannot carry what this floor carries. ``evidence_head_sha256`` -- the digest of the
           signed head document, which drives the "same sequence, different signed head" refusal --
           has no column in that table, and the ``_index.json`` roster,
-          ``_require_establishable_mark`` and the owner-signed ``evidence-floor-anchor`` bootstrap
+          ``_require_establishable_mark`` and the signed ``evidence-floor-anchor`` bootstrap
           have no equivalent there at all.
     """
     directory = (

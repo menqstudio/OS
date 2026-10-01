@@ -247,16 +247,17 @@ ARTIFACT_AUTHORITY = {
     "protected-authority": OPERATOR,
     "workspace-binding": OPERATOR,
     # The conductor session token binds the environment-derived conductor identity
-    # (M-4) to a credential the operator issued. It is an authorisation of identity,
+    # (M-4) to a credential the operator root issued. It is an authorisation of identity,
     # not a claim, so like the workspace binding it may only come from the
-    # owner-held operator authority — never a key any agent process could hold.
+    # operator authority — minted at install, used by provisioning and then destroyed
+    # (PR #78: no person holds it) — never a key any agent process could hold.
     "conductor-session": OPERATOR,
     # O-4. The control-room command itself, so an owner-issued command can be a signed
     # artifact instead of two strings out of the caller's own JSON. Registering the type
     # provisions NOTHING and weakens nothing: `verify_artifact` still requires the
     # presented key to carry "control-room-command" in its OWN allowed_artifact_types,
     # the committed config/trusted-keys.json grants it to no key, and no key material is
-    # shipped or generated here. What the entry buys is that the owner CAN be given one —
+    # shipped or generated here. What the entry buys is that a key CAN be granted it —
     # before it, `_parse_key` refused any registry entry naming the type, so the closure
     # could not be provisioned from configuration at all.
     #
@@ -284,7 +285,8 @@ ARTIFACT_AUTHORITY = {
     "verifier-receipt": VERIFIER,
     "release-grant": RELEASE,
     # The proof that a recovery actually happened is an authorisation, not a claim,
-    # so it comes from the owner-held recovery authority — never the builder, which
+    # so it comes from the delegated recovery authority (install-minted; no person holds
+    # it, PR #78) — never the builder, which
     # would otherwise clear its own interrupted mutation with an arbitrary token.
     "recovery-proof": RECOVERY,
     "trusted-key-registry": OPERATOR,
