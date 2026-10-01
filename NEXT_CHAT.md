@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t130/no-owner-key-ceremony` — `main` @ `de6ed04`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `c7e6253`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #301 · branch `t130/no-owner-key-ceremony`** (base `main`, tip `de6ed04`, task T-130).
+> **✅ SETTLED — `main` is at `c7e6253`.** The only thing open is PR #302 on `t132/settled-at-c7e6253`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-130: an Owner-key ceremony contradicted #78; removed, and a gate forbids its return
+> **Next:** Builder: T-131, design an install-minted broker root. Nothing waits on the Owner for custody.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
