@@ -2,8 +2,9 @@
 """The production trust anchors' private halves are not in this tree. Checked, not asserted.
 
 Every guarantee in this repository that ends in `trusted_verified` rests on one fact: the private half
-of the root public key compiled into `tcb.rs` exists only on the Owner's offline media. `tcb.rs` says so
-in a comment. A comment is not evidence, and the failure mode is not hypothetical — a seed pasted into a
+of the root public key compiled into `tcb.rs` is in nobody's reach — today nobody holds it at all (Owner
+decision #78: no person carries a key; T-131 replaces the pin with an install-minted root). A comment
+is not evidence, and the failure mode is not hypothetical — a seed pasted into a
 fixture, a test helper, a runbook snippet or a JSON sample would hand the whole trust chain to anyone
 with a clone, and nothing in the tree would notice.
 
@@ -23,8 +24,7 @@ FIVE RULES, and the fourth is the one that makes the other four mean anything:
      sweep cannot find the seed that IS there, it has not established anything about the one that
      must not be.
   5. Every `tcb.rs` pins the SAME production anchor. Two different production roots across the Linux
-     broker and the Windows kit would mean the Owner's single offline root can provision one of them
-     and never the other, and the one it cannot provision would be undeployable without anyone saying so.
+     broker and the Windows kit would mean one root can provision one of them and never the other, and the one it cannot provision would be undeployable without anyone saying so.
 
 FAIL-CLOSED: without `cryptography` this gate cannot do the arithmetic, and it exits non-zero saying so
 rather than passing. A check that reports success when it could not run is the defect this repository is
@@ -120,7 +120,7 @@ def main() -> int:
         problems.append(
             "the tcb files pin DIFFERENT production anchors — "
             + "; ".join(f"{r} -> {v[:12]}..." for r, v in sorted(production.items()))
-            + ". The Owner holds one offline root, so one of these is undeployable")
+            + ". One root provisions one of these, so the other is undeployable")
 
     if not production:
         for line in ["RED: root anchor custody could not be established", ""]:

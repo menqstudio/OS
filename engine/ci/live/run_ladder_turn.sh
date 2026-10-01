@@ -161,17 +161,6 @@ SUPSTATE="$LIVE/supervisor-state"     # the supervisor's PRIVATE durable ledger 
 RECSTATE="$LIVE/recorder-state"       # the recorder's PRIVATE evidence head counter (F-02), 0750
 STAGING="$LIVE/supervisor-staging"    # the §4.10(a)(b)(c) staging root — supervisor-private, 0700
 LADDER="$LIVE/ladder"                 # this proof's working files + evidence bundle
-# Phase 1's keys must survive the wipe below. `--keys-in` is READ and copied into a fresh `keys/`,
-# so a keys directory inside $LIVE would be deleted before phase 2 could read it — and the
-# ceremony document told the Owner to put it exactly there until T-126.
-if [ -n "${BROPS_KEYS_IN:-}" ]; then
-  case "$(realpath -m -- "$BROPS_KEYS_IN")/" in
-    "$LIVE"/*)
-      echo "FAIL: BROPS_KEYS_IN=$BROPS_KEYS_IN is inside $LIVE, which this kit deletes before it"
-      echo "      provisions. Run phase 1 with --root-dir outside $LIVE (docs/DEBIAN_CUSTODY_CEREMONY.md)."
-      exit 1;;
-  esac
-fi
 rm -rf "$LIVE"
 mkdir -p "$STORE" "$SOCK" "$REPORT" "$TCB" "$BIN" "$KEYS" "$SUPSTATE" "$RECSTATE" "$STAGING" \
          "$LADDER/evidence" "$LIVE/engine" "$LIVE/broker-state"
@@ -205,59 +194,12 @@ install -m 0755 "$RECORDER_BIN" "$BIN/governed_recorder"; chown 0:0 "$BIN/govern
 LAUNCHER_SHA=$(sha256sum "$TCB/privileged-launcher.bin" | cut -d' ' -f1)
 EXECUTOR_SHA=$(sha256sum "$TCB/contained-executor.bin" | cut -d' ' -f1)
 
-# ----- an EXTERNAL root anchor, when the environment names one (T-126) ------------------------------
-# Until T-126 this kit read none of the five `BROPS_*` variables `run_live_turn.sh` takes, so the
-# kit that starts the real `brops-broker` could only ever run under a root it minted itself. It
-# takes them now, plus a SIXTH: on this kit the root signs TWO things — the key manifest and the
-# §4.2 challenge-key registry — and `provision_ladder.py` signed the second with `keys/root.priv`,
-# which external mode never writes. `BROPS_REGISTRY_SIG_IN` is the offline root's signature over
-# the bytes `provision_ladder.py --emit-registry` wrote in phase 1.
-#
-# ALL SIX OR NONE, for the reason `run_live_turn.sh` gives: a partial set would provision fresh keys
-# no earlier signature names, or fall back to `kit_generated` while the environment asked for more.
-#
-# WHAT AN EXTERNAL ANCHOR CANNOT DO: make a throwaway root production. `ladder_turn` refuses an
-# anchor that says `external` unless it IS the root compiled into `broker/src/tcb.rs`
-# (`check_declared_external_anchor`), so exporting six variables over a root you just generated
-# stops at `blocked:setup:root_anchor_external_not_the_pinned_root` — and CI proves that below, on
-# every run, with this kit's own root.
-ANCHOR_VARS="BROPS_KEYS_IN BROPS_ROOT_ANCHOR_KEY_ID BROPS_ROOT_ANCHOR_PUB_HEX BROPS_MANIFEST_IN BROPS_MANIFEST_SIG_IN BROPS_REGISTRY_SIG_IN"
-ANCHOR_ARGS=()
-LADDER_ANCHOR_ARGS=()
-ANCHOR_MODE=kit_generated
-ANCHOR_SET=""
-for v in $ANCHOR_VARS; do
-  [ -n "${!v:-}" ] && ANCHOR_SET="$ANCHOR_SET $v"
-done
-if [ -n "$ANCHOR_SET" ]; then
-  for v in $ANCHOR_VARS; do
-    [ -n "${!v:-}" ] || {
-      echo "FAIL: an external root anchor needs ALL of: $ANCHOR_VARS"
-      echo "      set:$ANCHOR_SET"
-      echo "      missing: $v"
-      echo "      Phase 1: provision_keys.py --emit-manifest, then provision_ladder.py --emit-registry"
-      echo "      over the same keys directory; sign BOTH files with sign_manifest.py offline; then"
-      echo "      point BROPS_KEYS_IN at that keys directory. See docs/DEBIAN_CUSTODY_CEREMONY.md."
-      exit 1
-    }
-  done
-  ANCHOR_ARGS=(--keys-in "$BROPS_KEYS_IN" \
-               --root-anchor-key-id "$BROPS_ROOT_ANCHOR_KEY_ID" \
-               --root-anchor-pub-hex "$BROPS_ROOT_ANCHOR_PUB_HEX" \
-               --manifest-in "$BROPS_MANIFEST_IN" \
-               --manifest-sig-in "$BROPS_MANIFEST_SIG_IN")
-  LADDER_ANCHOR_ARGS=(--registry-sig-in "$BROPS_REGISTRY_SIG_IN")
-  ANCHOR_MODE=external
-  echo "== EXTERNAL root anchor requested: $BROPS_ROOT_ANCHOR_KEY_ID =="
-fi
-
 # ----- keys + manifest + store + shared config -------------------------------------------------
 echo "== provisioning keys + root-signed manifest + store + config =="
 python3 "$PYLIVE/provision_keys.py" --root-dir "$LIVE" \
   --launcher-sha "$LAUNCHER_SHA" --executor-sha "$EXECUTOR_SHA" \
   --recorder-bin "$BIN/governed_recorder" --sudo-recorder-user "$RECORDER_USER" \
   --login-uid "$(id -u "${SUDO_USER:-root}")" \
-  ${ANCHOR_ARGS[@]+"${ANCHOR_ARGS[@]}"} \
   || { echo "FAIL: provision_keys.py"; exit 1; }
 
 CONFIG="$LIVE/config.json"
@@ -274,7 +216,6 @@ python3 "$PYLIVE/provision_ladder.py" --root-dir "$LIVE" \
   --supervisor-uid "$(id -u "$SUPERVISOR_USER")" \
   --broker-uid "$(id -u "$BROKER_USER")" \
   --recorder-user "$RECORDER_USER" \
-  ${LADDER_ANCHOR_ARGS[@]+"${LADDER_ANCHOR_ARGS[@]}"} \
   || { echo "FAIL: provision_ladder.py"; exit 1; }
 LADDER_CONFIG="$TCB/ladder.json"
 
@@ -363,13 +304,7 @@ chown "$SUPERVISOR_USER": "$KEYS/supervisor_attest.priv";  chmod 0400 "$KEYS/sup
 chown "$SIGNER_USER":     "$KEYS/signer.priv";             chmod 0400 "$KEYS/signer.priv"
 # The root key SIGNED the §4.2 registry document during provisioning and is never read again. It
 # stays root-only: a service account that could read it could mint a registry naming its own key.
-# Under an external anchor there is none, and there must be none: its whole point is that the root
-# private never touches this box.
-if [ "$ANCHOR_MODE" = external ]; then
-  [ ! -e "$KEYS/root.priv" ] || { echo "FAIL: an external-anchor kit holds keys/root.priv"; exit 1; }
-else
-  chown 0:0 "$KEYS/root.priv";                             chmod 0400 "$KEYS/root.priv"
-fi
+chown 0:0 "$KEYS/root.priv";                               chmod 0400 "$KEYS/root.priv"
 chmod 0644 "$KEYS"/*.pub.hex "$CONFIG" "$LIVE/manifest.json" "$LIVE/manifest.sig" "$LIVE/floor.json"
 chown 0:0 "$TCB/root-anchor.json"; chmod 0644 "$TCB/root-anchor.json"
 # The registry document, the ladder config and both IPC policies are TCB: the supervisor refuses
@@ -717,16 +652,13 @@ chmod 0644 "$DRIVER_CONFIG" "$DRIVER_CONFIG_ROLLBACK" "$DRIVER_CONFIG_ROOTFLOOR"
           "$DRIVER_CONFIG_NOAUTH"
 chown "$BROKER_USER": "$ROLLED_FLOOR"; chmod 0600 "$ROLLED_FLOOR"
 
-# Variant 4 — THIS kit's own root, relabelled `external` (T-126). It is exactly what exporting the
-# six `BROPS_*` variables over a root you just generated produces: a TCB anchor file saying
-# `external` over a key the kit holds. `ladder_turn` must refuse it at setup, by the name of the
-# check that compares it to the compiled-in pin, before a hop or a staging session is spent. Only
-# on a kit-generated run: under a real external anchor there is no throwaway root to relabel.
+# Variant 4 — THIS kit's own root, relabelled `external` (T-126): a TCB anchor file claiming
+# outside custody over a key the kit holds. `ladder_turn` must refuse it at setup, by the name of
+# the check that compares it to the compiled-in pin, before a hop or a staging session is spent.
 DRIVER_CONFIG_THROWAWAY="$TCB/ladder-driver-throwaway-external.json"
 THROWAWAY_ANCHOR="$TCB/root-anchor-throwaway-external.json"
-if [ "$ANCHOR_MODE" = kit_generated ]; then
-  python3 - "$TCB/root-anchor.json" "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG" "$DRIVER_CONFIG_THROWAWAY" \
-    <<'PYTHROW' || { echo "FAIL: could not build the throwaway-external variant"; exit 1; }
+python3 - "$TCB/root-anchor.json" "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG" "$DRIVER_CONFIG_THROWAWAY" \
+  <<'PYTHROW' || { echo "FAIL: could not build the throwaway-external variant"; exit 1; }
 import json, sys
 anchor_in, anchor_out, cfg_in, cfg_out = sys.argv[1:5]
 anchor = json.load(open(anchor_in, encoding="utf-8"))
@@ -739,9 +671,8 @@ cfg = json.load(open(cfg_in, encoding="utf-8"))
 cfg["trust"]["root_anchor_path"] = anchor_out
 json.dump(cfg, open(cfg_out, "w", encoding="utf-8"), indent=2, sort_keys=True)
 PYTHROW
-  chown 0:0 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
-  chmod 0644 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
-fi
+chown 0:0 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
+chmod 0644 "$THROWAWAY_ANCHOR" "$DRIVER_CONFIG_THROWAWAY"
 
 # ----- the PRODUCT broker's deployment (OWNER_ACTION_REQUIRED §0 row 5) -------------------------
 # `brops-broker` itself, not the driver: its binary, the `$BROPS_BROKER_CONFIG` document
@@ -1182,36 +1113,10 @@ run_driver positive "$DRIVER_CONFIG" committed
 # now found more than once. So it is checked, on the driver's own recorded evidence, against three
 # values at once — and a run that reported production here is a RED, not a note, because it would be
 # exactly the substitution this shape exists to make impossible.
-#
-# UNDER AN EXTERNAL ANCHOR (T-126) the three values invert, and they may only invert there: the
-# anchor reached the driver saying `external`, and `ladder_turn` accepts that only for the root
-# compiled into `broker/src/tcb.rs`. So the run must commit as `trusted_verified` with
-# production_verified=true under THAT key id — anything less is a RED, because it would mean the
-# Owner's root verified and the chain still did not bind. This branch has never run: it needs the
-# Owner's signatures, and no CI run holds them.
 DRIVER_CUSTODY_RC=1
-python3 - "$DRIVERDIR/positive/ladder-turn.json" "$ANCHOR_MODE" <<'PYCUSTODY' && DRIVER_CUSTODY_RC=0 || DRIVER_CUSTODY_RC=$?
+python3 - "$DRIVERDIR/positive/ladder-turn.json" <<'PYCUSTODY' && DRIVER_CUSTODY_RC=0 || DRIVER_CUSTODY_RC=$?
 import json, sys
 document = json.load(open(sys.argv[1], encoding="utf-8"))
-if sys.argv[2] == "external":
-    required = {
-        "outcome": "committed",
-        "bound": True,
-        "chain_bound": True,
-        "production_verified": True,
-        "root_anchor_provenance": "external",
-        "root_anchor_key_id": "brops-tcb-root-1",
-        "committed_trust_state": "trusted_verified",
-        "is_the_brops_broker_binary": False,
-    }
-    bad = {k: (document.get(k), v) for k, v in required.items() if document.get(k) != v}
-    if bad:
-        print("the driver's committed turn under the external anchor is not production "
-              "(got, required): %r" % (bad,), file=sys.stderr)
-        raise SystemExit(1)
-    print("  CUSTODY: committed as `trusted_verified` under the external anchor brops-tcb-root-1; "
-          "production_verified=true — the driver, NOT the brops-broker binary")
-    raise SystemExit(0)
 required = {
     "outcome": "committed",
     "bound": True,
@@ -1284,10 +1189,8 @@ run_driver no-authority "$DRIVER_CONFIG_NOAUTH" blocked:hop:challenge_authority:
 
 # NEGATIVE 4 — a throwaway root cannot say `external` (T-126). Variant 4 above: this kit's own root
 # in an anchor file that claims external custody. Refused at setup by the compiled-in pin, by name.
-if [ "$ANCHOR_MODE" = kit_generated ]; then
-  run_driver throwaway-external "$DRIVER_CONFIG_THROWAWAY" \
-    blocked:setup:root_anchor_external_not_the_pinned_root
-fi
+run_driver throwaway-external "$DRIVER_CONFIG_THROWAWAY" \
+  blocked:setup:root_anchor_external_not_the_pinned_root
 
 # The two sign flips, and they test DIFFERENT failures of the same comparator.
 #
@@ -1583,7 +1486,7 @@ if ! grep -qF "$BROKER_PROVISIONED" "$BROKER_RUN/product.log"; then
 elif grep -q 'REFUSED\|serving fail-closed' "$BROKER_RUN/product.log"; then
   echo "  BROKER product: RED — it reported a refusal as well as provisioning"; BROKER_PRODUCT_RC=1
 elif ! reply_is_blocked_upstream product; then
-  echo "  BROKER product: RED — the reply is not blocked/upstream_blocked under the $ANCHOR_MODE root"
+  echo "  BROKER product: RED — the reply is not blocked/upstream_blocked under a kit_generated root"
   BROKER_PRODUCT_RC=1
 else
   echo "  BROKER product: GREEN — every config gate passed, and the kit-signed manifest was still refused"
@@ -1662,15 +1565,9 @@ if [ "$DRIVER_RC" = "0" ] && [ "$DRIVER_EV_RC" = "0" ] && [ "$DRIVER_DERIVE_RC" 
   echo "  negatives were refused BY NAME (anti_rollback, floor_not_persisted, and the §4.1 hop"
   echo "  attributed to challenge_authority) and both sign-flip controls reported failure with the"
   echo "  outcome they named."
-  if [ "$ANCHOR_MODE" = external ]; then
-    echo "  Custody is EXTERNAL and the anchor is the compiled-in pin: the driver committed a"
-    echo "  trusted_verified turn with production_verified=true. It is still NOT the brops-broker"
-    echo "  binary, and the product's governed path is still shut."
-  else
-    echo "  Custody is kit_generated, so production_verified is FALSE by construction — this is a"
-    echo "  complete, honestly-labelled chain run and it is NOT a production trust claim. The same"
-    echo "  root relabelled external was refused at setup by the compiled-in pin (T-126)."
-  fi
+  echo "  Custody is kit_generated, so production_verified is FALSE by construction — this is a"
+  echo "  complete, honestly-labelled chain run and it is NOT a production trust claim. The same"
+  echo "  root relabelled external was refused at setup by the compiled-in pin (T-126)."
 else
   echo "DRIVER: RED — runs=$DRIVER_RC verifier=$DRIVER_EV_RC derivation=$DRIVER_DERIVE_RC"
   echo "  custody=$DRIVER_CUSTODY_RC"

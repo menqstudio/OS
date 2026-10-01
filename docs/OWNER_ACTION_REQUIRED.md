@@ -6,18 +6,9 @@ on me" is never reconstructed from a chat log.
 Nothing here is a suggestion to flip anything. The governed surfaces stay fail-closed until every
 item below is settled, a **separate** audit passes, and the Owner approves — in that order.
 
-> **2026-09-20 — READ THIS FIRST: the thing this page said was waiting on you was not.**
->
-> §0 said *"Your offline root is the one thing between this product and a governed turn"* and that
-> **"Nothing needs building"** if you held the seed. Both were false, and you were told them for weeks.
-> Six pieces of Linux code do not exist — the first one makes `trusted_verified` unreachable **by
-> construction**, because an offline signature has to name serving keys that `provision_keys.py` does
-> not mint until after the signature is required as input. The seed was necessary and nowhere near
-> sufficient. §0 now lists all six with the line that proves each absent.
->
-> **What is yours is short:** mint the root (`win_gen_root` is cross-platform by its own doc, so it runs
-> on your Debian box), hand over the PUBLIC hex, and — once pieces 1 and 2 exist — sign one file
-> offline. Plus the licence terms in §2f. Everything else on the critical path is the Builder's.
+> **Custody needs nothing from you, ever.** You decided on 2026-08-09 (#78) that the install mints
+> trust and no person carries a key. From 2026-09-20 to 2026-09-30 this page asked you to mint an
+> offline root anyway; that contradicted your decision and was removed in T-130. See §0.
 
 > **2026-09-20 — THREE one-line edits need you, all in files only you touch.** *(Item 3 is DONE, 2026-09-29: two remain.)*
 >
@@ -301,114 +292,24 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 
 ---
 
-## 0. THE BLOCKER WAS NOT YOURS — six pieces of Linux code do not exist
+## 0. No person holds a key — DECIDED 2026-08-09 (#78), and it applies to every root
 
-> **This heading said "Your offline root is the one thing between this product and a governed turn" until 2026-09-20, and that was false.** Not stale — false when written, and repeated to you for weeks. The seed is necessary. It is nowhere near sufficient. If it were in your hand this minute, nothing would open, because six things a Builder has to write are not written. They are listed below, each with the line that proves it absent. Holding you responsible for a wait that was mine is the worst defect this page has ever carried, because unlike a wrong number it cost you time you cannot get back.
+The install mints trust. Nobody carries a key, a USB stick or a seed, and nothing is ever asked of
+you for custody. That was decided for the engine's trust material in #78 (see "The install does the
+ceremony now" below). From 2026-09-20 to 2026-09-30 an offline-root ceremony was rebuilt for the
+broker's TCB root (`apps/desktop/src-tauri/broker/src/tcb.rs`) and you were asked to run it. That
+contradicted your decision. **T-130 removed it**: the two ceremony documents, the offline signer,
+the root generator and the outside-anchor modes of both live kits are deleted, and
+`tools/check_no_owner_key_ceremony.py` fails any change that brings them back.
 
-**2026-09-20.** Six roadmap rows are open across phases 1, 8 and 9, and every account of them says the
-same true and unhelpful thing: they need a provisioned deployment. Here is the shape of that, measured
-from `broker/src/preflight.rs` rather than described:
+**What that leaves, stated plainly.** The broker's compiled pin is a key whose private half nobody
+holds, so the broker's production path is unreachable today — by design of the current code, not
+because anything waits on you. Replacing that pin with an install-minted root is Builder work
+(`T-131`): a design first, then code. The trade is the one #78 already accepted: locally-minted
+trust defends against an attacker who arrives later, not one who owned the machine at install.
 
-| who provides it | rows |
-|---|---|
-| an installer | 13 |
-| a machine administrator | 11 |
-| the Linux kernel | 1 (`platform.linux_af_unix_peercred`) |
-| the BUILD, since `T-088` | 1 (`custody.committed_label_resolver`) |
-| **you, and nobody else** | **1 — `custody.tcb_root_manifest_signature`** |
-
-The last one is a signature, and it can only be made by whoever holds the private half of the root
-public key compiled into `apps/desktop/src-tauri/broker/src/tcb.rs`. That much was always right.
-
-> **RETRACTED 2026-09-20.** This paragraph used to continue: *"Twenty-four of those are a day's work
-> for a person with root on a Debian box, and [`docs/DEBIAN_DEPLOYMENT.md`](DEBIAN_DEPLOYMENT.md) is
-> the runbook for them."* Both halves are false, and the second one sent you to a document about a
-> different key.
->
-> `docs/DEBIAN_DEPLOYMENT.md` is the runbook for the **engine's operator root** — `broctl keygen`,
-> `BRO_OPERATOR_ROOT_PUBKEY_FILE`, the `trusted-key-registry`. Measured: it contains **zero**
-> occurrences of `tcb`, `brops-broker`, `BROPS_BROKER_CONFIG`, `run_live_turn`, `key manifest` or
-> `3c83c2bc`. And its own first paragraph (`:15-16`) says **"`broctl` cannot produce a production
-> deployment, and nothing else in this repository can either"**, and `:28-30` that what it produces
-> *"is **not** enough to close O-2, O-3 or O-5 for a production deployment"*. Conflating the two roots
-> is the likeliest way this work goes wrong, so it is named here rather than left to be discovered.
->
-> That banner exists because someone tried to follow that document and found it could not work —
-> *"the only reason a runbook is worth having"* (`:32-33`). The same thing has now happened one level
-> up, to this page.
->
-> **And "a day's work" has no command behind it.** `engine/ci/live/run_live_turn.sh:20` heads its
-> account block *"already provisioned on the box"* and lists the accounts under *"Requires"*; the
-> script creates only the three shared groups. The six-account vector exists **only as workflow YAML**
-> (`.github/workflows/ci.yml:164-177`). A `grep -rn useradd` over the tree finds nothing that
-> provisions them at their fixed uids. So a machine administrator following this repository has no
-> command for the first machine-admin row, never mind eleven.
-
-### What is established about that key, by arithmetic and not by reading comments
-
-* The pinned production anchor is `3c83c2bc…`. Its private half is **not in this repository**: every
-  32-byte hex literal in every tracked text file was treated as an Ed25519 seed and none of them
-  derives it. That is now a gate — `tools/check_root_anchor_custody.py` — and it runs on every pull
-  request, with the demonstration seed as its control, so a sweep that quietly stopped working cannot
-  report this result.
-* It was pinned on **2026-08-06**, in `#53` (*"Windows production trusted_verified over named pipes"*).
-  Somebody ran `win_gen_root` that day and the ceremony's own runbook writes the seed to
-  `D:\brops-root\root.private.seed` on removable media. **Whether that file still exists is the one
-  fact this repository cannot tell you**, and it is the fact everything else waits on.
-* A demonstration anchor cannot substitute for it. `ProductionResolver::provisioned_with_pin` is
-  `pub(crate)` on purpose and the shipped binary reaches only `provisioned`, which pins the production
-  anchor; on Windows `win_provision` compares any `--root-key` against the production public and exits
-  3 otherwise. Both refusals are deliberate: the demonstration private is readable by anyone with a
-  clone, so an anchor it can sign under must never be able to render `trusted_verified`.
-
-### The Owner answered this on 2026-09-20: he does NOT have the seed
-
-So path 1 below is moot and is kept only as the record of what was believed. Path 2 is the live one,
-and the sentence *"Nothing needs building"* in path 1 was the false claim at the centre of this page.
-
-### What was missing, and it was all Builder work — all six are now built (◑)
-
-Six pieces, each cited by the line that proved it absent on 2026-09-20. Rows 1–3 kept saying
-"absent" after T-108 and T-109 built them; corrected 2026-10-01 (T-128). What remains after the
-six is not Builder work: it is your root, `DEBIAN_CUSTODY_CEREMONY.md` steps 1–2.
-
-| # | missing | proof it is absent | why it comes first or later |
-|---|---|---|---|
-| **1** | ◑ **BUILT by `T-108` (#279):** `--emit-manifest` / `--keys-in`. a **two-phase** external-root ceremony on Linux | `provision_keys.py:221-224` mints the signer and supervisor-attestation keys **fresh on every run**; `build_manifest_bytes(signer_pub_hex, sup_pub_hex)` (`:117`) proves the manifest must **name those public hexes**; and the external branch (`:241-249`) consumes a pre-signed manifest verbatim — *"It must not 'fix up' the contents"*. There is no `--emit-manifest`, no `--keys-in`, no `--reuse-keys` in the whole flag list (`:159-181`). | **First.** An offline signature cannot name keys that do not exist yet, so `trusted_verified` on Linux is unreachable **by construction, not by policy**. Nothing else matters until this splits in two. |
-| **2** | ◑ **BUILT by `T-108` (#279):** `engine/ci/live/sign_manifest.py`. a CLI that **signs** those bytes with the offline root | `build_manifest_bytes` is reachable from no flag; `engine/ci/live/live_crypto.py`'s `sign_b64std` is a library function with no entry point. The only in-tree manifest signer is `win_provision.rs`, which is Windows-shaped and mints its own keypairs rather than signing supplied bytes. | With #1. Your private half must never reach a networked box, so the signing step has to be a command you run on the airgapped machine. |
-| **3** | ◑ **BUILT by `T-109` (#281)**, and for the ladder kit by `T-126` (#297). **flag passthrough** for the external anchor | `run_live_turn.sh:103-106` calls `provision_keys.py` with five arguments and **none** of the four anchor flags, while `:462-464` of the same file instructs the reader to *"Re-provision with `--root-anchor-key-id`/`--root-anchor-pub-hex` plus the externally-signed manifest"*. No flag, env var or hook exists to do it. | After #1. Without it, #1 is unreachable from any command in the tree. |
-| **4** | ◑ **BUILT by `T-121`, never run on a provisioned box.** a §2.5 pin manifest for the **real** `brops-broker` | Both kits pin `trusted-verifier-broker.bin` to their **proof driver** (`bin/live_turn`, `bin/ladder_turn`), and the broker's floor never asked whether that path was itself — so either manifest satisfied it. Now: `build_tcb_pin_manifest.py --kit broker --broker-config` pins `bin/brops-broker` and the `$BROPS_BROKER_CONFIG` document, and the broker runs `tcb_probe::verify_broker_tcb`, which refuses a manifest whose `.bin` role is not `current_exe()` or whose `pinned-manifest-config` role is not its own config. `write_broker_config.py --pin-manifest-built-after` writes the config first, because the manifest pins its digest. | `main.rs` refuses on this **before** keys, sockets or content, so it fires first at runtime even though it is fourth to build. |
-| **5** | ◑ **BUILT by `T-123` (#294), GREEN in CI's ladder job** — `trusted manifest provisioned`, then `upstream_blocked` under the kit root. anything that writes or exports `$BROPS_BROKER_CONFIG` — `run_ladder_turn.sh` now installs `brops-broker`, writes its config with `write_broker_config.py`, builds its `--kit broker` manifest before any service starts, and starts it with the variable exported: it must print `trusted manifest provisioned` and still refuse the turn (the kit's root is not yours), and a copy naming the ladder manifest must be refused at the floor by `trusted-verifier-broker.bin`. **DECIDED by the Owner 2026-09-30 («գո քո ռեքով»): the read grant.** The broker evaluates the floor as ITSELF, not as root, and two pinned artifacts are closed to it (the recorder sudoers vector, the 4750 setuid launcher) — CI measured `Missing` on the first. The kit grants it READ on those two and search on `/etc/sudoers.d`, nothing else; a real deployment must make the same grant or the floor refuses. | `broker/src/preflight.rs:852` says it in the product's own voice: *"Nothing in the shipped product writes it"*. `main.rs:268-270` returns the fail-closed executor without it. The **shape** is not missing — `run_ladder_turn.sh` writes `$TCB/ladder-driver.json` against the key list at `preflight.rs:352` (`CONFIG_KEYS_READ_BY_BUILD_GOVERNED_EXECUTOR`), and records that the driver takes `--config` because *“`$BROPS_BROKER_CONFIG` is never read”* on that path — so what is missing is the line that exports it and a broker process to read it, not the config. | Last of the code. Small. |
-| **6** | ◑ **WRITTEN by `T-124`: [`DEBIAN_CUSTODY_CEREMONY.md`](DEBIAN_CUSTODY_CEREMONY.md).** Writing it found the two Owner tools could not be chained (`win_gen_root` wrote 64 hex at mode 0664; `sign_manifest.py` took 32 raw bytes only, exit 3) — both fixed. ◑ **`T-126`:** `run_ladder_turn.sh`, the kit that starts the real broker, takes them — **six**, because that kit's root also signs the §4.2 registry, which step 4 now signs too. Both drivers refuse an `external` anchor that is not the compiled pin, so a throwaway root cannot render `production_verified`; CI runs that refusal. The page's `BROPS_KEYS_IN=/opt/brops-live/keys` was inside the directory both kits wipe first — moved, and refused. | The only ceremony in the tree is `apps/desktop/src-tauri/win-live/CUSTODY_CEREMONY.md`, Windows end to end. It is also **stale in two ways that both fail on first run**: its `win_provision` command (`:79-84`) omits four now-required flags (`--root-provenance` at `win_provision.rs:148-159`, *no default*, exit 2; and three `--*-account` flags at `:131-136`), and its step 4 never mentions `win_tcb_pin`, without which `win_provision.rs:396-399` says *"every server bin and the driver refuse to serve"*. | After #1-#5, because a ceremony must document commands that exist. |
-
-**What is yours, and it is short.** Mint the root — `win_gen_root --out <path>`, which is
-**cross-platform on purpose** by its own doc (`win_gen_root.rs:12`: *"run it on an airgapped machine,
-not the serving box"*), so it runs on your Debian box and Windows is not required. Hand over the
-**public** hex only. Then, once #1 and #2 exist, sign one file offline. That is the whole of it.
-
-**What the Builder must never do,** and this is why #2 is a separate piece rather than a convenience:
-generate, read, hold or transport the production root **private** half. `provision_keys.py`'s default
-mode mints a root private key **on the serving box** (`:224` `root_key = lc.gen_private()`, written at
-`:230`) and self-signs the manifest with it (`:252` `sign_b64std(root_key, manifest_bytes)`) under provenance
-`kit_generated` — which is exactly why `run_ladder_turn.sh:608-611` records that *"a
-`kit_generated` anchor may never render `production_verified=true`"*. That mode is honest about itself
-and unusable for production.
-
-### The record of what was believed, kept rather than deleted
-
-1. **You still hold the seed.** Nothing needs building. `win_tcb_pin`, then
-   `win_live_proof.ps1 -RootKey <the seed>` per
-   [`CUSTODY_CEREMONY.md`](../apps/desktop/src-tauri/win-live/CUSTODY_CEREMONY.md), and one governed
-   turn reaches a real `trusted_verified` across three distinct Windows service accounts.
-   *(RETRACTED 2026-09-20: "Nothing needs building" was false — see the six rows above — and the
-   Owner does not hold the seed. The Windows commands named here are also stale; see row 6.)*
-2. **You do not.** Mint a new root on an offline machine (`win_gen_root --out <path>`), send the
-   PUBLIC hex, and the pin changes in two files — `broker/src/tcb.rs` and `win-live/src/tcb.rs`, which
-   the new gate holds to agreeing with each other, because the Owner holds ONE root and two different
-   production anchors would leave one of them undeployable with nobody saying so.
-
-Neither path is a Builder decision and neither is a code problem, which is why this is the first
-section on this page rather than a line in a roadmap row.
+**Kept from that work:** `T-126`'s refusal. A TCB anchor file that claims `external` custody is
+refused unless its key is the compiled pin, and CI's ladder job proves it on every run.
 
 ---
 
@@ -497,8 +398,8 @@ it would commit rows labelled `demonstration_custody`. `resolve_trust_state` wil
 `Production` state from a `kit_generated` anchor no matter what a config says, and every
 `CustodyResolver` implementation is required by its own trait contract to end there rather than
 constructing a `TrustState` by hand — *"building the enum by hand is how a demonstration root gets to
-call itself production."* Only a manifest verifying under **your offline root** produces
-`trusted_verified`.
+call itself production."* Only a manifest verifying under the compiled pin produces `trusted_verified`, and
+nobody holds that key (§0, `T-131`).
 
 ### The decision
 
