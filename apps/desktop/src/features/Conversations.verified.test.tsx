@@ -248,7 +248,7 @@ describe('Chat — delete stays parked: disabled, with its reason, wired to noth
     const del = document.querySelector('.chat-item-action--danger') as HTMLButtonElement;
     expect(del).not.toBeNull();
     expect(del).toBeDisabled();
-    expect(del.getAttribute('title')).toMatch(/T-011/);
+    expect(del.getAttribute('title')).toMatch(/disabled for safety/);
     fireEvent.click(del);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(invokeMock.mock.calls.some((c) => c[0] === 'delete_conversation')).toBe(false);

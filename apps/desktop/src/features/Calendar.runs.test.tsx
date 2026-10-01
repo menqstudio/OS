@@ -185,7 +185,7 @@ describe('Calendar — run history, and the receipt this build cannot produce', 
     render(<AppProvider><ToastProvider><Calendar /></ToastProvider></AppProvider>);
     const del = await screen.findByRole('button', { name: 'Delete' });
     expect(del).toBeDisabled();
-    expect(del).toHaveAttribute('title', expect.stringMatching(/T-011/));
+    expect(del).toHaveAttribute('title', expect.stringMatching(/disabled for safety/));
     expect(invokeMock.mock.calls.some((c) => c[0] === 'delete_event')).toBe(false);
   });
 });

@@ -41,7 +41,6 @@ export const hy: Record<DictKey, string> = {
 
   'action.new': 'Նոր',
   'action.reject': 'Մերժել',
-  'action.open': 'Բացել',
   'action.viewAll': 'Տեսնել բոլորը',
   'action.send': 'Ուղարկել',
   'action.ask': 'Հարցնել Բրոյին',
@@ -101,7 +100,7 @@ export const hy: Record<DictKey, string> = {
   'action.deleteDisabledSafety': 'Ջնջելն անջատված է անվտանգության համար — սա ջնջելու համար պետք է հաստատման քայլ, որը դեռ չկա։',
   'confirm.deleteTitle': 'Ջնջե՞լ այս տարրը։',
   'confirm.deleteBody': 'Այս գործողությունը հետ չի շրջվում։',
-  'confirm.deleteDeniedBody': 'Ոչինչ չի հեռացվի. այս build-ը մերժում է այս ջնջումը, որովհետև այն դեռ չունի ո՛չ undo, ո՛չ native հաստատում (T-011)։ «Ջնջել»-ը, միևնույն է, հարցնում է պահոցին, ու դրա մերժումը ցույց է տրվում այս էջում։',
+  'confirm.deleteDeniedBody': 'Ոչինչ չի հեռացվի. այս build-ը մերժում է այս ջնջումը, որովհետև այն դեռ չունի ո՛չ undo, ո՛չ native հաստատում։ «Ջնջել»-ը, միևնույն է, հարցնում է պահոցին, ու դրա մերժումը ցույց է տրվում այս էջում։',
   'files.subtitle': 'Դիտիր լոկալ ֆայլային համակարգը',
   'files.up': 'Վերև',
   'files.folder': 'Թղթապանակ',
