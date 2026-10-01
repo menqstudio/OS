@@ -91,6 +91,99 @@ class SecurityV2Tests(unittest.TestCase):
         # A config option (-c) is NOT a filesystem path and must not become a target.
         self.assertEqual(analyze_command("git -c color.ui=false status")[0].targets, ())
 
+    def test_read_only_git_subcommand_with_an_unlisted_flag_is_not_read_only(self):
+        # A read-only SUBCOMMAND can still write or execute through its options:
+        # `--output` writes a file, `--ext-diff`/`--textconv`/`--filters` run configured
+        # programs. The subcommand used to decide alone, so `git diff --output=<path>`
+        # classified READ_LOCAL and the read-scope gate then dropped the flag token —
+        # the only place the path appeared.
+        for command, surfaced in (
+            ("git diff --output=runtime/x.py HEAD~1", "runtime/x.py"),
+            ("git log --output=runtime/x.py -1", "runtime/x.py"),
+            ("git show --outp=runtime/x.py HEAD", "runtime/x.py"),   # git accepts abbreviations
+            ("git diff --output runtime/x.py", "runtime/x.py"),
+            ("git diff --ext-diff", None),
+            ("git show --textconv HEAD:x", None),
+            ("git cat-file --filters HEAD:x", None),
+            ("git cat-file --textconv HEAD:x", None),
+            ("git ls-files --exclude-from=/etc/shadow", "/etc/shadow"),
+            ("git status --no-such-flag", None),
+        ):
+            info = analyze_command(command)[0]
+            self.assertTrue(info.mutating, command)
+            self.assertFalse(info.recognized_read_only, command)
+            if surfaced is not None:
+                self.assertIn(surfaced, info.targets, command)
+
+    def test_read_only_git_subcommand_with_listed_flags_stays_read_only(self):
+        for command in (
+            "git status --short --branch",
+            "git diff --stat --cached",
+            "git log --oneline -5",
+            "git log -n5 --format=%H",
+            "git show --name-only HEAD",
+            "git rev-parse --abbrev-ref HEAD",
+            "git ls-files --others --exclude-standard",
+            "git cat-file -p HEAD",
+            # After a bare `--` everything is a pathspec, not an option.
+            "git diff -- --output=x",
+        ):
+            info = analyze_command(command)[0]
+            self.assertTrue(info.recognized_read_only, command)
+            self.assertFalse(info.mutating, command)
+
+    def test_path_qualified_executable_is_never_the_read_only_builtin(self):
+        # The basename is what a file is called, not what it is: `./tmp/echo hi` runs
+        # whatever sits at ./tmp/echo. A path-qualified executable is therefore never
+        # read-only, and the file itself is a target for the scope gate.
+        for command, path in (
+            ("./tmp/echo hi", "./tmp/echo"),
+            ("/tmp/evil/cat x", "/tmp/evil/cat"),
+            ("tools\\ls.exe", "tools\\ls.exe"),
+            ('"./my tools/pwd"', "./my tools/pwd"),
+            ("/usr/bin/git status", "/usr/bin/git"),
+            ("./find . -name x", "./find"),
+        ):
+            info = analyze_command(command)[0]
+            self.assertTrue(info.mutating, command)
+            self.assertFalse(info.recognized_read_only, command)
+            self.assertEqual(info.targets[0], path, command)
+        # The bare names are untouched.
+        for command in ("echo hi", "cat x", "git status", "find . -name x"):
+            info = analyze_command(command)[0]
+            self.assertFalse(info.mutating, command)
+            self.assertTrue(info.recognized_read_only, command)
+        # A segment that was already mutating with NO determinable target is refused
+        # by the scope gate for that reason. Naming its executable by path must not
+        # hand it a target that could then match a scope.
+        for command in ('./tools/bash -c "rm x"', "/usr/bin/python3 -c pass", "./tools/git commit"):
+            info = analyze_command(command)[0]
+            self.assertTrue(info.mutating, command)
+            self.assertEqual(info.targets, (), command)
+        # End to end: the shell verbs leave READ_LOCAL for UNKNOWN, which is denied
+        # outright; a path-qualified git becomes a governed mutation, never a read.
+        from bro_authorization import classify_tool_action
+        for command in ("./tmp/echo hi", "/tmp/evil/cat x"):
+            classified = classify_tool_action("Bash", {"command": command})
+            self.assertTrue(classified.unknown, command)
+            self.assertTrue(classified.mutating, command)
+        for command in ("/usr/bin/git status", "git diff --output=runtime/x.py HEAD~1"):
+            classified = classify_tool_action("Bash", {"command": command})
+            self.assertNotIn("READ_LOCAL", classified.capabilities, command)
+            self.assertTrue(classified.mutating, command)
+
+    def test_a_lone_ampersand_separates_segments(self):
+        # `&` backgrounds the first command and runs the second. It was not a
+        # separator, so the whole line was one segment judged by its first word:
+        # `echo hi & rm -rf x` classified as a targetless read.
+        for command in ("echo hi & rm -rf x", "echo hi &rm x", "pwd & ./evil", "echo hi |& rm x"):
+            infos = analyze_command(command)
+            self.assertEqual(len(infos), 2, command)
+            self.assertTrue(infos[1].mutating, command)
+        # Quoted or escaped, it is text.
+        for command in ('echo "a & b"', "echo 'a & b'", "echo a \\& b"):
+            self.assertEqual(len(analyze_command(command)), 1, command)
+
     def test_segments_quotes_windows_and_mixed_case(self):
         infos = analyze_command(
             'git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '
@@ -169,6 +262,9 @@ class SecurityV2Tests(unittest.TestCase):
             "git -C . push origin HEAD:bro-agent-os-v1",
             "git push origin HEAD:other",
             "git status && git push origin HEAD:bro-agent-os-v1",
+            # A path-qualified git is a file somebody named, not the git on PATH.
+            "./git push origin HEAD:bro-agent-os-v1",
+            "/tmp/evil/git push origin HEAD:bro-agent-os-v1",
         ]
         for command in blocked:
             with self.assertRaises(SecurityError, msg=command):

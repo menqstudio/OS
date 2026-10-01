@@ -138,6 +138,33 @@ class SupervisorServiceRejectionTests(unittest.TestCase):
                  "execution_attempt_id": "a", "evidence": {}}
         self.assertEqual(svc.handle(extra)["reason"], "malformed")
 
+    def test_supervisor_refuses_a_run_handle_that_could_name_another_path(self):
+        # The handle becomes a file name under the protected run-state directory. The
+        # gate checked only that both parts were strings, so "../outside/evil" and an
+        # absolute path went on to the provider. Refused here, before any state is
+        # touched — the bare service below has none to touch.
+        svc = SupervisorService.__new__(SupervisorService)
+        for run_id, attempt in (("../outside/evil", "a"), ("/etc/passwd", "a"), ("r", "../a"),
+                                ("r\\x", "a"), ("", "a"), (".", "a"), ("r", "a\n")):
+            frame = {"protocol": "brops.evidence-request.v1", "run_id": run_id,
+                     "execution_attempt_id": attempt}
+            self.assertEqual(svc.handle(frame)["reason"], "malformed", frame)
+
+    def test_the_contract_schema_carries_the_same_handle_pattern(self):
+        import json
+        import brops_protocol
+        from brops_live_runstate import HANDLE_COMPONENT
+        schema = json.loads((ROOT / "contracts" / "brops-evidence-request.v1.schema.json")
+                            .read_text(encoding="utf-8"))
+        for field in ("run_id", "execution_attempt_id"):
+            self.assertEqual(schema["properties"][field]["pattern"],
+                             "^" + HANDLE_COMPONENT.pattern + "$")
+        good = {"protocol": "brops.evidence-request.v1", "run_id": "run-1",
+                "execution_attempt_id": "attempt-1"}
+        brops_protocol.validate(good, schema)
+        with self.assertRaises(brops_protocol.ProtocolError):
+            brops_protocol.validate(dict(good, run_id="../outside/evil"), schema)
+
 
 if __name__ == "__main__":
     unittest.main()

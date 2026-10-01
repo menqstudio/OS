@@ -7,6 +7,7 @@ exit 0), evidence-chain head + chain, and containment. Every failure is fail-clo
 
 import base64
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -205,6 +206,48 @@ class LiveRunStateProviderTests(unittest.TestCase):
     def test_missing_evidence_chain_is_refused(self):
         self._write_record(evidence_event_ids=["task-1-e1", "task-1-eMISSING"])
         with self.assertRaises(RunStateValidationError):
+            self.provider.terminal_run_state("run-1", "attempt-1")
+
+    def _plant_outside(self, run_id: str) -> pathlib.Path:
+        """A record that validates in every signed respect, OUTSIDE the state directory."""
+        self._write_record(run_id=run_id)
+        inside = self.state_dir / "run-1__attempt-1.json"
+        outside = self.base / "outside"
+        outside.mkdir(exist_ok=True)
+        planted = outside / "evil__attempt-1.json"
+        planted.write_text(inside.read_text(encoding="utf-8"), encoding="utf-8")
+        inside.unlink()
+        return planted
+
+    def test_a_run_handle_cannot_name_a_record_outside_the_state_directory(self):
+        # The path was `state_dir / f"{run_id}__{attempt}.json"` with the caller's
+        # run_id unexamined, so "../outside/evil" read — and, the record being
+        # otherwise valid, ATTESTED — a file from wherever the caller pointed.
+        planted = self._plant_outside("../outside/evil")
+        with self.assertRaisesRegex(RunStateValidationError, "well-formed run handle"):
+            self.provider.terminal_run_state("../outside/evil", "attempt-1")
+        # An absolute run_id discards state_dir altogether under pathlib's `/`.
+        absolute = str(planted)[: -len("__attempt-1.json")]
+        self._plant_outside(absolute)
+        with self.assertRaisesRegex(RunStateValidationError, "well-formed run handle"):
+            self.provider.terminal_run_state(absolute, "attempt-1")
+
+    def test_malformed_run_handles_are_refused_by_name(self):
+        for run_id, attempt in (("", "a"), ("r", ""), ("..", "a"), (".hidden", "a"), ("r/x", "a"),
+                                ("r\\x", "a"), ("r", "a/../b"), ("r\x00", "a"), ("r\n", "a"),
+                                ("r" * 129, "a"), (None, "a"), ("r", 7)):
+            with self.assertRaisesRegex(RunStateValidationError, "well-formed run handle",
+                                        msg=repr((run_id, attempt))):
+                self.provider.terminal_run_state(run_id, attempt)
+        # The shapes real handles take are untouched: a UUID, and the CI fixtures' names.
+        for run_id in ("3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a3b", "ci-run-1", "run_live.1"):
+            self.assertIsNone(self.provider.terminal_run_state(run_id, "attempt-1"))
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix", "needs POSIX symlinks")
+    def test_a_record_that_is_a_symlink_out_of_the_state_directory_is_refused(self):
+        planted = self._plant_outside("run-1")
+        (self.state_dir / "run-1__attempt-1.json").symlink_to(planted)
+        with self.assertRaisesRegex(RunStateValidationError, "outside the run-state directory"):
             self.provider.terminal_run_state("run-1", "attempt-1")
 
 

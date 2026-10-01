@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import tempfile
+import threading
 import time
 import uuid
 from typing import Any, Iterator
@@ -42,7 +43,12 @@ STALE_LOCK_SECONDS = 30
 #: pid took a lock once". Module-level rather than an instance attribute because the
 #: reentrancy it answers for is a V1 wrapper delegating into a base method — same process and
 #: same lock file, not necessarily the same object.
-_HELD_CLAIM_TOKENS: dict[str, str] = {}
+#:
+#: Keyed by lock file AND thread. Keyed by the file alone, a second thread of the holding
+#: process found the holder's token, was told it "held" the guard, and walked in beside
+#: it: eight threads calling the base ``claim_next`` collided on every run. The
+#: reentrancy this answers for is one call stack delegating to itself, which is one thread.
+_HELD_CLAIM_TOKENS: dict[tuple[str, int], str] = {}
 
 # --------------------------------------------------------------------------- #
 # The lifecycle actor is PROVEN, never claimed (the O-4 defect, in the runtime).
@@ -274,6 +280,17 @@ class DurableOrchestrationRuntime:
         if not isinstance(now_epoch, int) or now_epoch < 0:
             raise OrchestrationRuntimeError("time must be a non-negative integer")
         records = self._records(task_id)
+        # A task's ledger never runs backwards. Claim-lease expiry is judged against
+        # this same caller-supplied ``now_epoch`` (`_active_lease`), so a caller that
+        # could hand in an EARLIER time than the ledger has already observed could
+        # revive a lease the ledger knows to be over — the weakness `_prove_actor`
+        # refuses for credentials by reading the wall clock. The lifecycle clock stays
+        # the caller's (the embedding runtime supplies it, and replays depend on that),
+        # but it may not move behind what is already written.
+        if records and now_epoch < records[-1]["observed_at_epoch"]:
+            raise OrchestrationRuntimeError(
+                f"time moved backwards: this task's ledger has already observed "
+                f"{records[-1]['observed_at_epoch']}, and a record at {now_epoch} is refused")
         sequence = len(records) + 1
         record = {
             "schema": 1,
@@ -293,12 +310,19 @@ class DurableOrchestrationRuntime:
         _exclusive_json(path, record)
         return record
 
-    def _state(self, task_id: str) -> str:
+    def _lifecycle_state(self, task_id: str) -> str | None:
+        """The task's current state, or None when no transition was ever written."""
         records = self._records(task_id)
         transitions = [item for item in records if item.get("kind") == "transition"]
         if not transitions:
-            raise OrchestrationRuntimeError("task has no lifecycle state")
+            return None
         return transitions[-1]["payload"]["next_state"]
+
+    def _state(self, task_id: str) -> str:
+        state = self._lifecycle_state(task_id)
+        if state is None:
+            raise OrchestrationRuntimeError("task has no lifecycle state")
+        return state
 
     def _transition(
         self,
@@ -441,17 +465,58 @@ class DurableOrchestrationRuntime:
             raise OrchestrationRuntimeError(str(exc)) from exc
         task_id = contract.get("task_id")
         directory = self._task_dir(task_id)
-        if directory.exists():
-            raise OrchestrationRuntimeError("task already exists")
         if queue_class not in self.queue:
             raise OrchestrationRuntimeError("unknown queue class")
         limits = self._validate_budget_limits(budget_limits or {})
-        _atomic_json(directory / "contract.json", contract)
-        self._append(task_id, "runtime-config", now_epoch, {"queue_class": queue_class, "budget_limits": limits})
-        self._transition(task_id, "draft", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
-                         "task-created", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
-        return self._transition(task_id, "queued", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
-                                "queued-for-routing", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
+        config = {"queue_class": queue_class, "budget_limits": limits}
+        # Creation is four writes (the contract, the config record, two transitions)
+        # and a process can die between any two of them. The directory it leaves has no
+        # way forward — no queued state, so nobody may claim it — and used to have no
+        # way back either: this method answered "task already exists" to the only call
+        # that could finish it. Under the guard, an interrupted creation is RESUMED, and
+        # only by a call that asks for exactly what the interrupted one wrote.
+        with self._mutation_guard():
+            written = self._creation_progress(task_id, contract, config) if directory.exists() else 0
+            if written == 0:
+                _atomic_json(directory / "contract.json", contract)
+                self._append(task_id, "runtime-config", now_epoch, config)
+            if written <= 1:
+                self._transition(task_id, "draft", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
+                                 "task-created", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
+            return self._transition(task_id, "queued", CONDUCTOR_ROLE, CANONICAL_CONDUCTOR_ID, now_epoch,
+                                    "queued-for-routing", [], identity_basis=ACTOR_RUNTIME_ORIGINATED)
+
+    def _creation_progress(self, task_id: str, contract: dict[str, Any],
+                           config: dict[str, Any]) -> int:
+        """How many creation records an existing task directory already holds.
+
+        Returns 0, 1 or 2 for a creation that was interrupted before the task reached
+        ``queued``, and refuses everything else as the existing task it is. A directory
+        is resumable only when what it holds is a strict prefix of what `create_task`
+        writes: the same contract, then the same runtime-config, then the draft
+        transition. Anything further — or anything different — is somebody's task, and
+        the answer is the one this method always gave.
+        """
+        records = self._records(task_id)
+        expected = ("runtime-config", "transition")
+        if len(records) > len(expected) or any(
+                record.get("kind") != kind for record, kind in zip(records, expected)):
+            raise OrchestrationRuntimeError("task already exists")
+        if len(records) == 2 and records[1]["payload"].get("next_state") != "draft":
+            raise OrchestrationRuntimeError("task already exists")
+        contract_path = self._task_dir(task_id) / "contract.json"
+        if contract_path.exists():
+            if _load(contract_path) != contract:
+                raise OrchestrationRuntimeError(
+                    "task already exists: an interrupted creation under this task_id "
+                    "holds a different contract")
+        elif records:
+            raise OrchestrationRuntimeError("task already exists")
+        if records and records[0]["payload"] != config:
+            raise OrchestrationRuntimeError(
+                "task already exists: an interrupted creation under this task_id "
+                "recorded a different queue class or budget")
+        return len(records)
 
     def _validate_budget_limits(self, limits: dict[str, dict[str, int | None]]) -> dict[str, dict[str, int | None]]:
         supported = set(self.registry["budget_policy"]["supported_dimensions"])
@@ -496,9 +561,18 @@ class DurableOrchestrationRuntime:
         had already replaced. Rename is exclusive: the loser gets ENOENT because
         the source is already gone.
 
-        The token observed before the staleness check is re-read here, so a lock
-        that was released and re-taken in the meantime is left alone.
+        ``observed_token`` is what the caller read AFTER it saw a stale mtime. Both
+        observations are repeated here, staleness first: a lock released and re-taken
+        since the caller looked has a fresh mtime, or a different token, and either
+        leaves it alone. The caller used to pass a token it had read one statement
+        earlier, so this compared two back-to-back reads of whatever was there — a
+        re-taken lock matched itself and was stolen.
         """
+        try:
+            if time.time() - self.claim_lock.stat().st_mtime <= STALE_LOCK_SECONDS:
+                return
+        except FileNotFoundError:
+            return
         if self._lock_owner() != observed_token:
             return
         stolen = self.claim_lock.with_name(f".claim.stale.{uuid.uuid4().hex}")
@@ -560,7 +634,7 @@ class DurableOrchestrationRuntime:
                 if time.monotonic() >= deadline:
                     raise OrchestrationRuntimeError("claim lock acquisition timed out")
                 time.sleep(0.01)
-        key = str(self.claim_lock)
+        key = (str(self.claim_lock), threading.get_ident())
         _HELD_CLAIM_TOKENS[key] = token
         try:
             yield
@@ -573,7 +647,7 @@ class DurableOrchestrationRuntime:
                 self.claim_lock.unlink(missing_ok=True)
 
     def _guard_held_by_this_process(self) -> bool:
-        """True when the claim lock on disk is the one THIS process is holding.
+        """True when the claim lock on disk is the one THIS thread of this process is holding.
 
         A wrapper that already acquired the guard (the V1 runtime's lease-checked entry
         points) must be told apart from an unrelated holder, so ``_mutation_guard`` can be
@@ -589,7 +663,7 @@ class DurableOrchestrationRuntime:
         (no token in :data:`_HELD_CLAIM_TOKENS`), and a lock broken and retaken while we
         overran is not ours either (the token on disk is somebody else's).
         """
-        held = _HELD_CLAIM_TOKENS.get(str(self.claim_lock))
+        held = _HELD_CLAIM_TOKENS.get((str(self.claim_lock), threading.get_ident()))
         if held is None:
             return False
         return self._lock_owner() == held
@@ -692,7 +766,12 @@ class DurableOrchestrationRuntime:
                 if not directory.is_dir():
                     continue
                 task_id = directory.name
-                if self._state(task_id) != "queued":
+                # A creation interrupted before its first transition has no lifecycle
+                # state, so it is not queued and is not a candidate. `_state` raising
+                # here made that one directory fail the claim of every healthy task
+                # beside it. Only this case is skipped: a record that does not verify
+                # (identity, sequence, hash chain) still raises out of `_records`.
+                if self._lifecycle_state(task_id) != "queued":
                     continue
                 contract = self._contract(task_id)
                 if contract.get("agent_id") != agent_id:
@@ -1066,7 +1145,11 @@ class DurableOrchestrationRuntime:
             if not directory.is_dir():
                 continue
             records = self._records(directory.name)
-            heads[directory.name] = records[-1]["record_sha256"]
+            # A creation interrupted before its first record has an empty chain,
+            # whose head is the zero hash `_append` would chain from. It is
+            # reported, not raised on: an integrity report that dies on the one
+            # directory worth reporting reports nothing.
+            heads[directory.name] = records[-1]["record_sha256"] if records else ZERO_HASH
         return {
             "schema": 1,
             "tasks": len(heads),

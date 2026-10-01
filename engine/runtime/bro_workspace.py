@@ -7,6 +7,7 @@ import pathlib
 import re
 import time
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from bro_signature import SignatureError, load_trusted_keys, verify_artifact
 
@@ -72,6 +73,35 @@ def matches_pattern(relative: str, pattern: str, *, case_sensitive: bool = True)
 
 def _case_insensitive_fs() -> bool:
     return os.name == "nt"
+
+
+def normalize_repository_reference(value: object) -> str:
+    """Fold the spellings of one repository reference together, for an EQUALITY test.
+
+    This is the comparison form the mode-grant binding (bro_policy.enforce_grant_bindings)
+    and the release-grant binding (bro_release_v3) use, and it lived in both as two
+    copies of the same ten lines. It is deliberately NOT `normalize_remote` below, and
+    the two must not be compared with each other:
+
+      * `normalize_remote` answers "which GitHub repository is this remote?" — it returns
+        `owner/repo`, refuses every other host and every other shape.
+      * this function refuses nothing. It accepts a bare `owner/repo` (which is what a
+        task contract's `full_name` is) as well as a URL, keeps the host, and keeps URL
+        userinfo: `ssh://git@github.com/o/r` becomes `git@github.com/o/r` while the scp
+        form `git@github.com:o/r` becomes `github.com/o/r`. Two spellings of one remote
+        can therefore compare UNEQUAL here. That direction is a refusal, never a false
+        match, and making them equal is a change to what a grant binds to — an Owner
+        decision, not a tidy-up.
+    """
+    normalized = str(value or "").strip().replace("\\", "/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    if normalized.startswith("git@") and ":" in normalized:
+        normalized = normalized.split("@", 1)[1].replace(":", "/", 1)
+    elif "://" in normalized:
+        parsed = urlparse(normalized)
+        normalized = (parsed.netloc + parsed.path).lstrip("/")
+    return normalized.lower()
 
 
 def normalize_remote(url: str) -> str:

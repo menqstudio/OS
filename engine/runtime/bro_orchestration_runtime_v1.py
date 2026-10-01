@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import json
-import os
 import pathlib
-import time
 import uuid
 from typing import Any
 
-from bro_orchestration_runtime import (DurableOrchestrationRuntime,
+from bro_orchestration_runtime import (ACTOR_RUNTIME_ORIGINATED,
+                                       DEFAULT_LEASE_SECONDS,
+                                       MAX_LEASE_SECONDS,
+                                       DurableOrchestrationRuntime,
                                        OrchestrationRuntimeError)
 
-DEFAULT_LEASE_SECONDS = 300
-MAX_LEASE_SECONDS = 86400
 RECONCILER_ID = "system-reconciler"
 
 
@@ -26,101 +24,20 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
             super().__init__(state_dir, **kwargs)
         else:
             super().__init__(state_dir, root, **kwargs)
-        self.claim_lock = self.state_dir / ".claim.lock"
 
-    def _mint_lease(self, task_id: str, agent_id: str, now_epoch: int,
-                    lease_seconds: int) -> str:
-        lease_id = f"lease-{uuid.uuid4().hex}"
-        self._append(task_id, "claim-lease", now_epoch, {
-            "lease_id": lease_id,
-            "agent_id": agent_id,
-            "issued_at_epoch": now_epoch,
-            "expires_at_epoch": now_epoch + lease_seconds,
-        })
-        return lease_id
+    # _mint_lease, _require_lease and _active_lease are the base class's, and so is the
+    # body of claim_next. This class kept its own copies after they moved there, and
+    # the copy of claim_next had drifted: it recorded the runtime's own routing
+    # transition with no identity basis, so the ledger of the runtime the bridge
+    # sidecar ships said "unproven-caller-claim" where the base class says
+    # "runtime-originated".
 
-    def _require_lease(self, task_id: str, agent_id: str, lease_id: str,
-                       now_epoch: int) -> dict[str, Any]:
-        """Execution authority is the lease, not the contract.
-
-        The assignee check the base class performs asks whether you were ever the
-        right agent for this task. That stays true after the lease expires, after
-        it is released, and after a recovery that issued none, so it answered a
-        question nobody was asking. Only the lease says whether you are
-        authorised right now.
-        """
-        active = self._active_lease(task_id, now_epoch)
-        if active is None or active.get("lease_id") != lease_id or active.get("agent_id") != agent_id:
-            raise OrchestrationRuntimeError("claim lease is missing, expired, or mismatched")
-        return active
-
-    def _active_lease(self, task_id: str, now_epoch: int) -> dict[str, Any] | None:
-        latest: dict[str, Any] | None = None
-        for record in self._records(task_id):
-            if record.get("kind") == "claim-lease":
-                latest = record["payload"]
-            elif record.get("kind") in {"claim-released", "claim-expired"}:
-                latest = None
-        if latest is None:
-            return None
-        if latest["expires_at_epoch"] <= now_epoch:
-            self._append(
-                task_id,
-                "claim-expired",
-                now_epoch,
-                {"lease_id": latest["lease_id"], "reason": "lease-expired-before-claim"},
-            )
-            return None
-        return latest
-
-    def claim_next(
-        self,
-        agent_id: str,
-        *,
-        now_epoch: int,
-        lease_seconds: int = DEFAULT_LEASE_SECONDS,
-    ) -> dict[str, Any] | None:
-        self._validate_actor("agent", agent_id)
-        if not isinstance(now_epoch, int) or now_epoch < 0:
-            raise OrchestrationRuntimeError("time must be a non-negative integer")
-        if not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
-            raise OrchestrationRuntimeError("lease duration invalid")
+    def claim_next(self, agent_id: str, *, now_epoch: int,
+                   lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None:
+        # Like every other entry point here: take the claim guard itself, then
+        # delegate. The base method's guard is reentrant, so it rides this one.
         with self._claim_guard():
-            candidates: list[tuple[int, int, str]] = []
-            for directory in self.tasks_dir.iterdir():
-                if not directory.is_dir():
-                    continue
-                task_id = directory.name
-                if self._state(task_id) != "queued":
-                    continue
-                contract = self._contract(task_id)
-                if contract.get("agent_id") != agent_id:
-                    continue
-                if self._active_lease(task_id, now_epoch) is not None:
-                    continue
-                config = self._config(task_id)
-                first = self._records(task_id)[0]["observed_at_epoch"]
-                candidates.append((-self.queue[config["queue_class"]], first, task_id))
-            if not candidates:
-                return None
-            _, _, task_id = sorted(candidates)[0]
-            lease_id = f"lease-{uuid.uuid4().hex}"
-            self._append(
-                task_id,
-                "claim-lease",
-                now_epoch,
-                {
-                    "lease_id": lease_id,
-                    "agent_id": agent_id,
-                    "issued_at_epoch": now_epoch,
-                    "expires_at_epoch": now_epoch + lease_seconds,
-                },
-            )
-            self._transition(task_id, "routing", "bro", "bro-000", now_epoch, "routing-started", [])
-            snapshot = self._transition(task_id, "running", "agent", agent_id, now_epoch, "execution-started", [])
-            snapshot["lease_id"] = lease_id
-            snapshot["lease_expires_at_epoch"] = now_epoch + lease_seconds
-            return snapshot
+            return super().claim_next(agent_id, now_epoch=now_epoch, lease_seconds=lease_seconds)
 
     def renew_claim(
         self,
@@ -269,8 +186,11 @@ class DurableOrchestrationRuntimeV1(DurableOrchestrationRuntime):
                         continue
                     if self._active_lease(task_id, now_epoch) is not None:
                         continue
+                    # The reconciler is this runtime's own automatic decision, not a
+                    # caller's claim, and is recorded as what it is.
                     self._transition(task_id, "recovery-required", "system",
-                                     RECONCILER_ID, now_epoch, "recovery-required", [])
+                                     RECONCILER_ID, now_epoch, "recovery-required", [],
+                                     identity_basis=ACTOR_RUNTIME_ORIGINATED)
                     stranded.append({"task_id": task_id, "reason": "lease-lost-while-running"})
                 except OrchestrationRuntimeError as exc:
                     # One unreadable task must not stop the sweep that would have

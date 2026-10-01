@@ -44,10 +44,13 @@ so "I did not record this" cannot be read as "recorded, and it changed nothing".
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import pathlib
-from typing import Any, Callable, Mapping
+import time
+from typing import Any, Callable, Iterator, Mapping
 
 #: The wire contract. Held as literals here AND in the bridge, with a test asserting the two are
 #: equal, exactly as `brops.governance-read.v1` is -- the bridge has to be able to refuse when this
@@ -65,8 +68,79 @@ LOG_NAME = "approval-requests.jsonl"
 SCHEMA_REL = ("schemas", "approval-request.schema.json")
 
 
+#: Where the Windows writer lock sits: one byte far past any content. A byte-range lock is
+#: MANDATORY there, so locking byte 0 of the log would stop this module's own reads of it;
+#: a byte nobody reads serializes writers and blocks nothing. (POSIX locks the whole file
+#: advisorily and needs no offset.)
+_LOCK_OFFSET = 0x4000_0000
+
+#: How long a Windows writer waits for that byte before refusing. (POSIX `flock` blocks in
+#: the kernel and is released when the holder exits, so it needs no deadline.)
+_LOCK_TIMEOUT_SECONDS = 10
+
+
 class ApprovalRequestError(Exception):
     """Raised only for a programming error in a caller, never for a bad request."""
+
+
+class _LogUnlockable(Exception):
+    """The log could not be locked for writing. `record` turns this into a refusal."""
+
+
+def _platform_name() -> str:
+    return os.name
+
+
+@contextlib.contextmanager
+def _write_lock(path: pathlib.Path) -> Iterator[Any]:
+    """Hold the log exclusively across verify-read-append, and yield the handle to append to.
+
+    `record` reads the whole log, derives `sequence` and `previous_sha256` from what it read,
+    and only then appends. Unlocked, two asks arriving together both read N lines and both
+    write line N+1 chained to line N: the chain forks, `verify_chain` fails from then on, and
+    every later ask is refused until the file is repaired by hand. The lock makes
+    read-derive-append one step.
+
+    It is taken on the log file ITSELF, not on a lock file beside it: the only thing this
+    module writes is that log, and a test holds it to that. An advisory lock rather than an
+    `O_EXCL` lock file for the reason `bro_completion._floor_write_lock` gives — the kernel
+    drops it when the holder dies, so a crash cannot leave the log permanently unwritable.
+
+    A platform with neither primitive REFUSES: an unserialized append is the defect.
+    """
+    with open(path, "ab", buffering=0) as handle:
+        if _platform_name() == "posix":
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield handle
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        elif _platform_name() == "nt":
+            import msvcrt
+
+            # LK_NBLCK in a short loop rather than LK_LOCK, which sleeps a whole second
+            # between its ten attempts: the lock is held for one append. A writer that
+            # still cannot take it must not proceed unlocked.
+            deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+            while True:
+                os.lseek(handle.fileno(), _LOCK_OFFSET, os.SEEK_SET)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise _LogUnlockable(f"another writer holds it ({exc})") from exc
+                    time.sleep(0.01)
+            try:
+                yield handle
+            finally:
+                os.lseek(handle.fileno(), _LOCK_OFFSET, os.SEEK_SET)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            raise _LogUnlockable(
+                f"this runtime has no way to serialize two writers on {_platform_name()}")
 
 
 def _sha256(payload: Any) -> str:
@@ -201,26 +275,38 @@ class ApprovalRequestLog:
                                          f"{', '.join(repr(m) for m in sorted(missing))}; a "
                                          f"reference is resolved inside this engine or refused")
 
-        self.verify_chain()
-        recorded = self.entries()                          # read once: the log is the same file
-        previous = recorded[-1]["entry_sha256"] if recorded else ""
-        duplicate = request["request_id"] in {e["request"]["request_id"] for e in recorded}  # O-1
-
-        body = {
-            "sequence": len(recorded) + 1,
-            "previous_sha256": previous,
-            "received_at_epoch": int(now_epoch),           # O-3, the engine's own clock
-            "claimed_at_epoch": int(request["requested_at_epoch"]),
-            "duplicate": duplicate,
-            "requester_authenticated": False,
-            "task_state_when_received": held,
-            "request": request,
-        }
-        entry = dict(body, entry_sha256=_sha256(body))
-
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+        try:
+            with _write_lock(self.path) as handle:
+                try:
+                    self.verify_chain()
+                    recorded = self.entries()              # read once: the log is the same file
+                except ApprovalRequestError as exc:
+                    # A log that does not verify is not this caller's programming error and
+                    # not a bad request: it is the engine unable to say what came before, and
+                    # the rule at the top of this file is that a refusal is a document.
+                    return _refusal(request, "the engine's approval-request log does not "
+                                             f"verify, so nothing can be appended to it: {exc}")
+                previous = recorded[-1]["entry_sha256"] if recorded else ""
+                duplicate = request["request_id"] in {
+                    e["request"]["request_id"] for e in recorded}                       # O-1
+
+                body = {
+                    "sequence": len(recorded) + 1,
+                    "previous_sha256": previous,
+                    "received_at_epoch": int(now_epoch),   # O-3, the engine's own clock
+                    "claimed_at_epoch": int(request["requested_at_epoch"]),
+                    "duplicate": duplicate,
+                    "requester_authenticated": False,
+                    "task_state_when_received": held,
+                    "request": request,
+                }
+                entry = dict(body, entry_sha256=_sha256(body))
+                line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
+                handle.write(line.encode("utf-8"))
+        except _LogUnlockable as exc:
+            return _refusal(request, "the engine's approval-request log cannot be locked for "
+                                     f"writing, and an unserialized append forks its chain: {exc}")
 
         return {
             "protocol": APPROVAL_REPLY_PROTOCOL,

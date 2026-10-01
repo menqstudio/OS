@@ -126,6 +126,50 @@ class RemoteTests(unittest.TestCase):
             "menqstudio/bro")
 
 
+class RepositoryReferenceTests(unittest.TestCase):
+    """The grant bindings' comparison form: one definition, and its behaviour pinned.
+
+    It existed twice, byte for byte (bro_policy and bro_release_v3). It is one function
+    now; what it RETURNS is unchanged, including the places it disagrees with
+    `normalize_remote`, because changing those changes what a signed grant binds to.
+    """
+
+    def test_there_is_one_definition_and_both_bindings_use_it(self):
+        import bro_policy
+        import bro_release_v3
+        import bro_workspace
+        for module in (bro_policy, bro_release_v3):
+            self.assertIs(module.normalize_repository_reference,
+                          bro_workspace.normalize_repository_reference)
+            self.assertFalse(hasattr(module, "_normalize_repo"), module.__name__)
+            source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+            self.assertNotIn("urlparse", source, module.__name__)
+
+    def test_the_comparison_form_is_what_it_was(self):
+        from bro_workspace import normalize_repository_reference as normalize
+        for value, expected in (
+            ("menqstudio/OS", "menqstudio/os"),
+            ("  menqstudio/OS.git ", "menqstudio/os"),
+            ("menqstudio\\OS", "menqstudio/os"),
+            ("https://github.com/menqstudio/OS.git", "github.com/menqstudio/os"),
+            ("git@github.com:menqstudio/OS.git", "github.com/menqstudio/os"),
+            ("https://gitlab.com/menqstudio/OS", "gitlab.com/menqstudio/os"),   # no host is refused
+            (None, ""),
+        ):
+            self.assertEqual(normalize(value), expected, value)
+
+    def test_it_is_not_normalize_remote_and_the_difference_refuses(self):
+        # Userinfo survives in the URL form, so two spellings of one remote compare
+        # UNEQUAL here while normalize_remote folds them. Unequal is a refused binding,
+        # never a false match; folding them is a decision about what a grant binds to.
+        from bro_workspace import normalize_repository_reference as normalize
+        ssh_url, scp = "ssh://git@github.com/menqstudio/OS.git", "git@github.com:menqstudio/OS.git"
+        self.assertEqual(normalize_remote(ssh_url), normalize_remote(scp))
+        self.assertEqual(normalize(ssh_url), "git@github.com/menqstudio/os")
+        self.assertNotEqual(normalize(ssh_url), normalize(scp))
+        self.assertNotEqual(normalize(scp), normalize_remote(scp))
+
+
 class ScopeTests(WorkspaceFixture):
     def test_inside_workspace_allowed(self):
         resolved = authorize_path(self.workspace(), "src/app.py")

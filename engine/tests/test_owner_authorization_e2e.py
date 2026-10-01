@@ -131,6 +131,39 @@ class OwnerAuthorizationE2ETests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     load_mode_grant_from_env(bundle, "sess-e2e", "specialist", root=reg, now=NOW)
 
+    def test_every_grant_carries_its_own_nonce_and_the_ledger_takes_the_second(self):
+        # Both fields defaulted to constants no caller overrode, so every grant carried
+        # the nonce "mode-grant-nonce-000001" and the L-1 ledger — which binds a nonce
+        # to the first grant presenting it — refused the second specialist's grant.
+        import re
+        from bro_contracts import MODE_GRANT_NONCE_RE, bind_mode_grant_nonce
+        task, agent = task_contract(), agent_profile()
+        receipt = build_skill_receipt(task, agent, root=ROOT, now=NOW)
+        first, second = (build_mode_grant_payload(
+            task, agent, receipt, session_id=session, role="specialist", mode="work",
+            head_sha=HEAD, tree_identity=TREE, now=NOW) for session in ("sess-one", "sess-two"))
+        self.assertNotEqual(first["nonce"], second["nonce"])
+        self.assertNotEqual(first["grant_id"], second["grant_id"])
+        schema = json.loads((ROOT / "schemas" / "mode-grant.schema.json").read_text(encoding="utf-8"))
+        grant_id_pattern = schema["properties"]["payload"]["properties"]["grant_id"]["pattern"]
+        for payload in (first, second):
+            self.assertRegex(payload["nonce"], MODE_GRANT_NONCE_RE)
+            self.assertTrue(re.fullmatch(grant_id_pattern, payload["grant_id"]), payload["grant_id"])
+        ledger = pathlib.Path(tempfile.mkdtemp(prefix="bro-e2e-nonce-"))
+        self.addCleanup(shutil.rmtree, ledger, ignore_errors=True)
+        bind_mode_grant_nonce(first, ledger)
+        bind_mode_grant_nonce(second, ledger)          # used to raise: "already consumed"
+        bind_mode_grant_nonce(first, ledger)           # re-presenting the same grant stays idempotent
+        # The ledger still refuses what it exists to refuse: one nonce, two grants.
+        replay = dict(second, nonce=first["nonce"])
+        with self.assertRaisesRegex(ContractError, "already consumed by a different grant"):
+            bind_mode_grant_nonce(replay, ledger)
+        # A caller that names them is still obeyed.
+        named = build_mode_grant_payload(
+            task, agent, receipt, session_id="sess-one", role="specialist", mode="work",
+            head_sha=HEAD, tree_identity=TREE, now=NOW, grant_id="grant-x", nonce="n" * 16)
+        self.assertEqual((named["grant_id"], named["nonce"]), ("grant-x", "n" * 16))
+
     def test_owner_cli_produces_a_loadable_bundle(self):
         from broctl import generate_key
         reg, issuer = self._registry()

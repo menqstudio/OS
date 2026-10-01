@@ -47,6 +47,42 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("hunter2sekretvalue", out)
         self.assertIn("[REDACTED:keyed-secret]", out)
 
+    def test_keyed_secret_under_a_quoted_or_prefixed_key_is_redacted(self):
+        # The two commonest shapes in a stderr tail: a serialised JSON object, whose key
+        # carries a closing quote between the name and the colon, and a prefixed
+        # environment variable, whose name has no word boundary before `PASSWORD`. The
+        # old pattern needed `\b<name>` directly followed by `[=:]` and left all of
+        # these verbatim.
+        for text, value in (
+            ('{"password": "hunter2sekret"}', "hunter2sekret"),
+            ("{'api_key': 'ABCDEF123456ghijkl'}", "ABCDEF123456ghijkl"),
+            ("DB_PASSWORD=hunter2sekret", "hunter2sekret"),
+            ("export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCY", "wJalrXUtnFEMIK7MDENGbPxRfiCY"),
+            ("GITHUB_TOKEN: abcdef0123456789", "abcdef0123456789"),
+            # JSON re-serialised inside a JSON string: the quotes arrive escaped.
+            ('{\\"client_secret\\": \\"hunter2sekret\\"}', "hunter2sekret"),
+        ):
+            self.assertTrue(contains_secret(text), text)
+            out = redact(text)
+            self.assertNotIn(value, out, text)
+            self.assertIn("[REDACTED:keyed-secret]", out, text)
+
+    def test_a_key_name_inside_a_longer_word_is_not_a_keyed_secret(self):
+        # The name must END the identifier: `tokens`, `password_file` and `key_id` are
+        # counts, paths and identifiers, and this repository's evidence is full of them.
+        for text in ("max_tokens=1000000", "password_file: /etc/app/pwfile",
+                     "key_id: operator-key-01", "secrets_scanned=1234567"):
+            self.assertEqual(redact(text), text)
+
+    def test_keyed_scan_is_linear_on_a_long_identifier_run(self):
+        # No prefix group: a megabyte of identifier characters with no key name in it
+        # must not backtrack. A quadratic pattern does not finish this in a test run.
+        import time
+        blob = "a1B2_" * 200_000
+        started = time.monotonic()
+        self.assertEqual(redact(blob), blob)
+        self.assertLess(time.monotonic() - started, 5.0)
+
     def test_does_not_redact_sha256_or_git_hashes(self):
         # Precision: ubiquitous, legitimate hashes must survive (no over-redaction).
         digest = "a1b2c3d4" * 8  # 64-hex

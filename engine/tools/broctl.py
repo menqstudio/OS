@@ -15,6 +15,7 @@ registry they produce. They are for tests and local bootstrap. A production
 operator root key belongs offline.
 
     python tools/broctl.py keygen --authority operator-root --out KEYDIR
+    python tools/broctl.py keygen --authority builder --subject-agent-id agt-p01-r01 --out KEYDIR
     python tools/broctl.py build-registry --keydir KEYDIR --out config/trusted-keys.json
     python tools/broctl.py sign --key KEYDIR/issuer.json --artifact task-contract --in t.json --out t.signed.json
     python tools/broctl.py sign --key KEYDIR/operator-root.json --artifact workspace-binding --in b.json --out b.signed.json
@@ -42,7 +43,9 @@ from bro_signature import (
     ARTIFACT_AUTHORITY,
     AUDIT_ANCHOR,
     AUTHORITY_TYPES,
+    BUILDER,
     OPERATOR,
+    VERIFIER,
     SignatureError,
     canonical_bytes,
     load_trusted_keys,
@@ -195,13 +198,29 @@ def _write_key(path: pathlib.Path, value: dict) -> pathlib.Path:
 
 
 def cmd_keygen(args) -> int:
+    # A builder or verifier key speaks for ONE agent, and the deploy preflight
+    # (bro_deploy_preflight.check_registry) refuses any such key that does not say which.
+    # `generate_key` could always record that; this command could not be told, so the
+    # preflight was satisfiable only by hand-editing a key file. The binding is refused
+    # on every other authority rather than recorded and ignored: a subject on an issuer
+    # or operator key would read as a restriction nothing enforces.
+    subject = args.subject_agent_id
+    if subject is not None:
+        if args.authority not in (BUILDER, VERIFIER):
+            raise SignatureError(
+                f"--subject-agent-id binds a {BUILDER} or {VERIFIER} key to an agent; "
+                f"a {args.authority} key is not identity-bound")
+        if not subject.strip() or subject != subject.strip():
+            raise SignatureError("--subject-agent-id must be a non-empty agent id")
     key = generate_key(args.authority, args.key_id or f"dev-{args.authority}",
-                       args.production)
+                       args.production, subject_agent_id=subject)
     keydir = _require_private_key_dir(pathlib.Path(args.out))
     out = _write_key(keydir / f"{key['authority_type']}.json", key)
     print(f"GREEN: development {key['authority_type']} key {key['key_id']}")
     print(f"  path:       {out}")
     print(f"  public key: {key['public_key']}")
+    if key.get("subject_agent_id"):
+        print(f"  subject:    {key['subject_agent_id']}")
     print("  NOT FOR PRODUCTION: stored unencrypted")
     return 0
 
@@ -269,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
     keygen = sub.add_parser("keygen", help="generate a development key")
     keygen.add_argument("--authority", required=True, choices=sorted(AUTHORITY_TYPES))
     keygen.add_argument("--key-id")
+    keygen.add_argument("--subject-agent-id",
+                        help="the agent a builder or verifier key speaks for; "
+                             "the deploy preflight refuses such a key without one")
     keygen.add_argument("--out", required=True, help="key directory, outside the repository")
     keygen.add_argument("--production", action="store_true",
                         help="refused: production roots belong offline")

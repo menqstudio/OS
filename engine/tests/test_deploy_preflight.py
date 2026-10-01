@@ -112,6 +112,40 @@ class DeployPreflightTests(PreflightFixture):
         failures = self.run_preflight()
         self.assertTrue(any("subject_agent_id" in f for f in failures), failures)
 
+    def keygen(self, keydir, *argv):
+        import contextlib
+        import io
+        import broctl
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = broctl.main(["keygen", "--out", str(keydir), *argv])
+        return code, out.getvalue() + err.getvalue()
+
+    def test_keygen_can_mint_the_subject_bound_key_this_preflight_requires(self):
+        # The check above refuses every builder/verifier key without a subject, and
+        # `broctl keygen` had no way to set one: only a test calling generate_key
+        # directly, or a hand-edited key file, could ever pass it.
+        keydir = self.tmp / "keys"
+        keys = dict(self.keys)
+        for authority, agent in (("builder", "agt-p01-r01"), ("verifier", "agt-p01-r05")):
+            code, text = self.keygen(keydir, "--authority", authority, "--subject-agent-id", agent)
+            self.assertEqual(code, 0, text)
+            keys[authority] = json.loads((keydir / f"{authority}.json").read_text(encoding="utf-8"))
+            self.assertEqual(keys[authority]["subject_agent_id"], agent)
+            self.assertFalse(keys[authority]["production"])
+        self._write_registry(keys.values())
+        self.assertEqual(self.run_preflight(), [])
+
+    def test_keygen_refuses_a_subject_on_an_authority_that_is_not_identity_bound(self):
+        keydir = self.tmp / "keys"
+        code, text = self.keygen(keydir, "--authority", "issuer", "--subject-agent-id", "agt-p01-r01")
+        self.assertEqual(code, 1)
+        self.assertIn("not identity-bound", text)
+        self.assertFalse((keydir / "issuer.json").exists())
+        code, text = self.keygen(keydir, "--authority", "builder", "--subject-agent-id", " ")
+        self.assertEqual(code, 1)
+        self.assertFalse((keydir / "builder.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

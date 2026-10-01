@@ -6,7 +6,6 @@ import pathlib
 import subprocess
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 from bro_completion import validate_completion, validate_verifier_receipt
 from bro_contracts import canonical_json_sha256, load_json, validate_task_contract
@@ -21,24 +20,13 @@ from bro_security import (
     validate_exact_push,
     verify_signed_document,
 )
+from bro_workspace import normalize_repository_reference
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class ReleaseV3Error(ValueError):
     pass
-
-
-def _normalize_repo(value: object) -> str:
-    text = str(value or "").strip().replace("\\", "/")
-    if text.endswith(".git"):
-        text = text[:-4]
-    if text.startswith("git@") and ":" in text:
-        text = text.split("@", 1)[1].replace(":", "/", 1)
-    elif "://" in text:
-        parsed = urlparse(text)
-        text = (parsed.netloc + parsed.path).lstrip("/")
-    return text.lower()
 
 
 def _signed(path_env: str, artifact_type: str, root: pathlib.Path = ROOT, now: int | None = None) -> dict[str, Any]:
@@ -133,10 +121,12 @@ def validate_release_grant_v3(
     for key, value in expected.items():
         actual = payload.get(key)
         if key == "repository":
-            actual, value = _normalize_repo(actual), _normalize_repo(value)
+            actual, value = (normalize_repository_reference(actual),
+                             normalize_repository_reference(value))
         if actual != value:
             raise ReleaseV3Error(f"release grant binding mismatch: {key}")
-    if _normalize_repo(payload.get("remote")) != _normalize_repo(_origin()):
+    if (normalize_repository_reference(payload.get("remote"))
+            != normalize_repository_reference(_origin())):
         raise ReleaseV3Error("release grant remote binding mismatch")
     return payload
 

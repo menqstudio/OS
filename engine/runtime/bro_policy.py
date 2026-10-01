@@ -9,11 +9,11 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from bro_authorization import ActionClassification
 from bro_contracts import ContractError, load_contract_bundle_from_env, load_mode_grant_from_env
 from bro_security import SecurityError, enforce_scope, enforce_scope_within_binding
+from bro_workspace import normalize_repository_reference
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / ".bro" / "policy.json"
@@ -65,21 +65,29 @@ UNKNOWN_ROLE = "unknown"
 
 # The canonical conductor may bootstrap — read the repository to orchestrate —
 # without a bound task contract, but ONLY through direct read-only tools. Shell
-# tools are excluded by construction: split_shell does not reject $() command
-# substitution, so a "read-only" command such as `cat $(rm -rf x)` classifies as
-# READ_LOCAL yet executes an arbitrary mutation. Gating on an explicit tool
-# allowlist (never Bash/Shell/PowerShell) closes that vector; the capability set
-# is the defence-in-depth second check. READ_EXTERNAL is excluded because a
-# network fetch is not workspace-bound.
+# tools are excluded by construction: a shell command's read-only classification
+# is a static reading of text the shell then interprets. The parser in
+# bro_security closes the forms it knows — it refuses `$(...)`, backticks and
+# redirection, splits on every separator including a lone `&`, never treats a
+# path-qualified executable as a builtin, and allowlists the flags of `find` and
+# of the read-only git subcommands — but it does not model variable and glob
+# expansion, aliases or PATH lookup, and each of those closures was a bypass
+# first. Gating on an explicit tool allowlist (never Bash/Shell/PowerShell) does
+# not depend on the parser being complete; the capability set is the
+# defence-in-depth second check. READ_EXTERNAL is excluded because a network
+# fetch is not workspace-bound.
 CONDUCTOR_BOOTSTRAP_TOOLS = frozenset({"Read", "Glob", "Grep"})
 CONDUCTOR_BOOTSTRAP_CAPABILITIES = frozenset({"READ_LOCAL"})
 
-# Review mode produces findings only, and a shell tool cannot be trusted as
-# read-only: its arguments are not parsed, so `find . -delete` classifies as
-# READ_LOCAL and `cat /etc/passwd` reads outside the workspace, both slipping past
-# the read-only gate. Review therefore allows ONLY these structured read tools;
-# every shell/command tool — and anything unrecognised — is denied. A
-# command-specific parser can widen this later; deny-by-default is the safe floor.
+# Review mode produces findings only, and a shell tool is not trusted as read-only
+# here. When this was written its arguments were not parsed at all: `find . -delete`
+# classified as READ_LOCAL and `cat /etc/passwd` carried no target. Both are closed
+# in bro_security now (analyze_find inspects every argument; read verbs surface
+# their path targets), but the parser is still a static reading of shell text — see
+# CONDUCTOR_BOOTSTRAP_TOOLS above for what it does not model. Review therefore
+# allows ONLY these structured read tools; every shell/command tool — and anything
+# unrecognised — is denied. Deny-by-default is the floor, and it does not depend on
+# the parser being complete.
 REVIEW_READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
 
 
@@ -272,18 +280,6 @@ def canonical_context() -> str:
     )
 
 
-def _normalize_repo(value: object) -> str:
-    normalized = str(value or "").strip().replace("\\", "/")
-    if normalized.endswith(".git"):
-        normalized = normalized[:-4]
-    if normalized.startswith("git@") and ":" in normalized:
-        normalized = normalized.split("@", 1)[1].replace(":", "/", 1)
-    elif "://" in normalized:
-        parsed = urlparse(normalized)
-        normalized = (parsed.netloc + parsed.path).lstrip("/")
-    return normalized.lower()
-
-
 def enforce_grant_bindings(grant: dict, task: dict, mode: str) -> tuple[bool, str]:
     """Bind the mode grant to the task's repository, branch and mode.
 
@@ -293,7 +289,8 @@ def enforce_grant_bindings(grant: dict, task: dict, mode: str) -> tuple[bool, st
     signed grant for another repository, branch or mode could authorize an action —
     or a completion. The grant's mode must equal the task's mode and the current
     runtime mode."""
-    if _normalize_repo(grant.get("repository")) != _normalize_repo(task["repository"]["full_name"]):
+    if (normalize_repository_reference(grant.get("repository"))
+            != normalize_repository_reference(task["repository"]["full_name"])):
         return False, "grant repository binding mismatch"
     if str(grant.get("branch")) != str(task["repository"]["branch"]):
         return False, "grant branch binding mismatch"
@@ -348,8 +345,8 @@ def authorize_classified_action(
     # Conductor bootstrap: the one canonical conductor may read the repository to
     # bootstrap and orchestrate without a task-contract bundle, but only through
     # an explicit allowlist of direct read-only tools (Read/Glob/Grep) — never a
-    # shell tool, whose command substitution can smuggle a mutation past the
-    # read-only classification. Bro never builds and can never mutate (denied
+    # shell tool, whose read-only classification is a static reading of text the
+    # shell then interprets. Bro never builds and can never mutate (denied
     # above), so an allowlisted read authorizes nothing a specialist would need a
     # contract for. The exemption requires the exact canonical identity
     # (is_conductor, not the role string); the capability check is a second,
