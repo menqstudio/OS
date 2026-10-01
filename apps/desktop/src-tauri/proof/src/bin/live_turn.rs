@@ -270,10 +270,10 @@ mod linux {
         if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
             return blocked(&format!("root_anchor_{why}"));
         }
-        let anchor: Value = match std::fs::read_to_string(&anchor_path)
-            .ok()
-            .and_then(|b| serde_json::from_str(&b).ok())
-        {
+        // The raw text is kept: an `install_minted` anchor is compared, byte for byte, against the
+        // file the §2.5 pin manifest pins (below).
+        let anchor_raw = std::fs::read_to_string(&anchor_path).ok();
+        let anchor: Value = match anchor_raw.as_deref().and_then(|b| serde_json::from_str(b).ok()) {
             Some(v) => v,
             None => return blocked("root_anchor_unreadable"),
         };
@@ -312,6 +312,25 @@ mod linux {
             &root_anchor.pinned.root_key_id,
             &root_anchor.pinned.public_key_hex,
         ) {
+            return blocked(&format!("root_anchor_{why}"));
+        }
+        // `install_minted` is the one provenance that can ever support a production claim here
+        // (behind the Owner's `INSTALL_MINTED_CUSTODY_ACCEPTED`), so it is not taken on the file's
+        // word either: the anchor this driver read must be, byte for byte, the file the §2.5 pin
+        // manifest pins as `key-manifest.root-anchor`, and that file must pass the floor's
+        // per-artifact check. What the label then buys is `resolve_trust_state` and the constant.
+        if let Err(why) =
+            brops_broker::tcb::check_declared_install_minted_anchor(root_anchor.provenance, || {
+                crate::tcb_verify::anchor_is_floor_pinned(
+                    &cfg,
+                    anchor_raw.as_deref().unwrap_or_default().as_bytes(),
+                )
+                .map_err(|detail| {
+                    eprintln!("live_turn: the install_minted anchor is not the floor-pinned one: {detail}");
+                    detail
+                })
+            })
+        {
             return blocked(&format!("root_anchor_{why}"));
         }
         // `verify_manifest_anchored` (not `verify_manifest`) — it returns evidence of WHICH anchor the

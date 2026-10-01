@@ -15,7 +15,9 @@ pub mod chain_hops;
 
 pub mod chain_executor;
 
-/// The broker's compiled-in TCB root anchor (production-trust root public key).
+/// The root-anchor rules: the parser for the TCB anchor FILE the broker reads its root from, and the
+/// one compiled-in root that may be called `external`. The Linux broker no longer PINS that
+/// constant as its root (T-131 slice C) — see the module's own header.
 pub mod tcb;
 
 /// The REAL filesystem probe + loader behind the §2.5 TCB-integrity floor (audit F-10). The floor's

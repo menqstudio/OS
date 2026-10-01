@@ -302,11 +302,14 @@ contradicted your decision. **T-130 removed it**: the two ceremony documents, th
 the root generator and the outside-anchor modes of both live kits are deleted, and
 `tools/check_no_owner_key_ceremony.py` fails any change that brings them back.
 
-**What that leaves, stated plainly.** The broker's compiled pin is a key whose private half nobody
-holds, so the broker's production path is unreachable today — by design of the current code, not
-because anything waits on you. Replacing that pin with an install-minted root is Builder work
-(`T-131`): a design first, then code. The trade is the one #78 already accepted: locally-minted
-trust defends against an attacker who arrives later, not one who owned the machine at install.
+**What that leaves, stated plainly (updated 2026-10-01, `T-140`).** The Linux broker no longer
+pins a compiled root nobody holds: it reads its root from the anchor file its own §2.5 floor has
+already pinned. A provisioned deployment therefore completes a governed turn — and commits it as
+`demonstration_custody`, never production, because `INSTALL_MINTED_CUSTODY_ACCEPTED` ships `false`.
+**That constant is the one line that is yours**: flip it after the independent audit, not before.
+It matters, because the floor proves where the anchor file sits, not that the root private was
+destroyed. The trade is the one #78 already accepted: locally-minted trust defends against an
+attacker who arrives later, not one who owned the machine at install.
 
 **Kept from that work:** `T-126`'s refusal. A TCB anchor file that claims `external` custody is
 refused unless its key is the compiled pin, and CI's ladder job proves it on every run.
@@ -341,7 +344,7 @@ always `External` kills both the provenance test and
 `TrustState::Production` by hand kills that same load-bearing one.
 
 **What still gates Phase 1's two rows:** the other 26 prerequisites in `broker/src/preflight.rs` — 13
-installer, 11 machine-admin, 1 platform, and the custody row that no person can meet (it waits on `T-131`, `docs/design/DEBIAN_INSTALL_PROVISIONING.md`). None of them is a decision. The table
+installer, 11 machine-admin, 1 platform, and the custody row, which an install-minted root now meets (`T-140`, `docs/design/DEBIAN_INSTALL_PROVISIONING.md`). None of them is a decision. The table
 now marks the custody row `met-by-build`.
 
 ---
@@ -354,7 +357,7 @@ Phase 1 has two open Definition-of-Done rows — *"One governed round-trip prove
 That account is true and **incomplete**. Measured at `a94513e`:
 
 `apps/desktop/src-tauri/broker/src/preflight.rs` lists **27** prerequisites for a governed round trip,
-each with the party that can create it: **13 installer · 11 machine-admin · 1 custody row (T-131) ·
+each with the party that can create it: **13 installer · 11 machine-admin · 1 install-minted-root (T-140) ·
 2 not-provisionable-on-a-machine**. The interesting number is the last one. Of those two:
 
 | Requirement | Why no machine can provide it |
@@ -398,8 +401,8 @@ it would commit rows labelled `demonstration_custody`. `resolve_trust_state` wil
 `Production` state from a `kit_generated` anchor no matter what a config says, and every
 `CustodyResolver` implementation is required by its own trait contract to end there rather than
 constructing a `TrustState` by hand — *"building the enum by hand is how a demonstration root gets to
-call itself production."* Only a manifest verifying under the compiled pin produces `trusted_verified`, and
-nobody holds that key (§0, `T-131`).
+call itself production."* Only an install-minted root can produce `trusted_verified`, and only once the Owner flips
+`INSTALL_MINTED_CUSTODY_ACCEPTED` (§0, `T-140`).
 
 ### The decision
 

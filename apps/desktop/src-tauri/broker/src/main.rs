@@ -321,15 +321,49 @@ mod linux {
         // `verify_broker_tcb`, not `verify_deployment_tcb`: the manifest must also pin THIS executable
         // and THIS config under the broker's own roles. Both in-tree kits pin their proof driver there,
         // and until 2026-09-30 either kit's manifest passed this floor with the broker itself unmeasured.
-        if let Err(why) = brops_broker::tcb_probe::verify_broker_tcb(
+        let floor_verdict = match brops_broker::tcb_probe::verify_broker_tcb(
             pin_manifest_path.as_deref(),
             &principals,
             login_uid,
             &path,
         ) {
-            eprintln!("brops-broker: TCB integrity floor REFUSED ({why}) — serving fail-closed");
-            return fail_closed();
-        }
+            Ok(verified) => verified,
+            Err(why) => {
+                eprintln!("brops-broker: TCB integrity floor REFUSED ({why}) — serving fail-closed");
+                return fail_closed();
+            }
+        };
+
+        // ---- THE ROOT ANCHOR, from the path the floor pinned (T-131 slice C) ----
+        //
+        // The root this broker verifies its key manifest under is no longer a constant compiled into
+        // `tcb.rs` — nobody holds that key's private half (Owner decision #78), so no manifest could
+        // ever verify under it. It is the anchor FILE, and the only way this function can name that
+        // file is to ask the floor that just passed which path it pinned under
+        // `key-manifest.root-anchor`. There is deliberately no `trust.root_anchor_path` read here
+        // and no environment variable: a path the config could supply is a root the config's writer
+        // could choose. The bytes are bound to the pinned digest, so the file parsed is the file
+        // measured; `external` is still held to the compiled-in root; and an anchor that states no
+        // provenance, or an unknown one, is refused rather than defaulted.
+        //
+        // What the anchor's provenance buys is decided elsewhere and is not much: `kit_generated`,
+        // `demonstration` and — while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` —
+        // `install_minted` all commit as `demonstration_custody`.
+        let root_anchor = match floor_verdict.root_anchor() {
+            Ok(anchor) => anchor,
+            Err(why) => {
+                eprintln!("brops-broker: root anchor REFUSED ({why}) — serving fail-closed");
+                return fail_closed();
+            }
+        };
+        eprintln!(
+            "brops-broker: root anchor {} provenance={} read from the floor-pinned {}; \
+             production custody claim supported: {}",
+            root_anchor.anchor().pinned.root_key_id,
+            root_anchor.anchor().provenance.as_str(),
+            root_anchor.path(),
+            root_anchor.anchor().provenance.supports_production_claim(),
+        );
 
         // The presence of a manifest path is the switch: absent ⇒ no trusted manifest ⇒ fail-closed.
         let manifest_path = match s(&["trust", "manifest_path"]) {
@@ -382,6 +416,7 @@ mod linux {
             author: s(&["resolved", "author"]).unwrap_or_else(|| "Bro".to_string()),
         };
         let resolver = ProductionResolver::provisioned(
+            root_anchor,
             manifest,
             root_sig,
             floor,
@@ -561,11 +596,15 @@ mod linux {
         // could provide, because no amount of provisioning changes a line of code.
         //
         // The Owner took option A: wire it. What that does NOT do is claim production custody. The label a
-        // committed row carries is decided by `resolve_trust_state` on the anchor's PROVENANCE -- external
-        // root => `trusted_verified`, anything else => `demonstration_custody` -- and the provenance is
-        // derived from which anchor this binary pinned, not from anything a deployment can write. A turn
-        // that verified nothing still commits nothing: `BrokerCustody` returns `NoTrustedManifest` with no
-        // observation recorded, which is the answer this line gave before it changed.
+        // committed row carries is decided by `resolve_trust_state` on the anchor's PROVENANCE -- a
+        // provenance that supports a production claim => `trusted_verified`, anything else =>
+        // `demonstration_custody` -- and the provenance is the one stated by the anchor file the 2.5
+        // floor pinned (read above), not anything the deployment CONFIG can write. Today no reachable
+        // provenance supports that claim: `external` is refused for every key but a compiled-in root
+        // nobody holds, and `install_minted` is behind `INSTALL_MINTED_CUSTODY_ACCEPTED`, which ships
+        // `false`. A turn that verified nothing still commits nothing: `BrokerCustody` returns
+        // `NoTrustedManifest` with no observation recorded, which is the answer this line gave before
+        // it changed.
         match custody {
             Some(c) => Box::new(ChainExecutor::with_custody(chain, Box::new(c))),
             // Unreachable from here -- this arm runs only for an unprovisioned resolver, and every early
@@ -759,6 +798,55 @@ mod tests {
         let refused = after.find("return fail_closed()").expect("a refusal that does not refuse");
         let manifest = after.find("trust\", \"manifest_path\"").expect("manifest_path gone");
         assert!(refused < manifest, "the floor's refusal comes after the key manifest is read");
+    }
+
+    /// T-131 slice C. The root anchor comes from the FLOOR'S VERDICT — the path the pin manifest
+    /// pinned for `key-manifest.root-anchor` — and from nowhere else: no config key, no environment
+    /// variable, no compiled constant. A refusal to produce one is a refusal to serve.
+    ///
+    /// Textual for the reason the tests around it are: `build_governed_executor` is Linux-only.
+    /// What the anchor reader DOES is tested for real in `tcb_probe` and `tcb`.
+    #[test]
+    fn the_root_anchor_comes_from_the_floors_verdict_and_from_nowhere_else() {
+        let code = broker_code();
+        // The verdict is kept, and the anchor is asked of it.
+        assert!(
+            code.contains("let floor_verdict = match brops_broker::tcb_probe::verify_broker_tcb("),
+            "the floor's verdict is no longer kept, so there is nothing to ask for the pinned path"
+        );
+        let floor = code.find("tcb_probe::verify_broker_tcb(").unwrap();
+        let asked = code.find("floor_verdict.root_anchor()").expect("the anchor is not asked of the floor");
+        let manifest = code.find("trust\", \"manifest_path\"").expect("manifest_path gone");
+        let built = code.find("ProductionResolver::provisioned(").expect("no resolver is built");
+        assert!(floor < asked && asked < manifest && manifest < built, "the order changed");
+
+        // A refused anchor returns the fail-closed executor BEFORE any trust material is read, and
+        // says so on stderr by name.
+        let between = &code[asked..manifest];
+        assert!(between.contains("return fail_closed();"), "a refused anchor is not a refusal to serve");
+        assert!(between.contains("root anchor REFUSED ({why})"), "the refusal does not name its reason");
+
+        // The resolver is built FROM that anchor: it is the first argument.
+        let args = code[built..].split(')').next().unwrap();
+        let first = args.split('(').nth(1).unwrap().split(',').next().unwrap().trim();
+        assert_eq!(first, "root_anchor", "the resolver is not built from the floor-pinned anchor");
+
+        // And there is no other source. Each of these would be a second way to name a root.
+        for forbidden in [
+            "root_anchor_path",
+            "ROOT_PUBLIC_KEY_HEX",
+            "ROOT_KEY_ID",
+            "provisioned_with_pin",
+            "parse_root_anchor",
+            "RootAnchor {",
+            "PinnedRoot {",
+            "RootProvenance::",
+        ] {
+            assert!(
+                !code.contains(forbidden),
+                "the broker names `{forbidden}`: a root or a provenance it did not get from the floor"
+            );
+        }
     }
 
     /// The broker must never name the calling-principal constructor.

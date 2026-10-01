@@ -17,8 +17,8 @@
 //!
 //! * **It does not provision.** Eleven of the requirements below can only be created by a machine
 //!   administrator (service accounts, a setuid launcher, a sudoers vector, root-owned TCB material),
-//!   one is a signature under the compiled-in TCB root whose private half NO person holds (Owner
-//!   decision #78; unmeetable until T-131 makes that root install-minted), one is not on a machine at
+//!   one is a key manifest signed under a root the INSTALL minted and wrote into the floor-pinned
+//!   anchor file (no person holds a root — Owner decision #78; T-131), one is not on a machine at
 //!   all, and one the shipped build already provides. An installer that "provisioned" the other
 //!   thirteen would produce a config that still ends in `fail_closed()` — with the gap now hidden
 //!   behind a file that looks complete.
@@ -39,8 +39,8 @@
 
 use std::collections::BTreeSet;
 
-use brops_core::key_manifest::{verify_manifest, KeyManifest, PinnedRoot};
-use brops_core::tcb_integrity::{TcbPinManifest, TCB_REQUIRED_ARTIFACTS};
+use brops_core::key_manifest::{verify_manifest, KeyManifest};
+use brops_core::tcb_integrity::{TcbPinManifest, ROOT_ANCHOR_ROLE, TCB_REQUIRED_ARTIFACTS};
 use serde_json::Value;
 
 /// Who, on a real deployment, is able to create a requirement.
@@ -54,16 +54,18 @@ pub enum Provisioner {
     /// Only a machine administrator (root, or an installer elevated to it) can create this: OS
     /// accounts, setuid bits, a sudoers vector, root-owned files under a root-owned directory.
     MachineAdministrator,
-    /// A signature under the TCB root whose PUBLIC half is compiled into this binary
-    /// (`crate::tcb::ROOT_PUBLIC_KEY_HEX`). No person holds or carries its private half — the Owner
-    /// decided on 2026-08-09 (#78) that the install mints all trust — so nothing and nobody can meet
-    /// a row of this kind today. It stays unmeetable until T-131 replaces the pin with an
-    /// install-minted root. (The variant name is historical; it does not name a real custodian.)
-    OfflineRootCustodian,
+    /// The privileged INSTALL step, minting a root: it generates the TCB root keypair, signs the key
+    /// manifest with it, writes the public half and its provenance into the anchor file the §2.5
+    /// pin manifest pins (`key-manifest.root-anchor`), and destroys the private half before it
+    /// exits. No person holds or carries a root — the Owner decided on 2026-08-09 (#78) that the
+    /// install mints all trust — so this is a step of the install and not of anybody's ceremony
+    /// (`docs/design/DEBIAN_INSTALL_PROVISIONING.md`, T-131). The live kits stand in for it with a
+    /// `kit_generated` root, which meets the row and can never be production.
+    InstallMintedRoot,
     /// Nothing on any machine can create it — it is a property of the shipped BINARY, and changing it
     /// is a code change behind the Owner's gate.
     NotProvisionableOnAMachine,
-    /// The shipped binary already provides it: no installer, administrator or key custodian has anything
+    /// The shipped binary already provides it: no installer and no administrator has anything
     /// to do. It stays in this table because it is still a PREREQUISITE — a reader asking what makes a
     /// committed row possible should find it here — and because a build that stopped providing it would
     /// otherwise vanish from the list rather than turn red.
@@ -75,7 +77,7 @@ impl Provisioner {
         match self {
             Provisioner::Installer => "installer",
             Provisioner::MachineAdministrator => "machine-admin",
-            Provisioner::OfflineRootCustodian => "offline-root-custodian",
+            Provisioner::InstallMintedRoot => "install-minted-root",
             Provisioner::NotProvisionableOnAMachine => "not-provisionable",
             Provisioner::MetByTheBuild => "met-by-build",
         }
@@ -144,8 +146,8 @@ pub struct Requirement {
 /// Every prerequisite, in the order `build_governed_executor` would meet them.
 ///
 /// `Provisioner` is the column that matters: thirteen `installer`, eleven `machine-admin`, one
-/// `offline-root-custodian` (a root nobody holds — see [`Provisioner::OfflineRootCustodian`]), one
-/// `not-provisionable`, one `met-by-build`.
+/// `install-minted-root` (the root the install mints — see [`Provisioner::InstallMintedRoot`]), one
+/// `not-provisionable`, one `met-by-build`. A test holds those five counts.
 pub const REQUIREMENTS: &[Requirement] = &[
     // ---- platform + OS topology -------------------------------------------------------------
     Requirement {
@@ -327,12 +329,16 @@ pub const REQUIREMENTS: &[Requirement] = &[
     // ---- custody ------------------------------------------------------------------------------
     Requirement {
         name: "custody.tcb_root_manifest_signature",
-        what: "the key manifest verifies under the root PINNED IN THIS BINARY — whose private half no \
-               person holds (Owner decision #78), so this is unmeetable until T-131 makes the root \
-               install-minted",
-        provisioner: Provisioner::OfflineRootCustodian,
-        refusal: "ProductionResolver::provisioned pins crate::tcb::ROOT_KEY_ID; a manifest under any \
-                  other root resolves UnknownRoot / RootSignatureInvalid",
+        what: "the key manifest verifies under the root in the FLOOR-PINNED anchor file — the one \
+               the §2.5 pin manifest pins as `key-manifest.root-anchor`, never a path the config \
+               names — and that file states a known provenance. Meeting this row is not a \
+               production claim: the provenance decides the label",
+        provisioner: Provisioner::InstallMintedRoot,
+        refusal: "main.rs: `root anchor REFUSED ({why}) — serving fail-closed` when the pinned \
+                  anchor is absent, changed since the pin, garbled, states no known provenance, or \
+                  says `external` for a root that is not the compiled-in one; and \
+                  ProductionResolver::resolve_keys → UnknownRoot / RootSignatureInvalid when the \
+                  manifest is not signed under it",
     },
     Requirement {
         name: "custody.committed_label_resolver",
@@ -1247,22 +1253,68 @@ fn check_root_custody(host: &dyn Host, cfg: &Cfg) -> Status {
         Some(s) => s.trim().to_string(),
         None => return Status::not_met("no readable detached root signature to verify"),
     };
-    let pinned = PinnedRoot {
-        root_key_id: crate::tcb::ROOT_KEY_ID.to_string(),
-        public_key_hex: crate::tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
+    // The anchor is LOCATED the way the broker locates it: through the §2.5 pin manifest, under the
+    // one role that names it. There is no config key for it and this must not invent one — a row
+    // that read `trust.root_anchor_path` would report MET for a file the broker never opens.
+    let pin = match read_pin_manifest(host, cfg) {
+        Ok(m) => m,
+        Err(why) => {
+            return Status::not_met(format!(
+                "the root anchor is located through the §2.5 pin manifest, and {why}"
+            ))
+        }
     };
-    match verify_manifest(&manifest, &sig, &pinned) {
+    let art = match pin.sole_artifact(ROOT_ANCHOR_ROLE) {
+        Ok(a) => a,
+        Err(why) => {
+            return Status::not_met(format!(
+                "the §2.5 pin manifest does not pin exactly one `{ROOT_ANCHOR_ROLE}` ({why:?}), so \
+                 there is no anchor file the broker would read"
+            ))
+        }
+    };
+    let bytes = match host.read(&art.path) {
+        Some(b) => b,
+        None => {
+            return Status::not_met(format!(
+                "the pinned root anchor {} is absent or unreadable",
+                art.path
+            ))
+        }
+    };
+    // The broker parses the anchor only if its bytes hash to the pinned digest; so does this.
+    if let Some(why) = crate::tcb_probe::pinned_digest_violation(art, &bytes) {
+        return Status::not_met(why);
+    }
+    let anchor = match crate::tcb::parse_root_anchor(&bytes) {
+        Ok(a) => a,
+        Err(why) => {
+            return Status::not_met(format!(
+                "the root anchor pinned at {} is refused: {why}",
+                art.path
+            ))
+        }
+    };
+    match verify_manifest(&manifest, &sig, &anchor.pinned) {
         Ok(()) => Status::met(format!(
-            "the manifest verifies under the binary-pinned production root {}",
-            crate::tcb::ROOT_KEY_ID
+            "the manifest verifies under root `{}` in the floor-pinned anchor {} (provenance \
+             `{}`). What this does NOT establish: production custody — a turn under this anchor \
+             commits as `{}` — nor that the §2.5 floor passes over that file, which only the \
+             broker, as its own uid, measures",
+            anchor.pinned.root_key_id,
+            art.path,
+            anchor.provenance.as_str(),
+            if anchor.provenance.supports_production_claim() {
+                brops_core::governed_turn_ipc::TRUSTED_VERIFIED
+            } else {
+                "demonstration_custody"
+            }
         )),
         Err(e) => Status::not_met(format!(
-            "the manifest names root `{}` and does not verify under the root pinned in this binary \
-             (`{}`): {e:?}. No person holds the private half of that root (Owner decision #78) \
-             and no provisioning step on this machine can produce this signature; it stays \
-             unmeetable until T-131 replaces the pin with an install-minted root",
-            manifest.root_key_id,
-            crate::tcb::ROOT_KEY_ID
+            "the manifest names root `{}` and does not verify under root `{}` in the floor-pinned \
+             anchor {}: {e:?}. The install mints that root and signs the manifest with it in one \
+             step (T-131); a manifest and an anchor from two different runs do not match",
+            manifest.root_key_id, anchor.pinned.root_key_id, art.path
         )),
     }
 }
@@ -1272,9 +1324,9 @@ fn check_custody_resolver() -> Status {
         "build_governed_executor passes `ProductionResolver::custody()` to \
          `ChainExecutor::with_custody`, so a turn that verified a manifest under the pinned anchor can \
          commit. What this does NOT establish: the LABEL on that row. `resolve_trust_state` decides it \
-         on the anchor's provenance — the compiled-in production root gives `trusted_verified`, any \
-         other pinned anchor gives `demonstration_custody` — and a turn that verified nothing still \
-         commits nothing",
+         on the provenance the floor-pinned anchor file states — `kit_generated`, `demonstration` and \
+         (while INSTALL_MINTED_CUSTODY_ACCEPTED is false) `install_minted` all give \
+         `demonstration_custody` — and a turn that verified nothing still commits nothing",
     )
 }
 
@@ -1424,8 +1476,9 @@ mod tests {
     /// A preflight that cannot report a failure is the defect this repository is named for finding.
     /// On a bare Linux machine with nothing provisioned, the only requirements that may come back MET
     /// are the ones no machine provides: the platform itself, and — since 2026-09-19 — the custody
-    /// resolver, which the BUILD provides. Every row an installer, an administrator or a key custodian
-    /// would have to create must be NOT MET or UNMEASURABLE on a machine where none of them has run.
+    /// resolver, which the BUILD provides. Every row an installer, an administrator or the
+    /// root-minting install step would have to create must be NOT MET or UNMEASURABLE on a machine
+    /// where none of them has run.
     #[test]
     fn a_bare_machine_meets_only_what_no_machine_provides() {
         let report = evaluate(&FakeHost::linux(), None);
@@ -1619,10 +1672,61 @@ mod tests {
 
     // ---- a fully provisioned fake deployment --------------------------------------------------
 
+    /// Where the fixture's pin manifest pins the root anchor.
+    const ANCHOR: &str = "/opt/brops-live/tcb/key-manifest.root-anchor";
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(bytes);
+        format!("{:x}", h.finalize())
+    }
+
+    /// The fixture's root: a REAL keypair, so the manifest signature below really verifies and a
+    /// negative that breaks it is breaking something. Built from a repeated byte, not a literal.
+    fn fixture_root() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn anchor_document(root_key_id: &str, public_key_hex: &str, provenance: &str) -> String {
+        serde_json::json!({
+            "root_key_id": root_key_id, "public_key_hex": public_key_hex, "provenance": provenance,
+        })
+        .to_string()
+    }
+
+    fn fixture_anchor(provenance: &str) -> String {
+        let public: String =
+            fixture_root().verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        anchor_document("brops-live-root-1", &public, provenance)
+    }
+
+    /// Replace the pinned anchor FILE and re-pin it at the new bytes' digest — what a provisioner
+    /// that wrote a different anchor before taking the pin would leave behind.
+    fn with_anchor(mut host: FakeHost, document: &str) -> FakeHost {
+        host.files.insert(ANCHOR.into(), document.as_bytes().to_vec());
+        let mut pin: TcbPinManifest =
+            serde_json::from_slice(host.files.get("/kit/pin.json").unwrap()).unwrap();
+        let mut hit = false;
+        for a in pin.artifacts.iter_mut().filter(|a| a.logical_name == ROOT_ANCHOR_ROLE) {
+            a.expected_sha256 = sha256_hex(document.as_bytes());
+            hit = true;
+        }
+        assert!(hit, "the fixture pins no root anchor");
+        host.files.insert("/kit/pin.json".into(), serde_json::to_vec(&pin).unwrap());
+        host
+    }
+
     /// The kit's shape, reduced to what the preflight reads. Every requirement that a machine CAN
     /// meet is met here — which is what makes the negative tests below meaningful.
     fn provisioned() -> FakeHost {
+        use base64::Engine as _;
+        use ed25519_dalek::Signer as _;
         let manifest = r#"{"manifest_epoch":2,"root_key_id":"brops-live-root-1","keys":[]}"#;
+        let parsed: KeyManifest = serde_json::from_str(manifest).unwrap();
+        let signature = base64::engine::general_purpose::STANDARD
+            .encode(fixture_root().sign(&parsed.canonical_bytes()).to_bytes());
+        let anchor = fixture_anchor("kit_generated");
         let pin = serde_json::to_string(&TcbPinManifest {
             artifacts: TCB_REQUIRED_ARTIFACTS
                 .iter()
@@ -1636,7 +1740,13 @@ mod tests {
                         "supervisor.config" => "/kit/supervisor.json".to_string(),
                         _ => format!("/opt/brops-live/tcb/{n}"),
                     },
-                    expected_sha256: "0".repeat(64),
+                    // The anchor is the one pinned file this module READS, and it holds it to the
+                    // pinned digest as the broker does; the others it only locates.
+                    expected_sha256: if *n == ROOT_ANCHOR_ROLE {
+                        sha256_hex(anchor.as_bytes())
+                    } else {
+                        "0".repeat(64)
+                    },
                     expected_owner: brops_core::tcb_integrity::TcbOwner::Root,
                 })
                 .collect(),
@@ -1679,7 +1789,8 @@ mod tests {
             .file("/kit/supervisor.json", &supervisor_cfg)
             .file("/kit/pin.json", &pin)
             .file("/kit/manifest.json", manifest)
-            .file("/kit/manifest.sig", "AAAA")
+            .file("/kit/manifest.sig", &signature)
+            .file(ANCHOR, &anchor)
             .file("/kit/floor.json", r#"{"highest_epoch":2,"highest_hash":"abc"}"#)
             .stat("/kit/floor.json", 5001, 0o100600, false)
             .stat("/kit/authority.sock", 5002, 0o140660, false)
@@ -1697,24 +1808,36 @@ mod tests {
     #[test]
     fn a_provisioned_deployment_meets_everything_a_machine_can_meet() {
         let report = evaluate(&provisioned(), Some("/kit/broker-state/broker.sock"));
-        let unexpected: Vec<&str> = report
-            .not_met()
-            .iter()
-            .map(|f| f.requirement.name)
-            .filter(|n| {
-                // ONE custody row is the honest residue now: the pinned root, whose private half
-                // nobody holds (#78; T-131 makes it install-minted). The other was a code decision,
-                // the Owner took it on 2026-09-19, and the build provides it — so a provisioned
-                // deployment that still could not commit is no longer a thing this table describes.
-                *n != "custody.tcb_root_manifest_signature"
-            })
-            .collect();
+        // NOTHING is left over. Until T-131 slice C one row was: the key manifest had to verify
+        // under a root compiled into the binary whose private half nobody holds, so no deployment
+        // could meet it. The broker now verifies under the floor-pinned anchor file, and a
+        // deployment whose manifest is signed by the root in that file meets the row.
+        let unexpected: Vec<&str> = report.not_met().iter().map(|f| f.requirement.name).collect();
         assert!(unexpected.is_empty(), "unexpectedly not met: {unexpected:?}\n{}", report.render());
-        // …and the one that remains is exactly the row whose root nobody holds.
-        assert_eq!(report.not_met().len(), 1);
-        for f in report.not_met() {
-            assert!(matches!(f.requirement.provisioner, Provisioner::OfflineRootCustodian));
-        }
+        // …and meeting it is NOT a production claim, which the evidence says in so many words.
+        let custody = status_of(&report, "custody.tcb_root_manifest_signature");
+        assert!(custody.is_met(), "{custody:?}");
+        let d = custody.detail();
+        assert!(d.contains("brops-live-root-1") && d.contains(ANCHOR), "{d}");
+        assert!(d.contains("provenance `kit_generated`"), "{d}");
+        assert!(d.contains("commits as `demonstration_custody`"), "{d}");
+        assert!(!d.contains("trusted_verified"), "{d}");
+    }
+
+    #[test]
+    fn the_provisioner_column_has_the_five_counts_the_table_claims() {
+        let count = |p: Provisioner| REQUIREMENTS.iter().filter(|r| r.provisioner == p).count();
+        assert_eq!(count(Provisioner::Installer), 13);
+        assert_eq!(count(Provisioner::MachineAdministrator), 11);
+        assert_eq!(count(Provisioner::InstallMintedRoot), 1);
+        assert_eq!(count(Provisioner::NotProvisionableOnAMachine), 1);
+        assert_eq!(count(Provisioner::MetByTheBuild), 1);
+        assert_eq!(REQUIREMENTS.len(), 27);
+        // The one install-minted-root row is the custody row, and its name in a report is the new one.
+        let row = REQUIREMENTS.iter().find(|r| r.provisioner == Provisioner::InstallMintedRoot).unwrap();
+        assert_eq!(row.name, "custody.tcb_root_manifest_signature");
+        assert_eq!(Provisioner::InstallMintedRoot.as_str(), "install-minted-root");
+        assert!(row.what.contains("FLOOR-PINNED anchor file"), "{}", row.what);
     }
 
     // ---- one negative per measured requirement ----------------------------------------------
@@ -2064,13 +2187,120 @@ mod tests {
             .contains("does not exist"));
     }
 
+    const CUSTODY: &str = "custody.tcb_root_manifest_signature";
+
+    fn custody_of(host: &FakeHost) -> Status {
+        status_of(&evaluate(host, None), CUSTODY).clone()
+    }
+
     #[test]
     fn a_manifest_under_another_root_cannot_meet_the_custody_requirement() {
-        let r = evaluate(&provisioned(), None);
-        let d = status_of(&r, "custody.tcb_root_manifest_signature").detail();
-        assert!(d.contains("brops-live-root-1"), "{d}");
-        assert!(d.contains("T-131"), "{d}");
-        assert!(d.contains(crate::tcb::ROOT_KEY_ID), "{d}");
+        // The anchor file holds a DIFFERENT key under the same id — a manifest and an anchor from
+        // two provisioning runs. Pinned honestly, parses, and the signature does not verify.
+        let other = anchor_document("brops-live-root-1", &"ab".repeat(32), "kit_generated");
+        let s = custody_of(&with_anchor(provisioned(), &other));
+        assert!(!s.is_met(), "{s:?}");
+        let d = s.detail();
+        assert!(d.contains("does not verify under root `brops-live-root-1`"), "{d}");
+        assert!(d.contains(ANCHOR), "{d}");
+
+        // ...and the same key under another id: the manifest names a root the anchor is not.
+        let public: String =
+            fixture_root().verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let renamed = anchor_document("some-other-root", &public, "kit_generated");
+        let s = custody_of(&with_anchor(provisioned(), &renamed));
+        assert!(!s.is_met(), "{s:?}");
+        assert!(s.detail().contains("UnknownRoot"), "{}", s.detail());
+
+        // A signature that is not one.
+        let mut host = provisioned();
+        host.files.insert("/kit/manifest.sig".into(), b"AAAA".to_vec());
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "{s:?}");
+    }
+
+    #[test]
+    fn the_anchor_is_the_floor_pinned_one_and_no_other_file_can_stand_in() {
+        // No pin manifest: there is no anchor to find, and a config key cannot supply one.
+        let mut host = provisioned();
+        host.files.remove("/kit/pin.json");
+        let cfg = String::from_utf8(host.files.get("/kit/config.json").unwrap().clone()).unwrap();
+        let mut cfg: Value = serde_json::from_str(&cfg).unwrap();
+        cfg["trust"]["root_anchor_path"] = Value::String(ANCHOR.into());
+        host.files.insert("/kit/config.json".into(), cfg.to_string().into_bytes());
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "a config-named anchor met the row: {s:?}");
+        assert!(s.detail().contains("located through the §2.5 pin manifest"), "{}", s.detail());
+
+        // The manifest pins NO anchor role.
+        let mut host = provisioned();
+        let mut pin: TcbPinManifest =
+            serde_json::from_slice(host.files.get("/kit/pin.json").unwrap()).unwrap();
+        pin.artifacts.retain(|a| a.logical_name != ROOT_ANCHOR_ROLE);
+        host.files.insert("/kit/pin.json".into(), serde_json::to_vec(&pin).unwrap());
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "{s:?}");
+        assert!(s.detail().contains("does not pin exactly one"), "{}", s.detail());
+
+        // It pins TWO.
+        let mut host = provisioned();
+        let mut pin: TcbPinManifest =
+            serde_json::from_slice(host.files.get("/kit/pin.json").unwrap()).unwrap();
+        let mut second =
+            pin.artifacts.iter().find(|a| a.logical_name == ROOT_ANCHOR_ROLE).unwrap().clone();
+        second.path = "/kit/substitute-anchor.json".into();
+        pin.artifacts.push(second);
+        host.files.insert("/kit/pin.json".into(), serde_json::to_vec(&pin).unwrap());
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "{s:?}");
+        assert!(s.detail().contains("AmbiguousRole"), "{}", s.detail());
+
+        // The pinned file is not there.
+        let mut host = provisioned();
+        host.files.remove(ANCHOR);
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "{s:?}");
+        assert!(s.detail().contains("absent or unreadable"), "{}", s.detail());
+    }
+
+    #[test]
+    fn an_anchor_changed_since_the_pin_is_not_met_whatever_it_now_says() {
+        // The relabel, done AFTER the pin: same key, the word changed to `install_minted`. The
+        // broker refuses to parse a file the floor never measured, and so does this row.
+        let mut host = provisioned();
+        host.files.insert(ANCHOR.into(), fixture_anchor("install_minted").into_bytes());
+        let s = custody_of(&host);
+        assert!(!s.is_met(), "{s:?}");
+        assert!(s.detail().contains("changed after the floor measured it"), "{}", s.detail());
+    }
+
+    #[test]
+    fn an_anchor_stating_no_known_provenance_or_a_false_external_is_not_met() {
+        for (provenance, reason) in [
+            ("", "provenance_unknown"),
+            ("production", "provenance_unknown"),
+            ("external", "external_not_the_pinned_root"),
+        ] {
+            let s = custody_of(&with_anchor(provisioned(), &fixture_anchor(provenance)));
+            assert!(!s.is_met(), "{provenance:?}: {s:?}");
+            assert!(s.detail().contains(&format!("is refused: {reason}")), "{}", s.detail());
+        }
+        let s = custody_of(&with_anchor(provisioned(), "{ not json"));
+        assert!(s.detail().contains("is refused: not_json"), "{}", s.detail());
+    }
+
+    #[test]
+    fn an_install_minted_anchor_meets_the_row_and_the_evidence_says_it_is_not_production() {
+        // Pinned AS install_minted (the install wrote it before the pin was taken). The row is
+        // met: the manifest verifies under the floor-pinned root. The label is not production,
+        // because the Owner's line ships closed — and the evidence must say so rather than leave
+        // a reader to infer it from the word MET.
+        let s = custody_of(&with_anchor(provisioned(), &fixture_anchor("install_minted")));
+        assert!(s.is_met(), "{s:?}");
+        let d = s.detail();
+        assert!(d.contains("provenance `install_minted`"), "{d}");
+        assert!(d.contains("commits as `demonstration_custody`"), "{d}");
+        assert!(d.contains("does NOT establish: production custody"), "{d}");
     }
 
     #[test]

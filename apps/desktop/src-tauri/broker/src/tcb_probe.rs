@@ -320,12 +320,16 @@ pub fn broker_identity_violation(
 ///
 /// ONE checked read. The identity decision and the integrity decision are taken over the same parsed
 /// manifest, so they cannot be about two different files.
+///
+/// `Ok` carries that manifest out as a [`VerifiedBrokerTcb`], and that is how the broker finds the
+/// files it then reads: the root anchor comes from the path THIS manifest pinned, never from a path
+/// looked up again or named in config.
 pub fn verify_broker_tcb(
     manifest_path: Option<&str>,
     login_and_runtime_uids: &[u32],
     login_uid: u32,
     own_config: &str,
-) -> Result<(), String> {
+) -> Result<VerifiedBrokerTcb, String> {
     let path = manifest_path.ok_or_else(|| {
         format!("no TCB pin manifest configured ({TCB_PIN_MANIFEST_ENV} unset)")
     })?;
@@ -352,12 +356,222 @@ pub fn verify_broker_tcb(
             login_and_runtime_uids,
             login_uid,
         )
-        .map_err(|v| format!("{v:?}"))
+        .map_err(|v| format!("{v:?}"))?;
+        Ok(VerifiedBrokerTcb { manifest })
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (path, login_and_runtime_uids, login_uid, own_config);
         Err("TCB integrity floor requires Linux (owner/mode/O_NOFOLLOW facts)".to_string())
+    }
+}
+
+/// Evidence that the §2.5 floor PASSED, in this process, over one parsed pin manifest — and the
+/// only way to ask that manifest where a pinned file is.
+///
+/// The field is private and there is no public constructor: the one way to hold this value is
+/// [`verify_broker_tcb`] returning `Ok`. So "the path the pin manifest pinned for a role" cannot be
+/// obtained from a manifest that was not checked, or from a floor that refused.
+#[derive(Debug)]
+pub struct VerifiedBrokerTcb {
+    // Constructed only on Linux (the floor refuses everywhere else), so on other hosts nothing
+    // outside the tests ever builds one.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    manifest: TcbPinManifest,
+}
+
+impl VerifiedBrokerTcb {
+    /// The ONE artifact the verified manifest pins under `role`. Zero or several is a refusal.
+    pub fn pinned(&self, role: &str) -> Result<&brops_core::tcb_integrity::TcbArtifact, String> {
+        self.manifest.sole_artifact(role).map_err(|v| format!("{v:?}"))
+    }
+
+    /// The bytes of the artifact pinned under `role`, read through ONE `O_NOFOLLOW` descriptor and
+    /// REFUSED unless they hash to the digest the floor just verified ([`read_pinned_artifact`]).
+    #[cfg(target_os = "linux")]
+    pub fn read_pinned(&self, role: &str, max_len: usize) -> Result<Vec<u8>, String> {
+        read_pinned_artifact(self.pinned(role)?, max_len)
+    }
+
+    /// The deployment's ROOT ANCHOR: the file pinned under
+    /// [`ROOT_ANCHOR_ROLE`](brops_core::tcb_integrity::ROOT_ANCHOR_ROLE), read as above and parsed
+    /// fail-closed by [`crate::tcb::parse_root_anchor`] (which also holds `external` to the
+    /// compiled-in root). Any failure is `Err` with the reason; the broker then serves fail-closed.
+    #[cfg(target_os = "linux")]
+    pub fn root_anchor(&self) -> Result<FloorPinnedAnchor, String> {
+        let role = brops_core::tcb_integrity::ROOT_ANCHOR_ROLE;
+        let path = self.pinned(role)?.path.clone();
+        let bytes = self.read_pinned(role, crate::tcb::MAX_ROOT_ANCHOR_BYTES)?;
+        let anchor = crate::tcb::parse_root_anchor(&bytes)
+            .map_err(|why| format!("the root anchor pinned at {path} is refused: {why}"))?;
+        Ok(FloorPinnedAnchor { anchor, path })
+    }
+}
+
+/// A root anchor that was read from the path the §2.5 pin manifest pins, after the floor passed.
+///
+/// This type — not a bare `RootAnchor` — is what [`crate::manifest_resolver::ProductionResolver::provisioned`]
+/// takes, and it has no public constructor. That is what keeps the anchor's PROVENANCE honest now
+/// that it is read from a file instead of derived from a compiled-in key id: a caller outside this
+/// crate cannot assemble an `install_minted` (or any other) anchor of its own and hand it to the
+/// production resolver. *The label is earned by where the file sits and who can write it* — and
+/// holding this value is the evidence that the file sat there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FloorPinnedAnchor {
+    anchor: brops_core::key_manifest::RootAnchor,
+    path: String,
+}
+
+impl FloorPinnedAnchor {
+    pub fn anchor(&self) -> &brops_core::key_manifest::RootAnchor {
+        &self.anchor
+    }
+    /// The pinned path the anchor was read from — for the line the broker prints, nothing else.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    pub(crate) fn into_anchor(self) -> brops_core::key_manifest::RootAnchor {
+        self.anchor
+    }
+}
+
+/// `None` iff `bytes` hash to the digest `art` pins. The floor checked the file at that digest a
+/// moment ago; a reader that then parses bytes with a DIFFERENT digest is parsing a file the floor
+/// never measured, whatever path it opened.
+pub fn pinned_digest_violation(
+    art: &brops_core::tcb_integrity::TcbArtifact,
+    bytes: &[u8],
+) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    let actual = format!("{:x}", h.finalize());
+    if actual == art.expected_sha256 {
+        None
+    } else {
+        Some(format!(
+            "{} at {} hashes to {actual}, not the pinned {} — it changed after the floor measured it",
+            art.logical_name, art.path, art.expected_sha256
+        ))
+    }
+}
+
+/// Read a pinned artifact for USE: one `O_NOFOLLOW` open, a regular file no larger than `max_len`,
+/// and bytes that hash to the pinned digest.
+///
+/// The floor and this read are two opens of one path, so without the digest comparison a file
+/// swapped between them would be parsed on the strength of a measurement of its predecessor. With
+/// it, the bytes returned are bytes the pin manifest names, or nothing is returned.
+#[cfg(target_os = "linux")]
+pub fn read_pinned_artifact(
+    art: &brops_core::tcb_integrity::TcbArtifact,
+    max_len: usize,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&art.path)
+        .map_err(|e| format!("{} at {} cannot be opened (O_NOFOLLOW): {e}", art.logical_name, art.path))?;
+    let md = file
+        .metadata()
+        .map_err(|e| format!("{} at {}: fstat failed: {e}", art.logical_name, art.path))?;
+    if !md.is_file() {
+        return Err(format!("{} at {} is not a regular file", art.logical_name, art.path));
+    }
+    // `take(max_len + 1)`: one byte past the cap is enough to know the cap was exceeded, and the
+    // read is bounded whatever the file's size says.
+    let mut bytes = Vec::new();
+    file.take(max_len as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{} at {} unreadable: {e}", art.logical_name, art.path))?;
+    if bytes.len() > max_len {
+        return Err(format!(
+            "{} at {} is larger than the {max_len} bytes a reader will accept",
+            art.logical_name, art.path
+        ));
+    }
+    match pinned_digest_violation(art, &bytes) {
+        Some(why) => Err(why),
+        None => Ok(bytes),
+    }
+}
+
+/// For a reader that did NOT obtain its anchor through [`VerifiedBrokerTcb`] — the proof drivers,
+/// whose anchor path comes from their own config and whose whole floor is evaluated by root before
+/// the services start: are these the bytes of the floor-pinned root anchor?
+///
+/// It reads the pin manifest through the custody-checked reader, runs the per-artifact floor for the
+/// ONE role [`ROOT_ANCHOR_ROLE`](brops_core::tcb_integrity::ROOT_ANCHOR_ROLE) — owner, writability,
+/// digest, every ancestor — reads the pinned file digest-bound, and compares. It is NOT the §2.5
+/// floor (`verify_pinned_role` says why) and it is never the broker's check; it is what stops the
+/// word `install_minted` in a driver's anchor file from being taken on the file's word
+/// (`tcb::check_declared_install_minted_anchor`).
+#[cfg(target_os = "linux")]
+pub fn anchor_bytes_are_floor_pinned(
+    manifest_path: Option<&str>,
+    login_and_runtime_uids: &[u32],
+    login_uid: u32,
+    anchor_bytes: &[u8],
+) -> Result<(), String> {
+    let path = manifest_path.ok_or_else(|| {
+        format!("no TCB pin manifest configured ({TCB_PIN_MANIFEST_ENV} unset)")
+    })?;
+    let manifest = read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)
+        .map_err(|why| format!("TCB pin manifest unreadable or malformed: {why}"))?;
+    let probe = LinuxFsProbe { login_and_runtime_uids: login_and_runtime_uids.to_vec() };
+    anchor_bytes_match_the_pinned_role(
+        &manifest,
+        &probe,
+        login_and_runtime_uids,
+        login_uid,
+        anchor_bytes,
+        |art| read_pinned_artifact(art, crate::tcb::MAX_ROOT_ANCHOR_BYTES),
+    )
+}
+
+/// The decision inside [`anchor_bytes_are_floor_pinned`], over an injected probe and reader so it is
+/// tested on every host and without a root-owned tree: the manifest pins exactly ONE root anchor,
+/// that artifact passes the per-artifact floor, and the bytes read from the pinned path — `read`
+/// binds them to the pinned digest — are the bytes the caller was given. Three ways to refuse and
+/// each is its own: not pinned / fails the floor, unreadable or changed since the pin, and a
+/// different file from the pinned one.
+pub fn anchor_bytes_match_the_pinned_role(
+    manifest: &TcbPinManifest,
+    probe: &dyn brops_core::tcb_integrity::FsProbe,
+    login_and_runtime_uids: &[u32],
+    login_uid: u32,
+    anchor_bytes: &[u8],
+    read: impl FnOnce(&brops_core::tcb_integrity::TcbArtifact) -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    let art = brops_core::tcb_integrity::verify_pinned_role(
+        manifest,
+        brops_core::tcb_integrity::ROOT_ANCHOR_ROLE,
+        probe,
+        login_and_runtime_uids,
+        login_uid,
+    )
+    .map_err(|v| format!("{v:?}"))?;
+    let pinned = read(art)?;
+    if pinned != anchor_bytes {
+        return Err(format!(
+            "the anchor this reader was given is not the one pinned at {}",
+            art.path
+        ));
+    }
+    Ok(())
+}
+
+// Test-only constructors, kept at the very end of the non-test code on purpose: `code_only` in the
+// tests below cuts this file at its first `cfg(test)` attribute.
+#[cfg(test)]
+impl FloorPinnedAnchor {
+    /// For `manifest_resolver`'s tests, which need to hand `ProductionResolver::provisioned` an
+    /// anchor without a root-owned TCB directory to read one from. Not compiled into any binary.
+    pub(crate) fn for_test(anchor: brops_core::key_manifest::RootAnchor) -> Self {
+        FloorPinnedAnchor { anchor, path: "<test>".to_string() }
     }
 }
 
@@ -736,6 +950,381 @@ mod tests {
         let e = verify_broker_tcb(Some("/nonexistent/tcb-pin.json"), &[1000], 1000, "/nonexistent")
             .unwrap_err();
         assert!(e.contains("unreadable or malformed") || e.contains("requires Linux"), "{e}");
+    }
+
+    // ---- what the floor hands out: the pinned path, and bytes bound to the pinned digest --------
+
+    use brops_core::tcb_integrity::ROOT_ANCHOR_ROLE;
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(bytes);
+        format!("{:x}", h.finalize())
+    }
+
+    fn artifact(role: &str, path: &str, bytes: &[u8]) -> TcbArtifact {
+        TcbArtifact {
+            logical_name: role.to_string(),
+            path: path.to_string(),
+            expected_sha256: sha256_hex(bytes),
+            expected_owner: TcbOwner::Root,
+        }
+    }
+
+    /// A value only `verify_broker_tcb` can build outside this module. Built here from a manifest
+    /// the test wrote, to exercise what the broker does AFTER the floor has passed.
+    fn verified(artifacts: Vec<TcbArtifact>) -> VerifiedBrokerTcb {
+        VerifiedBrokerTcb {
+            manifest: TcbPinManifest { artifacts, owner_uids: Default::default() },
+        }
+    }
+
+    #[test]
+    fn the_digest_binding_accepts_the_pinned_bytes_and_names_a_change() {
+        let art = artifact(ROOT_ANCHOR_ROLE, "/opt/brops/tcb/root-anchor.json", b"pinned");
+        assert_eq!(pinned_digest_violation(&art, b"pinned"), None);
+        let why = pinned_digest_violation(&art, b"pinned ").expect("one byte more is another file");
+        assert!(why.contains(ROOT_ANCHOR_ROLE) && why.contains("/opt/brops/tcb/root-anchor.json"), "{why}");
+        assert!(why.contains(&art.expected_sha256), "{why}");
+    }
+
+    #[test]
+    fn the_floor_hands_out_exactly_one_path_per_role_or_refuses() {
+        let one = verified(vec![artifact(ROOT_ANCHOR_ROLE, "/t/anchor.json", b"a")]);
+        assert_eq!(one.pinned(ROOT_ANCHOR_ROLE).unwrap().path, "/t/anchor.json");
+
+        let none = verified(vec![artifact("supervisor.bin", "/t/sup", b"s")]);
+        let why = none.pinned(ROOT_ANCHOR_ROLE).unwrap_err();
+        assert!(why.contains("MissingRequired") && why.contains(ROOT_ANCHOR_ROLE), "{why}");
+
+        let two = verified(vec![
+            artifact(ROOT_ANCHOR_ROLE, "/t/anchor.json", b"a"),
+            artifact(ROOT_ANCHOR_ROLE, "/t/substitute.json", b"b"),
+        ]);
+        let why = two.pinned(ROOT_ANCHOR_ROLE).unwrap_err();
+        assert!(why.contains("AmbiguousRole") && why.contains("/t/substitute.json"), "{why}");
+    }
+
+    // ---- the drivers' question, over an injected filesystem (every host, no root) --------------
+
+    /// A filesystem in which every path is root-owned and unwritable, except the ones overridden.
+    struct Fs(std::collections::HashMap<String, brops_core::tcb_integrity::FileFacts>);
+    impl Fs {
+        fn clean(art: &TcbArtifact) -> Fs {
+            let mut m = std::collections::HashMap::new();
+            let facts = |sha: &str| brops_core::tcb_integrity::FileFacts {
+                owner_uid: 0,
+                is_world_or_group_writable: false,
+                writable_by_login_or_runtime: false,
+                sha256: sha.to_string(),
+            };
+            m.insert(art.path.clone(), facts(&art.expected_sha256));
+            let mut cur = art.path.as_str();
+            while let Some(i) = cur.rfind('/') {
+                let parent = if i == 0 { "/" } else { &cur[..i] };
+                m.insert(parent.to_string(), facts(""));
+                if i == 0 {
+                    break;
+                }
+                cur = &cur[..i];
+            }
+            Fs(m)
+        }
+    }
+    impl brops_core::tcb_integrity::FsProbe for Fs {
+        fn stat(&self, path: &str) -> Option<brops_core::tcb_integrity::FileFacts> {
+            self.0.get(path).cloned()
+        }
+    }
+
+    const PINNED_ANCHOR: &str = "/opt/brops/tcb/root-anchor.json";
+    const DOC: &[u8] = br#"{"root_key_id":"r","public_key_hex":"..","provenance":"install_minted"}"#;
+
+    fn pin_with_anchor() -> (TcbPinManifest, TcbArtifact) {
+        let art = artifact(ROOT_ANCHOR_ROLE, PINNED_ANCHOR, DOC);
+        let manifest = TcbPinManifest {
+            artifacts: vec![art.clone()],
+            owner_uids: [(TcbOwner::Root, 0)].into_iter().collect(),
+        };
+        (manifest, art)
+    }
+
+    #[test]
+    fn the_given_anchor_is_floor_pinned_only_if_it_is_the_pinned_files_bytes() {
+        let (m, art) = pin_with_anchor();
+        let fs = Fs::clean(&art);
+        // The control: the pinned file's own bytes, on a clean filesystem.
+        assert_eq!(
+            anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, DOC, |_| Ok(DOC.to_vec())),
+            Ok(())
+        );
+        // A DIFFERENT file — the throwaway anchor a driver's config names. Same key, same word,
+        // one byte apart; the pinned file is untouched and passes the floor. Refused.
+        let mut other = DOC.to_vec();
+        other.push(b'\n');
+        let why = anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, &other, |_| Ok(DOC.to_vec()))
+            .unwrap_err();
+        assert!(why.contains("is not the one pinned at") && why.contains(PINNED_ANCHOR), "{why}");
+        // The reader asked for THE PINNED PATH, not for whatever the caller named.
+        let mut asked = String::new();
+        let _ = anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, DOC, |a| {
+            asked = a.path.clone();
+            Ok(DOC.to_vec())
+        });
+        assert_eq!(asked, PINNED_ANCHOR);
+    }
+
+    #[test]
+    fn the_given_anchor_is_not_floor_pinned_when_the_pinned_file_fails_the_floor_or_cannot_be_read() {
+        let (m, art) = pin_with_anchor();
+        let read_ok = |_: &TcbArtifact| Ok(DOC.to_vec());
+
+        // The pinned anchor is owned by a runtime principal: the reader is never even consulted.
+        let mut fs = Fs::clean(&art);
+        fs.0.get_mut(PINNED_ANCHOR).unwrap().owner_uid = RUNTIME[0];
+        let why = anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, DOC, |_| {
+            panic!("read a file the floor had refused")
+        })
+        .unwrap_err();
+        assert!(why.contains("WrongOwner"), "{why}");
+
+        // A writable ancestor.
+        let mut fs = Fs::clean(&art);
+        fs.0.get_mut("/opt/brops/tcb").unwrap().writable_by_login_or_runtime = true;
+        let why = anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, DOC, read_ok).unwrap_err();
+        assert!(why.contains("AncestorWritable"), "{why}");
+
+        // Changed on disk since the pin.
+        let mut fs = Fs::clean(&art);
+        fs.0.get_mut(PINNED_ANCHOR).unwrap().sha256 = "e".repeat(64);
+        let why = anchor_bytes_match_the_pinned_role(&m, &fs, RUNTIME, LOGIN, DOC, read_ok).unwrap_err();
+        assert!(why.contains("HashMismatch"), "{why}");
+
+        // No anchor pinned at all.
+        let empty = TcbPinManifest { artifacts: vec![], owner_uids: Default::default() };
+        let why = anchor_bytes_match_the_pinned_role(&empty, &Fs::clean(&art), RUNTIME, LOGIN, DOC, read_ok)
+            .unwrap_err();
+        assert!(why.contains("MissingRequired"), "{why}");
+
+        // The floor passes and the digest-bound read refuses: that refusal is carried out as it is.
+        let why = anchor_bytes_match_the_pinned_role(&m, &Fs::clean(&art), RUNTIME, LOGIN, DOC, |_| {
+            Err("changed after the floor measured it".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(why, "changed after the floor measured it");
+    }
+
+    #[cfg(target_os = "linux")]
+    mod pinned_reads {
+        use super::*;
+        use brops_core::key_manifest::RootProvenance;
+
+        fn anchor_json(provenance: &str) -> Vec<u8> {
+            format!(
+                r#"{{"root_key_id":"brops-live-root-1","public_key_hex":"{}","provenance":"{provenance}"}}"#,
+                "ab".repeat(32)
+            )
+            .into_bytes()
+        }
+
+        /// A temp dir holding `anchor.json` with `on_disk`, and a floor result whose manifest pins
+        /// that path at the digest of `pinned`.
+        fn deployment(on_disk: &[u8], pinned: &[u8]) -> (tempfile::TempDir, VerifiedBrokerTcb) {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("anchor.json");
+            std::fs::write(&path, on_disk).unwrap();
+            let v = verified(vec![artifact(ROOT_ANCHOR_ROLE, path.to_str().unwrap(), pinned)]);
+            (dir, v)
+        }
+
+        #[test]
+        fn the_pinned_anchor_is_read_and_carries_its_own_provenance() {
+            for (word, want) in [
+                ("kit_generated", RootProvenance::KitGenerated),
+                ("demonstration", RootProvenance::Demonstration),
+                ("install_minted", RootProvenance::InstallMinted),
+            ] {
+                let doc = anchor_json(word);
+                let (dir, v) = deployment(&doc, &doc);
+                let got = v.root_anchor().unwrap_or_else(|e| panic!("{word}: {e}"));
+                assert_eq!(got.anchor().provenance, want);
+                assert_eq!(got.anchor().pinned.root_key_id, "brops-live-root-1");
+                assert_eq!(got.path(), dir.path().join("anchor.json").to_str().unwrap());
+                // Whatever it says, it is not production: install_minted is behind the Owner's line.
+                assert!(!got.anchor().provenance.supports_production_claim(), "{word}");
+            }
+        }
+
+        #[test]
+        fn an_anchor_relabelled_after_the_pin_is_refused_by_its_digest() {
+            // THE RELABEL. The floor measured a `kit_generated` anchor; the file now says
+            // `install_minted`. The broker must not parse a file the floor never measured.
+            let (_dir, v) = deployment(&anchor_json("install_minted"), &anchor_json("kit_generated"));
+            let why = v.root_anchor().unwrap_err();
+            assert!(why.contains("changed after the floor measured it"), "{why}");
+        }
+
+        #[test]
+        fn a_missing_garbled_or_unlabelled_pinned_anchor_is_refused_with_the_reason() {
+            // Missing.
+            let dir = tempfile::tempdir().unwrap();
+            let gone = dir.path().join("gone.json");
+            let v = verified(vec![artifact(ROOT_ANCHOR_ROLE, gone.to_str().unwrap(), b"x")]);
+            let why = v.root_anchor().unwrap_err();
+            assert!(why.contains("cannot be opened"), "{why}");
+
+            // Garbled — and PINNED as garbled, so the digest passes and the parser is what refuses.
+            let (_d, v) = deployment(b"{ not json", b"{ not json");
+            let why = v.root_anchor().unwrap_err();
+            assert!(why.contains("is refused: not_json"), "{why}");
+
+            // No provenance, an unknown one, and a kit root calling itself external.
+            let no_provenance = format!(
+                r#"{{"root_key_id":"brops-live-root-1","public_key_hex":"{}"}}"#,
+                "ab".repeat(32)
+            )
+            .into_bytes();
+            for (doc, reason) in [
+                (no_provenance, "provenance_unknown"),
+                (anchor_json("production"), "provenance_unknown"),
+                (anchor_json("external"), "external_not_the_pinned_root"),
+            ] {
+                let (_d, v) = deployment(&doc, &doc);
+                let why = v.root_anchor().unwrap_err();
+                assert!(why.contains(&format!("is refused: {reason}")), "{why}");
+            }
+
+            // Not pinned at all, or pinned twice: there is no path to read.
+            assert!(verified(vec![]).root_anchor().unwrap_err().contains("MissingRequired"));
+        }
+
+        #[test]
+        fn a_pinned_read_refuses_a_symlink_a_directory_and_an_oversized_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let real = dir.path().join("real.json");
+            std::fs::write(&real, b"0123456789").unwrap();
+
+            // The control: the same bytes at the pinned digest ARE returned.
+            let art = artifact(ROOT_ANCHOR_ROLE, real.to_str().unwrap(), b"0123456789");
+            assert_eq!(read_pinned_artifact(&art, 64).unwrap(), b"0123456789");
+            // Exactly at the cap is accepted; one byte under it is not.
+            assert!(read_pinned_artifact(&art, 10).is_ok());
+            let why = read_pinned_artifact(&art, 9).unwrap_err();
+            assert!(why.contains("larger than the 9 bytes"), "{why}");
+
+            // A symlink at the pinned path — even one pointing at the right bytes.
+            let link = dir.path().join("link.json");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let art = artifact(ROOT_ANCHOR_ROLE, link.to_str().unwrap(), b"0123456789");
+            let why = read_pinned_artifact(&art, 64).unwrap_err();
+            assert!(why.contains("cannot be opened (O_NOFOLLOW)"), "{why}");
+
+            // A directory.
+            let art = artifact(ROOT_ANCHOR_ROLE, dir.path().to_str().unwrap(), b"");
+            assert!(read_pinned_artifact(&art, 64).is_err());
+        }
+
+        /// The drivers' question, on the real filesystem. An anchor this test's own uid owns is NOT
+        /// a TCB-owned file, and a manifest that expects root there refuses it by role — whatever
+        /// the file says about itself.
+        #[test]
+        fn an_anchor_the_tcb_owner_does_not_own_is_not_floor_pinned() {
+            // SAFETY: getuid never fails and touches no memory.
+            let me = unsafe { libc::getuid() };
+            if me == 0 {
+                return; // as root every file here IS root-owned; the refusal under test cannot arise
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let doc = anchor_json("install_minted");
+            let anchor = dir.path().join("anchor.json");
+            std::fs::write(&anchor, &doc).unwrap();
+            let manifest = TcbPinManifest {
+                artifacts: vec![artifact(ROOT_ANCHOR_ROLE, anchor.to_str().unwrap(), &doc)],
+                owner_uids: [(TcbOwner::Root, 0)].into_iter().collect(),
+            };
+            let pin = dir.path().join("pin.json");
+            std::fs::write(&pin, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+            // The manifest's own custody is judged against principals that do not include this
+            // uid, so the refusal that follows is the ANCHOR's and not the manifest's.
+            let other = me.wrapping_add(1);
+            let why = anchor_bytes_are_floor_pinned(pin.to_str(), &[other], other, &doc).unwrap_err();
+            assert!(why.contains("WrongOwner") && why.contains(ROOT_ANCHOR_ROLE), "{why}");
+
+            // ...and with this uid named as a runtime principal, the manifest itself is refused
+            // first: a floor a measured party can re-pin measures nothing.
+            let why = anchor_bytes_are_floor_pinned(pin.to_str(), &[me], other, &doc).unwrap_err();
+            assert!(why.contains("login or runtime principal"), "{why}");
+
+            // No manifest configured at all.
+            let why = anchor_bytes_are_floor_pinned(None, &[other], other, &doc).unwrap_err();
+            assert!(why.contains("no TCB pin manifest configured"), "{why}");
+        }
+    }
+
+    /// `root_anchor` reads the pinned path, digest-bound, and parses with the fail-closed parser —
+    /// asserted from the source as well, because on a non-Linux host the tests above do not compile.
+    #[test]
+    fn the_root_anchor_is_read_from_the_pinned_path_and_bound_to_the_pinned_digest() {
+        let src = code_only(include_str!("tcb_probe.rs"));
+        let body = src
+            .split("pub fn root_anchor(&self)")
+            .nth(1)
+            .expect("root_anchor is gone")
+            .split("\n    }")
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(body.contains("ROOT_ANCHOR_ROLE"), "{body}");
+        assert!(body.contains("self.read_pinned(role"), "{body}");
+        assert!(body.contains("crate::tcb::parse_root_anchor(&bytes)"), "{body}");
+        // No second source for the path: not a config value, not an environment variable.
+        assert!(!body.contains("std::env::var") && !body.contains("cfg"), "{body}");
+
+        let read = src
+            .split("pub fn read_pinned_artifact")
+            .nth(1)
+            .expect("read_pinned_artifact is gone")
+            .split("\n}")
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(read.contains("libc::O_NOFOLLOW"), "{read}");
+        assert!(read.contains("pinned_digest_violation(art, &bytes)"), "{read}");
+        assert!(!read.contains("std::fs::read("), "{read}");
+
+        // The drivers' wrapper hands the tested decision the REAL pieces: the custody-checked
+        // manifest reader, the real probe, and the digest-bound reader — not a closure that answers.
+        let wrapper = src
+            .split("pub fn anchor_bytes_are_floor_pinned")
+            .nth(1)
+            .expect("anchor_bytes_are_floor_pinned is gone")
+            .split("\n}")
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(
+            wrapper.contains("read_pin_manifest_checked(path, login_and_runtime_uids, login_uid)"),
+            "{wrapper}"
+        );
+        assert!(wrapper.contains("LinuxFsProbe {"), "{wrapper}");
+        assert!(wrapper.contains("anchor_bytes_match_the_pinned_role("), "{wrapper}");
+        assert!(
+            wrapper.contains("|art| read_pinned_artifact(art, crate::tcb::MAX_ROOT_ANCHOR_BYTES)"),
+            "{wrapper}"
+        );
+
+        // And the only construction of the floor's evidence is inside `verify_broker_tcb`, after
+        // the integrity floor returned `Ok`.
+        assert_eq!(src.matches("VerifiedBrokerTcb { manifest }").count(), 1);
+        let verify = src.split("pub fn verify_broker_tcb").nth(1).unwrap();
+        let floor = verify.find("verify_tcb_integrity(").unwrap();
+        let built = verify.find("Ok(VerifiedBrokerTcb { manifest })").expect("not built by the floor");
+        assert!(floor < built);
+        assert!(verify[floor..built].contains(".map_err(|v| format!(\"{v:?}\"))?;"), "{verify}");
     }
 
     /// The Linux branch reads ONCE through the checked reader, asks the identity question of

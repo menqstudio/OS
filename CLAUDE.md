@@ -82,8 +82,8 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ## 4. Verify commands
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2397 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1242 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2410 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
@@ -113,7 +113,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 1. `governed_verification_unconfigured()` returns `Some(...)` while `governed_provisioning_missing()` finds any of its five inputs absent — all five are, in every build
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
-3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment config carrying a TCB-root-signed manifest** — which nothing in the shipped app sets
+3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest verifies under the floor-pinned root anchor** — which nothing in the shipped app sets; then it commits only `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` — the Owner's line
 
 **The standing independent verdict is RED.** TEN rounds; the current one is [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) — RED, no P0, and its reason is three named items rather than unconfirmed claims. The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3).
 
@@ -121,7 +121,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 > **O-2 — the audit ledger is not tamper-evident against its own writer on any real deployment.** Custody comes from `BRO_AUDIT_ANCHOR_SIGNER` / `BRO_AUDIT_ANCHOR_KEY_ID` and **nothing in the shipped product sets either**; `tauri.conf.json` declares no `externalBin`, so no signer binary is installed. `append()` writes the record, rewrites a **plaintext** `.head`, and produces no `.head.sig`. Anyone who can write the ledger can drop records, recompute the chain and rewrite the head, and an unkeyed `verify()` reports it intact. On Windows the signer is built and in no installer; **on POSIX it has never run.**
 
-**No person holds a key — Owner decision #78 (2026-08-09).** The install mints trust; never ask him to mint, carry or sign with a root. `tools/check_no_owner_key_ceremony.py` forbids the ceremony T-130 removed; the broker pin has no holder, and making it install-minted is T-131.
+**No person holds a key — Owner decision #78 (2026-08-09).** The install mints trust; never ask him to mint, carry or sign with a root. `tools/check_no_owner_key_ceremony.py` forbids the ceremony T-130 removed; the broker reads its root from the floor-pinned anchor file (T-140).
 
 **There is no path in this repository to a production trust root.** `broctl build-registry` hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses a development registry when the pin comes from the production path. See [`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md).
 
@@ -130,7 +130,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 ## 7. Rules for AI sessions
 
 1. **Do not start execution without Gev's explicit go** («սկսի» / «start»). He front-loads context across several messages — collect, don't act.
-2. **You push and merge**, but **only on an all-green exact head**: `gh run watch --exit-status`, then `gh pr checks`, then merge. Never mid-run. #84 merged with `Repo-state` red and #85/#86 merged in flight, so the head that landed was never the head the checks passed on. **Release and tagging stay the Owner's.**
+2. **You push and merge**, but **only on an all-green exact head**: `gh run watch --exit-status`, then `gh pr checks`, then merge. Never mid-run. **Release and tagging stay the Owner's.**
    **A queue of open PRs costs N² synchronisation.** `check_repo_state` requires every open PR to be named in `prs[]` at its exact live head, so each merge invalidates every other PR's mirror. Seven open on 2026-08-31 cost six extra mirror commits. Merge one at a time, refreshing only the mirror before each, and settle **once** at the end — that is where you read `gh run list --branch main`. An intermediate red `main` is honest if the mirror records it.
 3. **A documented claim is not evidence.** Twelve comments that were true when written and false when read were found in one week. Check the code, then trust the sentence.
 4. **A green test is not a passing check.** When you add a check, delete it once and confirm its test goes red, then restore it. Of ninety checks swept that way, four came back green — four tests testing nothing. `T-045` ran the same sweep on its own gates and found three of seven checks tested by nothing, plus a fourth with no test at all.

@@ -15,27 +15,29 @@
 //! **It is not the `brops-broker` binary, and it must never be cited as one.** The differences are
 //! not cosmetic and each one is here because the binary genuinely cannot be driven in CI:
 //!
-//!  * `build_governed_executor` is not called, and cannot be. It reaches only
-//!    `ProductionResolver::provisioned`, which hard-pins the compiled-in root
-//!    `brops-tcb-root-1` / `3c83c2bc…` — a root whose private half NO person holds (Owner
-//!    decision #78; T-131 replaces it with an install-minted root). The one constructor that
-//!    accepts another anchor is `pub(crate)` IN THE LIBRARY, so no binary outside `brops-broker`
-//!    can reach it (measured: `error[E0624]`). So nothing can satisfy the pin in CI, and
-//!    committing any production signer's private half instead would make forging a
-//!    production-class §4.9 envelope trivial against every shipped install. This driver therefore
-//!    supplies its OWN `KeyResolver` over the kit's TCB root-anchor file, carrying that file's
-//!    DECLARED provenance. That is honest for exactly one reason, and it is the same reason
-//!    `proof/src/bin/live_turn.rs` is honest: **a `kit_generated` anchor may never render
+//!  * `build_governed_executor` is not called. Since T-131 slice C the broker no longer pins a
+//!    compiled-in root: `ProductionResolver::provisioned` takes a `FloorPinnedAnchor`, which only
+//!    the broker's own §2.5 floor can produce (it reads the path the pin manifest pins as
+//!    `key-manifest.root-anchor`, after the floor passed), and that type has no constructor
+//!    outside `brops-broker`. So this driver still cannot build the broker's resolver, and it is
+//!    the kit's `brops-broker` phase — not this one — that proves the product binary's turn. This
+//!    driver supplies its OWN `KeyResolver` over the anchor file its config names, carrying that
+//!    file's DECLARED provenance. That is honest for these reasons, and they are the same ones
+//!    that make `proof/src/bin/live_turn.rs` honest: **a `kit_generated` anchor may never render
 //!    `production_verified=true`** — `production_trust::resolve_trust_state` will not build a
-//!    `TrustState::Production` from it, so this driver cannot report production custody no matter
-//!    what it prints.
+//!    `TrustState::Production` from it; an anchor saying `external` is refused unless it is the
+//!    compiled-in root nobody holds; and an anchor saying `install_minted` is refused unless it is,
+//!    byte for byte, the floor-pinned anchor — and even then is production only behind the
+//!    Owner's `INSTALL_MINTED_CUSTODY_ACCEPTED`, which ships `false`. So this driver cannot report
+//!    production custody no matter what it prints.
 //!  * There is no renderer socket, no `SO_PEERCRED` on a renderer→broker hop, and no `handle_conn`.
 //!    The request is constructed in-process. The peer-authentication boundary the broker binary
 //!    enforces on ITS front door is not exercised here at all.
-//!  * `persist_committed` still runs (it is inside `run_governed_turn`), but the custody resolver
-//!    that lets it commit is wired HERE, by this driver, with `ChainExecutor::with_custody`. The
-//!    shipped broker calls `ChainExecutor::new` and therefore commits nothing. **That difference is
-//!    deliberate and this driver does not change it**: nothing in this file touches
+//!  * `persist_committed` still runs (it is inside `run_governed_turn`), and the custody resolver
+//!    that lets it commit is wired HERE, by this driver, with `ChainExecutor::with_custody`. (This
+//!    line said the shipped broker "calls `ChainExecutor::new` and therefore commits nothing" until
+//!    T-131 slice C; the broker has wired `with_custody` since 2026-09-19.) Nothing in this file
+//!    touches
 //!    `build_governed_executor`, `UpstreamBlockedExecutor`, `connect_broker` or
 //!    `governed_verification_unconfigured`, and nothing here makes any of them reachable.
 //!  * `$BROPS_BROKER_CONFIG` is NOT read. The deployment config arrives as `--config`, so no
@@ -317,8 +319,8 @@ mod linux {
     // =============================================================================================
 
     /// The same sequence `ProductionResolver::resolve_keys` runs — root-verify, anti-rollback CAS
-    /// **and persist**, resolve both production keys — against the anchor file the kit provisioned
-    /// instead of the compiled-in production pin.
+    /// **and persist**, resolve both production keys — against the anchor file this driver's CONFIG
+    /// names, where the broker takes the one its §2.5 floor pinned.
     ///
     /// It uses [`verify_manifest_anchored`] rather than `verify_manifest` for the reason `live_turn`
     /// does: the anchored form returns evidence of WHICH anchor verified the signature, and
@@ -732,9 +734,10 @@ mod linux {
         if let Err(why) = anchor_file_is_tcb_owned(&anchor_path) {
             return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path);
         }
-        let anchor_doc: Value = match std::fs::read_to_string(&anchor_path)
-            .ok()
-            .and_then(|b| serde_json::from_str(&b).ok())
+        // The raw text is kept: an `install_minted` anchor is compared, byte for byte, against the
+        // file the §2.5 pin manifest pins (below).
+        let anchor_raw = std::fs::read_to_string(&anchor_path).ok();
+        let anchor_doc: Value = match anchor_raw.as_deref().and_then(|b| serde_json::from_str(b).ok())
         {
             Some(v) => v,
             None => return setup_blocked(&evidence, expect, "root_anchor_unreadable", &anchor_path),
@@ -779,6 +782,27 @@ mod linux {
             &anchor.pinned.root_key_id,
             &anchor.pinned.public_key_hex,
         ) {
+            return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path);
+        }
+        // `install_minted` is the one provenance that can ever support a production claim here
+        // (behind the Owner's `INSTALL_MINTED_CUSTODY_ACCEPTED`), so this driver does not take it
+        // on the file's word either: the anchor it read must be, byte for byte, the file the §2.5
+        // pin manifest pins as `key-manifest.root-anchor`, and that file must pass the floor's
+        // per-artifact check. A root-owned file at a path this driver's CONFIG names is not that.
+        // What the label then buys is the same rule as everywhere: `resolve_trust_state`, and the
+        // constant. A kit_generated or demonstration anchor is not asked the question.
+        if let Err(why) =
+            brops_broker::tcb::check_declared_install_minted_anchor(anchor.provenance, || {
+                crate::tcb_verify::anchor_is_floor_pinned(
+                    &cfg,
+                    anchor_raw.as_deref().unwrap_or_default().as_bytes(),
+                )
+                .map_err(|detail| {
+                    eprintln!("ladder_turn: the install_minted anchor is not the floor-pinned one: {detail}");
+                    detail
+                })
+            })
+        {
             return setup_blocked(&evidence, expect, &format!("root_anchor_{why}"), &anchor_path);
         }
 

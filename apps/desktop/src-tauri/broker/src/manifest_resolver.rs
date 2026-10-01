@@ -4,8 +4,10 @@
 //! FAIL-CLOSED BY DEFAULT: constructed with no manifest ([`ProductionResolver::fail_closed`]), every turn
 //! returns `UpstreamBlocked` — identical outward behaviour to the interim `UpstreamBlockedExecutor`, so the
 //! shipped broker keeps rendering `blocked` until a trusted manifest is provisioned. When a manifest IS
-//! provisioned, `resolve` — BEFORE any hop — verifies it against the **TCB-pinned root** ([`crate::tcb`],
-//! never config), runs anti-rollback, and resolves the production signer + supervisor-attestation keys
+//! provisioned, `resolve` — BEFORE any hop — verifies it against the **floor-pinned root anchor** (the
+//! file the §2.5 pin manifest pins under `key-manifest.root-anchor`, read after that floor passed —
+//! [`crate::tcb_probe::FloorPinnedAnchor`], never config), runs anti-rollback, and resolves the
+//! production signer + supervisor-attestation keys
 //! (trust-class / validity-window / revocation enforced); any failure ⇒ `UpstreamBlocked` (still fail-closed).
 //! Only a fully-resolved manifest yields a `ResolvedTurn`, and only that lets the chain reach a real
 //! `verify_and_accept`.
@@ -19,11 +21,10 @@ use brops_core::governed_turn_ipc::{TurnReason, ValidatedRequest};
 use brops_core::governed_verification::RECEIPT_ENVELOPE_ARTIFACT_TYPE;
 use brops_core::key_manifest::{
     check_and_persist, resolve_production_key, verify_manifest_anchored, AntiRollbackFloor, KeyManifest,
-    PinnedRoot, RootAnchor, RootProvenance, VerifiedManifestRoot,
+    RootAnchor, VerifiedManifestRoot,
 };
+use crate::tcb_probe::FloorPinnedAnchor;
 use brops_core::production_trust::{resolve_trust_state, TrustState};
-
-use crate::tcb;
 
 /// The broker-owned per-turn Expected facts, as the DIRECT `GovernedChain` path consumes them.
 ///
@@ -62,9 +63,21 @@ struct Provisioned {
     signer_key_id: String,
     sup_attest_key_id: String,
     facts: ResolvedFacts,
-    /// The root the manifest is verified against — the TCB PRODUCTION anchor (`crate::tcb`, never config) in
-    /// production; a demonstration anchor only in unit tests via [`ProductionResolver::provisioned_with_pin`].
-    pinned: PinnedRoot,
+    /// The root the manifest is verified against, WITH its custody provenance — the floor-pinned
+    /// anchor file's in the shipped broker ([`ProductionResolver::provisioned`]); a demonstration
+    /// anchor only in unit tests via `ProductionResolver::provisioned_with_pin`.
+    ///
+    /// **The provenance is the anchor's own, and nothing else decides custody.** NOT a config value,
+    /// and no longer derived from the key ID. It used to be `External` whenever
+    /// `root_key_id == tcb::ROOT_KEY_ID` — safe only while the root itself was a compiled constant,
+    /// because then nothing else could carry that id. An anchor read from a file can call itself
+    /// anything, so an id-derived answer would let a kit root NAMED `brops-tcb-root-1` read as
+    /// external custody.
+    ///
+    /// The LIMIT is the one `key_manifest` already states and it is not weakened here: this
+    /// establishes which anchor verified the manifest and what that anchor's file stated, not that
+    /// the statement is true. What makes it worth anything is the §2.5 floor over that file.
+    anchor: RootAnchor,
     /// What THIS turn's verification established: the anchor token and the key the envelope will be
     /// verified with. Written by [`KeyResolver::resolve_keys`], read by [`BrokerCustody`].
     ///
@@ -87,10 +100,22 @@ impl ProductionResolver {
         ProductionResolver { inner: None }
     }
 
-    /// Provisioned: a root-signed manifest + its root signature + the anti-rollback floor + the resolved key
-    /// ids + the broker-owned Expected facts. `resolve` verifies + resolves per turn (fail-closed on any gap).
+    /// Provisioned: the FLOOR-PINNED root anchor + a manifest signed under it + its root signature +
+    /// the anti-rollback floor + the resolved key ids + the broker-owned Expected facts. `resolve`
+    /// verifies + resolves per turn (fail-closed on any gap).
+    ///
+    /// **The anchor is the first argument and its type is the control.** Until T-131 slice C this
+    /// function took no anchor at all: it built its `PinnedRoot` from the constants compiled into
+    /// `crate::tcb`, and answered "what is this root's custody?" from the key ID. Both are gone. The
+    /// root is whatever the anchor file says, and the custody is what that file states — which is
+    /// only safe because a [`FloorPinnedAnchor`] cannot be built outside `tcb_probe`: it exists only
+    /// as the result of reading the path the §2.5 pin manifest pins, after that floor passed, with
+    /// the bytes bound to the pinned digest and `external` held to the compiled-in root. A caller in
+    /// another crate cannot write `RootProvenance::InstallMinted` next to a key of its choosing and
+    /// reach this resolver with it.
     #[allow(clippy::too_many_arguments)]
     pub fn provisioned(
+        anchor: FloorPinnedAnchor,
         manifest: KeyManifest,
         root_sig_b64: String,
         floor: AntiRollbackFloor,
@@ -99,21 +124,60 @@ impl ProductionResolver {
         sup_attest_key_id: String,
         facts: ResolvedFacts,
     ) -> Self {
-        // Production: the manifest is pinned to the TCB PRODUCTION root (`crate::tcb`), never a config value.
-        let pinned = PinnedRoot {
-            root_key_id: tcb::ROOT_KEY_ID.to_string(),
-            public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
-        };
-        Self::provisioned_with_pin(pinned, manifest, root_sig_b64, floor, floor_path, signer_key_id, sup_attest_key_id, facts)
+        Self::build(
+            anchor.into_anchor(),
+            manifest,
+            root_sig_b64,
+            floor,
+            floor_path,
+            signer_key_id,
+            sup_attest_key_id,
+            facts,
+        )
     }
 
-    /// Provisioned against an explicit pinned root — production uses [`ProductionResolver::provisioned`] (TCB
-    /// PRODUCTION anchor); unit tests pass the DEMONSTRATION anchor so they can sign with an in-code private.
-    /// `pub(crate)`: external code can only reach `provisioned` (production pin), so the public demo private
+    /// Provisioned against an explicit pinned root that is, by this function's own definition, a
+    /// DEMONSTRATION anchor — the shipped broker uses [`ProductionResolver::provisioned`]; unit tests
+    /// pass the demonstration root so they can sign with an in-code private.
+    ///
+    /// It takes a bare `PinnedRoot` and assigns the provenance ITSELF, so there is no key a caller
+    /// can pass here that comes out as anything but `Demonstration`. `#[cfg(test)]` since T-131
+    /// slice C — `provisioned` used to delegate to it and no longer does, so nothing outside the
+    /// tests has a reason to call it and it is not compiled into any binary: the public demo private
     /// can never be pinned onto a live turn.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn provisioned_with_pin(
-        pinned: PinnedRoot,
+        pinned: brops_core::key_manifest::PinnedRoot,
+        manifest: KeyManifest,
+        root_sig_b64: String,
+        floor: AntiRollbackFloor,
+        floor_path: PathBuf,
+        signer_key_id: String,
+        sup_attest_key_id: String,
+        facts: ResolvedFacts,
+    ) -> Self {
+        let anchor = RootAnchor {
+            pinned,
+            provenance: brops_core::key_manifest::RootProvenance::Demonstration,
+        };
+        Self::build(
+            anchor,
+            manifest,
+            root_sig_b64,
+            floor,
+            floor_path,
+            signer_key_id,
+            sup_attest_key_id,
+            facts,
+        )
+    }
+
+    /// The one place a `Provisioned` is assembled. PRIVATE: the two functions above are the only
+    /// ways in, and each decides where the anchor's provenance comes from.
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        anchor: RootAnchor,
         manifest: KeyManifest,
         root_sig_b64: String,
         floor: AntiRollbackFloor,
@@ -131,7 +195,7 @@ impl ProductionResolver {
                 signer_key_id,
                 sup_attest_key_id,
                 facts,
-                pinned,
+                anchor,
                 custody: Arc::new(Mutex::new(None)),
             }),
         }
@@ -139,24 +203,6 @@ impl ProductionResolver {
 
     pub fn is_provisioned(&self) -> bool {
         self.inner.is_some()
-    }
-
-    /// What the pinned anchor's custody IS, derived from which anchor the binary pinned.
-    ///
-    /// NOT a config value, and that is the point. `broker/src/tcb.rs` compiles in one production root and
-    /// says of it: the private half "is held OFFLINE by the operator ... never appears in a deployed
-    /// binary or on the serving box". An operator who can write the config directory cannot swap it. Any
-    /// other pinned root reached this resolver through `provisioned_with_pin`, which is `pub(crate)` and
-    /// exists for tests — so it is a demonstration anchor and says so.
-    ///
-    /// The LIMIT is the one `key_manifest` already states and it is not weakened here: this establishes
-    /// which anchor verified the manifest, not that the Owner's custody ceremony was actually honoured.
-    fn root_provenance(pinned: &PinnedRoot) -> RootProvenance {
-        if pinned.root_key_id == tcb::ROOT_KEY_ID {
-            RootProvenance::External
-        } else {
-            RootProvenance::Demonstration
-        }
     }
 
     /// A custody resolver bound to this resolver's per-turn observation, or `None` when nothing is
@@ -190,7 +236,7 @@ pub struct ResolvedKeys {
     pub author: String,
 }
 
-/// Resolve the deployment's pinned keys for ONE turn: root-verify the manifest against the TCB pin, run
+/// Resolve the deployment's pinned keys for ONE turn: root-verify the manifest against the root anchor, run
 /// anti-rollback and persist the advanced floor, then resolve both production keys (trust-class /
 /// validity-window / revocation enforced). Any gap ⇒ `UpstreamBlocked`.
 ///
@@ -225,18 +271,15 @@ impl KeyResolver for ProductionResolver {
         let p = self.inner.as_ref().ok_or(TurnReason::UpstreamBlocked)?;
         let now = now_ms();
 
-        // (1) Verify the manifest against the pinned root — the TCB PRODUCTION anchor in production (never a
-        //     config-supplied root); a demonstration anchor only under `provisioned_with_pin` in tests.
+        // (1) Verify the manifest against the root anchor — the floor-pinned anchor file's in the shipped
+        //     broker (never a config-supplied root); a demonstration anchor only under
+        //     `provisioned_with_pin` in tests.
         //
         //     ANCHORED since the custody wiring (T-088): the same signature check, returning the token that
         //     says WHICH anchor verified this manifest and what that anchor's custody is. The provenance is
-        //     derived from the pinned root rather than declared anywhere a deployment could write it — see
-        //     `root_provenance` below.
-        let anchor = RootAnchor {
-            pinned: p.pinned.clone(),
-            provenance: Self::root_provenance(&p.pinned),
-        };
-        let verified = verify_manifest_anchored(&p.manifest, &p.root_sig_b64, &anchor)
+        //     the anchor's own — carried here from the file the §2.5 floor pinned — and is not derived
+        //     from the key id or from anything in the deployment config. See `Provisioned::anchor`.
+        let verified = verify_manifest_anchored(&p.manifest, &p.root_sig_b64, &p.anchor)
             .map_err(|_| TurnReason::UpstreamBlocked)?;
 
         // (2) Anti-rollback: accept only an epoch at/above the floor, advance it, and WRITE IT BACK.
@@ -360,6 +403,13 @@ impl TurnResolver for ProductionResolver {
 mod tests {
     use super::*;
     use crate::chain_executor::CustodyResolver as _;
+    use crate::tcb;
+    use brops_core::key_manifest::{PinnedRoot, RootProvenance};
+
+    /// The provenance the resolver holds for its anchor, or `None` when nothing is provisioned.
+    fn held_provenance(r: &ProductionResolver) -> Option<RootProvenance> {
+        r.inner.as_ref().map(|p| p.anchor.provenance)
+    }
     use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
@@ -384,9 +434,26 @@ mod tests {
 
     // ---- custody (T-088, the Owner's decision of 2026-09-19) --------------------------------
 
-    /// A demo-pinned, fully provisioned resolver: the only kind a unit test can build, because the
-    /// production root's private half is held offline and is not in this tree.
+    /// How a test hands the resolver its anchor.
+    enum Via {
+        /// `provisioned_with_pin`: a bare pin, which that function labels `Demonstration` itself.
+        Pin,
+        /// `provisioned`, the shipped broker's entry, with an anchor STATING this provenance under
+        /// this key id — as a floor-pinned anchor file would.
+        Anchor(&'static str, RootProvenance),
+    }
+
+    /// A demo-pinned, fully provisioned resolver: the only kind a unit test can build, because
+    /// nobody holds the private half of the compiled-in root and it is not in this tree.
     fn demo_resolver(dir: &std::path::Path, valid_signature: bool) -> (ProductionResolver, String) {
+        resolver_via(dir, valid_signature, Via::Pin)
+    }
+
+    fn resolver_via(dir: &std::path::Path, valid_signature: bool, via: Via) -> (ProductionResolver, String) {
+        let root_key_id = match &via {
+            Via::Pin => tcb::DEMO_ROOT_KEY_ID,
+            Via::Anchor(id, _) => *id,
+        };
         let root = SigningKey::from_bytes(&seed32(DEMO_ROOT_SEED_HEX));
         let signer = SigningKey::from_bytes(&seed32(&"11".repeat(32)));
         let sup = SigningKey::from_bytes(&seed32(&"22".repeat(32)));
@@ -394,7 +461,7 @@ mod tests {
         let sup_pub = hex(sup.verifying_key().as_bytes());
         let manifest: KeyManifest = serde_json::from_value(json!({
             "manifest_epoch": 2u64,
-            "root_key_id": tcb::DEMO_ROOT_KEY_ID,
+            "root_key_id": root_key_id,
             "keys": [
                 { "key_id": "signer-1", "public_key_hex": signer_pub, "trust_class": "production",
                   "valid_from_ms": 1, "valid_to_ms": 9999999999999i64, "key_epoch": 2u64,
@@ -418,10 +485,23 @@ mod tests {
             run_id: "run".into(), task_id: "task".into(), requested_at_ms: 1_900_000_000_000,
             author: "Bro".into(),
         };
-        let r = ProductionResolver::provisioned_with_pin(
-            demo_pin(), manifest, sig, floor, dir.join("floor.json"),
-            "signer-1".into(), "sup-1".into(), facts,
-        );
+        let r = match via {
+            Via::Pin => ProductionResolver::provisioned_with_pin(
+                demo_pin(), manifest, sig, floor, dir.join("floor.json"),
+                "signer-1".into(), "sup-1".into(), facts,
+            ),
+            Via::Anchor(id, provenance) => ProductionResolver::provisioned(
+                FloorPinnedAnchor::for_test(RootAnchor {
+                    pinned: PinnedRoot {
+                        root_key_id: id.to_string(),
+                        public_key_hex: tcb::DEMO_ROOT_PUBLIC_KEY_HEX.to_string(),
+                    },
+                    provenance,
+                }),
+                manifest, sig, floor, dir.join("floor.json"),
+                "signer-1".into(), "sup-1".into(), facts,
+            ),
+        };
         (r, signer_pub)
     }
 
@@ -479,25 +559,133 @@ mod tests {
         assert_ne!(state.committed_label(), Some("trusted_verified"));
     }
 
+    /// Drive one turn's key resolution and return the custody verdict it leaves behind.
+    fn custody_after_a_turn(via: Via) -> TrustState {
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = resolver_via(dir.path(), true, via);
+        r.resolve_keys().expect("a validly signed manifest resolves");
+        r.custody().unwrap().resolve()
+    }
+
     #[test]
-    fn the_provenance_follows_the_pinned_anchor_and_nothing_else() {
-        // Not a config value, deliberately: an operator who can write the config directory would
-        // otherwise be able to claim the Owner's custody for an anchor the Owner never held.
-        let production = PinnedRoot {
-            root_key_id: tcb::ROOT_KEY_ID.to_string(),
-            public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
-        };
-        assert!(matches!(
-            ProductionResolver::root_provenance(&production),
-            RootProvenance::External
-        ));
-        assert!(matches!(
-            ProductionResolver::root_provenance(&demo_pin()),
-            RootProvenance::Demonstration
-        ));
-        // And the two anchors are genuinely different, so the test above is not comparing a thing to
-        // itself.
-        assert_ne!(production.root_key_id, demo_pin().root_key_id);
+    fn the_provenance_follows_the_anchor_and_nothing_else() {
+        // The custody verdict is what the ANCHOR stated — for each provenance an anchor file can
+        // carry — and the committed label follows it. Not a config value, and not the key id.
+        for provenance in [RootProvenance::KitGenerated, RootProvenance::Demonstration, RootProvenance::InstallMinted] {
+            let dir = tempfile::tempdir().unwrap();
+            let (r, _) = resolver_via(dir.path(), true, Via::Anchor("brops-live-root-1", provenance));
+            assert_eq!(held_provenance(&r), Some(provenance));
+            r.resolve_keys().unwrap();
+            let state = r.custody().unwrap().resolve();
+            match &state {
+                TrustState::DemonstrationCustody { root_key_id, root_provenance, .. } => {
+                    assert_eq!(root_key_id, "brops-live-root-1");
+                    assert_eq!(*root_provenance, provenance);
+                }
+                other => panic!("{provenance:?} must not produce {other:?}"),
+            }
+            assert_eq!(state.committed_label(), Some("demonstration_custody"));
+            assert!(!state.is_production_verified());
+        }
+        // `provisioned_with_pin` states the provenance ITSELF: whatever pin it is handed.
+        let dir = tempfile::tempdir().unwrap();
+        let (r, _) = demo_resolver(dir.path(), true);
+        assert_eq!(held_provenance(&r), Some(RootProvenance::Demonstration));
+        assert_eq!(held_provenance(&ProductionResolver::fail_closed()), None);
+    }
+
+    /// THE REGRESSION THIS SLICE COULD HAVE INTRODUCED. The resolver used to answer `External` for
+    /// any pin whose id was `brops-tcb-root-1` — harmless while the key behind that id was a
+    /// compiled constant. Now the anchor comes from a file, and a file can carry any id it likes: a
+    /// kit root that NAMES itself after the compiled root must still be exactly as trusted as its
+    /// provenance says, which is not production.
+    #[test]
+    fn a_kit_root_named_after_the_compiled_root_is_still_only_what_its_provenance_says() {
+        let state = custody_after_a_turn(Via::Anchor(tcb::ROOT_KEY_ID, RootProvenance::KitGenerated));
+        match &state {
+            TrustState::DemonstrationCustody { root_key_id, root_provenance, .. } => {
+                assert_eq!(root_key_id, tcb::ROOT_KEY_ID);
+                assert_eq!(*root_provenance, RootProvenance::KitGenerated);
+            }
+            other => panic!("a key id bought {other:?}"),
+        }
+        assert_eq!(state.committed_label(), Some("demonstration_custody"));
+        assert_ne!(state.committed_label(), Some("trusted_verified"));
+    }
+
+    /// An INSTALL-MINTED anchor, read from the floor-pinned file, with everything else about the
+    /// deployment correct: the turn binds and commits, and it is NOT production, because the
+    /// Owner's line (`INSTALL_MINTED_CUSTODY_ACCEPTED`) ships closed.
+    #[test]
+    fn an_install_minted_anchor_commits_as_demonstration_custody_and_never_as_production() {
+        let state = custody_after_a_turn(Via::Anchor("brops-install-root-1", RootProvenance::InstallMinted));
+        assert!(state.is_chain_bound());
+        assert!(!state.is_production_verified());
+        assert_eq!(
+            state.root_provenance(),
+            Some(RootProvenance::InstallMinted),
+            "the row's custody must say WHICH non-production custody it was"
+        );
+        assert_eq!(state.committed_label(), Some("demonstration_custody"));
+        assert_ne!(state.committed_label(), Some("trusted_verified"));
+    }
+
+    /// The control for the three tests above: the verdict really is a function of the provenance.
+    /// An anchor carrying `External` DOES reach production through this resolver — which is why
+    /// `tcb::parse_root_anchor` refuses that word for every key but the compiled-in one, and why a
+    /// `FloorPinnedAnchor` cannot be built outside `tcb_probe`. (`for_test` is how this test gets
+    /// one; no binary can.)
+    #[test]
+    fn the_verdict_is_a_function_of_the_provenance_so_an_external_anchor_would_be_production() {
+        let state = custody_after_a_turn(Via::Anchor("brops-live-root-1", RootProvenance::External));
+        assert!(state.is_production_verified());
+        assert_eq!(state.committed_label(), Some("trusted_verified"));
+    }
+
+    #[test]
+    fn a_manifest_signed_by_another_root_than_the_anchor_resolves_nothing() {
+        // The anchor is the floor-pinned one; the manifest names a different root id. `UnknownRoot`
+        // inside, `UpstreamBlocked` outside, and no custody observation left behind.
+        let dir = tempfile::tempdir().unwrap();
+        let (good, _) = resolver_via(dir.path(), true, Via::Anchor("brops-live-root-1", RootProvenance::KitGenerated));
+        let inner = good.inner.as_ref().unwrap();
+        let other = ProductionResolver::provisioned(
+            FloorPinnedAnchor::for_test(RootAnchor {
+                pinned: PinnedRoot {
+                    root_key_id: "some-other-root".into(),
+                    public_key_hex: tcb::DEMO_ROOT_PUBLIC_KEY_HEX.to_string(),
+                },
+                provenance: RootProvenance::KitGenerated,
+            }),
+            inner.manifest.clone(),
+            inner.root_sig_b64.clone(),
+            AntiRollbackFloor { highest_epoch: 2, highest_hash: inner.manifest.content_hash() },
+            dir.path().join("floor-other.json"),
+            "signer-1".into(),
+            "sup-1".into(),
+            inner.facts.clone(),
+        );
+        assert!(matches!(other.resolve_keys(), Err(TurnReason::UpstreamBlocked)));
+        assert!(matches!(other.custody().unwrap().resolve(), TrustState::NoTrustedManifest(_)));
+
+        // And the right id over the WRONG key: the signature does not verify.
+        let wrong_key = ProductionResolver::provisioned(
+            FloorPinnedAnchor::for_test(RootAnchor {
+                pinned: PinnedRoot {
+                    root_key_id: "brops-live-root-1".into(),
+                    public_key_hex: tcb::ROOT_PUBLIC_KEY_HEX.to_string(),
+                },
+                provenance: RootProvenance::KitGenerated,
+            }),
+            inner.manifest.clone(),
+            inner.root_sig_b64.clone(),
+            AntiRollbackFloor { highest_epoch: 2, highest_hash: inner.manifest.content_hash() },
+            dir.path().join("floor-wrong.json"),
+            "signer-1".into(),
+            "sup-1".into(),
+            inner.facts.clone(),
+        );
+        assert!(matches!(wrong_key.resolve_keys(), Err(TurnReason::UpstreamBlocked)));
     }
 
     #[test]
@@ -508,9 +696,9 @@ mod tests {
         assert!(matches!(r.resolve(&req(), "bt", "nonce"), Err(TurnReason::UpstreamBlocked)));
     }
 
-    // The DEMONSTRATION root the tests pin — never the production anchor. Its private is the in-code seed
-    // below; production trust pins tcb::ROOT_PUBLIC_KEY_HEX alone — a root whose private half no
-    // person holds (Owner decision #78; T-131 makes it install-minted).
+    // The DEMONSTRATION root the tests pin — never a production anchor. Its private is the in-code seed
+    // above. The shipped broker pins no compiled root any more (T-131 slice C): it reads the
+    // floor-pinned anchor file, and `provisioned_with_pin` labels whatever it is handed `Demonstration`.
     fn demo_pin() -> PinnedRoot {
         PinnedRoot {
             root_key_id: tcb::DEMO_ROOT_KEY_ID.to_string(),

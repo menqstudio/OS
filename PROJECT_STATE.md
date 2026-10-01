@@ -3,16 +3,17 @@
 **Last updated · Վերջին թարմացում:** 2026-10-01 — 84 pull requests merged (`#219`–`#303`), `main` at
 `20b9e63`, all seven of its workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
-administrator provide, the Linux kernel, and a broker root the install must mint (`T-131`; nobody
-holds the compiled one, and under #78 nobody ever will — `docs/OWNER_ACTION_REQUIRED.md` §0). The negative matrix reads: **155 implemented · 52 blocked · 35
+administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
+anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
+deployment or the broker root. The negative matrix reads: **155 implemented · 52 blocked · 35
 unreviewed**, from 39/21/182.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #308 · branch `t138/installer-entry-and-package`** (base `main`, tip `81736b4`, task T-138).
+> **⏭️ CURRENT ACTIVE: PR #309 · branch `t140/broker-reads-anchor`** (base `main`, tip `db88c85`, task T-140).
 >
-> T-138: the installer is the one entry point postinst calls, and the .deb carries it
+> T-140: slice C; the broker reads its root from the floor-pinned anchor, and production stays behind the Owner's constant
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -46,8 +47,8 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-09-21 | 1223 OK |
 | frontend · 2026-10-01 | typecheck clean, 801 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-09-30 | 2397 OK, 14 skipped |
-| Rust, 10 crates · 2026-10-01 | 1242 passed, 1 ignored (needs root; CI runs it) |
+| engine (Python), non-root, Debian 13 · 2026-09-30 | 2410 OK, 14 skipped |
+| Rust, 10 crates · 2026-10-01 | 1288 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 

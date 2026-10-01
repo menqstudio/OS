@@ -119,6 +119,410 @@ class KitScriptTests(unittest.TestCase):
                 self.assertIn("check_declared_external_anchor", text)
                 self.assertIn('format!("root_anchor_{why}")', text)
 
+    def test_the_install_minted_negative_names_the_refusal_the_driver_actually_emits(self):
+        # T-131 slice C. `install_minted` is the one provenance that can ever support a production
+        # claim, so a driver must not take it from an anchor file that is merely root-owned: the
+        # kit relabels its own root, puts it OUTSIDE the pinned path, and expects a refusal. The
+        # outcome string is built in two languages here too, and BOTH drivers must make the check —
+        # with the real floor question, not a closure that answers `Ok`.
+        script = _script("run_ladder_turn.sh")
+        self.assertIn("run_driver throwaway-install-minted", script)
+        self.assertIn("blocked:setup:root_anchor_install_minted_not_floor_pinned", script)
+        tauri = os.path.join(REPO_ROOT, "apps", "desktop", "src-tauri")
+        with open(os.path.join(tauri, "broker", "src", "tcb.rs"), "r", encoding="utf-8") as f:
+            self.assertIn('"install_minted_not_floor_pinned"', f.read())
+        for driver in ("ladder_turn.rs", "live_turn.rs"):
+            path = os.path.join(tauri, "proof", "src", "bin", driver)
+            with self.subTest(driver=driver), open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+                self.assertEqual(
+                    text.count("brops_broker::tcb::check_declared_install_minted_anchor("), 1)
+                call = text.split("brops_broker::tcb::check_declared_install_minted_anchor(")[1]
+                call = call.split('format!("root_anchor_{why}")')[0]
+                self.assertIn("crate::tcb_verify::anchor_is_floor_pinned(", call)
+                # The bytes handed to the floor question are the bytes this driver PARSED.
+                self.assertIn("anchor_raw", call)
+                # ...and a refusal is a refusal: the next thing after the check is the blocked exit.
+                self.assertRegex(
+                    call, r"\}\)\s*\{\s*return (setup_blocked\(&evidence, expect, |blocked\()&$")
+        with open(os.path.join(tauri, "proof", "src", "tcb_verify.rs"), "r", encoding="utf-8") as f:
+            shared = f.read()
+        self.assertIn("brops_broker::tcb_probe::anchor_bytes_are_floor_pinned(", shared)
+
+    def test_the_product_broker_phase_names_a_committed_demonstration_turn_and_never_production(self):
+        # The phase used to assert `blocked/upstream_blocked` BECAUSE the kit root was not the
+        # compiled pin. The broker now verifies the kit's manifest under the kit's own floor-pinned
+        # anchor, so the expected outcome is named: committed, labelled `demonstration_custody`,
+        # with `trusted_verified` a RED of its own. A check weakened to "any outcome" fails here.
+        script = _script("run_ladder_turn.sh")
+        self.assertIn('r.get("status") == "committed"', script)
+        self.assertIn('and label == "demonstration_custody"', script)
+        self.assertIn('if label == "trusted_verified":', script)
+        # The product positive is judged by the committed verdict, against the anchor the product
+        # manifest pins, and no longer by the blocked check.
+        lines = script.splitlines()
+        self.assertIn('broker_expect_committed product kit_generated "$TCB/root-anchor.json"', lines)
+        self.assertNotIn("reply_is_blocked_upstream product", script)
+        # The floor-refusal negative keeps the blocked check.
+        self.assertIn("reply_is_blocked_upstream ladder-pin", script)
+        # The relabel control: the same deployment, the anchor's one word changed and PINNED —
+        # started over ITS config and judged against ITS anchor.
+        self.assertIn('run_broker install-minted "$BROKER_CONFIG_IM"', lines)
+        self.assertIn(
+            'broker_expect_committed install-minted install_minted "$BROKER_ANCHOR_IM"', lines)
+        self.assertIn('anchor["provenance"] = "install_minted"', script)
+        # Each verdict follows its own run, with nothing between them.
+        for run, verdict in (
+                ('run_broker product "$BROKER_CONFIG"',
+                 'broker_expect_committed product kit_generated "$TCB/root-anchor.json"'),
+                ('run_broker install-minted "$BROKER_CONFIG_IM"',
+                 'broker_expect_committed install-minted install_minted "$BROKER_ANCHOR_IM"')):
+            self.assertEqual(lines.index(verdict), lines.index(run) + 1, run)
+        # The stderr line the kit greps is the line the broker prints, in two languages.
+        self.assertIn(
+            'grep -qF "provenance=$2 read from the floor-pinned $3; production custody claim '
+            'supported: false"', script)
+        main_rs = os.path.join(REPO_ROOT, "apps", "desktop", "src-tauri", "broker", "src", "main.rs")
+        with open(main_rs, "r", encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn(
+            '"brops-broker: root anchor {} provenance={} read from the floor-pinned {}; \\\n'
+            '             production custody claim supported: {}",', text)
+        # Both completing broker turns wait for the §2.4 budget the way the third driver turn does.
+        self.assertEqual(script.count('wait_for_staging_reclaim "brops-broker '), 2)
+        self.assertEqual(script.count('wait_for_turn_slot "brops-broker '), 2)
+
+    def test_the_relabelled_broker_deployment_is_pinned_before_any_service_starts(self):
+        # A pin is a start-time measurement: the relabelled anchor, its config and its manifest are
+        # all written before the first `start_service`, and the manifest is derived AFTER the
+        # product manifest it copies.
+        lines = _script("run_ladder_turn.sh").splitlines()
+
+        def first(needle: str) -> int:
+            hits = [i for i, l in enumerate(lines) if needle in l]
+            self.assertTrue(hits, "no line in run_ladder_turn.sh contains %r" % needle)
+            return hits[0]
+
+        anchor = first("<<'PYBROKERIM'")
+        product_pin = first('--kit broker --broker-config "$BROKER_CONFIG"')
+        derived = first("<<'PYPINIM'")
+        owned = first('chown 0:0 "$BROKER_PIN_IM"; chmod 0644 "$BROKER_PIN_IM"')
+        start = [i for i, l in enumerate(lines) if l.lstrip().startswith('start_service "$')][0]
+        self.assertLess(anchor, product_pin)
+        self.assertLess(product_pin, derived)
+        self.assertLess(derived, owned)
+        self.assertLess(owned, start)
+
+
+def _shell_function(script: str, name: str) -> str:
+    """The text of the top-level shell function `name() { ... }` in `script`."""
+    lines = script.split("\n")
+    starts = [i for i, line in enumerate(lines) if line.startswith(name + "() {")]
+    if len(starts) != 1:
+        raise AssertionError("%d definitions of %s" % (len(starts), name))
+    end = starts[0]
+    while lines[end] != "}":
+        end += 1
+    return "\n".join(lines[starts[0]:end + 1]) + "\n"
+
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("python3"),
+                     "the kit's verdict functions are bash calling python3; this host has not both")
+class KitBrokerVerdictTests(unittest.TestCase):
+    """`broker_expect_committed`, EXECUTED: the kit's verdict on a product-broker turn.
+
+    The three shell functions are lifted out of `run_ladder_turn.sh` verbatim and run in bash
+    against a log and a reply this test writes. So the outcome the kit names — committed,
+    `demonstration_custody`, the anchor read from the pinned path, never production — is checked as
+    behaviour, not as text. What it cannot check is that a real broker produces that log and reply.
+    """
+
+    PROVISIONED = "trusted manifest provisioned - serving the 4.10(g) governed ladder"
+    ANCHOR = "/opt/brops-live/tcb/root-anchor.json"
+
+    def setUp(self):
+        script = _script("run_ladder_turn.sh")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.run_dir = self.tmp.name
+        self.functions = "".join(_shell_function(script, name) for name in (
+            "broker_read_anchor", "reply_is_committed_demonstration", "broker_expect_committed"))
+        # The kit's own definition of the line it greps for, not a copy of it.
+        declared = [l for l in script.splitlines() if l.startswith("BROKER_PROVISIONED=")]
+        self.assertEqual(declared, ["BROKER_PROVISIONED='%s'" % self.PROVISIONED])
+
+    def log(self, provenance="kit_generated", anchor=None, supported="false", provisioned=True,
+            extra=""):
+        text = ("brops-broker: root anchor brops-live-root-1 provenance=%s read from the "
+                "floor-pinned %s; production custody claim supported: %s\n"
+                % (provenance, anchor or self.ANCHOR, supported))
+        if provisioned:
+            text += "brops-broker: %s\n" % self.PROVISIONED
+        return text + extra
+
+    def reply(self, status="committed", trust_state="demonstration_custody"):
+        document = {"protocol": "brops.renderer-governed-turn-result.v1", "status": status,
+                    "client_request_id": "c", "broker_turn_id": "b", "conversation_id": "k"}
+        if status == "committed":
+            document["message"] = {"message_id": "m", "author": "Bro", "body": "hello",
+                                   "created_at_ms": 1, "trust_state": trust_state}
+        else:
+            document["reason"] = "upstream_blocked"
+        return document
+
+    def verdict(self, log, reply, provenance="kit_generated"):
+        with open(os.path.join(self.run_dir, "t.log"), "w", encoding="utf-8") as fh:
+            fh.write(log)
+        with open(os.path.join(self.run_dir, "t.reply.json"), "w", encoding="utf-8") as fh:
+            json.dump(reply, fh)
+        driver = os.path.join(self.run_dir, "verdict.sh")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write("set -u\nBROKER_RUN=%s\nBROKER_PROVISIONED='%s'\nBROKER_PRODUCT_RC=0\n"
+                     % (self.run_dir, self.PROVISIONED))
+            fh.write(self.functions)
+            fh.write('broker_expect_committed t %s "%s"\n' % (provenance, self.ANCHOR))
+            fh.write('echo "RC=$BROKER_PRODUCT_RC"\n')
+        done = subprocess.run(["bash", driver], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        # The verdict is the last line of STDOUT; stderr (the reply check's own explanation) is
+        # returned beside it for the assertions and is not where the verdict is read from.
+        rc = int(done.stdout.rsplit("RC=", 1)[1].strip())
+        return rc, done.stdout + done.stderr
+
+    def test_a_committed_demonstration_turn_under_the_pinned_anchor_is_green(self):
+        rc, out = self.verdict(self.log(), self.reply())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("GREEN", out)
+        self.assertIn("NOT production", out)
+        # ...and the same for the relabelled deployment, judged against the word IT pinned.
+        rc, out = self.verdict(self.log(provenance="install_minted"), self.reply(),
+                               provenance="install_minted")
+        self.assertEqual(rc, 0, out)
+
+    def test_a_production_label_is_red_and_says_production(self):
+        rc, out = self.verdict(self.log(), self.reply(trust_state="trusted_verified"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("PRODUCTION claim", out)
+        self.assertNotIn("GREEN", out)
+
+    def test_a_blocked_turn_is_red(self):
+        # The outcome this phase USED to expect. It is now a failure of the product binary to take
+        # the turn the driver takes.
+        rc, out = self.verdict(self.log(), self.reply(status="blocked"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("did not commit as demonstration_custody", out)
+
+    def test_a_broker_that_did_not_name_the_pinned_anchor_is_red_even_when_the_turn_committed(self):
+        cases = {
+            "another provenance": self.log(provenance="demonstration"),
+            "another path": self.log(anchor="/opt/brops-live/tcb/elsewhere.json"),
+            "a production claim": self.log(supported="true"),
+            "no anchor line at all": "brops-broker: %s\n" % self.PROVISIONED,
+        }
+        for name, log in cases.items():
+            with self.subTest(case=name):
+                rc, out = self.verdict(log, self.reply())
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("GREEN", out)
+
+    def test_a_broker_that_refused_or_never_provisioned_is_red(self):
+        rc, out = self.verdict(self.log(provisioned=False), self.reply())
+        self.assertEqual(rc, 1, out)
+        self.assertIn("never reported the trusted manifest provisioned", out)
+        rc, out = self.verdict(
+            self.log(extra="brops-broker: root anchor REFUSED (x) — serving fail-closed\n"),
+            self.reply())
+        self.assertEqual(rc, 1, out)
+        self.assertIn("reported a refusal", out)
+
+
+def _heredoc(script: str, tag: str) -> str:
+    """The body of the ONE Python heredoc `<<'tag'` in `script`, as bash would feed it to python."""
+    lines = script.split("\n")
+    openers = [i for i, line in enumerate(lines) if "<<'%s'" % tag in line]
+    if len(openers) != 1:
+        raise AssertionError("%d heredocs tagged %s" % (len(openers), tag))
+    start = openers[0]
+    while lines[start].endswith("\\"):  # a backslash-newline joins the opener to the next line
+        start += 1
+    start += 1
+    end = start
+    while lines[end] != tag:
+        end += 1
+    return "\n".join(lines[start:end]) + "\n"
+
+
+class KitHeredocTests(unittest.TestCase):
+    """The Python the ladder kit runs for the T-131 controls, RUN — against a synthetic tree.
+
+    The kit itself needs root, seven accounts and `/opt/brops-live`, so no test here runs it and
+    none of this says a turn completes. What it does say: the relabelled anchor, the derived pin
+    manifest and the reply check each do what the script's prose claims, on inputs of the shape the
+    kit hands them. The text assertions above hold WHERE these run; these hold WHAT they do.
+    """
+
+    def setUp(self):
+        self.script = _script("run_ladder_turn.sh")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = self.tmp.name
+        self.anchor = self.path("root-anchor.json")
+        self.write(self.anchor, {"root_key_id": "brops-live-root-1", "public_key_hex": "ab" * 32,
+                                 "provenance": "kit_generated"})
+        self.broker_cfg = self.path("broker-config.json")
+        self.broker_pin = self.path("broker-tcb-pin-manifest.json")
+        self.write(self.broker_cfg, {"trust": {"tcb_pin_manifest_path": self.broker_pin,
+                                               "manifest_path": "/x"}, "uids": {}})
+        self.other = self.path("supervisor.py")
+        with open(self.other, "w", encoding="utf-8") as fh:
+            fh.write("# a pinned file this control must not touch\n")
+        self.write(self.broker_pin, {
+            "artifacts": [
+                self.pin("key-manifest.root-anchor", self.anchor),
+                self.pin("trusted-verifier-broker.config", self.broker_cfg),
+                self.pin("trusted-verifier-broker.pinned-manifest-config", self.broker_cfg),
+                dict(self.pin("supervisor.bin", self.other), digest_origin="source:x"),
+            ],
+            "owner_uids": {"root": 0, "brops_admin": 0},
+        })
+
+    def path(self, name):
+        return os.path.join(self.dir, name)
+
+    @staticmethod
+    def write(path, document):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(document, fh, separators=(",", ":"))
+
+    @staticmethod
+    def sha(path):
+        import hashlib
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+
+    def pin(self, role, path):
+        return {"logical_name": role, "path": path, "expected_sha256": self.sha(path),
+                "expected_owner": "root", "digest_origin": "deployment-measured"}
+
+    def run_heredoc(self, tag, *args):
+        return subprocess.run([sys.executable, "-", *args], input=_heredoc(self.script, tag),
+                              capture_output=True, text=True)
+
+    def relabelled_deployment(self):
+        anchor_im = self.path("root-anchor-install-minted.json")
+        cfg_im = self.path("broker-config-install-minted.json")
+        pin_im = self.path("broker-tcb-pin-manifest-install-minted.json")
+        r = self.run_heredoc("PYBROKERIM", self.anchor, anchor_im, self.broker_cfg, cfg_im, pin_im)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return anchor_im, cfg_im, pin_im
+
+    def test_the_relabel_changes_one_word_of_the_anchor_and_one_key_of_the_config(self):
+        anchor_im, cfg_im, pin_im = self.relabelled_deployment()
+        self.assertEqual(_read_json(anchor_im), {"root_key_id": "brops-live-root-1",
+                                                 "public_key_hex": "ab" * 32,
+                                                 "provenance": "install_minted"})
+        relabelled = _read_json(cfg_im)
+        self.assertEqual(relabelled["trust"]["tcb_pin_manifest_path"], pin_im)
+        relabelled["trust"]["tcb_pin_manifest_path"] = self.broker_pin
+        self.assertEqual(relabelled, _read_json(self.broker_cfg))
+        # It relabels a KIT anchor and nothing else: handed one that is already relabelled, it stops.
+        r = self.run_heredoc("PYBROKERIM", anchor_im, self.path("x.json"), self.broker_cfg,
+                             self.path("y.json"), pin_im)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(self.path("x.json")))
+
+    def test_the_derived_manifest_repoints_three_pins_and_leaves_every_other_alone(self):
+        anchor_im, cfg_im, pin_im = self.relabelled_deployment()
+        r = self.run_heredoc("PYPINIM", self.broker_pin, pin_im, anchor_im, cfg_im)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        derived = _read_json(pin_im)
+        by_role = {}
+        for artifact in derived["artifacts"]:
+            by_role.setdefault(artifact["logical_name"], []).append(artifact)
+        # ONE anchor entry (the broker refuses an ambiguous role), at the relabelled file's digest.
+        self.assertEqual(len(by_role["key-manifest.root-anchor"]), 1)
+        self.assertEqual(by_role["key-manifest.root-anchor"][0]["path"], anchor_im)
+        self.assertEqual(by_role["key-manifest.root-anchor"][0]["expected_sha256"],
+                         self.sha(anchor_im))
+        # Both of the broker's config roles pin the document that names THIS manifest — the role
+        # `verify_broker_tcb` compares with `$BROPS_BROKER_CONFIG` is one of them.
+        for role in ("trusted-verifier-broker.config",
+                     "trusted-verifier-broker.pinned-manifest-config"):
+            self.assertEqual(by_role[role][0]["path"], cfg_im, role)
+            self.assertEqual(by_role[role][0]["expected_sha256"], self.sha(cfg_im), role)
+        original = {a["logical_name"]: a for a in _read_json(self.broker_pin)["artifacts"]}
+        self.assertEqual(by_role["supervisor.bin"][0], original["supervisor.bin"])
+        self.assertEqual(derived["owner_uids"], {"root": 0, "brops_admin": 0})
+        self.assertEqual(len(derived["artifacts"]), len(original))
+
+    def test_the_derived_manifest_refuses_inputs_that_would_not_make_a_floor(self):
+        anchor_im, cfg_im, pin_im = self.relabelled_deployment()
+        # A product manifest with no anchor role: there is nothing to re-point.
+        stripped = _read_json(self.broker_pin)
+        stripped["artifacts"] = [a for a in stripped["artifacts"]
+                                 if a["logical_name"] != "key-manifest.root-anchor"]
+        no_anchor = self.path("no-anchor-pin.json")
+        self.write(no_anchor, stripped)
+        r = self.run_heredoc("PYPINIM", no_anchor, pin_im, anchor_im, cfg_im)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("key-manifest.root-anchor", r.stderr)
+        self.assertFalse(os.path.exists(pin_im))
+        # A config that names some OTHER manifest: the broker would read a different floor.
+        elsewhere = self.path("elsewhere.json")
+        r = self.run_heredoc("PYPINIM", self.broker_pin, elsewhere, anchor_im, cfg_im)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(elsewhere))
+
+    def test_the_drivers_throwaway_anchor_is_relabelled_and_named_by_its_own_config(self):
+        driver_cfg = self.path("ladder-driver.json")
+        self.write(driver_cfg, {"trust": {"root_anchor_path": self.anchor}})
+        anchor_out = self.path("root-anchor-throwaway-install-minted.json")
+        cfg_out = self.path("ladder-driver-throwaway-install-minted.json")
+        r = self.run_heredoc("PYTHROWIM", self.anchor, anchor_out, driver_cfg, cfg_out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(_read_json(anchor_out)["provenance"], "install_minted")
+        self.assertEqual(_read_json(cfg_out)["trust"]["root_anchor_path"], anchor_out)
+        # The pinned anchor is untouched: the throwaway is a DIFFERENT file, which is the point.
+        self.assertEqual(_read_json(self.anchor)["provenance"], "kit_generated")
+
+    def reply_verdict(self, tag, document):
+        reply = self.path("reply.json")
+        self.write(reply, document)
+        return self.run_heredoc(tag, reply).returncode
+
+    def test_the_reply_check_accepts_only_a_committed_demonstration_turn(self):
+        protocol = "brops.renderer-governed-turn-result.v1"
+        committed = {"protocol": protocol, "status": "committed", "client_request_id": "c",
+                     "broker_turn_id": "b", "conversation_id": "k",
+                     "message": {"message_id": "m", "author": "Bro", "body": "hello",
+                                 "created_at_ms": 1, "trust_state": "demonstration_custody"}}
+        blocked = {"protocol": protocol, "status": "blocked", "reason": "upstream_blocked",
+                   "client_request_id": "c", "broker_turn_id": "b", "conversation_id": "k"}
+
+        def variant(**message):
+            document = json.loads(json.dumps(committed))
+            document["message"].update(message)
+            return document
+
+        self.assertEqual(self.reply_verdict("PYCOMMITTED", committed), 0)
+        # THE outcome this phase exists to make impossible has its own exit code, so the kit can
+        # say "production" rather than "not what was expected".
+        self.assertEqual(
+            self.reply_verdict("PYCOMMITTED", variant(trust_state="trusted_verified")), 3)
+        self.assertEqual(self.reply_verdict("PYCOMMITTED", blocked), 1)
+        self.assertEqual(self.reply_verdict("PYCOMMITTED", variant(trust_state="other")), 1)
+        self.assertEqual(self.reply_verdict("PYCOMMITTED", variant(body="")), 1)
+        without_message = json.loads(json.dumps(committed))
+        del without_message["message"]
+        self.assertEqual(self.reply_verdict("PYCOMMITTED", without_message), 1)
+        self.assertEqual(
+            self.reply_verdict("PYCOMMITTED", dict(committed, protocol="something.else")), 1)
+        self.assertEqual(
+            self.reply_verdict("PYCOMMITTED", dict(committed, reason="upstream_blocked")), 1)
+        # ...and the floor-refusal negative's check still means what it meant.
+        self.assertEqual(self.reply_verdict("PYREPLY", blocked), 0)
+        self.assertEqual(self.reply_verdict("PYREPLY", committed), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
