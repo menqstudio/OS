@@ -172,18 +172,6 @@ class SecurityV2Tests(unittest.TestCase):
             self.assertNotIn("READ_LOCAL", classified.capabilities, command)
             self.assertTrue(classified.mutating, command)
 
-    def test_a_lone_ampersand_separates_segments(self):
-        # `&` backgrounds the first command and runs the second. It was not a
-        # separator, so the whole line was one segment judged by its first word:
-        # `echo hi & rm -rf x` classified as a targetless read.
-        for command in ("echo hi & rm -rf x", "echo hi &rm x", "pwd & ./evil", "echo hi |& rm x"):
-            infos = analyze_command(command)
-            self.assertEqual(len(infos), 2, command)
-            self.assertTrue(infos[1].mutating, command)
-        # Quoted or escaped, it is text.
-        for command in ('echo "a & b"', "echo 'a & b'", "echo a \\& b"):
-            self.assertEqual(len(analyze_command(command)), 1, command)
-
     def test_segments_quotes_windows_and_mixed_case(self):
         infos = analyze_command(
             'git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '

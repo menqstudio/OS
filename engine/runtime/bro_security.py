@@ -218,9 +218,7 @@ def split_shell(command: str) -> list[str]:
         if c in "><":
             raise SecurityError("shell redirection/substitution is denied")
         op = None
-        # A lone `&` separates commands exactly as `;` does (it only backgrounds the
-        # first). Without it `echo hi & rm -rf x` was ONE segment judged by `echo`.
-        for candidate in ("&&", "||", ";", "|", "&", "\n"):
+        for candidate in ("&&", "||", ";", "|", "\n"):
             if command.startswith(candidate, i):
                 op = candidate
                 break

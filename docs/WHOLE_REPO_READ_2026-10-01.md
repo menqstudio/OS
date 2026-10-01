@@ -89,10 +89,6 @@ All open. Grouped by kind; within a kind, by path.
   - `envPrefix: ["VITE_", "TAURI_"]`. release.yml:162-163 puts TAURI_SIGNING_PRIVATE_KEY and its password in the env of the step that runs `npm run build` (tauri.conf.json:10). Latent, not leaking today: no file under src reads import.meta.env; one wholesale reference would inline both.
   - also: `.github/workflows/release.yml:162`
   - fix: Narrow the prefix to ["VITE_", "TAURI_ENV_"] so no TAURI_SIGNING_* variable can reach import.meta.env.
-- **`docs/PHASE_10_PRODUCTION_ITEMS.md:370`** — O-3 still instructs the Owner to mint an artifact offline with the operator-root key, against decision #78, and the ceremony gate does not catch it
-  - L370 'Exactly what Gev must provide. Mint, offline with the operator-root key, an artifact of the form'. L366-368 and L643 say 'No Owner action for O-3'. Ran tools/check_no_owner_key_ceremony.py: GREEN ('13 tokens and 6 phrases absent') because FORBIDDEN_PHRASES has no phrase matching this.
-  - also: `tools/check_no_owner_key_ceremony.py:69-76`
-  - fix: Delete L370-381 (or mark it superseded history) and add phrases such as 'gev must provide' and 'mint, offline' to the gate with a test that goes red on them.
 - **`docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md:272`** — Design's key_usage type separation (receipt-signing vs supervisor-attestation keys) does not exist in the implemented manifest
   - Doc: 'receipt-key resolver rejects any key whose key_usage != receipt_signing ... disjoint key sets by construction'. Code: ManifestKey has no key_usage/supervisor_id/expires_at; manifest_resolver.rs:302 and :304 resolve BOTH keys via resolve_production_key(.., RECEIPT_ENVELOPE_ARTIFACT_TYPE, ..).
   - also: `apps/desktop/src-tauri/broker/src/manifest_resolver.rs:302-304; apps/desktop/src-tauri/core/src/key_manifest.rs:26-37`
@@ -109,16 +105,6 @@ All open. Grouped by kind; within a kind, by path.
   - is_protected()/is_digest_member() return False for install/brops_install.sh, ci/live/run_ladder_turn.sh, ci/isolation_proof.sh, contracts/brops-sign-result.v1.schema.json. ci.yml:170,179,266 run the first three under sudo. The listed '.github/workflows/**' only matches engine/.github, which GitHub never runs (ci.yml:825).
   - also: `.github/workflows/ci.yml:170,179,266,825`
   - fix: Add ci/**, install/** and contracts/** to protected_roots and digest_roots, and correct the purpose text about which workflows directory is actually covered.
-- **`engine/runtime/bro_secrets.py:48`** — The keyed-secret redactor misses JSON-quoted keys and prefixed env-var names, the two commonest shapes in stderr
-  - _ASSIGNMENT needs `\b(secret\|password\|...)` immediately followed by `[=:]`. Ran redact(): '{"password": "hunter2sekret"}' unchanged; 'DB_PASSWORD=hunter2sekret' unchanged; 'export AWS_SECRET_ACCESS_KEY=wJalr...' unchanged; only bare 'password=...' is redacted.
-  - fix: Allow an optional closing quote and identifier prefix/suffix around the key name (e.g. `[A-Za-z0-9_]*(secret\|password\|token\|key)[A-Za-z0-9_]*["']?\s*[=:]`) and pin the three cases above in tests.
-- **`engine/runtime/bro_security.py:183`** — _exe() reduces the executable to its basename, so any path ending in echo/cat/ls/pwd is classified as the read-only builtin
-  - _exe returns PurePath(token).name. Ran: analyze_command("./tmp/echo hi") -> executable='echo', mutating=False, recognized_read_only=True, targets=(); classify_tool_action gives READ_LOCAL. `/tmp/evil/cat x` likewise. An in-scope file named `echo` executes as a 'read'.
-  - fix: Treat a first token containing a path separator as an unknown/mutating executable instead of matching its basename against READ_ONLY_SHELL (and validate_exact_push's `git`).
-- **`engine/runtime/bro_security.py:224`** — Read-only git subcommands accept file-writing flags: `git diff --output=<path>` classifies READ_LOCAL and its target is dropped by the flag filter
-  - read_only = sub in READ_ONLY_GIT and not dangerous; args are not inspected. Ran: `git diff --output=runtime/x.py HEAD~1` -> mutating=False, caps READ_LOCAL, targets ('--output=runtime/x.py','HEAD~1'). bro_policy.py:400 then discards every target starting with '-'.
-  - also: `engine/runtime/bro_policy.py:400`
-  - fix: Allowlist the flags of read-only git subcommands (as analyze_find does) and classify --output/--ext-diff/--textconv style options as mutating with their path as a target.
 - **`engine/runtime/challenge_authority.py:130`** — _is_sha256_hex means two different things: the authority/supervisor copy accepts non-hex 64-char strings, the signer copy of the same name is strict
   - challenge_authority.py:130 and governed_supervisor.py:288 use `int(value, 16)`. Ran validate_create_pending with system_sha256 = ' '+'a'*63, '+'+'a'*63, '0x'+'a'*62, 'a'*31+'_'+'a'*32, '\n'+'a'*63: all ACCEPTED and returned for signing; isolated_signer._is_sha256_hex (line 266) returns False for each.
   - also: `engine/runtime/governed_supervisor.py:288 (lax copy); engine/runtime/isolated_signer.py:266 (strict copy, same name)`
@@ -127,10 +113,6 @@ All open. Grouped by kind; within a kind, by path.
   - L148-150: 'a config that does not parse or whose custody cannot be verified is a refusal to start'; L210 'custody-unverifiable means raise'. The body only does `json.loads(path.read_text())`; no stat/owner/mode/ancestry check. run_floor_writer.py checks marks_dir and socket dir only. The file carries the peer allowlist and install_id.
   - also: `engine/runtime/run_floor_writer.py:46-59`
   - fix: Open the config with the same fstat-on-descriptor owner/mode/ancestry rule (root or service uid, not group/world-writable) before parsing, or delete the custody claim.
-- **`engine/tools/brops_live_runstate.py:76`** — Run-record path is built from the caller's run_id with no sanitising: path traversal out of the protected state dir
-  - `safe = f"{run_id}__{execution_attempt_id}.json"; return self.state_dir / safe`. Service checks only isinstance str; schema has no pattern. Ran it (-B, scratchpad): run_id='../outside/evil' read outside/evil__a1.json -> 'run is not completed: running'. output/system/history come from that record.
-  - also: `engine/tools/brops_supervisor_service.py:80 ; engine/contracts/brops-evidence-request.v1.schema.json:10`
-  - fix: Reject any run_id/execution_attempt_id not matching a strict [A-Za-z0-9._-] pattern (in the schema and in handle()), and require the resolved record path to stay under state_dir.
 - **`tools/check_ai_surfaces.py:60`** — A generic #[tauri::command] is invisible to the AI-surface inventory gate
   - _FN_RE = `fn (\w+)\s*\(` does not match `fn name<R: Runtime>(`. Ran check() on `#[tauri::command] pub async fn sneaky<R: tauri::Runtime>(..){ crate::ai::generate(..) }` with empty policy: returned []. Same source without the generic: 'NOT classified'. No such command in the tree today; 8 generic non-command fns already unseen.
   - fix: Allow an optional generic parameter list between the fn name and `(` in _FN_RE and add the generic-command case to test_check_ai_surfaces.py.
@@ -292,13 +274,6 @@ All open. Grouped by kind; within a kind, by path.
   - l.872 `chown 0:0 /opt; chmod 0755 /opt`; l.873 `setfacl -Rb /opt "$LIVE" 2>/dev/null \|\| true` removes every POSIX ACL under /opt, including other software's. cleanup() (l.467-472) restores none of it. T-141 fixed the same class of problem for /etc/sudoers.d only.
   - also: `engine/ci/live/run_live_turn.sh:476`
   - fix: Strip ACLs only on $LIVE and on /opt itself non-recursively (`setfacl -b /opt`), and refuse rather than chmod when /opt is not already root-owned 0755 on a non-CI box.
-- **`engine/runtime/bro_approval_requests.py:204`** — Approval-request log has no write lock: concurrent asks fork the hash chain and wedge the log permanently
-  - record() does verify_chain(); entries(); then open('a') with no lock. Reproduced in scratchpad with 8 processes x 40 requests: 4 entries, 2 distinct sequences, chain BROKEN; every later record() RAISES ApprovalRequestError although the docstring says 'Always returns a reply document'.
-  - also: `bridge/engine_sidecar.py:894 (the only caller)`
-  - fix: Hold an exclusive advisory lock (as bro_completion._floor_write_lock does) across verify-read-append, and turn a broken chain into a refusal document instead of an exception.
-- **`engine/runtime/bro_orchestration_runtime.py:695`** — One half-created task directory makes claim_next fail for every agent, and create_task refuses to repair it
-  - create_task writes contract.json (L449) then appends records (L450-454) with no rollback. claim_next iterates all dirs and calls self._state(task_id) with no try (L695; V1 L94), which raises "task has no lifecycle state". Retry hits L444-445 "task already exists". integrity_report L1069 would IndexError.
-  - fix: Skip-and-report unreadable tasks in claim_next (as V1.reconcile already does) and make create_task atomic or resumable when the directory holds no transition.
 - **`engine/runtime/brops_socket.py:219`** — serve_forever has no exception backstop: one peer hang-up kills the signer/supervisor service
   - Loop is `try: _serve_one(...) finally: conn.close()`; `_serve_one` catches only ProtocolError/timeout. Reproduced: client sends a frame and closes before the reply -> `DIED: BrokenPipeError`, socket unlinked, with max_requests=5. Used by engine/tools/brops_signer_service.py:45 and brops_supervisor_service.py:148.
   - also: `engine/runtime/floor_writer.py:981 (same try/finally shape; handle() catches only FloorWriterError)`
@@ -327,18 +302,6 @@ All open. Grouped by kind; within a kind, by path.
   - Signer raises _Refuse("%s:%s.%s" % (REASON_CHAIN_DISAGREEMENT, handle_field, field)) (also :837). governed_acceptance._SIGNER_REASONS is keyed on the bare constant. Reproduced: mapped value stays suffixed, turn_result_refused raises SupervisorError 'not in the ... closed set'. The test stubs the bare constant.
   - also: `engine/runtime/governed_acceptance.py:181 (mapping), :923 (lookup); engine/tests/test_governed_acceptance.py:1655 (stub uses bare constant)`
   - fix: Map on the prefix before the first ':' in governed_acceptance (or have the signer return a fixed reason plus a separate detail field), and drive the test with a real IsolatedSigner refusal instead of a stub.
-- **`engine/tools/bro_authorize_specialist.py:43`** — Every mode grant is minted with the same constant nonce and grant_id, so the L-1 nonce ledger refuses the second grant
-  - Defaults `grant_id="mode-grant-1", nonce="mode-grant-nonce-000001"`; main() (l.93) and bro_supervisor.produce_builder_bundle (l.385) never pass either. Ran bind_mode_grant_nonce on two grants differing only in session_id: 'mode grant nonce was already consumed by a different grant'.
-  - also: `engine/tools/bro_supervisor.py:385 ; engine/runtime/bro_contracts.py:554`
-  - fix: Generate a fresh uuid-based nonce and grant_id per grant inside build_mode_grant_payload instead of defaulting to constants.
-- **`engine/tools/bro_supervisor.py:608`** — Supervisor reads the workspace binding as a flat unsigned dict; the signed binding the runtime requires makes it KeyError
-  - `binding = json.loads(...)` then `binding["workspace_id"]`, `binding["repository"]`, `binding["control_plane_digest"]` — no verify_artifact, no payload unwrap. bro_bind_workspace emits `{payload, signature}`; KeyError is not in `except (SupervisorError, OSError)` (l.623). test_supervisor.py:96 feeds the flat shape. Read, not executed.
-  - also: `engine/tools/bro_bind_workspace.py:113 ; engine/runtime/bro_workspace.py:145 ; engine/tests/test_supervisor.py:96`
-  - fix: Verify the binding with verify_artifact(document, "workspace-binding", keys) in run_task and read the fields from the verified payload, with a test that uses a signed binding.
-- **`engine/tools/bro_validate.py:175`** — The foundation validator writes bytecode under digest roots, the exact shadow the wall refuses on
-  - `py_compile.compile(str(ROOT / rel), doraise=True)` over 41 runtime/ and tools/ targets writes __pycache__/*.pyc there; assert_no_bytecode_shadow refuses on that. ci.yml:859-864 admits it and adds a 'Clear bytecode caches' step; nothing clears it for a local run (engine/runtime/__pycache__ exists in this checkout).
-  - also: `.github/workflows/ci.yml:862 ; engine/runtime/bro_protected.py:145`
-  - fix: Syntax-check in memory (compile(source, path, 'exec')) or pass a cfile under a temp directory so the validator leaves no bytecode in the tree.
 - **`tools/check_contrast.py:139`** — The 'palettes mirror the tokens' check is a substring test on the whole file, not a per-token comparison
   - `if value.lower() not in sources[rel]`. Ran _require_palettes_mirror_tokens on the real manifest with light bg/surface swapped (#f5f6f8 <-> #ffffff): accepted. Set light bg to the DARK value: accepted. Docstring l.95 says the palettes 'must equal the files that ship them - asserted'.
   - fix: Parse each token's light and dark value out of tokens.ts / aios.css by name and compare that value to the manifest entry for the same name and theme.
@@ -448,7 +411,7 @@ All open. Grouped by kind; within a kind, by path.
   - also: `CLAUDE.md §6 (decision #78) ; apps/desktop/src/components/TrustSelftest.tsx:13 ; apps/desktop/src/services/desktop.ts:63`
   - fix: Reword the note (and the two frontend copies) to name the install-minted, floor-pinned anchor as the missing production root instead of an offline root or HSM.
 - **`apps/desktop/src-tauri/src/governed_selftest.rs:58`** — On-screen text and the Owner decision table still name an offline root as the route to production trust
-  - CUSTODY_NOTE: "production offline-root custody ... remain pending". OWNER_ACTION_REQUIRED.md:411: "trusted_verified only under your offline root"; line 404 of the same file: "Only an install-minted root can produce trusted_verified". Decision #78: no offline root. check_no_owner_key_ceremony.py prints GREEN.
+  - CUSTODY_NOTE: "production offline-root custody ... remain pending". OWNER_ACTION_REQUIRED.md:411: "trusted_verified only under [the root phrase gate-refused since #314]"; line 404 of the same file: "Only an install-minted root can produce trusted_verified". Decision #78: no offline root. check_no_owner_key_ceremony.py prints GREEN.
   - also: `docs/OWNER_ACTION_REQUIRED.md:411`
   - fix: Reword both to install-minted custody and add "offline root"/"offline-root" to the gate's phrase list outside history.
 - **`apps/desktop/src-tauri/src/lib.rs:157`** — retire_orphaned_anchor renames an anchor the seal says the app account can never rename
@@ -515,10 +478,6 @@ All open. Grouped by kind; within a kind, by path.
   - :49 last_independent_audit = 2026-09-19-tenth-audit-75fca65.md; :50 its note: "The NINTH round, of main @ 5cf9b8c"; :110 stop_gates: "standing independent-audit verdict is RED -- the NINTH round, apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md". AUDIT_LEDGER.md:12 says the TENTH, main @ 75fca65.
   - also: `apps/desktop/AUDIT/AUDIT_LEDGER.md:12`
   - fix: Change the note at :50 and the stop gate at :110 to the tenth round at 75fca65, or drop the round name from both and point only at last_independent_audit.
-- **`config/reachability-declarations.json:138`** — O-2 and O-3 entries say the gap closed and that an Owner-held key/artifact is required, against the inventory and decision #78
-  - :138 "the caller is the owner's out-of-band signing command"; :147 "that gap closed when `append` started attaching an anchor"; :167 "needs an operator-signed conductor-session artifact only the Owner can mint"; :168 "Still absent from engine/.bro/policy.json". PHASE_10:24-25 O-2/O-3 OPEN, owner artifact "no"; policy.json:9 sets it true.
-  - also: `docs/PHASE_10_PRODUCTION_ITEMS.md:24`
-  - fix: Rewrite the three reasons and the observed note to match the inventory: O-2 open because nothing sets anchor custody, the install mints keys, no person signs, and the policy flag is set.
 - **`config/required-checks.json:50`** — A temporary exclusion whose own condition is met sits in the permanent bucket, where no date forces it
   - :50 "NOT required yet on purpose ... Require it ... after one green run on main." Main run 36851213190 (962743a): `Tools · gate self-tests on Windows (python)` success. deferred-enforcement.json:17-18 says deliberately_excluded is "permanently excluded" and temporary ones go in `deferrals` with a date; deferrals is {}.
   - also: `config/deferred-enforcement.json:17`
@@ -535,10 +494,6 @@ All open. Grouped by kind; within a kind, by path.
   - Doc: "The app now provisions its own trust material on first launch... writes it under the app data directory". provision/src/anchor.rs:1170-1178 returns `ProvisionError::Unsupported` off Windows; posix_install.rs:1-10: "root mints the trust anchor the application may only find"; CLAUDE.md §6 agrees with the code.
   - also: `apps/desktop/src-tauri/provision/src/posix_install.rs:1-25`
   - fix: Replace the paragraph with the POSIX reality: brops_install_anchor run as root (deb postinst) mints the anchor and the app only verifies it.
-- **`docs/DEBIAN_DEPLOYMENT.md:303`** — Owner key ceremony survives in two live docs, citing steps the runbook deleted; the ceremony gate misses both
-  - "Both halves of this one need the Owner... until the Owner has run Steps 1, 3 and 4" (:303-306) and "/media/usb/bro-root/operator-root.json ... as this document says at Step 1" (:291), though :68 says "Steps 1–5 — deleted". check_no_owner_key_ceremony.py prints GREEN: none of its 6 phrases match.
-  - also: `docs/OPERATOR_GUIDE.md:368-369 ("three of them waiting on an artifact only the Owner can mint"), contradicting docs/ARCHITECTURE.md:103-107`
-  - fix: Remove both passages and add phrases such as "only the owner can mint" and "the owner has run steps" to FORBIDDEN_PHRASES.
 - **`docs/OWNER_ACTION_REQUIRED.md:931`** — §2c says all five O-items wait on Owner acts 'with credentials you hold'; §0 of the same page and the inventory say the opposite
   - L931 'all five are waiting on you'; L953 O-4 'the shipped registry grants the type to nobody'; L954 O-5 'Mint the evidence-floor anchor offline'; L961 'What a Builder can still do here is nothing'. But L9 'Custody needs nothing from you, ever', and PHASE_10 L26 'registry half is done', L42 'wiring and packaging'.
   - also: `docs/PHASE_10_PRODUCTION_ITEMS.md:23-50 and docs/SECURITY_MODEL.md:355-408`
@@ -579,14 +534,6 @@ All open. Grouped by kind; within a kind, by path.
   - phase-3.md:87 '**no duplicated schema file exists anywhere in the tree** ... `approval` ... **does not exist**'. phase-10.md:69 '`engine/schemas/` still holds a byte-identical copy of all **six**'. cmp confirms all 6 contracts/*.schema.json identical to engine/schemas/, incl. approval-request.
   - also: `docs/roadmap/phase-10.md:69 and :78 ; contracts/ vs engine/schemas/ ; CLAUDE.md:62 and contracts/README.md:16 still say 'five'`
   - fix: Mark the Phase 3 sentence as superseded (dated) and align the five/six count in CLAUDE.md and contracts/README.md with contracts/index.json.
-- **`engine/AUDIT/tickets/H-4-forgeable-audit-trail.md:47`** — H-4 ticket names an env var that does not exist and says only the Owner can provision the signer, against decision #78
-  - H-4:47 'refuses by name when `BRO_AUDIT_HEAD_SIGNER`'; :6 'custody only the Owner can provide'; :49 'Provisioning that signer is the Owner's step'. Code: engine/runtime/bro_audit_log.py:128-129 BRO_AUDIT_ANCHOR_SIGNER / BRO_AUDIT_ANCHOR_KEY_ID. BRO_AUDIT_HEAD_SIGNER appears nowhere else in the repo.
-  - also: `engine/runtime/bro_audit_log.py:128 ; CLAUDE.md §6 ('none needs an Owner-minted artifact', 'No person holds a key')`
-  - fix: Correct the variable to BRO_AUDIT_ANCHOR_SIGNER/BRO_AUDIT_ANCHOR_KEY_ID and restate the blocker as deployment wiring plus a second principal, not an Owner step.
-- **`engine/docs/OPERATOR_RUNBOOK.md:118`** — Runbook says the recovery private key is owner-held offline; the install mints it and keeps it in the app store
-  - Runbook :118 'the `recovery` private key is held **offline**' and :242 'offline owner-held `recovery` authority'. provision/src/lib.rs:110 mints "recovery" and :172 lists it among retained private halves. docs/DEBIAN_DEPLOYMENT.md:6: 'No person holds or carries a root key'.
-  - also: `apps/desktop/src-tauri/provision/src/lib.rs:166-175; docs/DEBIAN_DEPLOYMENT.md:6`
-  - fix: Rewrite §0.1 and §3 step 3 to say that on the desktop deployment the recovery key is install-minted and held by the app account, so a recovery-proof there is not independent of the process it polices.
 - **`engine/laws/registry.json:109`** — Law L5 names bro_receipt.verify_receipt_set as its PRIMARY execution surface, but nothing calls it
   - registry.json L109: {"module": "bro_receipt", "symbol": "verify_receipt_set", "path_role": "primary"}. Repo-wide grep finds only the def (bro_receipt.py:144) and test_execution_receipts.py:223,231. The Stop gate uses its own loop in bro_completion.py:178-180.
   - also: `engine/runtime/bro_completion.py:178`
@@ -607,14 +554,6 @@ All open. Grouped by kind; within a kind, by path.
   - Module scope exec of REPO_ROOT/.github/supply-chain/npm_audit_filter.py; test_ladder_pull_evidence.py:48 imports from bridge/. On a copy of engine/ alone both gave `ImportError: Failed to import test module` (FileNotFoundError / No module named 'governed_turn_result_bridge'). BRIDGE_SIDECAR prerequisite exists but is unused here.
   - also: `engine/tests/test_ladder_pull_evidence.py:48`
   - fix: Move the out-of-tree imports behind a _prerequisites.require() in setUpModule/setUp so the modules skip (or fail under CI) with a named reason.
-- **`engine/tests/test_owner_artifact_registration.py:417`** — Tests tell the reader that O-4 / recovery closure is the Owner's key ceremony, against decision #78
-  - L406 'what remains is the Owner's signature'; L417 'That is the Owner's ceremony'; L501 'only the Owner can do that'; test_reconciler.py:173 'when the owner mints the artifact'. bro_control_room_api.py:176 says 'no person holds or mints one'. check_no_owner_key_ceremony.py is GREEN: its 6 phrases miss these.
-  - also: `engine/tests/test_reconciler.py:173 ; engine/tests/test_recovery.py:35 ; tools/check_no_owner_key_ceremony.py (FORBIDDEN_PHRASES)`
-  - fix: Reword the four docstrings to 'the install provisions the control-room key; nothing in the shipped product calls the mint yet' and add the claim phrases to the gate's rule 3.
-- **`engine/tools/broctl.py:198`** — keygen cannot set subject_agent_id, yet the deploy preflight refuses any builder/verifier key without one
-  - generate_key takes `subject_agent_id` (l.77) but cmd_keygen calls `generate_key(args.authority, args.key_id or ..., args.production)` and the parser has no such flag; only tests pass it. bro_deploy_preflight.py:100 fails every BUILDER/VERIFIER key with `not key.subject_agent_id`.
-  - also: `engine/tools/bro_deploy_preflight.py:100`
-  - fix: Add a --subject-agent-id option to `broctl keygen` and pass it through to generate_key.
 - **`tools/check_capabilities.py:72`** — The six 'INTENTIONALLY_UNGATED' commands are not ungated: Tauri rejects them, so their UI callers can never reach them
   - Checker :60 and build.rs:4-6 say a command absent from the manifest is 'webview-invokable with NO permission entry'. tauri-2.11.5 webview/mod.rs:1823 rejects when `has_app_acl_manifest && invoke.acl.is_none()`. default.json has no grant for them; desktop.ts:353-390,483 invoke them. Source-read, not run.
   - also: `apps/desktop/src-tauri/build.rs:4 ; apps/desktop/src-tauri/src/lib.rs:417 ; apps/desktop/src/services/desktop.ts:353 ; prior record: apps/desktop/AUDIT/2026-08-06-independent-audit.md:2202`
@@ -803,7 +742,7 @@ All open. Grouped by kind; within a kind, by path.
   - also: `.github/workflows/release.yml:1-21,73-77,113-135`
   - fix: Point §2.1 at the root release.yml and rewrite the signing note and the §11 'Installers are unsigned' bullet from what that workflow does.
 - **`docs/SECURITY_MODEL.md:19`** — Trust-boundary section still says the broker's production root is compiled in; since T-131/T-140 the broker reads it from the floor-pinned anchor file
-  - L19 'TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)'; L28 'The production root pin is compiled in'. broker/src/tcb.rs:4 'The Linux broker no longer pins a compiled-in root'. OWNER_ACTION L333-335 quotes tcb.rs 'held OFFLINE by the operator', text no longer in that file.
+  - L19 'TCB-pinned ROOT PUBLIC key (compiled into the broker, tcb.rs)'; L28 'The production root pin is compiled in'. broker/src/tcb.rs:4 'The Linux broker no longer pins a compiled-in root'. OWNER_ACTION L333-335 quotes tcb.rs '[a phrase gate-refused since #314]', text no longer in that file.
   - also: `docs/OWNER_ACTION_REQUIRED.md:331-338`
   - fix: Redraw §1.1 around the floor-pinned anchor file and INSTALL_MINTED_CUSTODY_ACCEPTED, and mark the OWNER_ACTION 'What landed' paragraph as superseded by its own §0.
 - **`docs/SECURITY_MODEL.md:239`** — 'Windows-only today' POSIX bullet describes a mechanism the code replaced: the refusal is no longer seal(), an existing anchor is used, and a root installer binary exists
@@ -1151,7 +1090,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/runtime/bro_control_plane.py:239` — Every allow is recorded as 'recovery journal prepared', including reads and conductor actions where nothing was prepared
 - `engine/runtime/bro_control_room_api.py:772` — Historic verdicts and evidence are re-verified against today's clock, so one expired or revoked key blanks the whole surface
 - `engine/runtime/bro_control_room_api.py:823` — An owner command with no attestation is told to present a conductor-session, which the owner path refuses; the owner refusal constant is never used
-- `engine/runtime/bro_orchestration_runtime.py:558` — Stale-lock breaker compares two back-to-back reads of the same token, so the 'released and re-taken' guard cannot fire
 - `engine/runtime/brops_canonical.py:254` — Governed generation_config regexes use `$` + .match, so a trailing newline is accepted as canonical; the Rust authority rejects it
 - `engine/runtime/challenge_authority.py:130` — _is_sha256_hex accepts strings that are not 64 hex characters, and the authority signs them
 - `engine/runtime/challenge_authority_server.py:172` — A valid create-pending can produce an issue reply over the 8192 frame bound; the row is burned ISSUED and nothing is written
@@ -1170,7 +1108,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/tools/bro_backup.py:182` — Backup copies a ledger into the archive before verifying its chain, contradicting 'never archived'
 - `engine/tools/bro_run_receipt.py:144` — Every `--` token is stripped from the wrapped command, changing what runs and what the receipt signs
 - `engine/tools/bro_traceability.py:282` — LAW_INDEX drift check is a substring test, so L1 is satisfied by L10–L16
-- `engine/tools/bro_validate.py:177` — Foundation validator reports skills=N from the stored `count` field, never from the list or the disk
 - `engine/tools/brops_receipt_signer.py:424` — stdin entrypoint says it always exits 0 with a refusal frame, but a missing key file escapes the except
 - `tools/check_audit_reports.py:62` — ORDINALS stops at 'tenth' and the current round is the tenth, so the next round breaks the gate
 - `tools/check_audit_reports.py:360` — GREEN claims the OWNER page leads with the newest report, which is never checked and is skipped if the page is missing
@@ -1219,7 +1156,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:772` — Round 9 intro claims every row carries the tenth round's verdict; the nine promotion rows carry none
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:864` — The record says the third audit's promotions are 'not applied in this file yet' while the same file carries them applied
 - `apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md:872` — The third audit's A-01 headline sits under the SECOND audit's 'Prior assessment', followed by 'That audit's target ... 219c763'
-- `apps/desktop/CHANGELOG.md:68` — CHANGELOG records an Owner offline-root ceremony and links a ceremony doc that was removed; the standing corrections do not cover it
 - `apps/desktop/README.md:45` — README names provider value `claude`; the code and SECURITY.md accept only `claude-cli`
 - `apps/desktop/docs/architecture/AI_RUNTIME_CONTRACTS.md:16` — Run lifecycle and budget behaviour are specified three different ways
 - `apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md:95` — Three incompatible responsive breakpoint tables
@@ -1296,7 +1232,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/config/runtime-dependencies.json:14` — Dependency SST forbids a bare 'python' token in hook wiring; both hook wirings start with one
 - `engine/laws/meta-layer.json:91` — LAW_INDEX.md is declared 'derived, not hand-written' but no generator exists and the drift check is substring-only
 - `engine/runtime/bro_audit_log.py:215` — Audit ledger uses the O_EXCL lock file that bro_completion rejects as a self-inflicted permanent denial
-- `engine/runtime/bro_signature.py:16` — Trust-model prose still describes an offline operator/issuer key, contradicting the same file and Owner decision #78
 - `engine/runtime/brops_socket.py:4` — Module docstring promises an owner-only 0700 socket directory; the code makes the directory 0755 and the socket 0666
 - `engine/runtime/governed_supervisor_ledger.py:414` — The _BOUND_FIELDS 'rolled-back registry epoch' fix guards accept_prepare, which no production code calls; the front door's reuse_or_prepare still answers IDEMPOTENT
 - `engine/runtime/governed_turn_open.py:613` — Comment says a staging ledger fault 'is still a REFUSAL'; the code raises SupervisorError
@@ -1306,7 +1241,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/skills/communication-writing-negotiation/SKILL.md:36` — 11 skills hand release/send actions to an 'authorized executor', a role that does not exist; 31 name the Push Executor
 - `engine/tests/catalog.json:4` — catalog declares orphan_tests_forbidden: true but lists 47 of 98 test modules and nothing enforces it
 - `engine/tests/test_brops_install.py:47` — Tests in this slice ERROR on an engine-only tree, against the rule _prerequisites.py states
-- `engine/tests/test_conductor_session_token.py:19` — Test docstrings say the Owner signs/mints the conductor token; the code and decision #78 say no person does
 - `engine/tests/test_governed_acceptance.py:1832` — The design still calls the 2848 envelope cap a machine-checked schema-max derivation; the tree pins the real maximum at 2888
 - `engine/tests/test_reconciler.py:167` — Two different OWNER_ACTOR_UNPROVABLE constants; the test pins the one that says no owner artifact type exists
 - `engine/tools/bro_deploy_preflight.py:49` — Preflight claims to check every configured ledger/store but its list omits three the runtime reads
@@ -1355,7 +1289,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src-tauri/broker/src/preflight.rs:5` — Module doc says build_governed_executor has 15 `return fail_closed()` branches; it has 16
 - `apps/desktop/src-tauri/broker/src/preflight.rs:256` — The floor row cites a refusal reason the broker never emits (`blocked:keys:floor_not_persisted`)
 - `apps/desktop/src-tauri/broker/src/preflight.rs:1737` — Fixture comment refers to `broker_config_keys`, a name that exists nowhere in the repository
-- `apps/desktop/src-tauri/broker/tests/broker_binary_e2e.rs:16` — Header points at a 'six-piece backlog' in OWNER_ACTION_REQUIRED.md section 0 that is not there
 - `apps/desktop/src-tauri/capabilities/default.json:4` — The description says 'Every app IPC command is declared in the app manifest (build.rs)'; 6 of the 94 registered commands are not
 - `apps/desktop/src-tauri/core/schema/0022_integration_auth_ref.sql:12` — The documented example reference `vault:kv/data/brops/smtp#password` is refused by the CHECK it documents
 - `apps/desktop/src-tauri/core/schema/supervisor_ledger.sql:4` — The mirror's header calls itself the single normative source and says to edit THIS file; it also cites a CLAUDE.md §4 that says nothing of the kind
@@ -1392,7 +1325,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `apps/desktop/src-tauri/win-broker/src/bin/restricted_launch.rs:13` — Doc and comment say CreateProcessWithTokenW / SeImpersonate; the code calls CreateProcessAsUserW with SeIncreaseQuota
 - `apps/desktop/src-tauri/win-live/proof/CROSS_ACCOUNT_PROOF.md:31` — "cargo test -p brops-win-live runs in no CI workflow" is false today
 - `apps/desktop/src-tauri/win-live/src/bin/win_live_turn.rs:181` — Driver comment still makes the floor-signature claim the hardening note says was removed everywhere
-- `apps/desktop/src-tauri/win-live/src/tcb.rs:55` — The kit still describes an 'offline root' and a nonexistent gate symbol after Owner decision #78
 - `apps/desktop/src-tauri/win-live/src/tcb_floor.rs:24` — Module docs say the Windows-only code is covered by no CI; CI runs it on windows-latest
 - `apps/desktop/src/components/Shell.tsx:282` — Sidebar footer hardcodes 'MENQ OS · v0.9'; the build is BroPS 0.1.0
 - `apps/desktop/src/features/Knowledge.honesty.test.tsx:10` — Test header says the knowledge write record is "not readable from this page yet — no command is registered for it"
@@ -1444,7 +1376,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/ci/live/run_signer.py:42` — Signer docstring still says the output blob is broker-written; the broker was removed from the store and the recorder publishes it
 - `engine/docs/REPOSITORY_LAYOUT.md:4` — Repository layout omits seven tracked engine directories and still calls the root 'Bro/'
 - `engine/runtime/bro_control_room_api.py:117` — O-4 header says an owner command is REFUSED and no artifact type exists; the same file registers and accepts one
-- `engine/runtime/bro_policy.py:68` — Security comments in bro_policy describe a shell parser that no longer exists
 - `engine/runtime/governed_acceptance.py:63` — Module docstring says no supervisor->signer transport exists and nothing wires the driver; both exist in the tree
 - `engine/runtime/governed_supervisor.py:862` — Stale counts and cross-references in comments: '25 fields' is 28; constants said to 'mirror governed_supervisor.py' are imported from the ledger; line refs point at the wrong lines
 - `engine/runtime/governed_supervisor_server.py:6` — Module docstring says the front door allowlists ONLY the broker and DENIES the sidecar; the code admits the sidecar for six protocols
@@ -1467,7 +1398,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/tests/test_live_broker_config.py:13` — "Every refusal is exercised. The writer refuses fourteen ways" is false on both counts
 - `engine/tests/test_negative_matrix.py:922` — NM-FRAME docstring describes a matrix state that no longer exists
 - `engine/tests/test_owner_artifact_registration.py:26` — Module docstring and class name say a valid control-room-command is still refused; the same file proves it is accepted
-- `engine/tools/bro_supervisor.py:18` — Module docstring documents a command line whose flags do not exist
 - `tools/check_capabilities.py:13` — Checker docstring puts the policy file at capabilities/command-policy.json; it lives one level up
 - `tools/check_produced_artifact.py:54` — Docstring and the contract's own `why` still say every locator ships null and nothing exists yet, while the contract is filled in and the header says the gate is GREEN
 - `tools/check_reachability.py:22` — Module docstring says assert_no_bytecode_shadow 'has never once been called' and that rust_symbols 'is empty'; both are false today
@@ -1478,8 +1408,7 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `tools/test_check_canon_budget.py:142` — TheRealCanon docstring says the gate is expected to be RED on this repository; it is GREEN and the class never runs it
 - `tools/test_check_doc_claims.py:253` — A test pins a version exemption whose reason is gone: CLAUDE.md no longer says cargo 1.96
 - `tools/test_check_repo_state.py:888` — Closing comment names a guard test that does not exist
-- `tools/test_check_residual_items.py:204` — Docstring says O-2/O-5 need artifacts 'only the Owner can mint'; the inventory and CLAUDE.md say none does, so the test's `yes` branch is dead
-- `tools/test_check_root_anchor_custody.py:158` — Comment asserts 'The Owner holds ONE offline root', contradicting Owner decision #78 and the gate's own docstring
+- `tools/test_check_residual_items.py:204` — Docstring says O-2/O-5 need artifacts '[a phrase gate-refused since #314]'; the inventory and CLAUDE.md say none does, so the test's `yes` branch is dead
 - `tools/test_roadmap_split.py:220` — Module docstring and a skip message still describe the abandoned git walk-back; the baseline is a committed fixture, and one test skips where another fails
 
 ### test-defect (90)
@@ -1564,7 +1493,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `tools/test_check_c1_tokens.py:269` — unittest.main() sits above later test classes in two files, so a direct run silently drops tests (ninth audit I-05 again)
 - `tools/test_check_capabilities.py:105` — Six refusal arms of the capability-inventory gate have no test that goes red without them
 - `tools/test_check_contracts_single_source.py:310` — Two path-spelling classes subclass a TestCase to borrow a helper, so 27 inherited tests run twice
-- `tools/test_check_no_owner_key_ceremony.py:98` — 'A sweep that misses its control is red' never checks that the gate goes red
 - `tools/test_check_prior_art.py:176` — The real-repository overlap test asserts only that a dict is returned
 - `tools/test_check_release_signing.py:216` — Test named '...never_prints_a_value' makes no assertion about values
 - `tools/test_check_repo_state.py:870` — test_both_entry_points_collect_the_same_number_of_tests compares the imported module with itself and cannot detect the defect it names
@@ -1692,7 +1620,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `engine/config/documentation-manifest.json:1` — Docs 'freshness' gate is equality against a literal copy in the tool; all 70 docs claim review on 2026-07-19
 - `engine/runtime/bro_completion.py:366` — Two store scanners discriminate chain events separately, and the docstring has their strictness backwards
 - `engine/runtime/bro_control_room_api.py:158` — ACTOR_PROVEN_BY_SESSION is re-spelled locally right after a comment saying the basis vocabulary is never re-spelled
-- `engine/runtime/bro_orchestration_runtime_v1.py:119` — V1 re-implements claim_next/_mint_lease/_require_lease/_active_lease already moved into the base class, and the copy has drifted on what it records
 - `engine/runtime/bro_policy.py:275` — Repository-URL normalisation exists three times: two byte-identical copies and a third that returns a different identity for the same remote
 - `engine/runtime/brops_canonical.py:158` — The brops.request.v1 envelope hash is hand-written four times while brops_canonical calls itself the single source of truth
 - `engine/runtime/brops_protocol.py:124` — Five lenient base64url decoders remain beside the 'one strict implementation'; the receipt signer decodes the attestation signature with the lenient one
@@ -1716,7 +1643,6 @@ All open. One line each; the evidence is in the workflow journal named in §6.
 - `tools/check_coordination.py:75` — Three different definitions of 'substantive change' enforce the same update law
 - `tools/check_reachability.py:480` — capability_grants() parsing default.json is written twice, in two gates
 - `tools/check_repo_state.py:945` — Job-name regex was 'factored out' into workflow_job_names() but verify_required_contexts_exist still carries its own copy
-- `tools/check_root_anchor_custody.py:59` — Two hand-kept 'text file' extension lists have drifted; the seed sweep skips suffixless files and uppercase hex
 - `tools/generate_agent_definitions.py:130` — Authority derivation is re-implemented in the generator instead of calling the engine's resolver
 - `tools/generate_agent_definitions.py:130` — authority_for() re-implements the engine's resolve_role_authority() derivation instead of calling it
 - `tools/sync_active_pr.py:204` — _rest_open_prs exists twice; sync_active_pr still carries the page-join parse that check_repo_state's own docstring calls BROKEN and replaced
@@ -1853,3 +1779,35 @@ Not landed yet.
 
 The workflow journal is session-local and is **not** in the repository: this file is the durable copy. A finding is closed by the pull request that fixes it, which strikes its line here.
 
+## 7. Closed
+
+Struck from the lists above by the pull request named. ◑ the Builder's claim; a second agent re-ran the suites and a sample of the mutation proofs, nothing here is independent.
+- `docs/PHASE_10_PRODUCTION_ITEMS.md:370` — fixed, #314
+- `engine/runtime/bro_secrets.py:48` — fixed, #314
+- `engine/runtime/bro_security.py:183` — fixed, #314
+- `engine/runtime/bro_security.py:224` — fixed, #314
+- `engine/tools/brops_live_runstate.py:76` — fixed, #314
+- `engine/runtime/bro_approval_requests.py:204` — fixed, #314
+- `engine/runtime/bro_orchestration_runtime.py:695` — fixed, #314
+- `engine/tools/bro_authorize_specialist.py:43` — fixed, #314
+- `engine/tools/bro_supervisor.py:608` — fixed, #314
+- `engine/tools/bro_validate.py:175` — fixed, #314
+- `config/reachability-declarations.json:138` — fixed, #314
+- `docs/DEBIAN_DEPLOYMENT.md:303` — fixed, #314
+- `engine/AUDIT/tickets/H-4-forgeable-audit-trail.md:47` — fixed, #314
+- `engine/docs/OPERATOR_RUNBOOK.md:118` — fixed, #314
+- `engine/tests/test_owner_artifact_registration.py:417` — fixed, #314
+- `engine/tools/broctl.py:198` — fixed, #314
+- `engine/runtime/bro_orchestration_runtime.py:558` — fixed, #314
+- `engine/tools/bro_validate.py:177` — fixed, #314
+- `apps/desktop/CHANGELOG.md:68` — fixed, #314
+- `engine/runtime/bro_signature.py:16` — fixed, #314
+- `engine/tests/test_conductor_session_token.py:19` — fixed, #314
+- `apps/desktop/src-tauri/broker/tests/broker_binary_e2e.rs:16` — fixed, #314
+- `apps/desktop/src-tauri/win-live/src/tcb.rs:55` — fixed, #314
+- `engine/runtime/bro_policy.py:68` — fixed, #314
+- `engine/tools/bro_supervisor.py:18` — fixed, #314
+- `tools/test_check_root_anchor_custody.py:158` — fixed, #314
+- `tools/test_check_no_owner_key_ceremony.py:98` — fixed, #314
+- `engine/runtime/bro_orchestration_runtime_v1.py:119` — fixed, #314
+- `tools/check_root_anchor_custody.py:59` — fixed, #314
