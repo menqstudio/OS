@@ -10,6 +10,8 @@ import { Mark } from '../components/Ambient';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { STR } from './Research.strings';
+import { classifyDeleteRefusal, type DeleteRefusal } from './researchLibraryDeleteRefusal';
+import { parseTimestamp } from './timestamps';
 import { heldLabel, heldNoteKey } from './Research.provenance';
 import type { ResearchItem } from '../domain/entities';
 import type { Lang, Tone } from '../domain/enums';
@@ -56,14 +58,21 @@ function statusLabel(L: Localize, status: string): string {
 // result". None of it existed: this page was a local CRUD list with no run, no receipt and no
 // refusal — the one page in the phase whose whole point is that it crosses the wall.
 //
-// It runs through `stream_ask`, which is the SAME governed path chat uses: buffered, verified
-// desktop-side, and the answer held server-side under a one-time id rather than streamed into
-// the window. That last part is why saving is a backend command taking the id — the app window
-// never receives the text, so it cannot save something the engine did not produce (P1-6).
+// It runs through `stream_ask`, the same command chat's ask uses, and WHICH path that takes is
+// the backend's decision from the resolved provider — this page does not choose it and cannot
+// assume it (`commands.rs::stream_ask`):
 //
-// In the shipped app this will render `blocked`, because the production gate is deliberately
-// shut. That is not a placeholder for a working run; it IS the working run, reporting what the
-// wall said. A version of this page that showed an answer today would be lying.
+//   * no provider configured — the state of an install that sets nothing — `resolve()` fails
+//     and the command sends `error`. This page renders `failed`, with that message. Not
+//     `blocked`: nothing refused, there was simply no provider.
+//   * the governed engine — buffered, verified desktop-side, the answer held server-side under
+//     a one-time id; a refusal there arrives as the typed `blocked` event.
+//   * an ungoverned development provider (`BROPS_ALLOW_UNGOVERNED`) — no governed turn, no
+//     challenge, no receipt; the `ready` event says so in `provenance`, and the badge is the
+//     worst-case one.
+//
+// The held id is why saving is a backend command taking the id — the app window never receives
+// the text, so it cannot save something the backend did not produce (P1-6).
 type RunState =
   | { k: 'idle' }
   | { k: 'running' }
@@ -124,6 +133,11 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
         // but a keymap that assumes that stops being true the first time one is added.
         const tag = (e.target as HTMLElement).tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        // Enter on a BUTTON is that button's own activation and stays so. Without this the
+        // bubbled Enter from the focused "Save to knowledge" button was prevented and turned
+        // into `start()`: the held result id was dropped and a NEW model call was issued,
+        // instead of the save the owner asked for.
+        if (e.key === 'Enter' && tag === 'BUTTON') return;
         if (e.key === 'Enter' && run.k !== 'running') { e.preventDefault(); start(); }
         else if (e.key === 'Escape' && run.k === 'running') { e.preventDefault(); cancel(); }
       }}
@@ -247,13 +261,17 @@ function CreateDialog(
   );
 }
 
-// ── Delete confirm (Modal) — wired to the REAL delete_research_item command ────
+// ── Delete confirm (Modal) — calls `delete_research_item`, which cannot delete today: the
+// window capability set denies it, and the handler takes no database handle and returns
+// `forbidden_hard_delete` unconditionally. So the dialog says nothing will be removed, and
+// the refusal — the only outcome a backend in this tree can produce — is classified: a
+// POLICY refusal is named as one, because otherwise the owner reads it as "try again".
 function DeleteDialog(
   { item, onClose, onDeleted }: { item: ResearchItem; onClose: () => void; onDeleted: (id: string) => void },
 ) {
   const { t, lang } = useApp();
   const L = makeL(lang);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DeleteRefusal | null>(null);
   const [busy, setBusy] = useState(false);
 
   const confirm = () => {
@@ -263,15 +281,20 @@ function DeleteDialog(
       .deleteResearchItem(item.id)
       .then(() => onDeleted(item.id))
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(classifyDeleteRefusal(e, 'delete_research_item'));
         setBusy(false);
       });
   };
 
   return (
     <Modal title={L('deleteTitle')} onClose={onClose}>
-      {error && <div className="form-error">{error}</div>}
-      <p>{L('deletePrompt')}</p>
+      {error && (
+        <div className="form-error" role="alert">
+          {error.kind === 'policy' && <div>{L('deleteRefusedPermanent')}</div>}
+          <div>{error.reason}</div>
+        </div>
+      )}
+      <p>{t('confirm.deleteDeniedBody')}</p>
       <p className="muted"><b>{item.title}</b></p>
       <div className="form-actions">
         <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
@@ -315,8 +338,8 @@ export function Research() {
   const fmtDate = (raw: string): string => {
     const v = raw?.trim();
     if (!v) return '—';
-    const d = new Date(isNaN(Number(v)) ? v : Number(v));
-    return isNaN(d.getTime()) ? v : dateFmt.format(d);
+    const d = parseTimestamp(v);
+    return d === null ? v : dateFmt.format(d);
   };
 
   const q = query.trim().toLowerCase();

@@ -12,6 +12,7 @@ import { useAsync } from '../hooks/useAsync';
 import type { LibraryItem } from '../domain/entities';
 import type { Lang } from '../domain/enums';
 import { STR } from './Library.strings';
+import { classifyDeleteRefusal, type DeleteRefusal } from './researchLibraryDeleteRefusal';
 
 // ── §D `library` ❑ Դարան — reskinned to the brops-aios "Դարան / Archive" ──────
 // The component / prompt / pattern catalog, wired end-to-end to the REAL desktop
@@ -181,10 +182,11 @@ export function Library() {
   const [creating, setCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LibraryItem | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  // The backend's own reason for REFUSING a delete. There was no `.catch` here at all,
-  // so a denied `delete_library_item` closed the dialog and reloaded the same row back
-  // with nothing said. Now the refusal is stated and stays until dismissed.
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // The backend's own reason for REFUSING a delete, classified. There was no `.catch` here at
+  // all, so a denied `delete_library_item` closed the dialog and reloaded the same row back
+  // with nothing said. Now the refusal is stated and stays until dismissed — and a refusal
+  // that is POLICY says so, because the row coming back otherwise reads as "try again".
+  const [deleteError, setDeleteError] = useState<DeleteRefusal | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -238,7 +240,15 @@ export function Library() {
     // the whole time, and the panel itself had no tab stop, so a keyboard user could see the
     // preview change and never reach it. Enter now hands focus to the panel, and Escape hands
     // it back to the row it came from.
-    else if (e.key === 'Enter' && filtered.length) { e.preventDefault(); previewRef.current?.focus(); }
+    //
+    // ONLY from a row. This handler sits on the <ul>, and each row also holds its ✕ delete
+    // button; a bubbled Enter from THAT button was prevented and turned into "focus the
+    // preview", so the delete dialog could not be opened from the keyboard with Enter at all.
+    else if (e.key === 'Enter' && filtered.length
+      && (e.target as HTMLElement).classList.contains('lib-item')) {
+      e.preventDefault();
+      previewRef.current?.focus();
+    }
   };
   /** Return from the preview to the row that opened it. Focus that goes somewhere with no way
    *  back is a trap, and the row is where the user's place in the list is. */
@@ -270,7 +280,11 @@ export function Library() {
     void item;
   };
 
-  // ── REAL hard-delete (delete_library_item), gated behind ConfirmDialog. ──
+  // ── Delete (delete_library_item). It cannot delete today: the window capability set denies
+  // the command, and behind that the handler takes no database handle and returns
+  // `forbidden_hard_delete` unconditionally. The confirmation therefore says nothing will be
+  // removed; the `.then` arm is what this page does the day T-011 gives the command an undo
+  // or a native confirmation, and no backend in this tree can reach it.
   const confirmDelete = () => {
     if (!pendingDelete || deleteBusy) return;
     setDeleteBusy(true);
@@ -279,7 +293,7 @@ export function Library() {
       .deleteLibraryItem(pendingDelete.id)
       .then(() => { setSelected(0); })
       .catch((e: unknown) => {
-        setDeleteError(e instanceof Error ? e.message : String(e));
+        setDeleteError(classifyDeleteRefusal(e, 'delete_library_item'));
       })
       .finally(() => {
         setPendingDelete(null);
@@ -408,7 +422,8 @@ export function Library() {
         <div className="lib-delete-error" role="alert">
           <b>{L('deleteRefusedTitle')}</b>
           <span>{L('deleteRefusedBody')}</span>
-          <span className="mono lib-delete-reason">{deleteError}</span>
+          {deleteError.kind === 'policy' && <span>{L('deleteRefusedPermanent')}</span>}
+          <span className="mono lib-delete-reason">{deleteError.reason}</span>
           <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
         </div>
       )}
@@ -481,7 +496,7 @@ export function Library() {
       {pendingDelete && (
         <ConfirmDialog
           title={L('deleteTitle')}
-          message={`${pendingDelete.title} — ${L('deleteConfirm')}`}
+          message={`${pendingDelete.title} — ${t('confirm.deleteDeniedBody')}`}
           confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={confirmDelete}

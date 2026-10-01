@@ -16,6 +16,11 @@ export const STR = {
     hy: 'notify: <տեքստ> · task: <վերնագիր> · note: <վերնագիր>',
     ru: 'notify: <текст> · task: <заголовок> · note: <заголовок>',
   },
+  runsUnreadable: {
+    en: 'Run history could not be read',
+    hy: 'Գործարկումների պատմությունը չհաջողվեց կարդալ',
+    ru: 'Не удалось прочитать историю запусков',
+  },
   noRuns: {
     en: 'No runs yet — use “Run now”, or wait for an interval trigger to fire.',
     hy: 'Դեռ գործարկումներ չկան — սեղմիր «Գործարկել հիմա» կամ սպասիր interval trigger-ի։',
@@ -263,10 +268,13 @@ export const STR = {
     hy: 'Պահապանը գործարկվեց կամ պատը մերժեց այս գործողությունը։ Լուծեք պահապանի պայմանը կամ պահանջեք հաստատում, ապա կրկնեք։',
     ru: 'Сработал страж или стена отклонила это действие. Устраните условие стража или запросите одобрение, затем повторите.',
   },
+  // `list_automations` only locks the local database and queries it. There is no mode, scope or
+  // approval behind that read, so a refusal of it is not described as one that any of them opens.
+  readRefused: { en: 'Read refused', hy: 'Ընթերցումը մերժվեց', ru: 'Чтение отклонено' },
   storeDenied: {
-    en: 'This automation store is denied in the current mode or scope. Switch to work mode, or request the required scope/approval, then retry.',
-    hy: 'Այս ավտոմատների պահեստը մերժված է ընթացիկ ռեժիմում կամ շրջանակում։ Անցեք work ռեժիմ կամ պահանջեք անհրաժեշտ շրջանակ/հաստատում, ապա կրկնեք։',
-    ru: 'Это хранилище автоматизаций запрещено в текущем режиме или области. Переключитесь в режим work или запросите нужную область/одобрение, затем повторите.',
+    en: 'The backend refused to read the automation list. This is a local read: no mode, scope or approval opens it. The reason above is what it returned.',
+    hy: 'Backend-ը մերժեց ավտոմատների ցուցակի ընթերցումը։ Սա տեղային ընթերցում է. այն չի բացում ոչ ռեժիմ, ոչ շրջանակ, ոչ հաստատում։ Վերևի պատճառը հենց այն է, ինչ վերադարձվել է։',
+    ru: 'Бэкенд отказался читать список автоматизаций. Это локальное чтение: его не открывает ни режим, ни область, ни одобрение. Причина выше — то, что он вернул.',
   },
 
   // ── conduit lane ─────────────────────────────────────────────────────────────

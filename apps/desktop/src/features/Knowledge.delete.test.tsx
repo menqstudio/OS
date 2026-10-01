@@ -59,6 +59,10 @@ async function deleteTheArticle() {
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   // Confirm inside the dialog — the danger-variant control, not the row's own button.
   const dialog = await screen.findByRole('dialog');
+  // The confirmation does not promise a delete the backend cannot perform. It used to read
+  // "This action cannot be undone." above a button whose only possible outcome is a refusal.
+  expect(dialog).toHaveTextContent(/Nothing will be removed/);
+  expect(dialog).not.toHaveTextContent(/cannot be undone/i);
   const confirm = Array.from(dialog.querySelectorAll('button')).find(
     (b) => b.className.includes('danger'),
   );
@@ -94,6 +98,10 @@ describe('Knowledge — a REFUSED delete is surfaced, never swallowed', () => {
   });
 });
 
+// No backend in this tree can produce this outcome: `delete_knowledge` is denied by the window
+// capability set and its handler returns `forbidden_hard_delete` unconditionally. The test pins
+// the renderer's success arm — what the page does the day T-011 gives the command an undo or a
+// native confirmation — and is not evidence that a delete works today.
 describe('Knowledge — an ACCEPTED delete reports the real outcome', () => {
   it('announces the deletion only after the backend confirms, and raises no alert', async () => {
     setup('accept');

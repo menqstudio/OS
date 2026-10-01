@@ -14,12 +14,18 @@ import {
   telemetryLostStr,
   peakInlineStr,
   hiddenTailStr,
+  seededNoteStr,
 } from './Activity.strings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // activity ♥ Զարկերակ — the "System Pulse Monitor".
 //
-// Every beat is a REAL system event from `desktop.listActivity()`. The ECG strip
+// Every beat is a REAL system event from `desktop.listActivity()` — which is why a row
+// `repo::seed` fabricated (`source === 'seed'`) is NOT a beat. The seed writes dozens of
+// audit rows at first launch to give this very strip "a real heartbeat"; the row carries a
+// mark saying so, and this page never read it, so the demo rows were plotted, counted,
+// rated and tallied as system events. They are held out of every instrument below and the
+// page says how many it held out. The ECG strip
 // stays the interactive `StripChart` primitive — one keyboard-scrubbable blip per
 // real event, deterministic geometry, reduced-motion aware. The surrounding HUD
 // (hero brackets, pulse-rail core, beat timeline, vitals panel) is re-dressed to
@@ -76,7 +82,13 @@ export function Activity() {
   const [sel, setSel] = useState(0);
   const [opened, setOpened] = useState<number | null>(null);
 
-  const events = state.data ?? [];
+  // Real events only. A seeded row is demo data: it is excluded from the strip, the counts,
+  // the rate and the tallies alike, and reported separately as `seededCount`.
+  const events = useMemo(
+    () => (state.data ?? []).filter((e) => e.source !== 'seed'),
+    [state.data],
+  );
+  const seededCount = (state.data ?? []).length - events.length;
   const displayed = useMemo(() => events.slice(0, MAX_BLIPS), [events]);
   const hiddenCount = events.length - displayed.length;
 
@@ -231,7 +243,11 @@ export function Activity() {
     );
   } else if (state.error && !hasBackend()) {
     main = <StateFrame><EmptyState glyph="♥" title={t('state.offline')} hint={t('state.offlineHint')} /></StateFrame>;
-  } else if (state.error && /denied|not permitted|permission|blocked/i.test(state.error)) {
+  } else if (state.error && /denied|not permitted|not allowed|permission|blocked/i.test(state.error)) {
+    // A REFUSED read, kept apart from a broken one. `list_activity` is a plain local SQLite
+    // read with no approval, mode or scope behind it, so the only thing that can refuse it is
+    // the window's own capability set. The copy used to say the stream "did not clear the
+    // governance wall" and would cross "once it is approved" — neither exists for this read.
     main = (
       <StateFrame>
         <div className="pa-blocked" role="status">
@@ -334,7 +350,9 @@ export function Activity() {
           </div>
 
           {/* right: the beating pulse core (real total beats) */}
-          <aside className="pulse-rail">
+          {/* A <div>, not an <aside>: nested in this unlabelled <section> an aside is no landmark
+              at all, and axe reports exactly that once the page is checked with rows in it. */}
+          <div className="pulse-rail">
             <div className="vcore">
               <span className="vc-ring" aria-hidden="true" />
               <span className="vc-ring r2" aria-hidden="true" />
@@ -347,7 +365,7 @@ export function Activity() {
               <b>{clock}</b>
               <span className="micro">{L('lastEvent')}</span>
             </div>
-          </aside>
+          </div>
         </section>
 
         {/* ── BOARD · beat timeline + honest vitals panel ──────────────────── */}
@@ -472,6 +490,11 @@ export function Activity() {
 
         {/* Text-equivalent live region for the strip (§D a11y). */}
         <span className="pa-sr" role="status" aria-live="polite" aria-atomic="true">{liveText}</span>
+        {/* Visible, not only announced: the reader of a strip that looks sparse (or empty) on a
+            fresh install is owed the reason. */}
+        {seededCount > 0 && !state.error && (
+          <p className="note" role="note">{seededNoteStr(lang, seededCount)}</p>
+        )}
 
         {main}
       </div>

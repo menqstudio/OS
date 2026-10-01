@@ -27,10 +27,23 @@ export const STR = {
     hy: 'Ապացույցների շղթայի ընթերցումը ձախողվեց — աշխատասեղանը չի կարող հաստատել ամբողջականությունը։ Շարժիչը որոշում է. կրկնեք ընթերցումը ստորև։',
     ru: 'Чтение цепочки доказательств не удалось — рабочий стол не может подтвердить целостность. Решение принимает движок; повторите чтение в разделе состояния ниже.',
   },
-  integrityDetailBlocked: {
-    en: 'Chain integrity is adjudicated by the engine (Ed25519). The read-only evidence-chain command is not wired into the desktop yet, so integrity cannot be confirmed here.',
-    hy: 'Շղթայի ամբողջականությունը որոշում է շարժիչը (Ed25519)։ Միայն-ընթերցման ապացույցների շղթայի հրամանը դեռ միացված չէ աշխատասեղանին, ուստի ամբողջականությունն այստեղ չի հաստատվում։',
-    ru: 'Целостность цепочки определяет движок (Ed25519). Команда чтения цепочки доказательств (только чтение) ещё не подключена к рабочему столу, поэтому целостность здесь подтвердить нельзя.',
+  // The three ways the settled read leaves integrity unconfirmed. There was one sentence for all
+  // of them — "the read-only evidence-chain command is not wired into the desktop yet" — and it
+  // was shown after that command had answered. Each now says what the read returned.
+  integrityDetailUnauthenticated: {
+    en: 'The evidence-chain read answered. Its records are checked for shape only and their origin is not authenticated, so an answer does not confirm integrity. Chain integrity is adjudicated by the engine (Ed25519), not here.',
+    hy: 'Ապացույցների շղթայի ընթերցումը պատասխանեց։ Գրառումները ստուգվում են միայն ձևով, ու դրանց ծագումը հաստատված չէ, ուստի պատասխանը ամբողջականություն չի հաստատում։ Շղթայի ամբողջականությունը որոշում է շարժիչը (Ed25519), ոչ թե այս էջը։',
+    ru: 'Чтение цепочки доказательств ответило. Записи проверены только по форме, а их происхождение не подтверждено, поэтому ответ не подтверждает целостность. Целостность цепочки определяет движок (Ed25519), а не эта страница.',
+  },
+  integrityDetailRefused: {
+    en: 'The engine refused the evidence-chain read, so integrity cannot be confirmed here. Chain integrity is adjudicated by the engine (Ed25519).',
+    hy: 'Շարժիչը մերժեց ապացույցների շղթայի ընթերցումը, ուստի ամբողջականությունն այստեղ չի հաստատվում։ Շղթայի ամբողջականությունը որոշում է շարժիչը (Ed25519)։',
+    ru: 'Движок отклонил чтение цепочки доказательств, поэтому целостность здесь подтвердить нельзя. Целостность цепочки определяет движок (Ed25519).',
+  },
+  integrityDetailNotRead: {
+    en: 'The evidence chain was not read here, so integrity cannot be confirmed. Chain integrity is adjudicated by the engine (Ed25519).',
+    hy: 'Ապացույցների շղթան այստեղ չի կարդացվել, ուստի ամբողջականությունը չի հաստատվում։ Շղթայի ամբողջականությունը որոշում է շարժիչը (Ed25519)։',
+    ru: 'Цепочка доказательств здесь не прочитана, поэтому целостность подтвердить нельзя. Целостность цепочки определяет движок (Ed25519).',
   },
 
   // 0 · Manifest / integrity hero
@@ -61,9 +74,9 @@ export const STR = {
 
   // 1 · Posture strip
   postureHint: {
-    en: 'Live posture counts from the engine audit summary.',
-    hy: 'Կենդանի ցուցանիշներ շարժիչի աուդիտի ամփոփումից։',
-    ru: 'Актуальные показатели состояния из сводки аудита движка.',
+    en: 'Counts from the desktop’s own local approvals and audit tables — not from the engine.',
+    hy: 'Թվերը՝ desktop-ի սեփական տեղային հաստատումների ու աուդիտի աղյուսակներից, ոչ թե շարժիչից։',
+    ru: 'Показатели из собственных локальных таблиц одобрений и аудита десктопа — не из движка.',
   },
 
   // 2 · Control-plane digest
@@ -78,9 +91,9 @@ export const STR = {
     ru: 'Дайджест защищённой плоскости управления (только чтение).',
   },
   digestBlockedNote: {
-    en: 'The protected control-plane digest is held by the engine and mirrored read-only; the engine chain read is not answering yet, so no digest is shown (never a fabricated one).',
-    hy: 'Պաշտպանված կառավարման հարթության digest-ը պահվում է շարժիչում և արտացոլվում է միայն ընթերցմամբ. շարժիչի շղթայի ընթերցումը դեռ չի պատասխանում, ուստի digest ցույց չի տրվում (երբեք կեղծ)։',
-    ru: 'Дайджест защищённой плоскости управления хранится в движке и отражается только для чтения; чтение цепочки движка пока не отвечает, поэтому дайджест не показывается (и никогда не подделывается).',
+    en: 'The protected control-plane digest is held by the engine. This page has no read that returns it and derives none from the evidence chain, so no digest is shown (never a fabricated one).',
+    hy: 'Պաշտպանված կառավարման հարթության digest-ը պահվում է շարժիչում։ Այս էջը այն վերադարձնող ընթերցում չունի ու ապացույցների շղթայից digest չի հանում, ուստի digest ցույց չի տրվում (երբեք կեղծ)։',
+    ru: 'Дайджест защищённой плоскости управления хранится в движке. У этой страницы нет чтения, которое его возвращает, и из цепочки доказательств она его не выводит, поэтому дайджест не показывается (и никогда не подделывается).',
   },
 
   // 3 · Residual-item tracker

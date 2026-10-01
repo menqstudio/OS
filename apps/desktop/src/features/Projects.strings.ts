@@ -5,12 +5,13 @@
 // never left as mixed text. Central `t('…')` keys and technical ids/brand names
 // (e.g. `Bro`) stay outside this table.
 export const STR = {
-  // Status labels — shared by the pills, the field legend and the KPI tiles.
-  st_planned: { en: 'Planned', hy: 'Ծրագրված', ru: 'Запланирован' },
-  st_active: { en: 'Active', hy: 'Ընթացքում', ru: 'Активен' },
-  st_blocked: { en: 'Blocked', hy: 'Արգելափակ', ru: 'Заблокирован' },
-  st_completed: { en: 'Completed', hy: 'Թողարկված', ru: 'Завершён' },
-  st_archived: { en: 'Archived', hy: 'Արխիվ', ru: 'Архив' },
+  // Status LABELS are not here: the pills, the field legend and the select read
+  // `statusLabel()` from `domain/statusLabels.ts`, the one table for every status in the app.
+  statusNotChanged: {
+    en: 'Status not changed',
+    hy: 'Կարգավիճակը չի փոխվել',
+    ru: 'Статус не изменён',
+  },
 
   eyebrow: {
     en: 'Strategic Work · Workstreams',
@@ -19,8 +20,8 @@ export const STR = {
   },
   activeWord: { en: 'active', hy: 'ակտիվ', ru: 'активных' },
   totalWord: { en: 'total', hy: 'ընդամենը', ru: 'всего' },
-  blockedWord: { en: 'blocked', hy: 'արգելափակ', ru: 'заблокировано' },
-  completedWord: { en: 'completed', hy: 'թողարկված', ru: 'завершено' },
+  blockedWord: { en: 'blocked', hy: 'արգելափակված', ru: 'заблокировано' },
+  completedWord: { en: 'completed', hy: 'ավարտված', ru: 'завершено' },
   heroHint: {
     en: 'Active workstreams · select to expand',
     hy: 'Ակտիվ հոսքեր · ընտրի՛ր՝ մանրամասնելու',
@@ -55,8 +56,6 @@ export const STR = {
     ru: 'Когда проект создан, он появится здесь как отдельная энергетическая линия.',
   },
   tasksDone: { en: 'done', hy: 'ավարտ', ru: 'выполнено' },
-  tasksWord: { en: 'tasks', hy: 'առաջադրանք', ru: 'задач' },
-  progressWord: { en: 'completion', hy: 'ավարտվածություն', ru: 'завершённость' },
   tasksBuilding: {
     en: 'Loading linked tasks…',
     hy: 'Կապված առաջադրանքները բեռնվում են…',

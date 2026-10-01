@@ -169,7 +169,12 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
 
   // A non-regular target comes back with `sizeBytes: 0` — a placeholder, not a
   // measurement — so it is rendered as "not established" rather than "0 B".
-  const size = establishedContentSize(data);
+  // An over-cap file is the other non-measurement: `read_file` reports the length of its bounded
+  // read, not the file's size. `list_dir` DID measure this entry, so that is the size shown.
+  const size = establishedContentSize(data)
+    ?? (data.readonly && readonlyReason(data.sizeBytes) === 'tooLarge' && Number.isFinite(entry.sizeBytes)
+      ? entry.sizeBytes
+      : null);
   const modified = parseModified(entry.modified);
 
   return (
@@ -342,6 +347,12 @@ export function Files() {
     ? `${hits.length} ${L('hits')} · ${entries.length} ${L('items')}`
     : `${entries.length} ${L('items')}`;
 
+  const sortKeys: { id: SortKey; label: string }[] = [
+    { id: 'name', label: L('sortName') },
+    { id: 'size', label: L('sortSize') },
+    { id: 'modified', label: L('sortModified') },
+  ];
+
   const chips: { id: 'all' | 'folder' | 'file'; label: string; n: number }[] = [
     { id: 'all', label: L('all'), n: entries.length },
     { id: 'folder', label: L('folders'), n: folderCount },
@@ -352,6 +363,7 @@ export function Files() {
     () => entries.filter((e) => selectedPaths.has(e.path)),
     [entries, selectedPaths],
   );
+  const selSummary = useMemo(() => selectionSummary(selectedList), [selectedList]);
 
   const segs = useMemo(() => crumbSegments(s.data?.path), [s.data?.path]);
 
@@ -449,6 +461,31 @@ export function Files() {
             ))}
           </div>
 
+          {/* Ordering. The state, `sortEntries` and these strings were all written and the control
+              itself was never rendered, so the listing was fixed at name/ascending. */}
+          <div className="fchips" role="group" aria-label={L('sort')}>
+            {sortKeys.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                className={`chip${sortKey === k.id ? ' on' : ''}`}
+                aria-pressed={sortKey === k.id}
+                onClick={() => setSortKey(k.id)}
+              >
+                {k.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="chip"
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              title={sortDir === 'asc' ? L('sortAsc') : L('sortDesc')}
+              aria-label={sortDir === 'asc' ? L('sortAsc') : L('sortDesc')}
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
+
           <div className="fx-actions">
             <button
               type="button"
@@ -503,7 +540,13 @@ export function Files() {
                   const isSelected = selectedPaths.has(e.path);
                   const isPreview = preview?.path === e.path;
                   const typeWord = e.isDir ? L('entryFolder') : L('entryFile');
-                  const guardWord = g === 'read' ? L('guardRead') : g === 'sealed' ? L('guardSealed') : L('guardOpen');
+                  // 'unknown' has its OWN word. It fell through to `guardOpen`, so the row of a file
+                  // this page had never read was still announced as "open" — the exact announcement
+                  // the 'unknown' state was introduced to stop.
+                  const guardWord = g === 'read' ? L('guardRead')
+                    : g === 'sealed' ? L('guardSealed')
+                      : g === 'open' ? L('guardOpen')
+                        : L('guardUnknown');
                   return (
                     <div
                       key={e.path}
@@ -536,6 +579,12 @@ export function Files() {
             {selectedList.length > 0 && (
               <div className="fx-tray" role="group" aria-label={L('selected')}>
                 <strong>{L('selected')}: {selectedList.length}</strong>
+                {/* What the selection measures: files carry a size, folders do not (list_dir
+                    does not walk them), so the two are stated apart, never as one total. */}
+                <span className="muted">
+                  {selSummary.files} {L('selFilesTotal')} {formatSize(selSummary.fileBytes)}
+                  {selSummary.folders > 0 ? ` · ${selSummary.folders} ${L('selFolders')}` : ''}
+                </span>
                 <span className="muted fx-tray-names">
                   {selectedList.map((e) => e.name).join(', ')}
                 </span>

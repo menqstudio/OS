@@ -11,6 +11,16 @@ vi.mock('@tauri-apps/api/core', () => ({
   Channel: class {},
 }));
 
+// The running build's own name and version come through the Tauri app plugin. Mocked here so a
+// test can make the build answer, or not; the default is "did not answer".
+const appMock = { name: vi.fn<() => Promise<unknown>>(), version: vi.fn<() => Promise<unknown>>() };
+vi.mock('@tauri-apps/api/app', () => ({
+  getName: () => appMock.name(),
+  getVersion: () => appMock.version(),
+}));
+
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Settings } from './Settings';
@@ -40,7 +50,11 @@ function setup() {
 
 const called = (cmd: string) => invokeMock.mock.calls.some((c) => c[0] === cmd);
 
-beforeEach(() => invokeMock.mockReset());
+beforeEach(() => {
+  invokeMock.mockReset();
+  appMock.name.mockReset().mockRejectedValue(new Error('app.name not allowed'));
+  appMock.version.mockReset().mockRejectedValue(new Error('app.version not allowed'));
+});
 
 describe('Settings — reflects the real ai_status, never a fabricated posture', () => {
   it('renders the real provider/model reported by ai_status', async () => {
@@ -157,5 +171,99 @@ describe('Settings — the governed-provider control reports, and cannot set', (
     expect(control()).toHaveAttribute('aria-checked', 'true');
     expect(control().getAttribute('aria-label')).toContain('Blocked');
     expect(control().getAttribute('aria-label')).not.toContain('Off');
+  });
+});
+
+// ── The System panel's identity, readiness and persistence ───────────────────────────────
+//
+// The probe (`settingsIdentity.ts`), the strings and three comments all said the literals had
+// been replaced. The JSX still rendered a fixed product name and a fixed version — for a build
+// that reports `BroPS` / `0.1.0` — and `reported`, `identityReason`, `prefsPersisted` and
+// `sysPill` were computed and used by nothing. The logic half had landed; the JSX half had not.
+describe('Settings — the System panel shows what the running build reports', () => {
+  const sysRow = (label: string) =>
+    Array.from(document.querySelectorAll('.set-sys .sys-row'))
+      .find((r) => r.querySelector('.sys-k')?.textContent === label)
+      ?.querySelector('b')?.textContent ?? '';
+
+  it('renders the name and version the build reported', async () => {
+    appMock.name.mockResolvedValue('BroPS');
+    appMock.version.mockResolvedValue('0.1.0');
+    setup();
+    await waitFor(() => expect(sysRow('Product')).toBe('BroPS'));
+    expect(sysRow('Version')).toBe('0.1.0');
+    expect(screen.getByText(/read from the running application build/i)).toBeInTheDocument();
+    expect(document.querySelector('.set-sys')?.textContent).not.toMatch(/MENQ OS|v0\.9/);
+  });
+
+  it('says the build did not report, with the reason, rather than printing a fixed label', async () => {
+    setup();
+    await waitFor(() => expect(sysRow('Product')).toBe('Not reported by this build'));
+    expect(sysRow('Version')).toBe('Not reported by this build');
+    expect(screen.getByText(/could not read the application name and version/i)).toBeInTheDocument();
+    expect(document.querySelector('.set-sys')?.textContent).toMatch(/Reason: .*not allowed/);
+    expect(document.querySelector('.set-sys')?.textContent).not.toMatch(/MENQ OS|v0\.9/);
+  });
+
+  it('half an identity is no identity', async () => {
+    appMock.name.mockResolvedValue('BroPS');
+    appMock.version.mockResolvedValue('');
+    setup();
+    await waitFor(() => expect(sysRow('Version')).toBe('Not reported by this build'));
+    expect(sysRow('Product')).toBe('Not reported by this build');
+  });
+
+  it('the source carries no product-name or version literal', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/features/Settings.tsx'), 'utf8')
+      // Comments may describe the old defect; rendered JSX and code may not contain it.
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    expect(src).not.toMatch(/MENQ OS/);
+    expect(src).not.toMatch(/v0\.9/);
+  });
+});
+
+describe('Settings — unknown readiness is not "Not ready"', () => {
+  const sysPillText = () => document.querySelector('.set-sys .sec-head .pill')?.textContent ?? '';
+
+  it('a failed status read reads Unknown', async () => {
+    mount('reject');
+    await waitFor(() => expect(sysPillText()).toBe('Unknown'));
+  });
+
+  it('no backend at all reads Unknown', async () => {
+    mount(UNGOVERNED, false);
+    await waitFor(() => expect(sysPillText()).toBe('Unknown'));
+  });
+
+  it('a backend that says ready reads Ready, and one that says not ready reads Not ready', async () => {
+    const { unmount } = mount(UNGOVERNED);
+    await waitFor(() => expect(sysPillText()).toBe('Ready'));
+    unmount();
+    mount({ ...UNGOVERNED, ready: false });
+    await waitFor(() => expect(sysPillText()).toBe('Not ready'));
+  });
+});
+
+describe('Settings — says whether the preferences it offers are actually kept', () => {
+  it('states that they are stored on this device when the probe round-trips', async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText(/Checked just now: this window can write to local storage/)).toBeInTheDocument());
+    expect(screen.queryByText(/NOT SAVED/)).not.toBeInTheDocument();
+  });
+
+  it('says NOT SAVED, as an alert and with the reason, when storage is unwritable', async () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    try {
+      setup();
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(/NOT SAVED: local storage is not writable/);
+      expect(screen.getByText('QuotaExceededError')).toBeInTheDocument();
+      expect(screen.queryByText(/Checked just now/)).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

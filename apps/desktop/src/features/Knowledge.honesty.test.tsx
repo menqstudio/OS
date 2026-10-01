@@ -5,11 +5,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 // behind it. Knowledge is the same kind of surface — plain local SQLite rows returned by
 // `list_knowledge` / `search_knowledge` — so it must never grow the same defect.
 //
-// The backend now appends an unsigned, append-only LOCAL write record for every knowledge
-// write (core/src/local_write_record.rs, migration 0021). That record is real, but it is
-// (a) unsigned, so it is not "verified", and (b) not readable from this page yet — no
-// command is registered for it. These tests lock BOTH halves: the page claims no
-// verification, and it states its real provenance instead of staying silent about it.
+// The backend appends an unsigned, append-only LOCAL write record for every knowledge write
+// (core/src/local_write_record.rs, migration 0021). That record is real, it is unsigned — so
+// it is not "verified" — and this page READS it: `knowledge_write_record_state` is a
+// registered command, `Knowledge.tsx` calls it through `useWriteRecordStates('knowledge', …)`
+// and `writeRecord.tsx` renders the result (the second half of this file mocks that command).
+// These tests lock both halves: the page claims no verification, and it states its real
+// provenance instead of staying silent about it.
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -19,6 +21,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Knowledge } from './Knowledge';
+import { FORBIDDEN as SHARED_FORBIDDEN } from './writeRecord.vocabulary';
 
 const NOTE = {
   id: 'k-1',
@@ -131,7 +134,15 @@ function renderedText(): string {
   return parts.join(' ');
 }
 
-const FORBIDDEN = [
+/** The vocabulary this page may never use — it belongs to the signed governed-receipt path, and
+ *  nothing on this page has custody of anything.
+ *
+ *  The list is `writeRecord.vocabulary.ts`'s, shared with `writeRecord.test.tsx` and the other
+ *  page guard. The nine English patterns are ALSO spelled out here, and that is deliberate:
+ *  `tools/test_check_source_control_bytes.py` pins their literal text in this file (they once
+ *  read `/<0x08>word<0x08>/i` and matched nothing). They are a subset of the shared list, so
+ *  this guard can be no narrower than it — which is what the three drifting copies were. */
+const FORBIDDEN: readonly RegExp[] = [
   /verifiable/i,
   /\bverified\b/i,
   /trusted[ _-]?verified/i,
@@ -141,6 +152,7 @@ const FORBIDDEN = [
   /\breceipt\b/i,
   /\bcustody\b/i,
   /tamper[ -]?proof/i,
+  ...SHARED_FORBIDDEN,
 ];
 
 function setupWithRecord(state: unknown) {
@@ -183,5 +195,40 @@ describe('Knowledge — the write record never borrows the receipt vocabulary', 
     for (const forbidden of FORBIDDEN) {
       expect(text, `rendered text must not contain ${forbidden}`).not.toMatch(forbidden);
     }
+  });
+});
+
+// `list_knowledge` and `search_knowledge` are two reads. Only the second one's error was ever
+// looked at: a rejected `list_knowledge` left the total at 0, hid the collections and the metric
+// strip, and said nothing — a failed read presented as an empty store.
+describe('Knowledge — a failed full-list read is not an empty store', () => {
+  it('shows the total as not established, and says why', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'search_knowledge') return Promise.resolve([{ ...NOTE }]);
+      if (cmd === 'list_knowledge') return Promise.reject(new Error('database is locked'));
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Knowledge /></ToastProvider></AppProvider>);
+    await waitFor(() =>
+      expect(screen.getAllByText(/Forward-only migrations/).length).toBeGreaterThan(0));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Store total not established');
+    expect(alert).toHaveTextContent('database is locked');
+
+    const head = document.querySelector('.kb-browser .sec-head .note')?.textContent ?? '';
+    expect(head).toMatch(/1\s*\/\s*—/);
+    expect(head).not.toMatch(/\/\s*0/);
+    // And no count strip is drawn over a store nobody could read.
+    expect(document.querySelector('.kb-metrics')).toBeNull();
+  });
+
+  it('a successful read still states the real total', async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getAllByText(/Forward-only migrations/).length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(document.querySelector('.kb-browser .sec-head .note')?.textContent ?? '').toMatch(/1\s*\/\s*1/));
+    expect(screen.queryByText('Store total not established')).not.toBeInTheDocument();
   });
 });

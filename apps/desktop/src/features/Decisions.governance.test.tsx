@@ -31,7 +31,7 @@ describe('Decisions — engine evidence chain renders blocked when the read-IPC 
       </AppProvider>,
     );
 
-    // Ledger mirrored (local read); the decision appears (row + chamber title).
+    // The local decision table was read; the decision appears (row + chamber title).
     await waitFor(() => expect(screen.getAllByText('Ship the mirror').length).toBeGreaterThan(0));
 
     // Open the evidence viewer — triggers the real READ-ONLY engine chain read.
@@ -43,5 +43,33 @@ describe('Decisions — engine evidence chain renders blocked when the read-IPC 
     );
     // The honest engine reason is surfaced; no fabricated evidence is shown.
     expect(screen.getByText(/broker_unavailable/)).toBeInTheDocument();
+  });
+});
+
+// The list on this page is `list_decisions`: `repo::decisions::list` on the desktop's SQLite. The
+// page called it "ENGINE LEDGER" and "Read-only mirror", and its failure "could not be read from
+// the engine". The engine's decision ledger is a different read, shown only by the bridge panel.
+describe('Decisions — the local decision table is not called the engine ledger', () => {
+  it('names the source as the local table in the header and the chamber', async () => {
+    const { container } = render(
+      <AppProvider>
+        <Decisions />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByText('Ship the mirror').length).toBeGreaterThan(0));
+
+    expect(screen.getByText('Read-only · local table')).toBeInTheDocument();
+    expect(screen.getByText('DELIBERATION · LOCAL DECISION TABLE')).toBeInTheDocument();
+    // Scoped to the page's own header and chamber heading: the bridge panel below legitimately
+    // names the engine's decision ledger, because that is what it reads.
+    const head = container.querySelector('.pageHead') as HTMLElement;
+    const chamberHead = container.querySelector('#chamber .ch-head') as HTMLElement;
+    for (const el of [head, chamberHead]) {
+      expect(el.textContent).not.toMatch(/engine ledger/i);
+      expect(el.textContent).not.toMatch(/mirror\b/i);
+    }
+    // The disabled Reweigh control no longer attributes a decision to the engine.
+    expect(screen.getByText('↻ Reweigh').closest('button')?.getAttribute('title'))
+      .not.toMatch(/adjudicated by the engine/i);
   });
 });

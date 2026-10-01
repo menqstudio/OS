@@ -15,8 +15,9 @@
 //
 // WHY THIS MODULE EXISTS
 // ----------------------
-// `status` is the ONLY mutable field, and the Rust store is explicit about what writing
-// it means: "Set a connector's local status. This records the desired state; it does not
+// `status` is the field this PAGE writes (`auth_ref` is mutable too, through
+// `set_integration_auth_ref`, which no page calls), and the Rust store is explicit about
+// what writing it means: "Set a connector's local status. This records the desired state; it does not
 // itself reach any external service." (repo.rs::integrations::set_status). So a row
 // reading `status = 'connected'` proves that somebody pressed a button on this desktop —
 // nothing more. Painting that as "Connected", with a green live pulse, is the product
@@ -73,13 +74,17 @@ export function enablementOf(status: string): Enablement {
 export type CredentialCustody = 'referenced' | 'no_reference';
 
 /**
- * Today the backend record has no auth-reference column, so this returns `no_reference`
- * for every connector. It reads the field rather than hard-coding the answer so that the
- * day the Rust `Integration` grows `auth_ref`, this lights up without a UI rewrite — and
- * so the honest "no reference" statement is a *finding*, not a constant.
+ * Reads the record's `authRef` (the Rust `auth_ref` column, schema 0022). It is `null` for
+ * every connector nobody has pointed at a reference — which, since no page calls
+ * `set_integration_auth_ref`, is every connector this desktop has declared so far. The
+ * answer is read from the field rather than hard-coded, so "no reference" is a *finding*
+ * about this row, not a constant.
+ *
+ * The value arrives over IPC, so its runtime type is checked rather than trusted: anything
+ * that is not a non-blank string is `no_reference`.
  */
 export function credentialCustodyOf(record: Integration): CredentialCustody {
-  const ref = (record as Integration & { authRef?: unknown }).authRef;
+  const ref: unknown = record.authRef;
   return typeof ref === 'string' && ref.trim() !== '' ? 'referenced' : 'no_reference';
 }
 

@@ -66,9 +66,12 @@ describe('Chat delegation surface — the absent state is the honest one today',
 
     // The live channel exists now, so the old "the backend does not report delegations"
     // headline would be false. What is missing is storage, and that is what it must say.
+    // (That old headline's strings are deleted: nothing rendered them, and the assertion that
+    // they were absent could not fail. The sentence itself is what is held out, below.)
     await screen.findByText(SURFACE_STR.noLedgerTitle.en);
     expect(screen.getByText(SURFACE_STR.noLedgerBody.en)).toBeInTheDocument();
-    expect(screen.queryByText(STR.notEmittedTitle.en)).not.toBeInTheDocument();
+    expect(screen.queryByText(/does not report delegations/i)).not.toBeInTheDocument();
+    expect('notEmittedTitle' in STR).toBe(false);
     // The backend's own words survive to the screen — a mapped headline never replaces them.
     expect(screen.getByText(/Command list_delegations not found/)).toBeInTheDocument();
     // And absolutely nothing that looks like a delegation was drawn.

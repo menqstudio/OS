@@ -103,6 +103,13 @@ export const STR = {
     hy: 'Գրիր հարցը, որ սենյակը որոշում է։',
     ru: 'Напишите вопрос, который решает комната.',
   },
+  // This room's participant read failed. Nobody is offered and no round can be opened: asking
+  // the previous room's roster — which is what stale data did — is asking the wrong people.
+  rosterUnreadable: {
+    en: 'This room’s participant list could not be read, so a round cannot be opened — who would be asked is not established.',
+    hy: 'Այս սենյակի մասնակիցների ցուցակը չհաջողվեց կարդալ, ուստի փուլ բացել չի լինի — հաստատված չէ, թե ում կհարցնեին։',
+    ru: 'Список участников этой комнаты прочитать не удалось, поэтому раунд открыть нельзя — не установлено, кого бы спросили.',
+  },
   needParticipants: {
     en: 'Pick at least one participant to ask.',
     hy: 'Ընտրիր առնվազն մեկ մասնակից, ում հարցնել։',
@@ -293,29 +300,31 @@ export const STR = {
   // ── delegation inside the room ────────────────────────────────────────────
   // Everything below is written so a partial list can never read as the room's whole
   // record. The section shows delegations reported by the turns THIS deck starts (the
-  // asks it sends for a round); the room's ordinary chat turns report to the workspace
-  // above, which draws them nowhere. That is a gap, and the copy names it rather than
-  // letting silence imply completeness.
+  // asks it sends for a round); the room's ordinary chat turns report to the thread
+  // above, which draws them in its OWN panel (`<DelegationSurface>` in Conversations,
+  // rendered for both kinds). The note used to say that workspace "draws it nowhere" —
+  // true before the thread's panel was opened to group rooms, false since. So the copy
+  // names where the other half IS, rather than a gap that no longer exists.
   delegationLabel: {
     en: 'DELEGATION IN THIS ROOM',
     hy: 'ՊԱՏՎԻՐԱԿՈՒՄ ԱՅՍ ՍԵՆՅԱԿՈՒՄ',
     ru: 'ДЕЛЕГИРОВАНИЕ В ЭТОЙ КОМНАТЕ',
   },
   delegationScopeNote: {
-    en: 'Bound to the room selected above. This window is told about a delegation only by a turn '
-      + 'it started itself — the asks this deck sends for a round. A delegation made in the room’s '
-      + 'ordinary chat above is reported to that workspace, which draws it nowhere, and will not '
+    en: 'Bound to the room selected above. This section is told about a delegation only by a turn '
+      + 'this deck started itself — the asks it sends for a round. A delegation made in the room’s '
+      + 'ordinary chat above is drawn by that thread’s own panel, beneath the chat, and will not '
       + 'appear here. So the section below covers this deck’s asks, not everything Bro did in the '
       + 'room, whatever its own wording says.',
-    hy: 'Կապված է վերևում ընտրված սենյակի հետ։ Այս պատուհանին պատվիրակման մասին ասում է միայն այն turn-ը, '
-      + 'որը ինքն է սկսել — այս deck-ի ուղարկած հարցումները փուլի համար։ Սենյակի սովորական զրույցում արված '
-      + 'պատվիրակումը հաղորդվում է վերևի workspace-ին, որը այն ոչ մի տեղ չի նկարում, ու այստեղ չի հայտնվի։ '
+    hy: 'Կապված է վերևում ընտրված սենյակի հետ։ Այս բաժնին պատվիրակման մասին ասում է միայն այն turn-ը, '
+      + 'որը այս deck-ն է սկսել — փուլի համար իր ուղարկած հարցումները։ Սենյակի սովորական զրույցում արված '
+      + 'պատվիրակումը նկարում է այդ զրույցի սեփական վահանակը՝ զրույցի տակ, ու այստեղ չի հայտնվի։ '
       + 'Ուրեմն ներքևի բաժինը ցույց է տալիս այս deck-ի հարցումները, ոչ թե այն ամենը, ինչ Bro-ն արել է սենյակում՝ '
       + 'անկախ նրանից, թե ինքն ինչ է գրում։',
-    ru: 'Привязано к комнате, выбранной выше. Об одном делегировании этому окну сообщает только ход, '
-      + 'который оно само и начало, — запросы, которые эта панель отправляет для раунда. Делегирование, '
-      + 'сделанное в обычном чате комнаты выше, сообщается той рабочей области, которая его нигде не '
-      + 'рисует, и здесь не появится. Поэтому раздел ниже охватывает запросы этой панели, а не всё, что '
+    ru: 'Привязано к комнате, выбранной выше. Об одном делегировании этому разделу сообщает только ход, '
+      + 'который начала сама эта панель, — запросы, которые она отправляет для раунда. Делегирование, '
+      + 'сделанное в обычном чате комнаты выше, рисует собственная панель того чата, под ним, '
+      + 'и здесь оно не появится. Поэтому раздел ниже охватывает запросы этой панели, а не всё, что '
       + 'Bro сделал в комнате, что бы ни говорил его собственный текст.',
   },
   delegationTrailLabel: {

@@ -2,7 +2,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import {
   PageHeader, Button, Badge, Skeleton, ErrorState, EmptyState,
-  Modal, FormRow, Input, ConfirmDialog,
+  Modal, FormRow, Input,
 } from '../components/ui';
 import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -67,11 +67,6 @@ const viewStyles = `
 .v-calendar .dg-empty{padding:var(--s5) 0}
 .v-calendar .cm-nav{display:flex;align-items:center;gap:6px}
 .v-calendar .ag-side .btn{white-space:nowrap}
-.v-calendar .cal-delete-error{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:14px;
-  padding:10px 12px;border:1px solid rgb(var(--danger-rgb)/.4);border-radius:var(--r);
-  background:rgb(var(--danger-rgb)/.08);font-size:13px}
-.v-calendar .cal-delete-error b{color:var(--danger)}
-.v-calendar .cal-delete-reason{color:var(--ink-muted);font-size:12px;word-break:break-word}
 `;
 
 function NewEventForm(
@@ -158,24 +153,49 @@ function RunHistory({ L }: { L: (k: keyof typeof STR) => string }) {
   const list = automations.data ?? [];
   // One read per automation. The set is small and owner-authored; a batched command would be the
   // right call at a scale this page does not have, and inventing one now would be speculative.
+  //
+  // A read that FAILED is counted, not turned into an empty list. It used to be
+  // `.catch(() => [])`, and `automations.error` was never read either, so a rejected
+  // `list_automations` or `list_automation_runs` produced `rows = []` and the page printed
+  // "No automation has run yet." — a statement about the world, made from a read that failed.
+  //
+  // The result also says WHICH automations it was read for. `useAsync` keeps the previous data
+  // until the next read lands, and the first read here runs against an empty list (the
+  // automations are still loading): for one committed frame after they arrive, that empty answer
+  // was the data on hand, and the section printed "No automation has run yet." before a single
+  // run had been asked for. A result for a different set of automations is not shown at all.
+  const ids = list.map((a) => a.id).join('\u0000');
   const runs = useAsync(
     () => Promise.all(list.map((a) => desktop.listAutomationRuns(a.id)
-      .then((rs) => rs.map((r) => ({ run: r, name: a.name })))
-      .catch(() => [])))
-      .then((rows) => rows.flat()
-        .sort((x, y) => Number(y.run.ranAt) - Number(x.run.ranAt))
-        .slice(0, 12)),
-    [list.length],
+      .then((rs) => ({ failed: null as string | null, rows: rs.map((r) => ({ run: r, name: a.name })) }))
+      .catch((e: unknown) => ({ failed: e instanceof Error ? e.message : String(e), rows: [] }))))
+      .then((reads) => ({
+        forIds: ids,
+        rows: reads.flatMap((r) => r.rows)
+          .sort((x, y) => Number(y.run.ranAt) - Number(x.run.ranAt))
+          .slice(0, 12),
+        failures: reads.flatMap((r) => (r.failed === null ? [] : [r.failed])),
+      })),
+    [ids],
   );
 
   if (automations.loading || runs.loading) return null;
-  const rows = runs.data ?? [];
+  if (runs.data !== null && runs.data.forIds !== ids) return null;
+  const rows = runs.data?.rows ?? [];
+  // Why the history may be incomplete: the automation list itself, the run reads, or the
+  // aggregate. The degradation the page promises is "no history", never "nothing ran".
+  const unreadable = automations.error ?? runs.error ?? runs.data?.failures[0] ?? null;
 
   return (
     <section className="cal-runs" aria-label={L('runHistory')}>
       <div className="cal-agenda-heading">{L('runHistory')}</div>
+      {unreadable !== null && (
+        <p className="ag-empty muted" role="alert">
+          {L('runHistoryUnreadable')} <span className="mono">{unreadable}</span>
+        </p>
+      )}
       {rows.length === 0 ? (
-        <p className="ag-empty muted">{L('runHistoryEmpty')}</p>
+        unreadable === null ? <p className="ag-empty muted">{L('runHistoryEmpty')}</p> : null
       ) : (
         <>
           <ul className="cal-run-list" role="list">
@@ -204,10 +224,6 @@ export function Calendar() {
   const locale = lang === 'hy' ? 'hy-AM' : lang === 'ru' ? 'ru-RU' : 'en-US';
   // `creating` holds the datetime-local prefill (empty string = no prefill).
   const [creating, setCreating] = useState<{ when: string } | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  // The backend's own reason for REFUSING a delete — surfaced, never swallowed.
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -246,22 +262,6 @@ export function Calendar() {
     if (d.getMonth() !== viewDate.getMonth() || d.getFullYear() !== viewDate.getFullYear()) {
       setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
     }
-  };
-
-  // Not optimistic: the event leaves the calendar only when `delete_event` resolves.
-  // A rejection keeps it and states the backend's reason.
-  const remove = (id: string) => {
-    if (deleteBusy) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    desktop.deleteEvent(id)
-      .then(() => { setPendingDelete(null); s.reload(); })
-      .catch((e: unknown) => {
-        setPendingDelete(null);
-        setDeleteError(e instanceof Error ? e.message : String(e));
-        s.reload();
-      })
-      .finally(() => setDeleteBusy(false));
   };
 
   // Split loaded events into dated (sorted ascending) and undated buckets.
@@ -356,12 +356,16 @@ export function Calendar() {
         </div>
         <div className="ag-side">
           <Badge tone={toneOf(e.kind)}>{kindLabel(e.kind, lang)}</Badge>
+          {/* Disabled, and wired to nothing. `delete_event` is denied to this window and the
+              control is parked until T-011 gives a delete an undo or a native confirmation.
+              It used to carry an `onClick` that staged a confirm dialog, with a delete
+              handler, busy state and a "delete refused" panel behind it — none of which a
+              disabled button can reach. That flow comes back with the command, not before. */}
           <Button
             variant="ghost"
             small
             disabled
             title={t('action.deleteDisabledSafety')}
-            onClick={() => setPendingDelete(e.id)}
           >
             {t('action.delete')}
           </Button>
@@ -386,27 +390,6 @@ export function Calendar() {
           onClose={() => setCreating(null)}
           onCreated={() => s.reload()}
         />
-      )}
-
-      {pendingDelete && (
-        <ConfirmDialog
-          title={t('confirm.deleteTitle')}
-          message={t('confirm.deleteBody')}
-          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
-          cancelLabel={t('action.cancel')}
-          onConfirm={() => remove(pendingDelete)}
-          onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}
-        />
-      )}
-
-      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
-      {deleteError && (
-        <div className="cal-delete-error" role="alert">
-          <b>{L('deleteRefusedTitle')}</b>
-          <span>{L('deleteRefusedBody')}</span>
-          <span className="mono cal-delete-reason">{deleteError}</span>
-          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
-        </div>
       )}
 
       {s.loading && s.data === null ? (

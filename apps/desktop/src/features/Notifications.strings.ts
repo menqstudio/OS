@@ -51,10 +51,28 @@ export const STR = {
     hy: 'Շարժիչի կառավարման ազդանշաններ',
     ru: 'Сигналы управления движком',
   },
-  gateTitle: {
-    en: 'Governance stream sealed',
-    hy: 'Կառավարման հոսքը կնքված է',
-    ru: 'Поток управления запечатан',
+  // One title per state of the read. There was ONE for everything that was not "records
+  // arrived" — "Governance stream sealed" — shown while the read was in flight, when nothing
+  // was reached, and over a read that had answered with no events.
+  gateTitleReading: {
+    en: 'Reading the governance stream',
+    hy: 'Կարդում ենք կառավարման հոսքը',
+    ru: 'Читаем поток управления',
+  },
+  gateTitleBlocked: {
+    en: 'Governance stream read refused',
+    hy: 'Կառավարման հոսքի ընթերցումը մերժվեց',
+    ru: 'Чтение потока управления отклонено',
+  },
+  gateTitleUnreachable: {
+    en: 'Governance stream not reached',
+    hy: 'Կառավարման հոսքին հասնել չհաջողվեց',
+    ru: 'До потока управления добраться не удалось',
+  },
+  gateTitleEmpty: {
+    en: 'Governance stream answered — no events',
+    hy: 'Կառավարման հոսքը պատասխանեց — իրադարձություն չկա',
+    ru: 'Поток управления ответил — событий нет',
   },
   gateTitleOk: {
     en: 'Governance stream mirrored',
@@ -106,18 +124,36 @@ export const STR = {
     hy: 'Պահոցը, որը շարժիչն ասում է կարդացել է՝ ',
     ru: 'Хранилище, которое движок сообщает, что прочитал: ',
   },
-  gateBody: {
-    en: 'The engine governance-event stream is not connected to this desktop yet. Signals '
-      + 'from the engine ledger appear here once the read bridge lands — the desktop mirrors, '
-      + 'it never decides.',
-    hy: 'Շարժիչի կառավարման իրադարձությունների հոսքը դեռ միացված չէ այս աշխատասեղանին։ '
-      + 'Շարժիչի մատյանի ազդանշանները կհայտնվեն այստեղ, երբ ընթերցման կամուրջը պատրաստ լինի — '
-      + 'աշխատասեղանը արտացոլում է, երբեք չի որոշում։',
-    ru: 'Поток событий управления движком ещё не подключён к этому рабочему столу. Сигналы '
-      + 'из журнала движка появятся здесь, как только заработает мост чтения — рабочий стол '
-      + 'отражает, но никогда не решает.',
+  // The read exists and this page calls it; these used to be one sentence saying the stream "is
+  // not connected to this desktop yet" and would appear "once the read bridge lands".
+  gateBodyBlocked: {
+    en: 'The engine refused this read of its governance-event chain, so nothing is mirrored '
+      + 'here. The desktop mirrors; it never decides.',
+    hy: 'Շարժիչը մերժեց իր կառավարման իրադարձությունների շղթայի այս ընթերցումը, ուստի այստեղ '
+      + 'ոչինչ արտացոլված չէ։ Աշխատասեղանը արտացոլում է, երբեք չի որոշում։',
+    ru: 'Движок отклонил это чтение своей цепочки событий управления, поэтому здесь ничего '
+      + 'не отражено. Рабочий стол отражает, но никогда не решает.',
   },
-  gateChainReading: { en: 'READING', hy: 'ԸՆԹԵՐՑՈՒՄ', ru: 'ЧТЕНИЕ' },
+  gateBodyUnreachable: {
+    en: 'The read of the engine governance-event chain reached nothing, so nothing is mirrored '
+      + 'here. The desktop mirrors; it never decides.',
+    hy: 'Շարժիչի կառավարման իրադարձությունների շղթայի ընթերցումը ոչնչի չհասավ, ուստի այստեղ '
+      + 'ոչինչ արտացոլված չէ։ Աշխատասեղանը արտացոլում է, երբեք չի որոշում։',
+    ru: 'Чтение цепочки событий управления движка ни до чего не добралось, поэтому здесь ничего '
+      + 'не отражено. Рабочий стол отражает, но никогда не решает.',
+  },
+  // A mark-as-read the store rejected.
+  markReadRefusedTitle: {
+    en: 'Not marked as read',
+    hy: 'Չնշվեց որպես կարդացված',
+    ru: 'Не отмечено как прочитанное',
+  },
+  markReadRefusedBody: {
+    en: 'The store rejected the change, so the signal is still unread and still listed.',
+    hy: 'Պահոցը մերժեց փոփոխությունը, ուստի ազդանշանը դեռ չկարդացված է ու դեռ ցուցակում է։',
+    ru: 'Хранилище отклонило изменение, поэтому сигнал всё ещё не прочитан и остаётся в списке.',
+  },
+  dismissNotice: { en: 'Close', hy: 'Փակել', ru: 'Закрыть' },
   gateChainMirror: { en: 'MIRROR', hy: 'ԱՐՏԱՑՈԼՈՒՄ', ru: 'ЗЕРКАЛО' },
   gateChainEngine: { en: 'ENGINE', hy: 'ՇԱՐԺԻՉ', ru: 'ДВИЖОК' },
 

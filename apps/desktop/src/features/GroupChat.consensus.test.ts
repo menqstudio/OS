@@ -156,6 +156,34 @@ describe('readPositionLine — what counts as a stated position', () => {
     expect(readPositionLine('POSITION: YES for the copy\nPOSITION: NO for the layout')).toBe('ambiguous');
   });
 
+  it('refuses the echoed menu in ANY case — a lower- or mixed-case echo was counted as YES', () => {
+    // `POSITION_LINE` is case-insensitive and the template detector was not, so these parsed
+    // as a stance of `yes` with no second capitalised word and were returned as a YES vote.
+    for (const echo of [
+      'POSITION: yes | no | abstain',
+      'POSITION: Yes / No / Abstain',
+      'POSITION: yes|no|abstain — your reason',
+      'position: Yes or No',
+      'POSITION: yes, no, abstain',
+      'POSITION: NO | yes',
+    ]) {
+      expect(readPositionLine(echo), echo).toBe('ambiguous');
+    }
+  });
+
+  it('still reads a real answer whose reason merely contains a stance word', () => {
+    expect(readPositionLine('POSITION: yes — no strong objection'))
+      .toEqual({ stance: 'yes', reason: 'no strong objection' });
+    expect(readPositionLine('POSITION: No — yes would be premature'))
+      .toEqual({ stance: 'no', reason: 'yes would be premature' });
+    // A stance word later in the reason, after a real separator, is prose and not a menu.
+    expect(readPositionLine('POSITION: abstain — yes or no is not mine to say'))
+      .toEqual({ stance: 'abstain', reason: 'yes or no is not mine to say' });
+    // A comma followed by ordinary words is a reason too, not the comma-separated menu.
+    expect(readPositionLine('POSITION: No, the scoring is unfinished'))
+      .toMatchObject({ stance: 'no' });
+  });
+
   it('refuses an echoed instruction template instead of counting it as a YES', () => {
     expect(readPositionLine('POSITION: YES | NO | ABSTAIN — your reason')).toBe('ambiguous');
   });

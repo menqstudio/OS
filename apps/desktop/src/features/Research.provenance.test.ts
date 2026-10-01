@@ -7,8 +7,9 @@ import { STR } from './Research.strings';
  *
  * The Research panel rendered "Verified · held" and "Verified desktop-side and held by the
  * backend" for every held answer, including the one produced with no governed turn, no challenge
- * and no receipt. On a shipped install that ungoverned path is the ONLY one that can be reached,
- * so the strongest claim on the page was permanently attached to the weakest outcome the app has.
+ * and no receipt — the ungoverned development path (`BROPS_ALLOW_UNGOVERNED`). So the strongest
+ * claim on the page was attached to the weakest outcome the app has. (With no provider configured
+ * no answer is held at all: `stream_ask` sends `error` and the page shows a failure.)
  *
  * These pin both halves of the fix: each provenance gets its own words, and anything unrecognised
  * fails toward the warning rather than toward the pass.
@@ -28,7 +29,7 @@ describe('a held answer is described by what produced it', () => {
     expect(heldNoteKey('development_untrusted')).toBe('heldDevelopmentNote');
   });
 
-  it('the ungoverned path — the only one a shipped install reaches — reads as the worst case', () => {
+  it('the ungoverned path — the development switch, no governed turn — reads as the worst case', () => {
     expect(heldLabel('ungoverned')).toMatchObject({ tone: 'bad', key: 'heldUngoverned' });
     expect(heldNoteKey('ungoverned')).toBe('heldUngovernedNote');
   });

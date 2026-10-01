@@ -160,11 +160,6 @@ export const STR = {
     hy: 'Ջնջել դարանի տարրը',
     ru: 'Удалить элемент библиотеки',
   },
-  deleteConfirm: {
-    en: 'Delete this item? This can’t be undone.',
-    hy: 'Ջնջե՞լ այս տարրը։ Սա հնարավոր չէ հետարկել։',
-    ru: 'Удалить этот элемент? Это действие необратимо.',
-  },
   deleting: {
     en: 'Deleting…',
     hy: 'Ջնջվում է…',
@@ -181,6 +176,14 @@ export const STR = {
     en: 'The backend rejected this delete, so the item is still in the archive and still listed below.',
     hy: 'Backend-ը մերժեց այս ջնջումը, ուստի տարրը դեռ արխիվում է և դեռ ցուցակում է ստորև։',
     ru: 'Бэкенд отклонил это удаление, поэтому элемент всё ещё в архиве и в списке ниже.',
+  },
+  // A refusal that will not change on a retry. `classifyDeleteRefusal` returns `policy` only
+  // for the capability wall's own wording or the handler's `forbidden_command:` prefix; any
+  // other failure is left unclassified and gets no such sentence.
+  deleteRefusedPermanent: {
+    en: 'This is a standing policy refusal, not a transient failure — retrying cannot succeed.',
+    hy: 'Սա մշտական քաղաքականության մերժում է, ոչ թե ժամանակավոր ձախողում — կրկնելը չի կարող հաջողել։',
+    ru: 'Это постоянный отказ политики, а не временный сбой — повтор не поможет.',
   },
   previewPrefix: {
     en: 'Preview: ',

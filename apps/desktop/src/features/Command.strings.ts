@@ -20,18 +20,27 @@ export const STR = {
   quickCommand: { en: 'QUICK COMMAND', hy: 'ԱՐԱԳ ՀՐԱՄԱՆ', ru: 'БЫСТРАЯ КОМАНДА' },
 
   // -- §D `blocked`: "dispatch denied by wall → reason" -------------------------
-  // A governed refusal is NOT a failure, and rendering it as one teaches the owner
-  // that the wall is a bug. It is the system working as designed; the engine's own
-  // reason is carried verbatim rather than summarised.
+  // A refusal is NOT a failure, and rendering it as one teaches the owner that a rule
+  // doing its job is a bug. The reason is carried verbatim rather than summarised.
+  //
+  // These used to say "refused at the governed wall" and "The engine refused this step.
+  // Nothing ran." The page cannot know either: the backend sends one untyped error, the
+  // page tells a refusal from a breakdown by its WORDING, the refusal may be the desktop's
+  // own approval ledger ("approval was rejected for this step") rather than the engine,
+  // and a governed turn can be refused after the model has already answered. What IS true
+  // of every such outcome is that the step's result was not recorded.
   dispatchBlocked: {
-    en: 'Dispatch refused at the governed wall',
-    hy: 'Առաքումը մերժվել է կառավարվող պատի մոտ',
-    ru: 'Отправка отклонена управляемой стеной',
+    en: 'Dispatch refused',
+    hy: 'Առաքումը մերժվել ա',
+    ru: 'Отправка отклонена',
   },
   dispatchBlockedNote: {
-    en: 'The engine refused this step. Nothing ran. The reason it gave is shown exactly as it arrived.',
-    hy: 'Շարժիչը մերժել ա այս քայլը։ Ոչինչ չի կատարվել։ Իր տված պատճառը ցույց ա տրված ուղիղ այնպես, ինչպես եկել ա։',
-    ru: 'Движок отклонил этот шаг. Ничего не выполнялось. Причина показана ровно так, как пришла.',
+    en: 'This step was refused and its result was not recorded. The reason is shown exactly as it '
+      + 'arrived; this page tells a refusal from a failure by that wording, not by a typed verdict.',
+    hy: 'Այս քայլը մերժվել ա, ու դրա արդյունքը չի գրանցվել։ Պատճառը ցույց ա տրված ուղիղ այնպես, ինչպես '
+      + 'եկել ա. այս էջը մերժումը ձախողումից տարբերում ա հենց այդ ձևակերպումով, ոչ թե տիպավորված վճռով։',
+    ru: 'Этот шаг отклонён, и его результат не записан. Причина показана ровно так, как пришла; '
+      + 'страница отличает отказ от сбоя по этой формулировке, а не по типизированному вердикту.',
   },
   dispatchFailed: {
     en: 'Dispatch failed',

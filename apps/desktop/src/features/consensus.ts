@@ -40,8 +40,8 @@ export function isConsensusRule(v: string): v is ConsensusRule {
 /**
  * OWNER-GATED DEFAULT. `unanimous` is the most conservative rule that is still
  * defensible: it can never declare a decision over anyone's stated objection.
- * Combined with `REQUIRE_FULL_PARTICIPATION` it means a round is decided only when
- * every asked participant has spoken and none of them said NO or abstained.
+ * Combined with the full-participation rule below it means a round is decided only
+ * when every asked participant has spoken and none of them said NO or abstained.
  *
  * The owner may legitimately prefer a cheaper rule (e.g. `majority`) as the default;
  * changing this constant is the whole change — every rule is implemented and any
@@ -49,18 +49,22 @@ export function isConsensusRule(v: string): v is ConsensusRule {
  */
 export const DEFAULT_CONSENSUS_RULE: ConsensusRule = 'unanimous';
 
-/**
- * OWNER-GATED DEFAULT. A `reached` verdict requires every asked participant to have
- * a recorded position. This is deliberately stricter than "the threshold is already
- * mathematically locked in": one silent agent holds the round at `pending` rather
- * than letting the room decide on that agent's behalf.
- *
- * Note the asymmetry, which is the fail-closed direction: a round may still be
- * declared NOT reached early, when the outstanding participants could not reach the
- * threshold even if all of them said YES. Closing a round early against a decision
- * is safe; closing it early in favour of one is not.
- */
-export const REQUIRE_FULL_PARTICIPATION = true;
+// FULL PARTICIPATION — A FIXED RULE, NOT A SETTING. A `reached` verdict requires every
+// asked participant to have a recorded position. This is deliberately stricter than "the
+// threshold is already mathematically locked in": one silent agent holds the round at
+// `pending` rather than letting the room decide on that agent's behalf.
+//
+// Note the asymmetry, which is the fail-closed direction: a round may still be declared
+// NOT reached early, when the outstanding participants could not reach the threshold even
+// if all of them said YES. Closing a round early against a decision is safe; closing it
+// early in favour of one is not.
+//
+// This used to be `export const REQUIRE_FULL_PARTICIPATION = true`, described as an
+// owner-gated default. Nothing read it: `evaluateConsensus` has no branch that would
+// declare `reached` with a position outstanding, so setting the constant to `false`
+// changed nothing. A switch wired to nothing reads as a control that exists; the rule is
+// stated here as what it is, and a looser one would be a new branch below with its own
+// tests, not a flipped constant.
 
 /** One recorded position, carrying the id of the real message it was read from so
  *  every counted vote can be traced back to something a participant actually wrote. */
@@ -222,9 +226,9 @@ export function tallyConsensus(
  * Order of the branches matters and is the fail-closed guarantee:
  *  - an empty roster is `not_reached`, never a vacuous success;
  *  - with everyone answered, the threshold decides;
- *  - with answers outstanding, the round is `reached` NEVER (see
- *    REQUIRE_FULL_PARTICIPATION) — only `not_reached` (when the threshold is already
- *    out of reach) or `pending`.
+ *  - with answers outstanding, the round is `reached` NEVER (the full-participation
+ *    rule above) — only `not_reached` (when the threshold is already out of reach) or
+ *    `pending`.
  */
 export function evaluateConsensus(
   rule: ConsensusRule,

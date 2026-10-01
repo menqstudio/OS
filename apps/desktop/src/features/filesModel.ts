@@ -80,7 +80,9 @@ export function formatSize(bytes: number | undefined | null): string {
 //     with empty content — and a genuinely empty REGULAR file is not readonly at
 //     all (empty bytes parse as valid UTF-8), so `readonly && size === 0`
 //     unambiguously means "not a regular file";
-//   * a file over the edit cap returns its real (over-cap) size;
+//   * a file over the edit cap returns `MAX_EDIT_BYTES + 1` — the length of the BOUNDED read
+//     (`file.take(MAX_EDIT_BYTES + 1)`), not the file's size. It says "over the cap" and
+//     nothing about how far over;
 //   * anything else readonly failed the UTF-8 parse, i.e. it is binary.
 //
 // If `MAX_EDIT_BYTES` in files.rs ever changes, only the boundary between
@@ -102,10 +104,15 @@ export function readonlyReason(sizeBytes: number | undefined | null): ReadonlyRe
  * The size `read_file` actually established for this file, or `null` when it did
  * not establish one. A non-regular target is reported as `size_bytes: 0` — that
  * zero is a placeholder, not a measurement, so rendering it as "0 B" would be
- * asserting a size nobody measured.
+ * asserting a size nobody measured. An over-cap file is the same kind of non-answer
+ * at the other end: `size_bytes` is the read cap plus one, so every such file was
+ * shown as "2.0 MB" whatever its real size. Neither is a size.
  */
 export function establishedContentSize(data: Pick<FileContent, 'readonly' | 'sizeBytes'>): number | null {
-  if (data.readonly && readonlyReason(data.sizeBytes) === 'notRegular') return null;
+  if (data.readonly) {
+    const why = readonlyReason(data.sizeBytes);
+    if (why === 'notRegular' || why === 'tooLarge') return null;
+  }
   if (data.sizeBytes == null || !Number.isFinite(data.sizeBytes)) return null;
   return data.sizeBytes;
 }

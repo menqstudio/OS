@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 
 // Mock the Tauri IPC boundary. Files mirrors a REAL directory (list_dir) and reads
 // real bytes on demand (read_file) — it never fabricates a listing or file content.
@@ -55,5 +55,50 @@ describe('Files — mirrors a real directory, never fabricates a listing', () =>
     expect(invokeMock).not.toHaveBeenCalledWith('read_file', expect.anything());
     // …and the directory was read from the real command.
     expect(invokeMock).toHaveBeenCalledWith('list_dir', expect.anything());
+  });
+});
+
+// The sort state, `sortEntries`, `selectionSummary` and nine strings were written and never
+// rendered: neither setter was ever called, so the listing was fixed at name/ascending and the
+// tray could not say what a selection measured.
+describe('Files — the sort control and the selection summary are reachable', () => {
+  const SIZED = {
+    path: '/home/gev',
+    parent: '/home',
+    entries: [
+      { name: 'alpha.txt', path: '/home/gev/alpha.txt', isDir: false, sizeBytes: 4096, modified: '1700000000000' },
+      { name: 'beta.txt', path: '/home/gev/beta.txt', isDir: false, sizeBytes: 16, modified: '1600000000000' },
+    ],
+  };
+  function mountSized() {
+    invokeMock.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'list_dir' ? SIZED : null));
+    return render(<AppProvider><ToastProvider><Files /></ToastProvider></AppProvider>);
+  }
+  const rowNames = () => screen.getAllByRole('row').map((r) => r.querySelector('.n')?.textContent);
+
+  it('sorting by size reorders the same real rows, and the direction flips', async () => {
+    mountSized();
+    await screen.findByText('alpha.txt');
+    expect(rowNames()).toEqual(['alpha.txt', 'beta.txt']);
+
+    const sort = screen.getByRole('group', { name: 'Sort' });
+    fireEvent.click(within(sort).getByRole('button', { name: 'Size' }));
+    expect(rowNames()).toEqual(['beta.txt', 'alpha.txt']);
+    expect(within(sort).getByRole('button', { name: 'Size' })).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(within(sort).getByRole('button', { name: /Ascending/ }));
+    expect(rowNames()).toEqual(['alpha.txt', 'beta.txt']);
+  });
+
+  it('the tray states what the selection measures', async () => {
+    mountSized();
+    await screen.findByText('alpha.txt');
+    const grid = screen.getByRole('grid');
+    fireEvent.keyDown(grid, { key: ' ' });
+    fireEvent.keyDown(grid, { key: 'ArrowDown' });
+    fireEvent.keyDown(grid, { key: ' ' });
+    const tray = screen.getByRole('group', { name: 'Selected' });
+    expect(tray.textContent).toContain('2 files, totalling 4.0 KB');
   });
 });

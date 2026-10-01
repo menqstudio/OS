@@ -5,6 +5,7 @@ import { Mark } from '../components/Ambient';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { STR } from './Integrations.strings';
+import { parseTimestamp } from './timestamps';
 import {
   connectorStateOf, summarize, isGenuinelyConnected, UNTESTED,
   type ConnectorState, type Reachability, type Verdict,
@@ -155,9 +156,12 @@ export function Integrations() {
         : r.state === 'indeterminate' ? L('reachIndeterminateNote')
           : null;
 
+  // `created_at` / `updated_at` are epoch-milliseconds AS TEXT (`brops_core::now()`). This was
+  // `new Date(raw)`, which is Invalid Date for a digit string, so "Declared" and "Record last
+  // written" showed a dash for every connector ever declared.
   const fmtDate = (raw: string) => {
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? '—' : dateFmt.format(d);
+    const d = parseTimestamp(raw);
+    return d === null ? '—' : dateFmt.format(d);
   };
 
   // ── Enable / disable (Space) ────────────────────────────────────────────────
@@ -223,13 +227,17 @@ export function Integrations() {
         s.reload();
         return;
       }
-      if (outcome.kind === 'unsupported') {
-        // A real capability refusal — report it as a missing feature here, with the
-        // exact command that is missing, not as anything the connector did.
+      if (outcome.kind === 'unsupported' || outcome.kind === 'refused') {
+        // `unsupported`: a real capability refusal — reported as a missing grant, with the
+        // exact command, not as anything the connector did. `refused`: the backend rejected
+        // this declaration — reported with its reason. Both belong IN the form, beside the
+        // fields that produced them; `refused` used to go to the page-level notice instead,
+        // which left the alert's second arm and its title unreachable.
         setDeclareBlock(outcome);
         return;
       }
-      setNotice({ kind: outcome.kind === 'refused' ? 'blocked' : 'error', text: outcome.reason });
+      // What is left is `invalid`: the form itself found a field empty.
+      setNotice({ kind: 'error', text: outcome.reason });
     });
   };
 

@@ -264,8 +264,15 @@ export function Agents() {
   useEffect(() => {
     if (focusedIndex > agents.length - 1) setFocusedIndex(agents.length > 0 ? agents.length - 1 : 0);
   }, [agents.length, focusedIndex]);
+  // ONCE — the first time a roster arrives. This effect used to run whenever `selectedId`
+  // was null, so the Escape handler's `setSelectedId(null)` was undone on the very next
+  // pass: Esc could not close the dossier, "Esc closes" in the keys hint was untrue, and the
+  // "Select an agent" branch below was unreachable while any agent existed.
+  const defaulted = useRef(false);
   useEffect(() => {
-    if (selectedId === null && agents.length > 0) setSelectedId(agents[0].id);
+    if (defaulted.current || agents.length === 0) return;
+    defaulted.current = true;
+    if (selectedId === null) setSelectedId(agents[0].id);
   }, [agents, selectedId]);
 
   const selected = agents.find((a) => a.id === selectedId) ?? null;

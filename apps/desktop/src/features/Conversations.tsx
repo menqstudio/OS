@@ -6,7 +6,7 @@ import { useApp } from '../app/store';
 import type { RouteId } from '../app/nav';
 import {
   PageHeader, Rail, Button, Async, EmptyState, Modal, FormRow, Input, Select, Skeleton,
-  ErrorState, ConfirmDialog, Badge,
+  ErrorState, Badge,
 } from '../components/ui';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
@@ -125,11 +125,11 @@ const VIEW_CSS = `
 .v-chat .recall-link:focus-visible{outline:2px solid rgb(var(--cyan-rgb)/.6);outline-offset:2px;border-radius:6px}
 .v-chat .recall-link .rc-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .v-chat .recall-link .rc-sub{color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.v-chat .chat-delete-error{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:14px;
+.v-chat .chat-write-error{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:14px;
   padding:10px 12px;border:1px solid rgb(var(--danger-rgb)/.4);border-radius:var(--r);
   background:rgb(var(--danger-rgb)/.08);font-size:13px}
-.v-chat .chat-delete-error b{color:var(--danger)}
-.v-chat .chat-delete-reason{color:var(--ink-muted);font-size:12px;word-break:break-word}
+.v-chat .chat-write-error b{color:var(--danger)}
+.v-chat .chat-write-reason{color:var(--ink-muted);font-size:12px;word-break:break-word}
 .v-chat .chat-workspace{display:grid;grid-template-columns:minmax(198px,238px) minmax(0,1fr);gap:18px;align-items:start}
 .v-chat .chat-main{min-width:0}
 .v-chat .th-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
@@ -255,7 +255,16 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
   const [error, setError] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
   // Stop button: a ref the responder loop checks so it can break out immediately.
-  const cancelledRef = useRef(false);
+  // WHICH TURN OWNS THE STREAM UI. Each `send()` takes the next id; Stop (and unmount) retire the
+  // current one by moving the counter on. A turn is "live" only while the counter still equals
+  // the id it took.
+  //
+  // This replaces a single shared `cancelledRef` boolean. Stop set it true; the next `send()`
+  // set it false again — while the STOPPED turn's `streamReply` was still pending. That turn's
+  // loop then saw "not cancelled" and went on (in a group room, to the next responder), and its
+  // `finally` cleared `thinking` / `streamingText` and drained the queue underneath the new
+  // turn. A boolean cannot say "the turn I belong to was stopped"; an id can.
+  const turnRef = useRef(0);
   // Messages sent while a turn is running are queued and fire automatically when it
   // finishes — the user never waits to keep talking. A ref (not state) so the drain in
   // send's `finally` reads the latest queue without a stale closure.
@@ -346,7 +355,8 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
       requestAnimationFrame(() => inputRef.current?.focus());
       return;
     }
-    cancelledRef.current = false;
+    const turn = ++turnRef.current;
+    const live = () => turnRef.current === turn;
     setBusy(true);
     setError(null);
     setReplyError(null);
@@ -362,7 +372,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
       setBusy(false);
       // A failed post must not strand queued follow-ups — drain the next one so the queue
       // keeps moving (each drained send surfaces its own error if it also fails).
-      if (!cancelledRef.current && queueRef.current.length > 0) {
+      if (live() && queueRef.current.length > 0) {
         const next = queueRef.current.shift()!;
         setQueuedCount(queueRef.current.length);
         void send(next);
@@ -373,7 +383,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
     // Stream real agent replies. In a direct chat the selected agent answers;
     // in a group room the first couple of specialists answer in turn. A provider
     // failure is shown honestly and never loses the user's message. The Stop button
-    // sets cancelledRef so this loop breaks and the backend turn is cancelled.
+    // retires this turn's id, so this loop breaks and the backend turn is cancelled.
     setThinking(true);
     setStreamingText('');
     try {
@@ -389,16 +399,20 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
           ? (roster.length ? roster : agentNames.slice(0, 2).length ? agentNames.slice(0, 2) : ['Bro'])
           : [selectedAgent];
       for (const who of responders) {
-        if (cancelledRef.current) break;
+        if (!live()) break;
         setStreamingAuthor(who);
         setStreamingText('');
         await desktop.streamReply(conversation.id, (ev) => {
-          if (ev.type === 'delta') setStreamingText((prev) => prev + ev.text);
-          else if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
-          else if (ev.type === 'error') setReplyError(ev.message);
+          // A `done` carries a message the backend really persisted, so it is kept whichever
+          // turn it belongs to. Everything that paints the IN-FLIGHT area — streamed text, the
+          // turn's error or block notice — belongs to the live turn only: a stopped turn must
+          // not write into the stream the next one is showing.
+          if (ev.type === 'done') setExtra((prev) => [...prev, ev.message]);
+          else if (ev.type === 'delta') { if (live()) setStreamingText((prev) => prev + ev.text); }
+          else if (ev.type === 'error') { if (live()) setReplyError(ev.message); }
           // Governed turn Blocked by desktop receipt verification: a transient
           // turn-level notice, NO persisted agent message (Wave 3a Blocks every turn).
-          else if (ev.type === 'blocked') setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`);
+          else if (ev.type === 'blocked') { if (live()) setReplyError(`${t('chat.governedBlocked')}: ${ev.reason}`); }
           else {
             // Bro handed work to a specialist mid-turn. `asDelegationEvent` matches the two
             // delegation tags and returns null for everything else, so an unrecognised frame —
@@ -412,16 +426,20 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
         // #4 per-agent isolation: one agent's error/block no longer aborts the whole room —
         // its error is surfaced inline and the remaining agents still get their turn. Only a
         // user Stop breaks the chain.
-        if (cancelledRef.current) break;
+        if (!live()) break;
       }
     } catch (e: unknown) {
-      setReplyError(e instanceof Error ? e.message : String(e));
+      if (live()) setReplyError(e instanceof Error ? e.message : String(e));
     } finally {
-      setThinking(false);
-      setStreamingText('');
+      // Only the turn that still owns the stream UI may clear it. A stopped turn finishing late
+      // must not switch off the indicator of the turn that replaced it.
+      if (live()) {
+        setThinking(false);
+        setStreamingText('');
+      }
       onActivity();
       // Fire the next queued message, if any and the user didn't Stop.
-      if (!cancelledRef.current && queueRef.current.length > 0) {
+      if (live() && queueRef.current.length > 0) {
         const next = queueRef.current.shift()!;
         setQueuedCount(queueRef.current.length);
         void send(next);
@@ -432,12 +450,13 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
   // Stop the in-flight turn: break the responder loop, cancel the backend stream
   // (keeping whatever streamed so far), and drop any queued follow-ups.
   const stopTurn = () => {
-    cancelledRef.current = true;
+    turnRef.current += 1; // retire the running turn: no turn is live until the next send
     queueRef.current = [];
     setQueuedCount(0);
     // Unstick the UI immediately — even if the backend is mid-stall and takes a beat to
     // actually kill the child, the composer must return to the user at once. A late done/
-    // return still runs the streaming finally harmlessly (thinking is already false).
+    // return still runs the streaming finally harmlessly: it is no longer the live turn, so it
+    // touches neither `thinking` nor the queue.
     setThinking(false);
     setStreamingText('');
     void desktop.cancelReply(conversation.id).catch(() => {});
@@ -448,7 +467,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
   // button — break the responder loop and cancel the in-flight turn. MessageThread is keyed by
   // conversation id, so selecting another conversation unmounts this instance and fires this cleanup.
   useEffect(() => () => {
-    cancelledRef.current = true;
+    turnRef.current += 1;
     void desktop.cancelReply(conversation.id).catch(() => {});
   }, [conversation.id]);
 
@@ -894,11 +913,9 @@ export function Conversations({ kind }: { kind: Kind }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<Conversation | null>(null);
-  const [deleting, setDeleting] = useState<Conversation | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  // The backend's own reason for REFUSING a delete. `delete_conversation` is denied by
-  // the window capability set today, so this is the expected path and must be readable.
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Why a new direct conversation could not be created. `createConversation` had no `.catch`
+  // at all: a rejection was an unhandled promise and the New button simply did nothing.
+  const [createError, setCreateError] = useState<string | null>(null);
   const s = useAsync(() => desktop.listConversations(kind), [kind]);
 
   // Delegations the OPEN thread's stream reported while this workspace has been mounted.
@@ -958,33 +975,17 @@ export function Conversations({ kind }: { kind: Kind }) {
     if (kind === 'group') {
       setCreating(true);
     } else {
-      desktop.createConversation('direct', 'Bro').then((c) => {
-        setSelectedId(c.id);
-        s.reload();
-      });
+      setCreateError(null);
+      desktop.createConversation('direct', 'Bro')
+        .then((c) => {
+          setSelectedId(c.id);
+          s.reload();
+        })
+        .catch((e: unknown) => {
+          setCreateError(e instanceof Error ? e.message : String(e));
+          s.reload();
+        });
     }
-  };
-
-  const confirmDelete = () => {
-    const target = deleting;
-    if (!target || deleteBusy) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    desktop
-      .deleteConversation(target.id)
-      .then(() => {
-        if (selectedId === target.id) setSelectedId(null);
-        setDeleting(null);
-        s.reload();
-      })
-      .catch((e: unknown) => {
-        // A refusal used to vanish here. State it, keep the conversation selected, and
-        // re-read so the rail provably still holds the row the backend kept.
-        setDeleting(null);
-        setDeleteError(e instanceof Error ? e.message : String(e));
-        s.reload();
-      })
-      .finally(() => setDeleteBusy(false));
   };
 
   return (
@@ -1015,24 +1016,12 @@ export function Conversations({ kind }: { kind: Kind }) {
         />
       )}
 
-      {deleting && (
-        <ConfirmDialog
-          title={t('chat.deleteConversation')}
-          message={t('chat.deleteConfirm')}
-          confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
-          cancelLabel={t('action.cancel')}
-          onConfirm={confirmDelete}
-          onCancel={() => { if (!deleteBusy) setDeleting(null); }}
-        />
-      )}
-
-      {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
-      {deleteError && (
-        <div className="chat-delete-error" role="alert">
-          <b>{L('deleteRefusedTitle')}</b>
-          <span>{L('deleteRefusedBody')}</span>
-          <span className="mono chat-delete-reason">{deleteError}</span>
-          <Button small variant="ghost" onClick={() => setDeleteError(null)}>{t('action.close')}</Button>
+      {/* A conversation the backend did not create, stated and left until dismissed. */}
+      {createError && (
+        <div className="chat-write-error" role="alert">
+          <b>{L('createFailedTitle')}</b>
+          <span className="mono chat-write-reason">{createError}</span>
+          <Button small variant="ghost" onClick={() => setCreateError(null)}>{t('action.close')}</Button>
         </div>
       )}
 
@@ -1067,10 +1056,14 @@ export function Conversations({ kind }: { kind: Kind }) {
                         <button
                           type="button"
                           className="chat-item-action chat-item-action--danger"
+                          // Disabled, and wired to nothing. `delete_conversation` is denied to this
+                          // window and the control is parked until T-011. It used to carry an
+                          // `onClick` that staged a confirm dialog, with a delete handler, busy
+                          // state and a "delete refused" panel behind it — none of which a
+                          // disabled button can reach. That flow returns with the command.
                           disabled
                           title={t('action.deleteDisabledSafety')}
                           aria-label={t('action.deleteDisabledSafety')}
-                          onClick={() => setDeleting(c)}
                         >🗑</button>
                       </div>
                     </div>

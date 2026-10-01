@@ -31,15 +31,18 @@ export const STR = {
     hy: 'ՌԻԹՄ · ԿԱՅՈՒՆ',
     ru: 'РИТМ · СТАБИЛЬНЫЙ',
   },
+  // The activity read is a local SQLite query. Nothing governs it and nothing approves it, so
+  // a refusal here is reported as a refused read with its reason — not as a governance wall
+  // that an approval would open.
   telemetryBlocked: {
-    en: 'Telemetry stream blocked',
-    hy: 'Հեռաչափման հոսքն արգելափակված է',
-    ru: 'Поток телеметрии заблокирован',
+    en: 'Activity read refused',
+    hy: 'Ակտիվության ընթերցումը մերժվեց',
+    ru: 'Чтение активности отклонено',
   },
   telemetryBlockedBody: {
-    en: 'The runtime telemetry stream did not clear the governance wall. No live data crosses until it is approved.',
-    hy: 'Հեռաչափման հոսքը չանցավ կառավարման պատը։ Կենդանի տվյալ չի փոխանցվում մինչ հաստատում։',
-    ru: 'Поток телеметрии среды выполнения не прошёл стену управления. Живые данные не передаются, пока он не будет одобрен.',
+    en: 'The backend refused to read the activity log, so nothing is shown. This is a local read: there is no approval that would open it. The reason it gave is below.',
+    hy: 'Backend-ը մերժեց ակտիվության մատյանի ընթերցումը, ուստի ոչինչ ցույց չի տրվում։ Սա տեղային ընթերցում է. այն բացող հաստատում չկա։ Տրված պատճառը ներքևում է։',
+    ru: 'Бэкенд отказался читать журнал активности, поэтому ничего не показано. Это локальное чтение: одобрения, которое бы его открыло, нет. Причина указана ниже.',
   },
   noActivity: {
     en: 'No activity yet',
@@ -270,6 +273,15 @@ export function telemetryLostStr(lang: Lang, error: string): string {
 export function peakInlineStr(lang: Lang, peak: number, peakTime: string): string {
   const label = { en: 'peak', hy: 'գագաթ', ru: 'пик' }[lang];
   return `${label} ${peak} · ${peakTime}`;
+}
+
+/** How many rows were held out because `repo::seed` fabricated them (`source === 'seed'`). */
+export function seededNoteStr(lang: Lang, seeded: number): string {
+  if (lang === 'hy') return `Ցուցադրական սերմի ${seeded} տող չի գծվում ու չի հաշվվում. դրանք գրել է առաջին գործարկման սերմը, ոչ թե իրական իրադարձություն։`;
+  if (lang === 'ru') return `Демонстрационных строк, не показанных и не посчитанных: ${seeded}. Их записал первичный посев, а не настоящее событие.`;
+  return seeded === 1
+    ? '1 seeded demo row is not plotted or counted. The first-run seed wrote it; no real event did.'
+    : `${seeded} seeded demo rows are not plotted or counted. The first-run seed wrote them; no real event did.`;
 }
 
 /** Tail note when older beats are not plotted. */

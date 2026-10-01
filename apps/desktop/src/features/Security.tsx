@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type KeyboardEvent, type CSSProperties } from 'react';
+import { useMemo, useRef, type ReactNode, type KeyboardEvent, type CSSProperties } from 'react';
 import { useApp } from '../app/store';
 import { Skeleton, ErrorState, EmptyState } from '../components/ui';
 import { desktop, hasBackend } from '../services/desktop';
@@ -6,19 +6,26 @@ import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
 import { TrustSelftestPanel } from '../components/TrustSelftest';
 import { STR } from './Security.strings';
+import { parseTimestamp } from './timestamps';
 
 // ⛨ Անվտանգություն — Evidence chain / posture (Phase-2 §D), re-dressed into the
 // AI-OS design language (aios.css) as a "manifest instrument" + posture strip.
 //
-// Data honesty is UNCHANGED. The ONLY backing command that exists today is
-// `get_security_summary` (posture counts + recent sensitive ActivityEvents),
-// which drives the real posture strip and the sensitive-events section. The four
-// engine-truth components (chain-integrity, control-plane digest, residual
-// tracker O-1..O-5, key/lease registry) read from the engine evidence chain, for
-// which NO read-only IPC command is wired into the desktop yet. Rather than
-// fabricate a "verified" chain or fake digests/leases, each renders its honest
-// `blocked` state. The instrument NEVER shows a confident SECURE/verified posture
-// or a live/green mark: the core power-mark and posture pill are driven straight
+// Data honesty is UNCHANGED. Two backing commands exist:
+//
+//   * `get_security_summary` — posture counts + recent sensitive ActivityEvents, COUNTED FROM
+//     THE DESKTOP'S OWN SQLITE (`repo::security::summary`). No engine read is involved, and
+//     the posture strip says so.
+//   * `read_evidence_chain` — the read-only engine evidence-chain mirror. It IS wired and this
+//     page calls it. What it cannot do is confirm anything: a read that answers carries
+//     records checked for shape only, with an unauthenticated origin.
+//
+// So chain integrity is never shown as confirmed, and the reason given is the one that is
+// true of the read that actually came back — refused, not reached, or answered-but-
+// unauthenticated — not "no command is wired", which stopped being true when the read landed.
+// The control-plane digest, residual tracker O-1..O-5 and key/lease registry have no read of
+// their own and render `blocked`. The instrument NEVER shows a confident SECURE/verified
+// posture or a live/green mark: the core power-mark and posture pill are driven straight
 // from the real load state — idle/alert/blocked — never forced live.
 //
 // # Motion (§D: "Motion: integrity pulse (`sigbreathe`)")
@@ -44,8 +51,9 @@ import { STR } from './Security.strings';
 // rather than ships.
 
 /** Derived integrity of the evidence chain, from the real load state only.
- *  `verified` is intentionally NOT a value: the desktop has no chain-read
- *  command, so it never claims a good chain — steady state is `blocked`. */
+ *  `verified` is intentionally NOT a value: the desktop's chain read cannot
+ *  authenticate what it mirrors, so it never claims a good chain — steady state
+ *  is `blocked`, including after a read that answered. */
 type Integrity = 'checking' | 'broken' | 'blocked';
 
 // Sections in tab order. Digit shortcuts (1..N) + `[` / `]` move focus between
@@ -91,16 +99,24 @@ export function Security() {
   const { t, lang } = useApp();
   const s = useAsync(() => desktop.getSecuritySummary(), []);
   // Real, READ-ONLY engine evidence-chain read — the honest source for the
-  // chain-integrity view and the control-plane digest. In Phase-2 it is
-  // blocked/unreachable (the engine chain read is not answering yet); the desktop
-  // never claims a "verified" chain of its own — it mirrors, it does not adjudicate.
+  // chain-integrity view. Whatever it returns, the desktop never claims a
+  // "verified" chain of its own — it mirrors, it does not adjudicate.
   const chain = useAsync(() => desktop.readEvidenceChain(), []);
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
+  const dateFmt = useMemo(
+    () => new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
+    [lang],
+  );
+  const fmtWhen = (raw: string): string => {
+    const d = parseTimestamp(raw);
+    return d === null ? raw : dateFmt.format(d);
+  };
 
   const backend = hasBackend();
   // Honest derivation from the real chain read — never a fabricated "verified".
   // `checking` while the read is in flight; otherwise `blocked` (the engine
-  // adjudicates integrity; the desktop only mirrors, and today the read is sealed).
+  // adjudicates integrity; the desktop only mirrors, and an `ok` mirror is
+  // unauthenticated, so even a read that answered confirms nothing).
   const integrity: Integrity =
     chain.data === null && chain.loading ? 'checking'
       : (chain.error || (chain.data && chain.data.state === 'unreachable')) && backend ? 'broken'
@@ -170,11 +186,18 @@ export function Security() {
     : integrity === 'broken'
       ? L('chainReadFailed')
       : L('integrityUnverified');
+  // The `blocked` detail names what the read ACTUALLY returned. It used to be one sentence —
+  // "the read-only evidence-chain command is not wired into the desktop yet" — shown even after
+  // that very command had answered.
   const integrityDetail = integrity === 'checking'
     ? L('readingChain')
     : integrity === 'broken'
       ? L('integrityDetailBroken')
-      : L('integrityDetailBlocked');
+      : chain.data?.state === 'ok'
+        ? L('integrityDetailUnauthenticated')
+        : chain.data?.state === 'blocked'
+          ? L('integrityDetailRefused')
+          : L('integrityDetailNotRead');
 
   // --- 0 · THE MANIFEST · chain-integrity instrument (REAL chain read, live region) --
   const integrityHero = (
@@ -279,7 +302,7 @@ export function Security() {
     </section>
   );
 
-  // --- 2 · Protected control-plane digest (blocked: no read command) -----------------
+  // --- 2 · Protected control-plane digest (blocked: nothing here reads a digest) -------
   const digestSection = section(
     2,
     'sec-digest',
@@ -347,7 +370,8 @@ export function Security() {
                 {ev.entityType ?? '—'}{ev.entityId ? ` · ${ev.entityId}` : ''}
               </span>
             </span>
-            <span className="note se-time mono">{ev.createdAt}</span>
+            {/* `createdAt` is epoch-milliseconds as text; printed raw it was a 13-digit number. */}
+            <span className="note se-time mono">{fmtWhen(ev.createdAt)}</span>
           </div>
         ))}
       </div>

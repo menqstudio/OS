@@ -320,12 +320,24 @@ describe('the run path cannot lose its pre-flight gate', () => {
   });
 
   it('the page never invokes a denied hard-delete', () => {
-    for (const denied of [
+    // The service methods are camelCase (`deleteConversation: … invoke('delete_conversation')`).
+    // This used to search the page for `desktop.delete_conversation` — the COMMAND spelling behind
+    // a `desktop.` prefix, which is a string no page could ever contain, so the test could not
+    // fail whatever the page called. The method names are derived from the command names and
+    // each is first shown to exist on the service, so a rename there fails here instead of
+    // quietly turning this back into a search for nothing.
+    const service = fromDesktopRoot('src/services/desktop.ts');
+    for (const command of [
       'delete_conversation', 'delete_knowledge', 'delete_library_item',
       'delete_research_item', 'delete_memory', 'delete_event',
     ]) {
-      // The names may appear in the governance mirror, but never as a call from this page.
-      expect(pageSource).not.toContain(`desktop.${denied}`);
+      const method = command.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+      expect(service, `services/desktop.ts must define ${method} over ${command}`)
+        .toMatch(new RegExp(`\\b${method}:[^\\n]*invoke<[^>]*>\\('${command}'`));
+      // The names may appear in the governance mirror, but never as a call from this page —
+      // neither through the service nor as a raw invoke.
+      expect(pageSource, `the page calls desktop.${method}`).not.toMatch(new RegExp(`\\.${method}\\s*\\(`));
+      expect(pageSource, `the page invokes ${command} directly`).not.toMatch(new RegExp(`invoke[^\\n]*['"\`]${command}['"\`]`));
     }
   });
 });

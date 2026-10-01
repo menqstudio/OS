@@ -130,9 +130,24 @@ function TurnOutcome({ attempt, L }: { attempt: GovernedTurnAttempt; L: Localize
       </div>
     );
   }
-  // Everything else is a NON-decision: nobody allowed or refused this turn. `committed`-but-not-verified
-  // cannot occur (parseResult rejects it), so the only way here is `unavailable`.
+  // Everything else produced no verdict THIS APP ACCEPTS, so the only way here is `unavailable`.
   if (attempt.status !== 'unavailable') return null;
+  // A reply that arrived and was refused by `parseResult` is NOT "nobody allowed or refused": the
+  // broker may have durably committed the turn under a label other than `trusted_verified`
+  // (`demonstration_custody` is what a configured deployment commits today), and the renderer rejects
+  // that frame by design. The refusal is this app's, so the words must not deny a broker decision.
+  if (attempt.kind === 'malformed_broker_reply') {
+    return (
+      <div role="note">
+        <span className="pill">{L('outcomeReplyRejected')}</span>
+        <p className="br-body">{L('outcomeReplyRejectedBody')}</p>
+        <p className="micro br-why">{L('kindLabel')}<b className="mono">{attempt.kind}</b></p>
+        <p className="micro br-why">{L(NON_DECISION_COPY[attempt.kind])}</p>
+        <p className="micro br-why">{attempt.detail}</p>
+      </div>
+    );
+  }
+  // What is left never reached a broker reply at all: nobody allowed or refused this turn.
   return (
     <div role="note">
       <span className="pill">{L('outcomeUnavailable')}</span>

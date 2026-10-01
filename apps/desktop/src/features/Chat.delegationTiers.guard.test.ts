@@ -1,6 +1,8 @@
 // Drift guard: the tier table the chat renders vs the agent definitions the CLI obeys.
 //
-// `TIER_TOOLS` in `delegation.ts` is a hand-written mirror of the `tools:` frontmatter in
+// `TIER_TOOLS` — defined once in `services/agentsDispatch.ts` and re-exported by `delegation.ts`,
+// so the table the chat renders and the one the Tasks page renders are the same object — is a
+// hand-written mirror of the `tools:` frontmatter in
 // `.claude/agents/{reader,runner,builder}.md`, because the renderer has no filesystem and
 // cannot read the real files at paint time. A mirror that drifts is worse than no mirror: it
 // renders a capability grant that reads as authoritative and is not what was granted — and the

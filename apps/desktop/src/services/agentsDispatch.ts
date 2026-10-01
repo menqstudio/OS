@@ -134,16 +134,30 @@ export function verifierIsMandatory(risk: Risk): boolean {
 // Segment rule: no empty / '.' / '..' segment, no leading or trailing whitespace, no
 // backslash, no ':', no glob metacharacter, no NUL. A scope must be provably literal.
 //
-// DRIFT WARNING: these are a mirror. If the schema changes, this changes with it, and
-// `agentsDispatch.test.ts` pins the corpus that proves the two agree on the cases that
-// matter. A mirror that has drifted is worse than none — but it can only ever refuse
+// DRIFT WARNING: these are a mirror. If the schema changes, this changes with it:
+// `features/Chat.delegationContract.test.ts` compares the two sources below with the schema
+// file character for character, and `agentsDispatch.test.ts` pins the corpus that proves the
+// two agree on the cases that matter. A mirror that has drifted is worse than none — but it can only ever refuse
 // MORE than the engine, never accept more, because the engine re-validates everything.
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,127}$/;
-const REPO_PATH_PATTERN =
-  /^(?:\.|(?!~)(?!\.\.?(?:\/|$))[^\s\\/:*?[\x00](?:[^\\/:*?[\x00]*[^\s\\/:*?[\x00])?(?:\/(?!\.\.?(?:\/|$))[^\s\\/:*?[\x00](?:[^\\/:*?[\x00]*[^\s\\/:*?[\x00])?)*)$/;
-const ABSOLUTE_PATH_PATTERN =
-  /^(?:\/|[A-Za-z]:\/)(?!\.\.?(?:\/|$))[^\s\\/:*?[\x00](?:[^\\/:*?[\x00]*[^\s\\/:*?[\x00])?(?:\/(?!\.\.?(?:\/|$))[^\s\\/:*?[\x00](?:[^\\/:*?[\x00]*[^\s\\/:*?[\x00])?)*$/;
+
+// The two path patterns are exported AS THE SCHEMA WRITES THEM — the pattern source, character
+// for character — and the RegExp is built from that string. `features/delegation.ts` used to
+// carry its own copy of both (and of `TIER_TOOLS`), and only THAT copy was compared with the
+// real files: `Chat.delegationContract.test.ts` reads the schema back and compares the strings,
+// `Chat.delegationTiers.guard.test.ts` reads `.claude/agents/*.md`. This module's copies were
+// pinned by literals alone, yet they are the ones the Tasks page renders as "Enforced". There is
+// one copy now, here, and those two tests hold it.
+
+/** `engine/schemas/task-contract.schema.json` → `$defs.repoPath.pattern`, verbatim. */
+export const REPO_PATH_PATTERN_SOURCE = String.raw`^(?:\.|(?!~)(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?(?:/(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?)*)$`;
+
+/** `engine/schemas/task-contract.schema.json` → `$defs.absolutePath.pattern`, verbatim. */
+export const ABSOLUTE_PATH_PATTERN_SOURCE = String.raw`^(?:/|[A-Za-z]:/)(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?(?:/(?!\.\.?(?:/|$))[^\s\\/:*?\[\x00](?:[^\\/:*?\[\x00]*[^\s\\/:*?\[\x00])?)*$`;
+
+const REPO_PATH_PATTERN = new RegExp(REPO_PATH_PATTERN_SOURCE);
+const ABSOLUTE_PATH_PATTERN = new RegExp(ABSOLUTE_PATH_PATTERN_SOURCE);
 
 /** A `$defs.id` — task_id, pack_id, agent_id, every skill id. */
 export function isContractId(v: string): boolean {

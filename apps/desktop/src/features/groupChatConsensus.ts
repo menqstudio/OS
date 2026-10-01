@@ -75,6 +75,17 @@ const POSITION_LINE = /^\s*POSITION\s*:\s*(YES|NO|ABSTAIN)\b(.*)$/i;
  *  "no strong objection" must not trip it. */
 const SHOUTED_STANCE = /\b(YES|NO|ABSTAIN)\b/g;
 
+/** The stance MENU, in any case: the stance token followed at once by a menu separator and
+ *  another stance word — `yes | no | abstain`, `Yes / No / Abstain`, `yes or no`,
+ *  `yes, no, abstain`. Matched against the text right after the stance token.
+ *
+ *  `SHOUTED_STANCE` above catches only the all-capitals template, while `POSITION_LINE` is
+ *  case-insensitive — so a lower- or mixed-case echo of the same menu parsed as a stance of
+ *  YES with no second "shouted" word, and was counted as a YES vote nobody cast. The
+ *  separator must come FIRST, so a prose reason that merely contains a stance word
+ *  ("yes — no strong objection") is still an answer. */
+const MENU_ECHO = /^\s*(?:(?:[|/]|or\b)\s*(?:yes|no|abstain)\b|,\s*(?:yes|no|abstain)\s*(?:,|or\b|$))/i;
+
 /** Leading separators between the stance and the reason. */
 const REASON_LEAD = /^[\s:—–\-·|]+/;
 
@@ -128,7 +139,7 @@ export function readPositionLine(body: string): { stance: Stance; reason: string
     // instruction being echoed back, not an answer.
     SHOUTED_STANCE.lastIndex = 0;
     const shouted = new Set((line.match(SHOUTED_STANCE) ?? []).map((w) => w.toUpperCase()));
-    if (shouted.size > 1) {
+    if (shouted.size > 1 || MENU_ECHO.test(m[2])) {
       sawTemplateEcho = true;
       continue;
     }

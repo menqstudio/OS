@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * The Integrations page renders one claim that matters: is this channel connected?
  *
  * The backend cannot answer that. `set_integration_status` writes a local row and its own
  * doc comment says so — "records the desired state; it does not itself reach any external
- * service" — and the window capability set grants exactly two integration commands, so
- * nothing on this desktop can contact a connector at all. A page that prints "Connected"
+ * service" — and none of the integration commands the window capability set grants (list,
+ * create, set-status, set-auth-ref) contacts anything, so nothing on this desktop can reach a
+ * connector at all. A page that prints "Connected"
  * off that row is asserting a working external link it has never once tested.
  *
  * These tests pin the honest behaviour end to end: enabled is never rendered as connected,
@@ -196,6 +199,70 @@ describe('enabling records intent and says exactly that', () => {
     await user.click(screen.getByRole('button', { name: 'Enable' }));
     await waitFor(() =>
       expect(screen.getByText(/GitHub enabled locally — not yet verified/)).toBeInTheDocument());
+  });
+});
+
+describe('the capability banner counts the commands that are really granted', () => {
+  it('does not say "exactly two" — capabilities/default.json grants four', async () => {
+    const user = userEvent.setup();
+    setup();
+    await openConnector(user);
+    await user.click(screen.getByRole('button', { name: /Test reachability/i }));
+    const banner = await screen.findByText(/None of the integration commands this desktop grants/);
+    expect(banner).toBeInTheDocument();
+    expect(screen.queryByText(/exactly two integration commands/)).not.toBeInTheDocument();
+  });
+
+  it('the banner and the grants agree: every granted integration command is one it describes', () => {
+    // The sentence is prose, so it cannot be diffed against the file. What CAN be held is the
+    // number it used to state: if the grant list changes, this fails and the sentence is re-read.
+    const caps = readFileSync(resolve(process.cwd(), 'src-tauri/capabilities/default.json'), 'utf8');
+    const granted = [...caps.matchAll(/"allow-([a-z-]*integration[a-z-]*)"/g)].map((m) => m[1]).sort();
+    expect(granted).toEqual([
+      'create-integration', 'list-integrations', 'set-integration-auth-ref', 'set-integration-status',
+    ]);
+  });
+});
+
+describe('the record dates are real dates', () => {
+  it('renders Declared / Record last written from the backend\'s epoch-millisecond text', async () => {
+    // `created_at` is "1700000000000". `new Date("1700000000000")` is Invalid Date, so both
+    // fields showed a dash for every connector ever declared.
+    const user = userEvent.setup();
+    setup();
+    await openConnector(user);
+    const declared = screen.getByText('Declared').closest('.field') as HTMLElement;
+    const written = screen.getByText('Record last written').closest('.field') as HTMLElement;
+    for (const field of [declared, written]) {
+      expect(field.textContent).toMatch(/2023/);
+      expect(field.textContent).not.toContain('—');
+    }
+  });
+});
+
+describe('a declaration the backend rejected is shown where it was made', () => {
+  it('renders "Declaration refused" with the backend reason, inside the form', async () => {
+    // Only `unsupported` reached the in-form alert; a plain rejection went to the page-level
+    // notice, so the alert's second arm and its `declareRefused` title could never render.
+    const user = userEvent.setup();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_integrations') return Promise.resolve([CONNECTED_ROW]);
+      if (cmd === 'create_integration') return Promise.reject(new Error('name is too long'));
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Integrations /></ToastProvider></AppProvider>);
+    await screen.findByRole('button', { name: /GitHub, github/ });
+    await user.click(screen.getByRole('button', { name: /Declare a connector…/ }));
+    await user.type(screen.getByPlaceholderText('GitHub'), 'Slack');
+    await user.type(screen.getByPlaceholderText('github'), 'slack');
+    await user.click(screen.getByRole('button', { name: 'Declare' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Declaration refused');
+    expect(alert).toHaveTextContent('name is too long');
+    // It is NOT described as a capability refusal, which it was not.
+    expect(alert).not.toHaveTextContent(/not allowed to declare/);
+    expect(screen.getByRole('form', { name: 'Declare a connector' })).toContainElement(alert);
   });
 });
 

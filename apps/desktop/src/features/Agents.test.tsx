@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 // Mock the Tauri IPC boundary. The Agents roster is a pure mirror of the real
 // list_agents command — only the facts an agent carries (displayName, role, status,
@@ -48,5 +48,38 @@ describe('Agents — mirrors the real roster from list_agents', () => {
     setup();
     await waitFor(() => expect(screen.getAllByText('Scout').length).toBeGreaterThan(0));
     expect(called('list_agents')).toBe(true);
+  });
+});
+
+// The keys hint says "Esc closes". An effect re-selected the first agent whenever the selection
+// was null, so Escape's `setSelectedId(null)` was undone on the next pass and the "Select an
+// agent" branch could not be reached while any agent existed.
+describe('Agents — Esc closes the dossier and it stays closed', () => {
+  it('opens the first agent by default, closes on Escape, and does not re-open by itself', async () => {
+    setup();
+    await waitFor(() => expect(document.querySelector('.dossier .ag-forge')).not.toBeNull());
+    expect(screen.queryByText('Select an agent')).not.toBeInTheDocument();
+
+    const node = screen.getByRole('button', { name: /Scout · researcher/ });
+    node.focus();
+    fireEvent.keyDown(node, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.getByText('Select an agent')).toBeInTheDocument());
+    // Give the effect that used to undo it every chance to run.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText('Select an agent')).toBeInTheDocument();
+    expect(document.querySelector('.dossier .ag-forge')).toBeNull();
+    expect(node).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('Enter re-opens the focused agent after an Escape', async () => {
+    setup();
+    await waitFor(() => expect(document.querySelector('.dossier .ag-forge')).not.toBeNull());
+    const node = screen.getByRole('button', { name: /Scout · researcher/ });
+    node.focus();
+    fireEvent.keyDown(node, { key: 'Escape' });
+    await waitFor(() => expect(screen.getByText('Select an agent')).toBeInTheDocument());
+    fireEvent.keyDown(node, { key: 'Enter' });
+    await waitFor(() => expect(document.querySelector('.dossier .ag-forge')).not.toBeNull());
   });
 });

@@ -70,13 +70,18 @@ describe('Analytics — no page ever claims a live stream', () => {
     expect(document.querySelector('.wire.live')).toBeNull();
   });
 
-  it('reports a read REFUSED at the governed wall as blocked, not as a live stream', async () => {
+  it('reports a REFUSED read as refused, not as a live stream — and not as a governed wall', async () => {
     setup('denied');
-    await waitFor(() => expect(screen.getByText('READ · blocked at the wall')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('READ · refused')).toBeInTheDocument());
 
     expect(screen.queryByText('STREAM · LIVE')).not.toBeInTheDocument();
     expect(headerMarkClass()).not.toMatch(/\blive\b/);
     // The body states the refusal too, not just the header.
-    expect(screen.getByText(/blocked at the wall; nothing was read/i)).toBeInTheDocument();
+    expect(screen.getByText(/refused this read; nothing was read/i)).toBeInTheDocument();
+    // `get_analytics` is a local SQLite count: no wall governs it and no approval opens it.
+    expect(screen.queryByText(/at the wall/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/is governed/i)).not.toBeInTheDocument();
+    // The backend's own reason is on screen, not only the page's paraphrase.
+    expect(document.querySelector('.an-blocked-reason')?.textContent ?? '').not.toBe('');
   });
 });

@@ -11,6 +11,8 @@ import { desktop } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import type { KnowledgeNote } from '../domain/entities';
 import { STR, fmt } from './Knowledge.strings';
+import { STR as RECORD_STR } from './writeRecord.strings';
+import { parseTimestamp } from './timestamps';
 import {
   WRITE_RECORD_CSS, WriteRecordBadge, WriteRecordNotice, WriteRecordPanel,
   useWriteRecordStates,
@@ -171,9 +173,11 @@ export function Knowledge() {
   // (opened read-only into the honest blocked edit state).
   const [editor, setEditor] = useState<'new' | KnowledgeNote | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  // A delete is in flight / was REFUSED by the backend. `delete_knowledge` is denied by
-  // the window capability set today, so the refusal path is the common one — it must be
-  // readable on screen, never swallowed.
+  // A delete is in flight / was REFUSED by the backend. Refusal is the ONLY outcome today,
+  // not merely the common one: `delete_knowledge` is denied by the window capability set,
+  // and behind that the handler takes no database handle and returns
+  // `forbidden_hard_delete` unconditionally. So the confirmation says nothing will be
+  // removed, and the refusal must be readable on screen, never swallowed.
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -194,8 +198,8 @@ export function Knowledge() {
   const fmtDate = (raw: string): string => {
     const v = raw?.trim();
     if (!v) return '—';
-    const d = new Date(isNaN(Number(v)) ? v : Number(v));
-    return isNaN(d.getTime()) ? v : dateFmt.format(d);
+    const d = parseTimestamp(v);
+    return d === null ? v : dateFmt.format(d);
   };
 
   // Collections derived from the full (unfiltered) note set: All, one per tag,
@@ -249,6 +253,11 @@ export function Knowledge() {
   // recall telemetry have no backing in the store, so they are omitted; only
   // honestly-countable facts appear here.
   const notes = all.data ?? [];
+  // The store total is a claim about NOW, so only a read that succeeded establishes it.
+  // `all.error` was never read anywhere on this page: a rejected `list_knowledge` left
+  // `notes` empty, the header printed "N / 0 nodes", the collections vanished and the metric
+  // strip hid — a failed read presented as an empty store, with nothing said.
+  const storeTotal = all.error || all.data === null ? null : all.data.length;
   const tagCount = useMemo(
     () => collections.filter((c) => c.id !== COLLECTION_ALL && c.id !== COLLECTION_UNTAGGED).length,
     [collections],
@@ -573,7 +582,18 @@ export function Knowledge() {
       {/* Standing record conditions across the listed articles: rows edited out of
           band, rows present under a deleted id, and — kept separate — records this
           page FAILED to read. A read fault must never read as an empty ledger. */}
-      <WriteRecordNotice reads={records.byId.values()} lang={lang} />
+      <WriteRecordNotice reads={records.byId} lang={lang} />
+
+      {/* The full-list read failed while the search read answered. Said plainly: the total
+          above is "—", not 0. (When both fail, the list's own error state already says so.) */}
+      {all.error && !s.error && (
+        <div className="kb-delete-error" role="alert">
+          <b>{L('totalUnreadableTitle')}</b>
+          <span>{L('totalUnreadableBody')}</span>
+          <span className="mono kb-delete-reason">{all.error}</span>
+          <Button small variant="ghost" onClick={all.reload}>{t('action.retry')}</Button>
+        </div>
+      )}
 
       {/* A REFUSED delete, stated plainly and left on screen until dismissed. */}
       {deleteError && (
@@ -588,7 +608,7 @@ export function Knowledge() {
       {pendingDelete && (
         <ConfirmDialog
           title={t('confirm.deleteTitle')}
-          message={t('confirm.deleteBody')}
+          message={t('confirm.deleteDeniedBody')}
           confirmLabel={deleteBusy ? L('deleting') : t('action.delete')}
           cancelLabel={t('action.cancel')}
           onConfirm={() => removeArticle(pendingDelete)}
@@ -606,7 +626,7 @@ export function Knowledge() {
             <h2>{L('searchIndex')}</h2>
             <span className="note">
               <b className="mono">{articles.length}</b>{' / '}
-              <b className="mono">{notes.length}</b>{' '}
+              <b className="mono">{storeTotal ?? '—'}</b>{' '}
               {L('nodes')}
             </span>
           </div>
@@ -650,14 +670,14 @@ export function Knowledge() {
       </div>
 
       {/* ── Honest metric strip (real derived counts only) ─────────────── */}
-      {!s.error && notes.length > 0 && (
+      {!s.error && !all.error && notes.length > 0 && (
         <section className="surface soft kb-metrics">
           <div className="sec-head">
             <h2>{L('knowledgeBase')}</h2>
             {/* Counts AND provenance. The counts are real; the second half says what
                 backs the rows they count — a local store, nothing signed. See
-                `provenance` in Knowledge.strings.ts for why no receipt is claimed. */}
-            <span className="note">{L('countedFromStore')} · {L('provenance')}</span>
+                `provenance` in writeRecord.strings.ts for why no receipt is claimed. */}
+            <span className="note">{L('countedFromStore')} · {RECORD_STR.provenance[lang]}</span>
           </div>
           <div className="kstats">
             {metrics.map((x, i) => (

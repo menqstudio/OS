@@ -88,13 +88,47 @@ const SECRET_SHAPED =
   /secret|credential|token|password|bearer|private|(?<![a-z])(?:pub|api|access|secret|private|public|session|signing|host|ssh|gpg|master|root|enc|dec)?[-_ ]?keys?(?:tore|chain|file|pair|ring|id)?(?![a-z])/i;
 
 function setup() {
-  invokeMock.mockImplementation((cmd: string) => {
+  invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'list_integrations') return Promise.resolve([ROW]);
     if (cmd === 'set_integration_status') return Promise.resolve({ ...ROW, status: 'disconnected' });
     if (cmd === 'probe_integration') return Promise.reject(new Error('probe_integration not allowed'));
+    if (cmd === 'create_integration') {
+      return Promise.resolve({
+        id: 'in-2', name: String(args?.name ?? ''), provider: String(args?.provider ?? ''),
+        status: 'disconnected', authRef: null, createdAt: '1700000000001', updatedAt: '1700000000001',
+      });
+    }
     return Promise.resolve(null);
   });
   return render(<AppProvider><ToastProvider><Integrations /></ToastProvider></AppProvider>);
+}
+
+/**
+ * Drive every write this page can issue: disable the connector, ask for a reachability check,
+ * and declare a new connector.
+ *
+ * The earlier version did `queryByRole('button', { name: /disable|…/ })` and clicked it `if`
+ * it existed. It never existed: no row was selected, and Disable renders only in the detail
+ * pane. So the "write path" these sweeps claimed to cover was `list_integrations` alone, and
+ * neither test could notice. Each step here uses `getBy…`/`findBy…`, so a control that is not
+ * there fails the test, and the caller asserts the commands really went out.
+ */
+async function exerciseWrites(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: /GitHub, github/ }));
+  await user.click(screen.getByRole('button', { name: /Test reachability/i }));
+  await waitFor(() => expect(issued()).toContain('probe_integration'));
+  await user.click(screen.getByRole('button', { name: 'Disable' }));
+  await waitFor(() => expect(issued()).toContain('set_integration_status'));
+  await user.click(screen.getByRole('button', { name: /Declare a connector…/ }));
+  await user.type(screen.getByPlaceholderText('GitHub'), 'Slack');
+  await user.type(screen.getByPlaceholderText('github'), 'slack');
+  await user.click(screen.getByRole('button', { name: 'Declare' }));
+  await waitFor(() => expect(issued()).toContain('create_integration'));
+}
+
+/** Names of every command the page issued. */
+function issued(): string[] {
+  return invokeMock.mock.calls.map(([cmd]) => String(cmd));
 }
 
 /** Args of every command the page issued, by command name. */
@@ -108,12 +142,9 @@ describe('Integrations — no external secret crosses this boundary', () => {
   it('sends nothing secret-shaped, on any command, at any depth', async () => {
     const user = userEvent.setup();
     setup();
-    await screen.findByText('GitHub');
     // Exercise the page's write path too, not only its read: a boundary is proven by what it
     // sends when the owner acts, not by what it sends while idle.
-    const toggle = screen.queryByRole('button', { name: /disable|disconnect|անջատ|отключ/i });
-    if (toggle) await user.click(toggle);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await exerciseWrites(user);
 
     for (const [cmd, args] of calls()) {
       const offenders = flatten(args).filter((s) => SECRET_SHAPED.test(s));
@@ -124,23 +155,35 @@ describe('Integrations — no external secret crosses this boundary', () => {
   it('each command carries only its declared arguments — a whitelist, not a blacklist', async () => {
     const user = userEvent.setup();
     setup();
-    await screen.findByText('GitHub');
-    const toggle = screen.queryByRole('button', { name: /disable|disconnect|անջատ|отключ/i });
-    if (toggle) await user.click(toggle);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await exerciseWrites(user);
 
     // A blacklist protects against the names we thought of. This fails the moment ANY new
     // argument appears on an integration command, which is when a reviewer should look.
+    //
+    // `create_integration` was listed as `['input']`; the real call is `{ name, provider }`
+    // (services/desktop.ts, commands.rs). It was never hit, so it was never red. And
+    // `set_integration_auth_ref` — the one command that carries a secret REFERENCE — was
+    // absent and skipped by a `continue`. An integration command missing from this table is
+    // now a failure, not a pass.
     const ALLOWED: Record<string, string[]> = {
       list_integrations: [],
       set_integration_status: ['id', 'status'],
       probe_integration: ['id'],
-      create_integration: ['input'],
+      create_integration: ['name', 'provider'],
+      set_integration_auth_ref: ['authRef', 'id'],
     };
+    const seen = new Set<string>();
     for (const [cmd, args] of calls()) {
-      if (!(cmd in ALLOWED)) continue;
-      expect(Object.keys(args).sort(), `command ${cmd}`).toEqual(ALLOWED[cmd].sort());
+      if (!/integration/.test(cmd)) continue;
+      expect(Object.keys(ALLOWED), `integration command ${cmd} has no whitelist entry`).toContain(cmd);
+      expect(Object.keys(args).sort(), `command ${cmd}`).toEqual([...ALLOWED[cmd]].sort());
+      seen.add(cmd);
     }
+    // The page calls four of the five today; `set_integration_auth_ref` has no caller in any
+    // feature file, and the day it gets one its arguments are already held to this table.
+    expect([...seen].sort()).toEqual(
+      ['create_integration', 'list_integrations', 'probe_integration', 'set_integration_status'],
+    );
   });
 
   it('positive control: the page really did call the backend, so the sweep is not vacuous', async () => {

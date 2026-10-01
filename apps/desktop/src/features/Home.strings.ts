@@ -49,11 +49,6 @@ export const STR = {
     hy: 'Չհաջողվեց կարդալ այս արժեքը',
     ru: 'Не удалось прочитать это значение',
   },
-  tasksUnavailable: {
-    en: 'Task list could not be read',
-    hy: 'Առաջադրանքների ցանկը չհաջողվեց կարդալ',
-    ru: 'Не удалось прочитать список задач',
-  },
 } as const;
 
 // Parameterised accessible-text equivalents. Kept as per-language builders so

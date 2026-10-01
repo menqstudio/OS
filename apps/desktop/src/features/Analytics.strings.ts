@@ -107,11 +107,13 @@ export const STR = {
     ru: 'узлов.',
   },
 
-  // -- governed-wall block (denied) ------------------------------------------
+  // -- a refused read (denied) -------------------------------------------------
+  // `get_analytics` counts rows in the desktop's own SQLite tables. Nothing governs that read,
+  // so a refusal is reported as a refused read with its reason — not as "blocked at the wall".
   governedBlocked: {
-    en: 'This analytics aggregate is governed. The request was blocked at the wall; nothing was read.',
-    hy: 'Այս վերլուծական ագրեգատը կառավարվող է։ Հարցումը արգելափակվեց պատի մոտ․ ոչինչ չկարդացվեց։',
-    ru: 'Этот аналитический агрегат управляемый. Запрос был заблокирован на стене; ничего не было прочитано.',
+    en: 'The backend refused this read; nothing was read. It is a local count over the desktop’s own tables, with no approval that would open it. Its reason:',
+    hy: 'Backend-ը մերժեց այս ընթերցումը․ ոչինչ չկարդացվեց։ Սա desktop-ի սեփական աղյուսակների տեղային հաշվարկ է, ու այն բացող հաստատում չկա։ Պատճառը՝',
+    ru: 'Бэкенд отклонил это чтение; ничего не было прочитано. Это локальный подсчёт по собственным таблицам десктопа, и одобрения, которое бы его открыло, нет. Причина:',
   },
 
   // -- hero deck framing ------------------------------------------------------
@@ -129,9 +131,9 @@ export const STR = {
     ru: 'ЧТЕНИЕ · недоступно',
   },
   readBlocked: {
-    en: 'READ · blocked at the wall',
-    hy: 'ԸՆԹԵՐՑՈՒՄ · արգելափակված է պատի մոտ',
-    ru: 'ЧТЕНИЕ · заблокировано на стене',
+    en: 'READ · refused',
+    hy: 'ԸՆԹԵՐՑՈՒՄ · մերժված է',
+    ru: 'ЧТЕНИЕ · отклонено',
   },
   readSnapshot: {
     en: 'SNAPSHOT · all-time aggregate',

@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Memory } from './Memory';
+import { FORBIDDEN as SHARED_FORBIDDEN } from './writeRecord.vocabulary';
 
 const ENTRY = {
   id: 'm-1',
@@ -72,6 +73,9 @@ async function selectTheEntry() {
 async function confirmDeleteDialog() {
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   const dialog = await screen.findByRole('dialog');
+  // The confirmation does not promise a delete the backend cannot perform.
+  expect(dialog).toHaveTextContent(/Nothing will be removed/);
+  expect(dialog).not.toHaveTextContent(/cannot be undone/i);
   const confirm = Array.from(dialog.querySelectorAll('button')).find(
     (b) => b.className.includes('danger'),
   );
@@ -144,6 +148,9 @@ describe('Memory — a REFUSED pin change is surfaced, never swallowed', () => {
   });
 });
 
+// No backend in this tree can produce this outcome: `delete_memory` is denied by the window
+// capability set and its handler returns `forbidden_hard_delete` unconditionally. The test pins
+// the renderer's success arm for the day T-011 lands; it is not evidence a delete works today.
 describe('Memory — an ACCEPTED delete reports the real outcome', () => {
   it('removes the entry and raises no refusal alert', async () => {
     setup();
@@ -194,9 +201,15 @@ function renderedText(): string {
   return parts.join(' ');
 }
 
-/** The vocabulary this page may never use — it belongs to the signed governed-receipt
- *  path, and nothing on this page has custody of anything. */
-const FORBIDDEN = [
+/** The vocabulary this page may never use — it belongs to the signed governed-receipt path, and
+ *  nothing on this page has custody of anything.
+ *
+ *  The list is `writeRecord.vocabulary.ts`'s, shared with `writeRecord.test.tsx` and the other
+ *  page guard. The nine English patterns are ALSO spelled out here, and that is deliberate:
+ *  `tools/test_check_source_control_bytes.py` pins their literal text in this file (they once
+ *  read `/<0x08>word<0x08>/i` and matched nothing). They are a subset of the shared list, so
+ *  this guard can be no narrower than it — which is what the three drifting copies were. */
+const FORBIDDEN: readonly RegExp[] = [
   /verifiable/i,
   /\bverified\b/i,
   /trusted[ _-]?verified/i,
@@ -206,6 +219,7 @@ const FORBIDDEN = [
   /\breceipt\b/i,
   /\bcustody\b/i,
   /tamper[ -]?proof/i,
+  ...SHARED_FORBIDDEN,
 ];
 
 function setupWithRecord(state: unknown) {
@@ -251,5 +265,62 @@ describe('Memory — the write record never borrows the receipt vocabulary', () 
     for (const forbidden of FORBIDDEN) {
       expect(text, `rendered text must not contain ${forbidden}`).not.toMatch(forbidden);
     }
+  });
+});
+
+// A `[[link]]` that matched no other memory was returned `sealed: true` and drawn under
+// "References sealed evidence … The referenced material stays sealed". There is no sealed
+// evidence store for a memory entry. And the match ran over raw content, so two memories that
+// both contained `[[runbook]]` resolved to each other — the link's own text was the match.
+describe('Memory — a link that resolves to nothing is unresolved, not sealed', () => {
+  const entry = (id: string, content: string, scope = 'user') => ({ ...ENTRY, id, scope, content });
+
+  function mount(entries: unknown[]) {
+    invokeMock.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'list_memory' ? entries : null));
+    return render(<AppProvider><ToastProvider><Memory /></ToastProvider></AppProvider>);
+  }
+  const open = async (text: RegExp) => {
+    await waitFor(() => expect(screen.getAllByText(text).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText(text)[0]);
+    await screen.findByRole('button', { name: 'Delete' });
+  };
+
+  it('two memories that both mention [[runbook]] do not resolve to each other', async () => {
+    mount([
+      entry('m-1', 'Alpha note, see [[runbook]] for steps'),
+      entry('m-2', 'Beta note, also [[runbook]] here'),
+    ]);
+    await open(/Alpha note/);
+
+    const detail = document.querySelector('.mr-detail') as HTMLElement;
+    // Not a jump target: nothing but the link's own text matched.
+    expect(detail.querySelector('.mem-link--resolved')).toBeNull();
+    expect(detail.querySelector('.mem-link--unresolved')?.textContent).toMatch(/\[\[runbook\]\].*unresolved/);
+    // And not sealed evidence.
+    expect(detail.querySelector('.mem-blocked')).toBeNull();
+    expect(detail.querySelector('.mem-link--sealed')).toBeNull();
+    expect(detail.textContent).not.toMatch(/sealed/i);
+  });
+
+  it('a link another memory really answers still resolves', async () => {
+    mount([
+      entry('m-1', 'Alpha note, see [[runbook]] for steps'),
+      entry('m-2', 'The runbook lives in the wiki'),
+    ]);
+    await open(/Alpha note/);
+    const detail = document.querySelector('.mr-detail') as HTMLElement;
+    expect(detail.querySelector('.mem-link--resolved')?.textContent).toBe('[[runbook]]');
+  });
+
+  it('only a link written [[sealed:…]] is called sealed, and the copy claims no sealed store', async () => {
+    mount([entry('m-1', 'Gamma note, see [[sealed:vault-7]]')]);
+    await open(/Gamma note/);
+    const detail = document.querySelector('.mr-detail') as HTMLElement;
+    const panel = detail.querySelector('.mem-blocked') as HTMLElement;
+    expect(panel).not.toBeNull();
+    expect(panel.textContent).toMatch(/References marked sealed/);
+    expect(panel.textContent).toMatch(/holds nothing behind it/);
+    expect(panel.textContent).not.toMatch(/stays sealed/);
   });
 });

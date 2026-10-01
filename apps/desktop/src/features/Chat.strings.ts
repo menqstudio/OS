@@ -49,19 +49,6 @@ export const STR = {
     hy: 'Այս զրույցում դեռ պատվիրակում չի հաղորդվել։',
     ru: 'В этом чате пока не сообщено ни об одном делегировании.',
   },
-  notEmittedTitle: {
-    en: 'The backend does not report delegations yet',
-    hy: 'Backend-ը դեռ չի հաղորդում պատվիրակումները',
-    ru: 'Бэкенд пока не сообщает о делегированиях',
-  },
-  notEmittedBody: {
-    en: 'Bro can delegate — he holds the Task tool — but the turn does not tell this window about it. '
-      + 'Nothing is shown here rather than a card drawn over data we do not have.',
-    hy: 'Bro-ն կարող է պատվիրակել — Task գործիքը իր մոտ է — բայց turn-ը այս պատուհանին չի հաղորդում դա։ '
-      + 'Այստեղ ոչինչ չի ցուցադրվում, փոխանակ քարտ նկարելու տվյալների վրա, որոնք չունենք։',
-    ru: 'Bro умеет делегировать — у него есть инструмент Task — но ход не сообщает об этом окну. '
-      + 'Здесь ничего не показано, вместо карточки, нарисованной поверх данных, которых у нас нет.',
-  },
   deniedTitle: {
     en: 'Reading delegations was refused',
     hy: 'Պատվիրակումների ընթերցումը մերժվեց',
