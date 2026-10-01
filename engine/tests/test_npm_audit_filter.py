@@ -30,6 +30,16 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 FILTER_PATH = REPO_ROOT / ".github" / "supply-chain" / "npm_audit_filter.py"
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from _prerequisites import SUPPLY_CHAIN_AUDIT_FILTER, require  # noqa: E402
+
+# Stated before the load it would otherwise break on, and for the whole module: every test here
+# drives the filter, which lives above engine/. On a tree that holds engine/ alone the load used
+# to surface as "ImportError: Failed to import test module" with a FileNotFoundError inside it;
+# now the module skips by name there, and under CI `require` FAILS rather than skipping.
+require(SUPPLY_CHAIN_AUDIT_FILTER)
+
 _spec = importlib.util.spec_from_file_location("npm_audit_filter", FILTER_PATH)
 naf = importlib.util.module_from_spec(_spec)
 sys.modules["npm_audit_filter"] = naf

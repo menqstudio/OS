@@ -33,8 +33,10 @@ No prerequisite here is optional. The pure-Python classes import at module scope
 ``try``/``except`` and no ``skipIf``, so a missing prerequisite is a hard error rather than a
 quiet skip. The cross-language class declares ``DESKTOP_GOVERNED_SOURCE`` through
 ``_prerequisites.require``, which SKIPS only off a CI runner (a deployed box copies
-``engine/`` alone) and FAILS on one. There is no ``BROPS_TEST_MISSING_PREREQUISITES``
-declaration anywhere in this tree, so nothing here may be softened.
+``engine/`` alone) and FAILS on one. ``BROPS_TEST_MISSING_PREREQUISITES`` is not consulted
+here: that declaration is the Rust `provision` crate's, set for one Windows job in
+``.github/workflows/ci.yml``, and no Python suite reads it — so nothing here may be softened
+through it.
 """
 
 from __future__ import annotations
@@ -48,6 +50,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 sys.path.insert(0, str(ROOT / "runtime"))
+# `discover -s tests` puts this directory on the path; naming the module directly does not.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import _prerequisites  # noqa: E402
 import bro_audit_log  # noqa: E402

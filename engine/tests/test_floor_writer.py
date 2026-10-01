@@ -423,13 +423,37 @@ class Negatives(ServiceFixture):
 class FramingBoundary(ServiceFixture):
     """§7 negative 8: the cap tested on BOTH sides of the number."""
 
+    def read_frame(self, declared_length, body):
+        """Hand `fw._read_frame` one frame over a real socket pair and return what it does."""
+        import socket
+
+        ours, theirs = socket.socketpair()
+        self.addCleanup(ours.close)
+        self.addCleanup(theirs.close)
+        theirs.sendall(declared_length.to_bytes(fw.LENGTH_PREFIX_BYTES, "big") + body)
+        theirs.shutdown(socket.SHUT_WR)
+        ours.settimeout(5)
+        return fw._read_frame(ours)
+
     def test_the_cap_is_one_number_and_a_frame_at_exactly_the_cap_is_accepted(self):
         self.assertEqual(fw.MAX_FLOOR_FRAME_BYTES, 4096)
+        # The READER is asked, on both sides of the number. This used to compare the constant
+        # with itself plus one and never call it, so `>` could have become `>=` unnoticed.
         payload = b"x" * fw.MAX_FLOOR_FRAME_BYTES
-        self.assertEqual(len(payload), fw.MAX_FLOOR_FRAME_BYTES)
-        # The refusal is strictly greater-than, so the boundary value itself is legal.
-        over = fw.MAX_FLOOR_FRAME_BYTES + 1
-        self.assertGreater(over, fw.MAX_FLOOR_FRAME_BYTES)
+        self.assertEqual(self.read_frame(len(payload), payload), payload)
+
+        # One byte over is refused on the DECLARED length, before any body is read: the body
+        # sent here is a single byte, so "truncated" would be the answer if it read first.
+        with self.assertRaises(fw.FloorWriterError) as caught:
+            self.read_frame(fw.MAX_FLOOR_FRAME_BYTES + 1, b"x")
+        self.assertEqual(caught.exception.reason, "oversize")
+
+    def test_an_empty_and_a_truncated_frame_are_malformed_not_oversize(self):
+        for declared, body in ((0, b""), (10, b"short")):
+            with self.subTest(declared=declared):
+                with self.assertRaises(fw.FloorWriterError) as caught:
+                    self.read_frame(declared, body)
+                self.assertEqual(caught.exception.reason, "malformed")
 
     def test_an_oversize_task_id_cannot_reach_the_store(self):
         reply = self.ask(_advance(task_id="x" * 129))

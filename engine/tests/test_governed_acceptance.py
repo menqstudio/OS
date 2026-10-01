@@ -29,7 +29,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _chain_docs
 
+import _chain_docs  # noqa: E402
 import challenge_key_registry as ckr  # noqa: E402
 import governed_acceptance as gac  # noqa: E402
 import governed_evidence_request as ger  # noqa: E402
@@ -132,44 +134,8 @@ class _Store:
         return data
 
 
-def build_run_evidence(output_bytes, *, head_sequence, output_sha256=None):
-    """A recorder evidence chain shaped exactly like `governed_recorder` writes one.
-
-    The supervisor derives the head from THIS and refuses a completion whose `output_handle`
-    is not the `output-captured` digest (audit F-01), so a test that wants to model a lying
-    executor passes an `output_sha256` that does not match the bytes.
-    """
-    def canon(payload):
-        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-    payloads = [
-        ("lease-validated", {"lease_sha256": sha(b"lease")}),
-        ("execution-launched", {"cgroup": "cg-1"}),
-        ("output-captured", {
-            "launcher_exit": 0,
-            "output_bytes": len(output_bytes),
-            "output_sha256": output_sha256 or sha(output_bytes),
-        }),
-    ]
-    previous, events = None, []
-    for sequence, (event_type, payload) in enumerate(payloads, start=1):
-        event = {
-            "event_type": event_type,
-            "payload": payload,
-            "payload_sha256": sha(canon(payload)),
-            "previous_event_hash": previous,
-            "sequence": sequence,
-        }
-        previous = sha(canon(event))
-        events.append(event)
-    return json.dumps({
-        "event_count": len(events),
-        "events": events,
-        "final_event_hash": previous,
-        "head_sequence": head_sequence,
-        "last_sequence": len(events),
-        "protocol": "brops.run-evidence-chain.v1",
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+#: The recorder's chain, from the one shared builder (`_chain_docs.run_evidence_chain`).
+build_run_evidence = _chain_docs.run_evidence_chain
 
 
 class _Executor(gac.ExecutionService):
@@ -834,6 +800,11 @@ class CrashCutTests(_Case):
         blob it expects; the store does not have it. The row this pins is that the retry
         publishes it ONCE -- the digest is content-addressed, so a second publish of the same
         bytes must not produce a second artifact.
+
+        The FAULT is NM-CRASH-03's, deliberately: both rows cut at the lease publish, before the
+        store write (`_crash_at_publish(after=False)`). They are two rows because they assert
+        two things about that one cut -- 03 the durable state it leaves, 04 what the retry
+        publishes -- not because they inject two faults.
         """
         case = "NM-CRASH-04"
         document, _handle = self.ready_turn()
@@ -846,15 +817,38 @@ class CrashCutTests(_Case):
         self.assertIsNotNone(expected, f"{case}: the ledger does not name the lease it expects")
         self.assertNotIn(expected, self.store.blobs, f"{case}: the blob was published anyway")
 
-        self.assertEqual(self.trigger(document)["status"], gtr.STATUS_SIGNED, case)
-        self.assertIn(expected, self.store.blobs, f"{case}: the retry did not publish the lease")
-        self.assertEqual(
-            sum(1 for handle in self.store.blobs if handle == expected), 1,
-            f"{case}: the lease exists more than once")
-        # A further identical trigger must not publish again either.
+        # The retry goes through a RECORDING publish seam. "Exactly once" is a statement about
+        # ARTIFACTS, and in a content-addressed store it is true by construction -- this used to
+        # count the dict keys equal to `expected`, which is 1 for any number of publishes. What
+        # can actually be wrong, and is measured here, is WHAT the retry published under that
+        # handle: every publish of the lease must carry the exact bytes persisted at acceptance.
+        # (Measured, not assumed: the retry publishes those bytes TWICE -- once at the lease
+        # step and once when completion derives `lease_handle` -- which the create-if-absent
+        # store makes one artifact. So this does not assert one CALL.)
+        lease_bytes = bytes(row["lease_payload_bytes"])
+        self.assertEqual(sha(lease_bytes), expected, case)
+        lease_publishes = []
+
+        def recording(data):
+            if bytes(data) == lease_bytes:
+                lease_publishes.append(bytes(data))
+            return self.store.publish(data)
+
+        retry = self.driver(publish_artifact=recording)
+        self.assertEqual(self.trigger(document, driver=retry)["status"], gtr.STATUS_SIGNED, case)
+        self.assertGreaterEqual(len(lease_publishes), 1,
+                                f"{case}: the retry never published the persisted lease bytes")
+        self.assertEqual(self.store.blobs.get(expected), lease_bytes,
+                         f"{case}: the lease in the store is not the bytes persisted at acceptance")
+        self.assertEqual(self.acceptance_row(document)["lease_handle"], expected, case)
+        # A further identical trigger answers from the completed turn: it publishes nothing,
+        # the lease included.
         before = dict(self.store.blobs)
-        self.trigger(document)
+        del lease_publishes[:]
+        self.trigger(document, driver=self.driver(publish_artifact=recording))
         self.assertEqual(self.store.blobs, before, f"{case}: a second retry wrote to the store")
+        self.assertEqual(lease_publishes, [],
+                         f"{case}: a trigger against the completed turn published the lease again")
 
     def test_nm_crash_05_a_crash_after_the_publish_finds_the_blob_and_no_lease_ready(self):
         """NM-CRASH-05 -- the blob is in the store and the ledger has not been told.
@@ -2177,19 +2171,40 @@ class NothingLaterIsMintedTests(_Case):
             sorted(produced & set(gtr.RATIFIED_REFUSAL_REASONS)),
             ["containment_missing", "handle_missing", "hash_mismatch", "identity_denied",
              "malformed", "not_completed", "oversize", "timestamp_invalid"])
-        # Every one of them is a member of the closed union, by construction.
-        for reason in produced:
+        # The other direction, read from the source and NOT from the union: every reason this
+        # module refuses with through `_Refuse("...")` is a member of the closed set. (The loop
+        # here used to walk `produced`, which is built by filtering that same set, and assert
+        # each member was in it.)
+        literals = set(re.findall(r"_Refuse\(\s*[\"']([a-z_]+)[\"']", source))
+        self.assertTrue(literals, "no _Refuse(\"...\") literal was found; the pattern is stale")
+        for reason in sorted(literals):
             with self.subTest(reason=reason):
                 self.assertIn(reason, gtr.GOVERNED_REFUSAL_REASONS)
 
     def test_no_governed_surface_is_wired_by_this_module(self):
-        """The live supervisor still constructs none of the sidecar services, so this driver
-        has no production construction site and opens no door."""
+        """`run_supervisor.py` stays the §5-only runner: it constructs neither this driver nor
+        any of the sidecar services.
+
+        That used to be the whole story ("this driver has no production construction site and
+        opens no door"). It is not any more: `ci/live/run_ladder_supervisor.py` constructs the
+        driver with all four services and a real `RecorderExecutor`, as a SEPARATE runner. So
+        the claim that holds, and is held below, is narrower — that runner is the ONE
+        construction site in the engine tree."""
         live = (ROOT / "ci" / "live" / "run_supervisor.py").read_text(encoding="utf-8")
         for absent in ("AcceptanceDriver", "EvidenceRequestService", "OpenService",
                        "StagingService", "OutputReadService"):
             with self.subTest(absent=absent):
                 self.assertNotIn(absent, live)
+
+    def test_the_ladder_runner_is_the_one_construction_site_of_the_driver(self):
+        import re
+
+        sites = []
+        for directory in ("ci", "runtime", "tools", "install"):
+            for path in sorted((ROOT / directory).rglob("*.py")):
+                if re.search(r"\bAcceptanceDriver\(", path.read_text(encoding="utf-8")):
+                    sites.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(sites, ["ci/live/run_ladder_supervisor.py"])
 
 
 if __name__ == "__main__":  # pragma: no cover

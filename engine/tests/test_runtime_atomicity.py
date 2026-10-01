@@ -79,34 +79,26 @@ class ExclusiveCreateTests(unittest.TestCase):
 
 
 
-class BaseClaimGuardTests(unittest.TestCase):
-    """The claim guard on the class everyone inherits, not only on the V1 subclass.
+class _DeletePendingClaimCases:
+    """The delete-pending retry and its bound, for whichever runtime `self.runtime` is.
 
-    The Windows delete-pending retry lived ONLY in `DurableOrchestrationRuntimeV1._claim_guard` until
-    2026-09-20, together with byte-identical copies of `_lock_owner` and `_break_stale_lock`. Every
-    claim test in this file instantiated the subclass, so the base class's claim path — the one
-    `bridge/engine_sidecar.py` and anything that does not need leases would take — surfaced a raw
-    `PermissionError` and nothing noticed. The guard is one implementation now; these drive it through
-    the base.
+    Not a TestCase: `BaseClaimGuardTests` and `ClaimLockOwnershipTests` both mix it in, so the pair
+    runs against the base class and against the V1 subclass from ONE body. It was written out twice,
+    word for word, while `test_the_subclass_no_longer_carries_its_own_copy_of_the_guard` asserted
+    that both classes resolve to the same function — two copies of a test for one implementation,
+    free to drift the way the two copies of the guard once did.
     """
 
-    def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-base-lock-"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.runtime = DurableOrchestrationRuntime(self.tmp)
+    def test_delete_pending_lock_is_retried_not_reported_as_failure(self):
+        """A contended claim must not surface a transient EACCES.
 
-    def test_the_base_class_has_a_claim_lock_at_all(self):
-        """`claim_lock` was set in the V1 constructor. If the base has none, the guard below is not
-        testing the base's own path but a subclass attribute that happens to exist."""
-        self.assertTrue(hasattr(self.runtime, "claim_lock"), "the base runtime has no claim lock")
-        with self.runtime._claim_guard():
-            self.assertTrue(self.runtime.claim_lock.exists())
-        self.assertFalse(self.runtime.claim_lock.exists())
-
-    def test_a_delete_pending_open_is_retried_on_the_base_class(self):
-        """The defect, on the class that carried it: one EACCES from an `O_EXCL` open against a
-        delete-pending lock must be retried, not raised. Windows answers a contended claim that way
-        and the answer means the same thing as `FileExistsError`."""
+        On Windows a lock file another claimant is unlinking or replacing is
+        briefly delete-pending: O_EXCL open fails with PermissionError instead of
+        FileExistsError. Only FileExistsError was retried, so eight threads racing
+        for one task intermittently produced PermissionError(13) out of
+        claim_next. Simulated here rather than raced, so it fails every run
+        instead of one in eight.
+        """
         real_open = os.open
         calls = []
 
@@ -121,11 +113,16 @@ class BaseClaimGuardTests(unittest.TestCase):
                 with self.runtime._claim_guard():
                     self.assertTrue(self.runtime.claim_lock.exists())
             except (PermissionError, OrchestrationRuntimeError) as exc:
-                self.fail(f"a delete-pending open was not retried on the base class: {exc!r}")
+                # Caught and NAMED rather than allowed to escape: an ERROR says "something blew up",
+                # a FAILURE says "the retry is gone", and only the second is a verdict. Both types are
+                # caught because both are ways the retry can be absent -- the raw EACCES escaping, or
+                # a refusal raised on the first attempt instead of after the deadline.
+                self.fail(f"a delete-pending open was not retried on "
+                          f"{type(self.runtime).__name__}: {exc!r}")
         self.assertEqual(len(calls), 1, "the delete-pending open was never attempted")
         self.assertFalse(self.runtime.claim_lock.exists())
 
-    def test_a_persistent_permission_error_still_fails_closed_on_the_base_class(self):
+    def test_a_persistent_permission_error_still_fails_closed(self):
         """The retry must not swallow a genuinely unwritable state directory: it runs out the same
         bounded deadline and names both possibilities rather than asserting one."""
         def always_denied(path, flags, *args, **kwargs):
@@ -140,6 +137,31 @@ class BaseClaimGuardTests(unittest.TestCase):
             except PermissionError as exc:
                 self.fail(f"the raw error escaped instead of the typed refusal: {exc!r}")
         self.assertIn("permission denied", str(caught.exception))
+
+
+class BaseClaimGuardTests(_DeletePendingClaimCases, unittest.TestCase):
+    """The claim guard on the class everyone inherits, not only on the V1 subclass.
+
+    The Windows delete-pending retry lived ONLY in `DurableOrchestrationRuntimeV1._claim_guard` until
+    2026-09-20, together with byte-identical copies of `_lock_owner` and `_break_stale_lock`. Every
+    claim test in this file instantiated the subclass, so the base class's claim path — the one
+    `bridge/engine_sidecar.py` and anything that does not need leases would take — surfaced a raw
+    `PermissionError` and nothing noticed. The guard is one implementation now; these drive it through
+    the base — including the delete-pending pair, inherited from `_DeletePendingClaimCases`.
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="bro-base-lock-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.runtime = DurableOrchestrationRuntime(self.tmp)
+
+    def test_the_base_class_has_a_claim_lock_at_all(self):
+        """`claim_lock` was set in the V1 constructor. If the base has none, the guard below is not
+        testing the base's own path but a subclass attribute that happens to exist."""
+        self.assertTrue(hasattr(self.runtime, "claim_lock"), "the base runtime has no claim lock")
+        with self.runtime._claim_guard():
+            self.assertTrue(self.runtime.claim_lock.exists())
+        self.assertFalse(self.runtime.claim_lock.exists())
 
     def test_the_subclass_no_longer_carries_its_own_copy_of_the_guard(self):
         """One implementation, asserted rather than assumed.
@@ -159,7 +181,7 @@ class BaseClaimGuardTests(unittest.TestCase):
                     f"{name} resolves to a different function on the subclass")
 
 
-class ClaimLockOwnershipTests(unittest.TestCase):
+class ClaimLockOwnershipTests(_DeletePendingClaimCases, unittest.TestCase):
     """The lock wrote an owner token and never read it back. Staleness was decided
     on mtime alone and the release unlinked the path unconditionally, so a slow
     holder whose lock had already been broken and retaken would delete the new
@@ -183,7 +205,6 @@ class ClaimLockOwnershipTests(unittest.TestCase):
         self.assertFalse(self.runtime.claim_lock.exists())
 
     def test_overrunning_holder_does_not_delete_a_newer_lock(self):
-        other = DurableOrchestrationRuntimeV1(self.tmp)
         with self.assertRaises(OrchestrationRuntimeError):
             with self.runtime._claim_guard():
                 # The lock is broken and retaken by someone else while we are
@@ -225,53 +246,6 @@ class ClaimLockOwnershipTests(unittest.TestCase):
         self.runtime._break_stale_lock("someone-else")
         self.assertTrue(self.runtime.claim_lock.exists())
         self.runtime.claim_lock.unlink()
-
-    def test_delete_pending_lock_is_retried_not_reported_as_failure(self):
-        """A contended claim must not surface a transient EACCES.
-
-        On Windows a lock file another claimant is unlinking or replacing is
-        briefly delete-pending: O_EXCL open fails with PermissionError instead of
-        FileExistsError. Only FileExistsError was retried, so eight threads racing
-        for one task intermittently produced PermissionError(13) out of
-        claim_next. Simulated here rather than raced, so it fails every run
-        instead of one in eight.
-        """
-        real_open = os.open
-        calls = []
-
-        def flaky_open(path, flags, *args, **kwargs):
-            if str(path).endswith(".claim.lock") and not calls:
-                calls.append(path)
-                raise PermissionError(13, "Permission denied")
-            return real_open(path, flags, *args, **kwargs)
-
-        with unittest.mock.patch("bro_orchestration_runtime.os.open", flaky_open):
-            try:
-                with self.runtime._claim_guard():
-                    self.assertTrue(self.runtime.claim_lock.exists())
-            except (PermissionError, OrchestrationRuntimeError) as exc:
-                # Caught and NAMED rather than allowed to escape: an ERROR says "something blew up",
-                # a FAILURE says "the retry is gone", and only the second is a verdict. Both types are
-                # caught because both are ways the retry can be absent -- the raw EACCES escaping, or
-                # a refusal raised on the first attempt instead of after the deadline.
-                self.fail(f"a delete-pending open was not retried: {exc!r}")
-        self.assertEqual(len(calls), 1, "the delete-pending open was never attempted")
-        self.assertFalse(self.runtime.claim_lock.exists())
-
-    def test_a_persistent_permission_error_still_fails_closed(self):
-        """The retry above must not swallow a genuinely unwritable state directory."""
-        def always_denied(path, flags, *args, **kwargs):
-            raise PermissionError(13, "Permission denied")
-
-        with unittest.mock.patch("bro_orchestration_runtime.os.open", always_denied), \
-                unittest.mock.patch("bro_orchestration_runtime.LOCK_TIMEOUT_SECONDS", 0.05):
-            try:
-                with self.assertRaises(OrchestrationRuntimeError) as caught:
-                    with self.runtime._claim_guard():
-                        pass
-            except PermissionError as exc:
-                self.fail(f"the raw error escaped instead of the typed refusal: {exc!r}")
-        self.assertIn("permission denied", str(caught.exception))
 
     def test_fresh_lock_blocks_and_times_out(self):
         self.runtime.claim_lock.write_text(

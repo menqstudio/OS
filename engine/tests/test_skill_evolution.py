@@ -11,6 +11,36 @@ from bro_learning import validate_learning_registry
 from bro_skill_evolution import SkillEvolutionError, validate_skill_evolution
 
 
+def proposal(**overrides):
+    """A proposal `validate_skill_evolution` accepts, over this tree's own skills and agents.
+
+    Promoted, GREEN-reviewed by a DIFFERENT agent and approved by the Owner: every test below
+    changes exactly one thing about it, so each refusal has one cause.
+    """
+    skills = json.loads((ROOT / "skills" / "index.json").read_text(encoding="utf-8"))["skills"]
+    proposer, verifier = sorted(all_agent_identities(ROOT))[:2]
+    value = {
+        "schema": 1,
+        "proposal_id": "prop-0001",
+        "skill_id": sorted(skills)[0],
+        "proposed_by_agent_id": proposer,
+        "gap_evidence": ["evidence/gap.md"],
+        "candidate": {"path": "skills/x/SKILL.md", "sha256": "a" * 64,
+                      "baseline_sha256": "b" * 64, "proposed_version": "1.1"},
+        "benchmarks": {"commands": ["bench"], "expected_outcomes": ["pass"],
+                       "regression_required": True, "safety_required": True},
+        "risk": "low",
+        "independent_review": {"verifier_agent_id": verifier, "verdict": "green",
+                               "evidence_paths": ["evidence/review.md"]},
+        "owner_approval": {"required": True, "approved": True, "approved_by": "Gev"},
+        "promotion_status": "promoted",
+        "rollback": {"previous_sha256": "b" * 64},
+    }
+    for key, change in overrides.items():
+        value[key] = dict(value[key], **change) if isinstance(change, dict) else change
+    return value
+
+
 class SkillEvolutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -43,7 +73,55 @@ class SkillEvolutionTests(unittest.TestCase):
         self.assertEqual(value["pipeline"][0], "observe")
         self.assertEqual(value["pipeline"][-1], "rollback")
 
+    def test_a_reviewed_and_owner_approved_promotion_is_accepted(self):
+        """The positive control for every denial below: the fixture itself validates."""
+        value = proposal()
+        self.assertIs(validate_skill_evolution(value, ROOT), value)
+
     def test_promotion_is_not_self_approved(self):
+        """L13's deny case (`laws/registry.json`), asked of the VALIDATOR.
+
+        It used to read four constants out of `skills/evolution-policy.json`, which no code
+        consults, so it held with every check in `validate_skill_evolution` deleted.
+        """
+        base = proposal()
+        cases = (
+            # The proposer reviewing its own proposal -- refused at any status, not only at promotion.
+            ("proposer cannot self-verify",
+             {"independent_review": {"verifier_agent_id": base["proposed_by_agent_id"]}}),
+            ("proposer cannot self-verify",
+             {"independent_review": {"verifier_agent_id": base["proposed_by_agent_id"]},
+              "promotion_status": "draft"}),
+            # A promotion nobody independent turned GREEN.
+            ("promotion requires GREEN independent review",
+             {"independent_review": {"verdict": "pending"}}),
+            ("promotion requires GREEN independent review",
+             {"independent_review": {"verdict": "red"}, "promotion_status": "approved"}),
+            # A promotion the Owner did not approve, in each way that can be spelled.
+            ("promotion requires Gev approval", {"owner_approval": {"approved": False}}),
+            ("promotion requires Gev approval", {"owner_approval": {"approved_by": None}}),
+            ("promotion requires Gev approval",
+             {"owner_approval": {"approved_by": base["proposed_by_agent_id"]}}),
+            ("promotion requires Gev approval",
+             {"owner_approval": {"approved": "true"}, "promotion_status": "approved"}),
+        )
+        for expected, change in cases:
+            with self.subTest(expected=expected, change=change):
+                with self.assertRaises(SkillEvolutionError) as caught:
+                    validate_skill_evolution(proposal(**change), ROOT)
+                self.assertEqual(str(caught.exception), expected)
+
+    def test_an_unapproved_proposal_may_still_be_recorded_before_promotion(self):
+        """The approval is a condition of PROMOTION. A draft awaiting review is not refused for
+        lacking it, which is what makes the refusals above about promotion and not about shape."""
+        value = proposal(promotion_status="pending-owner",
+                         independent_review={"verdict": "pending"},
+                         owner_approval={"approved": False, "approved_by": None})
+        self.assertIs(validate_skill_evolution(value, ROOT), value)
+
+    def test_the_policy_file_states_the_same_rules(self):
+        # A statement of intent only: nothing reads these four values (`bro_learning` checks the
+        # file exists). What ENFORCES them is the validator, tested above.
         policy = json.loads((ROOT / "skills" / "evolution-policy.json").read_text(encoding="utf-8"))
         self.assertTrue(policy["independent_review_required"])
         self.assertTrue(policy["self_verification_forbidden"])

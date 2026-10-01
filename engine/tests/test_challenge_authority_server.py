@@ -490,12 +490,28 @@ class TheConnectionBudgetBoundsOneExchangeTests(unittest.TestCase):
 
     def test_the_bound_comes_from_the_shared_module_rather_than_a_local_copy(self):
         """Five accept loops, two bounds, three of them unbounded — the divergence WAS the defect.
-        One number, one place."""
+        One number, one place.
+
+        Asked of a connection built the way the accept loop builds it, with NO budget passed:
+        every other test here names its own budget, so a local default of a day would pass them
+        all, and comparing `srv.brops_socket.X` with `brops_socket.X` compares a module to itself.
+        """
+        import time
+
         import brops_socket
-        self.assertIs(self.srv.brops_socket.recv_exactly_bounded,
-                      brops_socket.recv_exactly_bounded)
-        self.assertEqual(self.srv.brops_socket.CONNECTION_BUDGET_S,
-                         brops_socket.CONNECTION_BUDGET_S)
+        before = time.monotonic()
+        conn = self.srv.SocketPeerConn(self.FakeSock())
+        after = time.monotonic()
+        self.assertGreaterEqual(conn._deadline, before + brops_socket.CONNECTION_BUDGET_S)
+        self.assertLessEqual(conn._deadline, after + brops_socket.CONNECTION_BUDGET_S)
+        # ...and the read goes through the shared bounded reader, not a local loop.
+        seen = []
+        original = brops_socket.recv_exactly_bounded
+        self.addCleanup(setattr, brops_socket, "recv_exactly_bounded", original)
+        brops_socket.recv_exactly_bounded = (
+            lambda recv, n, **kwargs: seen.append((n, kwargs["deadline"])) or b"")
+        conn.recv_exactly(4)
+        self.assertEqual(seen, [(4, conn._deadline)])
 
 
 if __name__ == "__main__":

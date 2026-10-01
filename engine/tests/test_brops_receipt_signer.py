@@ -16,28 +16,14 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
-
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+sys.path.insert(0, str(ROOT / "tests"))  # _brops_fixtures
 
 import brops_canonical as bc
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
 import brops_receipt_signer as signer
 from brops_supervisor_attest import RunState, produce_sign_request
 
-
-def _keypair():
-    priv = Ed25519PrivateKey.generate()
-    from cryptography.hazmat.primitives import serialization
-
-    raw_priv = priv.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    raw_pub = priv.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
-    )
-    return raw_priv.hex(), raw_pub.hex()
+from _brops_fixtures import keypair as _keypair
 
 
 def _b64url_decode(text: str) -> bytes:

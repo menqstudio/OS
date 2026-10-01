@@ -165,7 +165,6 @@ class OwnerAuthorizationE2ETests(unittest.TestCase):
         self.assertEqual((named["grant_id"], named["nonce"]), ("grant-x", "n" * 16))
 
     def test_owner_cli_produces_a_loadable_bundle(self):
-        from broctl import generate_key
         reg, issuer = self._registry()
         work = pathlib.Path(tempfile.mkdtemp(prefix="bro-e2e-cli-"))
         self.addCleanup(shutil.rmtree, work, ignore_errors=True)
@@ -173,12 +172,36 @@ class OwnerAuthorizationE2ETests(unittest.TestCase):
         agent_path = work / "agent.json"; agent_path.write_text(json.dumps(agent_profile()), encoding="utf-8")
         key_path = work / "issuer.json"; key_path.write_text(json.dumps(issuer), encoding="utf-8")
         out = work / "bundle"
-        rc = main(["--task", str(task_path), "--agent", str(agent_path), "--issuer-key", str(key_path),
-                   "--session-id", "sess-cli", "--role", "specialist",
-                   "--head-sha", HEAD, "--tree-identity", TREE, "--out-dir", str(out)])
+        # The CLI stamps the bundle with its own clock; pinned to the instant the fixture
+        # registry is valid at, so the loaders below can be asked about the same instant.
+        with patch("bro_authorize_specialist.time.time", return_value=NOW):
+            rc = main(["--task", str(task_path), "--agent", str(agent_path),
+                       "--issuer-key", str(key_path),
+                       "--session-id", "sess-cli", "--role", "specialist",
+                       "--head-sha", HEAD, "--tree-identity", TREE, "--out-dir", str(out)])
         self.assertEqual(rc, 0)
-        for name in ("task-contract.json", "agent-profile.json", "skill-receipt.json", "mode-grant.signed.json"):
+        files = {"BRO_TASK_CONTRACT": "task-contract.json",
+                 "BRO_AGENT_PROFILE": "agent-profile.json",
+                 "BRO_SKILL_RECEIPT": "skill-receipt.json",
+                 "BRO_MODE_GRANT": "mode-grant.signed.json"}
+        for name in files.values():
             self.assertTrue((out / name).is_file(), name)
+        # LOADABLE, as the name says: the four files the CLI wrote go through the same two
+        # runtime loaders the hand-built bundle above does. Four files existing is not that —
+        # a CLI that wrote an unbound or unsigned grant would write four files too.
+        with patch.dict(os.environ, {env: str(out / name) for env, name in files.items()}):
+            bundle = load_contract_bundle_from_env(ROOT, now=NOW)
+            self.assertEqual(bundle.task["task_id"], "task-owner-e2e")
+            with patch("bro_contracts.current_commit", return_value=HEAD), \
+                    patch("bro_contracts.current_tree_identity", return_value=TREE):
+                loaded = load_mode_grant_from_env(bundle, "sess-cli", "specialist",
+                                                  root=reg, now=NOW)
+                self.assertEqual(loaded["mode"], "work")
+                self.assertEqual(loaded["agent_id"], AGENT_ID)
+                # ...and it is bound to the session it was issued for, not to any session.
+                with self.assertRaises(ContractError):
+                    load_mode_grant_from_env(bundle, "sess-other", "specialist",
+                                             root=reg, now=NOW)
 
 
 if __name__ == "__main__":

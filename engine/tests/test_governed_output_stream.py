@@ -25,9 +25,10 @@ to make without naming the instant.
 
 No prerequisite here is optional. Everything is stdlib plus repo modules, imported at module
 scope with no ``try``/``except`` and no ``skipIf``, so a missing prerequisite is an
-unmissable hard error rather than a green run with a quiet skip. (There is no
-``BROPS_TEST_MISSING_PREREQUISITES`` declaration anywhere in this tree, so nothing is
-declared in it and nothing here may be softened.)
+unmissable hard error rather than a green run with a quiet skip. (``BROPS_TEST_MISSING_PREREQUISITES`` is
+not consulted here: that declaration is the Rust `provision` crate's, set for one Windows job
+in ``.github/workflows/ci.yml``, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 
 import pathlib
@@ -38,9 +39,15 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _acceptance_fixtures
 
 import governed_output_stream as gos  # noqa: E402
 import governed_supervisor_ledger as gsl  # noqa: E402
+
+# Streams hang off accepted attempts by design (see the DDL note): §4.10(f) declares no parent,
+# and the FOREIGN KEY is a deliberate strengthening, so every test here walks the real §5 CAS
+# (`accept`) to get an acceptance row rather than inserting a bare one.
+from _acceptance_fixtures import accept, ledger  # noqa: E402
 
 DDL = ROOT / "runtime" / "supervisor_ledger.sql"
 
@@ -48,37 +55,6 @@ HANDLE_A = "a" * 64
 HANDLE_B = "b" * 64
 TOKEN_A = "A" * 43
 TOKEN_B = "B" * 43
-
-
-def ledger() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:", isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    gsl.apply_schema(conn)
-    return conn
-
-
-def accept(conn, attempt="attempt-1", *, install_id="inst-1", nonce="nonce-1",
-           receipt_id="rcpt-1", handle=None, now_ms=1_000_000) -> str:
-    """Create the acceptance row a stream's FOREIGN KEY requires.
-
-    Streams hang off accepted attempts by design (see the DDL note): §4.10(f) declares no
-    parent, and the FK is a deliberate strengthening, so every test here has to walk the real
-    §5 CAS to get one rather than inserting a bare row.
-    """
-    gsl.accept_prepare(conn, gsl.NewAcceptance(
-        install_id=install_id, request_nonce=nonce,
-        challenge_handle=handle or ("c" * 63 + str(abs(hash(attempt)) % 10)),
-        run_id="run-1", task_id="task-1", workspace_id="ws-1",
-        execution_attempt_id=attempt, challenge_accepted_at_ms=now_ms,
-        challenge_registry_handle="d" * 64, challenge_registry_hash="e" * 64,
-        challenge_registry_epoch=7, challenge_registry_root_key_id="root-1",
-        lease_payload_bytes=b"{}", lease_id="lease-1",
-        lease_issued_at_ms=now_ms, lease_expires_at_ms=now_ms + 210_000,
-        receipt_id=receipt_id, supervisor_id="sup-1", requested_at_ms=now_ms - 10,
-        request_sha256="f" * 64, system_handle="1" * 64, history_handle="2" * 64,
-        generation_config_handle="3" * 64,
-    ), now_ms)
-    return attempt
 
 
 def new_stream(attempt="attempt-1", *, install_id="inst-1", receipt_id="rcpt-1",

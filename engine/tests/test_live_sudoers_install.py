@@ -31,8 +31,13 @@ import sys
 import tempfile
 import unittest
 
-ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LIVE_DIR = os.path.join(ENGINE_ROOT, "ci", "live")
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if TESTS_DIR not in sys.path:
+    sys.path.insert(0, TESTS_DIR)
+
+from _kit_scripts import heredoc as _heredoc  # noqa: E402
+from _kit_scripts import script as _script  # noqa: E402
+from _kit_scripts import shell_function as _shell_function  # noqa: E402
 KITS = ("run_live_turn.sh", "run_ladder_turn.sh")
 
 BLOCK_OPEN = "# >>> sudoers-install >>>"
@@ -77,11 +82,6 @@ FIXTURE_CONFIG = {"execution": {
 }}
 
 
-def _script(name: str) -> str:
-    with open(os.path.join(LIVE_DIR, name), "r", encoding="utf-8") as f:
-        return f.read()
-
-
 def _block(script: str) -> str:
     """The `sudoers-install` block, markers included."""
     lines = script.split("\n")
@@ -107,30 +107,6 @@ def _marked(script: str, marker: str) -> str:
     if len(opens) != 1 or len(closes) != 1 or closes[0] < opens[0]:
         raise AssertionError("%s markers: %d open, %d close" % (marker, len(opens), len(closes)))
     return "\n".join(lines[opens[0]:closes[0] + 1]) + "\n"
-
-
-def _shell_function(script: str, name: str) -> str:
-    """The text of the top-level shell function `name() { ... }` in `script`."""
-    lines = script.split("\n")
-    starts = [i for i, line in enumerate(lines) if line.startswith(name + "() {")]
-    if len(starts) != 1:
-        raise AssertionError("%d definitions of %s" % (len(starts), name))
-    end = starts[0]
-    while lines[end] != "}":
-        end += 1
-    return "\n".join(lines[starts[0]:end + 1]) + "\n"
-
-
-def _heredoc(script: str, marker: str) -> tuple[int, str]:
-    """(index of the line carrying `<<'MARKER'`, the heredoc's body)."""
-    lines = script.split("\n")
-    starts = [i for i, line in enumerate(lines) if "<<'%s'" % marker in line]
-    if len(starts) != 1:
-        raise AssertionError("%d heredocs named %s" % (len(starts), marker))
-    end = starts[0] + 1
-    while lines[end] != marker:
-        end += 1
-    return starts[0], "\n".join(lines[starts[0] + 1:end]) + "\n"
 
 
 class KitSudoersTextTests(unittest.TestCase):

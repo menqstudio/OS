@@ -425,6 +425,26 @@ class FloorCustodyTests(unittest.TestCase):
                 self.floor if directory is None else directory)
         return str(caught.exception)
 
+    def test_the_suppression_this_class_rests_on_works_in_both_forms(self):
+        """Every refusal in this class is only reachable with the acknowledgement OFF, and
+        ``setUp`` turns it off with ``_self_owned_ack.suppress()``. That helper once removed
+        the acknowledgement through ``.start()`` and not through ``with`` — so it is held to
+        both here: declared, then suppressed either way, then restored."""
+        names = _self_owned_ack.NAMES
+        declared = {name: "declared-for-this-test" for name in names}
+        with unittest.mock.patch.dict(os.environ, declared):
+            with _self_owned_ack.suppress():
+                self.assertEqual([n for n in names if n in os.environ], [])
+            self.assertEqual({n: os.environ.get(n) for n in names}, declared)
+
+            started = _self_owned_ack.suppress()
+            started.start()
+            try:
+                self.assertEqual([n for n in names if n in os.environ], [])
+            finally:
+                started.stop()
+            self.assertEqual({n: os.environ.get(n) for n in names}, declared)
+
     def test_a_floor_this_process_can_write_is_refused_on_every_platform(self):
         """The universal configuration: a directory this very process just created.
 
@@ -592,8 +612,9 @@ class FloorCustodyTests(unittest.TestCase):
 
 
 class HeadFloorConfigurationContradictionTests(unittest.TestCase):
-    """**No floor directory satisfies both halves of the design.** This is a contradiction
-    pinned as executable fact, NOT a regression test for a fix — there is no fix here.
+    """**No LOCAL floor directory satisfies both halves of the design.** This is a
+    contradiction pinned as executable fact about the in-process write path. It is still true
+    of that path, and that path is no longer the only one: see "What resolved it" below.
 
     `_advance_head_floor` writes the mark **in the process the mark polices**, and any write
     failure raises. `_refuse_self_owned_floor` refuses any floor directory that process owns
@@ -604,7 +625,7 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
       `<task>.floor.json.tmp` and renaming it over the mark all need exactly the capability
       custody refuses — the serialization lock added for audit R1 `:271` needs the same write
       capability as the mark it protects, so it neither widens nor narrows this contradiction);
-    * so the only satisfiable posture is the acknowledgement
+    * so the only satisfiable posture FOR THE LOCAL WRITE is the acknowledgement
       (`BRO_OPERATOR_ROOT_PIN_SELF_OWNED_FILE`, or the raw variable under `BRO_ENV=ci`),
       which `bro_custody` describes as short-circuiting **every rule in that module** — the
       operator-root pin, the redirected registry root, the evidence store and this floor. The
@@ -612,13 +633,20 @@ class HeadFloorConfigurationContradictionTests(unittest.TestCase):
       while that variable is present, for exactly that reason.
 
     `_head_floor_dir`'s own docstring offers the escape route "a deployment that can put the
-    marks under a principal the builder cannot write should do exactly that". That deployment
-    cannot be configured: the builder IS the writer.
+    marks under a principal the builder cannot write should do exactly that". On the local path
+    that deployment cannot be configured: the builder IS the writer.
 
-    Closing it needs a second principal to perform the write -- a floor-writer service or a
-    setuid helper. **That is an Owner/Architect decision about where the write happens, not a
-    patch**, so this class states the contradiction rather than hiding it: any change that claims
-    to resolve it has to come here and say which posture now satisfies both rules.
+    **What resolved it.** Closing it needed a second principal to perform the write, and that
+    now exists: `bro_completion.ServiceFloor`, selected by `BRO_EVIDENCE_FLOOR_WRITER`, hands
+    the advance to the Floor Writer service (`runtime/floor_writer.py`), and under that posture
+    no branch reaches `_advance_head_floor` at all. `_floor_posture` is a closed two-state
+    resolver — `ServiceFloor` or `AcknowledgedLocalFloor`, with no fallback from the first to
+    the second — and `TheLocalWriteIsReachableOnlyFromTheAcknowledgedPosture`, further down
+    this file, holds that split. This docstring said "there is no fix here" and "the only
+    satisfiable posture is the acknowledgement" for as long as both of those were in the tree.
+    So what this class pins today is narrower and still worth pinning: under
+    `AcknowledgedLocalFloor` the two rules have no intersection, which is exactly why that
+    posture has to be DISCLOSED rather than chosen by omission.
 
     DO NOT reach for the supervisor's durable ledger. This text used to name it as a candidate,
     on the grounds that it "already holds an equivalent floor written by the supervisor uid".

@@ -132,10 +132,16 @@ class TheAcceptLoopArmsTheBudgetTests(unittest.TestCase):
     """`serve_forever`'s own loop had no bound either, and it is the one the service entry points
     run (`engine/tools/brops_signer_service.py`, `brops_supervisor_service.py`).
 
-    Asserted against the SOURCE because the loop cannot run here: it raises `SocketAclError` off
-    AF_UNIX before the first accept. A source assertion is the only kind that can hold a
-    platform's code to account from a platform that cannot execute it — and it is checked against
-    code with full-line comments stripped, so a comment mentioning the call cannot satisfy it.
+    The ARMING is asserted against the source, because the loop cannot run on every host these
+    tests do: off AF_UNIX it raises `SocketAclError` before the first accept. A source assertion
+    is the only kind that can hold a platform's code to account from a platform that cannot
+    execute it — and it is checked against code with full-line comments stripped, so a comment
+    mentioning the call cannot satisfy it.
+
+    What the armed timeout DOES when it fires is not a source question, and is not asked as one:
+    `_serve_one` takes the connection as an argument, so it is driven with a stand-in that stalls,
+    on any host. (The handler's `except` line also occurs in `recv_exactly_bounded`, so a grep for
+    it was satisfied with `_serve_one`'s own handler deleted.)
     """
 
     @staticmethod

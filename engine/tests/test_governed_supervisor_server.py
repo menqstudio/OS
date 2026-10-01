@@ -1108,6 +1108,12 @@ class UnknownOpTests(unittest.TestCase):
         )
         self.assertFalse(reply["ok"])
         self.assertNotIn("attestation", reply)
+        # The two assertions above hold for ANY refusal of this request -- run "r" does not
+        # exist, so with the seam injected the same frame is refused `no_terminal_run_state`.
+        # What makes this the config fault is that the reply names the missing seam, and is
+        # not the answer a correctly-configured supervisor gives.
+        self.assertIn("sign_attestation", reply["error"])
+        self.assertNotEqual(reply.get("reason"), REFUSE_NO_TERMINAL_RUN)
 
 
 # ---------------------------------------------------------------------------

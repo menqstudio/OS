@@ -65,6 +65,12 @@ CALLER = (os.geteuid() + 1) if _LINUX else 0
 CHILD_ADVANCES = 20000
 #: How many kills. Each is a separate process and a separate store state.
 KILL_ROUNDS = 12
+#: How many of those kills must land while the child is WRITING -- after its first commit and
+#: before its last. Half, not all: the shortest budget below is 20 ms after "ready", and on a slow
+#: device one fsync pair can take that long, so a round that kills before the first commit is
+#: possible and proves nothing either way. Half of them doing so means the window is not being
+#: sampled, and that is the failure the meta-control exists to report.
+MIN_MID_WRITE_ROUNDS = KILL_ROUNDS // 2
 
 _CHILD = r'''
 import json, pathlib, sys
@@ -230,6 +236,7 @@ class KillInjection(DurabilityFixture):
     def test_every_kill_leaves_a_complete_document_at_a_head_the_writer_attempted(self):
         random.seed(20260831)
         interrupted = 0
+        mid_write = []
         for round_number in range(KILL_ROUNDS):
             # A FRESH task each round: replaying head 1 against a floor already at N is a
             # `stale_floor` refusal, so a reused id would kill a child that had already died of
@@ -255,6 +262,12 @@ class KillInjection(DurabilityFixture):
                     self.assertEqual(digest, DIGEST)
                 if head < CHILD_ADVANCES:
                     interrupted += 1
+                # A kill landed INSIDE the write window only if the child had already
+                # committed something and had not finished: `before < head < CHILD_ADVANCES`.
+                # `head < CHILD_ADVANCES` alone is also true of a child killed before its first
+                # commit (head == before), which interrupts nothing.
+                if before < head < CHILD_ADVANCES:
+                    mid_write.append(round_number)
 
                 # Usable, not merely readable: the next advance must succeed from exactly here.
                 reply = fw.handle(
@@ -268,6 +281,14 @@ class KillInjection(DurabilityFixture):
                          "no kill landed before the child finished its whole loop; the window "
                          f"this test exists to sample was never sampled (store filesystem: "
                          f"{self.fstype})")
+        # The meta-control the module docstring promises. Every round can be "interrupted" by
+        # the count above with every kill landing before the child's first commit; this is the
+        # count of kills that actually interrupted a writer that was writing.
+        self.assertGreaterEqual(
+            len(mid_write), MIN_MID_WRITE_ROUNDS,
+            f"only {len(mid_write)} of {KILL_ROUNDS} kills landed after the child's first commit "
+            f"and before its last (rounds {mid_write}); the rest killed a child that had written "
+            f"nothing, which measures no interruption (store filesystem: {self.fstype})")
 
     def test_a_temp_file_left_by_a_kill_is_never_merged_into_the_document(self):
         # The no-auto-heal rule, on debris a real kill produced rather than debris written by

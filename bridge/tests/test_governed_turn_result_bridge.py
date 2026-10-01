@@ -39,9 +39,10 @@ things it must be unable to do are unable by CONSTRUCTION rather than by care".
 
 No prerequisite here is optional. Everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is an unmissable
-hard error rather than a green run with a quiet skip. (There is no
-`BROPS_TEST_MISSING_PREREQUISITES` declaration anywhere in this tree, so nothing is declared
-in it and nothing here may be softened.)
+hard error rather than a green run with a quiet skip. (`BROPS_TEST_MISSING_PREREQUISITES` is not
+consulted here: that declaration is the Rust `provision` crate's, set for one Windows job in
+`.github/workflows/ci.yml`, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 from __future__ import annotations
 
@@ -511,7 +512,8 @@ class FrameArithmeticTests(unittest.TestCase):
         self.assertEqual(len(as_written), 74_236)
 
     def test_the_desktop_stdout_bound_admits_it_with_a_factor_of_127_to_spare(self) -> None:
-        # `ai.rs:44` — `const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;`
+        # `core/src/governed_sidecar.rs` — `pub const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;`
+        # (`ai.rs` has a constant of the same name; that one bounds the `claude` CLI provider.)
         max_stdout = 9 * 1024 * 1024
         self.assertEqual(max_stdout, 9_437_184)
         as_written = len(json.dumps(self.bridge_max).encode("utf-8"))

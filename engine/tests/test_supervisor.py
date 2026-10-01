@@ -266,13 +266,20 @@ class LeaseContainmentTests(SupervisorFixture):
                          "a lease that outlives its builder is a credential on disk")
 
     def test_builder_does_not_inherit_the_supervisor_environment(self):
-        result = self.supervise(
-            self.request(),
-            builder=[sys.executable, "-c",
-                     "import json,os;print('evidence:'+json.dumps(sorted(os.environ)))"])
+        # The variables are PUT in the supervisor's environment first. Asserting the absence of a
+        # name nothing ever set holds just as well for a builder handed all of os.environ.
+        planted = {"BRO_SUPERVISOR_ONLY_SENTINEL": "issuer-side", "BRO_COMPLETION_KEY": "x"}
+        with patch.dict(os.environ, planted):
+            result = self.supervise(
+                self.request(),
+                builder=[sys.executable, "-c",
+                         "import json,os;print('evidence:'+json.dumps(sorted(os.environ)))"])
+        self.assertEqual(result.status, COMPLETED, result.message)
         names = json.loads(result.evidence[0][len("evidence:"):])
-        self.assertNotIn("BRO_TASK_CONTRACT", names)
-        self.assertNotIn("BRO_COMPLETION_KEY", names)
+        for name in planted:
+            self.assertNotIn(name, names)
+        # The positive half: the builder did get the environment the supervisor builds for it.
+        self.assertIn("BRO_EXECUTION_LEASE", names)
 
 
 class UsageTests(unittest.TestCase):

@@ -1,6 +1,9 @@
+import os
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -105,11 +108,49 @@ class RedactionTests(unittest.TestCase):
 
 class RecoveryWiringTests(unittest.TestCase):
     def test_recovery_redacts_persisted_error(self):
-        # The recovery module must persist redacted error text, not raw secrets.
+        # The recovery module must persist redacted error text, not raw secrets. Asked of the
+        # journal it writes: `bro_recovery.redact` is only the name it imported, and calling that
+        # says nothing about whether the one place an error is persisted goes through it.
         import bro_recovery
-        redacted = bro_recovery.redact("irreversible failed: bearer abcdefghijklmnopqrstuvwxyz0123")
-        self.assertIn("REDACTED", redacted)
-        self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123", redacted)
+        from bro_contracts import canonical_json_sha256
+
+        store = tempfile.TemporaryDirectory()
+        self.addCleanup(store.cleanup)
+        token = "abcdefghijklmnopqrstuvwxyz0123"
+        before = {"head": "a" * 40, "tree": "b" * 64, "status_hash": "c" * 64}
+        action = {"tool": "Write", "action": "write", "capabilities": ["WRITE_REPOSITORY"],
+                  "targets": ["runtime/x.py"]}
+        prepared = {
+            "schema": 1, "record_id": "recovery-1", "task_id": "task-redact-1",
+            "agent_id": "agt-p01-r01", "session_id": "session-1", "tool_use_id": "toolu_1",
+            "phase": "PREPARED", "effect_class": "IRREVERSIBLE",
+            "action_hash": canonical_json_sha256(action),
+            "capabilities": action["capabilities"], "targets": action["targets"],
+            "before_head": before["head"], "before_tree": before["tree"],
+            "after_head": None, "after_tree": None,
+            "before_status_hash": before["status_hash"], "after_status_hash": None,
+            "recovery_proof_hash": None, "irreversible_effects": [], "state_version": 0,
+            "previous_record_hash": None, "issued_at_epoch": 1000}
+        with patch.dict(os.environ, {"BRO_RECOVERY_STORE": store.name}), \
+                patch("bro_recovery.snapshot", return_value=before), \
+                patch("bro_recovery._signed_record", return_value=prepared):
+            bro_recovery.prepare_mutation(
+                task={"task_id": "task-redact-1"}, agent_id="agt-p01-r01",
+                session_id="session-1", tool_use_id="toolu_1",
+                capabilities=("WRITE_REPOSITORY",), targets=("runtime/x.py",),
+                tool="Write", action_name="write")
+            bro_recovery.settle_mutation(
+                "task-redact-1", "toolu_1", success=False,
+                error=f"irreversible failed: bearer {token}")
+            state = bro_recovery._load_state("task-redact-1")
+            on_disk = "".join(
+                path.read_text(encoding="utf-8", errors="replace")
+                for path in pathlib.Path(store.name).rglob("*") if path.is_file())
+        self.assertEqual(state["phase"], "FAILED_WITH_IRREVERSIBLE_EFFECT")
+        self.assertEqual(len(state["irreversible_effects"]), 1)
+        self.assertIn("REDACTED", state["irreversible_effects"][0])
+        self.assertIn("irreversible failed", state["irreversible_effects"][0])
+        self.assertNotIn(token, on_disk)
 
 
 class RedactionCompletenessTests(unittest.TestCase):

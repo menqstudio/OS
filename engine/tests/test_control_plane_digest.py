@@ -223,9 +223,18 @@ class ScopeAuthorityTests(unittest.TestCase):
             authorize_protected_scope(MANIFEST, SECURITY_AUTHORITY, ["runtime/bro_security.py"])
 
     def test_security_scope_may_not_be_a_pattern(self):
-        authority = dict(SECURITY_AUTHORITY, protected_scope=["runtime/**"])
-        with self.assertRaises(ProtectedScopeError):
-            authorize_protected_scope(MANIFEST, authority, ["runtime/bro_policy.py"])
+        # The scope names the target EXACTLY as well as by pattern, so the membership check
+        # further down has nothing to refuse: only the pattern rule can. With a scope of
+        # `["runtime/**"]` alone the target was simply "not in the approved protected_scope",
+        # the same exception type, and this passed with the pattern rule deleted.
+        for pattern in ("runtime/**", "runtime/bro_?olicy.py", "runtime/[b]ro_policy.py"):
+            with self.subTest(pattern=pattern):
+                authority = dict(SECURITY_AUTHORITY,
+                                 protected_scope=["runtime/bro_policy.py", pattern])
+                with self.assertRaises(ProtectedScopeError) as caught:
+                    authorize_protected_scope(MANIFEST, authority, ["runtime/bro_policy.py"])
+                self.assertIn("exact paths, not patterns", str(caught.exception))
+                self.assertIn(pattern, str(caught.exception))
 
     def test_missing_task_class_denied(self):
         with self.assertRaises(ProtectedScopeError):

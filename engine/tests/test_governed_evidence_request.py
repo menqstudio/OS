@@ -20,8 +20,9 @@ The tests are organized as the design's own obligations:
   * nothing here creates an acceptance row, an `execution_attempt_id`, a lease, or writes a
     single byte to any table: the whole gate is SELECTs, and that is asserted rather than
     assumed;
-  * the §4.10(f) output pull landed on 2026-08-10 (the SUPERVISOR hop; the desktop hop is
-    still unbuilt) and is not this gate's business either way. The §5
+  * the §4.10(f) output pull is not this gate's business: the supervisor hop is
+    `governed_output_read`, and the desktop hop is
+    `apps/desktop/src-tauri/core/src/governed_output_pull.rs`. The §5
     continuation is a test double throughout. §5 acceptance DOES have a production supplier
     (`governed_acceptance.AcceptanceDriver`, and `test_governed_acceptance.py` drives it
     through this very gate); it is doubled HERE on purpose, because this file's subject is
@@ -32,16 +33,15 @@ The tests are organized as the design's own obligations:
     cannot impersonate this module.
 """
 
-import hashlib
 import json
 import pathlib
 import sqlite3
 import sys
-import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _staging_fixtures
 
 import governed_evidence_request as ger  # noqa: E402
 import governed_staging_ledger as gsl  # noqa: E402
@@ -50,17 +50,11 @@ import governed_supervisor_server as gss  # noqa: E402
 import governed_turn_result as gtr  # noqa: E402
 from governed_supervisor import SupervisorError  # noqa: E402
 
-SIDECAR_UID = 4101
-BROKER_UID = 4102
-
-NOW = 1_700_000_100_000
-EXPIRES = NOW + 30_000
-
-CHUNK = gsu.MAX_STAGING_CHUNK_BYTES          # 184320
-
-SYSTEM_BYTES = b"you are a governed assistant.\n" * 7
-HISTORY_BYTES = bytes((i * 7 + 11) % 251 for i in range(CHUNK + 4096))
-GENCFG_BYTES = b'{"max_tokens":512,"temperature":0.2}'
+from _staging_fixtures import (  # noqa: E402
+    BROKER_UID, CHUNK, EXPIRES, GENCFG_BYTES, HISTORY_BYTES, NOW, SIDECAR_UID, SYSTEM_BYTES,
+    StagingLedgerCase, b64, sha,
+)
+from _staging_fixtures import FramedConn as _Conn  # noqa: E402
 
 ARTIFACTS = (("system", SYSTEM_BYTES), ("history", HISTORY_BYTES),
              ("generation_config", GENCFG_BYTES))
@@ -70,22 +64,6 @@ GOVERNED_TABLES = ("governed_turn_acceptance", "governed_turn_completion",
                    "governed_turn_outbox", "governed_evidence_head_floor")
 STAGING_TABLES = ("governed_turn_staging", "governed_turn_staging_session",
                   "governed_turn_staging_chunk")
-
-
-def sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-class _Store:
-    """A real content-addressed store: the handle IS the digest of the bytes written."""
-
-    def __init__(self):
-        self.blobs = {}
-
-    def publish(self, data: bytes) -> str:
-        handle = sha(data)
-        self.blobs.setdefault(handle, data)
-        return handle
 
 
 #: What the §5 continuation answers with. The real supplier lives in
@@ -124,8 +102,8 @@ class _Continuation:
         return self.reply
 
 
-class _Case(unittest.TestCase):
-    """One durable ledger on a REAL file, one REAL staging root, one real store per test.
+class _Case(StagingLedgerCase):
+    """The shared staging ledger (`_staging_fixtures.StagingLedgerCase`), plus §4.10(d).
 
     A turn is walked to `INPUTS_READY` through the real §4.10(a0)-created row and the real
     §4.10(a)(b)(c) handlers rather than by writing the state directly. That matters here
@@ -135,45 +113,8 @@ class _Case(unittest.TestCase):
     """
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._cleanup)
-        self.base = pathlib.Path(self.tmp.name)
-        self.conn = gsl.open_ledger(str(self.base / "sup.db"))
-        self.staging_root = self.base / "staging"
-        self.store = _Store()
-        self.clock = NOW
-        self.turn = self.new_turn()
+        super().setUp()
         self.continuation = _Continuation()
-
-    def _cleanup(self):
-        try:
-            self.conn.close()
-        except Exception:
-            pass
-        try:
-            self.tmp.cleanup()
-        except OSError:
-            # Windows keeps a handle on a just-closed SQLite file for a moment; the temp
-            # dir is the OS's problem, not the test's verdict.
-            pass
-
-    # ---- fixtures --------------------------------------------------------------
-    def new_turn(self, *, nonce="nonce-1", handle=None, install="inst-1", expires=EXPIRES):
-        handle = handle or sha(nonce.encode("utf-8") + install.encode("utf-8") + b"|ch")
-        row = gsl.NewStaging(
-            install_id=install,
-            request_nonce=nonce,
-            challenge_handle=handle,
-            run_id="run-1",
-            task_id="task-1",
-            workspace_id="ws-1",
-            system_sha256=sha(SYSTEM_BYTES),
-            history_sha256=sha(HISTORY_BYTES),
-            generation_config_sha256=sha(GENCFG_BYTES),
-            challenge_expires_at_ms=expires,
-        )
-        gsl.open_staging(self.conn, row, NOW)
-        return row
 
     def staging_service(self):
         return gsu.StagingService(
@@ -206,13 +147,11 @@ class _Case(unittest.TestCase):
         offset, seq = 0, 0
         while offset < len(data):
             n = min(CHUNK, len(data) - offset)
-            import base64
             ack = call({
                 "protocol": gsu.STAGING_CHUNK_PROTOCOL,
                 "staging_session_id": session_id,
                 "seq": seq,
-                "bytes_b64": base64.urlsafe_b64encode(
-                    data[offset:offset + n]).decode("ascii").rstrip("="),
+                "bytes_b64": b64(data[offset:offset + n]),
             })
             self.assertEqual(ack["status"], "ack", ack)
             offset += n
@@ -254,10 +193,6 @@ class _Case(unittest.TestCase):
             request, peer_uid=peer_uid, conn=self.conn)
 
     # ---- introspection ---------------------------------------------------------
-    def turn_row(self, turn=None):
-        turn = turn or self.turn
-        return gsl.load_staging(self.conn, turn.install_id, turn.request_nonce)
-
     def snapshot(self):
         """Every row of every governed + staging table, as comparable JSON."""
         out = {}
@@ -359,7 +294,17 @@ class NothingGovernedIsMintedTests(_Case):
             self.call(self.request(extra="x")),                          # malformed
         ]
         self.assertEqual(self.snapshot(), before)
-        self.assertEqual(len(outcomes), 5)
+        # Each call really was the outcome its label says. Without this the snapshot holds
+        # for five requests that might all have been refused at the first check, and "no
+        # outcome writes" would be a statement about one outcome.
+        self.assertEqual(outcomes[0], CONTINUATION_REPLY)
+        self.assertEqual(len(self.continuation.calls), 1)
+        for reply, reason in zip(outcomes[1:], ("no_inputs_ready", "retry_conflict",
+                                                "peer_denied", "malformed")):
+            with self.subTest(reason=reason):
+                self.assertEqual(reply["protocol"], ger.EVIDENCE_REQUEST_RESULT_PROTOCOL)
+                self.assertEqual(reply["status"], "refused")
+                self.assertEqual(reply["reason"], reason)
 
     def test_the_gated_turn_carries_no_supervisor_minted_identity(self):
         """§4.10(d) "carries no `execution_attempt_id` (the supervisor reserves it, §5) and
@@ -900,32 +845,6 @@ class ReplyNamespaceTests(_Case):
 # ---------------------------------------------------------------------------
 # The front door
 # ---------------------------------------------------------------------------
-
-
-class _Conn:
-    """A framed connection stand-in: one request in, one reply out.
-
-    `raw` lets a test send bytes that are NOT the compact serialization of `body` — the
-    only way to show that the front door's frame cap is about what ARRIVED on the wire and
-    not about what the decoder made of it.
-    """
-
-    def __init__(self, peer_uid, body, raw=None):
-        self.peer_uid = peer_uid
-        payload = raw if raw is not None else json.dumps(
-            body, separators=(",", ":")).encode("utf-8")
-        self._inbox = len(payload).to_bytes(4, "big") + payload
-        self.sent = bytearray()
-
-    def recv_exactly(self, n):
-        head, self._inbox = self._inbox[:n], self._inbox[n:]
-        return head
-
-    def send_all(self, data):
-        self.sent.extend(data)
-
-    def close(self):
-        pass
 
 
 class FrontDoorTests(_Case):

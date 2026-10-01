@@ -72,16 +72,38 @@ def declare_for_process() -> str:
 NAMES = ("BRO_OPERATOR_ROOT_PIN_SELF_OWNED", ENV_PIN_SELF_OWNED_ACK_FILE)
 
 
-def suppress() -> unittest.mock._patch_dict:
-    """An unstarted ``patch.dict`` under which no acknowledgement is declared."""
-    patcher = unittest.mock.patch.dict(os.environ, {}, clear=False)
-    original_start = patcher.start
+class _Suppressed:
+    """An unstarted patch under which no acknowledgement is declared.
 
-    def start():
-        result = original_start()
+    Usable the two ways ``patch.dict`` is: ``.start()`` / ``.stop()``, or as a context manager.
+    It used to be a ``patch.dict`` with ``start`` replaced on the instance, and
+    ``_patch_dict.__enter__`` does not go through ``start`` — so ``with suppress():`` entered a
+    patch that removed nothing, and the block ran with the acknowledgement still declared. The
+    sibling :func:`patch` is used with ``with`` at most of its call sites, so the next caller
+    of this one would have reached for the form that silently did not work.
+    """
+
+    def __init__(self):
+        self._patcher = unittest.mock.patch.dict(os.environ, {}, clear=False)
+
+    def start(self):
+        self._patcher.start()
         for name in NAMES:
             os.environ.pop(name, None)
-        return result
+        return self
 
-    patcher.start = start
-    return patcher
+    def stop(self):
+        # ``patch.dict`` restores the whole mapping it saw at start, the removed names included.
+        return self._patcher.stop()
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *exc_info):
+        self.stop()
+        return False
+
+
+def suppress() -> _Suppressed:
+    """An unstarted patch under which no acknowledgement is declared, by any of ``NAMES``."""
+    return _Suppressed()

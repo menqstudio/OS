@@ -44,25 +44,14 @@ from _prerequisites import BRIDGE_SIDECAR, require  # noqa: E402
 require(BRIDGE_SIDECAR)
 
 import engine_sidecar  # noqa: E402  (bridge/ placed on the path above)
-from bro_control_room_api import GOVERNANCE_OP, GOVERNANCE_PROTOCOL, ControlRoomAPIV1  # noqa: E402
+from bro_control_room_api import ControlRoomAPIV1  # noqa: E402
 from bro_orchestration_runtime_v1 import DurableOrchestrationRuntimeV1  # noqa: E402
 # Helper functions only — importing a TestCase from another module would re-run that
 # module's whole suite under this one's name.
+from test_governance_read import read_request  # noqa: E402
 from test_orchestration_runtime import AGENT, task_contract  # noqa: E402
 
 SIDECAR = BRIDGE / "engine_sidecar.py"
-
-
-def read_request(surface: str = "decisionLedger", task_id=None, **overrides) -> dict:
-    body = {
-        "protocol": GOVERNANCE_PROTOCOL,
-        "op": GOVERNANCE_OP,
-        "surface": surface,
-        "task_id": task_id,
-        "read_only": True,
-    }
-    body.update(overrides)
-    return body
 
 
 class GovernanceSidecarRouteTests(unittest.TestCase):

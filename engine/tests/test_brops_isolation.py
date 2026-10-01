@@ -5,9 +5,10 @@ cannot (1) connect to the signer channel, (2) read the signer/attestation keys, 
 read/write the protected store, (4) get the supervisor to sign caller-supplied evidence.
 
 The OS-principal / ACL enforcement of (1)-(3) is Linux-first (dedicated service SID/UID +
-socket/pipe + key/dir ACLs, design §1.1) and is exercised on Linux in CI; here we prove
-the portable custody discipline (dirs refuse group/other access) and the no-oracle
-behavior, and skip-guard the parts that need a real dedicated principal on this host.
+socket/pipe + key/dir ACLs, design §1.1). It needs real dedicated principals, so it is NOT
+proven in this file on any host: `engine/ci/isolation_proof.sh` proves it, run by the
+`signer-isolation` job of `.github/workflows/ci.yml`. Here we prove the portable custody
+discipline (dirs refuse group/other access) and the no-oracle behavior.
 """
 
 import json
@@ -26,9 +27,7 @@ import unittest.mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "tools"))
-
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+sys.path.insert(0, str(ROOT / "tests"))  # _brops_fixtures
 
 import io
 
@@ -37,12 +36,14 @@ import brops_protocol
 import brops_receipt_signer as signer
 import brops_supervisor_attest as attest_mod
 from brops_evidence_store import EvidenceStore, EvidenceStoreError
-from brops_supervisor_attest import RunState, produce_sign_request
+from brops_supervisor_attest import produce_sign_request
+
+from _brops_fixtures import POLICY_BUNDLE as _POLICY_BUNDLE
+from _brops_fixtures import keypair as _keypair
+from _brops_fixtures import run_state as _run_state
+from _brops_fixtures import signer_env
 
 _POSIX = os.name == "posix"
-
-# The signer's authorization policy matching the `_run_state()` fixture (policy_bundle=b"pb").
-_POLICY_BUNDLE = b"pb"
 
 
 def _policy():
@@ -53,30 +54,6 @@ def _policy():
         expected_policy_id="policy-1",
         expected_policy_version="1",
         expected_policy_bundle_sha256=bc.policy_bundle_sha256(_POLICY_BUNDLE),
-    )
-
-
-def _keypair():
-    priv = Ed25519PrivateKey.generate()
-    raw_priv = priv.private_bytes(
-        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
-    ).hex()
-    raw_pub = priv.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    ).hex()
-    return raw_priv, raw_pub
-
-
-def _run_state():
-    return RunState(
-        run_id="run-1", execution_attempt_id="attempt-1", lease_id="lease-1",
-        request_nonce="00000000-0000-4000-8000-000000000000",
-        receipt_id="11111111-1111-4111-8111-111111111111", decision="completed",
-        workspace_id="ws-1", install_id="install-1", supervisor_id="sup-1",
-        executor_id="exec-1", builder_id="builder-1", policy_id="policy-1", policy_version="1",
-        requested_at="1000", completed_at="2000",
-        system="s", history=[{"role": "user", "content": "hi"}], output="out",
-        generation_config="{}", containment_evidence={"contained": True}, policy_bundle=b"pb",
     )
 
 
@@ -185,8 +162,13 @@ class NoOracleTests(unittest.TestCase):
 
 
 class SignerProcessBoundaryTests(unittest.TestCase):
-    """(1): the signer runs as its OWN process reading a request in / result out. The
-    dedicated-principal socket/pipe ACL is Linux deployment (skip-guarded below)."""
+    """(1): the signer runs as its OWN process reading a request in / result out.
+
+    That a same-login-user peer cannot CONNECT to the signer's channel is not tested here: it
+    takes a dedicated OS principal, and `engine/ci/isolation_proof.sh` (the `signer-isolation`
+    CI job) proves it against real ones. This class used to carry an unconditionally skipped
+    placeholder for it, whose reason said "exercised on Linux in CI, not on this host" on Linux
+    in CI — a skip that could never run, counted on every run as if it might."""
 
     def _provision(self):
         d = tempfile.mkdtemp()
@@ -208,17 +190,7 @@ class SignerProcessBoundaryTests(unittest.TestCase):
             store=store, attestation_key={"key_id": "sup-att-1", "private_key": att_priv},
         )
         env = dict(os.environ)
-        env["BROPS_EVIDENCE_STORE_DIR"] = str(store_dir)
-        env["BROPS_RECEIPT_SIGNER_KEYDIR"] = str(keydir)
-        env["BROPS_SUPERVISOR_ATTESTATION_PUBKEY"] = att_pub
-        env["BROPS_SUPERVISOR_ATTESTATION_KEY_ID"] = "sup-att-1"
-        # The signer's own authorization policy (P1-7).
-        env["BROPS_ALLOWED_EXECUTOR_IDS"] = "exec-1"
-        env["BROPS_ALLOWED_BUILDER_IDS"] = "builder-1"
-        env["BROPS_ALLOWED_SUPERVISOR_IDS"] = "sup-1"
-        env["BROPS_EXPECTED_POLICY_ID"] = "policy-1"
-        env["BROPS_EXPECTED_POLICY_VERSION"] = "1"
-        env["BROPS_EXPECTED_POLICY_BUNDLE_SHA256"] = bc.policy_bundle_sha256(_POLICY_BUNDLE)
+        env.update(signer_env(store_dir=store_dir, keydir=keydir, attestation_pubkey=att_pub))
         env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "runtime"), str(ROOT / "tools")])
         return request, env
 
@@ -242,14 +214,6 @@ class SignerProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         result = brops_protocol.read_frame(io.BytesIO(proc.stdout))
         self.assertEqual(result["status"], "refused")
-
-    @unittest.skip(
-        "Dedicated-OS-principal socket/pipe ACL denying the same-login-user peer is "
-        "Linux-first deployment (design §1.1); exercised on Linux in CI, not on this host."
-    )
-    def test_same_user_cannot_connect_to_signer_channel(self):  # pragma: no cover
-        raise AssertionError("placeholder — see CI Linux isolation job")
-
 
 
 class UcredFormatTests(unittest.TestCase):

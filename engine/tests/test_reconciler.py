@@ -166,12 +166,14 @@ class RecoveryHandsBackAuthorityTests(ReconcilerFixture):
 
     That lease hand-back is now UNREACHABLE, and deliberately so: clearing a recovery
     quarantine is an owner authorisation, `owner-gev` was a string any caller could
-    type, and no owner-bound artifact type exists for this engine to verify one with
-    (`bro_orchestration_runtime.OWNER_ACTOR_UNPROVABLE`). A recovery anybody can sign
-    off is not a recovery. So the tests below assert the refusal and the stranding it
-    leaves behind; the hand-back behaviour returns — with its own tests — when a
-    shipped path mints the artifact that message names. No person does: the install
-    provisions the key that signs it (PR #78).
+    type, and the orchestration runtime consumes no artifact that could prove one: the
+    type its refusal names (`orchestration-actor`) is not registered, and the
+    `control-room-command` type that IS registered is consumed by the control-room API
+    only (`bro_orchestration_runtime.OWNER_ACTOR_UNPROVABLE`; the control-room module
+    has a constant of the same name saying something different). A recovery anybody can
+    sign off is not a recovery. So the tests below assert the refusal and the stranding
+    it leaves behind; the hand-back behaviour returns — with its own tests — when an
+    install-provisioned key can sign the artifact that message names. No person mints it.
     """
 
     def test_recovery_is_refused_until_the_owner_actor_can_be_proven(self):
@@ -214,9 +216,14 @@ class RecoveryHandsBackAuthorityTests(ReconcilerFixture):
     def test_recovery_rejects_an_invalid_lease_duration(self):
         self.running_task("task-rec4", lease_seconds=10)
         self.runtime.reconcile(now_epoch=200)
-        with self.assertRaises(OrchestrationRuntimeError):
+        with self.assertRaises(OrchestrationRuntimeError) as caught:
             self.runtime.recover_task("task-rec4", owner_id="owner-gev", now_epoch=201,
                                       evidence_refs=["proof"], lease_seconds=0)
+        # The owner-actor refusal raises the same type for every call in this class, so the type
+        # alone would be satisfied with the duration check gone. The duration is refused first
+        # and in its own words.
+        self.assertIn("lease duration invalid", str(caught.exception))
+        self.assertNotIn("cannot be validated", str(caught.exception))
 
 
 if __name__ == "__main__":

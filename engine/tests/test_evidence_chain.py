@@ -188,9 +188,14 @@ class HeadAuthorityTests(EvidenceFixture):
         self.assertIn("different task", str(caught.exception))
 
     def test_head_count_disagreeing_with_its_sequence_denied(self):
-        self.write_head("task-1", "d" * 64, 4, 9)
-        with self.assertRaises(EvidenceError):
+        # The head is otherwise TRUE: the real final hash and the real count. With an invented
+        # hash the "does not end at the signed head" check refuses a line later, and it answered
+        # for this one whether or not this one existed.
+        final_hash = self.check(self.chain)
+        self.write_head("task-1", final_hash, 4, 9)
+        with self.assertRaises(EvidenceError) as caught:
             self.check(self.chain)
+        self.assertIn("last_sequence disagrees with its own count", str(caught.exception))
 
     def test_head_naming_a_different_final_hash_denied(self):
         self.write_head("task-1", "e" * 64, 4, 4)
@@ -393,12 +398,19 @@ class CompletionIntegrationTests(EvidenceFixture):
         self.assertEqual(len(self.chain_check(["task-fresh-e1", "task-fresh-e2"], "task-fresh")), 64)
 
     def test_evidence_store_inside_the_repository_denied(self):
+        # "The repository" is the one `bro_completion` itself lives in (its module ROOT), not the
+        # `root` a caller passes: a store under the fixture repo is accepted as external and then
+        # refused only for having no head floor -- the same answer an empty directory anywhere
+        # gets. So the path named here is under the real ROOT. It is never created: the refusal
+        # is on where the path POINTS, before anything is opened.
         from bro_completion import CompletionError
-        inside = self.repo / "store"
-        inside.mkdir()
+        inside = self.completion.ROOT / "evidence-store-inside-the-repository"
+        self.assertFalse(inside.exists())
         with unittest.mock.patch.dict(os.environ, {"BRO_EVIDENCE_STORE": str(inside)}):
-            with self.assertRaises(CompletionError):
+            with self.assertRaises(CompletionError) as caught:
                 self.completion.validate_evidence_chain("task-1", self.chain, self.repo)
+        self.assertIn("BRO_EVIDENCE_STORE must be outside the repository", str(caught.exception))
+        self.assertFalse(inside.exists())
 
 if __name__ == "__main__":
     unittest.main()

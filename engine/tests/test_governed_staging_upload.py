@@ -20,17 +20,15 @@ The tests are organized as the design's own obligations:
   * nothing here creates an acceptance row, an ``execution_attempt_id``, or a lease.
 """
 
-import base64
-import hashlib
 import json
 import pathlib
 import sqlite3
 import sys
-import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
+sys.path.insert(0, str(ROOT / "tests"))  # _staging_fixtures
 
 import governed_staging_ledger as gsl  # noqa: E402
 import governed_staging_upload as gsu  # noqa: E402
@@ -38,89 +36,16 @@ import governed_supervisor_server as gss  # noqa: E402
 from brops_protocol import encode_frame  # noqa: E402
 from governed_supervisor import SupervisorError  # noqa: E402
 
-SIDECAR_UID = 4101
-BROKER_UID = 4102
-
-NOW = 1_700_000_100_000
-EXPIRES = NOW + 30_000
-
-CHUNK = gsu.MAX_STAGING_CHUNK_BYTES          # 184320
-
-SYSTEM_BYTES = b"you are a governed assistant.\n" * 7
-HISTORY_BYTES = bytes((i * 7 + 11) % 251 for i in range(CHUNK + 4096))
-GENCFG_BYTES = b'{"max_tokens":512,"temperature":0.2}'
+from _staging_fixtures import (  # noqa: E402
+    BROKER_UID, CHUNK, EXPIRES, GENCFG_BYTES, HISTORY_BYTES, NOW, SIDECAR_UID, SYSTEM_BYTES,
+    StagingLedgerCase, b64, sha,
+)
+from _staging_fixtures import FramedConn as _Conn  # noqa: E402
 
 
-def sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
-
-
-class _Store:
-    """A real content-addressed store: the handle IS the digest of the bytes written."""
-
-    def __init__(self):
-        self.blobs = {}
-
-    def publish(self, data: bytes) -> str:
-        handle = sha(data)
-        self.blobs.setdefault(handle, data)
-        return handle
-
-
-class _Case(unittest.TestCase):
-    """One durable ledger on a REAL file and one REAL staging root per test.
-
-    The staging row is created through ``governed_staging_ledger.open_staging`` — the same
-    CAS §4.10(a0) drives — rather than by replaying a signed challenge. What §4.10(a)(b)(c)
-    need from the turn is exactly the three committed digests and the ``UPLOADING`` state;
-    how the supervisor came to believe them is §4.10(a0)'s tested concern, and re-proving it
-    here would test the challenge machinery a third time instead of this one.
-    """
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._cleanup)
-        self.base = pathlib.Path(self.tmp.name)
-        self.conn = gsl.open_ledger(str(self.base / "sup.db"))
-        self.staging_root = self.base / "staging"
-        self.store = _Store()
-        self.clock = NOW
-        self.turn = self.new_turn()
-
-    def _cleanup(self):
-        try:
-            self.conn.close()
-        except Exception:
-            pass
-        try:
-            self.tmp.cleanup()
-        except OSError:
-            # Windows keeps a handle on a just-closed SQLite file for a moment; the temp
-            # dir is the OS's problem, not the test's verdict.
-            pass
-
-    # ---- fixtures --------------------------------------------------------------
-    def new_turn(self, *, nonce="nonce-1", handle=None, expires=EXPIRES, now=None,
-                 install="inst-1", system=None, history=None, gencfg=None):
-        handle = handle or sha(nonce.encode("utf-8") + b"|challenge")
-        row = gsl.NewStaging(
-            install_id=install,
-            request_nonce=nonce,
-            challenge_handle=handle,
-            run_id="run-1",
-            task_id="task-1",
-            workspace_id="ws-1",
-            system_sha256=sha(system if system is not None else SYSTEM_BYTES),
-            history_sha256=sha(history if history is not None else HISTORY_BYTES),
-            generation_config_sha256=sha(gencfg if gencfg is not None else GENCFG_BYTES),
-            challenge_expires_at_ms=expires,
-        )
-        gsl.open_staging(self.conn, row, NOW if now is None else now)
-        return row
+class _Case(StagingLedgerCase):
+    """The shared staging ledger (`_staging_fixtures.StagingLedgerCase`), plus the §4.10(a)(b)(c)
+    service, its three request builders and the upload flows."""
 
     def service(self, *, publish=None, mint=None, sidecar_uid=SIDECAR_UID):
         return gsu.StagingService(
@@ -194,10 +119,6 @@ class _Case(unittest.TestCase):
     # ---- introspection ---------------------------------------------------------
     def session_row(self, session_id):
         return gsl.load_session(self.conn, session_id)
-
-    def turn_row(self, turn=None):
-        turn = turn or self.turn
-        return gsl.load_staging(self.conn, turn.install_id, turn.request_nonce)
 
     def session_dir(self, session_id):
         return pathlib.Path(self.session_row(session_id)["session_dir"])
@@ -396,18 +317,25 @@ class StagingOpenRefusalsTests(_Case):
 
     def test_oversize_boundary_the_exact_ceiling_is_admitted(self):
         """Strictly `>`, not `>=`: a declaration AT the ceiling opens, one byte over does
-        not. Tested on both sides of the same boundary."""
-        self.assertEqual(
-            self.call(self.open_request(
-                artifact="generation_config",
-                declared_len=gsu.ARTIFACT_CEILINGS["generation_config"],
-                declared_sha256=self.turn.generation_config_sha256))["status"],
-            "opened")
-        self.assertEqual(
-            self.refuse(self.open_request(
-                artifact="history", declared_sha256=self.turn.history_sha256,
-                declared_len=gsu.ARTIFACT_CEILINGS["history"] + 1)),
-            "oversize")
+        not. Tested on both sides of the SAME boundary, for each of the three artifacts —
+        each has its own ceiling, and one artifact admitted at its ceiling says nothing about
+        another refused past a different one."""
+        digests = {"system": self.turn.system_sha256, "history": self.turn.history_sha256,
+                   "generation_config": self.turn.generation_config_sha256}
+        self.assertEqual(set(digests), set(gsu.ARTIFACT_CEILINGS))
+        for artifact, digest in digests.items():
+            ceiling = gsu.ARTIFACT_CEILINGS[artifact]
+            with self.subTest(artifact=artifact):
+                # Refused first: a refusal opens nothing, so the same turn can still open.
+                self.assertEqual(
+                    self.refuse(self.open_request(
+                        artifact=artifact, declared_sha256=digest, declared_len=ceiling + 1)),
+                    "oversize")
+                self.assertEqual(
+                    self.call(self.open_request(
+                        artifact=artifact, declared_sha256=digest,
+                        declared_len=ceiling))["status"],
+                    "opened")
 
     def test_retry_conflict_on_a_reopen_declaring_a_different_length(self):
         self.open_session("system", SYSTEM_BYTES)
@@ -959,12 +887,18 @@ class CrashRecoveryTests(_Case):
         directory = self.session_dir(session_id)
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "0.chunk").write_bytes(HISTORY_BYTES[:CHUNK])
-        inode_before = (directory / "0.chunk").stat().st_size
+        before = (directory / "0.chunk").stat()
 
         reply = self.call(self.chunk_request(session_id, 0, HISTORY_BYTES[:CHUNK]))
         self.assertEqual(reply["status"], "ack")
         self.assertEqual(reply["next_seq"], 1)
-        self.assertEqual((directory / "0.chunk").stat().st_size, inode_before)
+        # "Same file, no rewrite", measured as that: the inode and the modification time. The
+        # retry is byte-identical, so the SIZE is the same whether the chunk was adopted or
+        # written again — which is all this used to compare.
+        after = (directory / "0.chunk").stat()
+        self.assertEqual(after.st_ino, before.st_ino)
+        self.assertEqual(after.st_mtime_ns, before.st_mtime_ns)
+        self.assertEqual(after.st_size, before.st_size)
         self.assertEqual(self.session_row(session_id)["byte_count"], CHUNK)
 
         # …and the adopted chunk assembles into the real artifact.
@@ -1055,9 +989,16 @@ class CrashRecoveryTests(_Case):
 
     def test_the_sweep_may_remove_a_corrupt_session_without_touching_the_turn(self):
         """§2.4: recovery is operator-swept, and the sweep does NOT consume the challenge
-        nonce — so the desktop can re-issue against the still-valid signed challenge. The
-        sweep itself is a later ordered piece and is NOT IMPLEMENTED; what is proved here is
-        that the DDL leaves the door open for it."""
+        nonce — so the desktop can re-issue against the still-valid signed challenge.
+
+        The sweep EXISTS (`gsu.sweep_staging` / `gsl.sweep_expired_staging`), and
+        `StagingSweepTests` below drives it. It is not what this test calls, on purpose: it
+        reclaims by EXPIRY and takes the turn's row with it, while the subject here is a
+        corrupt session under a turn that is still LIVE. So this stays a raw DELETE of the
+        one session, and what it proves is the narrower thing the sweep rests on: the DDL
+        lets a session and its chunks go without touching the turn, and the same challenge
+        can then be staged again. (This docstring said the sweep was "NOT IMPLEMENTED" for
+        as long as the same file had tests for it.)"""
         session_id = self.open_session("history", HISTORY_BYTES)
         self.call(self.chunk_request(session_id, 0, HISTORY_BYTES[:CHUNK]))
         (self.session_dir(session_id) / "0.chunk").unlink()
@@ -1572,35 +1513,6 @@ class LedgerContractTests(_Case):
             gsl.load_session(conn, "s1")
         with self.assertRaises(gsl.Corrupt):
             gsl.load_session_for_artifact(conn, "d" * 64, "system")
-
-
-class _Conn:
-    """A framed connection stand-in: one request in, one reply out.
-
-    ``raw`` lets a test send bytes that are NOT the compact serialization of ``body`` —
-    which is the only way to show that the front door's frame cap is about what arrived on
-    the wire and not about what the decoder made of it.
-    """
-
-    def __init__(self, peer_uid, body, raw=None):
-        self.peer_uid = peer_uid
-        payload = raw if raw is not None else json.dumps(
-            body, separators=(",", ":")).encode("utf-8")
-        self._inbox = len(payload).to_bytes(4, "big") + payload
-        self.sent = bytearray()
-
-    def recv_exactly(self, n):
-        head, self._inbox = self._inbox[:n], self._inbox[n:]
-        return head
-
-    def send_all(self, data):
-        self.sent.extend(data)
-
-    def close(self):
-        pass
-
-    def reply(self):
-        return json.loads(bytes(self.sent[4:]).decode("utf-8"))
 
 
 class FrontDoorTests(_Case):

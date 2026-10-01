@@ -21,10 +21,14 @@ a green one means something.
 2026-08-12 it recorded `{status: null, reason: null}` for every §4.10(f) frame — the §4.10(a0)/(d)
 shape, which that protocol does not use — so the log said WHO was served and never WHICH range.
 
-No prerequisite here is optional: everything is stdlib plus repo modules imported at module scope,
-with no `try`/`except` and no `skipIf`, so a missing one is a hard error rather than a green run
-with a quiet skip. Nothing is declared in ``BROPS_TEST_MISSING_PREREQUISITES`` — no declaration
-exists anywhere in this tree — so nothing here may be softened.
+One prerequisite lives outside `engine/`, and it is named rather than assumed:
+`ladder_evidence` imports the bridge's §4.6 frame parser, so the module calls
+`_prerequisites.require(BRIDGE_TURN_RESULT)` before importing it. That SKIPS by name only off a CI
+runner (a deployed box copies `engine/` alone) and FAILS on one. Everything else is stdlib plus
+repo modules imported at module scope, with no `try`/`except` and no `skipIf`, so a missing one is
+a hard error rather than a green run with a quiet skip. ``BROPS_TEST_MISSING_PREREQUISITES`` is not
+consulted here: that declaration is the Rust `provision` crate's, set for one Windows job in
+`.github/workflows/ci.yml`, and no Python suite reads it.
 """
 
 from __future__ import annotations
@@ -39,9 +43,17 @@ import unittest
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 ENGINE_ROOT = os.path.dirname(TESTS_DIR)
 for path in (os.path.join(ENGINE_ROOT, "ci", "live"), os.path.join(ENGINE_ROOT, "runtime"),
-             os.path.join(os.path.dirname(ENGINE_ROOT), "bridge")):
+             os.path.join(os.path.dirname(ENGINE_ROOT), "bridge"), TESTS_DIR):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+from _prerequisites import BRIDGE_TURN_RESULT, require  # noqa: E402
+
+# Stated before the import it would otherwise break on: `ladder_evidence` imports the bridge's
+# §4.6 frame parser at module scope, so on a tree that holds engine/ alone this module used to
+# fail to LOAD ("No module named 'governed_turn_result_bridge'"). It skips by name there now, and
+# under CI `require` FAILS rather than skipping.
+require(BRIDGE_TURN_RESULT)
 
 import ladder_evidence as le  # noqa: E402
 import run_ladder_supervisor as rls  # noqa: E402
@@ -360,14 +372,59 @@ class TheVerifierIsNotOptionalTests(_PullCase):
 
     The negative ladder run passes none, because a refused turn mints no capability. That path is
     the reason the argument is optional at all, and it is also the shape a future edit could abuse
-    to make the pull unreported — so the contract is pinned here: no documents means `check_pull`
-    is not consulted, and any documents at all means every rule above applies.
+    to make the pull unreported — so the contract is pinned here, in both halves: `main` does not
+    consult `check_pull` when no document is given and does when any is, and the checker itself
+    refuses an empty set rather than passing it.
     """
 
-    def test_an_empty_set_never_reaches_the_checker(self):
+    def test_the_checker_itself_refuses_an_empty_set(self):
         # `main` guards on `if args.pull_evidence`; called directly with nothing, the checker
         # itself must still refuse rather than return a hollow green.
         self.refuses("no_pull_positive", [], hops=[])
+
+    def _run_main(self, pull_evidence):
+        """Drive the real `main` with every OTHER check stood in for, so the one decision left
+        is whether it consults `check_pull`. Returns (exit code, the calls it made, the bundle)."""
+        from unittest import mock
+
+        calls = []
+        ledger = {"execution_attempt_id": ATTEMPT_ID, "staged_handles": {}}
+        pulled = {"expected_chunks": 1, "served_to_uid": SIDECAR_UID,
+                  "negatives_refused_by_name": ["refused"]}
+        bundle_dir = os.path.join(self.tmp.name, "bundle-%d" % len(pull_evidence))
+        argv = ["ladder_evidence.py", "--live-root", self.tmp.name, "--submit", "s", "--document", "d",
+                "--reply", "r", "--hop-log", os.path.join(self.tmp.name, "absent.log"),
+                "--uids", "u", "--bundle", bundle_dir]
+        for path in pull_evidence:
+            argv += ["--pull-evidence", path]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(le, "read_json", lambda path, reason: {}), \
+                mock.patch.object(le, "check_frame",
+                                  lambda reply: {"envelope_jcs_b64": ""}), \
+                mock.patch.object(le, "check_envelope", lambda receipt, root: envelope()), \
+                mock.patch.object(le, "check_request_binding", lambda env, document: None), \
+                mock.patch.object(le, "check_ledger", lambda root, document, handle: ledger), \
+                mock.patch.object(le, "check_containment", lambda root, attempt: {}), \
+                mock.patch.object(le, "check_output", lambda env, root, report: {}), \
+                mock.patch.object(le, "check_hops", lambda hops, uids: {}), \
+                mock.patch.object(le, "check_pull",
+                                  lambda *args: calls.append(args[0]) or pulled), \
+                mock.patch("builtins.print"):
+            code = le.main()
+        with open(os.path.join(bundle_dir, "ladder-evidence.json"), encoding="utf-8") as fh:
+            return code, calls, json.load(fh)
+
+    def test_main_does_not_consult_the_checker_when_no_document_is_given(self):
+        code, calls, bundle = self._run_main([])
+        self.assertEqual(code, 0, bundle["verdict"])
+        self.assertEqual(calls, [])
+        self.assertIsNone(bundle["output_pull"])
+
+    def test_main_consults_the_checker_as_soon_as_one_document_is_given(self):
+        code, calls, bundle = self._run_main(["one.json"])
+        self.assertEqual(code, 0, bundle["verdict"])
+        self.assertEqual(calls, [["one.json"]])
+        self.assertEqual(bundle["output_pull"]["served_to_uid"], SIDECAR_UID)
 
 
 # ---------------------------------------------------------------------------

@@ -781,10 +781,6 @@ class NegativeMatrixEvidenceFloorTests(_MatrixCase):
         self.assert_nothing_renders_trusted_verified(conn, run_id="run-2", attempt="att-2")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # ---------------------------------------------------------------------------
 # Plan section 7.1 / 6.1(14) -- concurrency (NM-CONC-*)
 # ---------------------------------------------------------------------------
@@ -911,7 +907,8 @@ class NegativeMatrixTerminalTests(_MatrixCase):
 
 
 class NegativeMatrixFrameTests(_MatrixCase):
-    """T-062. Seven of the twenty `NM-FRAME-*` rows, established against the tree.
+    """T-062. Seven of the twenty `NM-FRAME-*` rows (01, 02, 03, 04, 07, 13, 18), established
+    against the tree.
 
     Reviewing them found a live defect and it is fixed in the same change: `strict_loads`'s
     own docstring said "strict JSON" and §1.9/§4 say *no NaN/Inf*, but Python's `json.loads`
@@ -919,9 +916,12 @@ class NegativeMatrixFrameTests(_MatrixCase):
     `strict_loads(b'{"a": NaN}')` returned `{'a': nan}` — measured on 2026-09-01, before
     `_reject_json_constant` existed. That is what an `unreviewed` row is worth looking at for.
 
-    The other thirteen rows stay `unreviewed`, which is their honest state: nobody has
-    established them. Two are worth naming because they were looked at and NOT closed.
-    **NM-FRAME-14** (86-char b64url signature) does refuse today, but as
+    The other thirteen rows are not held here, and their status is not restated here either:
+    `config/negative-matrix.json` is the record, and a count copied into a docstring is a count
+    that goes stale (this one said "thirteen `unreviewed`" long after most had a test elsewhere
+    or a recorded blocker). Two are worth naming because T-062 looked at them and did NOT close
+    them, which is why the matrix carries them as `blocked`.
+    **NM-FRAME-14** (86-char b64url signature) did refuse when measured, but as
     `attestation_invalid` rather than the matrix's `malformed`: `_validate_attestation`
     accepts any capped string as `sig` and defers the shape to the injected
     `verify_attestation`. Enforcing the shape at the decoder changes an audited perimeter's
@@ -1074,3 +1074,7 @@ class NegativeMatrixFrameTests(_MatrixCase):
                 signer.validate_sign_request(request)
             self.assertEqual(caught.exception.reason, signer.REASON_MALFORMED,
                              f"{case}: a caller-supplied {derived} was accepted")
+
+
+if __name__ == "__main__":
+    unittest.main()

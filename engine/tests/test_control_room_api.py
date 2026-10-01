@@ -218,11 +218,18 @@ class ControlRoomActorProofTests(unittest.TestCase):
     must present one, verified against the operator-signed trusted-key registry with
     real Ed25519, bound to that role and agent id, and unexpired.
 
-    The owner has no such credential and this change does not invent one: there is no
-    owner-authority artifact type in `bro_signature.ARTIFACT_AUTHORITY`, no signature
-    field in `schemas/control-room-command.schema.json`, and no trusted key that could
-    sign either. An owner-issued command is therefore refused BY NAME, which is the
-    honest state — not validated on its own say-so.
+    The owner is proven PER COMMAND: `control-room-command` is registered in
+    `bro_signature.ARTIFACT_AUTHORITY` under the delegated `control-room` authority, the
+    schema carries `artifact_type` / `key_id` / `signature`, and `_prove_command_actor`
+    verifies the artifact and binds it to this exact command (command_id, task_id, command).
+    An owner command presented with NO artifact, or with one a key the registry does not
+    grant the type to signed, is still refused by name — it is not validated on its own
+    say-so. (This paragraph said the artifact type, the signature fields and the key did not
+    exist, beside tests in this class that present all three and are accepted.)
+
+    What the engine does not have is the artifact on a real deployment: the install
+    provisions the `control-room` key and nothing in the shipped product signs a command
+    with it yet. That is O-4, and it is not a gap in this code.
     """
 
     def setUp(self) -> None:

@@ -19,21 +19,28 @@ and a setuid launcher. It is a typed seam whose shipped default (`RefusingExecut
 `platform_unsupported` **pre-record**, so a stand-in is the only way any test on any platform
 reaches step 6, and that is stated here rather than implied by a green run.
 
-**§4.10(g), and who walks it.** Everything below is driven from a submit frame this test
-writes. The trusted side writes one too — `prepare_governed_turn_v1b` and
-`governed_turn_submit_prepared` in `apps/desktop/src-tauri/core/src/` — and since 2026-09-20 it
-is wired: the broker's `ladder_executor::LadderChain` calls the helper over
-`impl SubmitTransport for GovernedSidecar`. (This paragraph said the helper "has no caller"
-until 2026-10-01.) The counterparty exists in CI only: `engine/ci/live/run_ladder_supervisor.py`
-constructs the services this file constructs, while `engine/ci/live/run_supervisor.py` still
-constructs none of them, which its own test asserts. So this file proves the ladder WORKS; the
-ladder kit proves something walks it under real uids; nothing a user can launch does.
+**What walks the ladder outside this file.** Everything below is driven from a submit frame
+this test writes. Until 2026-09 that was the only writer there was, and this paragraph said so
+("the helper has no caller ... nor is there a counterparty"). Both halves have since been
+built, and the sentence outlived them:
+
+  * the trusted side writes the frame in production code — `broker/src/ladder_executor.rs`
+    calls `prepare_governed_turn_v1b` and `governed_turn_submit_prepared`, and
+    `broker/src/main.rs` constructs the `LadderChain` that holds them;
+  * the counterparty is `engine/ci/live/run_ladder_supervisor.py`, which constructs all four
+    services. `engine/ci/live/run_supervisor.py` stays the §5-only runner and constructs none.
+
+That is wiring, not deployment: the broker serves the ladder only when `$BROPS_BROKER_CONFIG`
+names a verified deployment, which nothing in the shipped app sets. So this file is still the
+proof that the ladder WORKS; the last class below pins which runner is which, so that neither
+half of that statement can go stale silently again.
 
 No prerequisite here is optional: everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is a hard error
-rather than a green run with a quiet skip. Nothing is declared in
-`BROPS_TEST_MISSING_PREREQUISITES` — no declaration exists anywhere in this tree — so
-nothing here may be softened.
+rather than a green run with a quiet skip. `BROPS_TEST_MISSING_PREREQUISITES` is not consulted
+here: that declaration is the Rust `provision` crate's, set for one Windows job in
+`.github/workflows/ci.yml`, and no Python suite reads it — so nothing here may be softened
+through it.
 """
 
 import hashlib
@@ -425,16 +432,45 @@ class TheSupervisorValidatesItsOwnSupplierTests(_SubmitCase):
             self.drive(frame, drive_acceptance=liar)
 
 
-class TheSupervisorIsNotDeployedTests(unittest.TestCase):
-    """The ladder above works and NOTHING RUNS IT. This is the declaration, as a test."""
+class TheLadderHasExactlyOneLiveRunnerTests(unittest.TestCase):
+    """Which live runner is the ladder's counterparty, as a test in both directions.
+
+    This class was `TheSupervisorIsNotDeployedTests` and declared "the ladder works and NOTHING
+    RUNS IT". It read `run_supervisor.py` alone, so when `run_ladder_supervisor.py` was added as
+    a separate runner the declaration became false and stayed green.
+    """
+
+    SERVICES = ("OpenService", "StagingService", "EvidenceRequestService", "OutputReadService")
+
+    @staticmethod
+    def _called_names(name: str) -> set:
+        """Every name the runner CALLS, read from its syntax tree. Both runners name the
+        services in prose, and prose is not construction."""
+        import ast
+
+        tree = ast.parse((ROOT / "ci" / "live" / name).read_text(encoding="utf-8"))
+        constructed = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                constructed.add(func.attr if isinstance(func, ast.Attribute)
+                                else getattr(func, "id", ""))
+        return constructed
 
     def test_the_live_supervisor_constructs_none_of_the_three_services(self):
+        # The §5-only runner. (The name says three; `OutputReadService` made it four.)
         source = (ROOT / "ci" / "live" / "run_supervisor.py").read_text(encoding="utf-8")
-        for absent in ("OpenService", "StagingService", "EvidenceRequestService",
-                       "OutputReadService"):
+        for absent in self.SERVICES:
             self.assertNotIn(absent, source,
-                             "run_supervisor.py now constructs %s — the §4.10(g) ladder has "
-                             "a live counterparty and this declaration is stale" % absent)
+                             "run_supervisor.py now names %s — it is the §5-only runner, and "
+                             "the ladder's counterparty is run_ladder_supervisor.py" % absent)
+
+    def test_the_ladder_runner_constructs_all_four_services(self):
+        constructed = self._called_names("run_ladder_supervisor.py")
+        for present in self.SERVICES:
+            self.assertIn(present, constructed,
+                          "run_ladder_supervisor.py no longer constructs %s — the §4.10(g) "
+                          "ladder has lost its live counterparty" % present)
 
 
 if __name__ == "__main__":  # pragma: no cover

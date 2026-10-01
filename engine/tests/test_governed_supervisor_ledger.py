@@ -533,13 +533,35 @@ class CompletionTests(unittest.TestCase):
         for field, bad in (
             ("output_handle", "not-hex"),
             ("output_handle", H_A.upper()),
-            ("evidence_event_count", 0),
             ("completed_at_ms", -1),
-            ("evidence_final_event_hash", "abc"),
         ):
             with self.subTest(field=field, bad=bad):
-                with self.assertRaises(gsl.LedgerError):
+                with self.assertRaises(gsl.LedgerError) as caught:
                     gsl.record_completion(conn, "att-1", _produced(**{field: bad}), 50, derived=DERIVED)
+                self.assertIn(field, str(caught.exception))
+        # The evidence head and the three terminal handles are DERIVED by the supervisor, so a
+        # malformed one arrives through `derived`. Put into `produced` instead — where these two
+        # cases used to be — they are refused as unexpected KEYS, and so were their valid
+        # values: the derived-value checks were never reached.
+        for field, bad in (
+            ("evidence_event_count", 0),
+            ("evidence_event_count", True),
+            ("evidence_last_sequence", -3),
+            ("evidence_head_sequence", "12"),
+            ("evidence_final_event_hash", "abc"),
+            ("evidence_final_event_hash", H_C.upper()),
+            ("record_handle", "not-hex"),
+            ("lease_handle", None),
+        ):
+            with self.subTest(derived_field=field, bad=bad):
+                with self.assertRaises(gsl.LedgerError) as caught:
+                    gsl.record_completion(conn, "att-1", _produced(), 50,
+                                          derived=_derived(**{field: bad}))
+                self.assertIn("derived %s must be" % field, str(caught.exception))
+        # ...and nothing above recorded anything: the well-formed completion still goes in.
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0)
+        gsl.record_completion(conn, "att-1", _produced(), 50, derived=DERIVED)
 
 
 # ---------------------------------------------------------------------------

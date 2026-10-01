@@ -137,7 +137,10 @@ class TraceabilityEntrypointTests(unittest.TestCase):
         report = validate_traceability(ROOT)
         self.assertGreaterEqual(report["meta_layer_principles"], 12)
         self.assertGreaterEqual(report["runtime_dependencies"], 3)
-        self.assertGreaterEqual(report["law_records_backfilled"], 0)
+        # The count is `len(records)`, so "at least zero" asserted nothing. The floor is the
+        # fifteen core laws (L0-L14), and every counted record has a derived proof beside it.
+        self.assertGreaterEqual(report["law_records_backfilled"], 15)
+        self.assertEqual(len(report["derived"]), report["law_records_backfilled"])
 
 
 class BackfillTests(unittest.TestCase):

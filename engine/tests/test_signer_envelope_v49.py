@@ -278,10 +278,6 @@ class EnvelopeV49ConformanceTest(unittest.TestCase):
         self.assertNotIn(": ", jcs)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _publish_chain(store, handles):
     """Publish the three protected-chain documents the signer re-verifies (audit R3-01).
 
@@ -312,3 +308,7 @@ def _publish_chain(store, handles):
         _chain_docs.execution_receipt(evidence_like)))
     handles["lease_handle"] = store.put(_chain_docs.canonical(
         _chain_docs.lease_payload(evidence_like)))
+
+
+if __name__ == "__main__":
+    unittest.main()

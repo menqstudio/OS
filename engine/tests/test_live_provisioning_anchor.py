@@ -22,9 +22,20 @@ import sys
 import tempfile
 import unittest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PROVISION = os.path.join(REPO_ROOT, "engine", "ci", "live", "provision_keys.py")
-LIVE_DIR = os.path.join(REPO_ROOT, "engine", "ci", "live")
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if TESTS_DIR not in sys.path:
+    sys.path.insert(0, TESTS_DIR)
+ENGINE_ROOT = os.path.dirname(TESTS_DIR)
+REPO_ROOT = os.path.dirname(ENGINE_ROOT)
+# Derived from the engine tree, not spelled REPO_ROOT/"engine": the kit ships INSIDE engine/, so
+# it is present wherever the engine is, whatever the directory above it is called.
+LIVE_DIR = os.path.join(ENGINE_ROOT, "ci", "live")
+PROVISION = os.path.join(LIVE_DIR, "provision_keys.py")
+
+from _kit_scripts import heredoc as _heredoc  # noqa: E402
+from _kit_scripts import script as _script  # noqa: E402
+from _kit_scripts import shell_function as _shell_function  # noqa: E402
+from _prerequisites import DESKTOP_ANCHOR_REFUSAL_SOURCE, requires  # noqa: E402
 
 SHA_A = "aa" * 32
 SHA_B = "bb" * 32
@@ -41,11 +52,6 @@ def _provision(root: str, *extra: str) -> subprocess.CompletedProcess:
          "--launcher-sha", SHA_A, "--executor-sha", SHA_B, *extra],
         capture_output=True, text=True,
     )
-
-
-def _script(name: str) -> str:
-    with open(os.path.join(LIVE_DIR, name), "r", encoding="utf-8") as f:
-        return f.read()
 
 
 class LiveProvisioningAnchorTests(unittest.TestCase):
@@ -100,6 +106,7 @@ class KitScriptTests(unittest.TestCase):
                 with self.subTest(script=name, var=var):
                     self.assertNotIn(var, script)
 
+    @requires(DESKTOP_ANCHOR_REFUSAL_SOURCE)
     def test_the_throwaway_negative_names_the_refusal_the_driver_actually_emits(self):
         # The ladder kit relabels its own root `external` and expects the driver to refuse it. The
         # outcome string is built from two languages: `setup_blocked` prefixes `root_anchor_` to the
@@ -119,6 +126,7 @@ class KitScriptTests(unittest.TestCase):
                 self.assertIn("check_declared_external_anchor", text)
                 self.assertIn('format!("root_anchor_{why}")', text)
 
+    @requires(DESKTOP_ANCHOR_REFUSAL_SOURCE)
     def test_the_install_minted_negative_names_the_refusal_the_driver_actually_emits(self):
         # T-131 slice C. `install_minted` is the one provenance that can ever support a production
         # claim, so a driver must not take it from an anchor file that is merely root-owned: the
@@ -149,6 +157,7 @@ class KitScriptTests(unittest.TestCase):
             shared = f.read()
         self.assertIn("brops_broker::tcb_probe::anchor_bytes_are_floor_pinned(", shared)
 
+    @requires(DESKTOP_ANCHOR_REFUSAL_SOURCE)
     def test_the_product_broker_phase_names_a_committed_demonstration_turn_and_never_production(self):
         # The phase used to assert `blocked/upstream_blocked` BECAUSE the kit root was not the
         # compiled pin. The broker now verifies the kit's manifest under the kit's own floor-pinned
@@ -212,18 +221,6 @@ class KitScriptTests(unittest.TestCase):
         self.assertLess(product_pin, derived)
         self.assertLess(derived, owned)
         self.assertLess(owned, start)
-
-
-def _shell_function(script: str, name: str) -> str:
-    """The text of the top-level shell function `name() { ... }` in `script`."""
-    lines = script.split("\n")
-    starts = [i for i, line in enumerate(lines) if line.startswith(name + "() {")]
-    if len(starts) != 1:
-        raise AssertionError("%d definitions of %s" % (len(starts), name))
-    end = starts[0]
-    while lines[end] != "}":
-        end += 1
-    return "\n".join(lines[starts[0]:end + 1]) + "\n"
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("python3"),
@@ -336,22 +333,6 @@ class KitBrokerVerdictTests(unittest.TestCase):
         self.assertIn("reported a refusal", out)
 
 
-def _heredoc(script: str, tag: str) -> str:
-    """The body of the ONE Python heredoc `<<'tag'` in `script`, as bash would feed it to python."""
-    lines = script.split("\n")
-    openers = [i for i, line in enumerate(lines) if "<<'%s'" % tag in line]
-    if len(openers) != 1:
-        raise AssertionError("%d heredocs tagged %s" % (len(openers), tag))
-    start = openers[0]
-    while lines[start].endswith("\\"):  # a backslash-newline joins the opener to the next line
-        start += 1
-    start += 1
-    end = start
-    while lines[end] != tag:
-        end += 1
-    return "\n".join(lines[start:end]) + "\n"
-
-
 class KitHeredocTests(unittest.TestCase):
     """The Python the ladder kit runs for the T-131 controls, RUN — against a synthetic tree.
 
@@ -405,7 +386,7 @@ class KitHeredocTests(unittest.TestCase):
                 "expected_owner": "root", "digest_origin": "deployment-measured"}
 
     def run_heredoc(self, tag, *args):
-        return subprocess.run([sys.executable, "-", *args], input=_heredoc(self.script, tag),
+        return subprocess.run([sys.executable, "-", *args], input=_heredoc(self.script, tag)[1],
                               capture_output=True, text=True)
 
     def relabelled_deployment(self):

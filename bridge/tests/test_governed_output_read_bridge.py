@@ -38,9 +38,10 @@ What the file is organized around
 
 No prerequisite here is optional. Everything is stdlib plus repo modules imported at module
 scope, with no `try`/`except` and no `skipIf`, so a missing prerequisite is an unmissable
-hard error rather than a green run with a quiet skip. (There is no
-`BROPS_TEST_MISSING_PREREQUISITES` declaration anywhere in this tree, so nothing is declared
-in it and nothing here may be softened.)
+hard error rather than a green run with a quiet skip. (`BROPS_TEST_MISSING_PREREQUISITES` is not
+consulted here: that declaration is the Rust `provision` crate's, set for one Windows job in
+`.github/workflows/ci.yml`, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 from __future__ import annotations
 
@@ -607,13 +608,15 @@ class FrameArithmeticTests(unittest.TestCase):
         self.assertEqual(len(self._max_bridge_reply()) - len(self._max_supervisor_reply()), 1)
 
     def test_the_desktop_stdout_bound_admits_a_full_chunk_with_room_to_spare(self) -> None:
-        # `ai.rs::MAX_STDOUT_BYTES`, the bound on the sidecar→desktop leg. Asserted from the
-        # Rust source so the number cannot drift silently on the other side of the pipe.
-        ai_rs = (pathlib.Path(engine_sidecar.__file__).resolve().parents[1]
-                 / "apps" / "desktop" / "src-tauri" / "src" / "ai.rs")
-        line = next(l for l in ai_rs.read_text(encoding="utf-8").splitlines()
-                    if "const MAX_STDOUT_BYTES" in l)
-        self.assertIn("9 * 1024 * 1024", line)
+        # `brops_core::governed_sidecar::MAX_STDOUT_BYTES`, the bound on the sidecar→desktop
+        # leg. Asserted from the Rust source so the number cannot drift silently on the other
+        # side of the pipe -- and from THAT file: `ai.rs` keeps a constant of the same name, but
+        # it bounds the `claude` CLI provider now and says nothing about the sidecar.
+        sidecar_rs = (pathlib.Path(engine_sidecar.__file__).resolve().parents[1]
+                      / "apps" / "desktop" / "src-tauri" / "core" / "src" / "governed_sidecar.rs")
+        lines = [l for l in sidecar_rs.read_text(encoding="utf-8").splitlines()
+                 if l.startswith("pub const MAX_STDOUT_BYTES")]
+        self.assertEqual(lines, ["pub const MAX_STDOUT_BYTES: u64 = 9 * 1024 * 1024;"])
         self.assertLess(len(self._max_bridge_reply()), 9 * 1024 * 1024)
 
     def test_neither_framed_ipc_bound_could_ever_carry_a_chunk(self) -> None:

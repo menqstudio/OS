@@ -32,6 +32,7 @@ REPO_ROOT = os.path.dirname(ENGINE_ROOT)
 # Spelling it REPO_ROOT/engine/... made the two tests that need only the builder depend
 # on the engine sitting one level down.
 BUILDER = os.path.join(ENGINE_ROOT, "ci", "live", "build_tcb_pin_manifest.py")
+WRITER = os.path.join(ENGINE_ROOT, "ci", "live", "write_broker_config.py")
 TCB_INTEGRITY_RS = os.path.join(
     REPO_ROOT, "apps", "desktop", "src-tauri", "core", "src", "tcb_integrity.rs")
 
@@ -46,8 +47,20 @@ def required_artifacts() -> list[str]:
     """
     with open(TCB_INTEGRITY_RS, "r", encoding="utf-8") as f:
         source = f.read()
-    body = source.split("pub const TCB_REQUIRED_ARTIFACTS: &[&str] = &[", 1)[1].split("];", 1)[0]
-    return re.findall(r'"([^"]+)"', body)
+    # ONE extractor for this Rust constant, and it is the live kit's own
+    # (`write_broker_config.rust_string_list`), which `test_live_broker_config` holds to its
+    # comment handling. This function had a second one — a bare `findall` over the block — that
+    # counted a name inside a `//` comment as a required artifact. The two agreed on today's
+    # source and would have stopped agreeing at the first commented-out entry.
+    return writer_module().rust_string_list(source, "TCB_REQUIRED_ARTIFACTS")
+
+
+def writer_module():
+    """`engine/ci/live/write_broker_config.py`, imported for the extractor it owns."""
+    spec = importlib.util.spec_from_file_location("brops_write_broker_config", WRITER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def builder_module():

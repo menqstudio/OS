@@ -6,6 +6,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -357,16 +358,19 @@ class SecurityV2Tests(unittest.TestCase):
 
     def test_signature_and_tamper(self):
         key = "k" * 32
-        os.environ["TEST_KEY"] = key
         payload = {"a": 1}
         signature = hmac.new(
             key.encode(), canonical_bytes(payload), hashlib.sha256
         ).hexdigest()
         document = {"payload": payload, "signature": signature}
-        self.assertEqual(verify_signed_document(document, "TEST_KEY"), payload)
-        document["payload"]["a"] = 2
-        with self.assertRaises(SecurityError):
-            verify_signed_document(document, "TEST_KEY")
+        # Scoped: this used to assign `os.environ["TEST_KEY"]` and leave it set for every
+        # test that ran afterwards in the same process.
+        with unittest.mock.patch.dict(os.environ, {"TEST_KEY": key}):
+            self.assertEqual(verify_signed_document(document, "TEST_KEY"), payload)
+            document["payload"]["a"] = 2
+            with self.assertRaises(SecurityError):
+                verify_signed_document(document, "TEST_KEY")
+        self.assertNotIn("TEST_KEY", os.environ)
 
     def test_atomic_nonce_replay_legacy(self):
         with tempfile.TemporaryDirectory() as temp_dir:

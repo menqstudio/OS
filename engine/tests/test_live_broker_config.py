@@ -10,10 +10,15 @@ duplicate-implementation defect often enough to know what an unchecked copy beco
 extract the constants out of the Rust source and compare them BOTH ways: a key added on either side
 and not the other fails here, in seconds, on any platform.
 
-**Every refusal is exercised.** The writer refuses fourteen ways, and each refusal exists because the
-same condition, reached at broker start-up instead, renders as one indistinguishable `blocked` reply.
-A refusal that is never tested is a refusal that can be deleted without anything turning red — and
-the value of the whole file is that it turns an unreadable `blocked` into a named key.
+**Every reachable refusal is exercised.** The writer has twenty-seven `raise Refused` sites, and each
+exists because the same condition, reached at broker start-up instead, renders as one
+indistinguishable `blocked` reply. Twenty-six are driven below, by a real run of the writer that must
+exit 1, name the condition and leave no document. The twenty-seventh is the last gate before the file
+is created — "a read key came out `None`" — which the writer's own comment calls unreachable while
+its allowlist covers the read set, and the mirror tests above are what hold that. (This paragraph
+said "fourteen ways" and "every refusal" while eleven sites had no test at all; a refusal that is
+never tested can be deleted without anything turning red, and the value of the whole file is that it
+turns an unreadable `blocked` into a named key.)
 """
 
 from __future__ import annotations
@@ -40,7 +45,8 @@ PREFLIGHT_RS = os.path.join(TAURI, "broker", "src", "preflight.rs")
 TCB_INTEGRITY_RS = os.path.join(TAURI, "core", "src", "tcb_integrity.rs")
 SIDECAR_RS = os.path.join(TAURI, "core", "src", "governed_sidecar.rs")
 
-from _prerequisites import DESKTOP_BROKER_CONTRACT_SOURCE, requires  # noqa: E402
+from _prerequisites import (DESKTOP_BROKER_CONTRACT_SOURCE,  # noqa: E402
+                            DESKTOP_RUST_WORKSPACE, requires)
 
 
 def writer_module():
@@ -346,6 +352,23 @@ class WriterBehaviourTests(unittest.TestCase):
             handle.write("{not json")
         self.expect_refusal("not valid JSON")
 
+    def test_a_base_config_that_is_json_but_not_an_object_is_refused(self):
+        with open(self.dep.base_config, "w", encoding="utf-8") as handle:
+            json.dump(["a", "list"], handle)
+        self.expect_refusal("the base config at %s is not a JSON object" % self.dep.base_config)
+
+    def test_a_system_prompt_file_that_is_not_there_is_refused(self):
+        gone = os.path.join(self.dep.root, "gone.txt")
+        self.expect_refusal("--system-file %s is not readable" % gone, **{"--system-file": gone})
+
+    def test_a_system_prompt_that_is_not_utf8_is_refused(self):
+        """Every digest the ladder derives from the prompt is over its bytes; a prompt that only
+        decodes under some other codec has no one reading to digest."""
+        latin = os.path.join(self.dep.root, "latin1.txt")
+        with open(latin, "wb") as handle:
+            handle.write(b"caf\xe9 \xff\xfe")
+        self.expect_refusal("is not UTF-8", **{"--system-file": latin})
+
     def test_an_empty_system_prompt_is_refused(self):
         empty = os.path.join(self.dep.root, "empty.txt")
         open(empty, "w", encoding="utf-8").close()
@@ -362,11 +385,41 @@ class WriterBehaviourTests(unittest.TestCase):
         self.expect_refusal("--floor-path",
                             **{"--floor-path": os.path.join(self.dep.root, "gone.json")})
 
+    def test_a_sidecar_interpreter_or_script_that_is_not_there_is_refused(self):
+        """The same check as the two above, and each flag is named in its own refusal."""
+        for flag in ("--sidecar-python", "--sidecar-script"):
+            with self.subTest(flag=flag):
+                gone = os.path.join(self.dep.root, "gone-" + flag.strip("-"))
+                self.expect_refusal("%s is %s, which is not a file" % (flag, gone),
+                                    **{flag: gone})
+
     def test_a_sandbox_that_is_not_a_directory_is_refused(self):
         self.expect_refusal("--sidecar-cwd", **{"--sidecar-cwd": self.dep.messages_db})
 
     def test_an_empty_sidecar_principal_is_refused(self):
         self.expect_refusal("sidecar.principal", **{"--sidecar-principal": "   "})
+
+    def test_an_invoker_that_is_not_json_is_refused(self):
+        self.expect_refusal("--sidecar-invoker is not valid JSON", invoker="[/usr/bin/sudo")
+
+    def test_an_invoker_that_is_json_but_not_an_array_is_refused(self):
+        self.expect_refusal("`sidecar.invoker` must be an array",
+                            invoker=json.dumps({"program": "/usr/bin/sudo"}))
+
+    def test_an_invoker_token_that_is_not_a_usable_argv_argument_is_refused(self):
+        """Three ways a token can be something no argv may carry, each refused by its index."""
+        prefix = ["/usr/bin/sudo", "-n", "-u", "brops-sidecar", "/usr/bin/env"]
+        for index, token, fragment in (
+            (1, 7, "`sidecar.invoker[1]` is not a string"),
+            (2, {"u": 1}, "`sidecar.invoker[2]` is not a string"),
+            (1, "", "`sidecar.invoker[1]` is empty"),
+            # JSON carries the NUL as an escape, so it reaches the writer inside the token.
+            (2, "-u\u0000x", "`sidecar.invoker[2]` contains a NUL byte"),
+        ):
+            with self.subTest(index=index, token=token):
+                invoker = list(prefix)
+                invoker[index] = token
+                self.expect_refusal(fragment, invoker=invoker)
 
     def test_an_invoker_shorter_than_the_minimum_is_refused(self):
         self.expect_refusal("tokens", invoker=["/usr/bin/sudo", "-u", "/usr/bin/env"])
@@ -430,6 +483,12 @@ class WriterBehaviourTests(unittest.TestCase):
             "not readable",
             **{"--tcb-pin-manifest": os.path.join(self.dep.tcb, "absent.json")})
 
+    def test_a_pin_manifest_that_is_json_but_not_an_object_is_refused(self):
+        with open(self.dep.pin_manifest, "w", encoding="utf-8") as handle:
+            json.dump([], handle)
+        self.expect_refusal(
+            "the 2.5 TCB pin manifest at %s is not a JSON object" % self.dep.pin_manifest)
+
     def test_a_pin_manifest_with_no_artifacts_array_is_refused(self):
         with open(self.dep.pin_manifest, "w", encoding="utf-8") as handle:
             json.dump({"owner_uids": {"root": 0}}, handle)
@@ -480,10 +539,13 @@ class TheTreeStillWritesNoConfigForTheProductTests(unittest.TestCase):
     variable or calls it.
     """
 
+    @requires(DESKTOP_RUST_WORKSPACE)
     def test_the_writer_is_not_reachable_from_any_desktop_crate(self):
-        if not os.path.isdir(TAURI):
-            self.skipTest("apps/desktop/src-tauri is not beside the engine tree")
+        # Through `requires`, not a bare `skipTest`: this test's passing answer is "no hits", which
+        # is also what a walk over a missing tree finds, so on a CI runner an absent tree has to
+        # be a failure and not a quiet skip.
         hits = []
+        scanned = 0
         for current, dirs, files in os.walk(TAURI):
             dirs[:] = [d for d in dirs if d not in ("target", "node_modules")]
             for name in files:
@@ -491,10 +553,12 @@ class TheTreeStillWritesNoConfigForTheProductTests(unittest.TestCase):
                     continue
                 path = os.path.join(current, name)
                 source = read(path)
+                scanned += 1
                 if "write_broker_config" in source:
                     hits.append(os.path.relpath(path, REPO_ROOT))
                 if re.search(r'set_var\s*\(\s*"BROPS_BROKER_CONFIG"', source):
                     hits.append(os.path.relpath(path, REPO_ROOT) + " (set_var)")
+        self.assertGreater(scanned, 0, "the walk read no Rust source at all")
         self.assertEqual(hits, [],
                          "a desktop crate now reaches the deployment-config writer or sets the "
                          "variable; the fail-closed claim in README.md, CLAUDE.md, START_HERE.md "

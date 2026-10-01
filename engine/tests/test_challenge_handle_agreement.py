@@ -21,9 +21,10 @@ property of the pair, and a test that only pinned one side would let the other d
 
 No prerequisite here is optional. Everything is stdlib plus repo modules, imported at module
 scope with no ``try``/``except`` and no ``skipIf``, so a missing prerequisite is an
-unmissable hard error rather than a green run with a quiet skip. (There is no
-``BROPS_TEST_MISSING_PREREQUISITES`` declaration anywhere in this tree, so nothing is
-declared in it and nothing here may be softened.)
+unmissable hard error rather than a green run with a quiet skip. (``BROPS_TEST_MISSING_PREREQUISITES`` is
+not consulted here: that declaration is the Rust `provision` crate's, set for one Windows job
+in ``.github/workflows/ci.yml``, and no Python suite reads it — so nothing here may be softened
+through it.)
 """
 
 import base64
@@ -304,8 +305,15 @@ class ChallengeHandleAgreementTests(unittest.TestCase):
         )
         # ...while the superseded formula cannot tell them apart. Kept as the honest record
         # of what the old form bought — and the next test is why losing it costs nothing.
-        self.assertEqual(hashlib.sha256(_canonical(self.payload)).hexdigest(),
-                         hashlib.sha256(_canonical(self.payload)).hexdigest())
+        # Computed from the two DOCUMENTS, which differ; this used to hash `self.payload`
+        # twice and compare the result with itself.
+        resigned = dict(self.document, sig=other_sig)
+        self.assertNotEqual(resigned, self.document)
+
+        def superseded(document):
+            return hashlib.sha256(_canonical(document["payload"])).hexdigest()
+
+        self.assertEqual(superseded(resigned), superseded(self.document))
 
     def test_a_re_signed_replay_still_buys_zero_additional_execution_attempts(self):
         """Losing the payload-only collapse does NOT open a replay hole.
