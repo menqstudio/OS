@@ -368,6 +368,81 @@ for f in reply.json reply-tampered.json; do
 # principals under test could have authored.
 mkdir -p "$LADDER/pull"; chown 0:0 "$LADDER/pull"; chmod 0755 "$LADDER/pull"
 
+# ----- sudoers: HOW a fragment reaches /etc/sudoers.d (T-141) -------------------------------------
+# Not an environment override: these three are assigned here, unconditionally, by a script that is
+# already root. They are variables only so the test can run the block below against a directory
+# that is not /etc/sudoers.d and a visudo that is not the real one.
+SUDOERS_DIR=/etc/sudoers.d
+SUDOERS_VISUDO_CANDIDATES=(/usr/sbin/visudo /sbin/visudo)
+SUDOERS_STAGE_DIR=""
+# >>> sudoers-install >>>
+# IDENTICAL in run_live_turn.sh and run_ladder_turn.sh, and `engine/tests/test_live_sudoers_install.py`
+# lifts this block out of BOTH files and RUNS it against a stand-in directory and a stand-in visudo.
+#
+# A fragment used to be written straight into /etc/sudoers.d and validated afterwards, with the
+# `trap cleanup EXIT` that removes it installed hundreds of lines later, and the validation skipped
+# altogether when `visudo` was not on PATH (it lives in /usr/sbin, which a PATH not derived from
+# root's lacks). On a CI runner that is harmless. On a real machine one file sudo cannot parse in
+# that directory makes sudo refuse EVERY command for EVERY account, and the usual way back in is
+# sudo. So the order is now: write it somewhere sudo does not read, validate THAT, and only then
+# let it appear under its real name.
+#
+# WHY `mv` AND NOT `install`. `install -m 0440 -o root -g root` creates the destination NAME first
+# and then writes into it, then sets owner and mode: between those system calls the name exists in
+# /etc/sudoers.d holding a prefix of the fragment, and a kill in that window leaves it there. `mv`
+# between two names on ONE filesystem is rename(2): the name either does not exist or names the
+# complete file, already root-owned and 0440 — and it is the very inode visudo was shown, not a
+# copy of it. Across filesystems `mv` silently becomes copy-then-unlink, which is `install`'s
+# window again, so the two device numbers are compared and a mismatch REFUSES. That is also why
+# the staging directory is a sibling of /etc/sudoers.d (mktemp -d: 0700, owned by its creator, and
+# this script is root) rather than something under /tmp or /run.
+sudoers_find_visudo() {
+  local candidate
+  for candidate in "${SUDOERS_VISUDO_CANDIDATES[@]}"; do
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then printf '%s\n' "$candidate"; return 0; fi
+  done
+  candidate="$(command -v visudo 2>/dev/null)" || return 1
+  case "$candidate" in
+    /*) printf '%s\n' "$candidate"; return 0 ;;
+  esac
+  return 1
+}
+
+# Sets SUDOERS_STAGE_DIR. Called directly, never inside `$(...)`: a subshell would create the
+# directory and lose the variable `cleanup` needs in order to remove it. The assignment's status is
+# mktemp's, and a mktemp that failed printed nothing, so a failure leaves the variable empty.
+sudoers_stage_begin() {
+  [ -z "$SUDOERS_STAGE_DIR" ] || return 0
+  SUDOERS_STAGE_DIR="$(mktemp -d "$(dirname "$SUDOERS_DIR")/.brops-sudoers-stage.XXXXXX")"
+}
+
+sudoers_stage_end() {
+  case "$SUDOERS_STAGE_DIR" in
+    */.brops-sudoers-stage.*) rm -rf -- "$SUDOERS_STAGE_DIR" ;;
+  esac
+  SUDOERS_STAGE_DIR=""
+}
+
+sudoers_install() {  # <staged file> <target directly inside $SUDOERS_DIR>
+  local staged="$1" target="$2" visudo staged_dev target_dev
+  [ -n "$SUDOERS_STAGE_DIR" ] && [ "$(dirname "$staged")" = "$SUDOERS_STAGE_DIR" ] \
+    || { echo "sudoers: $staged is not in the staging directory; refusing to install it" >&2; return 1; }
+  [ "$(dirname "$target")" = "$SUDOERS_DIR" ] \
+    || { echo "sudoers: $target is not directly inside $SUDOERS_DIR; refusing to install it" >&2; return 1; }
+  visudo="$(sudoers_find_visudo)" \
+    || { echo "sudoers: no visudo at ${SUDOERS_VISUDO_CANDIDATES[*]} or on PATH; refusing to install $target unvalidated" >&2; return 1; }
+  chown 0:0 "$staged" && chmod 0440 "$staged" \
+    || { echo "sudoers: could not make $staged root-owned 0440; $target was NOT installed" >&2; return 1; }
+  "$visudo" -cf "$staged" >/dev/null \
+    || { echo "sudoers: $visudo rejected $staged; $target was NOT installed" >&2; return 1; }
+  staged_dev="$(stat -c %d "$staged")" && target_dev="$(stat -c %d "$SUDOERS_DIR/.")" \
+    && [ "$staged_dev" = "$target_dev" ] \
+    || { echo "sudoers: $SUDOERS_STAGE_DIR is not on the filesystem of $SUDOERS_DIR, so a rename would be a copy; $target was NOT installed" >&2; return 1; }
+  mv -fT "$staged" "$target" \
+    || { echo "sudoers: could not rename $staged to $target" >&2; return 1; }
+}
+# <<< sudoers-install <<<
+
 # ----- sudoers: the SUPERVISOR may spawn the recorder with ONE argument vector -------------------
 # In the §5 kit this grant belongs to the broker, because the broker drives the lifecycle and
 # spawns the recorder. In §4.10(d) the supervisor owns the whole of §5 internally, so the spawn is
@@ -383,7 +458,23 @@ SUDOERS=/etc/sudoers.d/brops-ladder-recorder
 # spawning the one-shot sidecar as the SIDECAR account. Named here so `cleanup` removes it on every
 # exit path, including the ones that happen before the phase that writes it.
 DRIVER_SUDOERS=/etc/sudoers.d/brops-ladder-driver-sidecar
-python3 - "$CONFIG" "$SUPERVISOR_USER" "$RECORDER_USER" "$SUDOERS" \
+
+# `cleanup` and its trap, BEFORE the first fragment can exist. They used to sit five hundred lines
+# down, beside the three services they also stop — so every `exit 1` between here and there (a
+# fragment visudo refuses, a pin that does not build, a floor that does not pass) left the fragment
+# and the broker's ACL on /etc/sudoers.d behind. `PIDS` is empty until `start_service` fills it.
+PIDS=()
+cleanup() {
+  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
+  rm -f "$SUDOERS" "$DRIVER_SUDOERS"
+  sudoers_stage_end
+  setfacl -x "u:$BROKER_USER" /etc/sudoers.d 2>/dev/null || true
+}
+trap cleanup EXIT
+
+sudoers_stage_begin || { echo "FAIL: could not create the sudoers staging directory beside $SUDOERS_DIR"; exit 1; }
+SUDOERS_STAGED="$SUDOERS_STAGE_DIR/brops-ladder-recorder"
+python3 - "$CONFIG" "$SUPERVISOR_USER" "$RECORDER_USER" "$SUDOERS_STAGED" \
   <<'PYSUDO' || { echo "FAIL: could not build the recorder sudoers vector"; exit 1; }
 import json, sys
 cfg = json.load(open(sys.argv[1]))
@@ -422,10 +513,7 @@ with open(out_path, "w", encoding="utf-8") as fh:
     fh.write("%s ALL=(%s) NOPASSWD: %s %s\n"
              % (invoker_user, recorder_user, recorder_bin, " ".join(args)))
 PYSUDO
-chmod 0440 "$SUDOERS"
-if command -v visudo >/dev/null 2>&1; then
-  visudo -cf "$SUDOERS" >/dev/null || { echo "FAIL: the recorder sudoers vector is not valid sudoers"; exit 1; }
-fi
+sudoers_install "$SUDOERS_STAGED" "$SUDOERS" || { echo "FAIL: the recorder sudoers vector was not installed (the sudoers: line above says why)"; exit 1; }
 echo "== recorder sudo vector (invoker: $SUPERVISOR_USER) =="; cat "$SUDOERS"
 
 # =================================================================================================
@@ -851,9 +939,10 @@ setfacl -m "u:$BROKER_USER:r" "$SUDOERS" "$TCB/privileged-launcher.bin"
 [ "$(stat -c %a "$TCB/privileged-launcher.bin")" = "4750" ] \
   || { echo "FAIL: the launcher lost its 4750 mode to the ACL"; exit 1; }
 [ "$(stat -c %a "$SUDOERS")" = "440" ] || { echo "FAIL: the sudoers vector is no longer 0440"; exit 1; }
-if command -v visudo >/dev/null 2>&1; then
-  visudo -cf "$SUDOERS" >/dev/null || { echo "FAIL: sudo no longer accepts the recorder vector"; exit 1; }
-fi
+# Re-validated IN PLACE, because the ACL was applied in place. Fail closed on a missing visudo here
+# as well: `cleanup` is already armed, so this exit removes the fragment rather than leaving it.
+VISUDO="$(sudoers_find_visudo)" || { echo "FAIL: no visudo to re-validate the recorder vector after its ACL"; exit 1; }
+"$VISUDO" -cf "$SUDOERS" >/dev/null || { echo "FAIL: sudo no longer accepts the recorder vector"; exit 1; }
 getfacl -p /etc/sudoers.d "$SUDOERS" "$TCB/privileged-launcher.bin" 2>/dev/null | grep -E "^# file|$BROKER_USER"
 # Root, and before anything starts, for the reason `proof/src/tcb_verify.rs` gives: the pinned set
 # includes artifacts the serving principals must not be able to read, so root is the only principal
@@ -863,13 +952,7 @@ getfacl -p /etc/sudoers.d "$SUDOERS" "$TCB/privileged-launcher.bin" 2>/dev/null 
 "$BIN/ladder_turn" --config "$DRIVER_CONFIG" --verify-tcb || { echo "FAIL: the §2.5 TCB integrity floor"; exit 1; }
 
 # ----- start the three service servers -----------------------------------------------------------
-PIDS=()
-cleanup() {
-  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
-  rm -f "$SUDOERS" "$DRIVER_SUDOERS"
-  setfacl -x "u:$BROKER_USER" /etc/sudoers.d 2>/dev/null || true
-}
-trap cleanup EXIT
+# `PIDS`, `cleanup` and `trap cleanup EXIT` are defined above the first sudoers fragment, not here.
 
 # Each service's stdout+stderr is TEE'd into the evidence directory as well as the job log.
 # A supervisor-side fault answers the peer with an op-shaped `{"ok": false, "error": ...}` that
@@ -1072,8 +1155,9 @@ DRIVER_RC=0
 # no third arrangement, which is why this grant exists and why it is EXACT: no wildcard, because
 # `GovernedSidecar::command` builds a fully determined argv for a relay spawn (the trust set is
 # empty under `SidecarTrust::RelayFramesOnly`, so the only assignment is the supervisor socket).
+DRIVER_SUDOERS_STAGED="$SUDOERS_STAGE_DIR/brops-ladder-driver-sidecar"
 python3 - "$BROKER_USER" "$SIDECAR_USER" "$ENV_BIN" "$SOCK/supervisor.sock" "$PYTHON_BIN" \
-  "$LIVE/bridge/engine_sidecar.py" "$DRIVER_SUDOERS" \
+  "$LIVE/bridge/engine_sidecar.py" "$DRIVER_SUDOERS_STAGED" \
   <<'PYDRVSUDO' || { echo "FAIL: could not build the driver's sidecar sudoers vector"; exit 1; }
 import sys
 
@@ -1097,11 +1181,8 @@ with open(out_path, "w", encoding="utf-8") as fh:
              % (invoker_user, sidecar_user, escape(env_bin),
                 " ".join(escape(a) for a in args)))
 PYDRVSUDO
-chmod 0440 "$DRIVER_SUDOERS"
-if command -v visudo >/dev/null 2>&1; then
-  visudo -cf "$DRIVER_SUDOERS" >/dev/null \
-    || { echo "FAIL: the driver's sidecar sudoers vector is not valid sudoers"; exit 1; }
-fi
+sudoers_install "$DRIVER_SUDOERS_STAGED" "$DRIVER_SUDOERS" \
+  || { echo "FAIL: the driver's sidecar sudoers vector was not installed (the sudoers: line above says why)"; exit 1; }
 echo "== ladder-driver sudo vector (invoker: $BROKER_USER) =="; cat "$DRIVER_SUDOERS"
 
 # ----- the runs ---------------------------------------------------------------------------------

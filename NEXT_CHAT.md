@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `c7eba6a`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t141/sudoers-install-safety` — `main` @ `4f274ee`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `c7eba6a`.** The only thing open is PR #310 on `t142/settled-at-c7eba6a`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #311 · branch `t141/sudoers-install-safety`** (base `main`, tip `4f274ee`, task T-141).
 >
-> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
+> T-141: a kit could break sudo on a real box; fragments are staged, validated, then renamed in
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2410 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2437 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1288 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 801 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context
