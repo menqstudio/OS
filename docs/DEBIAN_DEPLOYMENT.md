@@ -307,12 +307,12 @@ nothing in this repository mints yet, and says so where it stands.
   *accepted*. A negative test with no positive control cannot tell "the check works" from
   "everything is refused".
 
-  ⚠️ **Neither half of this one can be run today, and no person is what it waits for.** The
-  positive control needs a correctly signed production evidence-floor anchor, and nothing in this
+  ⚠️ **The negative half runs today; its positive control cannot, and no person is what it waits
+  for.** The control needs a correctly signed production evidence-floor anchor, and nothing in this
   repository mints one: `provision::mint_floor_anchor` exists and no shipped path calls it (O-5 —
   *when* it is minted is an open design question). The steps that once produced it by hand were
-  deleted (above); no person holds or signs with a root (#78). Report this check as **NOT RUN**,
-  not as passed. It is listed here rather than moved because it belongs with the other three
+  deleted (above); no person holds or signs with a root (#78). A negative with no positive control
+  proves nothing, so report this check as **NOT RUN**, not as passed. It is listed here rather than moved because it belongs with the other three
   negatives; what it needs is stated so nobody records a refusal-for-the-wrong-reason as
   evidence.
 
