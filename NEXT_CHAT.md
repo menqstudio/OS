@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t141/sudoers-install-safety` — `main` @ `4f274ee`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `58b19bb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #311 · branch `t141/sudoers-install-safety`** (base `main`, tip `4f274ee`, task T-141).
+> **✅ SETTLED — `main` is at `58b19bb`.** The only thing open is PR #312 on `t144/settled-at-58b19bb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-141: a kit could break sudo on a real box; fragments are staged, validated, then renamed in
+> **Next:** Owner: read design §10 (the real-turn gap) and decide what comes next.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

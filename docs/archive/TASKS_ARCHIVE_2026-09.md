@@ -13,7 +13,7 @@ They are here rather than on [`TASKS.md`](../../TASKS.md) because that file is r
 every session and carries a 7,000-byte ceiling. Five consecutive pull requests met that ceiling by
 shortening prose, including other people's; the ceiling's own remedy text says to move the history
 out and leave the live statement behind. The live statement is on the board in one line naming all
-67 of these and their pull requests. What is here is the account of each defect, which is
+69 of these and their pull requests. What is here is the account of each defect, which is
 what "how did we get here" means. That sentence said `38` from the day twelve more rows were added
 under it until 2026-09-21; the count is now a declared claim in
 [`config/counted-claims.json`](../../config/counted-claims.json), recounted on every run, so it
@@ -87,6 +87,8 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-137** | **Slice D: POSIX anchor installer** ◑ | Bro | Review | merged `#307` |
 | **T-138** | **The `.deb` carries the installer** ◑ | Bro | Review | merged `#308` |
 | **T-140** | **Slice C: broker reads the pinned anchor** ◑ | Bro | Review | merged `#309` |
+| **T-141** | **A kit could break sudo on a real box** — fragments are staged, validated, then renamed in ◑ | Bro | Review | merged `#311` |
+| **T-143** | **The real-turn gap** — measured: no real executor, one pinned conversation, no service units; the kit must not be ported wholesale (design §10) ◑ | Bro | Review | merged `#310` |
 | **T-117** | **Preflight located two artifacts by keys the broker never reads** — now through the §2.5 pin manifest; the ledger row checks its owner ◑ | Bro | Review | merged `#288` |
 | **T-115** | **The ladder kit takes the §2.5 floor** — driver config written before the pin; `ladder_turn --verify-tcb` as root before any service; + Owner item 3 ◑ | Bro | Review | merged `#286` |
 | **T-112** | **The §2.5 pin manifest's role table was hardcoded to ONE kit** - `--kit live|ladder`, no default; every ladder role measured against `run_ladder_turn.sh`'s own text, the live table frozen and proven unmoved; 7 mutants, 7 named deaths ◑ | Bro | Review | merged `#284` |
