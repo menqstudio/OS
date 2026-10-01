@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `6d50091`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t128/owner-page-rows-built` — `main` @ `7538980`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `6d50091`.** The only thing open is PR #298 on `t127/settled-at-6d50091`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #299 · branch `t128/owner-page-rows-built`** (base `main`, tip `7538980`, task T-128).
 >
-> **Next:** Owner: DEBIAN_CUSTODY_CEREMONY.md steps 1-2 (mint the root offline, hand over the public hex); then the Builder repins both tcb.rs, and steps 3-5 need a persistent serving box.
+> T-128: the Owner page said three built pieces were absent
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

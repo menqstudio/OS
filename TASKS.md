@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `6d50091`.** The only thing open is PR #298 on `t127/settled-at-6d50091`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #299 · branch `t128/owner-page-rows-built`** (base `main`, tip `7538980`, task T-128).
 >
-> **Next:** Owner: DEBIAN_CUSTODY_CEREMONY.md steps 1-2 (mint the root offline, hand over the public hex); then the Builder repins both tcb.rs, and steps 3-5 need a persistent serving box.
+> T-128: the Owner page said three built pieces were absent
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-128** | **The Owner page said three built pieces were absent** — §0 rows 1–3 marked built (T-108, T-109) ◑ | Bro | In-Progress | `t128/owner-page-rows-built` |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
 | **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
