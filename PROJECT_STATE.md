@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `8a042eb`.** The only thing open is PR #318 on `t151/settled-at-8a042eb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #319 · branch `t150/merge-and-push-gates`** (base `main`, tip `dc64823`, task T-150).
 >
-> **Next:** T-150 (merge and push gates), then the uncapped second read.
+> a merge and a push are refused before they turn main or CI red: two gates and a pre-tool shell arm in the hook
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1495 OK |
+| `tools/` self-tests · 2026-10-02 | 1591 OK |
 | frontend · 2026-10-02 | typecheck clean, 984 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2620 OK, 13 skipped |
