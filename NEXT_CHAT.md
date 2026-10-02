@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `4bc36cb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t156/audit-ledger-kernel-lock` — `main` @ `6743d7c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `4bc36cb`.** The only thing open is PR #327 on `settle/after-326`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156).
 >
-> **Next:** T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160 and T-161 ride this PR.
+> the audit ledger's append lock is released by the kernel; NOT to merge without the Architect's audit report
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2666 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2689 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1417 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

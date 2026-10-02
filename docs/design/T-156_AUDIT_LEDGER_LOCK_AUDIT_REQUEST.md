@@ -1,0 +1,120 @@
+# T-156 — the audit ledger's append lock: CODE-AUDIT request
+
+> **For the Architect.** Roadmap §G.2 makes an Architect audit mandatory for engine security code,
+> and the Owner chose the audit over a waiver for this change on 2026-10-02. The code is written and
+> is **not merged**. It was built before the audit, not after it as §G.2 asks; that order is the
+> Builder's, and it is said here rather than left to be noticed.
+>
+> **What the merge gate needs from you.** A report committed on this pull request's branch at
+> `engine/AUDIT/changes/pr-328-audit-ledger-lock.md` carrying two lines,
+> `Audited-PR: #328` and `Audited-Head: <the 40-hex commit you read>`. The gate
+> (`tools/check_merge_ready.py`) refuses the merge unless that commit is an ancestor of the head
+> being merged and no audit-required path differs since it. Take the head from
+> `gh pr view 328 --json headRefOid`; this page names no commit on purpose, because a page inside
+> the branch cannot name the branch's own head.
+>
+> Everything below marked ◑ is the Builder's claim. Nothing here is independently confirmed.
+
+## 1. What changed, in one paragraph
+
+`engine/runtime/bro_audit_log.py::append` is one critical section: read the chain, derive `seq` and
+`prev_hash` from its tail, append the record, replace the plaintext head, anchor. Until this change
+the section was guarded by a lock **file** created with `O_CREAT|O_EXCL`. A holder that died left the
+file behind and every append after it was refused until a person deleted the file. The section is
+now guarded by an exclusive **kernel advisory lock** held on a descriptor of `<ledger>.append-lock`:
+`flock` on POSIX, a byte-range lock on Windows. The kernel releases it when the holder dies.
+
+## 2. What is accepted now that was refused before
+
+**One thing, and it is the point of the change:** an append after a holder died while holding the
+lock. Before: refused forever. Now: proceeds.
+
+The Builder's argument that this widens nothing that mattered: the old refusal did not protect the
+ledger's content — a dead holder is not writing — it only denied service. **This argument is the
+first thing to attack.**
+
+## 3. What is refused now that was accepted before
+
+- `append()` onto a ledger whose last byte is not a newline (`AuditTornTail`). Before this change it
+  appended, fusing two records into one line no reader could parse.
+- A lock path that is a symbolic link, or is not a regular file; a platform or filesystem with no
+  kernel lock; a live holder that does not release within `_LOCK_TIMEOUT` (`AuditLockUnavailable`).
+  The wait is bounded and fails closed: it never proceeds unlocked and never waits forever.
+
+## 4. What is deliberately NOT changed
+
+- **O-2 is untouched.** The lock is advisory. It is an agreement between honest writers, not an
+  integrity control: the ledger is still not tamper-evident against its own writer wherever anchor
+  custody is unconfigured, which is every shipped deployment today.
+- **`append()` still does not consult the head.** An append onto a *truncated* ledger (head ahead of
+  the chain) still succeeds and writes a fresh, consistent head over the truncation, exactly as
+  before. Only a `verify()` that runs first, or a signed anchor, sees it. The Builder recommends
+  making `append()` verify the head under the lock and refuse; that is **not** in this pull request,
+  because it is a second change to the same perimeter and the Owner has not been asked to decide it.
+- A leftover `<ledger>.lock` from the old scheme is never read, trusted or deleted.
+- The lock is not shared with `bro_approval_requests._write_lock`. That lock yields the handle of
+  the log it locks and has no POSIX deadline; the two are pinned against drift by a test instead of
+  being merged into one helper.
+
+## 5. What a dead writer leaves, and the rule for each
+
+The write order is fixed: record line (record and newline together, then fsync), then head (temp
+file, atomic rename), then anchor.
+
+| Left behind | `verify()` | next `append()` |
+|---|---|---|
+| nothing | passes | proceeds |
+| a torn record (no trailing newline) | refuses, `AuditTornTail` | refuses, `AuditTornTail`; nothing is repaired |
+| a complete record whose head never landed | refuses, `AuditHeadBehind` | proceeds and writes a head that covers the record; nothing is dropped |
+| record and head, no anchor (custody configured) | every keyed `verify()` refuses | proceeds and re-anchors |
+
+Nothing is claimed about power loss: neither the head's temp file nor the directory entry is fsynced.
+
+## 6. Files
+
+| File | What |
+|---|---|
+| `engine/runtime/bro_audit_log.py` | the lock (`_append_lock`, `_open_lock_file`, `_try_lock`, `_is_still_the_lock_file`, `_close_lock`, `_drop_inherited_locks`), `_refuse_unterminated_tail`, three named refusals |
+| `engine/tests/test_stop_and_audit.py` | 23 new tests |
+| `engine/tests/catalog.json` | the new coverage names |
+| `apps/desktop/src-tauri/provision/src/audit_signer.rs` | comments only: they described the lock file |
+
+## 7. What the Builder ran ◑
+
+- Engine suite on this branch: 2689 tests, OK, 13 skipped (Debian 13, non-root, `BRO_ENV=ci`); it was 2666 before the 23 new tests.
+- A mutation sweep of 31 mutants over the new code; each was killed by the tests named for it and
+  the suite was green again after the restore.
+- Each state in §5 was reproduced on the old code before the change and then tested on the new.
+
+## 8. What was NOT run
+
+- **Nothing was run on Windows.** The `msvcrt` byte-range arm is exercised here only against a fake
+  `msvcrt`. CI's Windows engine job runs the suite; whether its tests reach the real arm is for the
+  auditor to read, not for this page to assert.
+- No test kills a holder with a real power loss, a full disk, or an NFS mount.
+- No second principal was involved at any point.
+
+## 9. Questions for the audit
+
+1. Is §2's argument sound — is there any state in which the old permanent refusal was protecting the
+   ledger, so that releasing on death now admits a write that should have been stopped?
+2. `flock` is per open file description. A `fork()`ed child inherits the description; the change
+   closes the child's copy in an at-fork hook. Is there an inheritance path that hook misses —
+   `subprocess` with `close_fds=False`, a descriptor passed over a socket, `posix_spawn`?
+3. A waiter re-checks that the lock path still names the inode it locked. Can a party who may write
+   the ledger's directory still make two writers each believe they hold the lock, and does that
+   differ from what the same party could do to the old lock file?
+4. On Windows a byte-range lock at `_LOCK_OFFSET` is mandatory for the range, not advisory. Does
+   anything else open that file in a way the lock would break, and is the range beyond any real size
+   of the file?
+5. The signer runs inside the lock with `_SIGNER_TIMEOUT` equal to `_LOCK_TIMEOUT`. Can a slow signer
+   make every other writer fail closed, and is failing closed there the right answer?
+6. `AuditHeadBehind` is recovered by the next `append()` without a human. Is there a way to produce
+   "exactly one correctly linked record more than the head" by tampering, so that the recovery
+   launders it?
+7. `AuditTornTail` is never repaired by code. Is refusing every append until an operator looks the
+   right availability trade for an audit ledger, given that every governed allow records here?
+8. Should `append()` verify the head under the lock and refuse a truncated ledger (§4)? The Builder
+   says yes, as its own change.
+9. Is anything in the docstring's claims about what the lock does and does not guarantee stronger
+   than the code supports?
