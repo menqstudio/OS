@@ -1047,7 +1047,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # WRITE, for one call: the stamp step below replaces the body's AUDIT_CANDIDATE_HEAD line.
+      # It was `read` while the marker was moved by whoever pushed, and whoever pushed was not
+      # always the Builder (T-163).
+      pull-requests: write
       # `actions: read` is what lets _live_main_ci read main's own workflow runs through
       # `gh api repos/<slug>/actions/workflows/ci.yml/runs`. On a PUBLIC repository that endpoint
       # answers any token, so this job never needed the scope and never declared it. The repository
@@ -1113,6 +1116,18 @@ jobs:
       # they read survived, because nothing counted a declaration nobody reads -- 20 of 149 were dead.
       - name: Dead design tokens (declared and read by nothing)
         run: python tools/check_dead_tokens.py
+
+      # The marker the next step reads, written by the run that verifies the head it names. Until
+      # T-163 it was written by hand after every push, and a push by anyone who did not know that
+      # -- the Architect's audit commits on #328 and #331 -- left this job red on a head whose
+      # every other check was green. A body edit made with the workflow token starts no new run,
+      # so this does not cancel the run it is part of. A pull request from a fork gets a read-only
+      # token, so the step is not attempted there and the check below judges the marker as written.
+      - name: Stamp the PR body at the head this run verifies
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/stamp_pr_head.py --pr ${{ github.event.pull_request.number }} --head ${{ github.event.pull_request.head.sha }}
 
       - name: Live GitHub truth check (fail-closed)
         env:

@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
 >
-> T-159: the Architect ruled in Appendix A of the design — a dependency-free positive grammar in the wall, the Bash parser test-only; no code yet.
+> T-159: the Architect ruled (design, Appendix A) — a dependency-free grammar in the wall, the parser test-only; no code yet. T-163 rides: CI stamps the head it verifies.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -41,7 +41,7 @@ Three more things must hold at every push: the PR body carries one `AUDIT_CANDID
 equal to the pushed head, `config/current_state.json` names the live `main`, and the head named
 above moves **in its own commit** — an amend leaves the handoff naming a dead commit.
 
-Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
+CI stamps the PR body (T-163); by hand: `tools/stamp_pr_head.py --pr <N>`.
 
 ## Verify before you believe any of this
 

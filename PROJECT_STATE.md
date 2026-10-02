@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
 >
-> T-159: the Architect ruled in Appendix A of the design — a dependency-free positive grammar in the wall, the Bash parser test-only; no code yet.
+> T-159: the Architect ruled (design, Appendix A) — a dependency-free grammar in the wall, the parser test-only; no code yet. T-163 rides: CI stamps the head it verifies.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1730 OK |
+| `tools/` self-tests · 2026-10-02 | 1739 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2692 OK, 13 skipped |

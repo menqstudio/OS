@@ -17,6 +17,23 @@ says so instead of stamping a commit nobody else can see.
 
 Requires `gh` on PATH and authenticated. Network, by nature.
 
+"Run this after every push" was a rule for whoever remembered it, and the Architect pushes too: on
+#328 and again on #331 an audit commit landed, nothing moved the marker, and `Repo-state` went red
+on a head whose every other check was green. So the job that READS the marker now WRITES it first
+(`.github/workflows/ci.yml`, T-163):
+
+    python tools/stamp_pr_head.py --pr 331 --head <the event's head sha>
+
+`--head` is the head that run verifies. A CI checkout is the pull request's merge commit, so the
+"local HEAD is what origin has" check below can never hold there; with `--head` the question is
+instead whether origin's tip is STILL that head. If it has moved on, nothing is written: the newer
+head has its own run, and this one verified nothing about it.
+
+What the marker is evidence of, said plainly: that the body names the head CI judged. It never
+showed that a person read that head -- this tool has always copied whatever `git ls-remote`
+answered. What binds an audit to a commit is `Audited-Head` in the filed report, which
+`check_merge_ready.py` compares with the head being merged.
+
 The body is written through the REST endpoint, not `gh pr edit`. On gh 2.46.0 -- the version
 Debian ships and the one this repository is driven from -- `gh pr edit` resolves the PR through
 GraphQL and asks for `repository.pullRequest.projectCards`, which GitHub sunset with Projects
@@ -126,7 +143,13 @@ def main() -> int:
     ap.add_argument("--pr", type=int, required=True)
     ap.add_argument("--repo", default=None,
                     help="owner/name; default: the repository this checkout's remote names")
+    ap.add_argument("--head", default=None,
+                    help="the 40-hex head a CI run verifies; stamped only while origin's tip is "
+                         "still that head, and in place of the local-HEAD comparison")
     args = ap.parse_args()
+    if args.head is not None and not re.fullmatch(r"[0-9a-f]{40}", args.head):
+        raise SystemExit(f"RED: --head must be a 40-hex commit id, not {args.head!r}. Nothing "
+                         "has been read or written.")
 
     # The slug is RESOLVED, not a literal. It was `default="menqstudio/OS"` while the tip two
     # lines below is read from `git ls-remote origin` -- so in a fork the body would be read from
@@ -149,8 +172,12 @@ def main() -> int:
         raise SystemExit(f"RED: origin has no {branch}; push it before stamping")
     pushed = remote[0]
 
-    local = run("git", "rev-parse", "HEAD").strip()
-    if local != pushed:
+    if args.head is not None:
+        if pushed != args.head:
+            print(f"origin's {branch} is at {pushed[:8]}, not the {args.head[:8]} this run "
+                  "verifies; the newer head has its own run. Nothing is written.")
+            return 0
+    elif (local := run("git", "rev-parse", "HEAD").strip()) != pushed:
         # Stamping the local tip would name a commit the auditor cannot fetch.
         raise SystemExit(f"RED: local HEAD {local[:8]} is not what origin has ({pushed[:8]}). "
                          "Push first — the marker must name a commit that exists on GitHub.")
