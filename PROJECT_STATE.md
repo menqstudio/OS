@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `db520c2`.** The only thing open is PR #320 on `t152/settled-at-db520c2`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #321 · branch `t153/tightening`** (base `main`, tip `e33c7e9`, task T-153).
 >
-> **Next:** the uncapped second read of T-145, then design §10 and the executor design.
+> the Owner-approved tightening list, built and NOT to be merged until he chooses: an Owner waiver or an Architect audit (roadmap G.2)
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,11 +44,11 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1591 OK |
-| frontend · 2026-10-02 | typecheck clean, 984 / 85 files |
+| `tools/` self-tests · 2026-10-02 | 1606 OK |
+| frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-10-02 | 2620 OK, 13 skipped |
-| Rust, 10 crates · 2026-10-02 | 1408 passed, 1 ignored (needs root; CI runs it) |
+| engine (Python), non-root, Debian 13 · 2026-10-02 | 2666 OK, 13 skipped |
+| Rust, 10 crates · 2026-10-02 | 1417 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
