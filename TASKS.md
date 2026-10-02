@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `5a56188`.** The only thing open is PR #330 on `t162/verifier-retries-a-stale-page`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
 >
-> **Next:** implement T-159 (the shell classifier) to the Architect's design, then a code audit. T-162 rides this PR.
+> T-159: three questions wait on the Architect before any classifier code; this pull request carries the page and no code.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -19,7 +19,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-162** | **The mirror gate asks again when GitHub answers from the past** — a stale runs page made it call a green `main` red, once in CI; it retries, then says "stale page" by name; 11 mutants, 11 deaths ◑ | Bro | Review | `#330` |
-| **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. **No code yet**: three questions wait on the Architect in `docs/design/T-159_IMPLEMENTATION_QUESTIONS.md`; the code is its own audited pull request | Bro | In-Progress | `t159/implementation-questions` |
+| **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. **No code yet**: three questions wait on the Architect in `docs/design/T-159_IMPLEMENTATION_QUESTIONS.md`; the code is its own audited pull request | Bro | In-Progress | `#331` |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |

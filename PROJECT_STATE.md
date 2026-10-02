@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-02 — 110 pull requests merged (`#219`–`#329`), `main` at
-`5a56188`: `ci` RED there on Repo-state alone, the other six green. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-02 — 111 pull requests merged (`#219`–`#330`), `main` at
+`71380ad`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `5a56188`.** The only thing open is PR #330 on `t162/verifier-retries-a-stale-page`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
 >
-> **Next:** implement T-159 (the shell classifier) to the Architect's design, then a code audit. T-162 rides this PR.
+> T-159: three questions wait on the Architect before any classifier code; this pull request carries the page and no code.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
