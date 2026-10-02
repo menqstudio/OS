@@ -6,9 +6,9 @@
 > he did not approve this specific change by name before it was written, and that is said here
 > rather than left to be noticed.
 >
-> File the report at `apps/desktop/AUDIT/changes/pr-<N>-cryptography-50.md` with the two lines
-> `Audited-PR: #<N>` and `Audited-Head: <40-hex>`, then a `VERDICT:` line. The pull request
-> number is in its title page; CI stamps the body. Everything marked ◑ is the Builder's claim.
+> File the report at `apps/desktop/AUDIT/changes/pr-336-cryptography-50.md` with the two lines
+> `Audited-PR: #336` and `Audited-Head: <40-hex>`, then a `VERDICT:` line. Take the head from
+> `gh pr view 336 --json headRefOid`; CI stamps the body. Everything marked ◑ is the Builder's claim.
 
 ## 1. Why
 
