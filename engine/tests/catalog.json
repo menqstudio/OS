@@ -475,6 +475,14 @@
         "audit-payload-redaction",
         "audit-tamper-detection",
         "audit-tail-truncation-detection",
+        "audit-append-lock-serializes-threads-and-processes",
+        "audit-dead-holder-does-not-strand-ledger",
+        "audit-torn-tail-refused-not-repaired",
+        "audit-head-behind-named-and-rolled-forward",
+        "audit-lock-bounded-wait-fails-closed",
+        "audit-legacy-lock-file-ignored",
+        "audit-lock-path-symlink-refused",
+        "audit-lock-drift-pin-approval-log",
         "stop-real-process-group",
         "unstopped-incident-recording"
       ]

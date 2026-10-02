@@ -11,8 +11,19 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
+import bro_audit_log
 import bro_stop_controller
-from bro_audit_log import AuditError, AuditMalformed, append, read_all, verify
+from bro_audit_log import (
+    AuditError,
+    AuditHeadBehind,
+    AuditLockUnavailable,
+    AuditMalformed,
+    AuditTornTail,
+    AuditTruncated,
+    append,
+    read_all,
+    verify,
+)
 from bro_stop_controller import is_group_alive, list_registered, register, stop_all
 
 
@@ -32,13 +43,16 @@ def _append_once(ledger_path: str, index: int) -> None:
 #: wedged holder must surface rather than starve every other writer. It is NOT a budget for `n`
 #: threads racing each other, and these tests are exactly that race.
 #:
-#: `_acquire_lock` polls an `O_EXCL` lock file every 10 ms. That is a race, not a queue: a losing
-#: writer does not keep its place, so the wall-clock the LAST writer needs grows like
-#: `n * H(n)` poll cycles, not `n`. For `n = 24`, `H(24) ~ 3.78`, so ~91 cycles — and a cycle on a
-#: loaded Windows runner is a create, a write, an fsync, a replace and an unlink. At ~100 ms per
-#: cycle that lands at ~9 s, just under the production bound, which is why this test passed on
-#: `main` for weeks and then failed on `7eb6bf0` with nine of twenty-four writers timing out — on a
-#: tree byte-identical to the one that had just passed the same job on PR #181.
+#: `_append_lock` polls a non-blocking kernel lock every 10 ms (`T-156`; it polled an `O_EXCL`
+#: lock file before, and the arithmetic below was measured under that scheme). Polling is a race,
+#: not a queue: a losing writer does not keep its place, so the wall-clock the LAST writer needs
+#: grows like `n * H(n)` poll cycles, not `n`. For `n = 24`, `H(24) ~ 3.78`, so ~91 cycles — and
+#: a cycle on a loaded Windows runner was a create, a write, an fsync, a replace and an unlink. At
+#: ~100 ms per cycle that lands at ~9 s, just under the production bound, which is why this test
+#: passed on `main` for weeks and then failed on `7eb6bf0` with nine of twenty-four writers timing
+#: out — on a tree byte-identical to the one that had just passed the same job on PR #181. The
+#: new lock drops the create and the unlink from the cycle and keeps the race, and it has not
+#: been timed on a Windows runner, so the raised bound stays.
 #:
 #: So the runner's speed was deciding the verdict of a test about chain integrity. The property
 #: here is *the chain never forks under concurrency*; the production constant is not what is under
@@ -197,6 +211,675 @@ class AuditLedgerTests(unittest.TestCase):
         self.assertEqual([r["seq"] for r in records], list(range(n)))
         self.assertEqual(verify(self.ledger), n)
         self.assertEqual(sorted(r["payload"]["index"] for r in records), list(range(n)))
+
+
+#: A writer that is going to be killed, run as a real second process. `mode` chooses how far
+#: into `append()`'s critical section it gets before it says READY and stops:
+#:
+#:   hold            inside the section, nothing written
+#:   torn            part of a record line on disk, no newline
+#:   record-no-head  the whole record fsynced, the head's rename not yet done
+#:   fork-then-hold  as `hold`, after forking a child that never execs and outlives it
+#:
+#: Each stops at a seam rather than on a timer, so the kill lands on a known state.
+_DYING_WRITER = r"""
+import os, pathlib, sys, time
+sys.path.insert(0, {runtime!r})
+import bro_audit_log as A
+
+ledger = pathlib.Path({ledger!r})
+mode = {mode!r}
+
+def ready_and_wait(*_args, **_kwargs):
+    sys.stdout.write("READY\n")
+    sys.stdout.flush()
+    time.sleep(300)
+
+if mode == "hold":
+    with A._append_lock(ledger):
+        ready_and_wait()
+elif mode == "torn":
+    with A._append_lock(ledger):
+        with ledger.open("a", encoding="utf-8") as fh:
+            fh.write('{{"seq": 1, "prev_hash": "ab')
+            fh.flush()
+            os.fsync(fh.fileno())
+        ready_and_wait()
+elif mode == "record-no-head":
+    A.os.replace = ready_and_wait          # the head's rename is where this writer stops
+    A.append(ledger, "dead-writer", {{"n": 1}})
+elif mode == "fork-then-hold":
+    with A._append_lock(ledger):
+        child = os.fork()
+        if child == 0:
+            time.sleep(300)
+            os._exit(0)
+        sys.stdout.write(str(child) + "\n")
+        ready_and_wait()
+"""
+
+#: One of several writers started as separate interpreters (no fork, so this runs on Windows
+#: too). Each says UP once it has imported the module, then waits for the go-file so they all
+#: reach the lock together.
+_SPAWNED_WRITER = r"""
+import pathlib, sys, time
+sys.path.insert(0, {runtime!r})
+import bro_audit_log as A
+
+A._LOCK_TIMEOUT = {timeout!r}
+ledger, go = pathlib.Path({ledger!r}), pathlib.Path({go!r})
+sys.stdout.write("UP\n")
+sys.stdout.flush()
+deadline = time.monotonic() + 60
+while not go.exists():
+    if time.monotonic() > deadline:
+        sys.exit(3)
+    time.sleep(0.002)
+for i in range({each}):
+    A.append(ledger, "concurrent", {{"writer": {writer}, "i": i}})
+"""
+
+
+class AuditLedgerLockTests(unittest.TestCase):
+    """`T-156`: the append lock is the kernel's, so it dies with its holder.
+
+    Every refusal that protects the ledger's content is asserted here beside the one thing
+    that changed, because the change is only safe if those stayed.
+    """
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="bro-audit-lock-"))
+        self.ledger = self.dir / "audit.jsonl"
+        self.lock = bro_audit_log._lock_path(self.ledger)
+        self.head = self.ledger.with_suffix(self.ledger.suffix + ".head")
+
+    # -- helpers -----------------------------------------------------------------------
+    def _spawn(self, source):
+        proc = subprocess.Popen([sys.executable, "-B", "-c", source],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.stdout.close)
+
+        def reap():
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=30)
+        self.addCleanup(reap)
+        return proc
+
+    def _kill_a_writer_at(self, mode):
+        """Start a writer, let it reach `mode`, and kill it there. Returns what it printed
+        before READY (the forked child's pid, in the one mode that prints one)."""
+        proc = self._spawn(_DYING_WRITER.format(
+            runtime=str(ROOT / "runtime"), ledger=str(self.ledger), mode=mode))
+        said = []
+        while True:
+            line = proc.stdout.readline()
+            self.assertTrue(line, f"the writer exited before READY (mode {mode!r}): {said}")
+            if line.strip() == "READY":
+                break
+            said.append(line.strip())
+        proc.kill()                      # SIGKILL on POSIX, TerminateProcess on Windows
+        proc.wait(timeout=30)
+        return said
+
+    def _lock_is_held(self):
+        """Probe with a SECOND descriptor. Both primitives conflict across descriptors even
+        inside one process, so this is certain without a second process or a race."""
+        fd = bro_audit_log._open_lock_file(self.lock)
+        try:
+            if bro_audit_log._try_lock(fd):
+                return False
+            return True
+        finally:
+            bro_audit_log._close_lock(fd)
+
+    # -- (a) two appenders never interleave ---------------------------------------------
+    def test_the_lock_is_held_while_append_reads_the_chain_it_will_extend(self):
+        append(self.ledger, "a", {"x": 1})
+        real_read_all = bro_audit_log.read_all
+        held = []
+
+        def probing_read_all(path):
+            held.append(self._lock_is_held())
+            return real_read_all(path)
+
+        with patch("bro_audit_log.read_all", probing_read_all):
+            append(self.ledger, "b", {"x": 2})
+        self.assertEqual(held, [True], "append() read the chain with no lock held")
+        self.assertFalse(self._lock_is_held(), "append() returned still holding the lock")
+
+    def test_the_lock_is_released_when_the_append_refuses(self):
+        append(self.ledger, "a", {"x": 1})
+        with patch("bro_audit_log.read_all", side_effect=AuditError("refused inside the section")):
+            with self.assertRaises(AuditError):
+                append(self.ledger, "b", {"x": 2})
+        self.assertFalse(self._lock_is_held(), "a refusal inside the section kept the lock")
+        self.assertEqual(append(self.ledger, "c", {"x": 3})["seq"], 1)
+
+    def test_separately_started_processes_appending_together_keep_one_valid_chain(self):
+        writers, each = 6, 8
+        go = self.dir / "go"
+        procs = [self._spawn(_SPAWNED_WRITER.format(
+            runtime=str(ROOT / "runtime"), ledger=str(self.ledger), go=str(go),
+            timeout=_CONTENDED_LOCK_TIMEOUT, each=each, writer=n)) for n in range(writers)]
+        for proc in procs:
+            self.assertEqual(proc.stdout.readline().strip(), "UP")
+        go.write_text("go", encoding="utf-8")            # all of them are waiting on this
+        for proc in procs:
+            proc.wait(timeout=120)
+        self.assertEqual([proc.returncode for proc in procs], [0] * writers)
+        records = read_all(self.ledger)
+        self.assertEqual([r["seq"] for r in records], list(range(writers * each)))
+        self.assertEqual(verify(self.ledger), writers * each)
+        self.assertEqual(sorted((r["payload"]["writer"], r["payload"]["i"]) for r in records),
+                         [(n, i) for n in range(writers) for i in range(each)])
+
+    # -- (b) a holder that dies does not strand the ledger -------------------------------
+    def test_a_holder_killed_while_holding_the_lock_does_not_strand_the_ledger(self):
+        """THE BEHAVIOUR CHANGE. Under the O_EXCL lock file this append was refused, and so
+        was every one after it, until a person deleted the file."""
+        append(self.ledger, "a", {"x": 1})
+        self._kill_a_writer_at("hold")
+        # Bounded well under the production timeout: a stranded ledger fails here, it does
+        # not make the suite wait.
+        with patch("bro_audit_log._LOCK_TIMEOUT", 5.0):
+            record = append(self.ledger, "after-the-holder-died", {"x": 2})
+        self.assertEqual(record["seq"], 1)
+        self.assertEqual(verify(self.ledger), 2)
+
+    @unittest.skipUnless(hasattr(os, "fork"),
+                         "a child that shares its parent's lock descriptor needs os.fork")
+    def test_a_forked_child_of_a_dead_holder_does_not_keep_the_lock_alive(self):
+        """`flock` belongs to the open file description, which a forked child shares. Without
+        `_drop_inherited_locks` the child IS a holder, and the ledger is stranded for as long
+        as it lives."""
+        append(self.ledger, "a", {"x": 1})
+        (child_pid,) = self._kill_a_writer_at("fork-then-hold")
+
+        def reap_orphan():
+            try:
+                os.kill(int(child_pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        self.addCleanup(reap_orphan)
+        os.kill(int(child_pid), 0)                       # the control: the child is alive
+        with patch("bro_audit_log._LOCK_TIMEOUT", 3.0):
+            self.assertEqual(append(self.ledger, "after", {"x": 2})["seq"], 1)
+        self.assertEqual(verify(self.ledger), 2)
+
+    # -- (c) what a dead writer leaves is never silently accepted ------------------------
+    def test_a_writer_killed_mid_record_leaves_a_torn_tail_that_is_refused_and_not_repaired(self):
+        append(self.ledger, "a", {"x": 1})
+        self._kill_a_writer_at("torn")
+        torn = self.ledger.read_bytes()
+        self.assertFalse(torn.endswith(b"\n"), "the fixture must leave a torn tail")
+        for name, call in (("verify", lambda: verify(self.ledger)),
+                           ("read_all", lambda: read_all(self.ledger)),
+                           ("append", lambda: append(self.ledger, "b", {"x": 2}))):
+            with self.subTest(call=name), patch("bro_audit_log._LOCK_TIMEOUT", 5.0):
+                with self.assertRaises(AuditTornTail):
+                    call()
+        self.assertEqual(self.ledger.read_bytes(), torn,
+                         "a refusal must leave the torn bytes exactly as the writer left them")
+
+    def test_a_corrupt_line_that_is_not_the_tail_is_not_called_a_torn_tail(self):
+        append(self.ledger, "a", {"x": 1})
+        whole = self.ledger.read_text(encoding="utf-8")
+        for name, text in (("corrupt, newline-terminated", whole + "{not json\n"),
+                           ("corrupt in the middle", "{not json\n" + whole.rstrip("\n"))):
+            with self.subTest(shape=name):
+                self.ledger.write_text(text, encoding="utf-8")
+                with self.assertRaises(AuditError) as caught:
+                    verify(self.ledger)
+                self.assertNotIsInstance(caught.exception, AuditTornTail)
+
+    def test_a_complete_last_record_with_no_newline_is_never_appended_to(self):
+        """One byte short of a record boundary. The record still reads, so `verify()` passes;
+        appending to it used to write two objects on one line and lose both."""
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        self.ledger.write_bytes(self.ledger.read_bytes()[:-1])
+        before = self.ledger.read_bytes()
+        self.assertEqual(verify(self.ledger), 2)             # the record is intact
+        with self.assertRaises(AuditTornTail):
+            append(self.ledger, "c", {"x": 3})
+        self.assertEqual(self.ledger.read_bytes(), before)
+        self.assertEqual(verify(self.ledger), 2)             # ...and still is
+
+    def test_a_writer_killed_between_its_record_and_its_head_loses_nothing(self):
+        append(self.ledger, "a", {"x": 1})
+        self._kill_a_writer_at("record-no-head")
+        self.assertEqual([r["kind"] for r in read_all(self.ledger)], ["a", "dead-writer"])
+        with self.assertRaises(AuditHeadBehind):             # refused, and by its own name
+            verify(self.ledger)
+        with patch("bro_audit_log._LOCK_TIMEOUT", 5.0):
+            record = append(self.ledger, "b", {"x": 2})
+        self.assertEqual(record["seq"], 2)
+        self.assertEqual(verify(self.ledger), 3)
+        self.assertEqual([r["kind"] for r in read_all(self.ledger)], ["a", "dead-writer", "b"])
+
+    def test_only_a_head_exactly_one_record_behind_is_called_head_behind(self):
+        """`AuditHeadBehind` says "nothing is missing". Every other disagreement between the
+        head and the chain keeps the name it had, because for those something may be."""
+        import json
+
+        def fresh(count):
+            for name in list(self.dir.iterdir()):
+                name.unlink()
+            for i in range(count):
+                append(self.ledger, "k", {"i": i})
+            self.assertEqual(verify(self.ledger), count)
+            return [record["hash"] for record in read_all(self.ledger)]
+
+        def set_head(count, last_hash):
+            self.head.write_text(json.dumps({"count": count, "last_hash": last_hash}),
+                                 encoding="utf-8")
+
+        def drop_records(keep):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            self.ledger.write_text("".join(line + "\n" for line in lines[:keep]),
+                                   encoding="utf-8")
+
+        genesis = bro_audit_log.GENESIS
+        cases = (
+            ("one behind", 3, lambda h: set_head(2, h[1]), True),
+            ("first append, no head yet", 1, lambda h: self.head.unlink(), True),
+            ("first append, an empty head", 1, lambda h: set_head(0, genesis), True),
+            ("no records at all, and a head that says -1", 0,
+             lambda h: set_head(-1, genesis), False),
+            ("two behind", 3, lambda h: set_head(1, h[0]), False),
+            ("one behind in count, another chain's hash", 3, lambda h: set_head(2, h[0]), False),
+            ("count is True, not 1", 2, lambda h: set_head(True, h[0]), False),
+            ("no head on a longer chain", 2, lambda h: self.head.unlink(), False),
+            ("TRUNCATED: the head is ahead of the chain", 3, lambda h: drop_records(2), False),
+            ("the right count, the wrong tail hash", 2, lambda h: set_head(2, h[0]), False),
+        )
+        for name, count, tamper, head_behind in cases:
+            with self.subTest(shape=name):
+                tamper(fresh(count))
+                with self.assertRaises(AuditError) as caught:
+                    verify(self.ledger)
+                self.assertEqual(isinstance(caught.exception, AuditHeadBehind), head_behind,
+                                 str(caught.exception))
+
+    # -- append() looks before it writes (the Architect's audit of #328, F-05) -------------
+    def _shapes(self):
+        """`(name, records, tamper, what append() must do)`. `tamper` gets the record hashes."""
+        import json
+
+        def set_head(count, last_hash):
+            self.head.write_text(json.dumps({"count": count, "last_hash": last_hash}),
+                                 encoding="utf-8")
+
+        def drop_records(keep):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            self.ledger.write_text("".join(line + "\n" for line in lines[:keep]),
+                                   encoding="utf-8")
+
+        def rewrite_first_payload(_hashes):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            record = json.loads(lines[0])
+            record["payload"] = {"i": "rewritten"}           # the stored hash is kept
+            lines[0] = json.dumps(record, sort_keys=True)
+            self.ledger.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+        def swap_two_records(_hashes):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            lines[0], lines[1] = lines[1], lines[0]
+            self.ledger.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+        genesis = bro_audit_log.GENESIS
+        return (
+            ("TRUNCATED: the head is ahead of the chain", 3, lambda h: drop_records(2), AuditTruncated),
+            ("truncated to nothing, the head still counts three", 3, lambda h: drop_records(0), AuditTruncated),
+            ("the right count, the wrong tail hash", 2, lambda h: set_head(2, h[0]), AuditTruncated),
+            ("no head on a longer chain", 2, lambda h: self.head.unlink(), AuditTruncated),
+            ("two behind", 3, lambda h: set_head(1, h[0]), AuditTruncated),
+            ("one behind in count, another chain's hash", 3, lambda h: set_head(2, h[0]), AuditTruncated),
+            ("a head that is not JSON", 2, lambda h: self.head.write_text("{", encoding="utf-8"), AuditMalformed),
+            ("a head that is a list", 2, lambda h: self.head.write_text("[2]", encoding="utf-8"), AuditMalformed),
+            ("a record rewritten in the middle", 3, rewrite_first_payload, AuditError),
+            ("two records swapped", 3, swap_two_records, AuditError),
+            ("one behind", 3, lambda h: set_head(2, h[1]), None),
+            ("first append, no head yet", 1, lambda h: self.head.unlink(), None),
+            ("first append, an empty head", 1, lambda h: set_head(0, genesis), None),
+            ("an untouched ledger", 2, lambda h: None, None),
+            ("no ledger at all", 0, lambda h: None, None),
+        )
+
+    def test_append_refuses_a_ledger_its_head_does_not_describe_and_writes_nothing(self):
+        """Mutant: drop `_check_head` from `append()` ⇒ every truncation case appends, and
+        the fresh head it writes agrees with the shortened chain - `verify()` then PASSES on a
+        ledger that lost records. Mutant: drop `_check_chain` ⇒ the two rewritten-chain cases
+        append. Mutant: catch every AuditError where only AuditHeadBehind is meant ⇒ all of
+        them append."""
+        for name, count, tamper, refusal in self._shapes():
+            if refusal is None:
+                continue
+            with self.subTest(shape=name):
+                for leftover in list(self.dir.iterdir()):
+                    leftover.unlink()
+                for i in range(count):
+                    append(self.ledger, "k", {"i": i})
+                tamper([record["hash"] for record in read_all(self.ledger)])
+                before = {path.name: path.read_bytes() for path in self.dir.iterdir()
+                          if not path.name.endswith(".append-lock")}
+                with self.assertRaises(refusal) as caught:
+                    append(self.ledger, "after", {"x": 1})
+                self.assertIs(type(caught.exception), refusal, str(caught.exception))
+                after = {path.name: path.read_bytes() for path in self.dir.iterdir()
+                         if not path.name.endswith(".append-lock")}
+                self.assertEqual(after, before, "a refused append left something behind")
+
+    def test_append_still_proceeds_where_it_is_the_repair_or_there_is_nothing_to_repair(self):
+        """The other direction. Mutant: let AuditHeadBehind out of `append()` ⇒ a writer that
+        died between its record and its head strands the ledger again, which is the defect
+        T-156 exists to remove."""
+        for name, count, tamper, refusal in self._shapes():
+            if refusal is not None:
+                continue
+            with self.subTest(shape=name):
+                for leftover in list(self.dir.iterdir()):
+                    leftover.unlink()
+                for i in range(count):
+                    append(self.ledger, "k", {"i": i})
+                tamper([record["hash"] for record in read_all(self.ledger)] if count else [])
+                record = append(self.ledger, "after", {"x": 1})
+                self.assertEqual(record["seq"], count)
+                self.assertEqual(verify(self.ledger), count + 1)
+
+    def test_a_truncation_is_refused_by_verify_under_its_own_name_and_is_still_an_audit_error(self):
+        """Callers that catch AuditError keep working; ones that need to tell a truncation
+        from a lock that could not be taken now can. Mutant: raise plain AuditError again ⇒
+        the type assertion fails."""
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        self.ledger.write_text(self.ledger.read_text(encoding="utf-8").splitlines()[0] + "\n",
+                               encoding="utf-8")
+        with self.assertRaises(AuditError) as caught:
+            verify(self.ledger)
+        self.assertIs(type(caught.exception), AuditTruncated)
+        self.assertTrue(issubclass(AuditTruncated, AuditError))
+        self.assertFalse(issubclass(AuditTruncated, (AuditHeadBehind, AuditTornTail,
+                                                     AuditLockUnavailable, AuditMalformed)))
+
+    # -- (d) a bounded wait that fails closed --------------------------------------------
+    def test_a_live_holder_that_never_releases_makes_the_append_refuse_and_write_nothing(self):
+        import threading
+
+        append(self.ledger, "a", {"x": 1})
+        before = {p.name: p.read_bytes() for p in self.dir.iterdir()}
+        outcome = []
+
+        def blocked_append():
+            try:
+                outcome.append(append(self.ledger, "b", {"x": 2}))
+            except Exception as exc:                      # noqa: BLE001
+                outcome.append(exc)
+
+        with patch("bro_audit_log._LOCK_TIMEOUT", 0.3), bro_audit_log._append_lock(self.ledger):
+            worker = threading.Thread(target=blocked_append, daemon=True)
+            started = time.monotonic()
+            worker.start()
+            worker.join(timeout=10)
+            waited = time.monotonic() - started
+            self.assertFalse(worker.is_alive(),
+                             "the append is still waiting: the lock has no deadline")
+            self.assertEqual(len(outcome), 1)
+            self.assertIsInstance(outcome[0], AuditLockUnavailable, outcome[0])
+            self.assertIn("not acquired within", str(outcome[0]))
+            self.assertGreaterEqual(waited, 0.3, "it refused before the bound it names")
+            self.assertEqual({p.name: p.read_bytes() for p in self.dir.iterdir()}, before,
+                             "a writer that could not take the lock wrote anyway")
+        self.assertEqual(append(self.ledger, "c", {"x": 3})["seq"], 1)   # released: it works
+
+    def test_a_platform_with_no_kernel_lock_refuses_rather_than_appending_unlocked(self):
+        with patch("bro_audit_log._platform_name", lambda: "java"):
+            with self.assertRaises(AuditLockUnavailable) as caught:
+                append(self.ledger, "a", {"x": 1})
+        self.assertIn("no way to serialize", str(caught.exception))
+        self.assertFalse(self.ledger.exists())
+
+    def test_a_kernel_that_cannot_lock_the_file_is_a_named_refusal_and_writes_nothing(self):
+        """A filesystem with no lock support answers `flock` with an error that is not "held".
+        Every caller of `append()` fails closed on `AuditError`; this must be one."""
+        import errno
+
+        with patch("bro_audit_log._try_lock",
+                   side_effect=OSError(errno.ENOLCK, "No locks available")):
+            with self.assertRaises(AuditLockUnavailable) as caught:
+                append(self.ledger, "a", {"x": 1})
+        self.assertIn("No locks available", str(caught.exception))
+        self.assertFalse(self.ledger.exists())
+
+    def test_the_windows_arm_seeks_locks_refuses_and_releases_against_a_fake_msvcrt(self):
+        """NOT a proof that the lock works on Windows - only `windows-latest` can give that,
+        and there the thread and spawned-process tests above are that proof. This runs the
+        `nt` arm's own control flow on any platform against a stand-in for `msvcrt.locking`,
+        so a mistake in that arm is found before CI rather than by it: it must seek to
+        `_LOCK_OFFSET` before every call, treat "held" as a wait and not a pass, refuse at the
+        deadline, and unlock on release."""
+        import errno
+        import types
+
+        held = {}                                    # inode -> the descriptor holding it
+        calls = []
+
+        def locking(fd, mode, nbytes):
+            self.assertEqual(os.lseek(fd, 0, os.SEEK_CUR), bro_audit_log._LOCK_OFFSET,
+                             "msvcrt.locking locks from the current position")
+            self.assertEqual(nbytes, 1)
+            key = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            calls.append(mode)
+            if mode == fake.LK_NBLCK:
+                if key in held:
+                    raise OSError(errno.EACCES, "Permission denied")
+                held[key] = fd
+            elif mode == fake.LK_UNLCK:
+                if held.get(key) != fd:
+                    raise OSError(errno.EACCES, "Permission denied")
+                del held[key]
+            else:
+                self.fail(f"unexpected locking mode {mode!r}")
+
+        fake = types.SimpleNamespace(LK_NBLCK=2, LK_UNLCK=0, LK_LOCK=1, locking=locking)
+        with patch.dict(sys.modules, {"msvcrt": fake}), \
+                patch("bro_audit_log._platform_name", lambda: "nt"), \
+                patch("bro_audit_log._LOCK_TIMEOUT", 0.3):
+            append(self.ledger, "a", {"x": 1})
+            append(self.ledger, "b", {"x": 2})
+            self.assertEqual(calls, [fake.LK_NBLCK, fake.LK_UNLCK] * 2)
+            self.assertEqual(held, {}, "the lock was not released")
+            before = self.ledger.read_bytes()
+            with bro_audit_log._append_lock(self.ledger):
+                self.assertEqual(len(held), 1)
+                with self.assertRaises(AuditLockUnavailable) as caught:
+                    append(self.ledger, "c", {"x": 3})
+                self.assertIn("not acquired within", str(caught.exception))
+                self.assertEqual(self.ledger.read_bytes(), before)
+            self.assertEqual(held, {})
+            self.assertEqual(append(self.ledger, "d", {"x": 4})["seq"], 2)
+        self.assertEqual(verify(self.ledger), 3)
+
+    # -- (e) the old scheme's lock file --------------------------------------------------
+    def test_a_lock_file_left_by_the_old_scheme_is_neither_trusted_nor_deleted(self):
+        """An existing deployment can have `<ledger>.lock` on disk: under the old scheme it
+        was the lock, and a crashed holder left it there."""
+        legacy = self.ledger.with_suffix(self.ledger.suffix + ".lock")
+        self.assertNotEqual(legacy, self.lock, "the new lock must not reuse the old name")
+        legacy.write_bytes(b"left by a writer that crashed")
+        with patch("bro_audit_log._LOCK_TIMEOUT", 5.0):
+            append(self.ledger, "a", {"x": 1})
+            append(self.ledger, "b", {"x": 2})
+        self.assertEqual(verify(self.ledger), 2)
+        self.assertEqual(legacy.read_bytes(), b"left by a writer that crashed")
+
+    # -- (f) which file the lock is on ---------------------------------------------------
+    def test_the_lock_file_sits_beside_the_ledger_is_private_and_is_never_removed(self):
+        append(self.ledger, "a", {"x": 1})
+        self.assertEqual(self.lock.parent, self.ledger.parent)
+        self.assertTrue(self.lock.is_file())
+        first = os.stat(self.lock)
+        if os.name == "posix":
+            self.assertEqual(first.st_mode & 0o077, 0, oct(first.st_mode))
+        append(self.ledger, "b", {"x": 2})
+        second = os.stat(self.lock)
+        # Unlinking it between appends is what would let two writers hold "the" lock on
+        # two different inodes.
+        self.assertEqual((first.st_dev, first.st_ino), (second.st_dev, second.st_ino))
+        self.assertEqual(self.lock.read_bytes(), b"")
+
+    def _symlink_or_skip(self, target, link):
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError, AttributeError) as exc:
+            self.skipTest(f"this platform or account cannot create a symbolic link: {exc}")
+
+    def test_a_symlinked_lock_path_is_refused_and_cannot_redirect_the_lock(self):
+        elsewhere = self.dir / "elsewhere"
+        elsewhere.write_bytes(b"not a lock")
+        self._symlink_or_skip(elsewhere, self.lock)
+        with patch("bro_audit_log._LOCK_TIMEOUT", 0.5):
+            with self.assertRaises(AuditLockUnavailable) as caught:
+                append(self.ledger, "a", {"x": 1})
+        self.assertIn("symbolic link", str(caught.exception))
+        self.assertFalse(self.ledger.exists(), "nothing may be written without the lock")
+        self.assertEqual(elsewhere.read_bytes(), b"not a lock")
+        self.assertTrue(os.path.islink(self.lock))
+
+    def test_a_dangling_symlink_at_the_lock_path_creates_nothing_where_it_points(self):
+        target = self.dir / "planted-target"
+        self._symlink_or_skip(target, self.lock)
+        with patch("bro_audit_log._LOCK_TIMEOUT", 0.5):
+            with self.assertRaises(AuditLockUnavailable) as caught:
+                append(self.ledger, "a", {"x": 1})
+        self.assertIn("symbolic link", str(caught.exception))
+        self.assertFalse(target.exists(), "O_CREAT followed the symlink")
+        self.assertFalse(self.ledger.exists())
+
+    def test_where_the_platform_has_no_nofollow_a_symlinked_lock_path_is_still_refused(self):
+        """Windows has no `O_NOFOLLOW`; the path is checked before the open instead. Run here
+        by taking the flag away, so the arm CI's Linux job never reaches is not untested."""
+        target = self.dir / "planted-target"
+        self._symlink_or_skip(target, self.lock)
+        with patch.object(bro_audit_log.os, "O_NOFOLLOW", 0, create=True), \
+                patch("bro_audit_log._LOCK_TIMEOUT", 0.5):
+            with self.assertRaises(AuditLockUnavailable) as caught:
+                append(self.ledger, "a", {"x": 1})
+        self.assertIn("symbolic link", str(caught.exception))
+        self.assertFalse(target.exists(), "O_CREAT followed the symlink")
+        self.assertFalse(self.ledger.exists())
+
+    def test_a_lock_path_that_is_a_directory_is_refused(self):
+        self.lock.mkdir()
+        with patch("bro_audit_log._LOCK_TIMEOUT", 0.5):
+            with self.assertRaises(AuditLockUnavailable):
+                append(self.ledger, "a", {"x": 1})
+        self.assertFalse(self.ledger.exists())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "a FIFO at the lock path needs os.mkfifo")
+    def test_a_lock_path_that_is_a_fifo_is_refused_without_hanging(self):
+        import threading
+
+        os.mkfifo(self.lock)
+        outcome = []
+
+        def attempt():
+            try:
+                outcome.append(append(self.ledger, "a", {"x": 1}))
+            except Exception as exc:                      # noqa: BLE001
+                outcome.append(exc)
+
+        with patch("bro_audit_log._LOCK_TIMEOUT", 0.5):
+            worker = threading.Thread(target=attempt, daemon=True)
+            worker.start()
+            worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "opening the FIFO blocked")
+        self.assertIsInstance(outcome[0], AuditLockUnavailable, outcome[0])
+        self.assertIn("not a regular file", str(outcome[0]))
+        self.assertFalse(self.ledger.exists())
+
+    @unittest.skipUnless(os.name == "posix",
+                         "a lock file that is open cannot be unlinked on Windows, so the "
+                         "state this test builds does not exist there")
+    def test_a_waiter_does_not_take_its_lock_on_a_lock_file_that_was_replaced_under_it(self):
+        """A waiter has the lock file OPEN while it waits. Remove and recreate the file and the
+        waiter is polling an inode nobody else will ever open: it would get that lock the
+        moment the first holder left, while a newer writer holds the file now at the path."""
+        import fcntl
+        import threading
+
+        append(self.ledger, "a", {"x": 1})
+        opened = threading.Event()
+        real_open = bro_audit_log._open_lock_file
+
+        def signalling_open(path):
+            fd = real_open(path)
+            opened.set()
+            return fd
+
+        outcome = []
+
+        def waiter():
+            try:
+                outcome.append(append(self.ledger, "waiter", {}))
+            except Exception as exc:                      # noqa: BLE001
+                outcome.append(exc)
+
+        with patch("bro_audit_log._LOCK_TIMEOUT", 30.0):
+            first = bro_audit_log._append_lock(self.ledger)
+            first.__enter__()                             # a holder, on the ORIGINAL inode
+            try:
+                with patch("bro_audit_log._open_lock_file", signalling_open):
+                    worker = threading.Thread(target=waiter, daemon=True)
+                    worker.start()
+                    self.assertTrue(opened.wait(10), "the waiter never opened the lock file")
+                self.lock.unlink()                        # ...which is then replaced
+                second = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+                closed = []
+                self.addCleanup(lambda: closed or os.close(second))
+                fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)   # a second, newer holder
+            finally:
+                first.__exit__(None, None, None)          # the original inode is free now
+            time.sleep(0.5)                               # fifty of the waiter's poll cycles
+            self.assertTrue(worker.is_alive() and not outcome,
+                            f"the waiter appended while another writer held the lock: {outcome}")
+            self.assertEqual(len(read_all(self.ledger)), 1)
+            fcntl.flock(second, fcntl.LOCK_UN)
+            os.close(second)
+            closed.append(True)
+            worker.join(timeout=20)
+        self.assertFalse(worker.is_alive())
+        self.assertIsInstance(outcome[0], dict, outcome[0])
+        self.assertEqual(verify(self.ledger), 2)
+
+    # -- the approval log's lock is the same shape, and the two are held together ---------
+    def test_the_audit_lock_and_the_approval_log_lock_have_not_drifted(self):
+        """Two modules, one mechanism, deliberately not one helper: `_write_lock` yields the
+        handle of the log it locks and blocks without a deadline on POSIX, this one locks a
+        file beside the ledger and has a deadline everywhere. What they must keep in common
+        is the PRIMITIVE - so a fix to one that the other needs shows up here."""
+        import inspect
+
+        import bro_approval_requests
+
+        self.assertEqual(bro_audit_log._LOCK_OFFSET, bro_approval_requests._LOCK_OFFSET)
+        self.assertEqual(bro_audit_log._LOCK_TIMEOUT, bro_approval_requests._LOCK_TIMEOUT_SECONDS)
+        approval = inspect.getsource(bro_approval_requests._write_lock)
+        audit = (inspect.getsource(bro_audit_log._try_lock)
+                 + inspect.getsource(bro_audit_log._close_lock))
+        for name, source in (("bro_approval_requests._write_lock", approval),
+                             ("bro_audit_log._try_lock/_close_lock", audit)):
+            for primitive in ("fcntl.flock(", "fcntl.LOCK_EX", "fcntl.LOCK_UN",
+                              "msvcrt.LK_NBLCK, 1)", "msvcrt.LK_UNLCK, 1)",
+                              "_LOCK_OFFSET, os.SEEK_SET)",
+                              '_platform_name() == "posix"', '_platform_name() == "nt"'):
+                with self.subTest(module=name, primitive=primitive):
+                    self.assertIn(primitive, source)
+        # ...and neither went back to a lock FILE whose existence is the lock.
+        for module in (bro_audit_log, bro_approval_requests):
+            with self.subTest(module=module.__name__):
+                self.assertNotIn("os.O_EXCL", inspect.getsource(module))
 
 
 class StopControllerTests(unittest.TestCase):
