@@ -6,7 +6,7 @@
 
 - **35 slices** of the first read's 77 were re-read without a cap — the Python, shell, workflow, gate and document slices — plus **two sweeps** (`doc-vs-doc`, `dup-python`). They returned 1311 findings.
 - Every finding went to a second agent told to refute it by opening the cited line: **1248 confirmed, 63 refuted**. Of the confirmed, 22 were already in the first record and are left out here. **1226 remain** and are listed below.
-- **Not re-read yet:** the 20 Rust slices, the 12 frontend slices, and the sweeps `dup-rust`, `doc-vs-code`, `dead-and-placeholder`, `test-quality`. Nothing in this file speaks for them.
+- **Not re-read in this pass:** the Rust and frontend slices and the sweeps `dup-rust`, `doc-vs-code`, `dead-and-placeholder`, `test-quality`. Nothing in this file speaks for them; they were read later the same day and are recorded in [`WHOLE_REPO_READ_2026-10-02_COCKPIT.md`](WHOLE_REPO_READ_2026-10-02_COCKPIT.md).
 - "Confirmed" means a second agent agreed with a first after reading the line. It is ◑, not ✅. The Builder personally reproduced only the items marked **reproduced** in §1.
 - The full text of each finding — evidence, the verifier's note, the other location of a duplicate — is in [`archive/whole_repo_read_2_2026-10-02.json`](archive/whole_repo_read_2_2026-10-02.json), keyed by the `R2-` id used here.
 
