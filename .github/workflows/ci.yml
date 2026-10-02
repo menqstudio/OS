@@ -32,6 +32,19 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# No job leaves a git process behind. Every `git commit` and `git fetch` ends by starting
+# `git maintenance run --auto --detach`, which is still working in `.git/objects` when the
+# command returns. Dozens of test modules here build a repository in a temp directory and then
+# delete it; one lost that race on 2026-10-02 (`Directory not empty: .git/objects`) on a pull
+# request that changed only documents. Git reads these three variables as configuration in every
+# job, for every repository a step creates (T-164).
+env:
+  GIT_CONFIG_COUNT: "2"
+  GIT_CONFIG_KEY_0: maintenance.auto
+  GIT_CONFIG_VALUE_0: "false"
+  GIT_CONFIG_KEY_1: gc.auto
+  GIT_CONFIG_VALUE_1: "0"
+
 # Phase 0: each half builds and tests independently. A cross-integration
 # (bridge) smoke test is added in Phase 1.
 jobs:

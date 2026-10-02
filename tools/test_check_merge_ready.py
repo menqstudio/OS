@@ -935,6 +935,19 @@ class FixtureRepositoryTests(unittest.TestCase):
             self.skipTest("this git starts no automatic maintenance after a commit")
 
 
+    def test_ci_runs_every_job_with_git_maintenance_off(self):
+        """This module's fixtures are quiet by their own config. The other modules that build a
+        repository -- in tools/ and in engine/tests/ -- are covered in CI by the workflow's
+        environment, which git reads as configuration in every job."""
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        top = text[:text.index("\njobs:\n")]
+        for line in ('  GIT_CONFIG_COUNT: "2"', "  GIT_CONFIG_KEY_0: maintenance.auto",
+                     '  GIT_CONFIG_VALUE_0: "false"', "  GIT_CONFIG_KEY_1: gc.auto",
+                     '  GIT_CONFIG_VALUE_1: "0"'):
+            self.assertIn("\n" + line + "\n", top, line)
+        self.assertIn("\nenv:\n", top)
+
+
 class AuditBinding(GateCase):
     """T-155. A cited report satisfies the rule only for the pull request and the commit
     it names, and only while no audit-required path has moved since that commit.

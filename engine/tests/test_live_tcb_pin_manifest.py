@@ -85,6 +85,24 @@ def source_origin(kit: str = "live") -> dict:
     return dict(builder_module().SOURCE_ORIGIN[kit])
 
 
+@contextlib.contextmanager
+def deployment_root():
+    """A deployment root with a PRIVATE parent directory.
+
+    The source tree these tests stage is a SIBLING of the root (`<parent>/source-tree`), because
+    a source tree inside the tree it vouches for is not an independent origin. While the root
+    was the temp directory itself, its parent was the system temp directory, so the sibling was
+    one shared `/tmp/source-tree`: never removed, and written by every run on the machine. Two
+    engine suites at once failed each other -- measured, 28 of 30 concurrent runs -- and a
+    single run read whatever the last one left. The root is now one level down, so the sibling
+    is this test's own and goes when the test does.
+    """
+    with tempfile.TemporaryDirectory() as parent:
+        root = os.path.join(parent, "deployment")
+        os.mkdir(root)
+        yield root
+
+
 class LiveTcbPinManifestTests(unittest.TestCase):
     def _stage_source(self, root: str, live: str, kit: str = "live") -> str:
         """The tree the kit was staged FROM: a separate directory whose repo-sourced files are
@@ -182,7 +200,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         required set to compare against, so the test says so by name instead of
         raising FileNotFoundError at a reader four frames down.
         """
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             manifest = self._build(root)
             listed = {a["logical_name"] for a in manifest["artifacts"]}
             missing = [name for name in required_artifacts() if name not in listed]
@@ -197,7 +215,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         # one of them was computed by hashing the file it pinned, this assertion was a tautology.
         # `test_a_substituted_repo_artifact_is_refused_rather_than_pinned` is the one that has
         # teeth.
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             manifest = self._build(root)
             for artifact in manifest["artifacts"]:
                 with open(artifact["path"], "rb") as f:
@@ -211,7 +229,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         # The §2.5 floor is a content pin, and a content pin is only as good as the ORIGIN of the
         # number. The manifest has to be readable as which-is-which, or an auditor cannot tell a
         # pin from the tree measuring itself.
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             manifest = self._build(root)
             origins = source_origin()
             self.assertTrue(origins, "the builder declares no repo-sourced artifact at all")
@@ -237,7 +255,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         # the pin was taken was pinned at its substituted digest and the later §2.5 check verified
         # it happily. Driven against the old builder this returned 0 and emitted a manifest whose
         # supervisor pin WAS the attacker's bytes.
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root)
             victim = os.path.join(root, "engine", "ci", "live", "run_supervisor.py")
             with open(victim, "w", encoding="utf-8") as f:
@@ -252,7 +270,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
     def test_a_missing_source_origin_is_refused_not_self_measured(self):
         # The failure mode the required argument exists to prevent: falling back to hashing the
         # deployment copy when the origin cannot be found is exactly the defect, quietly restored.
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root)
             source = os.path.join(os.path.dirname(os.path.normpath(root)), "source-tree")
             os.remove(os.path.join(source, "engine", "ci", "live", "run_signer.py"))
@@ -263,7 +281,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
             self.assertFalse(os.path.exists(out))
 
     def test_the_builder_refuses_without_a_source_tree(self):
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root)
             out = os.path.join(root, "m.json")
             r = self._run_builder(root, sudoers, unit, out,
@@ -278,7 +296,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
         # "deployment-measured". This is the guard that makes that state a refusal instead of a
         # silent return to the defect, so it is driven with the map emptied.
         module = builder_module()
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root)
             source = os.path.join(os.path.dirname(os.path.normpath(root)), "source-tree")
             out = os.path.join(root, "m.json")
@@ -312,7 +330,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
 
     def test_the_ladder_kit_builds_a_manifest_that_covers_the_required_set(self):
         require(DESKTOP_TCB_SOURCE)
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             manifest = self._build(root, "ladder")
         pinned = sorted(a["logical_name"] for a in manifest["artifacts"])
         self.assertEqual(pinned, sorted(required_artifacts()))
@@ -321,7 +339,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
 
     def test_the_broker_kit_pins_brops_broker_and_the_document_it_reads(self):
         require(DESKTOP_TCB_SOURCE)
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             manifest = self._build(root, "broker")
             # normpath: the templates join with `/`, which Windows keeps beside its own `\\`.
             by_role = {a["logical_name"]: os.path.normpath(a["path"])
@@ -344,7 +362,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
     def test_a_broker_config_naming_another_manifest_is_refused(self):
         """The two documents name each other. A manifest pinning a config that points at some other
         manifest pins a document whose floor is not the one being built."""
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root, "broker")
             with open(self._broker_config(root), "w", encoding="utf-8") as f:
                 json.dump({"trust": {"tcb_pin_manifest_path": "/elsewhere/pin.json"}}, f)
@@ -355,7 +373,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
             self.assertFalse(os.path.exists(out))
 
     def test_a_broker_config_that_is_not_json_is_refused(self):
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root, "broker")
             with open(self._broker_config(root), "w", encoding="utf-8") as f:
                 f.write("{ not json")
@@ -382,7 +400,7 @@ class LiveTcbPinManifestTests(unittest.TestCase):
                                            config="/c", sudoers="/s", unit="/u")
 
     def test_a_missing_artifact_fails_the_build_instead_of_being_skipped(self):
-        with tempfile.TemporaryDirectory() as root:
+        with deployment_root() as root:
             sudoers, unit = self._kit(root)
             os.remove(os.path.join(root, "tcb", "root-anchor.json"))
             r = self._run_builder(root, sudoers, unit, os.path.join(root, "m.json"))
