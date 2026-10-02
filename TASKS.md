@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156). Also open, and not this PR's work: PR #329 on `architect/shell-classifier-design`.
+> **⏭️ CURRENT ACTIVE: PR #329 · branch `architect/shell-classifier-design`** (base `main`, tip `095938b`, task T-159).
 >
-> the audit ledger's kernel lock; the Architect's fourth round is GREEN for this change
+> the Architect's design for the shell classifier, written before any code; no engine file changes
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -20,7 +20,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 |----|------|-----------|--------|-------------|
 | **T-161** | **A CI reading older than the one recorded is refused** — the runs API answered from months ago and `sync_active_pr.py` wrote it down; 10 mutants ◑ | Bro | Review | `#327` |
 | **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | `#327` |
-| **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — the Architect's round 4 is GREEN for this change (rounds 1-3 RED); `append()` also checks chain and head under the lock ([request](docs/design/T-156_AUDIT_LEDGER_LOCK_AUDIT_REQUEST.md)) ◑ | Bro | Review | `#328` |
+| **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), written by the Architect before any code (roadmap §G.2); it answers findings R2-0001 and R2-0002. **No code yet**; the implementation is its own audited pull request | Bro | Todo | `#329` |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
@@ -40,7 +40,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **75 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **76 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

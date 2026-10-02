@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t156/audit-ledger-kernel-lock` — `main` @ `6743d7c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `architect/shell-classifier-design` — `main` @ `095938b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156). Also open, and not this PR's work: PR #329 on `architect/shell-classifier-design`.
+> **⏭️ CURRENT ACTIVE: PR #329 · branch `architect/shell-classifier-design`** (base `main`, tip `095938b`, task T-159).
 >
-> the audit ledger's kernel lock; the Architect's fourth round is GREEN for this change
+> the Architect's design for the shell classifier, written before any code; no engine file changes
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
