@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #321 · branch `t153/tightening`** (base `main`, tip `e33c7e9`, task T-153).
+> **⏭️ CURRENT ACTIVE: PR #322 · branch `t154/audit-gate`** (base `main`, tip `cf5f134`, task T-154).
 >
-> the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2
+> a merge that touches engine security code needs a cited audit or a waiver the Owner wrote on roadmap G.2
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-154** | **A merge that touches engine security code needs a cited audit or a waiver the Owner wrote** — `check_merge_ready.py` reads `config/audit-required-paths.json` (the engine's own protected roots, tests excluded); 73 mutants, 73 named deaths ◑ | Bro | Review | — |
 | **T-153** | **The tightening list the Owner approved** — a delete asks natively, a dead command is denied, `ci/` `install/` `contracts/` are protected, the HMAC verifier is gone, the test catalog is enforced, L5 and L13 say what runs. Owner waiver for the missing Architect audit: roadmap §G.2 ◑ | Bro | Review | `#321` |
 | **T-150** | **A merge and a push are refused before they turn `main` or CI red** — `check_merge_ready.py`, `check_push_ready.py`, and a pre-tool shell arm in the hook; 85 mutants, 85 named deaths ◑ | Bro | Review | `#319` |
 | **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): waves 1 and 2 merged (405 + 275 fixed), 89 open (§9 and wave 1), 36 wait on the Owner (§8); second read (uncapped) running ◑ | Bro | In-Progress | `#317` |

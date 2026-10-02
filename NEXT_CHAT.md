@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t153/tightening` — `main` @ `e33c7e9`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t154/audit-gate` — `main` @ `cf5f134`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #321 · branch `t153/tightening`** (base `main`, tip `e33c7e9`, task T-153).
+> **⏭️ CURRENT ACTIVE: PR #322 · branch `t154/audit-gate`** (base `main`, tip `cf5f134`, task T-154).
 >
-> the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2
+> a merge that touches engine security code needs a cited audit or a waiver the Owner wrote on roadmap G.2
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #321 · branch `t153/tightening`** (base `main`, tip `e33c7e9`, task T-153).
+> **⏭️ CURRENT ACTIVE: PR #322 · branch `t154/audit-gate`** (base `main`, tip `cf5f134`, task T-154).
 >
-> the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2
+> a merge that touches engine security code needs a cited audit or a waiver the Owner wrote on roadmap G.2
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1606 OK |
+| `tools/` self-tests · 2026-10-02 | 1657 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2666 OK, 13 skipped |
