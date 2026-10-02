@@ -682,6 +682,84 @@ class MainCiReadingTests(_StateFile):
         self.assertIn("nothing has been written", str(cm.exception))
 
 
+class StaleReadingTests(_StateFile):
+    """T-161. The runs endpoint answered `--branch main` from months ago, four times in one day,
+    and the generator wrote it into the mirror. Run ids only grow."""
+
+    RECORDED = 36992048558
+
+    def setUp(self):
+        super().setUp()
+        self.write({"schema": 2, "main_ci": {"_note": "n", "ci": {
+            "head": "a" * 40, "conclusion": "success", "run_id": self.RECORDED, "note": "x"}}})
+        self.before = self.path.read_bytes()
+        self.addCleanup(setattr, sap, "take_main_ci_reading", sap.take_main_ci_reading)
+        self.addCleanup(setattr, sap, "STALE_READING_PAUSE", sap.STALE_READING_PAUSE)
+        sap.STALE_READING_PAUSE = 0
+
+    def answers(self, *run_ids):
+        """Make the reader answer with these run ids in turn; returns the list of calls made."""
+        queue, calls = list(run_ids), []
+
+        def take():
+            calls.append(1)
+            run_id = queue.pop(0) if len(queue) > 1 else queue[0]
+            return None if run_id is None else {"ci": {
+                "head": "f3fdcce" + "0" * 33, "conclusion": "success", "run_id": run_id,
+                "failing": []}}
+        sap.take_main_ci_reading = take
+        return calls
+
+    def test_a_reading_older_than_the_recorded_one_is_refused_and_nothing_is_written(self):
+        """Mutant: drop the comparison ⇒ the stale reading is returned and written."""
+        calls = self.answers(35542745168)
+        with self.assertRaises(SystemExit) as cm:
+            sap.measured_main_ci()
+        message = str(cm.exception)
+        self.assertIn("OLDER than the one already recorded", message)
+        self.assertIn("run 35542745168 at f3fdcce is older than run 36992048558", message)
+        self.assertIn("Nothing has been", message)
+        self.assertEqual(len(calls), sap.STALE_READING_TRIES, "it is taken again before refusing")
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+    def test_a_stale_page_followed_by_the_real_one_is_the_real_one(self):
+        """Mutant: refuse on the first stale answer ⇒ SystemExit here."""
+        calls = self.answers(35542745168, self.RECORDED + 5)
+        self.assertEqual(sap.measured_main_ci()["ci"]["run_id"], self.RECORDED + 5)
+        self.assertEqual(len(calls), 2)
+
+    def test_the_same_run_and_a_newer_run_are_readings(self):
+        """Mutant: `<=` for `<` ⇒ re-syncing at an unchanged main is refused."""
+        for run_id in (self.RECORDED, self.RECORDED + 1):
+            with self.subTest(run_id=run_id):
+                calls = self.answers(run_id)
+                self.assertEqual(sap.measured_main_ci()["ci"]["run_id"], run_id)
+                self.assertEqual(len(calls), 1)
+
+    def test_a_mirror_that_records_no_run_refuses_nothing(self):
+        for state in ({"schema": 2}, {"schema": 2, "main_ci": {"_note": "n"}},
+                      {"schema": 2, "main_ci": {"ci": {"run_id": "36992048558"}}},
+                      {"schema": 2, "main_ci": {"other": {"run_id": 99999999999}}}):
+            with self.subTest(state=state):
+                self.write(state)
+                self.answers(1)
+                self.assertEqual(sap.measured_main_ci()["ci"]["run_id"], 1)
+
+    def test_an_unreadable_main_is_still_its_own_refusal(self):
+        """Mutant: skip `_refuse_without_main_ci` ⇒ a TypeError instead of the refusal."""
+        self.answers(None)
+        with self.assertRaises(SystemExit) as cm:
+            sap.measured_main_ci()
+        self.assertIn("could not read main's own ci runs", str(cm.exception))
+
+    def test_both_writers_take_the_reading_through_this(self):
+        """Mutant: call `take_main_ci_reading` directly at either site ⇒ the count is not 2."""
+        source = pathlib.Path(sap.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("reading = measured_main_ci()"), 2)
+        self.assertEqual(source.count("_refuse_without_main_ci(take_main_ci_reading())"), 1,
+                         "only measured_main_ci may call the raw reader")
+
+
 class SettledHeadTests(unittest.TestCase):
     """The generator must compute `settled_at_main_head` the way its VERIFIER does.
 

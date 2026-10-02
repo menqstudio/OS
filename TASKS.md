@@ -6,7 +6,7 @@
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `4bc36cb`.** The only thing open is PR #327 on `settle/after-326`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160 rides this PR.
+> **Next:** T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160, T-161 ride this PR.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,14 +18,11 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-161** | **A CI reading older than the one recorded is refused** — the runs API answered from months ago four times in a day and `sync_active_pr.py` wrote it down; run ids only grow; 10 mutants, 10 deaths ◑ | Bro | Review | `#327` |
 | **T-160** | **A push is judged on the tree it sends** — the hook runs the push gate before the command line starts, so `commit && push` in one line is refused; 16 mutants, 16 deaths ◑ | Bro | Review | `#327` |
 | **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — today a crashed holder turns every append into a refusal until a file is deleted by hand; building, then to Architect audit (roadmap §G.2) ◑ | Bro | In-Progress | — |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
-| **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
-| **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
-| **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | `#255` |
-| **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths ◑ | Bro | Review | `#254` |
 | **T-020** | **The anti-rollback floor's writer is the party the floor constrains** — a distinct **Floor Writer**; completion REQUESTS an advance. **C3 and a 2nd Architect pass NOT done** | Bro | Review | `#219` |
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
@@ -39,7 +36,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **75 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **79 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
