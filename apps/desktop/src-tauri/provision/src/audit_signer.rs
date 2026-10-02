@@ -267,7 +267,8 @@ pub const FILE_GENERIC_READ: u32 =
     READ_CONTROL | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE;
 
 /// `FILE_GENERIC_WRITE`, spelled out. What the **app** needs on the ledger directory: it
-/// creates and appends the `.jsonl`, replaces the `.head`, and takes the `.lock`.
+/// creates and appends the `.jsonl`, replaces the `.head`, and creates the `.append-lock` it
+/// holds a byte-range lock on while it appends (`T-156`; an `O_EXCL` `.lock` file before).
 pub const FILE_GENERIC_WRITE: u32 = READ_CONTROL
     | FILE_WRITE_DATA
     | FILE_APPEND_DATA
@@ -442,8 +443,8 @@ pub struct SignerPaths {
     pub shim_path: PathBuf,
     /// The service executable.
     pub service_exe: PathBuf,
-    /// `%LOCALAPPDATA%\<app>\audit`. The engine's ledger, its `.head`, `.anchor` and `.lock`
-    /// all live here and inherit its DACL.
+    /// `%LOCALAPPDATA%\<app>\audit`. The engine's ledger, its `.head`, `.anchor` and
+    /// `.append-lock` all live here and inherit its DACL.
     pub ledger_dir: PathBuf,
     /// The ledger itself.
     pub ledger_file: PathBuf,
@@ -543,7 +544,7 @@ pub fn key_dacl_plan(app_sid: &str, signer_sid: &str) -> Result<DaclPlan, Anchor
 }
 
 /// The DACL for the ledger directory (and, by inheritance, for the `.jsonl`, `.head`,
-/// `.anchor` and `.lock` the engine creates inside it).
+/// `.anchor` and `.append-lock` the engine creates inside it).
 ///
 /// The app gets read+write: it appends a record on every governed turn, and a ledger it
 /// cannot write is not a ledger. The **signer is absent**, which is the property the anchor's
@@ -2014,7 +2015,7 @@ pub mod winimpl {
     /// creates a *file* with the descriptor already attached, which is the right shape for a
     /// secret whose plaintext must never exist under a weaker DACL for even a moment; it has no
     /// directory form and no inheritance flags. The ledger is a **directory** whose children
-    /// (`.jsonl`, `.head`, `.anchor`, `.lock`) are created by the *engine* and can only be
+    /// (`.jsonl`, `.head`, `.anchor`, `.append-lock`) are created by the *engine* and can only be
     /// protected by inheritance, so its ACEs must carry `CONTAINER_INHERIT_ACE |
     /// OBJECT_INHERIT_ACE` and be applied to a container that already exists. The ledger also has
     /// no plaintext window to race — it holds no secret, only a hash chain.
