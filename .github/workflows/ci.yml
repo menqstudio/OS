@@ -984,6 +984,13 @@ jobs:
       - name: Gate self-tests
         working-directory: tools
         run: python -m unittest test_check_read_receipt test_check_roadmap_order test_check_prior_art test_check_canonical_sync test_check_no_lstrip_prefix test_check_source_control_bytes test_wall_bash_gap test_coordination_stop_guard test_check_main_ci
+      # T-150. The hook refuses `gh pr merge` and `git push` unless these two gates are GREEN.
+      # The gates themselves are session-side and are NOT run here -- one asks GitHub about a
+      # pull request, the other selects gates this workflow already runs -- but a gate whose
+      # self-tests never run is one nobody knows is broken until the day it waves a merge through.
+      - name: Merge and push gate self-tests
+        working-directory: tools
+        run: python -m unittest test_check_merge_ready test_check_push_ready
       # `lstrip("./")` strips a CHARACTER SET, not a prefix, and reads exactly like a prefix
       # strip. It was written three times: check_doc_claims.py hit it and fixed it inline
       # leaving only a comment, and check_roadmap_order.py:373 plus check_audit_reports.py:119
