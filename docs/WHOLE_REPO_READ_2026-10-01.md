@@ -2,6 +2,8 @@
 
 **What this is.** The Owner asked for the whole repository to be read file by file for duplication, design contradictions, wrong code and any other error. This file is the record of that read: what was read, what was not, and every finding a second agent confirmed. It is a work list, **not an audit** — the Builder commissioned it and the Builder's agents ran it, so nothing here is independent (◑). `main` was at `962743a`.
 
+**The uncapped second pass** — the 605 findings this read saw and did not return, and more — is recorded in [`WHOLE_REPO_READ_2026-10-02.md`](WHOLE_REPO_READ_2026-10-02.md).
+
 ## How it was run
 
 - The 1341 tracked text files (binaries and lockfiles excluded, 18.8 MB) were cut into **77 slices** of at most 330 KB. One read-only agent per slice was told to read every file in full and report at most 12 findings, most severe first.
