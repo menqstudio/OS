@@ -125,6 +125,14 @@ THE TWO NAMED COMMANDS (T-150) -- and why this does not contradict the paragraph
       them;
     - `CANONICAL_LAW=off`, which disables this exactly as it disables the rest.
 
+  A PUSH IS JUDGED ON THE TREE IT SENDS (T-160). This hook fires before the command line
+  starts, so the push gate reads the tree as it is THEN. A line that edits, commits and
+  pushes hands the gate a tree the push does not send: on 2026-10-02 `sync && commit &&
+  push` sent a banner 47 bytes over its budget and the gate, asked first, had said GREEN.
+  So a `git push` that is not a delete is refused when the line runs anything before it
+  except `cd`, `export`, `unset`, `set`, `true`, `:` and `gh auth token`. What follows the
+  push is not restricted.
+
 A DISCARDED VERDICT (T-157) -- the third thing the shell arm refuses, and it is a shape
   Six times in this repository a gate printed RED and the commit, the push or the write
   after it ran anyway. Never because the gate was wrong: because the command line never
@@ -1116,10 +1124,25 @@ def _git_push(words: list[str]) -> dict | None:
     return {"kind": "push", "delete": delete, "directory": directory}
 
 
+#: Commands that may stand before a `git push` in one command line, because they change
+#: nothing the push gate reads: they move, or they set the environment.
+_BEFORE_A_PUSH = frozenset({"cd", "export", "unset", "set", "true", ":"})
+
+
+def _changes_nothing(words: list[str]) -> bool:
+    program = _program(words[0])
+    return program in _BEFORE_A_PUSH or (program == "gh" and words[1:3] == ["auth", "token"])
+
+
 def guarded_invocations(command: str) -> list[dict]:
-    """Every `gh pr merge` and every `git push` this command line itself runs."""
+    """Every `gh pr merge` and every `git push` this command line itself runs.
+
+    A push also carries `after`: the commands the line runs BEFORE it that could change the
+    tree. The push gate is run when the hook fires, which is before the line starts.
+    """
     found: list[dict] = []
     moved_to: str | None = None
+    earlier: list[str] = []
     for segment in shell_segments(command):
         words = _command_words(segment)
         if not words:
@@ -1135,7 +1158,10 @@ def guarded_invocations(command: str) -> list[dict]:
             push = _git_push(words)
             if push:
                 push["cd"] = moved_to
+                push["after"] = list(earlier)
                 found.append(push)
+        if not _changes_nothing(words):
+            earlier.append(" ".join(words[:2]))
     return found
 
 
@@ -1396,6 +1422,16 @@ def push_problem(inv: dict, data: dict) -> tuple[str | None, str | None]:
     """`(refusal, note)` for one `git push`."""
     if inv.get("delete"):
         return None, None
+    if inv.get("after"):
+        shown = ", ".join(f"`{name}`" for name in inv["after"][:4])
+        return (f"CANONICAL LAW: `git push` is refused in this command line -- it runs after "
+                f"{shown}. tools/{PUSH_GATE} is run when this hook fires, which is BEFORE the "
+                f"line starts, so it would judge the tree as it is now and not the one the "
+                f"push sends. On 2026-10-02 a banner was written, committed and pushed in one "
+                f"line and went out 47 bytes over its budget with the gate GREEN.\n\n"
+                f"Run what comes before the push in one call, and `git push` first in the "
+                f"next (`cd`, `export` and `gh auth token` may stand before it).\n\n"
+                f"{RECOVERY}"), None
     checkout = push_checkout(inv, data)
     if checkout is None:
         return None, ("CANONICAL LAW: this `git push` is in a different repository. It was "

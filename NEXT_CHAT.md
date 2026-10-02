@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **✅ SETTLED — `main` is at `4bc36cb`.** The only thing open is PR #327 on `settle/after-326`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-156 opens as its own pull request and waits for the Architect's code audit; R2-0001/R2-0002 go to the Architect for design.
+> **Next:** T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160 rides this PR.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
