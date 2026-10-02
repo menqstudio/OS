@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-02 — 113 pull requests merged (`#219`–`#332`), `main` at
-`eb3b791`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-03 — 114 pull requests merged (`#219`–`#333`), `main` at
+`9ce6acb`: all seven workflows green there, `ci` on its second attempt (`T-164`). Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
+> **✅ SETTLED — `main` is at `9ce6acb`.** The only thing open is PR #334 on `settle/t159-merged`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved).
+> **Next:** T-164, two tests that fail outside the change under test. T-159 is merged.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1739 OK |
+| `tools/` self-tests · 2026-10-03 | 1741 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2730 OK, 17 skipped |
