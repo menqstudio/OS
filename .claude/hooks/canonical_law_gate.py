@@ -24,8 +24,10 @@ WHAT IT ENFORCES, PER EVENT
   PreToolUse (shell tools) -- TWO commands, recognised by NAME, are refused before they
     run: `gh pr merge`, unless it pins `--match-head-commit` and
     tools/check_merge_ready.py is GREEN; and a `git push` that is not a delete, unless
-    tools/check_push_ready.py is GREEN. Every other shell command returns before anything
-    is imported or spawned. See THE TWO NAMED COMMANDS below.
+    tools/check_push_ready.py is GREEN. And one SHAPE of command line: a gate
+    (`tools/check_*.py`) whose verdict is thrown away on the way to a commit, a push or a
+    pull request. Every other shell command returns before anything is imported or
+    spawned. See THE TWO NAMED COMMANDS and A DISCARDED VERDICT below.
   PostToolUse (shell tools only) -- DETECTION, NOT CONTAINMENT. See below.
 
 SHELL: WHY THIS IS A PostToolUse CHECK AND NOT A MATCHER CHANGE
@@ -123,6 +125,36 @@ THE TWO NAMED COMMANDS (T-150) -- and why this does not contradict the paragraph
       them;
     - `CANONICAL_LAW=off`, which disables this exactly as it disables the rest.
 
+A DISCARDED VERDICT (T-157) -- the third thing the shell arm refuses, and it is a shape
+  Six times in this repository a gate printed RED and the commit, the push or the write
+  after it ran anyway. Never because the gate was wrong: because the command line never
+  asked the shell to connect the two. `gate | tail -3 && git commit` -- `&&` tests the
+  last command of a pipeline, which is `tail`, and `tail` succeeded. `gate; git commit` --
+  `;` does not test anything. A memory note recorded it after the second time, and the
+  count went on to six, the sixth on the day this was written.
+
+  WHAT IS REFUSED. Reading the same split command line as above, with the operator that
+  ended each simple command:
+    - a gate piped into anything, when `&&` follows that pipeline -- unless
+      `set -o pipefail` came first on the line;
+    - `git commit`, `git push`, `git merge`, `gh pr create|merge|ready|edit|comment|
+      close|reopen`, `tools/sync_active_pr.py` or `tools/stamp_pr_head.py`, when a gate
+      runs earlier in the line and anything but `&&` stands between them.
+  A gate the shell itself is asking -- `if gate; then`, `elif`, `while`, `until` -- is not
+  judged; neither is a gate nothing leans on (`gate | tail -3` alone, `gate; echo $?`).
+
+  HOW IT FAILS. Open, like everything here that is not one of the two named commands: if
+  this rule raises, the command runs.
+
+  WHAT IT DOES NOT COVER, listed rather than implied:
+    - a gate the line does not name by file: `for g in tools/check_*.py; do python3 "$g";
+      done; git commit` is not seen, and neither is a gate inside a script or `sh -c`;
+    - any follower outside the list above. `gate | tail && python3 write_things.py` is
+      refused for its `&&`; `gate; python3 write_things.py` is not, because what a
+      command writes cannot be decided from its words (see the SHELL paragraph);
+    - a gate inside `( ... )`: a subshell's status is not followed, so no claim is made;
+    - a verdict discarded ACROSS two tool calls. Reading the output is still the job.
+
 THE THREE HONEST LIMITS -- do not read this gate as more than it is
   * SHELL IS NOT GATED BEFORE THE FACT -- for what it WRITES. Only
     Edit/Write/MultiEdit/NotebookEdit are refused in advance for a path; the two named
@@ -173,7 +205,8 @@ EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # Tools that run a shell. These are NOT added to EDIT_TOOLS: they are not refused in
 # advance for the PATHS they write (see the docstring -- a reliable PreToolUse shell
 # path-check is not possible), they are settled afterwards against what actually changed
-# on disk. Two commands are refused in advance by NAME: see `handle_pre_shell`.
+# on disk. Two commands are refused in advance by NAME, and one shape of command line:
+# see `handle_pre_shell`.
 SHELL_TOOLS = {"Bash", "PowerShell", "Shell"}
 # How long a merge/push gate may take before the command it guards is refused. Kept under
 # a minute on purpose: a hook the harness has to kill has given no verdict, and no verdict
@@ -849,8 +882,12 @@ def reads_as_guarded(command: str) -> bool:
     return False
 
 
-def shell_segments(command: str) -> list[list[str]]:
-    """The simple commands in a command line, each as its list of words.
+def _scan(command: str) -> tuple[list[list[str]], list[str]]:
+    """The simple commands in a command line, and the operator that ENDED each.
+
+    The second list is parallel to the first: `&&`, `||`, `|`, `|&`, `;`, `;;`, `&`, a
+    newline, `)`, or the empty string for the end of the line. `shell_segments` drops it;
+    `discarded_verdict` is what reads it.
 
     Split at the UNQUOTED separators `;` `&` `|` newline `(` `)`. A single- or
     double-quoted string is one word. A heredoc body is skipped. A `$(...)` or backtick
@@ -861,6 +898,7 @@ def shell_segments(command: str) -> list[list[str]]:
     follow `eval`, `sh -c` or a script: the docstring lists those as not covered.
     """
     segments: list[list[str]] = []
+    ops: list[str] = []
     words: list[str] = []
     word: str | None = None
     stack: list[tuple[str, list[str], str | None]] = []   # (kind, outer words, outer word)
@@ -873,11 +911,12 @@ def shell_segments(command: str) -> list[list[str]]:
             words.append(word)
             word = None
 
-    def end_segment() -> None:
+    def end_segment(op: str = "") -> None:
         nonlocal words
         end_word()
         if words:
             segments.append(words)
+            ops.append(op)
         words = []
 
     def open_sub(kind: str) -> None:
@@ -887,7 +926,7 @@ def shell_segments(command: str) -> list[list[str]]:
 
     def close_sub() -> None:
         nonlocal words, word
-        end_segment()
+        end_segment(")")
         _, words, word = stack.pop()
 
     while i < n:
@@ -938,13 +977,17 @@ def shell_segments(command: str) -> list[list[str]]:
             if stack and stack[-1][0] == "sub":
                 close_sub()
             else:
-                end_segment()
+                end_segment(")")
+            i += 1
+        elif c == "&" and (command[i + 1:i + 2] == ">" or (word and word[-1] in "<>")):
+            word = (word or "") + c                          # `2>&1`, `&>file`: a redirection
             i += 1
         elif c in ";&|":
-            end_segment()
-            i += 1
+            op = command[i:i + 2] if command[i:i + 2] in ("&&", "||", "|&", ";;") else c
+            end_segment(op)
+            i += len(op)
         elif c == "\n":
-            end_segment()
+            end_segment("\n")
             i += 1
             for delimiter, strip_tabs in heredocs:           # skip each pending body
                 while i < n:
@@ -993,7 +1036,12 @@ def shell_segments(command: str) -> list[list[str]]:
         if kind != "dq":                                     # a quote opened no new command
             words, word = outer_words, outer_word
             end_segment()
-    return segments
+    return segments, ops
+
+
+def shell_segments(command: str) -> list[list[str]]:
+    """The simple commands in a command line, each as its list of words. See `_scan`."""
+    return _scan(command)[0]
 
 
 def _command_words(words: list[str]) -> list[str]:
@@ -1089,6 +1137,136 @@ def guarded_invocations(command: str) -> list[dict]:
                 push["cd"] = moved_to
                 found.append(push)
     return found
+
+
+# --- a gate's verdict, discarded on the way to something that depends on it (T-157) -----
+# See A DISCARDED VERDICT in the module docstring. String work only: nothing is spawned.
+
+#: Operators that carry a failure forward: what follows runs only if what came before passed.
+_KEEPS = ("&&",)
+_PIPES = ("|", "|&")
+#: Operators after which the next command runs whatever the last one answered.
+_DROPS = (";", "\n", "&", "||")
+#: A command in one of these positions is being ASKED, and the shell reads its answer.
+_CONDITIONS = frozenset({"if", "elif", "while", "until"})
+_PY_VALUE_FLAGS = frozenset({"-X", "-W"})
+#: Outward `git` subcommands, `gh pr` subcommands, and the two tools that write the canon
+#: and the pull request body. A deliberately short list: see the docstring for why.
+_GIT_ACTIONS = frozenset({"commit", "push", "merge"})
+_GH_PR_ACTIONS = frozenset({"create", "merge", "ready", "edit", "comment", "close", "reopen"})
+_CANON_WRITERS = frozenset({"sync_active_pr.py", "stamp_pr_head.py"})
+
+
+def mentions_discard(command: str) -> bool:
+    """Could this line run a gate AND then something that leans on it? String tests only."""
+    if "check_" not in command:
+        return False
+    return (("|" in command and "&&" in command)
+            or any(word in command for word in ("commit", "push", "gh ", "git merge",
+                                                "sync_active_pr", "stamp_pr_head")))
+
+
+def _script(words: list[str]) -> str | None:
+    """The script file a command runs: `python3 -B tools/x.py` and `tools/x.py` are `x.py`."""
+    program = _program(words[0])
+    if program.endswith(".py"):
+        return program
+    if program != "py" and not program.startswith("python"):
+        return None
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        if words[i] in ("-c", "-m", "-"):
+            return None                                      # no script file is being run
+        i += 2 if words[i] in _PY_VALUE_FLAGS else 1
+    return _program(words[i]) if i < len(words) else None
+
+
+def _gate_run(words: list[str]) -> str | None:
+    """`check_x.py` when this simple command RUNS that gate, else None."""
+    script = _script(words)
+    if script and script.startswith("check_") and script.endswith(".py"):
+        return script
+    return None
+
+
+def _outward_action(words: list[str]) -> str | None:
+    """What this simple command sends out or records, in words, or None."""
+    program = _program(words[0])
+    if program == "git":
+        i = 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 2 if words[i] in _GIT_VALUE_FLAGS else 1
+        if i < len(words) and words[i] in _GIT_ACTIONS:
+            return f"git {words[i]}"
+        return None
+    if program == "gh":
+        positional, i = [], 1
+        while i < len(words):
+            if words[i].startswith("-"):
+                i += 2 if (words[i] in _GH_VALUE_FLAGS and "=" not in words[i]) else 1
+            else:
+                positional.append(words[i])
+                i += 1
+        if positional[:1] == ["pr"] and positional[1:2] and positional[1] in _GH_PR_ACTIONS:
+            return f"gh pr {positional[1]}"
+        return None
+    script = _script(words)
+    return f"tools/{script}" if script in _CANON_WRITERS else None
+
+
+def discarded_verdict(command: str) -> str | None:
+    """The refusal for a line that runs a gate and then does not let its verdict decide.
+
+    Two shapes, both of which ran in this repository and both of which committed or wrote
+    on a RED:
+
+      `gate | tail -3 && next`   -- `&&` tests the LAST command of a pipeline, so `next`
+                                    runs when the gate failed (unless `pipefail` is set);
+      `gate ; git commit`        -- or a newline, `||`, `&`, a pipe: the commit runs
+                                    whatever the gate said.
+
+    A gate whose answer the shell itself reads (`if gate; then ...`) is not judged.
+    """
+    segments, ops = _scan(command)
+    pipefail = False
+    held: list[str] = []          # gates whose verdict still decides what comes next
+    loose: list[str] = []         # gates whose verdict no longer does
+    feeding: str | None = None    # a gate upstream in the pipeline being read now
+    for raw, op in zip(segments, ops):
+        words = _command_words(raw)                          # empty for a bare `FOO=1`
+        if words and _program(words[0]) == "set" and "pipefail" in words and "+o" not in words:
+            pipefail = True
+        action = _outward_action(words) if words else None
+        if action and loose:
+            return (f"CANONICAL LAW: `{action}` is refused in this command line -- "
+                    f"tools/{loose[0]} runs earlier in it, and its verdict does not decide "
+                    f"whether `{action}` runs: between the two there is a `;`, a newline, "
+                    f"`||`, `&` or a pipe, so `{action}` runs on a RED exactly as on a "
+                    f"GREEN.\n\nJoin them with `&&` and nothing else -- "
+                    f"`python3 tools/{loose[0]} ... && {action} ...` -- or run the gate in "
+                    f"its own call and read what it printed.\n\n{RECOVERY}")
+        if feeding and op in _KEEPS:
+            return (f"CANONICAL LAW: this command line is refused -- tools/{feeding} is piped "
+                    f"into another command and `&&` follows the pipeline. `&&` tests the "
+                    f"LAST command of a pipeline (`tail`, `grep`, `tee`), not the gate, so "
+                    f"what follows runs when the gate is RED.\n\nRun the gate bare -- "
+                    f"`python3 tools/{feeding} ... && next` -- or put `set -o pipefail;` in "
+                    f"front of the line.\n\n{RECOVERY}")
+        gate = _gate_run(words) if words and raw[0] not in _CONDITIONS else None
+        if gate:
+            held.append(gate)
+        piped = op in _PIPES and not pipefail
+        if piped:
+            feeding = feeding or gate
+        else:
+            feeding = None
+        if op in _KEEPS or (op in _PIPES and pipefail):
+            continue
+        if piped or op in _DROPS:
+            loose, held = loose + held, []
+        else:                                                # `)`, `;;`: no claim is made
+            held = []                                        # about a subshell's status
+    return None
 
 
 def pr_number(target: str | None) -> int | None:
@@ -1231,10 +1409,21 @@ def push_problem(inv: dict, data: dict) -> tuple[str | None, str | None]:
 
 
 def handle_pre_shell(data: dict) -> None:
-    """Refuse `gh pr merge` and `git push` unless their gate is GREEN; touch nothing else."""
+    """Refuse `gh pr merge` and `git push` unless their gate is GREEN, and a line that
+    throws a gate's verdict away on the way to an outward action; touch nothing else."""
     tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
     command = tool_input.get("command")
-    if not isinstance(command, str) or not mentions_guarded(command):
+    if not isinstance(command, str):
+        return
+    if mentions_discard(command):
+        try:
+            refusal = discarded_verdict(command)
+        except Exception:  # noqa: BLE001 - this rule never refuses on its own bug
+            refusal = None
+        if refusal:
+            deny(refusal)
+            return
+    if not mentions_guarded(command):
         return                                   # every other command ends here, untouched
 
     try:

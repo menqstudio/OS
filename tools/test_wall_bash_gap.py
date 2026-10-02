@@ -1230,6 +1230,227 @@ class TheTwoNamedCommandsRefused(unittest.TestCase):
         self.assertEqual(out.getvalue(), "")
 
 
+#: Lines where a gate is piped and `&&` follows the pipeline. Each must be refused.
+BROKEN_GUARDS = [
+    "python3 tools/check_prior_art.py --declare x | tail -2 && python3 - <<EOF\nprint(1)\nEOF",
+    "python3 tools/check_canonical_sync.py --staged 2>&1 | tail -3 && git commit -m x",
+    "python3 -B tools/check_repo_state.py | grep -v ok | tail -1 && echo fine",
+    "cd /r && python3 -X utf8 tools/check_x.py |& tee log && ls",
+    "tools/check_x.py | tail && ls",
+    "BRO_ENV=ci timeout 50 python3 tools/check_x.py | tail -1 && ls",
+    "echo pipefail; python3 tools/check_x.py | tail -3 && ls",   # the word, not the option
+]
+
+#: Lines where an outward action follows a gate whose verdict does not decide it.
+UNGUARDED_ACTIONS = [
+    ("python3 tools/check_canonical_sync.py --staged; git commit -m x", "git commit"),
+    ("python3 tools/check_canonical_sync.py --staged\ngit commit -m x", "git commit"),
+    ("python3 tools/check_x.py | tail -3; git push", "git push"),
+    ("python3 tools/check_x.py || true; git push origin HEAD", "git push"),
+    ("python3 tools/check_x.py && git commit -m x; git push", "git push"),
+    ("python3 tools/check_x.py & git commit -m x", "git commit"),
+    ("python3 tools/check_x.py > out.txt; git -C /r commit -m x", "git commit"),
+    ("python3 tools/check_x.py; git merge other", "git merge"),
+    ("python3 tools/check_x.py; gh pr create --body-file b.md", "gh pr create"),
+    ("python3 tools/check_x.py; gh -R a/b pr edit 5 --body x", "gh pr edit"),
+    ("python3 tools/check_x.py; python3 tools/stamp_pr_head.py --pr 5", "tools/stamp_pr_head.py"),
+    ("python3 tools/check_x.py; python3 -B tools/sync_active_pr.py --settled",
+     "tools/sync_active_pr.py"),
+    ("if true; then python3 tools/check_x.py; git commit -m x; fi", "git commit"),
+    ("python3 tools/check_x.py; FOO=1; git commit -m x", "git commit"),
+    ("! python3 tools/check_x.py; git commit -m x", "git commit"),   # negated, not asked
+    ("python3 tools/check_x.py; (ls); git commit -m x", "git commit"),
+    ("set -o pipefail; python3 tools/check_x.py | tail -3; git commit -m x", "git commit"),
+]
+
+#: Lines that run a gate and are fine: its verdict decides, or nothing leans on it.
+VERDICT_KEPT = [
+    "python3 tools/check_x.py && git commit -m x && git push",
+    "python3 tools/check_x.py && git add -A && git commit -m x",
+    "set -o pipefail; python3 tools/check_x.py | tail -3 && git commit -m x",
+    "set -euo pipefail\npython3 tools/check_x.py | tail -3 && git commit -m x",
+    "python3 tools/check_x.py | tail -3",
+    "python3 tools/check_x.py; echo rc=$?",
+    "python3 tools/check_x.py; git status; git diff --stat",
+    "if python3 tools/check_x.py; then git commit -m x; fi",
+    "if python3 tools/check_x.py | grep -q GREEN; then git commit -m x; fi",
+    "! python3 tools/check_x.py && git commit -m x",
+    "while python3 tools/check_x.py; do git commit -m x; done",
+    "until python3 tools/check_x.py; do git commit -m x; done",
+    "if false; then ls; elif python3 tools/check_x.py; then git commit -m x; fi",
+    "python3 tools/check_x.py | tail -3; git status && git diff --stat",
+    "(python3 tools/check_x.py) && ls; git commit -m x",   # a subshell: no claim either way
+    "python3 tools/check_a.py | tail -1; python3 tools/check_b.py | tail -1",
+    "git commit -m x && python3 tools/check_x.py",
+    "git commit -m 'python3 tools/check_x.py; git push'",
+    "echo 'python3 tools/check_x.py | tail && git commit'",
+    "grep -n foo tools/check_x.py | tail -2 && git commit -m x",
+    "cat tools/check_x.py | head && git push",
+    "python3 -m unittest tools.test_check_x | tail -3 && git commit -m x",
+    "python3 -c 'import check_x' | tail && git commit -m x",
+    'for g in tools/check_*.py; do python3 "$g"; done; git status',
+    "python3 tools/sync_active_pr.py --pr 5 && python3 tools/check_x.py && git commit -m x",
+    "(python3 tools/check_x.py); git commit -m x",        # a subshell: no claim either way
+    "python3 tools/check_x.py; gh pr view 5; git log --oneline -1; git stash push",
+]
+
+
+class TheDiscardedVerdict(unittest.TestCase):
+    """T-157. A gate that printed RED and a commit that ran anyway, six times in this
+    repository, each time because the shell was never asked to connect the two."""
+
+    def setUp(self):
+        self.wall = import_wall()
+        self.calls: list = []
+
+    def shell(self, command: str) -> str:
+        def fake(script, args):
+            self.calls.append((script, list(args)))
+            return (0, "GREEN: it may be done.")
+        out = io.StringIO()
+        with mock.patch.object(self.wall, "ROOT", ROOT), \
+                mock.patch.object(self.wall, "run_gate", fake), contextlib.redirect_stdout(out):
+            self.wall.handle_pre_shell({"tool_name": "Bash", "cwd": str(ROOT),
+                                        "tool_input": {"command": command}})
+        return out.getvalue()
+
+    def test_a_piped_gate_followed_by_and_and_is_refused(self):
+        """Mutant: drop the `feeding` refusal ⇒ every line here is allowed. `&&` after a
+        pipeline tests `tail`."""
+        for command in BROKEN_GUARDS:
+            with self.subTest(command=command):
+                self.assertTrue(self.wall.mentions_discard(command))
+                problem = self.wall.discarded_verdict(command)
+                self.assertIsNotNone(problem)
+                self.assertIn("LAST command of a pipeline", problem)
+                self.assertIn("pipefail", problem)
+
+    def test_an_outward_action_after_a_loose_gate_is_refused_and_named(self):
+        """Mutant: treat `;` as keeping the verdict ⇒ the first case is allowed."""
+        for command, action in UNGUARDED_ACTIONS:
+            with self.subTest(command=command):
+                self.assertTrue(self.wall.mentions_discard(command))
+                problem = self.wall.discarded_verdict(command)
+                self.assertIsNotNone(problem)
+                self.assertIn(f"`{action}` is refused", problem)
+                self.assertIn("tools/check_", problem)
+
+    def test_a_verdict_that_decides_or_that_nothing_leans_on_is_left_alone(self):
+        """The other direction. Mutant: count `&&` as dropping the verdict ⇒ the first
+        line is refused, and that line is how every commit here is made."""
+        for command in VERDICT_KEPT:
+            with self.subTest(command=command):
+                self.assertIsNone(self.wall.discarded_verdict(command))
+                self.assertEqual(self.shell(command.replace("git push", "git status")
+                                            .replace("gh pr", "gh issue")), "")
+
+    def test_the_refusal_names_the_gate_that_was_let_go(self):
+        problem = self.wall.discarded_verdict(
+            "python3 tools/check_a.py && python3 tools/check_b.py; git commit -m x")
+        self.assertIn("tools/check_a.py runs earlier", problem)
+
+    def test_pipefail_switched_off_again_is_not_pipefail(self):
+        problem = self.wall.discarded_verdict(
+            "set +o pipefail; python3 tools/check_x.py | tail -3 && git commit -m x")
+        self.assertIsNotNone(problem)
+
+    def test_the_hook_denies_it_before_any_gate_is_asked(self):
+        """End to end through `handle_pre_shell`. Mutant: compute the refusal and not
+        `deny` it ⇒ no verdict. The push gate is never spawned: the line is refused for
+        its shape, before the push is judged."""
+        for command in ("python3 tools/check_canonical_sync.py --staged | tail -2 && git commit -m x",
+                        "python3 tools/check_canonical_sync.py --staged; git push"):
+            with self.subTest(command=command):
+                out = self.shell(command)
+                self.assertEqual(decision(out), "deny", out)
+                self.assertIn("CANONICAL_LAW=off", out)
+        self.assertEqual(self.calls, [])
+
+    def test_a_guarded_push_still_meets_the_push_gate(self):
+        """The new rule returning nothing must not return from the arm."""
+        self.shell("python3 tools/check_canonical_sync.py --staged && git commit -m x && git push")
+        self.assertEqual([script for script, _ in self.calls], ["check_push_ready.py"])
+
+    def test_the_cheap_test_keeps_every_other_command_out_of_it(self):
+        """Mutant: make `mentions_discard` return True always ⇒ `ls` reaches the scanner."""
+        for command in ("ls", "git commit -m x", "git push", "python3 tools/check_x.py",
+                        "python3 tools/check_merge_ready.py --pr 5",
+                        "python3 tools/check_x.py | tail -3", "gh pr create --fill", ""):
+            with self.subTest(command=command):
+                self.assertFalse(self.wall.mentions_discard(command))
+        boom = mock.Mock(side_effect=RuntimeError("the rule is broken"))
+        with mock.patch.object(self.wall, "discarded_verdict", boom):
+            self.assertEqual(self.shell("ls"), "")
+            self.assertEqual(self.shell("python3 tools/check_x.py | tail -3"), "")
+        boom.assert_not_called()
+
+    def test_this_rule_never_refuses_on_its_own_bug(self):
+        """It allows, as the docstring says of every command that is not one of the two.
+        Mutant: let the exception out ⇒ `handle_pre_shell` raises."""
+        boom = mock.Mock(side_effect=RuntimeError("the rule is broken"))
+        with mock.patch.object(self.wall, "discarded_verdict", boom):
+            self.assertEqual(self.shell("python3 tools/check_x.py | tail -3 && ls"), "")
+        boom.assert_called_once()
+
+    def test_the_scanner_reports_the_operator_that_ended_each_command(self):
+        segments, ops = self.wall._scan("a && b | c |& d; e || f & g\nh")
+        self.assertEqual([words[0] for words in segments], list("abcdefgh"))
+        self.assertEqual(ops, ["&&", "|", "|&", ";", "||", "&", "\n", ""])
+        self.assertEqual(self.wall._scan("(a) && b")[1], [")", ""])
+
+    def test_a_redirection_is_a_word_and_not_a_separator(self):
+        """Mutant: drop the redirection branch ⇒ `2>&1` splits at `&`, the gate's segment
+        ends in `&`, and `gate 2>&1 | tail && next` is no longer seen as a piped gate."""
+        self.assertEqual(self.wall.shell_segments("a 2>&1 | b &>log"),
+                         [["a", "2>&1"], ["b", "&>log"]])
+        self.assertEqual(self.wall._scan("a 2>&1 | b")[1], ["|", ""])
+        self.assertEqual(self.wall.shell_segments("a & b"), [["a"], ["b"]])
+
+    def test_what_counts_as_running_a_gate(self):
+        for words, gate in ((["python3", "tools/check_x.py"], "check_x.py"),
+                            (["python3", "-X", "utf8", "-B", "tools/check_x.py", "--pr", "5"],
+                             "check_x.py"),
+                            (["/usr/bin/python3.13", "/r/tools/check_x.py"], "check_x.py"),
+                            (["py", "-3", "tools\\check_x.py"], "check_x.py"),
+                            (["tools/check_x.py"], "check_x.py"),
+                            (["python3", "-m", "check_x.py"], None),
+                            (["python3", "-c", "check_x.py"], None),
+                            (["python3", "tools/test_check_x.py"], None),
+                            (["python3", "tools/sync_active_pr.py"], None),
+                            (["cat", "tools/check_x.py"], None),
+                            (["python3"], None)):
+            with self.subTest(words=words):
+                self.assertEqual(self.wall._gate_run(words), gate)
+
+    def test_what_counts_as_an_outward_action(self):
+        for words, action in ((["git", "commit", "-m", "x"], "git commit"),
+                              (["git", "-C", "/r", "-c", "a=b", "push"], "git push"),
+                              (["git", "status"], None),
+                              (["git", "log", "--grep", "commit"], None),
+                              (["git", "stash", "push"], None),
+                              (["gh", "pr", "create", "--fill"], "gh pr create"),
+                              (["gh", "-R", "a/b", "pr", "merge", "5"], "gh pr merge"),
+                              (["gh", "pr", "view", "5"], None),
+                              (["gh", "pr", "ready", "5"], "gh pr ready"),
+                              (["gh", "pr", "edit", "5", "--body", "x"], "gh pr edit"),
+                              (["gh", "pr", "comment", "5"], "gh pr comment"),
+                              (["gh", "pr", "close", "5"], "gh pr close"),
+                              (["gh", "pr", "reopen", "5"], "gh pr reopen"),
+                              (["git", "merge", "other"], "git merge"),
+                              (["python3", "tools/sync_active_pr.py"], "tools/sync_active_pr.py"),
+                              (["gh", "issue", "create"], None),
+                              (["python3", "tools/stamp_pr_head.py"], "tools/stamp_pr_head.py"),
+                              (["python3", "tools/check_x.py"], None),
+                              (["echo", "git", "commit"], None)):
+            with self.subTest(words=words):
+                self.assertEqual(self.wall._outward_action(words), action)
+
+    def test_the_docstring_says_what_this_rule_cannot_see(self):
+        doc = self.wall.__doc__
+        self.assertIn("A DISCARDED VERDICT", doc)
+        self.assertIn('"$g"', doc)
+
+
 class TheTwoNamedCommandsLive(unittest.TestCase):
     """The REAL hook, run as `.claude/settings.json` runs it. No network: every case
     here is decided before a gate would be asked."""
@@ -1256,6 +1477,15 @@ class TheTwoNamedCommandsLive(unittest.TestCase):
                 code, out = self.run_pre("gh pr merge --squash", tool)
                 self.assertEqual(code, 0)
                 self.assertEqual(decision(out), "deny", out)
+
+    def test_a_discarded_verdict_is_denied_by_the_real_hook(self):
+        """T-157, as the settings run it. Decided on the words: no gate is spawned."""
+        code, out = self.run_pre("python3 tools/check_canonical_sync.py --staged | tail -2 "
+                                 "&& git commit -m x")
+        self.assertEqual(code, 0)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("LAST command of a pipeline", out)
+        self.assertEqual(self.run_pre("python3 tools/check_canon_budget.py | tail -2"), (0, ""))
 
     def test_a_tool_that_is_not_a_shell_never_reaches_the_arm(self):
         """`BashOutput` carries a command-shaped field and is not a shell."""
