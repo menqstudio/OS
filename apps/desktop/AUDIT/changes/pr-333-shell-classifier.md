@@ -1,6 +1,59 @@
 Audited-PR: #333
-Audited-Head: 2c95395edbc0ddfc607810b2999b5fd2471943df
-VERDICT: RED — the classifier implementation is conservative and its required CI evidence is green, but test-only parser wheels are included in the production service installation lock; separate the test oracle dependency from the deployment lock before merge.
+Audited-Head: d92229209c0d82342f1aba56aa94cd37b8e25236
+VERDICT: GREEN — finding E is closed. The deployment lock is again runtime-only, the parser oracle has its own hash-pinned test lock installed only by the two engine test jobs, and the new lock is covered by the repository's protected/digest/audit and supply-chain checks. No change since round 1 reopens findings A, B, C, or D.
+
+# Round 2
+
+## Head and diff verified
+
+`gh pr view 333 --json headRefOid` and `git rev-parse HEAD` both printed:
+
+```text
+d92229209c0d82342f1aba56aa94cd37b8e25236
+```
+
+The requested diff since `2c95395edbc0ddfc607810b2999b5fd2471943df` contains the new oracle lock, CI/supply-chain wiring, protected/audit-root entries, and three separation tests. `git diff --quiet 2c95395 -- engine/runtime` printed success: `engine/runtime` is unchanged.
+
+## Finding E — closed
+
+I ran:
+
+```text
+git diff --quiet origin/main -- engine/requirements-ci.txt
+```
+
+and it succeeded, printing the equivalent result `requirements-ci: BYTE_IDENTICAL_TO_ORIGIN_MAIN`. `engine/requirements-ci.txt` contains no `tree-sitter` or `tree-sitter-bash` entry. The deployment runbook has exactly the runtime installation command at `docs/DEBIAN_DEPLOYMENT.md:251`:
+
+```text
+sudo /opt/brops/venv/bin/pip install --require-hashes -r ~/OS/engine/requirements-ci.txt
+```
+
+It contains no `requirements-test-oracle` reference. The new `engine/requirements-test-oracle.txt` contains only `tree-sitter==0.26.0` and `tree-sitter-bash==0.25.1`, and `.github/workflows/ci.yml` installs it only in the two engine test jobs after the runtime lock. `.github/workflows/supply-chain.yml` audits both locks. The three new tests in `engine/tests/test_shell_grammar.py` passed locally.
+
+Local targeted result under CPython 3.14.4 (parser not installed):
+
+```text
+Ran 33 tests in 1.353s
+OK (skipped=4)
+```
+
+The four skips are the parser-oracle tests, with the recorded reason that the parser is absent locally; CI sets `BRO_SHELL_PARSER_ORACLE=required`, so absence is a failure there rather than a skip. CI evidence for this head independently shows Linux 3.12.14 and Windows jobs installing both parser packages successfully, with `2728`-test jobs replaced by the new `2730` count and green results (`Linux: OK (skipped=13)`, `Windows: OK (skipped=239)`).
+
+## Ownership of the second lock
+
+Adding `engine/requirements-test-oracle.txt` to `protected_roots` and `digest_roots` is correct. It is a CI supply-chain input, and changing it can alter the parser oracle or its accepted binary hashes; the same fail-closed control-plane and digest protections that cover `requirements-ci.txt` should therefore cover it. Adding it to `config/audit-required-paths.json` and the pip-audit invocation is also correct and prevents an unreviewed or unaudited oracle dependency.
+
+## A–D regression check
+
+- **A — closed and unchanged:** `engine/runtime/bro_security.py` is byte-identical since the audited head. The positive grammar, the two stricter `~`/control rules, and the quoted-name behavior are unchanged.
+- **B — closed and unchanged:** `READ_ONLY_SHELL_TOOLS` and `_classify_shell` are unchanged. Bash-only read attestation and downstream denial of path-qualified/wrapper commands remain in force.
+- **C — closed and unchanged:** no classifier change reopens quoted command names or creates a separator/expansion path; the new work only changes dependency placement and test wiring.
+- **D — closed and unchanged:** the new lock makes the parser-oracle test dependency explicit and mandatory in CI. The separation change does not weaken the regex/Bash/parser test structure.
+
+## Round-2 limits
+
+I used CPython 3.14.4 locally; the pinned runtime lock is for supported CI interpreters, so I did not rerun the full suite locally. I did not install the parser wheels locally, run PowerShell, drive the pre-tool hook, or reproduce the full 3.12/Windows suites independently; those CI results were read from the exact-head GitHub job logs. No classifier code was changed.
+
 
 # Scope and environment
 
