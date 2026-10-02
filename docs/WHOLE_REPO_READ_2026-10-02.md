@@ -22,12 +22,14 @@
 - Evidence: Ran classify_tool_action('Bash', "echo hi # ' \n rm -rf src #'") -> action echo:hi, caps ('READ_LOCAL',), mutating=False, push=False, targets=(). The quote opened inside the comment swallows the newline. bash ran the second line of the same shape (printed INJECTED2).
 - Second agent: Reproduced on the current tree: classify_tool_action('Bash', {'command': "echo hi # ' \n rm -rf src #'"}) returns action echo:hi, caps READ_LOCAL, mutating=False, targets=(); bash ran the second line of the same shape with a harmless echo (printed INJECTED2). split_shell (bro_security.py:180-240) has no comment handling. Classifier plus bash only: I did not drive the full pre-tool hook. The recorded `&` entry is a different spelling.
 - Suggested fix: Refuse an unquoted `#` at a word start (or any newline inside a quote) in split_shell, and add both spellings as deny tests.
+- **Fixed in `#333` (T-159):** `split_shell` is gone. `parse_simple_command` accepts one simple command and refuses `#` and a newline anywhere outside its language; the Architect audited it, GREEN on the second round.
 
 ### R2-0002 · `engine/runtime/bro_security.py:195` — split_shell does not model bash ANSI-C quoting ($'...'): three commands are classified as one read-only echo
 
 - Evidence: Ran classify_tool_action('Bash', "echo $'\\'' ; rm -rf src ; echo \\'") -> one CommandInfo executable='echo', mutating=False, targets=(), caps READ_LOCAL. bash -c of the same shape with a harmless middle command printed INJECTED-RAN: bash ends the string at the 3rd quote, the parser does not.
 - Second agent: Reproduced: classify_tool_action('Bash', {'command': "echo $'\\'' ; rm -rf src ; echo \\'"}) returns a single echo CommandInfo, READ_LOCAL, mutating=False; bash -c of the same shape with a harmless middle command printed INJECTED-RAN. split_shell refuses `$(` but not `$'`. Classifier plus bash only: the full hook was not driven.
 - Suggested fix: Refuse `$'` and `$"` outside single quotes in split_shell, as `$(` already is.
+- **Fixed in `#333` (T-159):** `$` is refused outside single quotes and inside double quotes, so neither `$'...'` nor `$"..."` reaches the classifier.
 
 ### R2-0003 · `docs/OPERATOR_GUIDE.md:342` — Operator guide says agent-mode Bash is bounded by a deny list; the deny list is empty by Owner decision
 

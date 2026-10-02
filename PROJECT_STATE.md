@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-02 — 113 pull requests merged (`#219`–`#332`), `main` at
-`eb3b791`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-03 — 114 pull requests merged (`#219`–`#333`), `main` at
+`9ce6acb`: all seven workflows green there, `ci` on its second attempt (one cockpit test failed once, `T-164`). Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
