@@ -16,7 +16,6 @@ from bro_receipt import (
     transcript_sha256,
     verify_passing_receipt,
     verify_receipt,
-    verify_receipt_set,
 )
 from bro_run_receipt import candidate_state, run_and_sign
 from bro_signature import load_trusted_keys
@@ -168,6 +167,31 @@ class VerificationTests(ReceiptFixture):
         with self.assertRaises(ReceiptError):
             self.check({"payload": {"task_id": "task-1"}, "signature": "00" * 64})
 
+    def test_a_receipt_the_builder_signed_for_itself_is_refused_by_the_verifier(self):
+        """Law L5 at the function the completion path runs (`bro_receipt.verify_receipt`).
+
+        `test_builder_key_may_not_sign_a_receipt` proves the RUNNER declines to sign with a
+        builder key. A builder that wants its own GREEN does not ask the runner: it holds its
+        own private key and signs the payload itself. This is that document -- every field
+        true, the signature valid, the key registered and active -- and what refuses it is the
+        verifier, because a builder key's authority may not sign an execution receipt. The
+        same for the verifier's key: independent of the builder, and still not the recorder.
+        """
+        honest = self.make()["payload"]
+        for authority in ("builder", "verifier"):
+            with self.subTest(signed_by=authority):
+                payload = dict(honest, key_id=self.keys[authority]["key_id"])
+                document = sign_payload(self.keys[authority]["private_key"], payload)
+                with self.assertRaises(ReceiptError) as caught:
+                    self.check(document)
+                self.assertIn("receipt signature RED", str(caught.exception))
+                self.assertIn(f"({authority}) may not sign evidence-event",
+                              str(caught.exception))
+        # The control: the same payload under the recorder's key verifies, so the two refusals
+        # above are about WHO signed and not about the payload this test built.
+        recorder = sign_payload(self.keys["evidence-recorder"]["private_key"], dict(honest))
+        self.assertEqual(self.check(recorder)["receipt_id"], honest["receipt_id"])
+
     def test_missing_field_denied(self):
         """Signed, so the signature passes and the shape check is what refuses."""
         payload = dict(self.make()["payload"])
@@ -214,23 +238,14 @@ class PassingReceiptTests(ReceiptFixture):
             verify_passing_receipt(document, self.trusted, **self.kwargs())
         self.assertIn("failing run", str(caught.exception))
 
-    def test_required_command_set_must_all_have_passed(self):
-        """Otherwise a builder runs the one cheap command it knows will pass."""
-        cheap = [sys.executable, "-c", "print('ok')"]
-        suite = [sys.executable, "-c", "print('suite')"]
-        documents = [self.make(cheap)]
-        with self.assertRaises(ReceiptError) as caught:
-            verify_receipt_set(documents, self.trusted,
-                               required_commands=[cheap, suite], **self.kwargs())
-        self.assertIn("no passing receipt for required command", str(caught.exception))
-
-    def test_full_required_set_accepted(self):
-        cheap = [sys.executable, "-c", "print('ok')"]
-        suite = [sys.executable, "-c", "print('suite')"]
-        documents = [self.make(cheap), self.make(suite)]
-        payloads = verify_receipt_set(documents, self.trusted,
-                                      required_commands=[cheap, suite], **self.kwargs())
-        self.assertEqual(len(payloads), 2)
+    # Two cases stood here for `bro_receipt.verify_receipt_set`, which nothing but they called:
+    # the completion path proves the required-command set in its own loop
+    # (`bro_completion._validate_execution_receipts`), and that rule is held where it runs, by
+    # `test_completion_gate.ExecutionReceiptGateTests.
+    # test_green_true_cannot_substitute_for_the_required_suite` and
+    # `StopGateFullFlowTests.test_cheap_receipt_cannot_cover_the_required_suite`. The function
+    # and its two cases went together (T-153); `test_release_v3.LegacyReleaseGrantRetiredTests`,
+    # the engine's guard for retired symbols, holds it gone.
 
 
 class WrappedCommandTests(ReceiptFixture):

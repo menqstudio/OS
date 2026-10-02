@@ -18,7 +18,6 @@ from bro_security import (
     release_nonce_reservation,
     reserve_nonce,
     validate_exact_push,
-    verify_signed_document,
 )
 from bro_workspace import normalize_repository_reference
 

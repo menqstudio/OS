@@ -1,11 +1,13 @@
 """Asymmetric artifact authority.
 
 The audit's central finding was not that signing was missing but that it was
-symmetric. `bro_security.verify_signed_document` is HMAC, so the verifying key is
+symmetric. `bro_security.verify_signed_document` was HMAC, so the verifying key was
 the signing key, and the hook that verifies a verifier receipt runs inside the
-agent's own process. A builder therefore holds the key that mints its own GREEN
-receipt, and `validate_verifier_assignment` and `independence_level` describe a
-separation the cryptography cannot enforce.
+agent's own process. A builder therefore held the key that mints its own GREEN
+receipt, and `validate_verifier_assignment` and `independence_level` described a
+separation the cryptography could not enforce. (That function is gone since
+2026-10-02, T-153: nothing but its own test called it, and
+`tests/test_release_v3.py` refuses its return.)
 
 Ed25519 fixes that shape. This module only ever verifies, and only ever loads
 public keys. Private keys belong to the issuer, the evidence recorder, the

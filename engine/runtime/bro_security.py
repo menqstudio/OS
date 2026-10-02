@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import hmac
 import json
 import os
 import pathlib
@@ -170,16 +169,12 @@ def canonical_bytes(value: dict[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def verify_signed_document(doc: dict[str, Any], key_env: str) -> dict[str, Any]:
-    if set(doc) != {"payload", "signature"} or not isinstance(doc["payload"], dict):
-        raise SecurityError("signed document must contain payload and signature only")
-    key = os.getenv(key_env, "").encode()
-    if len(key) < 32:
-        raise SecurityError(f"{key_env} must contain at least 32 bytes")
-    expected = hmac.new(key, canonical_bytes(doc["payload"]), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, str(doc["signature"])):
-        raise SecurityError("invalid signature")
-    return doc["payload"]
+# An HMAC `verify_signed_document(doc, key_env)` stood here until 2026-10-02 (T-153). Its verifying
+# key was its signing key, read from the environment of the process that verified -- the shape
+# `bro_signature` (Ed25519, public keys only) replaced. Nothing but its own test called it, and a
+# verifier that is importable is callable. `tests/test_release_v3.py` refuses its return, here or
+# in any other runtime or tools module, together with the legacy `consume_nonce` that sat at the
+# end of this file beside the reserve/finalize flow that superseded it.
 
 
 def split_shell(command: str) -> list[str]:
@@ -785,18 +780,3 @@ def quarantine_nonce(
         reserved.unlink()
     except OSError as exc:
         raise SecurityError("nonce quarantined but reservation cleanup failed") from exc
-
-
-def consume_nonce(payload: dict[str, Any], ledger_dir: pathlib.Path) -> None:
-    """Legacy helper kept for compatibility; new release flow uses reserve/finalize."""
-    ledger_dir.mkdir(parents=True, exist_ok=True)
-    nonce = str(payload.get("nonce", ""))
-    if not re.fullmatch(r"[A-Za-z0-9._-]{16,128}", nonce):
-        raise SecurityError("invalid nonce")
-    path = ledger_dir / (hashlib.sha256(nonce.encode()).hexdigest() + ".used")
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise SecurityError("grant nonce already consumed") from exc
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({"nonce_sha256": path.stem, "consumed_at_epoch": int(time.time())}, handle)

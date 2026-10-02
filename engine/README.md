@@ -39,7 +39,7 @@ Execution Control Plane V2, Orchestration/Control Room V1 contracts, Orchestrati
 
 - latest merged PR: `#52`
 - main merge commit: `bc3b8533aa8f66ed5fa8693b23e0d16621cd4cc9`
-- laws: 17 (L0–L16), live-proven by the assurance gate; includes L15 (secret confidentiality) and L16 (auditable stop + incident ledger)
+- laws: 17 (L0–L16); the assurance gate reports 16 `ENFORCED` and one, **L13** (controlled learning and skill evolution), `NOT_ENFORCED` — its record is declared advisory since 2026-10-02 because its validator exists and is tested and no promotion flow calls it. Includes L15 (secret confidentiality) and L16 (auditable stop + incident ledger). *(This line said all 17 were live-proven.)*
 - live enforcement: workspace binding, path scope, and the protected control-plane digest are wired into `runtime/bro_control_plane.py`
 - issuance: Ed25519 authorities, an owner-signed trusted-key registry, and the `tools/broctl.py` minting/signing CLI; the external Supervisor issues leases in the one canonical execution-lease shape the runtime enforces (blocker 8b) and can produce a supervised builder's full authorization bundle (PR #52)
 - execution integrity: signed execution receipts feed the completion verdict against the exact candidate (blocker 6a)

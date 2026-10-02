@@ -95,6 +95,71 @@ def count_skills(root: pathlib.Path, index: dict) -> int:
     return len(skills)
 
 
+#: The only keys a catalog entry carries. An unknown key is refused rather than ignored: a
+#: field nothing reads is how `orphan_tests_forbidden` came to be declared and enforced by nothing.
+CATALOG_ENTRY_KEYS = {"id", "path", "covers"}
+
+
+def check_test_catalog(root: pathlib.Path, catalog: dict) -> int:
+    """The number of registered test modules, refused unless the catalog names every one.
+
+    `tests/catalog.json` declared `orphan_tests_forbidden: true` while listing 47 of the 98
+    test modules on disk, and nothing read the field: this file only checked that the paths it
+    DID list exist. That matters beyond tidiness, because `bro_receipt.catalog_sha256` hashes
+    the catalog and an execution receipt binds that hash as "the registered tests" -- a
+    catalog naming half the suite binds half of it.
+
+    So the declaration is enforced, and is not optional: the field must be literally `true`.
+    Setting it false, or deleting it, is refused in the same way `.bro/policy.json` is refused
+    for a `bro_identity_count` other than one -- a switch that turns the rule off is not a
+    setting, it is the rule's absence. With it true, every `tests/**/test_*.py` on disk must
+    be an entry, every entry must be such a file, and each entry says what it covers.
+
+    The helper modules beside the suites (`_kit_scripts.py`, `_brops_fixtures.py`, ...) are not
+    `test_*.py`, are not collected by unittest discovery, and are correctly not entries.
+    """
+    where = "tests/catalog.json"
+    if catalog.get("orphan_tests_forbidden") is not True:
+        fail(f"{where}: `orphan_tests_forbidden` must be true -- it says "
+             f"{catalog.get('orphan_tests_forbidden')!r}. The catalog's hash is what a receipt "
+             "binds as the registered tests, so a catalog that may omit test modules is not "
+             "one a receipt can bind")
+    tests = catalog.get("tests")
+    if not isinstance(tests, list) or not tests or not all(isinstance(item, dict) for item in tests):
+        fail(f"{where}: `tests` must be a non-empty list of objects")
+    ids: list[str] = []
+    paths: list[str] = []
+    for item in tests:
+        test_id, path, covers = item.get("id"), item.get("path"), item.get("covers")
+        if not isinstance(path, str) or not (root / path).is_file():
+            fail(f"registered test missing: {path}")
+        if not isinstance(test_id, str) or not test_id:
+            fail(f"{where}: the entry for {path} has no id")
+        if set(item) != CATALOG_ENTRY_KEYS:
+            fail(f"{where}: entry {test_id!r} must carry exactly {sorted(CATALOG_ENTRY_KEYS)}, "
+                 f"it carries {sorted(item)}")
+        if (not isinstance(covers, list) or not covers
+                or not all(isinstance(cover, str) and cover for cover in covers)):
+            fail(f"{where}: entry {test_id!r} must say what it covers")
+        if len(set(covers)) != len(covers):
+            fail(f"{where}: entry {test_id!r} lists a cover more than once")
+        ids.append(test_id)
+        paths.append(path)
+    repeated = sorted({value for value in ids if ids.count(value) > 1}
+                      | {value for value in paths if paths.count(value) > 1})
+    if repeated:
+        fail(f"{where}: registered more than once: {repeated}")
+    on_disk = sorted(path.relative_to(root).as_posix()
+                     for path in (root / "tests").rglob("test_*.py"))
+    not_modules = sorted(set(paths) - set(on_disk))
+    if not_modules:
+        fail(f"{where}: registered but not a tests/**/test_*.py module: {not_modules}")
+    orphans = sorted(set(on_disk) - set(paths))
+    if orphans:
+        fail(f"{where}: orphan test modules (on disk, in no catalog entry): {orphans}")
+    return len(tests)
+
+
 def main() -> int:
     # `CLAUDE.md`, `AGENTS.md` and `NEXT_CHAT.md` were required here when `engine/` was its own
     # repository. In the monorepo they were agent-INSTRUCTION files that tools load by directory
@@ -165,10 +230,7 @@ def main() -> int:
         if not (ROOT / source).is_file() or not (ROOT / validator).is_file():
             fail(f"SST source or validator missing for {domain}")
 
-    for item in load_json("tests/catalog.json").get("tests", []):
-        path = item.get("path")
-        if not isinstance(path, str) or not (ROOT / path).is_file():
-            fail(f"registered test missing: {path}")
+    test_modules = check_test_catalog(ROOT, load_json("tests/catalog.json"))
 
     schema_paths = []
     for item in load_json("schemas/registry.json").get("schemas", []):
@@ -234,6 +296,7 @@ def main() -> int:
         f"canonical={len(manifest.get('paths', []))}; sst_domains={len(domains)}; "
         f"packs={identity['pack_count']}; agents={identity['agent_count']}; "
         f"authorities={authority_count}; skills={skill_count}; schemas={len(schema_paths)}; "
+        f"test_modules={test_modules}; "
         f"documents={docs_count}; metrics={analytics['metrics']}; "
         f"dashboards={analytics['dashboards']}; orchestration_states={orchestration['states']}; "
         f"control_room_surfaces={orchestration['surfaces']}; tools={len(tool_registry['tools'])}; "

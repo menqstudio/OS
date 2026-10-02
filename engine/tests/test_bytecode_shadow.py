@@ -463,6 +463,130 @@ class FoundationValidatorTests(unittest.TestCase):
         index = self.skills_tree(["a", "a"], dirs=[])
         self.assertIn("more than once", self.refused(self.validate.count_skills, self.tmp, index))
 
+    # ---- tests/catalog.json: `orphan_tests_forbidden`, enforced (T-153) -------------------
+    #
+    # In this class for the reason the skill count is: it is `tools/bro_validate.py`, and the
+    # fixture (a temp tree, `refused`) is the one above.
+
+    def catalog_tree(self, modules, *, listed=None, others=(), **top):
+        """A `tests/` directory holding `modules`, and a catalog listing `listed` (default: all)."""
+        for name in tuple(modules) + tuple(others):
+            path = self.tmp / "tests" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        catalog = {
+            "schema": 1, "orphan_tests_forbidden": True,
+            "tests": [{"id": name.rsplit("/", 1)[-1][5:-3].replace("_", "-"),
+                       "path": f"tests/{name}", "covers": ["what-it-covers"]}
+                      for name in (modules if listed is None else listed)],
+        }
+        catalog.update(top)
+        return catalog
+
+    def test_the_shipped_catalog_names_every_test_module_on_disk(self):
+        catalog = json.loads((ROOT / "tests" / "catalog.json").read_text(encoding="utf-8"))
+        on_disk = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "tests").rglob("test_*.py"))
+        self.assertEqual(self.validate.check_test_catalog(ROOT, catalog), len(on_disk))
+        self.assertEqual(sorted(entry["path"] for entry in catalog["tests"]), on_disk)
+        self.assertGreaterEqual(len(on_disk), 98)
+        self.assertIs(catalog["orphan_tests_forbidden"], True)
+
+    def test_a_complete_catalog_is_accepted_and_counted(self):
+        # The control for every refusal below: the fixture itself passes.
+        catalog = self.catalog_tree(["test_a.py", "test_b.py"])
+        self.assertEqual(self.validate.check_test_catalog(self.tmp, catalog), 2)
+
+    def test_an_orphan_test_module_is_refused_by_name(self):
+        catalog = self.catalog_tree(["test_a.py", "test_b.py", "test_c.py"], listed=["test_a.py"])
+        out = self.refused(self.validate.check_test_catalog, self.tmp, catalog)
+        self.assertIn("orphan test modules", out)
+        self.assertIn("['tests/test_b.py', 'tests/test_c.py']", out)
+        self.assertNotIn("tests/test_a.py", out)
+
+    def test_an_orphan_in_a_subdirectory_is_an_orphan_too(self):
+        catalog = self.catalog_tree(["test_a.py", "deep/test_nested.py"], listed=["test_a.py"])
+        self.assertIn("['tests/deep/test_nested.py']",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+
+    def test_a_helper_beside_the_suites_is_not_an_orphan(self):
+        # `_kit_scripts.py`, `_brops_fixtures.py` ...: not `test_*.py`, not collected, not entries.
+        catalog = self.catalog_tree(["test_a.py"],
+                                    others=["_fixtures.py", "helper.py", "catalog.json"])
+        self.assertEqual(self.validate.check_test_catalog(self.tmp, catalog), 1)
+
+    def test_the_declaration_cannot_be_switched_off(self):
+        """A catalog that is COMPLETE and says orphans are allowed is still refused. Otherwise
+        the first orphan is fixed by flipping the flag, and the receipt goes back to binding
+        whatever part of the suite somebody listed."""
+        for value in (False, None, "true", 1, 0):
+            with self.subTest(orphan_tests_forbidden=value):
+                catalog = self.catalog_tree(["test_a.py"], orphan_tests_forbidden=value)
+                out = self.refused(self.validate.check_test_catalog, self.tmp, catalog)
+                self.assertIn("`orphan_tests_forbidden` must be true", out)
+                self.assertIn(repr(value), out)
+        catalog = self.catalog_tree(["test_a.py"])
+        del catalog["orphan_tests_forbidden"]
+        self.assertIn("`orphan_tests_forbidden` must be true",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+
+    def test_an_entry_must_name_a_test_module_that_exists(self):
+        catalog = self.catalog_tree(["test_a.py"], listed=["test_a.py", "test_gone.py"])
+        self.assertIn("registered test missing: tests/test_gone.py",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+        # A file that exists and is not a test module cannot stand in for one.
+        catalog = self.catalog_tree(["test_a.py"], others=["_helper.py"])
+        catalog["tests"].append({"id": "helper", "path": "tests/_helper.py", "covers": ["x"]})
+        out = self.refused(self.validate.check_test_catalog, self.tmp, catalog)
+        self.assertIn("registered but not a tests/**/test_*.py module: ['tests/_helper.py']", out)
+
+    def test_an_entry_must_say_what_it_covers_and_carry_nothing_else(self):
+        for covers in ([], None, "everything", [""], [7]):
+            with self.subTest(covers=covers):
+                catalog = self.catalog_tree(["test_a.py"])
+                catalog["tests"][0]["covers"] = covers
+                self.assertIn("entry 'a' must say what it covers",
+                              self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+        catalog = self.catalog_tree(["test_a.py"])
+        catalog["tests"][0]["covers"] = ["x", "x"]
+        self.assertIn("lists a cover more than once",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+        catalog = self.catalog_tree(["test_a.py"])
+        catalog["tests"][0]["optional"] = True
+        self.assertIn("must carry exactly ['covers', 'id', 'path']",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+        catalog = self.catalog_tree(["test_a.py"])
+        catalog["tests"][0]["id"] = ""
+        self.assertIn("has no id",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+
+    def test_a_module_or_an_id_registered_twice_is_refused(self):
+        catalog = self.catalog_tree(["test_a.py", "test_b.py"])
+        catalog["tests"][1]["id"] = catalog["tests"][0]["id"]
+        self.assertIn("registered more than once: ['a']",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+        catalog = self.catalog_tree(["test_a.py"])
+        catalog["tests"].append({"id": "again", "path": "tests/test_a.py", "covers": ["x"]})
+        self.assertIn("registered more than once: ['tests/test_a.py']",
+                      self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+
+    def test_an_empty_or_malformed_test_list_is_refused(self):
+        for tests in ([], None, {"a": 1}, ["tests/test_a.py"]):
+            with self.subTest(tests=tests):
+                catalog = self.catalog_tree(["test_a.py"], tests=tests)
+                self.assertIn("`tests` must be a non-empty list of objects",
+                              self.refused(self.validate.check_test_catalog, self.tmp, catalog))
+
+    def test_the_validator_actually_runs_the_catalog_check(self):
+        # A check nothing calls is what this field was. `main` is run for real up to the
+        # catalog, where a stand-in refuses with a line no other check prints.
+        def stand_in(root, catalog):
+            self.assertEqual(root, ROOT)
+            self.assertIn("orphan_tests_forbidden", catalog)
+            self.validate.fail("the catalog check was reached")
+
+        with patch.object(self.validate, "check_test_catalog", stand_in):
+            self.assertIn("RED: the catalog check was reached", self.refused(self.validate.main))
+
 
 if __name__ == "__main__":
     unittest.main()

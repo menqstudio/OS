@@ -106,17 +106,18 @@
       "responsibility": "A builder cannot issue final GREEN for its own medium/high/critical work; final claims require evidence and a different verifier identity.",
       "policy_source": ["schemas/verifier-receipt.schema.json", "agents/authority-policy.json"],
       "execution_surfaces": [
-        {"module": "bro_receipt", "symbol": "verify_receipt_set", "kind": "verifier", "path_role": "primary"},
+        {"module": "bro_receipt", "symbol": "verify_receipt", "kind": "verifier", "path_role": "primary"},
         {"module": "bro_evidence", "symbol": "validate_chain", "kind": "verifier", "path_role": "defense_in_depth"}
       ],
       "tests": [
-        {"file": "tests/test_execution_receipts.py", "case": "test_passing_receipt_accepted", "kind": "allow"},
-        {"file": "tests/test_execution_receipts.py", "case": "test_builder_key_may_not_sign_a_receipt", "kind": "deny"}
+        {"file": "tests/test_execution_receipts.py", "case": "test_receipt_verifies", "kind": "allow"},
+        {"file": "tests/test_execution_receipts.py", "case": "test_a_receipt_the_builder_signed_for_itself_is_refused_by_the_verifier", "kind": "deny"},
+        {"file": "tests/test_completion_gate.py", "case": "test_a_receipt_the_builder_signed_for_itself_is_refused_on_the_completion_path", "kind": "deny"}
       ],
       "evidence": {"schema": "verifier-receipt", "writer": "tools/bro_run_receipt.py", "verifier": "runtime/bro_receipt.py", "retention": "retained", "integrity_level": "Signed", "trust_source": "Independent"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}, {"ver": "1.1", "type": "Behavioral", "date": "2026-10-02", "note": "Primary surface repointed from bro_receipt.verify_receipt_set to bro_receipt.verify_receipt (Owner decision, T-153). Nothing called verify_receipt_set: the completion path (bro_completion.authorize_stop -> validate_completion -> _check_manifest -> _validate_execution_receipts) calls verify_receipt once per cited receipt and proves the required-command set in its own loop. The unused function and its two tests are deleted and tests/test_release_v3.py refuses its return. Tests rebound to cases that call verify_receipt: the allow case calls it directly; the first deny case is a receipt a builder signed with its own key, refused by the verifier for its authority (the case bound before called only the runner's signing-side refusal, never the verifier); the second deny case puts that same receipt through the completion loop, where every check the loop makes itself is satisfied and only verify_receipt can refuse. The evidence block is unchanged."}],
       "runtime_prerequisites": ["python3", "cryptography"]
     },
     {
@@ -243,12 +244,14 @@
       ],
       "tests": [
         {"file": "tests/test_control_plane_digest.py", "case": "test_standard_task_allowed_outside_protected_roots", "kind": "allow"},
-        {"file": "tests/test_control_plane_digest.py", "case": "test_standard_task_denied_on_protected_path", "kind": "deny"}
+        {"file": "tests/test_control_plane_digest.py", "case": "test_standard_task_denied_on_protected_path", "kind": "deny"},
+        {"file": "tests/test_control_plane_digest.py", "case": "test_a_standard_builder_is_refused_an_existing_file_under_each", "kind": "deny"},
+        {"file": "tests/test_control_plane_digest.py", "case": "test_a_standard_builder_is_refused_a_new_file_under_each", "kind": "deny"}
       ],
       "evidence": {"schema": "gate-decision", "writer": "runtime/bro_protected.py", "verifier": "runtime/bro_protected.py", "retention": "ephemeral", "integrity_level": "Unsigned", "trust_source": "Self"},
       "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}, {"ver": "1.1", "type": "Behavioral", "date": "2026-10-02", "note": "The policy source widened (Owner decision, T-153): config/protected-control-plane.json now lists ci/**, install/** and contracts/** in BOTH protected_roots and digest_roots, so a standard-builder task is refused the scripts the monorepo CI runs under sudo, the installer and the frozen wire schemas, and a workspace binding issued before a file under them changed no longer verifies. No surface changed; two deny cases that drive the SHIPPED manifest over the three roots are bound beside the fixture-manifest pair."}],
       "runtime_prerequisites": ["python3"]
     },
     {
@@ -258,16 +261,16 @@
       "policy_source": ["learning/registry.json", "schemas/skill-evolution-proposal.schema.json"],
       "execution_surfaces": [
         {"module": "bro_skill_evolution", "symbol": "validate_skill_evolution", "kind": "validator", "path_role": "primary"},
-        {"module": "bro_learning", "symbol": "validate_learning_registry", "kind": "validator", "path_role": "defense_in_depth"}
+        {"module": "bro_learning", "symbol": "validate_learning_registry", "kind": "validator", "path_role": "build_time"}
       ],
       "tests": [
-        {"file": "tests/test_skill_evolution.py", "case": "test_learning_pipeline_is_locked", "kind": "allow"},
+        {"file": "tests/test_skill_evolution.py", "case": "test_a_reviewed_and_owner_approved_promotion_is_accepted", "kind": "allow"},
         {"file": "tests/test_skill_evolution.py", "case": "test_promotion_is_not_self_approved", "kind": "deny"}
       ],
       "evidence": {"schema": "skill-evolution-proposal", "writer": "runtime/bro_skill_evolution.py", "verifier": "runtime/bro_skill_evolution.py", "retention": "retained", "integrity_level": "Unsigned", "trust_source": "Independent"},
-      "failure_behavior": {"class": "NORMATIVE_ENFORCEMENT", "mode": "fail-closed", "normative_strength": "MUST"},
+      "failure_behavior": {"class": "ADVISORY_OBSERVATION", "mode": "advisory", "normative_strength": "SHOULD"},
       "owner": "owner-gev",
-      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}],
+      "revisions": [{"ver": "1.0", "type": "Behavioral", "date": "2026-07-18", "note": "OLTS backfill from audit"}, {"ver": "1.1", "type": "Behavioral", "date": "2026-10-02", "note": "DECLARED, NOT ENFORCED AT RUNTIME (Owner decision, T-153). This record said NORMATIVE_ENFORCEMENT / fail-closed / MUST. What is true: bro_skill_evolution.validate_skill_evolution exists and is tested (it refuses a self-verified, un-reviewed or un-approved promotion), and NO skill-promotion flow exists in this tree, so nothing calls it -- no promotion is gated by it and no skill-evolution-proposal evidence is written or retained by anything. The record is therefore ADVISORY_OBSERVATION / advisory / SHOULD, which is the only way this schema can say a law is not normatively enforced; tools/bro_live_validate.py derives NOT_ENFORCED for it and never LIVE_PROVEN. bro_learning.validate_learning_registry is rebound from defense_in_depth to build_time: its only caller is tools/bro_validate.py. The allow case is rebound to one that calls the validator (the case bound before called validate_learning_registry only). The evidence block describes the proposal the validator WOULD check and is otherwise unchanged. tests/test_law_traceability.py holds this record to the code in both directions: it fails when a caller of the validator appears, which is when this law goes back to MUST with tests that drive the flow."}],
       "runtime_prerequisites": ["python3"]
     },
     {

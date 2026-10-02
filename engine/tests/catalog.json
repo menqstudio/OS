@@ -62,7 +62,8 @@
         "exemption-requires-canonical-identity",
         "bound-contract-owes-full-gate",
         "frozen-session-must-terminate",
-        "specialist-stop-unchanged"
+        "specialist-stop-unchanged",
+        "builder-signed-receipt-refused-on-completion-path"
       ]
     },
     {
@@ -74,7 +75,8 @@
         "head-tree-binding",
         "remote-binding",
         "v2-live-denial",
-        "expiry-denial"
+        "expiry-denial",
+        "retired-symbols-stay-gone"
       ]
     },
     {
@@ -168,11 +170,11 @@
       "id": "security-v2",
       "path": "tests/test_security_v2.py",
       "covers": [
-        "signed-mode-grants",
         "shell-aware-git-parser",
-        "historical-v2-grants",
         "scope-enforcement",
-        "schema-execution"
+        "schema-execution",
+        "exact-push-shape",
+        "nonce-reserve-finalize-quarantine"
       ]
     },
     {
@@ -292,7 +294,10 @@
         "pattern-scope-denial",
         "owner-approval-required",
         "verifier-independence-l4",
-        "canonical-manifest-covers-runtime"
+        "canonical-manifest-covers-runtime",
+        "ci-install-contracts-protected",
+        "ci-install-contracts-digested",
+        "bytecode-under-ci-is-a-shadow"
       ]
     },
     {
@@ -421,7 +426,7 @@
         "smuggled-field-denial",
         "future-receipt-denial",
         "failing-run-recorded-honestly",
-        "required-command-set"
+        "builder-signed-receipt-refused-by-verifier"
       ]
     },
     {
@@ -434,7 +439,10 @@
         "law-record-static-proof",
         "law-record-deny-paths",
         "derived-proof-not-hand-written",
-        "traceability-entrypoint"
+        "traceability-entrypoint",
+        "law-records-name-what-runs",
+        "advisory-law-declared-not-enforced",
+        "every-declared-link-resolves"
       ]
     },
     {
@@ -500,7 +508,8 @@
         "failure-drills",
         "lease-quarantine",
         "recovery-proof",
-        "interrupted-fencing"
+        "interrupted-fencing",
+        "standard-builder-refused-what-ci-executes"
       ]
     },
     {
@@ -618,6 +627,666 @@
         "npm-exit-code-backstop",
         "metadata-count-cross-check",
         "severity-threshold-and-allowlist"
+      ]
+    },
+    {
+      "id": "approval-request-contract",
+      "path": "tests/test_approval_request_contract.py",
+      "covers": [
+        "closed-schema",
+        "desktop-asks-never-decides",
+        "requester-named-not-authenticated",
+        "source-and-vendored-copy-identical",
+        "schema-acceptance-and-refusal"
+      ]
+    },
+    {
+      "id": "approval-requests",
+      "path": "tests/test_approval_requests.py",
+      "covers": [
+        "ask-recorded-not-decided",
+        "reply-is-not-a-decision",
+        "requester-not-authenticated",
+        "duplicate-request-id",
+        "stale-expectation-denial",
+        "unknown-task-denial",
+        "evidence-ref-resolution",
+        "schema-refusals",
+        "hash-chained-request-log",
+        "exclusive-log-lock",
+        "log-is-the-only-write"
+      ]
+    },
+    {
+      "id": "audit-head-anchor",
+      "path": "tests/test_audit_head_anchor.py",
+      "covers": [
+        "append-signs-head-anchor",
+        "dropped-record-forgery-denial",
+        "unanchored-ledger-is-its-own-refusal",
+        "anchor-custody-outside-engine",
+        "signer-misbehaviour-fails-closed",
+        "anchor-authority-binding",
+        "anchor-payload-shape",
+        "production-verifiers-pass-keys"
+      ]
+    },
+    {
+      "id": "brops-install",
+      "path": "tests/test_brops_install.py",
+      "covers": [
+        "installer-script-strictness",
+        "accounts-plan-matches-kit-and-uids",
+        "root-requirement",
+        "accounts-idempotence-and-refusal",
+        "system-account-database",
+        "desktop-account-resolution",
+        "refused-desktop-accounts",
+        "application-data-location",
+        "bundle-identifier-is-tauris",
+        "anchor-dry-run",
+        "stepless-form",
+        "anchor-real-run",
+        "ci-runs-the-installer"
+      ]
+    },
+    {
+      "id": "brops-isolation-prover",
+      "path": "tests/test_brops_isolation_prover.py",
+      "covers": [
+        "signer-connect-verdicts",
+        "custody-positive-control",
+        "key-read-verdicts",
+        "store-write-and-list-verdicts",
+        "supervisor-oracle-verdicts",
+        "inconclusive-never-proven",
+        "operator-error-is-not-denial",
+        "real-socket-classification"
+      ]
+    },
+    {
+      "id": "brops-socket",
+      "path": "tests/test_brops_socket.py",
+      "covers": [
+        "connection-budget",
+        "linux-only-helper-refusal",
+        "accept-loop-arms-budget",
+        "accept-loop-on-real-socket"
+      ]
+    },
+    {
+      "id": "bytecode-shadow",
+      "path": "tests/test_bytecode_shadow.py",
+      "covers": [
+        "forged-pyc-threat-model",
+        "shadow-detection",
+        "digest-chokepoint",
+        "wall-entry-refusal",
+        "settlement-path-refusal",
+        "wired-interpreter-dash-b",
+        "import-ordering-residue",
+        "foundation-validator-writes-no-bytecode",
+        "skill-count-derived",
+        "test-catalog-orphan-denial",
+        "test-catalog-declaration-required",
+        "test-catalog-entry-shape"
+      ]
+    },
+    {
+      "id": "challenge-authority",
+      "path": "tests/test_challenge_authority.py",
+      "covers": [
+        "create-pending-fixed-shape",
+        "caller-supplied-request-sha256-denial",
+        "request-sha256-recompute",
+        "peer-authorization",
+        "create-pending-idempotence",
+        "issue-and-byte-exact-replay",
+        "pending-ttl-and-retention"
+      ]
+    },
+    {
+      "id": "challenge-authority-server",
+      "path": "tests/test_challenge_authority_server.py",
+      "covers": [
+        "non-broker-peer-denial",
+        "frame-bounds",
+        "framable-reply-for-every-admitted-request",
+        "dispatch",
+        "serve-loop",
+        "never-raises",
+        "connection-budget"
+      ]
+    },
+    {
+      "id": "challenge-handle-agreement",
+      "path": "tests/test_challenge_handle_agreement.py",
+      "covers": [
+        "staging-and-acceptance-handle-agreement",
+        "addendum-records-the-correction"
+      ]
+    },
+    {
+      "id": "completion-head-binding",
+      "path": "tests/test_completion_head_binding.py",
+      "covers": [
+        "manifest-requires-head-binding",
+        "manifest-bound-to-one-signed-head",
+        "evidence-rollback-denial",
+        "floor-custody",
+        "head-floor-configuration-contradiction",
+        "head-floor-advance-serialised",
+        "service-floor-posture",
+        "local-floor-write-reachability"
+      ]
+    },
+    {
+      "id": "conductor-session-token",
+      "path": "tests/test_conductor_session_token.py",
+      "covers": [
+        "shipped-policy-requires-token",
+        "absent-flag-is-required-not-waived",
+        "explicit-waiver-only",
+        "operator-signed-token-verification",
+        "token-session-agent-role-binding",
+        "token-expiry-denial",
+        "bad-token-never-waived"
+      ]
+    },
+    {
+      "id": "control-plane-writable",
+      "path": "tests/test_control_plane_writable.py",
+      "covers": [
+        "writable-control-plane-denial",
+        "write-probe-not-mode-bits",
+        "digest-scope-only",
+        "exact-acknowledgement-waiver",
+        "stale-probe-file",
+        "unwritable-tree-passes"
+      ]
+    },
+    {
+      "id": "deb-postinst",
+      "path": "tests/test_deb_postinst.py",
+      "covers": [
+        "postinst-posix-sh-strictness",
+        "postinst-creates-no-account-or-key",
+        "postinst-reports-installer-verdict",
+        "absent-installer-is-not-provisioned",
+        "dpkg-unwind-actions-skip-installer",
+        "unknown-action-denial"
+      ]
+    },
+    {
+      "id": "deploy-preflight",
+      "path": "tests/test_deploy_preflight.py",
+      "covers": [
+        "hardened-environment-passes",
+        "operator-pin-file-required",
+        "external-absolute-ledgers",
+        "runtime-store-list-parity",
+        "recovery-authority-required",
+        "subject-bound-builder-key"
+      ]
+    },
+    {
+      "id": "evidence-store-shared-artifacts",
+      "path": "tests/test_evidence_store_shared_artifacts.py",
+      "covers": [
+        "receipts-share-store-without-breaking-chain",
+        "store-custody",
+        "republish-idempotent-collision-refused",
+        "hardlink-swap-refused-by-rehash"
+      ]
+    },
+    {
+      "id": "floor-writer",
+      "path": "tests/test_floor_writer.py",
+      "covers": [
+        "floor-writer-negative-matrix",
+        "framing-boundary",
+        "connection-budget-total",
+        "connection-fault-isolation",
+        "custody-contract",
+        "checked-directory-is-used-directory",
+        "runner-startup-refusals",
+        "platform-boundary"
+      ]
+    },
+    {
+      "id": "floor-writer-durability",
+      "path": "tests/test_floor_writer_durability.py",
+      "covers": [
+        "commit-syscall-order",
+        "kill-injection-crash-consistency"
+      ]
+    },
+    {
+      "id": "governance-sidecar-route",
+      "path": "tests/test_governance_sidecar_route.py",
+      "covers": [
+        "empty-crosses-as-empty-not-blocked",
+        "records-relayed-verbatim",
+        "refusal-carries-no-records",
+        "read-writes-nothing",
+        "read-never-reaches-execution",
+        "real-subprocess-pipe"
+      ]
+    },
+    {
+      "id": "governed-acceptance",
+      "path": "tests/test_governed_acceptance.py",
+      "covers": [
+        "governed-round-trip",
+        "acceptance-mints-attempt-and-consumes-nonce",
+        "idempotent-retrigger",
+        "crash-cuts",
+        "refusals-reachable",
+        "concurrency-and-store-failure",
+        "state-ladder-exhaustive",
+        "frame-caps-arithmetic",
+        "supervisor-faults",
+        "construction-refusals",
+        "nothing-later-minted"
+      ]
+    },
+    {
+      "id": "governed-chain-e2e",
+      "path": "tests/test_governed_chain_e2e.py",
+      "covers": [
+        "three-service-chain-offline",
+        "verifiable-receipt-envelope",
+        "supervisor-derived-terminal-handles",
+        "fabricated-run-not-attestable",
+        "replayed-challenge-one-attempt",
+        "stale-evidence-head-denial",
+        "output-blob-binding",
+        "challenge-addressing"
+      ]
+    },
+    {
+      "id": "governed-evidence-request",
+      "path": "tests/test_governed_evidence_request.py",
+      "covers": [
+        "gate-admits-ready-turn",
+        "nothing-governed-minted",
+        "refusals-reachable",
+        "session-corrupt-not-sidecar-reachable",
+        "inputs-ready-is-a-property",
+        "reply-namespace",
+        "front-door-authorization",
+        "supervisor-faults"
+      ]
+    },
+    {
+      "id": "governed-output-read",
+      "path": "tests/test_governed_output_read.py",
+      "covers": [
+        "chunked-output-serve",
+        "verdict-order",
+        "request-shape",
+        "store-faults",
+        "frame-fit",
+        "frame-bounds",
+        "front-door-authorization",
+        "closed-reason-set-reachable",
+        "completion-mints-stream",
+        "nothing-governed-minted"
+      ]
+    },
+    {
+      "id": "governed-output-stream",
+      "path": "tests/test_governed_output_stream.py",
+      "covers": [
+        "capability-token",
+        "stream-mint",
+        "phase-boundaries",
+        "quota-eviction",
+        "ddl-enforcement",
+        "sweep-scope",
+        "nothing-governed-minted"
+      ]
+    },
+    {
+      "id": "governed-run-attestation",
+      "path": "tests/test_governed_run_attestation.py",
+      "covers": [
+        "run-attestation-build",
+        "attestation-verifies-under-signer-path",
+        "caller-mapping-is-not-attestation-state",
+        "attest-run-server",
+        "old-facts-protocol-denial",
+        "fabricated-run-not-attestable"
+      ]
+    },
+    {
+      "id": "governed-staging-upload",
+      "path": "tests/test_governed_staging_upload.py",
+      "covers": [
+        "upload-publishes-declared-inputs",
+        "nothing-governed-minted",
+        "staging-open-refusals",
+        "chunk-refusals",
+        "final-refusals",
+        "idempotency",
+        "crash-recovery",
+        "deterministic-chunking",
+        "session-ddl",
+        "ledger-contract",
+        "front-door-authorization",
+        "staging-custody",
+        "supervisor-faults",
+        "staging-sweep"
+      ]
+    },
+    {
+      "id": "governed-supervisor",
+      "path": "tests/test_governed_supervisor.py",
+      "covers": [
+        "accept-open-valid-lease",
+        "challenge-addressing",
+        "challenge-expiry",
+        "request-sha256-binding",
+        "challenge-signature",
+        "malformed-challenge",
+        "run-attestation-not-an-oracle"
+      ]
+    },
+    {
+      "id": "governed-supervisor-ledger",
+      "path": "tests/test_governed_supervisor_ledger.py",
+      "covers": [
+        "acceptance-cas",
+        "bound-field-comparison",
+        "reuse-or-prepare",
+        "launch-gate",
+        "completion-lifecycle",
+        "evidence-floor",
+        "evidence-floor-install-scope",
+        "attestation-state",
+        "lifecycle-edges",
+        "evidence-chain-link"
+      ]
+    },
+    {
+      "id": "governed-supervisor-server",
+      "path": "tests/test_governed_supervisor_server.py",
+      "covers": [
+        "non-broker-peer-denial",
+        "frame-bounds",
+        "accept-open-dispatch",
+        "launch-gate-dispatch",
+        "complete-run-dispatch",
+        "crash-cuts-inside-completion",
+        "attest-run-not-an-oracle",
+        "unknown-op",
+        "serve-loop",
+        "hostile-frame-does-not-kill-supervisor",
+        "connection-budget"
+      ]
+    },
+    {
+      "id": "governed-turn-open",
+      "path": "tests/test_governed_turn_open.py",
+      "covers": [
+        "open-admits-signed-challenge",
+        "requester-supplied-id-refused",
+        "refusals-reachable",
+        "idempotent-reopen",
+        "staging-state-machine",
+        "registry-document",
+        "front-door-authorization",
+        "supervisor-faults"
+      ]
+    },
+    {
+      "id": "governed-turn-result",
+      "path": "tests/test_governed_turn_result.py",
+      "covers": [
+        "result-frame-arms",
+        "signed-arm-shape",
+        "refused-arm-shape",
+        "discriminator",
+        "closed-reason-union",
+        "union-not-decided-here",
+        "frame-fit",
+        "decoded-lengths",
+        "frozen-protocol-coexistence",
+        "nothing-governed-minted",
+        "evidence-request-continuation"
+      ]
+    },
+    {
+      "id": "governed-turn-submit-e2e",
+      "path": "tests/test_governed_turn_submit_e2e.py",
+      "covers": [
+        "submit-round-trip",
+        "canonical-bytes-parity",
+        "upstream-refusals-from-supervisor",
+        "supervisor-validates-its-supplier",
+        "one-live-ladder-runner"
+      ]
+    },
+    {
+      "id": "isolated-signer",
+      "path": "tests/test_isolated_signer.py",
+      "covers": [
+        "valid-sign-request",
+        "never-signs-caller-bytes",
+        "signer-refusals",
+        "cross-binding",
+        "record-time-agreement",
+        "output-binding",
+        "store-handle-integrity"
+      ]
+    },
+    {
+      "id": "isolated-signer-server",
+      "path": "tests/test_isolated_signer_server.py",
+      "covers": [
+        "non-broker-peer-denial",
+        "frame-bounds",
+        "dispatch",
+        "typed-signer-refusals",
+        "serve-loop",
+        "never-raises",
+        "connection-budget"
+      ]
+    },
+    {
+      "id": "isolated-signer-transport",
+      "path": "tests/test_isolated_signer_transport.py",
+      "covers": [
+        "wire-carries-signers-reply",
+        "decoder-refuses-rather-than-repairs"
+      ]
+    },
+    {
+      "id": "ladder-pull-evidence",
+      "path": "tests/test_ladder_pull_evidence.py",
+      "covers": [
+        "pull-verdict-green-path",
+        "gate-provenance",
+        "hop-log-pairing",
+        "evidence-set-shape",
+        "hop-detail-recorder",
+        "verifier-not-optional",
+        "manifest-check",
+        "envelope-check",
+        "frame-check",
+        "request-binding-check",
+        "output-check",
+        "ledger-check",
+        "hop-check",
+        "containment-check",
+        "root-owned-policy-loader",
+        "strict-base64-in-kit",
+        "shared-kit-store",
+        "recorder-timeout",
+        "ladder-service-graph"
+      ]
+    },
+    {
+      "id": "live-assurance",
+      "path": "tests/test_live_assurance.py",
+      "covers": [
+        "assurance-gate-fails-closed",
+        "bytecode-shadow-masks-wiring-proof",
+        "advisory-law-never-enforced",
+        "advisory-law-owes-bound-cases",
+        "surface-must-resolve",
+        "live-status-derivation"
+      ]
+    },
+    {
+      "id": "live-broker-config",
+      "path": "tests/test_live_broker_config.py",
+      "covers": [
+        "writer-mirrors-bound-to-rust",
+        "broker-config-writer-behaviour",
+        "base-config-refusals",
+        "no-product-config-writer"
+      ]
+    },
+    {
+      "id": "live-provisioning-anchor",
+      "path": "tests/test_live_provisioning_anchor.py",
+      "covers": [
+        "kit-anchor-provenance",
+        "kit-scripts-read-no-env-anchor",
+        "kit-broker-verdict",
+        "kit-heredoc-controls"
+      ]
+    },
+    {
+      "id": "live-sudoers-install",
+      "path": "tests/test_live_sudoers_install.py",
+      "covers": [
+        "kit-sudoers-block-parity",
+        "sudoers-install-validated-fragment",
+        "kit-cleanup-trap",
+        "kit-host-state-restore",
+        "recorder-invoker-absolute-path",
+        "fragment-text-unchanged"
+      ]
+    },
+    {
+      "id": "live-tcb-pin-manifest",
+      "path": "tests/test_live_tcb_pin_manifest.py",
+      "covers": [
+        "tcb-pin-manifest-covers-required-set",
+        "pins-are-real-digests-with-provenance",
+        "substituted-artifact-denial",
+        "broker-kit-pins",
+        "kit-role-tables"
+      ]
+    },
+    {
+      "id": "manifest-schema-agreement",
+      "path": "tests/test_manifest_schema_agreement.py",
+      "covers": [
+        "schema-and-runtime-required-sets-agree",
+        "runtime-enforces-schema-shape",
+        "schema-constrains-head-binding"
+      ]
+    },
+    {
+      "id": "negative-matrix",
+      "path": "tests/test_negative_matrix.py",
+      "covers": [
+        "nm-registry",
+        "nm-time",
+        "nm-replay",
+        "nm-evidence-floor",
+        "nm-concurrency",
+        "nm-terminal",
+        "nm-frame"
+      ]
+    },
+    {
+      "id": "one-standard-pins",
+      "path": "tests/test_one_standard_pins.py",
+      "covers": [
+        "one-governed-canonicalizer",
+        "two-encoding-families-stay-different",
+        "request-envelope-one-formula",
+        "wire-lease-is-the-dataclass",
+        "one-number-per-rule-python",
+        "python-rust-shared-numbers",
+        "frame-cap-asymmetry-pinned",
+        "one-op-vocabulary"
+      ]
+    },
+    {
+      "id": "owner-artifact-registration",
+      "path": "tests/test_owner_artifact_registration.py",
+      "covers": [
+        "owner-artifact-types-registered",
+        "evidence-floor-anchor",
+        "control-room-command-proven-per-command"
+      ]
+    },
+    {
+      "id": "prerequisite-guard",
+      "path": "tests/test_prerequisite_guard.py",
+      "covers": [
+        "absent-prerequisite-skips-by-name",
+        "absent-prerequisite-fails-under-ci",
+        "runner-detection",
+        "sibling-tree-probes",
+        "git-probe"
+      ]
+    },
+    {
+      "id": "provision-floor-writer",
+      "path": "tests/test_provision_floor_writer.py",
+      "covers": [
+        "provisioning-preconditions",
+        "imports-off-linux",
+        "generation-minting",
+        "peer-allowlist",
+        "parent-custody",
+        "publish-into-service-owned-directory"
+      ]
+    },
+    {
+      "id": "provisioned-registry-root",
+      "path": "tests/test_provisioned_registry_root.py",
+      "covers": [
+        "override-unset-default",
+        "registry-root-shape",
+        "registry-root-custody",
+        "anchor-independence",
+        "all-callers-or-none",
+        "call-site-inventory",
+        "conductor-session-o3",
+        "windows-custody-refusal-names-what-it-saw"
+      ]
+    },
+    {
+      "id": "runtime-dependency-schema",
+      "path": "tests/test_runtime_dependency_schema.py",
+      "covers": [
+        "runtime-dependency-sst-validates-against-record-schema"
+      ]
+    },
+    {
+      "id": "signer-envelope-v49",
+      "path": "tests/test_signer_envelope_v49.py",
+      "covers": [
+        "flat-23-key-envelope",
+        "request-sha256-formula-parity",
+        "signature-over-broker-reconstructed-jcs",
+        "jcs-bare-integers"
+      ]
+    },
+    {
+      "id": "supervisor-fault-visibility",
+      "path": "tests/test_supervisor_fault_visibility.py",
+      "covers": [
+        "supervisor-fault-reaches-operator-log",
+        "hostile-peer-cannot-flood-log",
+        "fault-reply-still-reaches-peer"
       ]
     }
   ]

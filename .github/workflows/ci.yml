@@ -857,8 +857,11 @@ jobs:
       # runners, the provisioners and the two orchestrators — and NO test imports any of
       # them. They were reachable only by running a kit as root on Linux, which means a
       # syntax error in one surfaced as a job that died mid-provision rather than as a
-      # parse failure with a line number. It is not a digest root, so it does not
-      # interact with the shadow reasoning above.
+      # parse failure with a line number. Since T-153 `ci/**` IS a digest root (with
+      # `install/**` and `contracts/**`), so the caches this step writes under `ci/` are
+      # a bytecode shadow like the other three — which changes nothing here, because
+      # the step is last and the clean step above already removes every `__pycache__`
+      # under the engine tree, `ci/` included, before the proof.
       - name: Compile Python (syntax gate for the files no test imports)
         run: python -m compileall -q runtime tools tests ci
 
