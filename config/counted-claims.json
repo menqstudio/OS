@@ -111,19 +111,19 @@
       ]
     },
     "engine_tests": {
-      "value": 2728,
+      "value": 2730,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
         "date": "2026-10-02",
         "head": "eb3b791",
         "environments": {
-          "Debian 13 (trixie) native @ eb3b791 + T-159, system python (no parser oracle)": {
-            "ran": 2728,
+          "Debian 13 (trixie) native @ eb3b791 + T-159 after audit round 1, system python (no parser oracle)": {
+            "ran": 2730,
             "skipped": 17
           },
-          "Debian 13 (trixie) native @ eb3b791 + T-159, venv from requirements-ci.txt": {
-            "ran": 2728,
+          "Debian 13 (trixie) native @ eb3b791 + T-159 after audit round 1, venv from both locks": {
+            "ran": 2730,
             "skipped": 13
           },
           "Debian 13 (trixie) native @ 6743d7c + T-156, second round": {

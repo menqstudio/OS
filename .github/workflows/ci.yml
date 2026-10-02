@@ -314,6 +314,10 @@ jobs:
       # This job is the second platform, not a duplicate of the first.
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      # Test-only, and its own lock so the deployment install (requirements-ci.txt) never
+      # carries it: the pinned Bash parser this job declares REQUIRED above (T-159).
+      - name: Install the shell-grammar test oracle
+        run: pip install --require-hashes -r requirements-test-oracle.txt
       # -v, unlike the ubuntu job. This job exists BECAUSE tests can run nowhere else, so what
       # skipped here is the thing worth reading: a skip is a hole unless somebody counts them,
       # and a count with no names cannot be audited. It also settles a question this job has
@@ -830,6 +834,10 @@ jobs:
           python-version: "3.12"
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      # Test-only, and its own lock so the deployment install (requirements-ci.txt) never
+      # carries it: the pinned Bash parser this job declares REQUIRED above (T-159).
+      - name: Install the shell-grammar test oracle
+        run: pip install --require-hashes -r requirements-test-oracle.txt
       - name: Validate foundation (operator-root pin, fail-closed)
         run: python tools/bro_validate.py
       - name: Run the engine test suite

@@ -14,6 +14,32 @@
 >
 > Everything below marked ◑ is the Builder's claim. Nothing here is independently confirmed.
 
+## Round 2 — what changed after your RED
+
+Your report (`apps/desktop/AUDIT/changes/pr-333-shell-classifier.md`) confirmed A, B and C and was
+RED on **E**: the parser pins sat in `engine/requirements-ci.txt`, which the deployment runbook
+installs into the service's environment. Corrected as you required, and nothing else in
+`engine/runtime/` moved:
+
+- `engine/requirements-ci.txt` is **byte-identical to `main`** again.
+- `engine/requirements-test-oracle.txt` is new and holds only the two parser pins. Both engine CI
+  jobs install it after the runtime lock; nothing else does. Measured in a fresh venv: after the
+  deployment lock alone, no `tree-sitter` package is present; after the oracle lock, exactly two.
+- The new lock is a CI supply-chain input, so it is held like the one beside it: added to
+  `protected_roots` and `digest_roots` in `engine/config/protected-control-plane.json`, to
+  `config/audit-required-paths.json`, and to the `pip-audit` step.
+- Three tests hold the separation: the oracle lock pins exactly the two packages at the versions
+  the test names; the deployment lock names no parser; the runbook does not install the oracle
+  lock. Six mutants, six named deaths.
+- Engine suite: **2730** OK (17 skipped without the parser, 13 with both locks installed).
+
+On your point in D — the parser oracle is run on accepted inputs and the two findings, not on
+every refused form — that is true and is left as it is: a refused form is not run under any
+oracle, by design, and the parser's opinion of one would not change the refusal.
+
+**Because audit-required paths changed after the head you read, the gate needs a new
+`Audited-Head`.** Please re-read the diff since that head and update your report in place.
+
 ## 1. What changed
 
 `engine/runtime/bro_security.py`: `split_shell` and `_tokens` (a hand-written lexer followed by
@@ -100,19 +126,20 @@ parser as a second opinion and not the first.
 |---|---|
 | `engine/runtime/bro_security.py` | `parse_simple_command`; `split_shell`, `_tokens` and the `shlex` import removed |
 | `engine/runtime/bro_authorization.py` | `READ_ONLY_SHELL_TOOLS`, the demotion in `_classify_shell` |
-| `engine/tests/test_shell_grammar.py` | new, 31 tests |
+| `engine/tests/test_shell_grammar.py` | new, 33 tests |
 | `engine/tests/test_security_v2.py` | four tests rewritten: they asserted the old splitting |
 | `engine/tests/test_full_execution_transaction_e2e.py` | five wall-level tests |
 | `engine/tests/catalog.json` | the new module |
-| `engine/requirements-ci.txt` | two test-only pins, PyPI's published hashes |
-| `.github/workflows/ci.yml` | `BRO_SHELL_PARSER_ORACLE: required` on both engine jobs |
+| `engine/requirements-test-oracle.txt` | new: the two test-only pins, PyPI's published hashes. `requirements-ci.txt` is unchanged from `main` |
+| `engine/config/protected-control-plane.json`, `config/audit-required-paths.json`, `.github/workflows/supply-chain.yml` | the new lock is protected, digested, audit-required and audited by `pip-audit` |
+| `.github/workflows/ci.yml` | `BRO_SHELL_PARSER_ORACLE: required` on both engine jobs, which install the oracle lock |
 
 ## 9. What the Builder ran ◑
 
-- Engine suite, `BRO_ENV=ci`, Debian 13, non-root: **2728 tests, OK**, 17 skipped under the system
+- Engine suite, `BRO_ENV=ci`, Debian 13, non-root: **2730 tests, OK**, 17 skipped under the system
   interpreter (4 are the parser oracle, not installed there) and 13 skipped in a fresh venv built
-  with `pip install --require-hashes -r engine/requirements-ci.txt`, oracle required. It was 2692.
-- The lockfile installs with hash checking on CPython 3.13.
+  from both locks with `pip install --require-hashes`, oracle required. It was 2692 on `main`.
+- Both locks install with hash checking on CPython 3.13.
 
 ## 10. What was NOT done
 
@@ -122,9 +149,8 @@ parser as a second opinion and not the first.
 - **The hook subprocess was not driven.** `authorize_tool`, the function `bro_hook.py pre-tool`
   calls, was driven in-process with the suite's existing bundle fixture.
 - **Python 3.14 is not supported by the lockfile**, before or after this change.
-- `docs/DEBIAN_DEPLOYMENT.md` installs `requirements-ci.txt` into the service's venv, so the two
-  parser wheels would be present there, unimported. A test-only file would avoid that; it would
-  also be a second supply-chain input to protect. Not decided here.
+- Nothing removes the oracle install from a CI job except CI itself: with the step deleted, the
+  job fails because the oracle is declared required there. No local test reads the workflow.
 - The findings pages still list R2-0001 and R2-0002 as open; they belong to T-145.
 - Seen and not fixed: `test_live_tcb_pin_manifest` uses one shared `/tmp/source-tree`, so two
   engine suites run at once fail each other.

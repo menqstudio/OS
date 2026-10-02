@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
 >
-> T-159: the shell classifier, built to the Architect's Appendix A. Engine security code: it waits on his code audit and is not merged without it.
+> T-159: the Architect's first audit is RED on one point, the parser pins in the deployment lock; they moved to a test-only lock. Not merged without his GREEN.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,7 +47,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-10-02 | 1739 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-10-02 | 2728 OK, 17 skipped |
+| engine (Python), non-root, Debian 13 · 2026-10-02 | 2730 OK, 17 skipped |
 | Rust, 10 crates · 2026-10-02 | 1417 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |

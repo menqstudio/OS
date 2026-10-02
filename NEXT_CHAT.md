@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
 >
-> T-159: the shell classifier, built to the Architect's Appendix A. Engine security code: it waits on his code audit and is not merged without it.
+> T-159: the Architect's first audit is RED on one point, the parser pins in the deployment lock; they moved to a test-only lock. Not merged without his GREEN.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ CI stamps the PR body (T-163); by hand: `tools/stamp_pr_head.py --pr <N>`.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2728 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2730 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1417 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

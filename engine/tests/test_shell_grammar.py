@@ -444,10 +444,26 @@ class ParserOracleTests(unittest.TestCase):
 
 
 class ParserStaysOutOfTheWallTests(unittest.TestCase):
-    def test_the_lockfile_pins_the_versions_this_module_names(self):
-        text = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
+    def test_the_oracle_lock_pins_the_versions_this_module_names(self):
+        text = (ROOT / "requirements-test-oracle.txt").read_text(encoding="utf-8")
         for package, version in PARSER_PINS.items():
             self.assertRegex(text, rf"(?m)^{re.escape(package)}=={re.escape(version)} \\$")
+        pinned = re.findall(r"(?m)^([A-Za-z0-9_.-]+)==", text)
+        self.assertEqual(sorted(pinned), sorted(PARSER_PINS), "the oracle lock pins something else")
+
+    def test_the_deployment_lock_carries_no_parser(self):
+        """requirements-ci.txt is what the production install reads. The Architect's audit of
+        #333 was RED on exactly this: the parser was pinned there and labelled test-only."""
+        text = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"(?im)^\s*tree[-_]sitter")
+
+    def test_the_deployment_runbook_does_not_install_the_oracle_lock(self):
+        runbook = ROOT.parent / "docs" / "DEBIAN_DEPLOYMENT.md"
+        if not runbook.is_file():
+            self.skipTest("the deployment runbook lives in the monorepo, not in the engine tree")
+        text = runbook.read_text(encoding="utf-8")
+        self.assertIn("requirements-ci.txt", text)
+        self.assertNotIn("requirements-test-oracle", text)
 
     def test_no_runtime_or_tool_module_imports_a_parser(self):
         """The acceptance decision must be reproducible without the parser package: a wall that
