@@ -128,7 +128,7 @@ head it names) is answered as follows. Nothing below is confirmed by anyone but 
 |---|---|
 | **F-05** `append()` overwrote the head of a truncated ledger | **Fixed.** `append()` now runs `_check_chain` and `_check_head` — the same functions `verify()` runs — under the lock and before writing. A truncation, a head for another chain, records with no head, and a chain with a broken link are refused and nothing is written; `AuditHeadBehind` alone is let through, because the append is its repair. The head cases raise `AuditTruncated`, a new subclass of `AuditError`. Three tests over fifteen ledger shapes; 13 mutants, each killed by a named test. §4's second bullet above is therefore no longer true. |
 | **F-01** the full suite was not green on the auditor's host | **Not a change to this pull request.** The auditor's host had Python 3.14 with no `venv`, no `cryptography`, and no `python` on `PATH`. The same suite is 2692 tests, OK, 13 skipped here and green in CI. Two of the six are worth their own look and are recorded as open: the sudoers tests fail against a real `visudo`, and no `visudo` exists on the Builder's box, so that branch has never run here. |
-| **F-04** Windows not live-certified | **Run on Windows at the first audited head, by a second Codex session, tests only — relayed by the Owner, not verbatim.** `test_stop_and_audit`: 37 tests, OK, 9 skipped. It reports that tests there DO take the real `msvcrt` byte-range lock on a real file, not only the fake. By hand: a process holding the append lock was terminated (`proc.kill()`, i.e. `TerminateProcess`; `taskkill /F` answered `Access denied`) and a second process then appended to the same ledger without hanging. The full suite there: 2689 run, 10 failures, 2 errors, 253 skipped — **the failing tests' names have not reached the Builder**; CI's Windows engine job is green on the same commit. Not run on Windows: the second-round head. |
+| **F-04** Windows not live-certified | **Run on Windows at the second-round head by a separate Codex session, tests only; the transcript, relayed by the Owner, is [`apps/desktop/AUDIT/changes/pr-328-windows-run-relayed.md`](../../apps/desktop/AUDIT/changes/pr-328-windows-run-relayed.md).** `test_stop_and_audit`: 40 tests, OK, 9 skipped; 24 tests take the real `msvcrt` lock on a real file; a terminated holder did not strand the ledger; a truncated ledger was refused with `AuditTruncated`. **Not run there:** the three symlink tests (the account could not create a symbolic link). The full suite there has 10 failures and 1 error, none in this module; they are recorded as open items B-04 to B-07 in `docs/WHOLE_REPO_READ_2026-10-02.md`. |
 | **F-02** descriptor passing is outside the fork defence | Docstring now says exactly that. No code: nothing in the engine passes that descriptor. |
 | **F-03** the lock is advisory | Unchanged and documented, as the audit says. |
 | **F-06** the signer runs inside the lock | Unchanged: fail-closed is the intent. |
@@ -148,3 +148,29 @@ second-round report there:** `apps/desktop/AUDIT/changes/pr-328-audit-ledger-loc
     becomes a denial of service on the governed path, and should it be bounded?
 11. A ledger with a pre-existing break now refuses every append until an operator acts. Is that the
     right availability trade for the plaintext-head check, given it adds no tamper-evidence?
+
+**Question 10, measured** (Builder, Debian 13): one `append()` costs 11 ms at 1,000 records, 58 ms at 5,000, 225 ms at 20,000 and 1.17 s at 100,000 (34 MB) — linear, about a third of it the read that was always there. Nothing bounds it. Recorded as open item B-08; a rotation or checkpoint design is not part of this pull request.
+
+## 11. Third round — the Architect's 33 failures, and where a Windows run can be audited
+
+**The full suite on the Architect's host (Python 3.12, hashed install): 2692 run, 3 failures,
+30 errors, 15 skipped.** The Builder read all 33. Two causes, neither in this pull request's diff ◑:
+
+- **31** (`test_audit_head_anchor` 21, `test_backup_restore` 7, `test_monitor` 3): the stand-in
+  signer the tests start cannot import `cryptography`. `_signer_argv` resolves the signer's
+  interpreter through symbolic links, and a virtualenv's `python` is one, so the signer runs
+  under the base interpreter. Open item B-09. That code is unchanged by this pull request.
+- **2** (`test_live_sudoers_install`): the host's `visudo` rejects the kits' sudoers rule with
+  `wildcards are not allowed in command arguments`. Open item B-03. Unchanged by this pull request.
+
+**The claim to check, rather than believe:** the same 33 fail on `main` at the merge base on the
+same host. If they do, this pull request did not introduce them.
+
+**A Windows run that can be audited.** CI ran the engine suite on `windows-latest` for the
+audited head: run `37002084820`, job `110821857190`, Python 3.12,
+`python -B -m unittest discover -s tests -v`, `Ran 2692 tests ... OK (skipped=233)`. Its log is
+readable with `gh api repos/menqstudio/OS/actions/jobs/110821857190/logs`. In it the three symlink
+tests of `test_stop_and_audit` are `ok` (the runner may create symbolic links; the relayed session
+could not), as are `test_a_holder_killed_while_holding_the_lock_does_not_strand_the_ledger` and
+`test_separately_started_processes_appending_together_keep_one_valid_chain`. The Linux job of the
+same run is `110821857399`: 2692 tests OK there too.
