@@ -1,6 +1,6 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
-**81 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+**82 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
@@ -105,4 +105,5 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-162** | **The mirror gate asks again when GitHub answers from the past** — a stale runs page made it call a green `main` red, once in CI; it retries, then says "stale page" by name; 11 mutants, 11 deaths ◑ | Bro | Review | merged `#330` |
 | **T-163** | **The run that verifies a head stamps it** — an Architect commit left `Repo-state` red on `#328` and `#331`; the job writes the marker before reading it; 10 mutants, 10 deaths ◑ | Bro | Review | merged `#331` |
 | **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. Built to its Appendix A: a dependency-free grammar in the wall, the parser a test-only oracle; 52 mutants, 52 deaths. Architect audit: round 1 RED on the parser lock, round 2 GREEN ([report](apps/desktop/AUDIT/changes/pr-333-shell-classifier.md)) ◑ | Bro | Review | merged `#333` |
+| **T-164** | **Three tests failed for reasons outside the change under test** — each traced and fixed: a cockpit test clicked a still-disabled button (reproduced); an engine test shared one `/tmp/source-tree` (28 of 30 concurrent runs failed, now 0); git's detached maintenance raced temp-repo cleanup (mechanism measured, failure not reproduced; off in every CI job) ◑ | Bro | Review | merged `#335` |
 | **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | merged `#327` |

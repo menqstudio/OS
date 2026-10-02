@@ -44,6 +44,30 @@ class ResolveTests(unittest.TestCase):
         self.assertTrue(version)
 
 
+class PinnedVersionsAreAdmittedTests(unittest.TestCase):
+    """The lock and the health check describe the same environment.
+
+    requirements-ci.txt pinned cryptography 46.0.7 while runtime-dependencies.json bounded it
+    `<47`, so moving the pin to a fixed release made the health check refuse the runtime, and
+    that refusal was recorded as "the bump broke the engine" and four advisories were waived on
+    it (T-165). A pin the declared bound excludes is now a failing test, not a finding.
+    """
+
+    def test_every_pinned_runtime_library_satisfies_its_declared_bound(self):
+        import re
+        lock = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
+        pins = dict(re.findall(r"(?m)^([A-Za-z0-9_.-]+)==([0-9][0-9A-Za-z.]*) ", lock))
+        checked = []
+        for dep in bro_env_health.load_runtime_dependencies(ROOT).values():
+            if dep["kind"] != "library" or dep["resolve"] not in pins:
+                continue
+            pinned = pins[dep["resolve"]]
+            self.assertTrue(satisfies(pinned, dep["version"]),
+                            f"{dep['resolve']}=={pinned} is outside the declared {dep['version']}")
+            checked.append(dep["resolve"])
+        self.assertEqual(sorted(checked), ["cryptography", "jsonschema"])
+
+
 class CheckEnvironmentTests(unittest.TestCase):
     def test_live_required_dependencies_resolve(self):
         # Allow-path: on this environment every required dependency is present.

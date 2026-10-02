@@ -16,24 +16,12 @@
 # That premise is no longer prose — tools/check_crypto_surface.py enforces it, and the day
 # somebody writes load_pem_private_key the gate goes RED and names this file.
 #
-# cryptography 49.0.0 and 50.0.0 were both tried; the bump broke the engine's governance
-# runtime, so the four advisories that need them are waived rather than forced. Note what that
-# reason does NOT cover: three further advisories (PYSEC-2026-2141 = GHSA-r6ph-v2qm-q3c2 HIGH,
-# PYSEC-2026-35, PYSEC-2026-36) were waived here under the same sentence while being fixed in
-# 46.0.5, 46.0.6 and 46.0.7 — patch releases inside the pinned 46.0 line. The pin moved
-# 46.0.3 -> 46.0.7 and those three lines are deleted. Rule 2 of the gate exists so that a
-# waiver cannot again borrow a neighbour's excuse.
-
-# Bundled OpenSSL in the cryptography wheels (18 CVEs, advisory of 2026-06-09). The HIGH one
-# is CVE-2026-45447, a use-after-free in OpenSSL's PKCS7_verify(); the rest are CMS, OCSP,
-# QUIC, CMP, FFC-DH, AES-OCB/SIV and ASN.1-parsing paths. None is reachable from Ed25519 raw
-# sign/verify, which touches no ASN.1 parser and no protocol stack. CVSS says availability
-# only (C:N/I:N/A:H):
-GHSA-537c-gmf6-5ccf  # fixed=48.0.1 — bundled OpenSSL; PKCS#7/CMS/QUIC/ASN.1 surfaces, all unused
-# X.509 verifier accepts wildcard DNS names, escaping permittedSubtrees (X.509 path validation
-# — this repository runs no path validation):
-GHSA-m2h6-j472-rp4c  # fixed=49.0.0 — X.509 path validation, unused
-# PKCS#7 EnvelopedData decryption exposes a Bleichenbacher oracle (PKCS#7 — unused):
-GHSA-g6cj-pr64-35w5  # fixed=50.0.0 — PKCS#7 EnvelopedData decryption, unused
-# Duplicate self-signed intermediates cause exponential path building (X.509 — unused):
-GHSA-jwv3-5hgf-82ww  # fixed=49.0.0 — X.509 path building, unused
+# cryptography 49.0.0 and 50.0.0 were tried once and "broke the engine's governance runtime",
+# and four advisories were waived here on that account. Measured 2026-10-03 (T-165): against
+# 50.0.2 the engine suite passed 2729 of 2730, and the one failure was
+# engine/config/runtime-dependencies.json declaring `cryptography >=41,<47` -- the health check
+# refusing a version its own bound excluded. The pin is 50.0.2 now, the bound admits it, and the
+# four waivers (GHSA-537c-gmf6-5ccf, GHSA-m2h6-j472-rp4c, GHSA-g6cj-pr64-35w5,
+# GHSA-jwv3-5hgf-82ww) are deleted: their fixes are at or below the pin. pip-audit over the lock
+# with no waiver at all reported no known vulnerability. This file has no entry; the rules above
+# still hold for the next one.
