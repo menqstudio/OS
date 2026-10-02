@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 75 mutants, 75 deaths ◑ | Bro | Review | `#325` |
+| **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 76 mutants, 76 deaths ◑ | Bro | Review | `#325` |
 | **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — today a crashed holder turns every append into a refusal until a file is deleted by hand; building, then to Architect audit (roadmap §G.2) ◑ | Bro | In-Progress | — |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |

@@ -1260,6 +1260,7 @@ UNGUARDED_ACTIONS = [
     ("python3 tools/check_x.py; FOO=1; git commit -m x", "git commit"),
     ("! python3 tools/check_x.py; git commit -m x", "git commit"),   # negated, not asked
     ("python3 tools/check_x.py; (ls); git commit -m x", "git commit"),
+    ("(python3 tools/check_x.py | tail -3); git commit -m x", "git commit"),   # lost in the pipe
     ("set -o pipefail; python3 tools/check_x.py | tail -3; git commit -m x", "git commit"),
 ]
 
@@ -1267,6 +1268,9 @@ UNGUARDED_ACTIONS = [
 VERDICT_KEPT = [
     "python3 tools/check_x.py && git commit -m x && git push",
     "python3 tools/check_x.py && git add -A && git commit -m x",
+    # a pipe on a LATER command loses that command's status, not the gate's: if the gate
+    # failed, nothing after its `&&` ran at all
+    "python3 tools/check_x.py && git push 2>&1 | tail -1 && python3 tools/stamp_pr_head.py --pr 5",
     "set -o pipefail; python3 tools/check_x.py | tail -3 && git commit -m x",
     "set -euo pipefail\npython3 tools/check_x.py | tail -3 && git commit -m x",
     "python3 tools/check_x.py | tail -3",

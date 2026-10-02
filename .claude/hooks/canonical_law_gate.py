@@ -1258,11 +1258,14 @@ def discarded_verdict(command: str) -> str | None:
         piped = op in _PIPES and not pipefail
         if piped:
             feeding = feeding or gate
-        else:
-            feeding = None
-        if op in _KEEPS or (op in _PIPES and pipefail):
+            if gate:                                         # only ITS verdict is lost: a
+                held.remove(gate)                            # gate held from before still
+                loose.append(gate)                           # decides whether this runs
             continue
-        if piped or op in _DROPS:
+        feeding = None
+        if op in _KEEPS or op in _PIPES:
+            continue
+        if op in _DROPS:
             loose, held = loose + held, []
         else:                                                # `)`, `;;`: no claim is made
             held = []                                        # about a subshell's status
