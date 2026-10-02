@@ -20,6 +20,8 @@ import stamp_pr_head as st  # noqa: E402
 
 SHA = "9431b0674fb87f14d6398746cb48ed149b24b581"
 OTHER = "3c9a5cf00000000000000000000000000000beef"
+# What a CI checkout of a pull request is at: the merge commit, never the pushed tip.
+MERGE = "63a1d188b5f74f04975b99467314935e366eb0ee"
 
 
 class RestampTests(unittest.TestCase):
@@ -247,6 +249,76 @@ class WriteDecisionTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._drive("prose\r\n", SHA, local=OTHER)
         self.assertEqual(self.written, [])
+
+    # ---- `--head`: the run that verifies a head stamps it (T-163) ----------------------------
+    #
+    # In CI the checkout is the pull request's MERGE commit, so `git rev-parse HEAD` is never the
+    # pushed tip and the tool refused there every time. `--head` names the head the run verifies.
+
+    def test_ci_stamps_the_head_it_verifies_though_the_checkout_is_a_merge_commit(self):
+        body = f"prose\n\nAUDIT_CANDIDATE_HEAD: {OTHER}{FOOTER}"
+        self.assertEqual(self._drive(body, SHA, local=MERGE, extra=("--head", SHA)), 0)
+        self.assertEqual(len(self.written), 1)
+        self.assertEqual(st.stamped_sha(self.written[0][2]), SHA)
+
+    def test_ci_does_not_stamp_a_head_origin_has_already_moved_past(self):
+        """A newer push has its own run. This one must not name a head it did not verify, and must
+        not name the newer head either: it verified nothing about that one."""
+        body = f"prose\n\nAUDIT_CANDIDATE_HEAD: {OTHER}\n"
+        self.assertEqual(self._drive(body, SHA, local=MERGE, extra=("--head", OTHER)), 0)
+        self.assertEqual(self.written, [])
+
+    def test_ci_leaves_a_body_already_at_the_verified_head_alone(self):
+        body = f"prose\n\nAUDIT_CANDIDATE_HEAD: {SHA}{FOOTER}"
+        self.assertEqual(self._drive(body, SHA, local=MERGE, extra=("--head", SHA)), 0)
+        self.assertEqual(self.written, [])
+
+    def test_a_head_that_is_not_forty_hex_is_refused_before_any_read(self):
+        with self.assertRaises(SystemExit):
+            self._drive("prose\n", SHA, local=MERGE, extra=("--head", "main"))
+        self.assertEqual((self.viewed, self.written), ([], []))
+
+    def test_without_head_a_merge_commit_checkout_still_refuses(self):
+        """The Builder's path is unchanged: no `--head`, and unpushed work is still a refusal."""
+        with self.assertRaises(SystemExit):
+            self._drive("prose\n", SHA, local=MERGE)
+        self.assertEqual(self.written, [])
+
+
+class CiStampsItsOwnHeadTests(unittest.TestCase):
+    """`Repo-state` went red on #328 and on #331 for one reason: somebody who is not the Builder
+    pushed, and nothing moved the marker. The job that reads the marker now writes it first."""
+
+    def setUp(self):
+        text = (pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows"
+                / "ci.yml").read_text(encoding="utf-8")
+        start = text.index("\n  repo-state:\n")
+        end = text.index("\n  capabilities:\n", start)
+        self.job = text[start:end]
+        self.stamp = self.job.find("run: python tools/stamp_pr_head.py")
+        self.check = self.job.find("run: python tools/check_repo_state.py")
+
+    def test_the_job_stamps_before_it_checks(self):
+        self.assertNotEqual(self.stamp, -1, "the Repo-state job no longer stamps the PR body")
+        self.assertNotEqual(self.check, -1)
+        self.assertLess(self.stamp, self.check, "the marker is read before it is written")
+
+    def test_it_stamps_the_event_head_and_the_event_pull_request(self):
+        line = self.job[self.stamp:self.job.index("\n", self.stamp)]
+        self.assertIn("--pr ${{ github.event.pull_request.number }}", line)
+        self.assertIn("--head ${{ github.event.pull_request.head.sha }}", line)
+
+    def test_the_step_runs_only_for_a_pull_request_from_this_repository(self):
+        step = self.job[self.job.rindex("\n      - name:", 0, self.stamp):self.stamp]
+        self.assertIn("github.event_name == 'pull_request'", step)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", step)
+
+    def test_the_job_may_write_a_pull_request_body_and_nothing_else(self):
+        permissions = self.job[self.job.index("    permissions:"):self.job.index("    steps:")]
+        granted = [line.strip() for line in permissions.splitlines()
+                   if line.strip() and not line.strip().startswith("#")][1:]
+        self.assertEqual(sorted(granted),
+                         ["actions: read", "contents: read", "pull-requests: write"])
 
 
 if __name__ == "__main__":

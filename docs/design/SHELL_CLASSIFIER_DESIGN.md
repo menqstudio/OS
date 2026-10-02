@@ -109,3 +109,40 @@ The replacement must have behavior tests, not source-string checks:
 ## Out of scope
 
 This design does not change Action Runtime authority, task/work grants, approval tokens, workspace binding, OS sandboxing, the shell executable itself, or the product's decision about whether shell access exists. It does not make arbitrary shell commands safe, does not grant network or credential use, and does not replace the existing external-write governance. It also does not attempt to support the full Bash language: unsupported language remains a deliberate refusal.
+
+## Appendix A — implementation rulings (T-159, PR #331)
+
+### Q1 — parser inside the wall or strict positive grammar
+
+**Ruling: choose B: use a dependency-free strict positive grammar inside the security wall, and use the pinned Bash parser only as a mandatory test-time second oracle.**
+
+The parser adds no acceptance guarantee that the proposed wall can rely on here: the measured tree does not expose several security-relevant separators and expansions, so the byte-coverage and character/structure rules would still decide every accepted input. Keeping that parser in the wall would add a native runtime dependency and a fail-all-shells failure mode without removing the need for the same strict table. A small language that accepts one simple command and accounts for every input byte is the smaller, auditable security boundary; it must not grow into a partial Bash implementation.
+
+The proposed character table is accepted with these precise rulings:
+
+- Outside quotes, accept only the listed ASCII characters and space/tab separators. Every other byte or code point is refused, including control characters, CR, LF, NUL, `#`, shell operators, glob characters, braces, commas, parentheses, and an unquoted backslash.
+- A bare `~` is accepted only after the first character of a word, as the table specifies. That permits literal revision/path forms such as `HEAD~1`; a bare leading `~` is refused because it is a Bash tilde-expansion position. A quoted `~` is literal data and is allowed by the selected quote rule.
+- Valid non-ASCII UTF-8 is allowed only inside a quoted part, so quoted Armenian or other human text can be passed as data. Non-ASCII outside quotes, malformed UTF-8, and control characters in either quote form are refused.
+- A missing or unusable parser in a CI job that declares the parser oracle is a test failure, never a skip. The runtime wall itself has no parser import and therefore does not become unavailable when the test-only parser is absent.
+
+**Required design (changed from the body):** implement a standard-library-only, left-to-right positive grammar for exactly `blank* word (blank+ word)* blank*`, with the stated `bare`, `single`, and `double` parts; account for every input byte; decode and validate arguments only after the grammar succeeds; then apply the existing executable, `git`, `find`, path, capability, and approval rules. The Bash grammar/parser is test-only, pinned, and used as an independent oracle; it is not part of the pre-tool wall.
+
+**Commands that must be refused (changed from the body):** refuse every byte sequence outside that one-simple-command language, including parse/coverage failure, unsupported characters, leading unquoted `~`, comments, continuations, ANSI-C or locale quotes, parameter/pathname/brace/arithmetic/command/process substitution, redirection, here-doc/here-string, pipeline, `&`, `&&`, `||`, `;`, newline, CR, subshell/group, function, loop, conditional, `!`, `time`, `eval`, `source`, `exec`, `env`-style wrapper, nested shell, path-qualified executable, unknown `git`/`find` option or predicate, and any path/capability target outside the existing allowlists. A quoted non-ASCII payload is allowed only as literal data under the quote rules above.
+
+**Test plan (changed from the body):** retain the current refusal corpus and real-Bash differential corpus, but make the test-only parser oracle a required CI dependency for that test job: absence, import failure, grammar-version mismatch, or parser error fails the job. Add exhaustive byte-table tests for every ASCII byte in bare, single-quoted, and double-quoted contexts; valid and malformed UTF-8 tests; `~` at word start versus after the first character; and full byte-coverage assertions. Keep generated quote/comment/CRLF/escape/expansion/compound inputs, safe-command differential tests, mutation tests for each refusal/default, authorization-wall integration tests, and parser-version corpus review. The runtime acceptance decision must be reproducible without the parser package.
+
+### Q2 — Bash, PowerShell, and Shell
+
+**Ruling: run the gate for Bash, PowerShell, and Shell, but grant `READ_LOCAL` only when the resolved tool is Bash; a would-be read under PowerShell or Shell is `UNKNOWN` and is denied, while mutating classifications remain subject to their existing governance.**
+
+The accepted grammar and oracle are Bash-specific, and the current registry resolves all three names through the shell classifier. Without a separately specified and tested grammar for PowerShell and the generic Shell resolver, the classifier cannot prove that a command has the same parse, expansion, quoting, or redirection semantics there. Applying the wall to all three prevents an alternate tool name from bypassing inspection; withholding the read-only capability outside Bash is the fail-closed result. This ruling does not grant any new write authority.
+
+### Q3 — compound commands
+
+**Ruling: refuse compound commands as a whole for both reads and governed mutations; use `git commit -F <file>` for multi-line commit messages.**
+
+A separator, pipeline, asynchronous list, or newline creates more than one shell operation and makes one capability/approval decision ambiguous; splitting it into separately classified segments is not an acceptable substitute. A commit message supplied by `-F` is file data consumed by one simple `git` invocation, so it does not reintroduce shell grammar into the command boundary. Mutating simple commands still follow the existing task, scope, work-grant, exact approval, execution, and verification gates.
+
+### Verification limits
+
+I verified the requested PR head and inspected the design, implementation-questions document, `bro_security.py`, and `bro_authorization.py`. I did not independently install or run tree-sitter, reproduce the Builder's parser measurements or import timings, execute PowerShell, run the full pre-tool hook, or implement the classifier/tests in this design-only pass. Those claims remain implementation-audit work for the follow-up code pull request.
