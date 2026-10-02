@@ -16,6 +16,7 @@ import copy
 import datetime
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -833,12 +834,28 @@ FILED = "apps/desktop/AUDIT/changes/pr-5-the-wall.md"
 OLD_ROUND = "apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md"
 
 
+def no_background_git(root: pathlib.Path) -> None:
+    """Stop git from leaving a process behind in a repository a test is about to delete.
+
+    Every `git commit` (and `git fetch`) ends by starting `git maintenance run --auto --detach`:
+    a detached process that is still working in `.git/objects` when the command returns. A test
+    that then removes its temp directory races it, and on 2026-10-02 lost once in CI:
+    `OSError: [Errno 39] Directory not empty: '.../.git/objects'`, on a pull request that
+    changed only documents. Written into the repository's own config so it also covers the git
+    commands the GATE runs there, which these helpers do not build.
+    """
+    for key, value in (("maintenance.auto", "false"), ("gc.auto", "0")):
+        subprocess.run(["git", "-C", str(root), "config", key, value],
+                       check=True, capture_output=True)
+
+
 class Branch:
     """A REAL repository in a temp directory: a pull request's branch, commit by commit."""
 
     def __init__(self, root: pathlib.Path) -> None:
         self.root = root
         self.git("init", "-q")
+        no_background_git(root)
 
     def git(self, *args: str) -> str:
         return subprocess.run(
@@ -889,6 +906,33 @@ class OnDisk(check_merge_ready.Inputs):
 
     def today_utc(self):
         return D2
+
+
+class FixtureRepositoryTests(unittest.TestCase):
+    """The fixture itself: a repository these tests build must be quiet when they delete it."""
+
+    def _traced_commit(self, root: pathlib.Path) -> str:
+        env = dict(os.environ, GIT_TRACE="1")
+        done = subprocess.run(
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
+             "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "traced"],
+            check=True, capture_output=True, text=True, env=env)
+        return done.stderr
+
+    def test_a_commit_in_a_fixture_repository_starts_no_detached_maintenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            branch = Branch(pathlib.Path(tmp))
+            branch.commit("first", {"a.txt": "a\n"})
+            self.assertNotIn("maintenance run", self._traced_commit(branch.root))
+
+    def test_the_control_git_does_start_one_when_nothing_stops_it(self):
+        """Without this the test above could pass on a git that never starts maintenance at
+        all, and would then be asserting nothing about the fixture."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            subprocess.run(["git", "-C", tmp, "init", "-q"], check=True, capture_output=True)
+            trace = self._traced_commit(pathlib.Path(tmp))
+        if "maintenance run" not in trace:
+            self.skipTest("this git starts no automatic maintenance after a commit")
 
 
 class AuditBinding(GateCase):
@@ -1529,6 +1573,7 @@ class TheRealInputs(unittest.TestCase):
                 check=True, capture_output=True, text=True).stdout.strip()
 
         git("init", "-q")
+        no_background_git(tmp)
         (tmp / "PROJECT_STATE.md").write_text(state(D1), encoding="utf-8")
         git("add", "-A")
         git("commit", "-qm", "yesterday")

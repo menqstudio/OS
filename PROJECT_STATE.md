@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1739 OK |
+| `tools/` self-tests · 2026-10-03 | 1741 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2730 OK, 17 skipped |
