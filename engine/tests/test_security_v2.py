@@ -134,7 +134,9 @@ class SecurityV2Tests(unittest.TestCase):
         for command, path in (
             ("./tmp/echo hi", "./tmp/echo"),
             ("/tmp/evil/cat x", "/tmp/evil/cat"),
-            ("tools\\ls.exe", "tools\\ls.exe"),
+            # A Windows spelling is a path too, and reaches the classifier only inside single
+            # quotes: an unquoted backslash is outside the accepted command language (T-159).
+            ("'tools\\ls.exe'", "tools\\ls.exe"),
             ('"./my tools/pwd"', "./my tools/pwd"),
             ("/usr/bin/git status", "/usr/bin/git"),
             ("./find . -name x", "./find"),
@@ -168,12 +170,28 @@ class SecurityV2Tests(unittest.TestCase):
             self.assertTrue(classified.mutating, command)
 
     def test_segments_quotes_windows_and_mixed_case(self):
-        infos = analyze_command(
-            'git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '
-            "git log | git show"
-        )
-        self.assertTrue(any(info.mutating for info in infos))
-        self.assertEqual(sum(info.executable == "git" for info in infos), 4)
+        # Until T-159 this was ONE command, split on `&&`, `;` and `|` into four segments that
+        # were classified one by one. A command that is more than one command is refused whole
+        # now (design Appendix A, Q3); each former segment is still classified as it was when it
+        # arrives alone.
+        whole = ('git status && C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"; '
+                 "git log | git show")
+        with self.assertRaises(SecurityError):
+            analyze_command(whole)
+        for command in ("git status", "git log", "git show"):
+            (info,) = analyze_command(command)
+            self.assertEqual((info.executable, info.mutating), ("git", False), command)
+        # Mixed case and `.exe` still fold to `git`; quotes still group an argument.
+        (info,) = analyze_command('GIT.EXE -C . commit -m "x y"')
+        self.assertEqual((info.executable, info.subcommand, info.mutating), ("git", "commit", True))
+        self.assertIn("x y", info.targets)
+        # The Windows path is refused bare (a backslash is not in the language) and is a
+        # path-qualified executable when quoted.
+        with self.assertRaises(SecurityError):
+            analyze_command('C:\\Git\\bin\\GIT.EXE -C . commit -m "x y"')
+        (info,) = analyze_command("'C:\\Git\\bin\\GIT.EXE' status")
+        self.assertTrue(info.mutating)
+        self.assertFalse(info.recognized_read_only)
 
     def test_wrappers_are_fail_closed(self):
         cases = [
@@ -182,10 +200,13 @@ class SecurityV2Tests(unittest.TestCase):
             "cmd /c del x",
             'bash -c "git push origin main"',
             'sh -c "rm x"',
-            'python -c "open(\\"x\\",\\"w\\").write(\\"bad\\")"',
+            "python -c 'pass'",
         ]
         for command in cases:
             self.assertTrue(analyze_command(command)[0].mutating, command)
+        # A wrapper whose payload needs an escape does not reach the classifier at all.
+        with self.assertRaises(SecurityError):
+            analyze_command('python -c "open(\\"x\\",\\"w\\").write(\\"bad\\")"')
 
     def test_redirection_and_substitution_are_denied(self):
         for command in (
@@ -215,13 +236,14 @@ class SecurityV2Tests(unittest.TestCase):
                 analyze_command(command)
 
     def test_an_ampersand_that_separates_nothing_is_still_text(self):
-        # Quoted or escaped, `&` is an argument; and `&&` stays the separator it was.
+        # Quoted, `&` is an argument.
         self.assertEqual(len(analyze_command("echo 'a & b'")), 1)
         self.assertEqual(len(analyze_command('echo "a & b"')), 1)
-        self.assertEqual(len(analyze_command("echo a \\& b")), 1)
-        infos = analyze_command("echo hi && rm -rf src")
-        self.assertEqual([i.executable for i in infos], ["echo", "rm"])
-        self.assertTrue(infos[1].mutating)
+        # Escaped, it was an argument until T-159; the language has no escape, so it is refused.
+        # And `&&` was a separator whose second segment was classified; it is refused whole.
+        for command in ("echo a \\& b", "echo hi && rm -rf src"):
+            with self.assertRaises(SecurityError, msg=command):
+                analyze_command(command)
 
     def test_single_quoted_substitution_is_literal(self):
         # Single quotes suppress substitution in the shell, so '$(...)' and

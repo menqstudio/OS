@@ -1,6 +1,6 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
-**79 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+**80 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
@@ -103,4 +103,5 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — the Architect's round 4 is GREEN for this change (rounds 1-3 RED); `append()` also checks chain and head under the lock ([request](docs/design/T-156_AUDIT_LEDGER_LOCK_AUDIT_REQUEST.md)) ◑ | Bro | Review | merged `#328` |
 | **T-161** | **A CI reading older than the one recorded is refused** — the runs API answered from months ago and `sync_active_pr.py` wrote it down; 10 mutants ◑ | Bro | Review | merged `#327` |
 | **T-162** | **The mirror gate asks again when GitHub answers from the past** — a stale runs page made it call a green `main` red, once in CI; it retries, then says "stale page" by name; 11 mutants, 11 deaths ◑ | Bro | Review | merged `#330` |
+| **T-163** | **The run that verifies a head stamps it** — an Architect commit left `Repo-state` red on `#328` and `#331`; the job writes the marker before reading it; 10 mutants, 10 deaths ◑ | Bro | Review | merged `#331` |
 | **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | merged `#327` |

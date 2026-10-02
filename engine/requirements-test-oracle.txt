@@ -1,0 +1,25 @@
+# TEST-ORACLE lockfile — installed with `pip install --require-hashes`, by the engine TEST jobs
+# only, AFTER requirements-ci.txt. It is not a deployment input: docs/DEBIAN_DEPLOYMENT.md installs
+# requirements-ci.txt into the service's environment and must never install this file.
+#
+# It pins the Bash parser that tests/test_shell_grammar.py holds the shell command language
+# against, beside a real bash (T-159). Nothing under runtime/ or tools/ imports either package —
+# that test module refuses it — so the wall's verdict never depends on their being installed.
+# Neither package has a runtime dependency of its own.
+#
+# The parser stood in requirements-ci.txt for one audit round. The Architect's audit of #333
+# refused that: a lock the production install reads must not carry two native packages production
+# never loads.
+#
+# Hashes are PyPI's PUBLISHED `digests.sha256`, never computed from a download — the same rule and
+# the same narrow set of platforms as requirements-ci.txt: CPython 3.12 (what CI pins) and 3.13 on
+# manylinux x86_64, and CPython 3.12 on win_amd64 (tree-sitter); the abi3 manylinux x86_64 and
+# win_amd64 wheels (tree-sitter-bash).
+
+tree-sitter==0.26.0 \
+    --hash=sha256:5a6b333b0282d8bb0af741f9b018bd2523d4eecb2686bf6717066a625fecfaa4 \
+    --hash=sha256:7075ef857ef86f327dbb72d1e2574dda78db5754b3a1fca6506acd7fe5d561a7 \
+    --hash=sha256:ca89e361a276dbc934b28a43dd881199e25d34ff5493ee0ce45f3c52a6124a37
+tree-sitter-bash==0.25.1 \
+    --hash=sha256:3f484c4bb8796cde7a87ca351e6116f09653edac0eb3c6d238566359dd28b117 \
+    --hash=sha256:52a6802d9218f86278aa3e8b459c3abdad67eed0fde1f9f13aca5b6c634217a6

@@ -1296,6 +1296,19 @@
         "hostile-peer-cannot-flood-log",
         "fault-reply-still-reaches-peer"
       ]
+    },
+    {
+      "id": "shell-command-language",
+      "path": "tests/test_shell_grammar.py",
+      "covers": [
+        "one-simple-command-positive-grammar",
+        "refusal-corpus-r2-0001-r2-0002",
+        "exhaustive-ascii-byte-table",
+        "real-bash-argument-oracle",
+        "pinned-parser-oracle-test-only",
+        "read-local-only-under-bash",
+        "compound-commands-refused-whole"
+      ]
     }
   ]
 }

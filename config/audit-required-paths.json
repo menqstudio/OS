@@ -12,6 +12,7 @@
     "engine/install/**",
     "engine/contracts/**",
     "engine/requirements-ci.txt",
+    "engine/requirements-test-oracle.txt",
     "engine/.bro/policy.json",
     "engine/agents/authority-policy.json",
     "engine/agents/registry.json",

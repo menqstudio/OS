@@ -425,6 +425,77 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertIn("scope gate RED", reason)
             self.assertEqual(list(self.lease_ledger.iterdir()), [])
 
+    # ---- the shell command language, through the whole wall (T-159) ------------
+    # The classifier's own tests say what it returns. These say what `authorize_tool` DOES with
+    # a full, valid bundle in hand -- the case where the only thing between a hidden second
+    # command and the shell is the classification.
+    def _shell(self, tool, command):
+        with self._patches(), patch.dict(os.environ, self._bundle_env(), clear=False):
+            return authorize_tool(self._state(), tool, {"command": command}, tool_use_id=TUID)
+
+    def test_shell_an_accepted_read_is_allowed_and_reserves_nothing(self):
+        for command in ("cat docs/e2e-allow.md", "git status"):
+            allowed, reason = self._shell("Bash", command)
+            self.assertTrue(allowed, f"{command}: {reason}")
+            self.assertIn("READ_LOCAL", reason)
+        self.assertEqual(self._ledger_state(), ([], []))
+
+    def test_shell_a_second_command_cannot_ride_an_accepted_read(self):
+        for command in (
+            "echo hi # ' \n rm -rf docs #'",               # R2-0001
+            "echo $'\\'' ; rm -rf docs ; echo \\'",        # R2-0002
+            "cat docs/e2e-allow.md ; rm -rf docs",
+            "cat docs/e2e-allow.md && rm -rf docs",
+            "cat docs/e2e-allow.md | tee docs/x",
+            "cat docs/e2e-allow.md\nrm -rf docs",
+            "cat docs/*.md",
+            "cat $HOME/x",
+        ):
+            allowed, reason = self._shell("Bash", command)
+            self.assertFalse(allowed, command)
+            self.assertIn("tool capability gate RED", reason, command)
+            self.assertIn("outside the accepted command language", reason, command)
+        # Refused before any transaction: no lease reserved, no recovery journal prepared.
+        self.assertEqual(self._ledger_state(), ([], []))
+        self.assertEqual(list(self.recovery_store.iterdir()), [])
+
+    def test_shell_a_read_under_another_shell_tool_is_denied_as_unknown(self):
+        for tool in ("PowerShell", "Shell"):
+            for command in ("cat docs/e2e-allow.md", "git status"):
+                allowed, reason = self._shell(tool, command)
+                self.assertFalse(allowed, f"{tool}: {command}")
+                self.assertIn("tool capability gate RED: unknown tool/action", reason)
+        self.assertEqual(self._ledger_state(), ([], []))
+
+    def test_shell_a_write_still_reaches_the_gates_that_govern_writes(self):
+        """A mutating simple command is not the classifier's to refuse: it must arrive at the
+        scope gate and the transaction gate exactly as a structured write does."""
+        allowed, reason = self._shell("Bash", "rm notes/out-of-scope.md")
+        self.assertFalse(allowed)
+        self.assertIn("scope gate RED: target outside task scope", reason)
+        allowed, reason = self._shell("Bash", "rm docs/e2e-allow.md")
+        self.assertFalse(allowed)
+        self.assertIn("transaction gate RED", reason)
+
+    def test_shell_what_the_design_lists_as_refused_is_denied_by_some_gate(self):
+        """The language accepts these as one command made of letters. Each is denied further
+        on, and this pins WHERE, so a later change to one of those gates cannot reopen them
+        unnoticed."""
+        for command, gate in (
+            ("bash -c 'rm docs/x'", "scope gate RED: mutation targets could not be determined"),
+            ("sh -c 'cat docs/x'", "scope gate RED: mutation targets could not be determined"),
+            ("/usr/bin/git status", "workspace scope gate RED"),
+            ("time cat docs/x", "tool capability gate RED: unknown tool/action"),
+            ("eval cat docs/x", "tool capability gate RED: unknown tool/action"),
+            ("exec cat docs/x", "tool capability gate RED: unknown tool/action"),
+            ("env cat docs/x", "tool capability gate RED: unknown tool/action"),
+            ("source docs/x", "tool capability gate RED: unknown tool/action"),
+            ("cat /etc/passwd", "workspace scope gate RED"),
+        ):
+            allowed, reason = self._shell("Bash", command)
+            self.assertFalse(allowed, command)
+            self.assertIn(gate, reason, command)
+
     # ---- failure drills -----------------------------------------------------
     # The ALLOW path is proven above; these drive the same assembled transaction
     # through failure and interruption and assert the recovery journal and the

@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `b69d57b`.** The only thing open is PR #332 on `t145/cockpit-read-recorded`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
 >
-> **Next:** T-159: implement the classifier to the Architect's ruling, then a code audit. T-145's cockpit read rides this.
+> T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,8 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-163** | **The run that verifies a head stamps it** — an Architect commit left `Repo-state` red on `#328` and `#331`; the job writes the marker before reading it; 10 mutants, 10 deaths ◑ | Bro | Review | `#331` |
-| **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. **No code yet**: the Architect ruled in its Appendix A — a dependency-free grammar in the wall, the parser test-only; the code is its own audited pull request | Bro | In-Progress | `#331` |
+| **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. Built to its Appendix A: a dependency-free grammar in the wall, the parser a test-only oracle; 52 mutants, 52 deaths. Architect audit: round 1 RED on the parser lock, round 2 GREEN ([report](apps/desktop/AUDIT/changes/pr-333-shell-classifier.md)) ◑ | Bro | Review | `#333` |
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
@@ -39,7 +38,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **79 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **80 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

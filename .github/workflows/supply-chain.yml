@@ -168,6 +168,7 @@ jobs:
           echo "pip-audit$IGNORE_ARGS"
           pip-audit \
             --requirement engine/requirements-ci.txt \
+            --requirement engine/requirements-test-oracle.txt \
             --strict \
             --progress-spinner off \
             $IGNORE_ARGS

@@ -30,6 +30,13 @@ MUTATING_CAPABILITIES = {
     "DESTRUCTIVE",
 }
 
+# The shell tools under which a command may be classified a READ. The accepted command language
+# and the oracle it is tested against are Bash's; nothing here establishes how PowerShell, or
+# whatever a generic `Shell` tool runs, reads the same line. All three tools go through the gate,
+# so no other tool name carries anything past it -- and only this one is granted READ_LOCAL
+# (docs/design/SHELL_CLASSIFIER_DESIGN.md, Appendix A, Q2).
+READ_ONLY_SHELL_TOOLS = frozenset({"Bash"})
+
 DIRECT_ACTIONS = {
     "Read": "read",
     "Glob": "search",
@@ -189,12 +196,20 @@ def _classify_shell(tool_name: str, tool_input: dict[str, Any]) -> ActionClassif
     targets: list[str] = []
     actions: list[str] = []
     push = False
+    unvouched_read = False
     for info in infos:
-        capabilities.update(_shell_capabilities(info))
+        granted = _shell_capabilities(info)
+        if "READ_LOCAL" in granted and tool_name not in READ_ONLY_SHELL_TOOLS:
+            # A would-be read under a shell this classifier cannot vouch for is UNKNOWN, which
+            # every gate downstream denies. It is not turned into a governed mutation: that
+            # would be something a work grant could then satisfy.
+            granted = ("UNKNOWN",)
+            unvouched_read = True
+        capabilities.update(granted)
         targets.extend(info.targets)
         push = push or info.push
         actions.append(f"{info.executable}:{info.subcommand or 'invoke'}")
-    mutating = any(cap in MUTATING_CAPABILITIES for cap in capabilities) or any(
+    mutating = unvouched_read or any(cap in MUTATING_CAPABILITIES for cap in capabilities) or any(
         info.mutating for info in infos
     )
     return ActionClassification(

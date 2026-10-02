@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `b69d57b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `t159/shell-positive-grammar` — `main` @ `eb3b791`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `b69d57b`.** The only thing open is PR #332 on `t145/cockpit-read-recorded`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
 >
-> **Next:** T-159: implement the classifier to the Architect's ruling, then a code audit. T-145's cockpit read rides this.
+> T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ CI stamps the PR body (T-163); by hand: `tools/stamp_pr_head.py --pr <N>`.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2692 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2730 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1417 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

@@ -291,6 +291,9 @@ jobs:
     runs-on: windows-latest
     env:
       BRO_ENV: ci
+      # The pinned Bash parser is a test-only oracle for the shell command language (T-159).
+      # Declared REQUIRED here, so a job where it cannot be loaded fails instead of skipping.
+      BRO_SHELL_PARSER_ORACLE: required
       BRO_OPERATOR_ROOT_PUBKEY: 7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c
       PYTHONDONTWRITEBYTECODE: "1"
     defaults:
@@ -311,6 +314,10 @@ jobs:
       # This job is the second platform, not a duplicate of the first.
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      # Test-only, and its own lock so the deployment install (requirements-ci.txt) never
+      # carries it: the pinned Bash parser this job declares REQUIRED above (T-159).
+      - name: Install the shell-grammar test oracle
+        run: pip install --require-hashes -r requirements-test-oracle.txt
       # -v, unlike the ubuntu job. This job exists BECAUSE tests can run nowhere else, so what
       # skipped here is the thing worth reading: a skip is a hole unless somebody counts them,
       # and a count with no names cannot be audited. It also settles a question this job has
@@ -797,6 +804,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRO_ENV: ci
+      # The pinned Bash parser is a test-only oracle for the shell command language (T-159).
+      # Declared REQUIRED here, so a job where it cannot be loaded fails instead of skipping.
+      BRO_SHELL_PARSER_ORACLE: required
       # The operator-root trust anchor, pinned from OUTSIDE the registry (this is the committed registry's
       # operator PUBLIC key — safe to commit; if it is rotated without updating this pin, foundation
       # validation fails closed, which is the point). The foundation + live-wiring validators previously
@@ -824,6 +834,10 @@ jobs:
           python-version: "3.12"
       - name: Install engine CI dependencies
         run: pip install --require-hashes -r requirements-ci.txt
+      # Test-only, and its own lock so the deployment install (requirements-ci.txt) never
+      # carries it: the pinned Bash parser this job declares REQUIRED above (T-159).
+      - name: Install the shell-grammar test oracle
+        run: pip install --require-hashes -r requirements-test-oracle.txt
       - name: Validate foundation (operator-root pin, fail-closed)
         run: python tools/bro_validate.py
       - name: Run the engine test suite
