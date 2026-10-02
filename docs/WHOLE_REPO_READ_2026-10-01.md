@@ -810,7 +810,9 @@ Each of these is a checker's finding about a wave-2 fix that was NOT resolved by
 
 - **2026-10-02 — the design follows what is built and tested.** Recorded as Amendment A1 in `docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md`: five of seven items applied (the evidence-head floor is supervisor-owned; §4.4 carries `builder_id` and unsuffixed timestamps; the fourth bounded-reason prefix is removed; the launcher invoker is role #6; the renderer command carries `client_request_id`). Two were NOT applied because the code contradicted the work list: the request frame cap is 8192 in code, not 4096, and the two shipped artifact documents are not the §4.7/§4.7b schemas under another name. It is an Owner decision, not an Architect audit.
 - **2026-10-02 — finished worktrees may be deleted.** Done.
-- **Not decided:** the tightening list and the four risk items (audit-ledger lock, past-time verdict verification, the conductor token on the pre-tool path, the launcher's hard-coded uid).
+- **2026-10-02 — the tightening list is approved** (changes that only refuse more, or delete dead code): `delete_automation` behind native confirmation; `post_message` denied; `ci/**`, `install/**`, `contracts/**` under the engine's protected and digest roots; the HMAC verifier and legacy nonce deleted; the test catalog enforced; laws L5 and L13 say what is enforced; the renderer's `trusted_verified` pin kept and stated as an acceptance contract. Built as `T-153`.
+- **2026-10-02 — the Approvals route ceiling is 11.5 KB**, and wave 1's three engine control-plane edits (`laws/registry.json`, `schemas/task-contract.schema.json`, `config/protected-control-plane.json`) stay.
+- **Not decided:** the four risk items (audit-ledger lock, past-time verdict verification, the conductor token on the pre-tool path, the launcher's hard-coded uid). The Windows resolver's missing distinctness check is on the tightening list in spirit and is NOT built: that code does not compile on the Linux box the work runs on.
 
 
 ## 7. Closed

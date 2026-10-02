@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-153** | **The tightening list the Owner approved** — a delete asks natively, a dead command is denied, the renderer's contract says what it is (desktop half integrated); the engine half is building ◑ | Bro | In-Progress | — |
 | **T-150** | **A merge and a push are refused before they turn `main` or CI red** — `check_merge_ready.py`, `check_push_ready.py`, and a pre-tool shell arm in the hook; 85 mutants, 85 named deaths ◑ | Bro | Review | `#319` |
 | **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): waves 1 and 2 merged (405 + 275 fixed), 89 open (§9 and wave 1), 42 wait on the Owner (§8); second read (uncapped) running ◑ | Bro | In-Progress | `#317` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
