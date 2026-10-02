@@ -5,6 +5,9 @@
 > [`SHELL_CLASSIFIER_DESIGN.md`](./SHELL_CLASSIFIER_DESIGN.md) on this pull request. Everything
 > marked ◑ is the Builder's claim; nothing here is independently confirmed. Only forms the design
 > already names are used below.
+>
+> **Answered 2026-10-02** in Appendix A of the design: Q1 is **B**, Q2 and Q3 are confirmed. The
+> appendix is the ruling; this page is the question as it was asked.
 
 ## What was measured (2026-10-02, Debian 13, Python 3.13.5, bash 5.2.37)
 

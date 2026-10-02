@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
 >
-> T-159: three questions wait on the Architect before any classifier code; this pull request carries the page and no code.
+> T-159: the Architect ruled in Appendix A of the design — a dependency-free positive grammar in the wall, the Bash parser test-only; no code yet.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
