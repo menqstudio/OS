@@ -36,6 +36,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 MERGE_MAP = {"open": "OPEN", "merged": "MERGED", "closed": "CLOSED"}
 #: `mergeCommit` is read so `verify_settled_snapshot` can bound settled_at_main_head from BELOW.
@@ -547,6 +548,55 @@ _REPO_FALLBACK = "menqstudio/OS"
 #: Resolved once per process. `None` means "not yet asked"; a resolved failure is cached as `False`
 #: so a repository with no `gh` context does not pay for three subprocess calls to learn it twice.
 _REPO_SLUG_CACHE: str | bool | None = None
+
+
+#: How often a window that is older than the recorded reading is asked for again, and how long
+#: between. The stale page has always been gone a few seconds later.
+STALE_WINDOW_TRIES = 3
+STALE_WINDOW_PAUSE = 4.0
+
+
+def window_predates_reading(declared: object, live: dict) -> list[str]:
+    """The workflows whose WHOLE live window is older than the run the mirror records.
+
+    Run ids only grow, and a recorded run that really happened cannot be newer than every
+    completed run GitHub lists for the same workflow. When it is, the list is a page from the
+    past. This says nothing about a mirror that records no integer run id.
+    """
+    if not isinstance(declared, dict):
+        return []
+    stale: list[str] = []
+    for wf, runs in sorted(live.items()):
+        entry = declared.get(wf)
+        recorded = entry.get("run_id") if isinstance(entry, dict) else None
+        ids = [rid for _head, _conclusion, rid in runs if type(rid) is int]
+        if type(recorded) is int and ids and recorded > max(ids):
+            stale.append(wf)
+    return stale
+
+
+def live_main_ci_past_stale_pages(slug: str, declared: object) -> tuple[dict | None, list[str]]:
+    """`(window, stale)`: the live window, asked for again while it predates the reading.
+
+    On 2026-10-02 the runs endpoint answered `branch=main` with a window months old seven
+    times: four went into the mirror through `sync_active_pr.py` (T-161 refuses that now), and
+    three made THIS gate say "the newest is failure at 95c52c5" about a `main` that was green,
+    once in CI on a pull request that then needed a re-run. A re-run is a number, not a
+    verdict; so the gate takes the reading again itself, and when the page stays stale it says
+    THAT, by name, instead of blaming the mirror.
+    """
+    live: dict | None = None
+    stale: list[str] = []
+    for attempt in range(STALE_WINDOW_TRIES):
+        live = _live_main_ci(slug)
+        if live is None:
+            return None, []
+        stale = window_predates_reading(declared, live)
+        if not stale:
+            return live, []
+        if attempt + 1 < STALE_WINDOW_TRIES:
+            time.sleep(STALE_WINDOW_PAUSE)
+    return live, stale
 
 
 def _live_main_ci(slug: str) -> dict | None:
@@ -1172,11 +1222,18 @@ def main(argv: list[str] | None = None) -> int:
         failures.append("could not resolve the repository to read `main`'s own CI runs — a check "
                         "that could not run has not passed.")
     else:
-        live_main = _live_main_ci(slug_for_ci)
+        live_main, stale = live_main_ci_past_stale_pages(slug_for_ci, snap.get("main_ci"))
         if live_main is None:
             failures.append("could not read the newest completed run on `main` for "
                             f"{', '.join(MAIN_CI_WORKFLOWS)} — a check that could not run has not "
                             "passed.")
+        elif stale:
+            failures.append(
+                f"the Actions API answered {STALE_WINDOW_TRIES} times with completed runs on "
+                f"`main` that are ALL older than the run config/current_state.json records for "
+                f"{', '.join(stale)}. Run ids only grow, so that is a stale page and not `main`'s "
+                f"state; the mirror was NOT judged against it. A check that could not run has "
+                f"not passed — run this again in a minute.")
         else:
             failures += main_ci_failures(snap.get("main_ci"), live_main)
 

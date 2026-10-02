@@ -135,5 +135,91 @@ class MainCiReadingTests(unittest.TestCase):
                                 "a non-success reading must carry a note")
 
 
+class StaleWindowTests(unittest.TestCase):
+    """T-162. The runs endpoint answered `branch=main` from months ago, and this gate then
+    reported a green `main` as "the newest is failure at 95c52c5" — once in CI, where it cost a
+    re-run. Run ids only grow."""
+
+    RECORDED = 36992048558
+    OLD = [("95c52c5" + "0" * 33, "failure", 35542745168), ("87bfe73" + "0" * 33, "success", 35542000000)]
+    NOW = [(HEAD, "success", RECORDED)]
+    DECLARED = {"ci": {"head": HEAD, "conclusion": "success", "run_id": RECORDED, "note": ""}}
+
+    def setUp(self):
+        self.addCleanup(setattr, gate, "_live_main_ci", gate._live_main_ci)
+        self.addCleanup(setattr, gate, "STALE_WINDOW_PAUSE", gate.STALE_WINDOW_PAUSE)
+        gate.STALE_WINDOW_PAUSE = 0
+
+    def answers(self, *windows):
+        queue, calls = list(windows), []
+
+        def take(slug):
+            calls.append(slug)
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            return None if answer is None else {"ci": answer}
+        gate._live_main_ci = take
+        return calls
+
+    def test_a_window_wholly_older_than_the_recorded_run_is_stale(self):
+        """Mutant: compare with the NEWEST run only when it is the same head ⇒ not stale."""
+        self.assertEqual(gate.window_predates_reading(self.DECLARED, {"ci": self.OLD}), ["ci"])
+
+    def test_a_window_that_holds_the_recorded_run_or_a_newer_one_is_not(self):
+        """Mutant: `>=` for `>` ⇒ the ordinary case, a reading of the newest run, is stale."""
+        newer = [(NEWER, "failure", self.RECORDED + 9)] + self.NOW
+        older_too = newer + [(OTHER, "success", self.RECORDED - 5)]     # the usual window
+        for runs in (self.NOW, newer, older_too, [(NEWER, "success", self.RECORDED + 9)]):
+            with self.subTest(runs=runs):
+                self.assertEqual(gate.window_predates_reading(self.DECLARED, {"ci": runs}), [])
+
+    def test_a_mirror_with_no_integer_run_id_is_never_called_stale(self):
+        for declared in (None, {}, {"ci": None}, {"ci": {"head": HEAD}},
+                         {"ci": {"run_id": str(self.RECORDED)}}, {"ci": {"run_id": True}},
+                         {"other": {"run_id": self.RECORDED}}):
+            with self.subTest(declared=declared):
+                self.assertEqual(gate.window_predates_reading(declared, {"ci": self.OLD}), [])
+
+    def test_a_stale_page_is_asked_for_again_and_the_real_one_is_used(self):
+        """Mutant: return the first window ⇒ the stale one comes back."""
+        calls = self.answers(self.OLD, self.NOW)
+        live_window, stale = gate.live_main_ci_past_stale_pages("o/r", self.DECLARED)
+        self.assertEqual((live_window, stale), ({"ci": self.NOW}, []))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(gate.main_ci_failures(self.DECLARED, live_window), [])
+
+    def test_a_page_that_stays_stale_is_reported_as_stale_after_the_tries(self):
+        """Mutant: give up after one try ⇒ one call. Mutant: return no stale list ⇒ the caller
+        judges the mirror against a page from the past."""
+        calls = self.answers(self.OLD)
+        live_window, stale = gate.live_main_ci_past_stale_pages("o/r", self.DECLARED)
+        self.assertEqual(stale, ["ci"])
+        self.assertEqual(len(calls), gate.STALE_WINDOW_TRIES)
+
+    def test_a_fresh_window_costs_one_call(self):
+        calls = self.answers(self.NOW)
+        self.assertEqual(gate.live_main_ci_past_stale_pages("o/r", self.DECLARED),
+                         ({"ci": self.NOW}, []))
+        self.assertEqual(len(calls), 1)
+
+    def test_an_unreadable_main_is_still_unreadable(self):
+        """Mutant: treat None as a window ⇒ AttributeError instead of the refusal."""
+        self.answers(None)
+        self.assertEqual(gate.live_main_ci_past_stale_pages("o/r", self.DECLARED), (None, []))
+
+    def test_the_gate_takes_its_reading_through_this_and_says_stale_by_name(self):
+        """Mutant: call `_live_main_ci` directly in `main()` ⇒ the first assertion. Mutant:
+        fall through to `main_ci_failures` on a stale page ⇒ the second."""
+        source = pathlib.Path(gate.__file__).read_text(encoding="utf-8")
+        self.assertIn("live_main, stale = live_main_ci_past_stale_pages(slug_for_ci, "
+                      'snap.get("main_ci"))', source)
+        self.assertEqual(source.count("_live_main_ci(slug"), 2,
+                         "the raw reader is called by the retrying one and defined once")
+        block = source[source.index("        elif stale:"):source.index(
+            '            failures += main_ci_failures(snap.get("main_ci"), live_main)')]
+        self.assertIn("that is a stale page", block)
+        self.assertIn("NOT judged against it", block)
+        self.assertIn("A check that could not run", block)
+
+
 if __name__ == "__main__":
     unittest.main()

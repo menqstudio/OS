@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `architect/shell-classifier-design` — `main` @ `095938b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `5a56188`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #329 · branch `architect/shell-classifier-design`** (base `main`, tip `095938b`, task T-159).
+> **✅ SETTLED — `main` is at `5a56188`.** The only thing open is PR #330 on `t162/verifier-retries-a-stale-page`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> the Architect's design for the shell classifier, written before any code; no engine file changes
+> **Next:** implement T-159 (the shell classifier) to the Architect's design, then a code audit. T-162 rides this PR.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

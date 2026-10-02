@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #329 · branch `architect/shell-classifier-design`** (base `main`, tip `095938b`, task T-159).
+> **✅ SETTLED — `main` is at `5a56188`.** The only thing open is PR #330 on `t162/verifier-retries-a-stale-page`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> the Architect's design for the shell classifier, written before any code; no engine file changes
+> **Next:** implement T-159 (the shell classifier) to the Architect's design, then a code audit. T-162 rides this PR.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,8 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-161** | **A CI reading older than the one recorded is refused** — the runs API answered from months ago and `sync_active_pr.py` wrote it down; 10 mutants ◑ | Bro | Review | `#327` |
-| **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | `#327` |
+| **T-162** | **The mirror gate asks again when GitHub answers from the past** — a stale runs page made it call a green `main` red, once in CI; it retries, then says "stale page" by name; 11 mutants, 11 deaths ◑ | Bro | Review | `#330` |
 | **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), written by the Architect before any code (roadmap §G.2); it answers findings R2-0001 and R2-0002. **No code yet**; the implementation is its own audited pull request | Bro | Todo | `#329` |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
@@ -40,7 +39,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **76 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **78 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
