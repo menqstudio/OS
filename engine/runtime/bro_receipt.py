@@ -141,16 +141,10 @@ def verify_passing_receipt(document: dict[str, Any], keys: dict, **kwargs) -> di
     return payload
 
 
-def verify_receipt_set(documents: list[dict[str, Any]], keys: dict, *,
-                       required_commands: list[list[str]], **kwargs) -> list[dict]:
-    """Prove every required command ran and passed.
-
-    Without this a builder satisfies the gate by running the one cheap command it
-    knows will pass and never mentioning the rest.
-    """
-    payloads = [verify_passing_receipt(document, keys, **kwargs) for document in documents]
-    ran = [payload["command"] for payload in payloads]
-    for command in required_commands:
-        if command not in ran:
-            raise ReceiptError(f"no passing receipt for required command: {command}")
-    return payloads
+# A `verify_receipt_set(documents, keys, required_commands=...)` stood here until 2026-10-02
+# (T-153). Law L5 named it as its primary surface and nothing called it: the rule it stated --
+# every REQUIRED command has a passing receipt, so a builder cannot run the one cheap command it
+# knows will pass -- is enforced where completion runs, in
+# `bro_completion._validate_execution_receipts`, which calls `verify_receipt` above once per
+# cited receipt and then checks the required set against the signed task contract. L5 names
+# `verify_receipt` now, and `tests/test_release_v3.py` refuses the unused copy's return.

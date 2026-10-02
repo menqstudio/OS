@@ -58,6 +58,8 @@ Automatic work is draft-first and sandbox-first. Production mutation, external c
 
 Learning records evidence before extracting lessons. Promotion requires sandbox simulation, benchmarks, independent review, controlled approval, monitoring, and rollback. Agents cannot silently rewrite canonical behavior or self-verify their own promotion.
 
+**Status: declared, not enforced at runtime (2026-10-02).** The validator for a promotion, `bro_skill_evolution.validate_skill_evolution`, exists and is tested — it refuses a self-verified, un-reviewed or un-approved promotion — and no skill-promotion flow exists in this tree, so nothing calls it. The registry records the law as `ADVISORY_OBSERVATION` / `advisory` / `SHOULD` for that reason, and `tools/bro_live_validate.py` reports it `NOT_ENFORCED`. It returns to `MUST` when a promotion flow calls the validator and tests drive that flow.
+
 ## L14 — Recovery before GREEN
 
 Interrupted or failed mutation leaves the system RED until journals, locks, partial state, and repository integrity are checked and the expected original or approved tree is recovered. Completion claims before recovery are forbidden.

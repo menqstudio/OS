@@ -356,6 +356,40 @@ class FullExecutionTransactionE2ETests(unittest.TestCase):
             self.assertFalse(allowed, reason)
             self.assertIn("protected control-plane gate", reason)
 
+    def test_a_standard_builder_is_refused_what_ci_executes(self):
+        """T-153: `ci/**`, `install/**` and `contracts/**` are inside the perimeter.
+
+        Driven through `authorize_tool` with the complete bundle of
+        `test_specialist_mutation_authorizes_and_settles_end_to_end` -- the same task, the same
+        lease, the same binding -- so the ONLY thing between this and that allow is the target.
+        An existing file and a new one under each root, because a root that protected only
+        what is already there would let a builder add the file CI runs next.
+        """
+        targets = (
+            "ci/live/run_live_turn.sh", "ci/live/brand_new_runner.py",
+            "install/brops_install.sh", "install/brand_new_step.sh",
+            "contracts/brops-sign-request.v1.schema.json", "contracts/brand-new.v1.schema.json",
+        )
+        for existing in targets[0::2]:
+            self.assertTrue((ROOT / existing).is_file(), existing)
+        for new in targets[1::2]:
+            self.assertFalse((ROOT / new).exists(), new)
+        env = self._bundle_env()
+        with self._patches(), patch.dict(os.environ, env, clear=False):
+            # No authority artifact: the least-privileged default, a standard builder.
+            os.environ.pop("BRO_PROTECTED_AUTHORITY", None)
+            for target in targets:
+                with self.subTest(target=target):
+                    allowed, reason = authorize_tool(
+                        self._state(), "Write", {"file_path": target}, tool_use_id=TUID)
+                    self.assertFalse(allowed, reason)
+                    self.assertIn("protected control-plane gate RED", reason)
+                    self.assertIn("standard-builder task may not touch protected paths", reason)
+                    self.assertIn(target, reason)
+            # Refused before the transaction: nothing reserved a lease or prepared a journal.
+            self.assertEqual(self._ledger_state(), ([], []))
+            self.assertEqual(list(self.recovery_store.iterdir()), [])
+
     def test_missing_execution_lease_denies_and_rolls_back_recovery(self):
         env = self._bundle_env()
         env.pop("BRO_EXECUTION_LEASE")

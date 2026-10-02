@@ -15,6 +15,7 @@ from bro_protected import (
     ProtectedManifest,
     ProtectedScopeError,
     authorize_protected_scope,
+    bytecode_shadow_offenders,
     compute_control_plane_digest,
     is_digest_member,
     is_protected,
@@ -275,6 +276,136 @@ class ManifestLoadTests(unittest.TestCase):
         self.assertTrue(modules)
         for name in modules:
             self.assertTrue(is_protected(manifest, f"runtime/{name}"), name)
+
+
+#: The three roots T-153 added, each with a file that EXISTS in this tree and a path that does not.
+#: The existing ones are what the monorepo CI executes or the services load: the two kits and the
+#: installer run under sudo, and the signer and supervisor read their wire schema from contracts/.
+CI_EXECUTED_ROOTS = (
+    ("ci/**", "ci/live/run_live_turn.sh", "ci/live/brand_new_runner.py"),
+    ("install/**", "install/brops_install.sh", "install/brand_new_step.sh"),
+    ("contracts/**", "contracts/brops-sign-request.v1.schema.json",
+     "contracts/brand-new.v1.schema.json"),
+)
+
+
+class CiExecutedSurfaceTests(unittest.TestCase):
+    """What CI runs from this tree is inside the perimeter (Owner decision 2026-10-02, T-153).
+
+    Until then `ci/**`, `install/**` and `contracts/**` were in neither list, so a standard
+    builder could rewrite the script CI runs under sudo, and a binding issued before the edit
+    still verified after it. Every test here drives the SHIPPED manifest, not a fixture one:
+    the property is about `config/protected-control-plane.json`, and a fixture manifest that
+    listed the roots would pass with the shipped file unchanged.
+    """
+
+    def setUp(self):
+        self.manifest = load_protected_manifest(ROOT)
+        self.root = real(tempfile.mkdtemp(prefix="bro-cp-ci-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        for _pattern, existing, _new in CI_EXECUTED_ROOTS:
+            self.write(existing, "as shipped")
+        self.write("docs/readme.md", "outside the perimeter")
+
+    def write(self, relative: str, content: str) -> pathlib.Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def digest(self) -> str:
+        return compute_control_plane_digest(self.root, self.manifest)
+
+    def test_the_fixture_names_real_files_and_unused_paths(self):
+        # Otherwise "an existing file" below is a path nothing ever ran, and "a new file" is one
+        # that is already there.
+        for _pattern, existing, new in CI_EXECUTED_ROOTS:
+            self.assertTrue((ROOT / existing).is_file(), existing)
+            self.assertFalse((ROOT / new).exists(), new)
+
+    def test_each_root_is_in_both_lists(self):
+        for pattern, _existing, _new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                self.assertIn(pattern, self.manifest.protected_roots)
+                self.assertIn(pattern, self.manifest.digest_roots)
+
+    def test_a_standard_builder_is_refused_an_existing_file_under_each(self):
+        for pattern, existing, _new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                with self.assertRaises(ProtectedScopeError) as caught:
+                    authorize_protected_scope(self.manifest, STANDARD_AUTHORITY, [existing])
+                self.assertIn("standard-builder task may not touch protected paths",
+                              str(caught.exception))
+                self.assertIn(existing, str(caught.exception))
+
+    def test_a_standard_builder_is_refused_a_new_file_under_each(self):
+        for pattern, _existing, new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                with self.assertRaises(ProtectedScopeError) as caught:
+                    authorize_protected_scope(self.manifest, STANDARD_AUTHORITY, [new])
+                self.assertIn(new, str(caught.exception))
+
+    def test_the_refusal_is_the_roots_and_not_everything(self):
+        # The control: with the same manifest and the same authority a path outside the
+        # perimeter is allowed, so the two tests above are not passing on a manifest that
+        # refuses every path.
+        self.assertEqual(
+            authorize_protected_scope(self.manifest, STANDARD_AUTHORITY, ["docs/readme.md"]), [])
+
+    def test_every_file_under_each_root_on_disk_is_protected_and_digested(self):
+        seen = 0
+        for pattern, _existing, _new in CI_EXECUTED_ROOTS:
+            directory = ROOT / pattern.split("/")[0]
+            for path in sorted(directory.rglob("*")):
+                relative = path.relative_to(ROOT).as_posix()
+                if not path.is_file() or "__pycache__" in relative.split("/"):
+                    continue
+                seen += 1
+                self.assertTrue(is_protected(self.manifest, relative), relative)
+                self.assertTrue(is_digest_member(self.manifest, relative), relative)
+        self.assertGreaterEqual(seen, 20, "the walk found almost nothing to check")
+
+    def test_the_digest_changes_when_a_file_under_each_changes(self):
+        for pattern, existing, _new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                before = self.digest()
+                self.write(existing, "edited after the binding was issued")
+                self.assertNotEqual(before, self.digest())
+
+    def test_the_digest_changes_when_a_file_is_created_under_each(self):
+        for pattern, _existing, new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                before = self.digest()
+                self.write(new, "surprise")
+                self.assertNotEqual(before, self.digest())
+
+    def test_a_binding_issued_before_the_edit_no_longer_verifies(self):
+        for pattern, existing, _new in CI_EXECUTED_ROOTS:
+            with self.subTest(root=pattern):
+                bound = self.digest()
+                self.assertEqual(
+                    verify_control_plane_digest(self.root, self.manifest, bound), bound)
+                self.write(existing, "edited after the binding was issued: " + pattern)
+                with self.assertRaises(ProtectedScopeError) as caught:
+                    verify_control_plane_digest(self.root, self.manifest, bound)
+                self.assertIn("control plane changed after session authority was issued",
+                              str(caught.exception))
+
+    def test_the_digest_still_ignores_what_is_outside_the_perimeter(self):
+        before = self.digest()
+        self.write("docs/readme.md", "rewritten")
+        self.assertEqual(before, self.digest())
+
+    def test_bytecode_under_ci_is_a_shadow(self):
+        # ci/ holds Python the kits stage and the suite imports. Digested, it is subject to the
+        # same compensating control as runtime/: a cache there refuses.
+        self.assertEqual(bytecode_shadow_offenders(self.root, self.manifest), [])
+        self.write("ci/live/__pycache__/run_signer.cpython-313.pyc", "forged")
+        self.assertEqual(bytecode_shadow_offenders(self.root, self.manifest),
+                         ["ci/live/__pycache__"])
+        with self.assertRaises(ProtectedScopeError) as caught:
+            verify_control_plane_digest(self.root, self.manifest, self.digest())
+        self.assertIn("compiled bytecode under a digest root", str(caught.exception))
 
 
 if __name__ == "__main__":

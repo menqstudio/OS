@@ -130,12 +130,26 @@ function TurnOutcome({ attempt, L }: { attempt: GovernedTurnAttempt; L: Localize
       </div>
     );
   }
-  // Everything else produced no verdict THIS APP ACCEPTS, so the only way here is `unavailable`.
+  // The broker DID commit, under `demonstration_custody` — what a configured deployment commits
+  // today. This app accepts only `trusted_verified`, so the turn is named for what it is and the
+  // reply is not shown: the attempt carries no message, so there is nothing here to render. This
+  // used to read "No verdict exists / no broker allowed or refused this turn", which was false.
+  if (attempt.status === 'commit_not_accepted') {
+    return (
+      <div role="note">
+        <span className="pill warn">{L('outcomeCommitNotAccepted')}</span>
+        <p className="br-body">{L('outcomeCommitNotAcceptedBody')}</p>
+        <p className="micro br-why">{L('trustLabel')}<b className="mono">{attempt.trustState}</b></p>
+        <p className="micro br-why">{L('turnIdLabel')}<b className="mono">{attempt.brokerTurnId}</b></p>
+      </div>
+    );
+  }
+  // Everything else produced no verdict at all, so the only way here is `unavailable`.
   if (attempt.status !== 'unavailable') return null;
-  // A reply that arrived and was refused by `parseResult` is NOT "nobody allowed or refused": the
-  // broker may have durably committed the turn under a label other than `trusted_verified`
-  // (`demonstration_custody` is what a configured deployment commits today), and the renderer rejects
-  // that frame by design. The refusal is this app's, so the words must not deny a broker decision.
+  // A reply that arrived and was refused by `parseResult` is NOT "nobody allowed or refused": a
+  // complete `demonstration_custody` commit is handled above, but a frame under a label this app
+  // does not know, or an incomplete one, lands here — and the renderer cannot rule out that the
+  // broker committed something. The refusal is this app's, so the words must not deny a decision.
   if (attempt.kind === 'malformed_broker_reply') {
     return (
       <div role="note">

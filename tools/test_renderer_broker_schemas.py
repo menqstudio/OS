@@ -16,10 +16,19 @@ The Rust ``CommittedMessage`` no longer does -- ``CommittedMessage::new`` carrie
 label the committing transaction stored, and ``governed_message_store.rs`` allows two
 (``trusted_verified`` and ``demonstration_custody``). So the broker can project a frame
 this schema refuses, and the renderer (``governedTurn.ts``) refuses it too, on purpose
-and fail-closed. Which side is the contract -- widen the schema to the labels the broker
-can commit, or have the broker decline to project anything but ``trusted_verified`` --
-is a decision about what the window may be shown as committed, and it is the Owner's.
-These tests pin the schema as it is: the NARROWER of the two.
+and fail-closed.
+
+WHY THE CONST IS LOCKED HERE. Which side is the contract was the Owner's decision, and he
+took it on 2026-10-02: the const stays, and the schema says what it is -- the RENDERER'S
+ACCEPTANCE CONTRACT, not the broker's emission set. The renderer rejecting every commit
+that is not ``trusted_verified`` is one of the three refusals holding the production gate
+(CLAUDE.md section 6, the second half of refusal 1: the Bridge panel reaches
+``connect_broker`` without ``governed_verification_unconfigured()``, and there this pin is
+what refuses). Widening the const to the two labels the broker can commit would make the
+window accept a demonstration-custody turn as committed, which is that gate opening by an
+edit to a JSON file. So ``test_committed_message_shape`` fails on any other value, and
+``test_trust_state_const_says_it_is_the_renderers_acceptance_contract`` fails if the
+schema stops saying why -- a const with no stated reason is one the next reader "fixes".
 
 Run: ``python -m unittest tools.test_renderer_broker_schemas`` (or execute the
 file directly).
@@ -157,11 +166,34 @@ class ResultSchemaTests(unittest.TestCase):
         # is not a constant any more (see the module docstring); this asserts the schema, which
         # is what the renderer accepts, not what the broker is able to send.
         self.assertEqual(message["properties"]["role"]["const"], "assistant")
-        self.assertEqual(
-            message["properties"]["trust_state"]["const"], "trusted_verified"
-        )
+        trust_state = message["properties"]["trust_state"]
+        self.assertEqual(trust_state["const"], "trusted_verified")
+        # A const, and nothing that could widen it: an `enum` beside a `const` reads as
+        # documentation and is how the second label would arrive.
+        self.assertNotIn("enum", trust_state)
+        self.assertNotIn("anyOf", trust_state)
+        self.assertNotIn("oneOf", trust_state)
         # created_at_ms is an integer (matches the Rust i64).
         self.assertEqual(message["properties"]["created_at_ms"]["type"], "integer")
+
+    def test_trust_state_const_says_it_is_the_renderers_acceptance_contract(self):
+        """The const is kept ON PURPOSE (Owner decision, 2026-10-02), and the schema has to
+        say so where the const is: the broker commits ``demonstration_custody`` too, and a
+        reader who sees a schema narrower than the emitter, with no reason beside it, widens
+        the schema. The sentence is locked with the value it explains."""
+        description = self.by_status["committed"]["properties"]["message"]["properties"][
+            "trust_state"
+        ]["description"]
+        for required in (
+            "renderer's acceptance contract",
+            "not the broker's emission set",
+            "demonstration_custody",
+            "one of the three refusals holding the production gate",
+            "Owner decision",
+        ):
+            self.assertIn(required, description)
+        # And the frame-level description points a reader at it.
+        self.assertIn("ACCEPTANCE CONTRACT", self.schema["description"])
 
     def test_blocked_required_and_no_message(self):
         blocked = self.by_status["blocked"]

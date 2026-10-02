@@ -149,6 +149,25 @@ export const STR = {
     ru: 'Ни один брокер не разрешил и не отклонил этот ход. Не читайте это как отказ — это отсутствие '
       + 'ответа, а это другой факт.',
   },
+  // The broker committed the turn under demonstration custody. A broker decision exists; this
+  // app declines it. Said in those words, and without the reply.
+  outcomeCommitNotAccepted: {
+    en: 'Committed by the broker — not accepted here',
+    hy: 'Broker-ը commit արեց — այստեղ չի ընդունվում',
+    ru: 'Брокер зафиксировал — здесь не принято',
+  },
+  outcomeCommitNotAcceptedBody: {
+    en: 'The broker was reached and it committed this turn, under demonstration custody. That is a '
+      + 'real broker verdict. This app accepts only a turn marked trusted_verified, so the reply is '
+      + 'not displayed and nothing here is shown as verified.',
+    hy: 'Broker-ին հասանք, ու նա commit արեց այս քայլը՝ demonstration custody-ի ներքո։ Սա broker-ի '
+      + 'իրական վճիռ ա։ Այս ծրագիրն ընդունում ա միայն trusted_verified նշված քայլը, ուստի պատասխանը '
+      + 'չի ցուցադրվում, ու այստեղ ոչինչ չի ներկայացվում որպես հաստատված։',
+    ru: 'Брокер был достигнут и зафиксировал этот ход — под demonstration custody. Это настоящий '
+      + 'вердикт брокера. Это приложение принимает только ход с меткой trusted_verified, поэтому '
+      + 'ответ не показан и ничто здесь не представлено как подтверждённое.',
+  },
+  trustLabel: { en: 'broker label: ', hy: 'broker-ի նշան՝ ', ru: 'метка брокера: ' },
   // A reply ARRIVED and this app refused to read it. Not "no broker allowed or refused": the broker may
   // have committed the turn under a label the renderer does not accept (anything but trusted_verified),
   // so the words name the refusal as the app's and leave what the broker did unestablished.

@@ -173,6 +173,91 @@ class LegacyReleaseGrantRetiredTests(unittest.TestCase):
     def test_v3_release_path_remains(self):
         from bro_release_v3 import validate_release_grant_v3  # noqa: F401  the live path
 
+    #: Retired on 2026-10-02 (T-153, Owner decision), by the module each lived in.
+    #:
+    #: `bro_security.verify_signed_document` was an HMAC verifier -- the verifying key IS the
+    #: signing key, read from the environment of the process doing the verifying -- and
+    #: `bro_security.consume_nonce` the legacy one-step nonce helper the reserve/finalize flow
+    #: superseded. Each had one caller, its own test, and two modules imported the first without
+    #: using it. Kept importable they stay callable.
+    #:
+    #: `bro_receipt.verify_receipt_set` was law L5's declared PRIMARY surface and nothing called
+    #: it: the completion path proves the required-command set in its own loop over
+    #: `bro_receipt.verify_receipt`. A second implementation of a rule, reached by no path, is
+    #: where the rule drifts unnoticed; L5 now names the function that runs.
+    RETIRED_BY_MODULE = {
+        "bro_security": ("verify_signed_document", "consume_nonce"),
+        "bro_receipt": ("verify_receipt_set",),
+    }
+    RETIRED_SECURITY_SYMBOLS = tuple(
+        symbol for symbols in RETIRED_BY_MODULE.values() for symbol in symbols)
+
+    def test_the_hmac_verifier_and_the_legacy_nonce_helper_are_gone(self):
+        import importlib
+        for module_name, symbols in self.RETIRED_BY_MODULE.items():
+            module = importlib.import_module(module_name)
+            for symbol in symbols:
+                self.assertFalse(hasattr(module, symbol),
+                                 f"retired {module_name} symbol is back: {symbol}")
+
+    @staticmethod
+    def retired_names_in(source: str, retired) -> list[str]:
+        """Where `source` DEFINES, IMPORTS or REACHES one of `retired`, as `kind name@line`.
+
+        Parsed, not grepped: the names still appear in prose (the comment left where the
+        functions stood says what they were), and a text match cannot tell that from a
+        definition. A definition anywhere in the tree counts -- nested, in a class, or bound by
+        assignment -- because a helper re-created one level down is the same helper.
+        """
+        import ast
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name in retired:
+                    found.append(f"def {node.name}@{node.lineno}")
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    for name in (alias.name.rsplit(".", 1)[-1], alias.asname):
+                        if name in retired:
+                            found.append(f"import {name}@{node.lineno}")
+            elif isinstance(node, ast.Name) and node.id in retired:
+                found.append(f"name {node.id}@{node.lineno}")
+            elif isinstance(node, ast.Attribute) and node.attr in retired:
+                found.append(f"attribute {node.attr}@{node.lineno}")
+        return found
+
+    def test_no_engine_module_defines_imports_or_calls_them(self):
+        """`hasattr` above sees one module. This reads every Python file the engine ships --
+        the runtime, its tools and the CI kits -- so the helper cannot come back under the same
+        name next door, or be imported from wherever it reappears."""
+        scanned = 0
+        for directory in ("runtime", "tools", "ci"):
+            for path in sorted((ROOT / directory).rglob("*.py")):
+                scanned += 1
+                found = self.retired_names_in(path.read_text(encoding="utf-8"),
+                                              self.RETIRED_SECURITY_SYMBOLS)
+                self.assertEqual(found, [], f"{path.relative_to(ROOT).as_posix()}: {found}")
+        self.assertGreater(scanned, 60, "the scan read almost nothing")
+
+    def test_the_scan_sees_each_way_a_retired_name_can_return(self):
+        # The scan above passes on a tree that holds none. This is what says it would not
+        # pass on one that did: every shape, each against the scanner itself.
+        retired = self.RETIRED_SECURITY_SYMBOLS
+        cases = {
+            "def verify_signed_document(doc, key_env):\n    return doc\n": "def verify_signed_document@1",
+            "class Legacy:\n    def consume_nonce(self):\n        pass\n": "def consume_nonce@2",
+            "from bro_security import SecurityError, verify_signed_document\n":
+                "import verify_signed_document@1",
+            "from elsewhere import other as consume_nonce\n": "import consume_nonce@1",
+            "import bro_security\nbro_security.consume_nonce({}, None)\n": "attribute consume_nonce@2",
+            "verify_signed_document = lambda doc, key_env: doc\n": "name verify_signed_document@1",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertIn(expected, self.retired_names_in(source, retired))
+        prose = '"""`verify_signed_document` was HMAC."""\n# consume_nonce stood here\nx = 1\n'
+        self.assertEqual(self.retired_names_in(prose, retired), [])
+
 
 if __name__ == "__main__":
     unittest.main()

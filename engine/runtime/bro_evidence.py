@@ -19,7 +19,9 @@ The anchor only works asymmetrically. Under HMAC the verifying key is the signin
 key, and the hook verifying the head runs in the builder's own process, so the
 builder would simply sign a head describing the prefix it wanted to present.
 Ed25519 is what makes the head an authority the builder cannot mint. That is why
-this module exists next to the older HMAC path rather than extending it.
+this module was written beside the older HMAC path rather than as an extension of
+it. (That path's verifier, ``bro_security.verify_signed_document``, was deleted on
+2026-10-02; nothing called it any more.)
 
 One anchor is not enough against rollback: a builder who RETAINS an older signed
 head (and the matching event prefix) presents a self-consistent truncated chain.

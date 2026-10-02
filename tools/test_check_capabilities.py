@@ -510,5 +510,163 @@ class TierXProtectionRules(unittest.TestCase):
         self.assertTrue(any("is missing" in p for p in problems), problems)
 
 
+# A `commands.rs` shaped like the real one: a gate that asks and then writes, a handler that
+# shows the dialog under the guard and delegates, and a test module that names the same calls.
+COMMANDS_RS_ASKING = """
+async fn delete_automation_after_native_confirmation<C, Fut>(db: &Db, id: &str, confirm: C) -> Result<(), String> {
+    let shown = repo::automations::get(&conn, id)?;
+    match confirm(delete_automation_prompt(lang, &shown)).await {
+        Ok(true) => {}
+        _ => return Err("not confirmed".into()),
+    }
+    repo::automations::delete(&conn, id, actor)
+}
+
+#[tauri::command]
+pub async fn delete_automation(
+    state: State<'_, AppState>,
+    window: tauri::Window,
+    id: String,
+) -> Result<(), String> {
+    let _guard = ConfirmationGuard::acquire()?;
+    delete_automation_after_native_confirmation(&state.db, &id, move |prompt| async move {
+        win.dialog().message(prompt.body).blocking_show()
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    fn a_test() {
+        repo::automations::delete(&conn, id, actor);
+    }
+}
+"""
+
+
+class NativeDialogAndRowDeleteRules(unittest.TestCase):
+    """T-153. `delete_automation` was `{"tier": "X", "grant": "allow", "protection": "none"}`:
+    an irreversible hard delete one renderer call away, outside the L2 rule because of the
+    tier it was typed under. It now claims `native-confirm` by a dialog its own handler
+    raises, and both the claim and the loophole are held here."""
+
+    def _tmp(self) -> pathlib.Path:
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return pathlib.Path(d.name)
+
+    def _tree(self, protection: str | None, commands_rs: str | None = COMMANDS_RS_ASKING,
+              tier: str = "X") -> pathlib.Path:
+        root = self._tmp()
+        cmds = ["list_projects", "decide_approval", "reject_approval", "delete_automation"]
+        grants = {"list_projects": "allow", "decide_approval": "deny",
+                  "reject_approval": "allow", "delete_automation": "allow"}
+        CheckCapabilitiesTests()._write(root, cmds, grants)
+        policy_path = root / cc.POLICY
+        doc = json.loads(policy_path.read_text(encoding="utf-8"))
+        spec = {"tier": tier, "grant": "allow"}
+        if protection is not None:
+            spec["protection"] = protection
+        doc["commands"]["delete_automation"] = spec
+        policy_path.write_text(json.dumps(doc), encoding="utf-8")
+        if commands_rs is not None:
+            (root / cc.COMMANDS_RS).write_text(commands_rs, encoding="utf-8")
+        return root
+
+    def _red(self, root: pathlib.Path, needle: str) -> None:
+        problems = cc.check(root)
+        self.assertTrue(any(needle in p for p in problems), problems)
+
+    # -- the loophole: a hard delete typed under another tier --------------------------
+
+    def test_a_delete_granted_under_tier_x_with_protection_none_is_red(self):
+        # Exactly the state the tree was in. X may honestly say 'none'; a delete may not.
+        self._red(self._tree("none"), "a delete_* command may be 'allow' only with")
+
+    def test_a_delete_granted_under_any_other_tier_with_no_protection_is_red(self):
+        for tier in ("R", "L1", "A"):
+            with self.subTest(tier=tier):
+                self._red(self._tree(None, tier=tier),
+                          "a delete_* command may be 'allow' only with")
+
+    def test_the_real_policy_grants_no_delete_without_a_protection(self):
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        policy = cc.policy_commands(repo)
+        granted = {c: s for c, s in policy.items()
+                   if c.startswith("delete_") and s.get("grant") == "allow"}
+        self.assertEqual(set(granted), {"delete_automation"})
+        self.assertEqual(granted["delete_automation"].get("protection"), "native-confirm")
+
+    # -- the claim: 'native-confirm' by a dialog the handler raises --------------------
+
+    def test_a_handler_that_asks_before_it_deletes_is_green(self):
+        self.assertEqual(cc.check(self._tree("native-confirm")), [])
+
+    def test_the_claim_with_no_commands_rs_is_red(self):
+        self._red(self._tree("native-confirm", commands_rs=None), "is missing")
+
+    def test_the_claim_with_no_handler_is_red(self):
+        src = COMMANDS_RS_ASKING.replace("pub async fn delete_automation(", "pub async fn other(")
+        self._red(self._tree("native-confirm", src), "has no handler")
+
+    def test_a_handler_missing_any_one_marker_is_red(self):
+        for marker in cc.HANDLER_MARKERS:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, COMMANDS_RS_ASKING)
+                src = COMMANDS_RS_ASKING.replace(marker, "/* removed */")
+                self._red(self._tree("native-confirm", src), f"its handler lacks `{marker}`")
+
+    def test_a_handler_that_does_not_call_the_gate_is_red(self):
+        src = COMMANDS_RS_ASKING.replace(
+            "    delete_automation_after_native_confirmation(&state.db",
+            "    something_else(&state.db")
+        self._red(self._tree("native-confirm", src), "never calls")
+
+    def test_a_handler_that_deletes_on_its_own_is_red(self):
+        src = COMMANDS_RS_ASKING.replace(
+            "    let _guard = ConfirmationGuard::acquire()?;",
+            "    let _guard = ConfirmationGuard::acquire()?;\n"
+            "    repo::automations::delete(&conn, &id, actor)?;")
+        root = self._tree("native-confirm", src)
+        self._red(root, "calls `repo::automations::delete(` itself")
+        self._red(root, "2 production call site(s)")
+
+    def test_a_second_production_call_site_is_red(self):
+        src = COMMANDS_RS_ASKING.replace(
+            "\n#[cfg(test)]",
+            "\nfn sweep() {\n    repo::automations::delete(&conn, id, actor);\n}\n\n#[cfg(test)]")
+        self._red(self._tree("native-confirm", src), "2 production call site(s)")
+
+    def test_a_gate_that_writes_before_it_asks_is_red(self):
+        src = COMMANDS_RS_ASKING.replace(
+            "    let shown = repo::automations::get(&conn, id)?;",
+            "    repo::automations::delete(&conn, id, actor)?;")
+        src = src.replace("    repo::automations::delete(&conn, id, actor)\n}", "    Ok(())\n}")
+        self._red(self._tree("native-confirm", src), "writes before it asks")
+
+    def test_a_gate_that_never_asks_is_red(self):
+        src = COMMANDS_RS_ASKING.replace("confirm(delete_automation_prompt(lang, &shown))",
+                                         "always_yes()")
+        self._red(self._tree("native-confirm", src), "never asks")
+
+    def test_a_delete_that_exists_only_in_the_test_module_does_not_count(self):
+        # The fixture's test module calls the delete too. With the production call gone the
+        # count must be zero, not one: a mention under #[cfg(test)] is not a production call.
+        src = COMMANDS_RS_ASKING.replace(
+            "    repo::automations::delete(&conn, id, actor)\n}", "    Ok(())\n}")
+        self.assertIn("repo::automations::delete(", src)
+        root = self._tree("native-confirm", src)
+        self._red(root, "0 production call site(s)")
+        self._red(root, "is not inside")
+
+    def test_the_real_handler_is_what_the_real_policy_claims(self):
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        src = (repo / cc.COMMANDS_RS).read_text(encoding="utf-8")
+        self.assertEqual(
+            cc.native_dialog_problems(
+                "delete_automation", cc.NATIVE_DIALOG_ENFORCEMENT["delete_automation"], src),
+            [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -499,6 +499,31 @@ class ExecutionReceiptGateTests(unittest.TestCase):
         with self.assertRaises(CompletionError):
             self._validate([self._entry(rid, command)], required=[self.OK_CMD])
 
+    def test_a_receipt_the_builder_signed_for_itself_is_refused_on_the_completion_path(self):
+        """Law L5 where it runs. The receipt is the recorder's, re-signed by a key the builder
+        holds: same id, same command, same candidate, a valid signature by a registered,
+        active key. Everything this loop checks ITSELF is satisfied -- the cited id matches,
+        the exit code is zero, the command is the required one -- so the only thing that can
+        refuse it is `bro_receipt.verify_receipt`, on the signing authority. A loop that
+        stopped calling the verifier would accept it."""
+        from broctl import sign_payload
+        rid, command = self._receipt(self.OK_CMD)
+        path = self.store / f"{rid}.json"
+        honest = json.loads(path.read_text(encoding="utf-8"))["payload"]
+        for authority in ("builder", "verifier"):
+            with self.subTest(signed_by=authority):
+                payload = dict(honest, key_id=self.keys[authority]["key_id"])
+                path.write_text(json.dumps(
+                    sign_payload(self.keys[authority]["private_key"], payload)), encoding="utf-8")
+                with self.assertRaises(CompletionError) as c:
+                    self._validate([self._entry(rid, command)], required=[self.OK_CMD])
+                self.assertIn(f"execution receipt {rid} RED: receipt signature RED", str(c.exception))
+                self.assertIn(f"({authority}) may not sign evidence-event", str(c.exception))
+        # The control: the recorder's own signature over the same payload passes the loop.
+        path.write_text(json.dumps(sign_payload(
+            self.keys["evidence-recorder"]["private_key"], dict(honest))), encoding="utf-8")
+        self._validate([self._entry(rid, command)], required=[self.OK_CMD])
+
     def test_no_trusted_required_command_defined_is_denied(self):
         rid, command = self._receipt(self.OK_CMD)
         # empty contract commands AND a catalog with no discovery_command

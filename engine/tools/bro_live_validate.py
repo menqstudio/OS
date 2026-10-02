@@ -13,6 +13,21 @@ A law is derived ENFORCED only when every required link is LIVE_PROVEN; otherwis
 stays STATIC_ONLY. Nothing is asserted -- status is computed from real runs
 (Verifiability MP-11).
 
+Two things a passing test cannot establish, and which this module therefore does not
+let a passing test stand in for (T-153):
+
+  * that the surface a record NAMES exists. Every declared execution surface must
+    resolve to a definition; a record pointing at a function that was renamed or
+    deleted is not enforced by it, however green the tests bound beside it are.
+  * that a law the record itself declares ADVISORY is enforced. A record whose
+    failure_behavior.class is ADVISORY_OBSERVATION says, in the registry's own
+    vocabulary, that nothing normative enforces the law today (L13: its validator
+    exists and is tested, and no promotion flow calls it). Such a law is derived
+    NOT_ENFORCED and never LIVE_PROVEN, is named on the last line, and is not counted
+    among the enforced. Its bound cases must still pass -- exactly the condition that
+    used to print ENFORCED for it -- so declaring a law advisory admits nothing that
+    was refused before; it only stops the report calling it something it is not.
+
 Negatives must assert WHY, not merely THAT (the rule ci/live/run_live_turn.sh spells
 out in `expect_blocked`). This probe used to accept ANY denial, and the O-1 bytecode
 gate showed what that costs: once `assert_no_bytecode_shadow` began refusing on a
@@ -45,7 +60,7 @@ from bro_env_health import check_environment
 from bro_protected import (WRITABLE_CONTROL_PLANE_ACKNOWLEDGEMENT,
                            WRITABLE_CONTROL_PLANE_ENV,
                            bytecode_shadow_offenders, load_protected_manifest)
-from bro_traceability import load_runtime_dependencies
+from bro_traceability import load_runtime_dependencies, symbol_defined
 
 # The exact cause the anti-dead-wiring negative exists to demonstrate: the wall
 # refusing an action whose scope cannot be proven. Any OTHER refusal -- a missing
@@ -169,6 +184,57 @@ def live_wiring_denies(root: pathlib.Path, interpreter: str) -> bool:
             and run_case(root, interpreter, "tests/test_live_hook_deny.py", "test_wired_command_denies_out_of_scope"))
 
 
+#: The registry's own word for a law nothing normative enforces. `bro_traceability` refuses it
+#: on a MUST / MUST_NOT / SHALL record, so a law can carry it only by also giving up the claim.
+ADVISORY_CLASS = "ADVISORY_OBSERVATION"
+
+
+def declared_advisory(record: dict) -> bool:
+    """True when the record itself says the law is not normatively enforced."""
+    return (record.get("failure_behavior") or {}).get("class") == ADVISORY_CLASS
+
+
+def derive_live_status(root: pathlib.Path, record: dict, *, prereq_ok: bool,
+                       tests_ok: bool, wiring_ok: bool) -> dict:
+    """One law's live status, from what was observed and what the record declares.
+
+    Split out of `validate_live` so the derivation can be driven without launching the
+    wired interpreter seventeen times: the three observations come in, the verdict goes
+    out, and nothing here runs a subprocess.
+
+    `bound_checks_pass` is the conjunction that used to be the whole of ENFORCED --
+    prerequisites resolve, every bound case passes, and for a hook-primary law the wired
+    hook denies for the expected cause -- now with one more term: every surface the record
+    names resolves to a definition. A law whose record names a function that does not exist
+    is not enforced by that function.
+
+    ENFORCED / LIVE_PROVEN additionally requires that the record does not declare the law
+    advisory. For such a law the status is NOT_ENFORCED whatever its tests say: they show
+    what its validator would refuse, not that anything calls it.
+    """
+    surfaces = record["execution_surfaces"]
+    has_hook = any(s["kind"] == "hook" and s["path_role"] == "primary" for s in surfaces)
+    surfaces_defined = all(symbol_defined(root, s["module"], s["symbol"]) for s in surfaces)
+    surface_ok = bool(tests_ok and surfaces_defined and (wiring_ok if has_hook else True))
+    bound_checks_pass = bool(prereq_ok and tests_ok and surface_ok)
+    advisory = declared_advisory(record)
+    enforced = bound_checks_pass and not advisory
+    if advisory:
+        status = "NOT_ENFORCED"
+    else:
+        status = "ENFORCED" if enforced else "STATIC_ONLY"
+    return {
+        "id": record["id"],
+        "enforcement_status": status,
+        "effective_proof_level": "LIVE_PROVEN" if enforced else "STATIC_PROVEN",
+        "declared_advisory": advisory,
+        "bound_checks_pass": bound_checks_pass,
+        "live": {"prereq": prereq_ok, "tests": tests_ok, "surface": surface_ok,
+                 "surfaces_defined": surfaces_defined,
+                 "hook_surface": has_hook, "wiring": wiring_ok},
+    }
+
+
 def validate_live(root: pathlib.Path = ROOT) -> dict:
     interpreter = wired_interpreter(root)
     # FIRST, before anything is run: a bytecode shadow under a digest root makes the
@@ -204,16 +270,8 @@ def validate_live(root: pathlib.Path = ROOT) -> dict:
     for record in records:
         interp = interpreter or sys.executable
         tests_ok = all(run_case(root, interp, t["file"], t["case"]) for t in record["tests"])
-        has_hook = any(s["kind"] == "hook" and s["path_role"] == "primary" for s in record["execution_surfaces"])
-        surface_ok = tests_ok and (wiring_ok if has_hook else True)
-        enforced = bool(prereq_ok and tests_ok and surface_ok)
-        derived.append({
-            "id": record["id"],
-            "enforcement_status": "ENFORCED" if enforced else "STATIC_ONLY",
-            "effective_proof_level": "LIVE_PROVEN" if enforced else "STATIC_PROVEN",
-            "live": {"prereq": prereq_ok, "tests": tests_ok, "surface": surface_ok,
-                     "hook_surface": has_hook, "wiring": wiring_ok},
-        })
+        derived.append(derive_live_status(root, record, prereq_ok=prereq_ok,
+                                          tests_ok=tests_ok, wiring_ok=wiring_ok))
     return {
         "wired_interpreter": interpreter,
         "wiring_denies": wiring_ok,
@@ -257,10 +315,35 @@ def assurance_failures(report: dict) -> list[str]:
             f"{report['wiring_reason']}")
     if not report["derived"]:
         failures.append("no laws with a responsibility were found to validate")
-    static_only = [d["id"] for d in report["derived"] if d["enforcement_status"] != "ENFORCED"]
+    # A law the registry declares advisory is NOT_ENFORCED by declaration, so "not ENFORCED" is
+    # not by itself its failure -- but everything that used to make it ENFORCED is still
+    # required of it, read from `bound_checks_pass` and absent-means-failed. The set of states
+    # this gate accepts is therefore the one it accepted before; what changed is that such a
+    # law is no longer counted, or printed, as enforced.
+    static_only = [d["id"] for d in report["derived"]
+                   if d["enforcement_status"] != "ENFORCED" and not d.get("declared_advisory")]
     if static_only:
         failures.append(f"laws not LIVE_PROVEN: {', '.join(static_only)}")
+    advisory_broken = [d["id"] for d in report["derived"]
+                       if d.get("declared_advisory") and d.get("bound_checks_pass") is not True]
+    if advisory_broken:
+        failures.append(
+            "laws declared advisory whose bound cases, surfaces or prerequisites do not hold "
+            f"live: {', '.join(advisory_broken)} — a law that is not enforced still owes the "
+            "tests that say what its validator would refuse")
+    overclaimed = [d["id"] for d in report["derived"]
+                   if d.get("declared_advisory") and (
+                       d["enforcement_status"] == "ENFORCED"
+                       or d.get("effective_proof_level") == "LIVE_PROVEN")]
+    if overclaimed:
+        failures.append(
+            f"laws declared advisory but reported as enforced: {', '.join(overclaimed)}")
     return failures
+
+
+def advisory_laws(report: dict) -> list[str]:
+    """Ids of the laws the registry declares advisory, in report order."""
+    return [d["id"] for d in report["derived"] if d.get("declared_advisory")]
 
 
 if __name__ == "__main__":
@@ -274,12 +357,20 @@ if __name__ == "__main__":
     if report["bytecode_shadow"]:
         print(f"  bytecode shadow under digest roots: {report['bytecode_shadow']}")
     for d in report["derived"]:
-        print(f"  {d['id']:<4} {d['enforcement_status']:<11} {d['effective_proof_level']:<12} {d['live']}")
+        print(f"  {d['id']:<4} {d['enforcement_status']:<12} {d['effective_proof_level']:<13} {d['live']}")
     print(f"LIVE-VALIDATED: {enforced}/{report['laws']} ENFORCED")
+    advisory = advisory_laws(report)
+    if advisory:
+        print(f"  declared advisory, NOT enforced at runtime: {', '.join(advisory)}")
 
     failures = assurance_failures(report)
     if failures:
         for reason in failures:
             print(f"RED: live-wiring assurance failed — {reason}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"GREEN: live-wiring assurance — {enforced}/{report['laws']} laws LIVE_PROVEN")
+    # The count on the GREEN line is the enforced laws only. It read "17/17" while L13's
+    # validator had no caller; a law the registry declares advisory is named beside the count
+    # rather than folded into it.
+    suffix = (f"; {len(advisory)} declared advisory and NOT enforced at runtime "
+              f"({', '.join(advisory)})") if advisory else ""
+    print(f"GREEN: live-wiring assurance — {enforced}/{report['laws']} laws LIVE_PROVEN{suffix}")

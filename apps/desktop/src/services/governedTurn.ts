@@ -11,6 +11,43 @@
 export const REQUEST_PROTOCOL = 'brops.renderer-governed-turn.v1';
 export const RESULT_PROTOCOL = 'brops.renderer-governed-turn-result.v1';
 export const TRUSTED_VERIFIED = 'trusted_verified';
+/**
+ * The OTHER label the broker can commit a turn under (`governed_message_store.rs`): a chain that
+ * ran under a root whose custody proves nothing. It is named here so the renderer can REFUSE it by
+ * name, never so it can accept it. `bridge/contracts/renderer-governed-turn-result.schema.json`
+ * pins a committed message's `trust_state` to `trusted_verified`, and says in the schema that this
+ * is the renderer's acceptance contract, not the broker's emission set: rejecting every commit
+ * that is not `trusted_verified` is one of the three refusals holding the production gate.
+ */
+export const DEMONSTRATION_CUSTODY = 'demonstration_custody';
+
+/** What the refusal of a demonstration-custody commit says, verbatim, wherever it is shown. */
+export const COMMIT_NOT_ACCEPTED_DETAIL =
+  'the broker committed this turn under demonstration_custody: a real broker verdict exists, and '
+  + 'this app does not accept it or display its reply — only trusted_verified is accepted here';
+
+/**
+ * A well-formed broker `committed` frame whose label is `demonstration_custody`. Thrown by
+ * [`parseResult`], which still refuses the frame: this is not a result. It is a separate error —
+ * and not the generic "not trusted_verified" — because the two facts differ. A forged or unknown
+ * label establishes nothing about the broker; this frame says the broker DID commit, and the
+ * renderer declines it. It carries the echo ids and the label, and deliberately NOT the message:
+ * a reply that is not accepted has no way to reach the screen through this type.
+ */
+export class CommitNotAcceptedError extends Error {
+  readonly trustState: typeof DEMONSTRATION_CUSTODY = DEMONSTRATION_CUSTODY;
+  readonly clientRequestId: string;
+  readonly brokerTurnId: string;
+  readonly conversationId: string;
+
+  constructor(clientRequestId: string, brokerTurnId: string, conversationId: string) {
+    super(COMMIT_NOT_ACCEPTED_DETAIL);
+    this.name = 'CommitNotAcceptedError';
+    this.clientRequestId = clientRequestId;
+    this.brokerTurnId = brokerTurnId;
+    this.conversationId = conversationId;
+  }
+}
 
 /** The CLOSED renderer-facing refusal reasons (rev-30 P0). */
 export const TURN_REASONS = [
@@ -80,6 +117,13 @@ function str(o: Record<string, unknown>, k: string): string {
  * well-formed rev-30 result: wrong protocol, unknown status, a `committed` frame whose message is not a
  * complete assistant projection with trust_state === 'trusted_verified', or a `blocked` frame whose reason
  * is outside the closed enum. A `blocked` frame that carries a `message` is also rejected.
+ *
+ * One refusal is NAMED: a complete assistant projection labelled `demonstration_custody` throws
+ * [`CommitNotAcceptedError`]. It is refused exactly as before — nothing is returned — but the
+ * refusal says a real broker verdict existed and was not accepted here, instead of the sentence
+ * used for a label nobody recognises. The shape is checked BEFORE the label for that reason: a
+ * frame that is incomplete is malformed whatever it calls itself, and only a complete one may be
+ * described as a broker commit.
  */
 export function parseResult(raw: unknown): GovernedTurnResult {
   const o = asRecord(raw);
@@ -92,14 +136,22 @@ export function parseResult(raw: unknown): GovernedTurnResult {
     if ('reason' in o) throw new Error('committed frame must not carry a reason');
     const m = asRecord(o.message);
     if (m.role !== 'assistant') throw new Error('committed message role must be assistant');
-    if (m.trust_state !== TRUSTED_VERIFIED) throw new Error('committed message is not trusted_verified');
     const createdAtMs = o.message && typeof (m.created_at_ms) === 'number' ? (m.created_at_ms as number) : NaN;
     if (!Number.isFinite(createdAtMs)) throw new Error('committed message created_at_ms invalid');
+    const messageId = str(m, 'message_id');
+    const author = str(m, 'author');
+    const body = str(m, 'body');
+    // The label is the LAST thing read, and the only thing that decides. Anything but
+    // `trusted_verified` is refused; `demonstration_custody` is refused by name.
+    if (m.trust_state === DEMONSTRATION_CUSTODY) {
+      throw new CommitNotAcceptedError(clientRequestId, brokerTurnId, conversationId);
+    }
+    if (m.trust_state !== TRUSTED_VERIFIED) throw new Error('committed message is not trusted_verified');
     const message: CommittedMessage = {
-      messageId: str(m, 'message_id'),
+      messageId,
       role: 'assistant',
-      author: str(m, 'author'),
-      body: str(m, 'body'),
+      author,
+      body,
       createdAtMs,
       trustState: TRUSTED_VERIFIED,
     };
@@ -188,12 +240,36 @@ export interface GovernedTurnUnavailable {
   detail: string;
 }
 
-/** Every honest outcome of attempting a governed turn: a broker DECISION, or a non-decision. */
-export type GovernedTurnAttempt = GovernedTurnResult | GovernedTurnUnavailable;
+/**
+ * The broker committed this turn under `demonstration_custody`, and this app does not accept it.
+ *
+ * Not `unavailable`: every member of [`NON_DECISIONS`] means no broker verdict exists, and here one
+ * does. Not `committed` either: [`isVerified`] is false for it, and there is no `message` field —
+ * the reply is not carried, so no component can render it by mistake.
+ */
+export interface GovernedTurnCommitNotAccepted {
+  status: 'commit_not_accepted';
+  trustState: typeof DEMONSTRATION_CUSTODY;
+  clientRequestId: string;
+  brokerTurnId: string;
+  conversationId: string;
+  /** [`COMMIT_NOT_ACCEPTED_DETAIL`], for display and for logs. */
+  detail: string;
+}
 
-/** `true` only when the broker itself decided this turn (committed OR blocked). */
-export function isBrokerDecision(a: GovernedTurnAttempt): a is GovernedTurnResult {
-  return a.status === 'committed' || a.status === 'blocked';
+/**
+ * Every honest outcome of attempting a governed turn: a broker DECISION this app accepts, a broker
+ * commit it does not accept, or a non-decision.
+ */
+export type GovernedTurnAttempt = GovernedTurnResult | GovernedTurnUnavailable | GovernedTurnCommitNotAccepted;
+
+/**
+ * `true` only when the broker itself decided this turn: committed, blocked, or committed under a
+ * label this app declines. The last is a decision by the BROKER all the same — what this app
+ * accepts is a separate question, and [`isVerified`] is the only answer to it.
+ */
+export function isBrokerDecision(a: GovernedTurnAttempt): a is GovernedTurnResult | GovernedTurnCommitNotAccepted {
+  return a.status === 'committed' || a.status === 'blocked' || a.status === 'commit_not_accepted';
 }
 
 function messageOf(e: unknown): string {
@@ -219,9 +295,10 @@ export function classifyTransportFailure(e: unknown): { kind: NonDecision; detai
  * Attempt one governed turn and return an outcome instead of throwing.
  *
  * This never invents a verdict. A `committed`/`blocked` result is returned ONLY when the broker really
- * produced a well-formed rev-30 frame; every other path — a request that could not even be built, a
- * transport that rejected, a reply that failed validation — returns `unavailable` with the honest
- * machine reason. `isVerified` stays the single gate for a "Verified" affordance, and it is false for
+ * produced a well-formed rev-30 frame the renderer accepts; a complete commit under
+ * `demonstration_custody` returns `commit_not_accepted`, without its reply; every other path — a
+ * request that could not even be built, a transport that rejected, a reply that failed validation —
+ * returns `unavailable` with the honest machine reason. `isVerified` stays the single gate for a "Verified" affordance, and it is false for
  * every `unavailable` outcome by construction.
  */
 export async function attemptGovernedTurn(
@@ -247,6 +324,18 @@ export async function attemptGovernedTurn(
     // A well-formed `blocked` frame parses fine — that IS a broker decision and stays one.
     return parseResult(raw);
   } catch (e) {
+    // A complete broker commit under demonstration custody. Still refused — but it is not "no
+    // verdict exists", and saying so would deny a decision the broker made.
+    if (e instanceof CommitNotAcceptedError) {
+      return {
+        status: 'commit_not_accepted',
+        trustState: e.trustState,
+        clientRequestId: e.clientRequestId,
+        brokerTurnId: e.brokerTurnId,
+        conversationId: e.conversationId,
+        detail: e.message,
+      };
+    }
     // Something answered but the answer is not a legal result frame. Refusing to interpret it is the
     // whole point: an illegal frame must never be upgraded into a verdict of either sign.
     return { status: 'unavailable', kind: 'malformed_broker_reply', detail: messageOf(e) };

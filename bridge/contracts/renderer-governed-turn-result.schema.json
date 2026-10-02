@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "brops.renderer-governed-turn-result.v1",
   "title": "Broker→renderer governed-turn result (rev-30 §4.10(g))",
-  "description": "The closed broker→renderer reply frame. Exactly one of committed (carries the broker-produced immutable message projection, NO reason) or blocked (carries a CLOSED reason enum, NO message). Every reply echoes client_request_id and broker_turn_id. UI-safe: no store handle, key, envelope, hash, nonce, or verdict internals.",
+  "description": "The closed broker→renderer reply frame. Exactly one of committed (carries the broker-produced immutable message projection, NO reason) or blocked (carries a CLOSED reason enum, NO message). Every reply echoes client_request_id and broker_turn_id. UI-safe: no store handle, key, envelope, hash, nonce, or verdict internals. THIS IS THE RENDERER'S ACCEPTANCE CONTRACT, NOT THE BROKER'S EMISSION SET: it describes the frames the renderer accepts, and the broker can emit a committed frame this schema refuses -- see message.trust_state.",
   "oneOf": [
     {
       "title": "committed",
@@ -50,7 +50,8 @@
             },
             "trust_state": {
               "type": "string",
-              "const": "trusted_verified"
+              "const": "trusted_verified",
+              "description": "The renderer's acceptance contract, not the broker's emission set. The broker commits a turn under one of two labels and projects whichever the committed row holds (apps/desktop/src-tauri/core/src/governed_message_store.rs: trusted_verified, or demonstration_custody for a chain that ran under a root whose custody proves nothing), so a real broker frame may carry demonstration_custody and fail this const. That is intended. The renderer rejecting every commit that is not trusted_verified is one of the three refusals holding the production gate (CLAUDE.md section 6, the second half of refusal 1: the Bridge panel reaches connect_broker without governed_verification_unconfigured(), and there this pin is what refuses). apps/desktop/src/services/governedTurn.ts refuses a demonstration_custody commit, says a broker verdict existed and was not accepted, and never carries its reply to the screen. Kept a const, not widened to an enum, by Owner decision of 2026-10-02; widening it is the Owner's alone. tools/test_renderer_broker_schemas.py locks both the const and this sentence."
             }
           }
         }

@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   attemptGovernedTurn, classifyTransportFailure, isBrokerDecision, isVerified,
+  COMMIT_NOT_ACCEPTED_DETAIL, DEMONSTRATION_CUSTODY,
   NON_DECISIONS, RESULT_PROTOCOL, TRUSTED_VERIFIED,
   type BrokerTransport, type GovernedTurnAttempt,
 } from './governedTurn';
@@ -127,6 +128,25 @@ describe('attemptGovernedTurn — a non-decision is never a verdict', () => {
     const a = await attemptGovernedTurn('conv-1', undefined, resolving(forged), genId);
     expect(unavailable(a).kind).toBe('malformed_broker_reply');
     expect(isVerified(a)).toBe(false);
+  });
+
+  it('a broker commit under demonstration_custody is its own outcome: decided, not accepted, no reply', async () => {
+    const demo = committedFrame();
+    demo.message.trust_state = DEMONSTRATION_CUSTODY;
+    demo.message.body = 'a demonstration answer';
+    const a = await attemptGovernedTurn('conv-1', undefined, resolving(demo), genId);
+    // Not `unavailable`: every non-decision means no broker verdict exists, and here one does.
+    expect(a.status).toBe('commit_not_accepted');
+    expect(isBrokerDecision(a)).toBe(true);
+    // Not accepted: no Verified, whatever else is true of it.
+    expect(isVerified(a)).toBe(false);
+    if (a.status !== 'commit_not_accepted') throw new Error('unreachable');
+    expect(a.trustState).toBe('demonstration_custody');
+    expect(a.brokerTurnId).toBe('bt-1');
+    expect(a.detail).toBe(COMMIT_NOT_ACCEPTED_DETAIL);
+    // The reply is not carried at all, so nothing downstream can display it.
+    expect(a).not.toHaveProperty('message');
+    expect(JSON.stringify(a)).not.toContain('a demonstration answer');
   });
 
   it('a request that cannot even be built never contacts the broker', async () => {

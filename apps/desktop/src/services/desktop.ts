@@ -308,7 +308,11 @@ export const desktop = {
   createAutomation: (input: NewAutomation) => invoke<Automation>('create_automation', { input }),
   setAutomationEnabled: (id: string, enabled: boolean) =>
     invoke<Automation>('set_automation_enabled', { id, enabled }),
-  deleteAutomation: (id: string) => invoke<void>('delete_automation', { id }),
+  // Deletes only after a NATIVE dialog, raised by the Rust handler, is answered yes. `lang`
+  // picks the dialog's language from the three the handler compiles in; it is not text the
+  // dialog shows, and nothing sent here can answer the dialog. A declined, dismissed or
+  // unshowable dialog rejects with the `native_confirmation_not_given` prefix.
+  deleteAutomation: (id: string, lang: string) => invoke<void>('delete_automation', { id, lang }),
   // Run an automation NOW: performs its local (no-AI) action and returns the recorded run.
   runAutomation: (id: string) => invoke<AutomationRun>('run_automation', { id }),
   listAutomationRuns: (id: string) => invoke<AutomationRun[]>('list_automation_runs', { id }),

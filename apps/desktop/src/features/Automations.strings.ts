@@ -37,6 +37,25 @@ export const STR = {
     hy: 'Գործարկել այս ավտոմատի գործողությունը հիմա՝ ներքևում ցուցադրված պայմանագրի ներքո։ Պայմանագիրը ստուգվում է առաջինը. եթե մերժի, ոչինչ չի կանչվում, իսկ պատճառը գրանցվում է։',
     ru: 'Запустить действие этой автоматизации сейчас — по контракту, показанному ниже. Контракт проверяется первым: если он отказывает, ничего не вызывается, а причина записывается.',
   },
+  // ── delete: the app asks, in a dialog this page does not draw ────────────────
+  // `delete_automation` is behind a NATIVE confirmation the Rust handler raises. The page used
+  // to show its own in-page dialog first; it does not any more, so the person is asked once,
+  // by the thing whose answer counts. These say what will happen before it does.
+  deleteAsks: {
+    en: 'Delete asks first: the app opens a system dialog that names this automation. Nothing is deleted unless you confirm there. A confirmed delete also removes its run history and cannot be undone.',
+    hy: 'Ջնջելուց առաջ ծրագիրը հարցնում է. բացվում է համակարգային պատուհան, որտեղ նշված է այս ավտոմատը։ Ոչինչ չի ջնջվում, քանի դեռ այնտեղ չեք հաստատել։ Հաստատված ջնջումը հեռացնում է նաև գործարկումների պատմությունը և հետ չի շրջվում։',
+    ru: 'Перед удалением приложение спрашивает: открывается системное окно, в котором названа эта автоматизация. Ничего не удаляется, пока вы не подтвердите там. Подтверждённое удаление убирает и историю запусков, и отменить его нельзя.',
+  },
+  deleteAsking: {
+    en: 'Waiting for your answer in the system dialog…',
+    hy: 'Սպասում ենք ձեր պատասխանին համակարգային պատուհանում…',
+    ru: 'Ждём вашего ответа в системном окне…',
+  },
+  deleteNotConfirmed: {
+    en: 'Nothing was deleted: the system dialog was not confirmed.',
+    hy: 'Ոչինչ չի ջնջվել. համակարգային պատուհանում հաստատում չի տրվել։',
+    ru: 'Ничего не удалено: в системном окне подтверждение не было дано.',
+  },
   // ── governance posture (authoring modal + selected conduit) ─────────────────
   // This used to promise that a model-reaching action "routes through the governed chain —
   // a lease and a verified receipt". No such path exists for an automation: an unattended fire

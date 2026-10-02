@@ -1,12 +1,9 @@
-import hashlib
-import hmac
 import json
 import os
 import pathlib
 import sys
 import tempfile
 import unittest
-import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
@@ -15,8 +12,6 @@ from bro_contracts import validate_registered_schemas
 from bro_security import (
     SecurityError,
     analyze_command,
-    canonical_bytes,
-    consume_nonce,
     enforce_scope,
     enforce_scope_within_binding,
     finalize_nonce,
@@ -24,7 +19,6 @@ from bro_security import (
     release_nonce_reservation,
     reserve_nonce,
     validate_exact_push,
-    verify_signed_document,
 )
 
 
@@ -356,28 +350,11 @@ class SecurityV2Tests(unittest.TestCase):
                     root, ["docs", (root.parent / "elsewhere").as_posix()])
             self.assertIn("outside the bound workspace root", str(caught.exception))
 
-    def test_signature_and_tamper(self):
-        key = "k" * 32
-        payload = {"a": 1}
-        signature = hmac.new(
-            key.encode(), canonical_bytes(payload), hashlib.sha256
-        ).hexdigest()
-        document = {"payload": payload, "signature": signature}
-        # Scoped: this used to assign `os.environ["TEST_KEY"]` and leave it set for every
-        # test that ran afterwards in the same process.
-        with unittest.mock.patch.dict(os.environ, {"TEST_KEY": key}):
-            self.assertEqual(verify_signed_document(document, "TEST_KEY"), payload)
-            document["payload"]["a"] = 2
-            with self.assertRaises(SecurityError):
-                verify_signed_document(document, "TEST_KEY")
-        self.assertNotIn("TEST_KEY", os.environ)
-
-    def test_atomic_nonce_replay_legacy(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            payload = {"nonce": "abcdefghijklmnop"}
-            consume_nonce(payload, pathlib.Path(temp_dir))
-            with self.assertRaises(SecurityError):
-                consume_nonce(payload, pathlib.Path(temp_dir))
+    # `test_signature_and_tamper` and `test_atomic_nonce_replay_legacy` stood here. They were the
+    # only callers of the HMAC `verify_signed_document` and the legacy `consume_nonce`, and went
+    # with them (T-153). Their absence is held by
+    # `test_release_v3.LegacyReleaseGrantRetiredTests`; nonce replay on the live path is the
+    # reserve/finalize tests below.
 
     def test_nonce_reserve_then_finalize(self):
         with tempfile.TemporaryDirectory() as temp_dir:

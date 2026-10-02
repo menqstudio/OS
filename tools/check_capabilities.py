@@ -22,6 +22,13 @@ DECLARE a `protection` (`native-confirm` or, honestly, `none`), and a command th
 `native-confirm` must be backed by the enforcing constants in the Rust authority layer --
 so the policy file cannot award itself a gate it does not have.
 
+T-153 adds two more. `native-confirm` has a second form -- the command's own handler raises
+a native OS dialog and writes only on an affirmative answer -- and a command claiming it is
+held to `src/commands.rs` (NATIVE_DIALOG_ENFORCEMENT). And a command named `delete_*` may be
+`allow` only with a declared `soft-delete` or `native-confirm`, WHATEVER its tier:
+`delete_automation` was an irreversible hard delete granted with protection `none`, because
+it was classified X and the hard-delete rule looked only at L2.
+
 and additionally asserts each policy `grant` matches the actual capability grants in
 `capabilities/default.json` (allow-<cmd> / deny-<cmd>). A command added in one place
 but not the others — or granted against its declared tier — **fails CI**. No manual
@@ -47,6 +54,7 @@ POLICY = DESKTOP / "command-policy.json"
 CAPABILITIES_DIR = DESKTOP / "capabilities"
 DEFAULT_CAP = CAPABILITIES_DIR / "default.json"
 REPO_RS = DESKTOP / "core" / "src" / "repo.rs"
+COMMANDS_RS = DESKTOP / "src" / "commands.rs"
 
 # T-052. A tier-X command claiming `"protection": "native-confirm"` is claiming that a
 # natively confirmed approval grant is verified and consumed in the authority layer before
@@ -60,6 +68,32 @@ NATIVE_CONFIRM_ENFORCEMENT = {
     "set_integration_status": ("INTEGRATION_ENTITY_TYPE", "INTEGRATION_STATUS_ACTION_TYPE"),
     "set_automation_enabled": ("AUTOMATION_ENTITY_TYPE", "AUTOMATION_ENABLED_ACTION_TYPE"),
 }
+
+# T-153. The second form of `native-confirm`: no approval grant is consumed; the command's
+# own handler raises a native OS dialog from Rust and performs its write only on an
+# affirmative answer. The claim is held to the handler's source, in four parts, because a
+# dialog that exists beside a write is not a dialog in front of it:
+#   - the handler takes the window and shows a blocking native dialog under the
+#     single-dialog guard (`HANDLER_MARKERS`);
+#   - the handler does not perform the write itself;
+#   - the write has exactly ONE call site in production code, and it is inside `gate`;
+#   - inside `gate`, the question (`ask`) comes before the write.
+# What this does NOT establish: that the gate returns on a declined answer. That is
+# behaviour, and the Rust tests in commands.rs prove it by declining
+# (`a_declined_native_dialog_deletes_nothing` and its neighbours).
+NATIVE_DIALOG_ENFORCEMENT = {
+    "delete_automation": {
+        "gate": "delete_automation_after_native_confirmation",
+        "ask": "confirm(delete_automation_prompt(",
+        "write": "repo::automations::delete(",
+    },
+}
+HANDLER_MARKERS = (
+    "window: tauri::Window",
+    "ConfirmationGuard::acquire()?",
+    ".blocking_show()",
+)
+_TEST_MODULE = "\n#[cfg(test)]\nmod tests {"
 
 # Commands deliberately registered OUTSIDE the window capability manifest. Every such
 # command MUST be named here with a reason — this turns what used to be a silent regex blind
@@ -212,6 +246,65 @@ def capability_source_problems(root: pathlib.Path) -> list[str]:
     return problems
 
 
+def production_source(text: str) -> str:
+    """`commands.rs` up to its test module. The tests name the same functions and calls, and
+    a mention there is not a production call."""
+    return text.split(_TEST_MODULE)[0]
+
+
+def function_text(production: str, name: str) -> str | None:
+    """The text of one top-level `fn name(` / `fn name<`: from its `fn` to the first `}` in
+    column 0. None when there is no such function."""
+    m = re.search(rf"\bfn {re.escape(name)}[(<]", production)
+    if not m:
+        return None
+    end = production.find("\n}\n", m.start())
+    return production[m.start():] if end == -1 else production[m.start():end]
+
+
+def native_dialog_problems(cmd: str, spec: dict[str, str], commands_src: str) -> list[str]:
+    """Hold one `native-confirm` claim of the dialog form to `src/commands.rs`."""
+    if not commands_src:
+        return [f"{cmd}: claims 'native-confirm' by a native dialog but {COMMANDS_RS} is "
+                f"missing, so nothing checks the claim"]
+    production = production_source(commands_src)
+    problems: list[str] = []
+    handler = function_text(production, cmd)
+    if handler is None:
+        return [f"{cmd}: claims 'native-confirm' by a native dialog but {COMMANDS_RS} has "
+                f"no handler `fn {cmd}`"]
+    for marker in HANDLER_MARKERS:
+        if marker not in handler:
+            problems.append(
+                f"{cmd}: claims 'native-confirm' by a native dialog but its handler lacks "
+                f"`{marker}`")
+    if f"{spec['gate']}(" not in handler:
+        problems.append(
+            f"{cmd}: claims 'native-confirm' by a native dialog but its handler never calls "
+            f"`{spec['gate']}`, the function that asks before it writes")
+    if spec["write"] in handler:
+        problems.append(
+            f"{cmd}: its handler calls `{spec['write']}` itself, outside the function that "
+            f"asks first")
+    sites = production.count(spec["write"])
+    if sites != 1:
+        problems.append(
+            f"{cmd}: `{spec['write']}` has {sites} production call site(s) in {COMMANDS_RS}; "
+            f"exactly one is allowed, and each further one is a way around the dialog")
+    gate = function_text(production, spec["gate"])
+    if gate is None:
+        problems.append(f"{cmd}: {COMMANDS_RS} has no `fn {spec['gate']}`")
+        return problems
+    asked, wrote = gate.find(spec["ask"]), gate.find(spec["write"])
+    if asked == -1:
+        problems.append(f"{cmd}: `{spec['gate']}` never asks (`{spec['ask']}` is absent)")
+    if wrote == -1:
+        problems.append(f"{cmd}: the write `{spec['write']}` is not inside `{spec['gate']}`")
+    if asked != -1 and wrote != -1 and wrote < asked:
+        problems.append(f"{cmd}: `{spec['gate']}` writes before it asks")
+    return problems
+
+
 def check(root: pathlib.Path) -> list[str]:
     problems: list[str] = capability_source_problems(root)
 
@@ -304,6 +397,17 @@ def check(root: pathlib.Path) -> list[str]:
                     f"if it is ungated -- an undeclared execution-tier command is how the "
                     f"three T-052 commands stayed ungated without anything saying so."
                 )
+        # T-153: a row delete is a row delete under any tier. The L2 rule above is keyed on
+        # the tier a person typed, so classifying a hard delete X took it out of that rule's
+        # sight and let it say 'none' -- which is exactly what delete_automation did.
+        if (cmd.startswith("delete_") and grant == "allow" and tier != "L2"
+                and spec.get("protection") not in safe_protection):
+            problems.append(
+                f"{cmd}: a delete_* command may be 'allow' only with a declared protection of "
+                f"{sorted(safe_protection)}, whatever its tier (here {tier!r}); got "
+                f"{spec.get('protection')!r}. Classifying a hard delete outside L2 does not "
+                f"exempt it."
+            )
 
     # T-052: a claimed 'native-confirm' must be backed by the enforcing constants in the
     # authority layer, in the same repository, at this head. A missing authority layer is
@@ -318,14 +422,21 @@ def check(root: pathlib.Path) -> list[str]:
             f"{REPO_RS} is missing, so no 'native-confirm' claim in the policy can be "
             f"checked against the authority layer that is supposed to enforce it"
         )
+    commands_path = root / COMMANDS_RS
+    commands_src = commands_path.read_text(encoding="utf-8") if commands_path.exists() else ""
     for cmd, spec in sorted(policy.items()):
         if spec.get("protection") != "native-confirm" or spec.get("tier") != "X":
+            continue
+        if cmd in NATIVE_DIALOG_ENFORCEMENT:
+            problems.extend(
+                native_dialog_problems(cmd, NATIVE_DIALOG_ENFORCEMENT[cmd], commands_src))
             continue
         consts = NATIVE_CONFIRM_ENFORCEMENT.get(cmd)
         if consts is None:
             problems.append(
                 f"{cmd}: claims 'native-confirm' but NATIVE_CONFIRM_ENFORCEMENT names no "
-                f"enforcing constants for it, so nothing checks the claim"
+                f"enforcing constants for it and NATIVE_DIALOG_ENFORCEMENT names no dialog "
+                f"gate, so nothing checks the claim"
             )
             continue
         missing = [c for c in consts if f"approvals::{c}," not in repo_src]
@@ -378,14 +489,17 @@ def main(argv: list[str] | None = None) -> int:
     n = len(policy)
     x_allow = [c for c, s in policy.items() if s.get("tier") == "X" and s.get("grant") == "allow"]
     confirmed = [c for c in x_allow if policy[c].get("protection") == "native-confirm"]
+    by_dialog = [c for c in confirmed if c in NATIVE_DIALOG_ENFORCEMENT]
     print(
         f"GREEN: capability inventory consistent ({n} gated commands; gated-registered == "
         f"manifest == policy == capability grants; default.json is the only capability "
         f"source; {len(INTENTIONALLY_UNGATED)} registered outside the manifest by name, which "
         f"the window is refused; decide_approval denied, reject_approval granted; "
         f"{len(x_allow)} tier-X allow commands all declare a protection, "
-        f"{len(confirmed)} of them 'native-confirm' backed by the enforcing constants in "
-        f"repo.rs)."
+        f"{len(confirmed)} of them 'native-confirm': {len(confirmed) - len(by_dialog)} "
+        f"backed by the enforcing constants in repo.rs, {len(by_dialog)} by a native dialog "
+        f"in the handler, held to commands.rs; no delete_* command is granted without a "
+        f"declared protection)."
     )
     return 0
 

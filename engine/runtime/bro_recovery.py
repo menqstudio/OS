@@ -11,7 +11,7 @@ from typing import Any
 from bro_contracts import canonical_json_sha256
 from bro_repository_state import resolve_state
 from bro_secrets import redact
-from bro_security import SecurityError, verify_signed_document
+from bro_security import SecurityError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BLOCKING = {"PREPARED", "RECOVERY_REQUIRED", "RECOVERY_STARTED", "QUARANTINED", "FAILED_WITH_IRREVERSIBLE_EFFECT"}
