@@ -6,7 +6,6 @@ import json
 import os
 import pathlib
 import re
-import shlex
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -116,7 +115,7 @@ READ_TARGET_SHELL = frozenset({
     "cat", "get-childitem", "get-content", "ls", "select-string", "test-path", "type",
 })
 # `find` is deliberately NOT in READ_ONLY_SHELL: it executes and mutates inside a
-# single shell segment that split_shell cannot see (`find . -delete` removes
+# single simple command, which no command-level check can see (`find . -delete` removes
 # files; `-exec/-execdir/-ok/-okdir` run arbitrary commands; `-fls/-fprint/
 # -fprint0/-fprintf` write files). analyze_find gates it behind an argument
 # inspector: the action flags below are never read-only, every other flag must be
@@ -177,73 +176,100 @@ def canonical_bytes(value: dict[str, Any]) -> bytes:
 # end of this file beside the reserve/finalize flow that superseded it.
 
 
-def split_shell(command: str) -> list[str]:
-    out, buf, quote, esc = [], [], None, False
-    i = 0
-    while i < len(command):
-        c = command[i]
-        if esc:
-            buf.append(c)
-            esc = False
-            i += 1
-            continue
-        if c == "\\" and quote != "'":
-            esc = True
-            buf.append(c)
-            i += 1
-            continue
-        # Command substitution ($(...) and backticks) runs in unquoted and
-        # double-quoted context but never inside single quotes. It defeats the
-        # static command analysis the capability and scope gates depend on — a
-        # read-only leading executable can carry a hidden mutation, e.g.
-        # `cat $(rm -rf x)` — so it is denied wherever it would execute.
-        if quote != "'" and (c == "`" or command.startswith("$(", i)):
-            raise SecurityError("shell redirection/substitution is denied")
-        if quote:
-            buf.append(c)
-            if c == quote:
-                quote = None
-            i += 1
-            continue
-        if c in "'\"":
-            quote = c
-            buf.append(c)
-            i += 1
-            continue
-        if c in "><":
-            raise SecurityError("shell redirection/substitution is denied")
-        op = None
-        for candidate in ("&&", "||", ";", "|", "\n"):
-            if command.startswith(candidate, i):
-                op = candidate
-                break
-        if op:
-            if "".join(buf).strip():
-                out.append("".join(buf).strip())
-            buf = []
-            i += len(op)
-            continue
-        # A bare `&` is a command separator too, and the one this list did not carry: `echo hi &
-        # rm -rf src` reached the classifier as ONE segment led by a read-only verb, so the `rm`
-        # was never classified and no scope, lease or recovery gate saw it. It is refused rather
-        # than split, because a backgrounded command also outlives the tool call the post-tool
-        # checks settle. `&&` was consumed above; `>&` and `&>` are refused by the `>` rule.
-        if c == "&":
-            raise SecurityError("shell backgrounding (`&`) is denied")
-        buf.append(c)
-        i += 1
-    if quote:
-        raise SecurityError("unterminated quote")
-    if "".join(buf).strip():
-        out.append("".join(buf).strip())
-    return out
+# ---- the shell command language (T-159; docs/design/SHELL_CLASSIFIER_DESIGN.md, Appendix A) ----
+#
+# This is not a Bash lexer and must not grow into one. `split_shell`, which stood here, tried to
+# MODEL the shell -- quotes, escapes, separators -- and every construct it did not model was a way
+# past it: a comment whose quote swallowed the newline after it (R2-0001), an ANSI-C quote that
+# closed where the model thought it was still open (R2-0002). What replaces it models nothing. It
+# ACCEPTS one small language, in one left-to-right pass, and refuses every other character:
+#
+#     command := blank* word (blank+ word)* blank*      blank := space | tab
+#     word    := part+                                  (adjacent parts are ONE argument)
+#     part    := bare | 'single' | "double"
+#
+# There is no escape, no expansion, no separator and no comment in it, so there is nothing to
+# decode: an argument is the characters between its quotes. A character is accepted only where it
+# means itself to Bash. Whether that is true of every character below is not argued here; it is
+# measured, character by character, against a real `bash` in tests/test_shell_grammar.py.
+_BLANK = " \t"
+_BARE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789" "_./:=@%+^-")
+# Each quote form refuses the OTHER quote character as well as its own terminator: the argument
+# analyzers below still strip quote characters from a token's ends, as they did when tokens
+# arrived with their quotes on, and an argument that could carry one would be judged as a
+# different string from the one the shell passes.
+_SINGLE_REFUSED = frozenset("'\"")
+_DOUBLE_REFUSED = frozenset("\"'$`\\!")
 
 
-def _tokens(segment: str) -> list[str]:
-    try:
-        return shlex.split(segment, posix=False)
-    except ValueError as exc:
-        raise SecurityError(str(exc)) from exc
+def _is_control(ch: str) -> bool:
+    """C0, DEL, C1, a lone surrogate (what invalid UTF-8 becomes on the way in), and the two
+    Unicode line separators. Ranges, not `unicodedata`: the answer must not depend on which
+    Unicode tables the interpreter was built with."""
+    code = ord(ch)
+    return (code < 0x20 or 0x7F <= code <= 0x9F or 0xD800 <= code <= 0xDFFF
+            or code in (0x2028, 0x2029))
+
+
+def _refuse(what: str) -> SecurityError:
+    return SecurityError(f"shell command is outside the accepted command language: {what}")
+
+
+def parse_simple_command(command: str) -> tuple[str, ...]:
+    """The argument list of ONE simple command, or a refusal. Never a guess.
+
+    Every character of `command` is consumed by exactly one rule or the whole command is
+    refused, so there is no input this function accepts in part.
+    """
+    words: list[str] = []
+    i, n = 0, len(command)
+    while True:
+        while i < n and command[i] in _BLANK:
+            i += 1
+        if i >= n:
+            break
+        parts: list[str] = []
+        # The last BARE character of this word, or None at the word's start and after a quoted
+        # part. A `~` is a literal only where Bash does not expand it: not first in the word,
+        # and not straight after a bare `=` or `:`, where Bash expands it in any argument shaped
+        # like an assignment (`x=~`), not only in a real one.
+        previous_bare: str | None = None
+        at_word_start = True
+        while i < n and command[i] not in _BLANK:
+            c = command[i]
+            if c == "'" or c == '"':
+                end = command.find(c, i + 1)
+                if end < 0:
+                    raise _refuse("unterminated quote")
+                body = command[i + 1:end]
+                refused = _SINGLE_REFUSED if c == "'" else _DOUBLE_REFUSED
+                for ch in body:
+                    if ch in refused or _is_control(ch):
+                        raise _refuse(f"{ch!r} inside {c}...{c}")
+                parts.append(body)
+                previous_bare = None
+                i = end + 1
+            elif c in _BARE:
+                parts.append(c)
+                previous_bare = c
+                i += 1
+            elif c == "~":
+                if at_word_start or previous_bare in ("=", ":"):
+                    raise _refuse("`~` where the shell would expand it")
+                parts.append(c)
+                previous_bare = c
+                i += 1
+            else:
+                raise _refuse(f"{c!r} outside quotes")
+            at_word_start = False
+        words.append("".join(parts))
+    if not words:
+        raise _refuse("it is empty")
+    # `NAME=value command` is an assignment prefix, not a command called `NAME=value`.
+    if "=" in words[0]:
+        raise _refuse("`=` in the command name")
+    return tuple(words)
 
 
 def _exe(token: str) -> str:
@@ -409,24 +435,17 @@ def _reached_by_path(token: str, named: CommandInfo) -> CommandInfo:
 
 
 def analyze_command(command: str) -> list[CommandInfo]:
-    result = []
-    for segment in split_shell(command):
-        tokens = _tokens(segment)
-        if not tokens:
-            continue
-        named = _analyze_named(tokens, _exe(tokens[0]))
-        if _path_qualified(tokens[0]):
-            named = _reached_by_path(tokens[0], named)
-        result.append(named)
-    return result
+    """Classify ONE simple command. The list is kept for the callers that iterate it; it has
+    exactly one element, because a command that is more than one command is refused whole."""
+    tokens = list(parse_simple_command(command))
+    named = _analyze_named(tokens, _exe(tokens[0]))
+    if _path_qualified(tokens[0]):
+        named = _reached_by_path(tokens[0], named)
+    return [named]
 
 
 def validate_exact_push(command: str, branch: str) -> None:
-    segments = split_shell(command)
-    if len(segments) != 1:
-        raise SecurityError("release push must be a single shell segment")
-    tokens = _tokens(segments[0])
-    normalized = [token.strip("\"'") for token in tokens]
+    normalized = list(parse_simple_command(command))
     # A path-qualified `git` is a file somebody named, not the git on PATH, and the
     # release grant authorizes the latter only.
     if (len(normalized) != 4 or _path_qualified(normalized[0]) or _exe(normalized[0]) != "git"

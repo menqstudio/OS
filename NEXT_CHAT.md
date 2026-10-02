@@ -48,7 +48,7 @@ CI stamps the PR body (T-163); by hand: `tools/stamp_pr_head.py --pr <N>`.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2692 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2728 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1417 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

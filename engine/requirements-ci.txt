@@ -54,3 +54,17 @@ pycparser==3.0 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+
+# TEST-ONLY (T-159): the pinned Bash parser that tests/test_shell_grammar.py holds the shell
+# command language against, beside a real bash. Nothing under runtime/ or tools/ imports either
+# package -- that test module refuses it -- so the wall's verdict never depends on their being
+# installed. Neither has a runtime dependency of its own. Hashes are PyPI's published digests for
+# the cp312 and cp313 manylinux x86_64 wheels and the cp312 win_amd64 one (tree-sitter), and the
+# abi3 manylinux x86_64 and win_amd64 wheels (tree-sitter-bash).
+tree-sitter==0.26.0 \
+    --hash=sha256:5a6b333b0282d8bb0af741f9b018bd2523d4eecb2686bf6717066a625fecfaa4 \
+    --hash=sha256:7075ef857ef86f327dbb72d1e2574dda78db5754b3a1fca6506acd7fe5d561a7 \
+    --hash=sha256:ca89e361a276dbc934b28a43dd881199e25d34ff5493ee0ce45f3c52a6124a37
+tree-sitter-bash==0.25.1 \
+    --hash=sha256:3f484c4bb8796cde7a87ca351e6116f09653edac0eb3c6d238566359dd28b117 \
+    --hash=sha256:52a6802d9218f86278aa3e8b459c3abdad67eed0fde1f9f13aca5b6c634217a6
