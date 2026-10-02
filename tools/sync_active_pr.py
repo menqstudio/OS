@@ -34,6 +34,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from check_coordination import PR_ROLES  # the closed enum, imported so it cannot drift  # noqa: E402
@@ -800,6 +801,59 @@ def _refuse_without_main_ci(reading: dict | None) -> dict:
     return reading
 
 
+#: How often a reading older than the recorded one is taken again before it is refused, and
+#: how long between. The stale page has always been gone a few seconds later.
+STALE_READING_TRIES = 3
+STALE_READING_PAUSE = 4.0
+
+
+def _recorded_run_ids() -> dict[str, int]:
+    """`{workflow: run_id}` as the mirror records it now; empty when it records none."""
+    try:
+        block = json.loads(STATE.read_text(encoding="utf-8")).get("main_ci")
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(block, dict):
+        return {}
+    return {wf: r["run_id"] for wf, r in block.items()
+            if isinstance(r, dict) and isinstance(r.get("run_id"), int)
+            and not isinstance(r.get("run_id"), bool)}
+
+
+def older_than_recorded(reading: dict, recorded: dict[str, int]) -> list[str]:
+    """One line per workflow whose reading is a run OLDER than the one already recorded."""
+    return [f"main_ci.{wf}: run {r['run_id']} at {str(r.get('head'))[:7]} is older than run "
+            f"{recorded[wf]}, which this file already records"
+            for wf, r in sorted(reading.items())
+            if wf in recorded and isinstance(r.get("run_id"), int) and r["run_id"] < recorded[wf]]
+
+
+def measured_main_ci() -> dict:
+    """The reading, or a refusal -- including when the Actions API answers from the past.
+
+    Run ids only grow. Four times on 2026-10-02 the runs endpoint answered `--branch main` with a
+    window months old, and the generator wrote it down: `main_ci.ci` went from a run of that day
+    to one at a commit long since buried, and the mirror then said so with a straight face. The
+    remedy on file was a memory note telling the next session to read the head back. A reading
+    whose run is older than the one already recorded is not a reading; it is taken again, and
+    refused if it stays old.
+    """
+    recorded = _recorded_run_ids()
+    older: list[str] = []
+    for attempt in range(STALE_READING_TRIES):
+        reading = _refuse_without_main_ci(take_main_ci_reading())
+        older = older_than_recorded(reading, recorded)
+        if not older:
+            return reading
+        if attempt + 1 < STALE_READING_TRIES:
+            time.sleep(STALE_READING_PAUSE)
+    raise SystemExit(
+        "RED: the Actions API answered with a reading OLDER than the one already recorded, "
+        f"{STALE_READING_TRIES} times running:\n  " + "\n  ".join(older)
+        + "\nRun ids only grow, so that is a stale page and not main's state. Nothing has been "
+          "written -- run this again in a minute.")
+
+
 def _print_main_ci(reading: dict, written: list[str]) -> None:
     for wf in written:
         r = reading[wf]
@@ -822,7 +876,7 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # settled_at_main_head, no prs[] entry) is precisely the RED state this whole change is about.
     parked = [p for p in live_open_prs() if p["number"] != pr]
     roles = parked_roles(parked, role_pairs)
-    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
+    reading = measured_main_ci()   # measured before anything is written
     text = STATE.read_text(encoding="utf-8")
     data = json.loads(text)
 
@@ -995,7 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
         return settle(head, args.next_up, args.pr, args.branch, args.banner, args.parked_role)
     if not (args.pr and args.branch and args.summary):
         raise SystemExit("RED: --pr, --branch and --summary are required unless --settled")
-    reading = _refuse_without_main_ci(take_main_ci_reading())   # measured before anything is written
+    reading = measured_main_ci()   # measured before anything is written
     # ... and so is everything the BANNER needs: which pull requests are open, the audit
     # sentence, the size bound and the markers in the three documents. Each of those can refuse,
     # each refusal says "Nothing has been written", and each used to run after rewrite_state()

@@ -1372,8 +1372,8 @@ class TheDiscardedVerdict(unittest.TestCase):
 
     def test_a_guarded_push_still_meets_the_push_gate(self):
         """The new rule returning nothing must not return from the arm."""
-        self.shell("python3 tools/check_canonical_sync.py --staged && git commit -m x && git push")
-        self.assertEqual([script for script, _ in self.calls], ["check_push_ready.py"])
+        self.shell(f"python3 tools/check_x.py && gh pr merge 5 --squash --match-head-commit {SHA}")
+        self.assertEqual([script for script, _ in self.calls], ["check_merge_ready.py"])
 
     def test_the_cheap_test_keeps_every_other_command_out_of_it(self):
         """Mutant: make `mentions_discard` return True always ⇒ `ls` reaches the scanner."""
@@ -1453,6 +1453,87 @@ class TheDiscardedVerdict(unittest.TestCase):
         doc = self.wall.__doc__
         self.assertIn("A DISCARDED VERDICT", doc)
         self.assertIn('"$g"', doc)
+
+
+#: Lines whose `git push` runs after something that could change the tree. Each is refused.
+PUSH_AFTER_A_CHANGE = [
+    ("git commit -m x && git push", ["git commit"]),
+    ("git add -A && git commit -m x && git push origin HEAD", ["git add", "git commit"]),
+    ("python3 tools/sync_active_pr.py --settled && git commit -am x && git push",
+     ["python3 tools/sync_active_pr.py", "git commit"]),
+    ("git status && git push", ["git status"]),
+    ("cd sub && sed -i s/a/b/ f && git push", ["sed -i"]),
+    ("touch f; git push", ["touch f"]),
+    ("x=$(date) && git push", ["date"]),
+]
+
+#: Lines whose `git push` is the first thing that could matter. Each reaches the push gate.
+PUSH_FIRST = [
+    "git push",
+    "cd sub/dir && git push",
+    "export GH_TOKEN=$(gh auth token --user menqstudio) && git push -u origin branch",
+    "export A=1; unset B; set -e; true; : && git push",
+    "FOO=1 git push",
+    "git push && python3 tools/stamp_pr_head.py --pr 5 && git status",
+    "git push && gh pr create --fill",
+]
+
+
+class APushIsJudgedOnTheTreeItSends(unittest.TestCase):
+    """T-160. The hook fires before the command line starts; the push gate reads the tree
+    as it is then. `sync && commit && push` went out 47 bytes over a budget on a GREEN."""
+
+    def setUp(self):
+        self.wall = import_wall()
+        self.calls: list = []
+
+    def shell(self, command: str) -> str:
+        def fake(script, args):
+            self.calls.append((script, list(args)))
+            return (0, "GREEN: it may be done.")
+        out = io.StringIO()
+        with mock.patch.object(self.wall, "ROOT", ROOT), \
+                mock.patch.object(self.wall, "run_gate", fake), contextlib.redirect_stdout(out):
+            self.wall.handle_pre_shell({"tool_name": "Bash", "cwd": str(ROOT),
+                                        "tool_input": {"command": command}})
+        return out.getvalue()
+
+    def test_a_push_after_anything_that_could_change_the_tree_is_refused_unasked(self):
+        """Mutant: drop the `after` refusal ⇒ the gate is asked and says GREEN about a tree
+        the push does not send. The gate is NOT asked: its answer would be about now."""
+        for command, earlier in PUSH_AFTER_A_CHANGE:
+            with self.subTest(command=command):
+                self.calls.clear()
+                self.assertEqual(self.wall.guarded_invocations(command)[-1]["after"], earlier)
+                out = self.shell(command)
+                self.assertEqual(decision(out), "deny", out)
+                self.assertIn("BEFORE the", out)
+                self.assertIn(f"`{earlier[0]}`", out)
+                self.assertEqual(self.calls, [])
+
+    def test_a_push_that_comes_first_reaches_the_gate(self):
+        """The other direction. Mutant: count `cd`, `export` or `gh auth token` as a change ⇒
+        the line every push here is typed with is refused."""
+        for command in PUSH_FIRST:
+            with self.subTest(command=command):
+                self.calls.clear()
+                self.assertEqual(self.wall.guarded_invocations(command)[0]["after"], [])
+                out = self.shell(command)
+                self.assertIsNone(decision(out), out)
+                self.assertEqual([script for script, _ in self.calls], ["check_push_ready.py"])
+
+    def test_a_delete_after_other_commands_is_still_not_gated(self):
+        """A delete sends no tree. Mutant: test `after` before `delete` ⇒ refused."""
+        out = self.shell("git branch -D old && git push origin --delete old")
+        self.assertEqual(out, "")
+        self.assertEqual(self.calls, [])
+
+    def test_only_gh_auth_token_is_let_through_not_gh(self):
+        push = self.wall.guarded_invocations("gh pr create --fill && git push")[-1]
+        self.assertEqual(push["after"], ["gh pr"])
+
+    def test_the_docstring_says_so(self):
+        self.assertIn("A PUSH IS JUDGED ON THE TREE IT SENDS", self.wall.__doc__)
 
 
 class TheTwoNamedCommandsLive(unittest.TestCase):
