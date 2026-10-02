@@ -6,8 +6,8 @@
 > **What the merge gate needs from you.** A report committed on this pull request's branch under
 > `apps/desktop/AUDIT/changes/` (not `engine/AUDIT/`: a Markdown file under `engine/` must be
 > registered in a manifest that is itself an audit-required path), carrying two lines,
-> `Audited-PR: #<this pull request>` and `Audited-Head: <the 40-hex commit you read>`. Take the
-> head from `gh pr view <N> --json headRefOid`. The gate (`tools/check_merge_ready.py`) refuses the
+> `Audited-PR: #333` and `Audited-Head: <the 40-hex commit you read>`. Take the
+> head from `gh pr view 333 --json headRefOid`. The gate (`tools/check_merge_ready.py`) refuses the
 > merge unless that commit is an ancestor of the head being merged and no audit-required path
 > differs since it. The gate does not read your verdict; the Builder does, and merges only on GREEN.
 > You do not need to touch the pull request body: CI stamps it (T-163).
