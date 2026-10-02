@@ -38,17 +38,20 @@ OVER = (1, "RED: bundle-size budget exceeded —\n  - route 'Approvals' navigati
 
 #: A population with one gate of every kind the report distinguishes.
 GATES = ["check_action_pins.py", BUNDLE, "check_canonical_sync.py", "check_coordination.py",
-         "check_merge_ready.py", "check_prior_art.py", "check_produced_artifact.py",
-         "check_push_ready.py", "check_read_receipt.py", SNIPPETS]
+         "check_handoff_ready.py", "check_merge_ready.py", "check_prior_art.py",
+         "check_produced_artifact.py", "check_push_ready.py", "check_read_receipt.py",
+         "check_repo_state.py", SNIPPETS, "check_spec_references.py"]
+#: The two of them that answer with no arguments.
+LOOP = ["check_action_pins.py", "check_coordination.py"]
 
 
 class Fake(check_push_ready.Inputs):
     def __init__(self, changed=(), *, bundle=GREEN, snippets=GREEN, blocker=None,
-                 gates=GATES, staged=()) -> None:
+                 gates=GATES, staged=(), loop=None) -> None:
         super().__init__(ROOT)
         self._changed = changed
         self._staged = staged
-        self.results = {BUNDLE: bundle, SNIPPETS: snippets}
+        self.results = {BUNDLE: bundle, SNIPPETS: snippets, **(loop or {})}
         self.blocker = blocker
         self._gates = gates
         self.calls: list[tuple[str, list[str]]] = []
@@ -65,7 +68,7 @@ class Fake(check_push_ready.Inputs):
 
     def run_gate(self, name, args):
         self.calls.append((name, list(args)))
-        result = self.results[name]
+        result = self.results.get(name, GREEN)
         if isinstance(result, BaseException):
             raise result
         return result
@@ -116,7 +119,12 @@ class PushReady(unittest.TestCase):
         self.assertIn("could not be established", out)
 
     def ran(self, inputs: Fake) -> list[str]:
-        return [name for name, _ in inputs.calls]
+        """The gates run for a REASON, in order. The argument-free loop runs after them, a
+        few at a time and so in no fixed order; `looped` is that half."""
+        return [name for name, _ in inputs.calls if name not in LOOP]
+
+    def looped(self, inputs: Fake) -> list[str]:
+        return sorted(name for name, _ in inputs.calls if name in LOOP)
 
     # --- which gates run -------------------------------------------------------------
 
@@ -142,7 +150,7 @@ class PushReady(unittest.TestCase):
         inputs = Fake(BACKEND + FRONTEND)
         code, out = gate(inputs)
         self.assertEqual(code, 0, out)
-        self.assertEqual(inputs.calls, [(BUNDLE, ["--root", str(ROOT)]), (SNIPPETS, [])])
+        self.assertEqual(inputs.calls[:2], [(BUNDLE, ["--root", str(ROOT)]), (SNIPPETS, [])])
         self.assertIn(f"GREEN tools/{BUNDLE}", out)
         self.assertIn("apps/desktop/src/pages/Approvals.tsx", out)
 
@@ -227,7 +235,7 @@ class PushReady(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.ran(inputs), [])
         self.assertIn(f"tools/{SNIPPETS} -- COULD NOT RUN: `cryptography` does not import", out)
-        self.assertIn("GREEN: 0 gate(s) ran and passed (none)", out)
+        self.assertIn("GREEN: 2 gate(s) ran and passed", out)      # the loop's two, not three
 
     # --- what was not run ------------------------------------------------------------------
 
@@ -238,17 +246,18 @@ class PushReady(unittest.TestCase):
         code, out = gate(inputs)
         self.assertEqual(code, 0, out)
         for name in GATES:
-            if name in (SNIPPETS, "check_push_ready.py"):
+            if name in (SNIPPETS, "check_push_ready.py", *LOOP):
                 continue
             with self.subTest(name=name):
                 self.assertIn(name, not_run_section(out))
         self.assertIn("tools/check_canonical_sync.py -- needs --staged", out)
         self.assertIn("tools/check_merge_ready.py -- needs --pr N", out)
         self.assertIn("tools/check_produced_artifact.py -- needs the evidence", out)
-        self.assertIn("2 argument-free gate(s)", out)
-        self.assertIn("check_action_pins.py, check_coordination.py", out)
+        self.assertIn("tools/check_repo_state.py -- compares the mirror with live GitHub", out)
+        self.assertIn("tools/check_handoff_ready.py -- asks whether everything is pushed", out)
+        self.assertIn("tools/check_spec_references.py -- takes over a minute", out)
         self.assertIn("This is not every gate.", out)
-        self.assertIn("8 named above were not run", out)
+        self.assertIn("GREEN: 3 gate(s) ran and passed; 9 named above were not run", out)
         self.assertNotIn("every gate passed", out.lower())
         self.assertNotIn("all gates", out.lower())
 
@@ -263,9 +272,77 @@ class PushReady(unittest.TestCase):
         """A table naming a gate that was renamed away would file the real one under
         'argument-free' and the dead name nowhere."""
         for name in (*check_push_ready.NEEDS_ARGUMENTS, *check_push_ready.NEEDS_ARTIFACT,
+                     *check_push_ready.NOT_BEFORE_A_PUSH, *check_push_ready.TOO_SLOW,
                      BUNDLE, SNIPPETS, check_push_ready.SELF):
             with self.subTest(name=name):
                 self.assertTrue((TOOLS / name).is_file(), name)
+
+    # --- the argument-free loop (T-158) -------------------------------------------------------
+
+    def test_every_argument_free_gate_is_run_bare_and_none_is_listed_as_not_run(self):
+        """Mutant: do not call `run_loop` ⇒ nothing in `looped`. #325 was pushed with a gate
+        of this kind RED on the commit and green on the working tree."""
+        inputs = Fake(BACKEND)
+        code, out = gate(inputs)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.looped(inputs), LOOP)
+        self.assertEqual([args for name, args in inputs.calls if name in LOOP], [[], []])
+        self.assertIn("2 of 2 argument-free gate(s) passed", out)
+        for name in LOOP:
+            self.assertNotIn(name, not_run_section(out))
+
+    def test_a_red_argument_free_gate_refuses_the_push_in_its_own_words(self):
+        """Mutant: ignore the loop's exit codes ⇒ green."""
+        red = (1, "RED: an Owner-held-key ceremony is coming back.\n  - docs/X.md names a phrase")
+        code, out = gate(Fake(BACKEND, loop={"check_coordination.py": red}))
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/X.md names a phrase", out)
+        self.assertIn("tools/check_coordination.py is RED", out)
+        self.assertIn("1 of 2 argument-free gate(s) passed", out)
+        self.assertNotIn("GREEN: ", out)
+
+    def test_an_argument_free_gate_that_does_not_answer_is_red_and_the_others_still_report(self):
+        """Mutant: let the GateError out of the worker ⇒ 'the gate itself failed', and the
+        other gate's verdict is lost. Mutant: swallow it ⇒ green."""
+        inputs = Fake(BACKEND, loop={"check_action_pins.py": GateError("did not finish within 40s")})
+        code, out = gate(inputs)
+        self.assertEqual(code, 1, out)
+        self.assertIn("tools/check_action_pins.py could not be run to a verdict", out)
+        self.assertNotIn("the gate itself failed", out)
+        self.assertEqual(self.looped(inputs), LOOP)
+
+    def test_a_gate_a_table_excuses_is_never_run_bare(self):
+        """Mutant: drop any table from EXCUSED ⇒ its gates are run with no arguments and
+        print usage, or a verdict about a state this push changes."""
+        inputs = Fake(BACKEND + FRONTEND)
+        gate(inputs)
+        bare = {name for name, args in inputs.calls if not args}
+        for table in (check_push_ready.NEEDS_ARGUMENTS, check_push_ready.NEEDS_ARTIFACT,
+                      check_push_ready.NOT_BEFORE_A_PUSH, check_push_ready.TOO_SLOW):
+            for name in table:
+                with self.subTest(name=name):
+                    self.assertIn(name, GATES, "the fixture must carry one gate of each kind")
+                    self.assertNotIn(name, bare)
+        self.assertNotIn("check_push_ready.py", bare)
+        self.assertEqual([name for name, _ in inputs.calls].count(BUNDLE), 1)
+        self.assertEqual([name for name, _ in inputs.calls].count(SNIPPETS), 1)
+
+    def test_a_gate_added_tomorrow_is_run_tomorrow(self):
+        """The list is the directory. Mutant: type the loop's names ⇒ the new one is skipped."""
+        inputs = Fake(BACKEND, gates=GATES + ["check_added_tomorrow.py"])
+        code, out = gate(inputs)
+        self.assertEqual(code, 0, out)
+        self.assertIn("check_added_tomorrow.py", [name for name, _ in inputs.calls])
+
+    def test_the_real_directory_has_no_gate_the_tables_have_forgotten(self):
+        """Every real gate is either run bare or excused BY NAME, and the excused ones exist.
+        A bound on the loop too: the hook gives this gate 50 seconds."""
+        real = check_push_ready.Inputs(ROOT)
+        loop = check_push_ready.loop_gates(real)
+        self.assertIn("check_no_owner_key_ceremony.py", loop)
+        self.assertIn("check_coordination.py", loop)
+        self.assertNotIn("check_spec_references.py", loop)
+        self.assertGreaterEqual(len(loop), 30)
 
     # --- failing inputs ---------------------------------------------------------------------
 

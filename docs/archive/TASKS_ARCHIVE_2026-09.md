@@ -1,5 +1,7 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
+**74 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
 [`apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`](../../apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
@@ -96,3 +98,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-153** | **The tightening list the Owner approved** — native-confirmed delete, a dead command denied, `ci/` `install/` `contracts/` protected, the HMAC verifier gone, the test catalog enforced, L5/L13 true. Owner waiver for the missing Architect audit: roadmap §G.2 ◑ | Bro | Review | merged `#321` |
 | **T-154** | **A merge that touches engine security code needs a cited audit or a waiver the Owner wrote** — `check_merge_ready.py` reads `config/audit-required-paths.json` (the engine's own protected roots, tests excluded); 73 mutants, 73 named deaths ◑ | Bro | Review | merged `#322` |
 | **T-155** | **An Architect audit passes the merge gate only for the PR and the commit it names** — the report carries `Audited-PR:` and `Audited-Head:`; no audit-required path may differ since; 44 mutants, 44 deaths ◑ | Bro | Review | merged `#324` |
+| **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 76 mutants, 76 deaths ◑ | Bro | Review | merged `#325` |

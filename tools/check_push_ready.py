@@ -15,7 +15,7 @@ read as noise, the build was never made, and a number a two-second local run pri
 found out from CI instead. `.claude/hooks/canonical_law_gate.py` now runs this before every
 `git push` that is not a delete, and refuses the push unless it is GREEN.
 
-WHAT IT RUNS -- the local gates CI runs that the argument-free loop skips, and only those
+WHAT IT RUNS
   * `tools/check_bundle_budget.py`, when the branch changes what the bundle is built from:
     anything under `apps/desktop/src/`, or `apps/desktop/package.json`,
     `package-lock.json`, `vite.config.ts`, `perf-budget.json`, `index.html`. "The branch
@@ -27,12 +27,20 @@ WHAT IT RUNS -- the local gates CI runs that the argument-free loop skips, and o
     changed is not knowing that nothing did.
   * `tools/check_runbook_snippets.py`, always -- when `cryptography` imports. When it does
     not, the gate is named as NOT RUN. It is never counted as passed.
+  * EVERY OTHER `tools/check_*.py` that answers with no arguments, four at a time (T-158).
+    Until 2026-10-02 this gate named them as "the separate loop" and left them to be
+    remembered. Pull request #325 was pushed after that loop had been run and had passed --
+    on a tree where the new document was still UNTRACKED, and
+    `check_no_owner_key_ceremony.py` reads tracked files. CI ran it on the commit and went
+    RED. A push is the one moment the tree being judged is exactly the tree being sent, so
+    the loop is run here, on that tree, and its RED refuses the push. The list is derived
+    from the directory, never typed: a gate added tomorrow is run tomorrow, and one that
+    cannot answer bare is RED here until it is filed under one of the tables below.
 
 WHAT IT DOES NOT RUN, and says so by name on every run
-  Every other `tools/check_*.py`. The list is derived from the directory, never typed, so a
-  gate added tomorrow is named here tomorrow. Three need arguments, one needs an artifact
-  only a build and a run produce, and the rest are the argument-free loop -- a separate,
-  slower thing this gate deliberately does not repeat. "Every gate" is never claimed.
+  The gates that need arguments, the one that needs an artifact only a build and a run
+  produce, the two that ask about a state this push is about to change, and one that takes
+  longer than the hook lets this gate live. "Every gate" is never claimed.
 
 WHAT THIS DOES NOT COVER -- listed, not implied
   * `git push` run from inside a script file rather than typed as the command. The hook
@@ -52,6 +60,7 @@ Stdlib only.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import importlib.util
 import pathlib
 import subprocess
@@ -89,6 +98,23 @@ NEEDS_ARTIFACT = {
     "check_produced_artifact.py": "needs the evidence its `producer_command` writes "
                                   "(a cargo build and a run); CI's Production-half job runs it",
 }
+
+
+#: Gates whose question is about a state this very push changes.
+NOT_BEFORE_A_PUSH = {
+    "check_repo_state.py": "compares the mirror with live GitHub, where this push has not "
+                           "landed yet; run it after the push",
+    "check_handoff_ready.py": "asks whether everything is pushed, which this push is about "
+                              "to change; run it after the push",
+}
+#: Gates that cannot finish inside the time the hook gives this one. Measured, not guessed:
+#: 68 s on the box this was written on, against a 50 s hook timeout.
+TOO_SLOW = {
+    "check_spec_references.py": "takes over a minute, longer than the hook lets this gate "
+                                "run; CI runs it",
+}
+#: How many argument-free gates run at once.
+LOOP_WORKERS = 4
 
 
 class GateError(Exception):
@@ -190,25 +216,65 @@ def _run(inputs: Inputs, name: str, args: list[str], why: str,
         problems.append(f"there is no fresh build for it to measure -- run: {BUILD_COMMAND}")
 
 
-def not_run_report(inputs: Inputs, ran: list[str], conditional: dict[str, str]) -> list[str]:
-    """One line per gate this run did NOT run, by name, with the reason."""
+#: Every table that excuses a gate from the argument-free loop, in the order it is reported.
+EXCUSED = (NEEDS_ARGUMENTS, NEEDS_ARTIFACT, NOT_BEFORE_A_PUSH, TOO_SLOW)
+
+
+def loop_gates(inputs: Inputs) -> list[str]:
+    """The gates that answer with no arguments: every one no table above excuses."""
+    special = {SELF, BUNDLE, SNIPPETS}
+    return [name for name in inputs.gates()
+            if name not in special and not any(name in table for table in EXCUSED)]
+
+
+def run_loop(inputs: Inputs, problems: list[str], ran: list[str]) -> None:
+    """Run the argument-free gates, a few at a time, and report them in name order."""
+    names = loop_gates(inputs)
+    if not names:
+        return
+
+    def one(name: str):
+        try:
+            return inputs.run_gate(name, [])
+        except GateError as exc:
+            return exc
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=LOOP_WORKERS) as pool:
+        results = list(pool.map(one, names))
+    red = 0
+    for name, result in zip(names, results):
+        if isinstance(result, GateError):
+            red += 1
+            problems.append(f"tools/{name} could not be run to a verdict: {result}")
+            print(f"  RED   tools/{name}  (argument-free)\n"
+                  f"      it could not be run to a verdict: {result}")
+            continue
+        ran.append(name)
+        code, output = result
+        if code != 0:
+            red += 1
+            problems.append(f"tools/{name} is RED")
+            print(f"  RED   tools/{name}  (argument-free)\n{_indent(output)}")
+    print(f"  {len(names) - red} of {len(names)} argument-free gate(s) passed"
+          + ("" if red else " -- " + ", ".join(names)))
+
+
+def not_run_report(inputs: Inputs, conditional: dict[str, str]) -> list[str]:
+    """One line per gate this run did NOT run, by name, with the reason.
+
+    A gate that ran is in neither `conditional` nor a table, so it has no line here.
+    """
     lines: list[str] = []
-    loop: list[str] = []
     for name in inputs.gates():
-        if name in ran or name == SELF:
+        if name == SELF:
             continue
         if name in conditional:
             lines.append(f"  tools/{name} -- {conditional[name]}")
-        elif name in NEEDS_ARGUMENTS:
-            lines.append(f"  tools/{name} -- {NEEDS_ARGUMENTS[name]}")
-        elif name in NEEDS_ARTIFACT:
-            lines.append(f"  tools/{name} -- {NEEDS_ARTIFACT[name]}")
-        else:
-            loop.append(name)
-    if loop:
-        lines.append(f"  {len(loop)} argument-free gate(s) -- the separate loop "
-                     f"`for g in tools/check_*.py; do python3 \"$g\"; done`, not run here:")
-        lines.append("    " + ", ".join(loop))
+            continue
+        for table in EXCUSED:
+            if name in table:
+                lines.append(f"  tools/{name} -- {table[name]}")
+                break
     return lines
 
 
@@ -259,7 +325,8 @@ def verdict(inputs: Inputs) -> int:
         _run(inputs, SNIPPETS, [], "always", problems, ran)
     else:
         conditional[SNIPPETS] = f"COULD NOT RUN: {blocker}. CI will run it; this did not"
-    report = not_run_report(inputs, ran, conditional)
+    run_loop(inputs, problems, ran)
+    report = not_run_report(inputs, conditional)
 
     if report:
         print("\nNOT RUN by this gate, and so NOT claimed:")
@@ -270,9 +337,9 @@ def verdict(inputs: Inputs) -> int:
         for i, problem in enumerate(problems, 1):
             print(f"  {i}. {problem}")
         return 1
-    skipped = len([g for g in inputs.gates() if g not in ran and g != SELF])
-    print(f"\nGREEN: {len(ran)} gate(s) ran and passed ({', '.join(ran) or 'none'}); "
-          f"{skipped} named above were not run. This is not every gate.")
+    skipped = len(report)
+    print(f"\nGREEN: {len(ran)} gate(s) ran and passed; {skipped} named above were not run. "
+          f"This is not every gate.")
     return 0
 
 

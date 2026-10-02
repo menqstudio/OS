@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #325 · branch `t145/second-read-recorded`** (base `main`, tip `79936be`, task T-157).
+> **⏭️ CURRENT ACTIVE: PR #326 · branch `t158/push-gate-runs-the-loop`** (base `main`, tip `cc0c1e5`, task T-158).
 >
-> the hook refuses a command line that throws a gate's verdict away; the uncapped second read (1226 findings) is recorded
+> the push gate runs every argument-free gate on the tree being pushed
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 76 mutants, 76 deaths ◑ | Bro | Review | `#325` |
+| **T-158** | **The push gate runs every argument-free gate on the tree being pushed** — `#325` went red in CI on a gate that was green on an untracked file; 34 gates in about 7 s, 21 mutants, 21 deaths ◑ | Bro | Review | `#326` |
 | **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — today a crashed holder turns every append into a refusal until a file is deleted by hand; building, then to Architect audit (roadmap §G.2) ◑ | Bro | In-Progress | — |
 | **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
@@ -39,7 +39,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-023** · **T-046** | **Two CI jobs called fixed on one green run** — windows trust-provisioning (inherited ACL) and the Windows engine job; one run proves nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
 | **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **73 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **74 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 

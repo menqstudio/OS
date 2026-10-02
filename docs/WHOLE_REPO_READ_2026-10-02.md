@@ -1308,3 +1308,9 @@ One line each; the evidence is in the data file.
 - **R2-0799** `engine/schemas/mode-grant.schema.json:1` — Schema $id values use two unrelated namespaces and four schemas have none *Fix:* Pick one $id base, apply it to all 21 (source copies in contracts/ first), and have validate_registered_schemas require $id to end with the registere…
 - **R2-0800** `tools/test_check_main_ci.py:33` — The file is named for a gate that does not exist *Fix:* Move the class into test_check_repo_state.py and update the ci.yml run line.
 - **R2-0801** `tools/test_check_residual_items.py:61` — Fixture directories are created with mkdtemp and never removed in eight of the slice's test modules *Fix:* Use tempfile.TemporaryDirectory with addCleanup, as test_check_version_parity and test_sync_active_pr already do.
+
+## 4. Found by the Builder afterwards
+
+Not from a reader. Open unless the line says otherwise.
+
+- **B-01** `tools/check_doc_claims.py:545` — a counted claim is "cited" in a document when the number occurs anywhere in it as a standalone number. `tasks_archive_2026_09_rows` was 72 and then 73 and passed both times although the archive never stated its row count: the digits were there by accident (the `T-154` row says "73 mutants, 73 named deaths"). At 74 no accident matched and the gate went RED, which is how it was found. **The archive now states its count (fixed in the pull request that added this line); the gate's matching is unchanged and still open** — *Fix:* require the number next to the words the claim is about, per claim.
