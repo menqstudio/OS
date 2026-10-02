@@ -54,6 +54,16 @@ ROADMAP = "MASTER_EXECUTION_ROADMAP.md"
 REPORT = "apps/desktop/AUDIT/2026-10-03-architect-audit-of-the-wall.md"
 RUNTIME = "engine/runtime/bro_security.py"
 WAIVED = "2027-01-01"
+#: What GREEN says, after the report's path, when the report names the head itself.
+AT_HEAD = ("names #5 and was audited at this head). Its verdict and its author are NOT read "
+           "by this gate")
+
+
+def report(pr: str = "#5", head: str = HEAD, prose: str = "Verdict: GREEN.") -> str:
+    """An audit report carrying the two binding lines (T-155). Under `Fake` the audited
+    commit is the head itself; a report filed AFTER the commit it names needs a real
+    history, and `AuditBinding` below builds one."""
+    return f"# Architect audit\n\nAudited-PR: {pr}\nAudited-Head: {head}\n\n{prose}\n"
 
 
 def changed(*names: str) -> list[dict]:
@@ -133,6 +143,22 @@ class Fake(check_merge_ready.Inputs):
         if isinstance(self.files, BaseException):
             raise self.files
         return self.files
+
+    # The only history this fake has is one commit: the head. A report that names it is
+    # zero commits behind with nothing moved; every other shape is `AuditBinding`'s, on a
+    # real repository, because ancestry and a diff answered from memory prove nothing.
+    def resolve_commit(self, sha, pr):
+        if sha != HEAD:
+            raise GateError(f"commit {sha[:12]} is not in this clone and could not be fetched")
+
+    def is_ancestor(self, old, new):
+        return old == new
+
+    def commits_between(self, old, new):
+        return 0
+
+    def paths_between(self, old, new):
+        return []
 
     def audit_rule(self):
         if self.rule is None:
@@ -447,7 +473,12 @@ class AuditRule(GateCase):
         out = self.red(Fake(files=changed("README.md", RUNTIME)),
                        "1 engine security path(s)", RUNTIME, "neither",
                        "get an Architect audit and cite it, or have the Owner record a "
-                       "scoped waiver on roadmap §G.2 naming this pull request")
+                       "scoped waiver on roadmap §G.2 naming this pull request",
+                       # ...and the first RED a Builder meets already says what a report
+                       # must carry, so the audit is not filed twice.
+                       "For an audit: the report must carry two lines",
+                       "`Audited-PR: #5`", f"`Audited-Head: {check_merge_ready.EXAMPLE_SHA}`",
+                       "engine/AUDIT/changes/pr-5-<what>.md")
         self.assertNotIn("README.md", out)
 
     def test_many_engine_paths_are_counted_and_the_first_few_named(self):
@@ -485,12 +516,14 @@ class AuditRule(GateCase):
     # --- Architect-Audit ---------------------------------------------------------------
 
     def test_a_cited_audit_that_exists_at_the_head_is_green(self):
-        """The positive control for the four REDs after it."""
+        """The positive control for the four REDs after it. The report names the head
+        itself, which only a fake can do -- a file cannot hold the id of the commit that
+        holds it -- so what this proves is where the report is READ, and `AuditBinding`
+        proves the rest on a real history."""
         for path in (REPORT, "engine/AUDIT/2026-10-03-wall.md"):
             with self.subTest(path=path):
-                inputs = Fake(self.cited(path), files=changed(RUNTIME),
-                              tree={path: "# Architect audit\n\nVerdict: GREEN.\n"})
-                self.green(inputs, f"Architect-Audit {path}")
+                inputs = Fake(self.cited(path), files=changed(RUNTIME), tree={path: report()})
+                self.green(inputs, f"Architect-Audit {path} ({AT_HEAD}")
                 self.assertIn((HEAD, path), inputs.asked,
                               "the report was not read AT the head that will merge")
                 self.assertEqual(inputs.blobs, [(HEAD, path)],
@@ -521,6 +554,21 @@ class AuditRule(GateCase):
             with self.subTest(text=text):
                 self.red(Fake(self.cited(), files=changed(RUNTIME), tree={REPORT: text}),
                          f"`Architect-Audit: {REPORT}` is empty at")
+
+    def test_a_history_that_cannot_be_read_is_red(self):
+        """Git failing to say whether the audited commit is an ancestor, how far the head
+        is, or what moved -- each on its own. Mutant: treat a failed answer as 'nothing
+        moved' ⇒ green."""
+        for broken in ("is_ancestor", "commits_between", "paths_between"):
+            with self.subTest(broken=broken):
+                inputs = Fake(self.cited(), files=changed(RUNTIME), tree={REPORT: report()})
+
+                def fail(old, new):
+                    raise GateError("`git ...` exited 128: fatal: bad object")
+
+                setattr(inputs, broken, fail)
+                self.red(inputs, f"what changed between the audited {HEAD[:12]} and the head",
+                         "could not be read", "fatal: bad object")
 
     def test_an_audit_line_that_names_no_path_is_red(self):
         view = green_view()
@@ -622,7 +670,7 @@ class AuditRule(GateCase):
         """Each line on its own would pass here. Mutant: take the first declaration found
         ⇒ green."""
         text = roadmap(f"**OWNER WAIVER {WAIVED}:** `#5` had no audit.")
-        tree = {ROADMAP: text, REPORT: "# Architect audit\n"}
+        tree = {ROADMAP: text, REPORT: report()}
         both = green_view()
         both["body"] = f"Architect-Audit: {REPORT}\nOwner-Waiver: {WAIVED}\n"
         self.red(Fake(both, files=changed(RUNTIME), tree=tree),
@@ -637,7 +685,7 @@ class AuditRule(GateCase):
         """Every body here would be GREEN if the key counted where it stands. Mutant:
         search for the key anywhere in the line, or ignore case ⇒ green."""
         text = roadmap(f"**OWNER WAIVER {WAIVED}:** `#5` had no audit.")
-        tree = {ROADMAP: text, REPORT: "# Architect audit\n"}
+        tree = {ROADMAP: text, REPORT: report()}
         for line in (f"See Architect-Audit: {REPORT}", f"  Architect-Audit: {REPORT}",
                      f"> Architect-Audit: {REPORT}", f"`Architect-Audit: {REPORT}`",
                      f"architect-audit: {REPORT}", f"ARCHITECT-AUDIT: {REPORT}",
@@ -653,8 +701,8 @@ class AuditRule(GateCase):
         view = green_view()
         view["body"] = (f"No Owner-Waiver: line here, this one was audited.\r\n\r\n"
                         f"Architect-Audit: {REPORT}\r\n")
-        self.green(Fake(view, files=changed(RUNTIME), tree={REPORT: "# Architect audit\n"}),
-                   f"Architect-Audit {REPORT}")
+        self.green(Fake(view, files=changed(RUNTIME), tree={REPORT: report()}),
+                   f"Architect-Audit {REPORT} ({AT_HEAD}")
 
     # --- inputs that cannot be read ----------------------------------------------------
 
@@ -730,11 +778,11 @@ class AuditRule(GateCase):
         and no command, because GREEN here is not permission. Mutant: print the command
         ⇒ red."""
         inputs = Fake(self.merged(f"Architect-Audit: {REPORT}\n"), files=changed(RUNTIME),
-                      tree={REPORT: "# Architect audit\n"})
+                      tree={REPORT: report()})
         code, out = gate(inputs, "--explain-audit")
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith("GREEN: pull request #5 meets the audit rule"), out)
-        self.assertIn(f"  audit  : Architect-Audit {REPORT}\n", out)
+        self.assertIn(f"  audit  : Architect-Audit {REPORT} ({AT_HEAD}\n", out)
         self.assertIn("  state  : MERGED\n", out)
         self.assertIn("NOT permission to merge", out)
         self.assertNotIn("gh pr merge", out)
@@ -744,7 +792,7 @@ class AuditRule(GateCase):
         """The flag must not have opened a second way to GREEN. Mutant: let the audit
         verdict stand in for the gate ⇒ green on a merged pull request."""
         inputs = Fake(self.merged(f"Architect-Audit: {REPORT}\n"), files=changed(RUNTIME),
-                      tree={REPORT: "# Architect audit\n"})
+                      tree={REPORT: report()})
         self.red(inputs, "is MERGED, not OPEN")
 
     def test_explain_audit_says_not_required_when_nothing_in_the_perimeter_changed(self):
@@ -772,11 +820,458 @@ class AuditRule(GateCase):
         """Mutant: run the audit check with no head ⇒ a report is 'read' at None."""
         view = self.merged(f"Architect-Audit: {REPORT}\n")
         view["headRefOid"] = None
-        inputs = Fake(view, files=changed(RUNTIME), tree={REPORT: "# Architect audit\n"})
+        inputs = Fake(view, files=changed(RUNTIME), tree={REPORT: report()})
         code, out = gate(inputs, "--explain-audit")
         self.assertEqual(code, 1, out)
         self.assertIn("did not name a head commit", out)
         self.assertEqual(inputs.asked, [])
+
+
+#: Where the gate's own remedy says a per-change audit goes, with its `<what>` filled in.
+FILED = "engine/AUDIT/changes/pr-5-the-wall.md"
+#: A round's report, on file since before the change: what satisfied the rule until T-155.
+OLD_ROUND = "apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md"
+
+
+class Branch:
+    """A REAL repository in a temp directory: a pull request's branch, commit by commit."""
+
+    def __init__(self, root: pathlib.Path) -> None:
+        self.root = root
+        self.git("init", "-q")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+             "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", *args],
+            check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message: str, files: dict[str, str]) -> str:
+        """Write `files` (as bytes: `write_text` would make them CRLF on the Windows
+        runner), commit everything, and return the new commit."""
+        for rel, text in files.items():
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(text.encode("utf-8"))
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+        return self.head()
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD")
+
+
+class OnDisk(check_merge_ready.Inputs):
+    """GitHub and the clock answer from memory. Git is the real one, on a real repository:
+    `blob_at`, `resolve_commit`, `is_ancestor`, `commits_between` and `paths_between` are
+    not replaced, so every ancestry and every diff below is git's own answer."""
+
+    def __init__(self, root: pathlib.Path, head: str, cited: str, state: str = "OPEN") -> None:
+        super().__init__(root)
+        self.view = green_view()
+        self.view.update(headRefOid=head, state=state,
+                         body=f"Tightens the wall.\n\nArchitect-Audit: {cited}\n")
+
+    def pr_view(self, pr):
+        return self.view
+
+    def changed_files(self, pr):
+        return changed(RUNTIME)
+
+    def audit_rule(self):
+        return check_merge_ready.Inputs(ROOT).audit_rule()   # the committed rule, drift-checked
+
+    def base_file(self, base, rel):
+        return state(D1, "what main said yesterday")
+
+    def today_local(self):
+        return D2
+
+    def today_utc(self):
+        return D2
+
+
+class AuditBinding(GateCase):
+    """T-155. A cited report satisfies the rule only for the pull request and the commit
+    it names, and only while no audit-required path has moved since that commit.
+
+    Until this rule ANY non-empty file under an AUDIT directory satisfied the gate --
+    measured on #321 with the tenth round's report, filed weeks earlier about another
+    head. Every history here is a real one: the commits exist, and git answers.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.branch = Branch(pathlib.Path(tmp.name))
+        self.base = self.branch.commit("main, before the change", {
+            "PROJECT_STATE.md": state(D2), "README.md": "# a product\n",
+            RUNTIME: "ALLOW = ('read',)\n",
+            OLD_ROUND: "# Tenth independent audit, of main @ 75fca65\n\nVerdict: RED.\n"})
+        self.audited = self.branch.commit("the change the auditor read",
+                                          {RUNTIME: "ALLOW = ()\n"})
+
+    def file(self, text: str, path: str = FILED) -> str:
+        return self.branch.commit(f"file {path}", {path: text})
+
+    def file_report(self, pr: str = "#5", head: str | None = None, path: str = FILED) -> str:
+        return self.file(report(pr, self.audited if head is None else head), path)
+
+    def inputs(self, cited: str = FILED, state: str = "OPEN") -> OnDisk:
+        return OnDisk(self.branch.root, self.branch.head(), cited, state)
+
+    def green(self, inputs: OnDisk, said: str) -> str:
+        code, out = gate(inputs)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"  audit  : Architect-Audit {said}. Its verdict and its author are NOT "
+                      f"read by this gate\n", out)
+        self.assertIn(f"gh pr merge 5 --squash --match-head-commit {self.branch.head()}\n", out)
+        return out
+
+    def later(self, commits: int, cited: str = FILED) -> str:
+        return (f"{cited} (names #5 and was audited at {self.audited[:12]}; the head is "
+                f"{commits} commit(s) later and no audit-required path moved)")
+
+    # --- GREEN -------------------------------------------------------------------------
+
+    def test_a_report_committed_after_the_commit_it_names_is_green(self):
+        """THE SELF-REFERENCE CASE. The report lives in the pull request, so the commit
+        that adds it comes after the commit it names -- and it is in the diff between
+        them. It does not invalidate itself, because a path under an AUDIT directory is
+        not audit-required. Mutant: count EVERY path that moved since the audit ⇒ red."""
+        head = self.file_report()
+        self.assertNotEqual(head, self.audited)
+        inputs = self.inputs()
+        self.assertTrue(inputs.is_ancestor(self.audited, head))
+        self.assertEqual(inputs.paths_between(self.audited, head), [FILED],
+                         "the premise: the report IS what changed since the commit it names")
+        self.green(inputs, self.later(1))
+
+    def test_the_recommended_places_to_file_a_per_change_audit_are_accepted(self):
+        """The remedy names a path; a remedy that sends the reader somewhere the gate then
+        refuses is worse than none. Mutant: narrow AUDIT_DIRS to top-level files ⇒ red."""
+        self.assertEqual(FILED, check_merge_ready.PER_CHANGE_AUDIT_PATH.format(pr=5)
+                         .replace("<what>", "the-wall"))
+        for commits, path in enumerate((FILED, "apps/desktop/AUDIT/changes/pr-5-the-wall.md"), 1):
+            with self.subTest(path=path):
+                self.file_report(path=path)
+                self.green(self.inputs(path), self.later(commits, path))
+
+    def test_docs_tests_and_the_canon_may_move_after_the_audit(self):
+        """What may still change once the auditor has read: everything that did not make
+        the audit mandatory. GREEN says how far the head has moved. Mutant: drop the
+        commit count, or refuse any head that is not the audited one ⇒ red."""
+        self.file_report()
+        self.branch.commit("a doc", {"docs/notes.md": "# notes\n"})
+        self.branch.commit("an engine test", {"engine/tests/test_bro_security.py": "# a test\n"})
+        self.branch.commit("the canon and a tool", {
+            "PROJECT_STATE.md": state(D2, "moved after the audit"),
+            "engine/AUDIT/README.md": "# where reports live\n", "tools/check_x.py": "# a gate\n"})
+        self.green(self.inputs(), self.later(4))
+
+    def test_a_change_made_and_taken_back_after_the_audit_is_green(self):
+        """What is compared is the two commits' CONTENT, not the list of commits between
+        them: if the audited code is byte for byte what merges, the audit read what
+        merges. Pinned so that nobody 'tightens' this into a rule about commit lists
+        without deciding to."""
+        self.file_report()
+        self.branch.commit("an experiment", {RUNTIME: "ALLOW = ('read', 'write')\n"})
+        self.branch.commit("taken back", {RUNTIME: "ALLOW = ()\n"})
+        self.green(self.inputs(), self.later(3))
+
+    def test_a_key_said_twice_with_one_value_is_one_statement(self):
+        """A report that states the head in its header and again in its summary has not
+        said two things. The control for the two-values test below."""
+        self.file(report(head=self.audited)
+                  + f"\n## Summary\n\nAudited-PR: #5\nAudited-Head: {self.audited}\n")
+        self.green(self.inputs(), self.later(1))
+
+    def test_a_report_with_windows_line_endings_is_read(self):
+        self.file(report(head=self.audited).replace("\n", "\r\n"))
+        self.green(self.inputs(), self.later(1))
+
+    # --- the audited content is the content being merged -------------------------------
+
+    def test_an_engine_security_path_changed_after_the_audit_is_red(self):
+        """The point of the head line: an audit of commit A does not cover engine security
+        code pushed after A. Mutant: drop the moved-paths arm ⇒ green."""
+        self.file_report()
+        self.branch.commit("pushed after the audit", {RUNTIME: "ALLOW = ('write',)\n",
+                                                      "docs/notes.md": "# notes\n"})
+        out = self.red(self.inputs(), "1 audit-required path(s) changed after the audit",
+                       RUNTIME, f"between the audited {self.audited[:12]}", "2 commit(s) later",
+                       "the audit must be redone or extended to the new head; then update "
+                       "`Audited-Head`")
+        self.assertNotIn("docs/notes.md", out)
+
+    def test_many_paths_changed_after_the_audit_are_counted_and_the_first_few_named(self):
+        self.file_report()
+        self.branch.commit("six more", {f"engine/runtime/bro_{i:02}.py": "x = 1\n"
+                                        for i in range(6)})
+        out = self.red(self.inputs(), "6 audit-required path(s) changed after the audit",
+                       "engine/runtime/bro_00.py", "(+2 more)")
+        self.assertNotIn("engine/runtime/bro_05.py", out)
+
+    def test_an_audit_of_the_commit_BEFORE_the_change_does_not_cover_it(self):
+        """`Audited-Head` is in the history and is the wrong end of it: the commit `main`
+        was at, before the engine change this pull request makes. Mutant: accept any
+        ancestor ⇒ green."""
+        self.file_report(head=self.base)
+        self.red(self.inputs(), "1 audit-required path(s) changed after the audit", RUNTIME,
+                 f"between the audited {self.base[:12]}")
+
+    def test_a_file_moved_out_of_the_perimeter_after_the_audit_counts_under_its_old_name(self):
+        """Moving `engine/runtime/x.py` to `docs/` after the audit deletes audited security
+        code. With rename detection git lists only where it went. Mutant: drop
+        `--no-renames` ⇒ green."""
+        self.file_report()
+        (self.branch.root / "docs").mkdir()
+        self.branch.git("mv", RUNTIME, "docs/old_wall.py")
+        self.branch.git("commit", "-qm", "moved out")
+        self.red(self.inputs(), "1 audit-required path(s) changed after the audit", RUNTIME)
+
+    # --- the audited commit is a commit of this pull request ---------------------------
+
+    def test_an_audited_commit_on_another_branch_is_red(self):
+        """The side commit adds only a doc, so no audit-required path differs between it
+        and the head: ancestry alone refuses it. Mutant: drop the ancestry arm ⇒ green."""
+        mine = self.branch.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.branch.git("checkout", "-q", "-b", "side")
+        side = self.branch.commit("another branch", {"docs/side.md": "# side\n"})
+        self.branch.git("checkout", "-q", mine)
+        head = self.file_report(head=side)
+        inputs = self.inputs()
+        self.assertFalse([p for p in inputs.paths_between(side, head) if p.startswith("engine/r")],
+                         "the premise: only ancestry can refuse this")
+        self.red(inputs, f"`Audited-Head: {side[:12]}` in the report `{FILED}` is not in the "
+                         f"history of pull request #5's head", "a rebase, a force-push, or another "
+                         "branch", "an audit of a commit that is not in what merges is an audit "
+                         "of something else", "the audit must be redone")
+
+    def test_an_audited_commit_that_was_rewritten_is_red(self):
+        """A rebase, in its smallest form: the audited commit is replaced by one with the
+        SAME tree and another id. Nothing here is clever about that: the commit the report
+        names is not in what merges. Mutant: accept a commit whose tree matches ⇒ green."""
+        before = self.audited
+        self.branch.git("commit", "-q", "--amend", "-m", "the same change, reworded")
+        after = self.branch.head()
+        self.assertNotEqual(before, after)
+        self.assertEqual(self.branch.git("rev-parse", f"{before}^{{tree}}"),
+                         self.branch.git("rev-parse", f"{after}^{{tree}}"))
+        self.file_report(head=before)
+        self.red(self.inputs(), f"`Audited-Head: {before[:12]}`", "is not in the history of")
+
+    def test_an_audited_commit_this_repository_does_not_have_is_red(self):
+        """An id nothing has, and the id of a TREE: well-formed, and not a commit. There is
+        no remote to fetch from, so 'even after a fetch' is what happened. Mutant: carry
+        on when the commit cannot be resolved ⇒ a different RED, or GREEN."""
+        tree = self.branch.git("rev-parse", f"{self.audited}^{{tree}}")
+        for sha in ("f" * 40, tree):
+            with self.subTest(sha=sha):
+                self.file_report(head=sha)
+                self.red(self.inputs(), f"`Audited-Head: {sha}` in the report `{FILED}` names "
+                                        f"no commit this repository has, even after a fetch",
+                         "could not be fetched")
+
+    def test_a_clone_that_has_neither_commit_fetches_both(self):
+        """The audited commit is fetched exactly as the head is. The clone the gate runs in
+        starts EMPTY. First a report naming an ancestor: GREEN, so both arrived. Then one
+        naming a commit on another branch, which does not come with the head: the RED is
+        'not in the history', which can only be said of a commit that WAS fetched.
+        Mutant: look for the audited commit without fetching ⇒ 'names no commit'."""
+        self.branch.git("config", "uploadpack.allowAnySHA1InWant", "true")
+        self.file_report()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        clone = Branch(pathlib.Path(tmp.name))
+        clone.git("remote", "add", "origin", str(self.branch.root))
+        inputs = OnDisk(clone.root, self.branch.head(), FILED)
+        self.assertFalse(inputs._has_commit(self.audited))
+        code, out = gate(inputs)
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.later(1), out)
+
+        mine = self.branch.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.branch.git("checkout", "-q", "-b", "side", self.audited)
+        side = self.branch.commit("another branch", {"docs/side.md": "# side\n"})
+        self.branch.git("checkout", "-q", mine)
+        self.file_report(head=side)
+        inputs = OnDisk(clone.root, self.branch.head(), FILED)
+        self.assertFalse(inputs._has_commit(side))
+        self.red(inputs, f"`Audited-Head: {side[:12]}`", "is not in the history of")
+        self.assertTrue(inputs._has_commit(side))
+
+    # --- the two lines -----------------------------------------------------------------
+
+    def test_an_old_report_about_something_else_no_longer_satisfies_the_rule(self):
+        """THE HOLE THIS CLOSES. A round's report, on file since before the change, cited
+        by a pull request it never heard of: GREEN until T-155. It names no pull request
+        and no commit, and each absence is its own problem. Mutant: drop the binding ⇒
+        green."""
+        self.file_report()                       # a good report exists; the body cites the old one
+        out = self.red(self.inputs(OLD_ROUND), f"the report `{OLD_ROUND}`",
+                       "carries no `Audited-PR:` line", "carries no `Audited-Head:` line",
+                       problems=2)
+        self.assertNotIn("names #5", out)
+
+    def test_a_report_that_does_not_name_a_pull_request_is_red(self):
+        """The remedy alone must be enough to write a report that passes: both lines, a
+        worked example, and where to file it. Mutant: drop the missing-`Audited-PR` arm ⇒
+        green, or the gate's own failure."""
+        self.file(f"# Architect audit\n\nAudited-Head: {self.audited}\n\nThis audits #5.\n")
+        self.red(self.inputs(), "carries no `Audited-PR:` line: it does not say which pull "
+                                "request it audited",
+                 "each BEGINNING its line: `Audited-PR: #5` and `Audited-Head: <the 40-hex "
+                 "commit the auditor read",
+                 f"`Audited-Head: {check_merge_ready.EXAMPLE_SHA}`",
+                 "File it as `engine/AUDIT/changes/pr-5-<what>.md`",
+                 "NOT as a `YYYY-MM-DD-*.md` directly under apps/desktop/AUDIT/",
+                 "tools/check_audit_reports.py")
+
+    def test_a_report_that_does_not_name_the_audited_commit_is_red(self):
+        """Mutant: drop the missing-`Audited-Head` arm ⇒ green, or the gate's own failure."""
+        self.file(f"# Architect audit\n\nAudited-PR: #5\n\nRead at {self.audited}.\n")
+        self.red(self.inputs(), "carries no `Audited-Head:` line: it does not say which commit "
+                                "the auditor read", "each BEGINNING its line")
+
+    def test_a_report_that_names_another_pull_request_is_red(self):
+        """Numbers that CONTAIN a 5. Mutant: drop the number comparison, or search the
+        line for `#5` ⇒ green."""
+        for named in ("#50", "#15", "#4", "#555"):
+            with self.subTest(named=named):
+                self.file_report(pr=named)
+                self.red(self.inputs(), f"says `Audited-PR: {named}`, and this is pull request "
+                                        f"#5: it is an audit of another pull request",
+                         "A report is not transferable")
+
+    def test_an_audited_pr_that_is_not_a_number_is_red(self):
+        """Each of these CONTAINS this pull request's number. Mutant: read the first
+        number on the line ⇒ green."""
+        for named in ("5", "#05", "PR 5", "#5 and #6", "another/repo#5", "#5 (the wall)",
+                      "# 5", "pull request #5", ""):
+            with self.subTest(named=named):
+                self.file_report(pr=named)
+                self.red(self.inputs(), f"`Audited-PR: {named}` in the report `{FILED}` is not "
+                                        f"a pull request number")
+
+    def test_an_audited_head_that_is_not_40_hex_is_red(self):
+        """Every one of these names the audited commit to a person, and most of them to
+        git. Mutant: drop the shape rule ⇒ green on the short id and on `HEAD~1`, because
+        git resolves both."""
+        a = self.audited
+        for value in (a[:39], a + "0", "A" + a[1:], a[:12], "HEAD~1", "", f"{a} (the change)",
+                      f"`{a}`", f"{a[:20]} {a[20:]}"):
+            with self.subTest(value=value):
+                self.file_report(head=value)
+                self.red(self.inputs(), f"`Audited-Head: {value}` in the report `{FILED}` is "
+                                        f"not a commit id", "exactly 40 lowercase hex")
+
+    def test_a_key_said_twice_with_two_values_is_red(self):
+        """In both orders, and each key on its own, so that neither 'take the first' nor
+        'take the last' passes: one of the two values is always the right one. Mutant:
+        either ⇒ green in one order."""
+        good = report(head=self.audited)
+        for extra, needle in (
+                ("Audited-PR: #6", "2 different `Audited-PR:` values"),
+                (f"Audited-Head: {self.base}", "2 different `Audited-Head:` values")):
+            for text in (f"{good}\n{extra}\n", f"{extra}\n\n{good}"):
+                with self.subTest(extra=extra, first=text[:12]):
+                    self.file(text)
+                    self.red(self.inputs(), needle, "ambiguous", "leave ONE")
+
+    def test_a_binding_key_that_does_not_begin_a_line_is_prose(self):
+        """Every report here would be GREEN if the key counted where it stands. Mutant:
+        search for the key anywhere in the line, or ignore case ⇒ green."""
+        a = self.audited
+        for line, missing in (
+                (f"  Audited-PR: #5\nAudited-Head: {a}", "Audited-PR:"),
+                (f"> Audited-PR: #5\nAudited-Head: {a}", "Audited-PR:"),
+                (f"`Audited-PR: #5`\nAudited-Head: {a}", "Audited-PR:"),
+                (f"audited-pr: #5\nAudited-Head: {a}", "Audited-PR:"),
+                (f"This is Audited-PR: #5\nAudited-Head: {a}", "Audited-PR:"),
+                (f"Audited-PR #5\nAudited-Head: {a}", "Audited-PR:"),
+                (f"Audited-PR: #5\n\tAudited-Head: {a}", "Audited-Head:"),
+                (f"Audited-PR: #5\n- Audited-Head: {a}", "Audited-Head:"),
+                (f"Audited-PR: #5\nAUDITED-HEAD: {a}", "Audited-Head:"),
+                (f"Audited-PR: #5\nThe Audited-Head: {a} was read", "Audited-Head:"),
+                (f"Audited-PR: #5\nAudited-Head {a}", "Audited-Head:")):
+            with self.subTest(line=line):
+                self.file(f"# Architect audit\n\n{line}\n")
+                self.red(self.inputs(), f"carries no `{missing}` line")
+
+    # --- --explain-audit -----------------------------------------------------------------
+
+    def test_explain_audit_holds_a_merged_pull_request_to_the_binding_and_says_which_rule(self):
+        """The flag reads history with TODAY's rule, and has to say so: a RED on a pull
+        request merged before T-155 is not a finding that it broke the rule of its day.
+        Mutant: drop the note ⇒ red. Mutant: skip the binding under the flag ⇒ green."""
+        self.file_report()
+        self.branch.commit("pushed after the audit", {RUNTIME: "ALLOW = ('write',)\n"})
+        code, out = gate(self.inputs(state="MERGED"), "--explain-audit")
+        self.assertEqual(code, 1, out)
+        self.assertTrue(out.startswith("RED: pull request #5 does NOT meet the audit rule"), out)
+        self.assertIn("1 audit-required path(s) changed after the audit", out)
+        self.assertIn("Pull request #5 is MERGED. The verdict above is the rule AS IT STANDS "
+                      "TODAY", out)
+        self.assertIn("not the rule that was in force when it was merged", out)
+        self.assertIn("a pull request settled before either was never asked", out)
+        self.assertNotIn("gh pr merge", out)
+
+    def test_explain_audit_says_nothing_about_another_days_rule_for_an_OPEN_pull_request(self):
+        """An open pull request IS held to today's rule; the note would be noise there, and
+        on a GREEN it would read as a caveat. Mutant: print the note always ⇒ red."""
+        self.file_report()
+        code, out = gate(self.inputs(), "--explain-audit")
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.later(1), out)
+        self.assertNotIn("AS IT STANDS TODAY", out)
+        code, out = gate(self.inputs(state="MERGED"), "--explain-audit")
+        self.assertEqual(code, 0, out)
+        self.assertIn(self.later(1), out)
+        self.assertIn("Pull request #5 is MERGED. The verdict above is the rule AS IT STANDS "
+                      "TODAY", out)
+
+
+class WhereAPerChangeAuditIsFiled(unittest.TestCase):
+    """The remedy says where to file a per-change audit so that ANOTHER gate stays green.
+    That is a claim about `tools/check_audit_reports.py`, so that gate is the one asked."""
+
+    def audit_reports(self, root: pathlib.Path) -> tuple[int, str]:
+        import check_audit_reports
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = check_audit_reports.main(["--root", str(root)])
+        return code, out.getvalue()
+
+    def test_the_recommended_paths_leave_the_audit_report_gate_green_and_the_other_does_not(self):
+        """A minimal audit trail that gate calls GREEN; then a per-change report in each
+        recommended place: still GREEN. Then the same report filed the way the remedy says
+        NOT to: RED, because it is now the newest round. If that gate ever lists deeper
+        than `apps/desktop/AUDIT/*.md`, the first half fails and the remedy must change."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            audit = root / "apps" / "desktop" / "AUDIT"
+            audit.mkdir(parents=True)
+            round_ = pathlib.PurePosixPath(OLD_ROUND).name
+            (audit / "AUDIT_LEDGER.md").write_text(
+                f"**Authoritative current assessment:** [`{round_}`](./{round_}) -- the "
+                f"**TENTH** independent audit.\n", encoding="utf-8")
+            (audit / round_).write_text("# Tenth audit\n" + "finding\n" * 400, encoding="utf-8")
+            code, out = self.audit_reports(root)
+            self.assertEqual(code, 0, out)
+
+            small = report()                       # far under that gate's size floor, too
+            for rel in (FILED, "apps/desktop/AUDIT/changes/pr-5-the-wall.md"):
+                path = root / rel
+                path.parent.mkdir(parents=True)
+                path.write_text(small, encoding="utf-8")
+            code, out = self.audit_reports(root)
+            self.assertEqual(code, 0, out)
+
+            (audit / "2026-10-03-pr-5-the-wall.md").write_text(small, encoding="utf-8")
+            code, out = self.audit_reports(root)
+            self.assertEqual(code, 1, out)
+            self.assertIn("the newest report filed is `2026-10-03-pr-5-the-wall.md`", out)
 
 
 #: The roots of the engine's perimeter this gate deliberately does not ask an audit for.
@@ -949,8 +1444,13 @@ class ThePathListIsTheEnginesOwn(unittest.TestCase):
         said = " ".join(f"{e.get('what', '')} {e.get('reason', '')}"
                         for e in self.rule["not_covered"])
         for needle in ("Trust-boundary / key / secret handling", "apps/desktop/src-tauri",
-                       "NOT covered", "Tests are not security code"):
+                       "NOT covered", "Tests are not security code",
+                       "the cited audit's content, verdict and author",
+                       "`Audited-Head` is a claim made by whoever wrote the file"):
             self.assertIn(needle, said)
+        # And the purpose states the rule the gate applies, in the gate's own keys.
+        for key in (check_merge_ready.AUDITED_PR_KEY, check_merge_ready.AUDITED_HEAD_KEY):
+            self.assertIn(f"`{key} ", self.rule["purpose"])
         for entry in self.rule["not_covered"]:
             self.assertTrue(str(entry.get("what") or "").strip(), entry)
             self.assertTrue(str(entry.get("reason") or "").strip(), entry)
@@ -1083,6 +1583,50 @@ class TheRealInputs(unittest.TestCase):
             with self.assertRaises(GateError) as caught:
                 check_merge_ready.Inputs(root).file_at("f" * 40, "PROJECT_STATE.md", 5)
             self.assertIn("could not be fetched", str(caught.exception))
+
+    def test_is_ancestor_says_yes_no_or_that_git_did_not_answer(self):
+        """Exit 0 is yes and exit 1 is no; anything else is git failing, which is neither.
+        Mutant: `return code == 0` ⇒ a commit git has never heard of is merely 'not an
+        ancestor'. Mutant: `return code != 1` ⇒ it IS one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, first, second = self._repo(pathlib.Path(tmp))
+            inputs = check_merge_ready.Inputs(root)
+            self.assertIs(inputs.is_ancestor(first, second), True)
+            self.assertIs(inputs.is_ancestor(second, second), True)
+            self.assertIs(inputs.is_ancestor(second, first), False)
+            with self.assertRaises(GateError) as caught:
+                inputs.is_ancestor("f" * 40, second)
+            self.assertIn("exited", str(caught.exception))
+            self.assertEqual(inputs.commits_between(first, second), 1)
+            self.assertEqual(inputs.commits_between(second, second), 0)
+            self.assertEqual(inputs.commits_between(second, first), 0)
+
+    def test_a_commit_count_that_is_not_a_number_is_a_GateError(self):
+        """Mutant: drop the shape check ⇒ a ValueError, which the gate reports as its own
+        failure instead of as something it could not read."""
+        real = check_merge_ready._run
+        check_merge_ready._run = lambda args, *, cwd, timeout=40: "warning: refname is ambiguous\n"
+        try:
+            with self.assertRaises(GateError) as caught:
+                check_merge_ready.Inputs(ROOT).commits_between("a" * 40, "b" * 40)
+        finally:
+            check_merge_ready._run = real
+        self.assertIn("not a number", str(caught.exception))
+
+    def test_paths_between_lists_every_path_as_itself(self):
+        """Both names of a moved file, and a path with a non-ASCII name as its own bytes
+        rather than git's quoted form of it. Mutant: drop `-z` ⇒ the second arrives as
+        `"docs/\\325..."`. Mutant: drop `--no-renames` ⇒ the old name is missing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            branch = Branch(pathlib.Path(tmp))
+            first = branch.commit("one", {"engine/runtime/a.py": "x = 1\n" * 20, "b.md": "b\n"})
+            (branch.root / "docs").mkdir()
+            branch.git("mv", "engine/runtime/a.py", "docs/a.py")
+            second = branch.commit("two", {"docs/նշումներ.md": "# notes\n"})
+            inputs = check_merge_ready.Inputs(branch.root)
+            self.assertEqual(sorted(inputs.paths_between(first, second)),
+                             ["docs/a.py", "docs/նշումներ.md", "engine/runtime/a.py"])
+            self.assertEqual(inputs.paths_between(second, second), [])
 
     def test_the_parser_is_the_one_the_gate_on_main_uses(self):
         """One parser, not a copy: if the two ever disagreed about what the line says,
