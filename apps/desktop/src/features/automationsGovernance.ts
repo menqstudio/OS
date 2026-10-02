@@ -50,11 +50,13 @@ export interface CommandPolicyEntry { tier: CommandTier; grant: CommandGrant }
  * `Automations.governance.test.ts` reads the real JSON and fails if any entry here drifts from
  * it, so this table cannot quietly become a second, wrong source of truth.
  *
- * ⚠ `delete_automation` is `X` / **allow** — the automation store's delete is a GRANTED command
- * and the page must keep offering it. The `L2` hard-deletes below (conversation, knowledge,
- * library item, research item, memory, event) are **deny** with `protection: none`. These are
- * different decisions about different commands: do not generalise in either direction. Listing
- * both here is what makes the distinction asserted rather than a comment nobody checks.
+ * ⚠ `delete_automation` is `X` / **allow** with `protection: native-confirm` — the automation
+ * store's delete is a GRANTED command and the page keeps offering it, but the grant admits a
+ * QUESTION, not a delete: the Rust handler raises a native dialog and deletes only on an
+ * affirmative answer there. The `L2` hard-deletes below (conversation, knowledge, library item,
+ * research item, memory, event) are **deny** with `protection: none`. These are different
+ * decisions about different commands: do not generalise in either direction. Listing both here
+ * is what makes the distinction asserted rather than a comment nobody checks.
  */
 export const COMMAND_POLICY: Readonly<Record<string, CommandPolicyEntry>> = {
   // automations — what this page invokes
@@ -72,6 +74,18 @@ export const COMMAND_POLICY: Readonly<Record<string, CommandPolicyEntry>> = {
   delete_memory: { tier: 'L2', grant: 'deny' },
   delete_event: { tier: 'L2', grant: 'deny' },
 };
+
+/**
+ * The stable machine prefix `delete_automation` rejects with when the native dialog did not end
+ * in an affirmative answer (commands.rs `DELETE_NOT_CONFIRMED_PREFIX`; the governance test reads
+ * the Rust source and fails if the two spellings drift). Nothing was deleted.
+ */
+export const DELETE_NOT_CONFIRMED_PREFIX = 'native_confirmation_not_given';
+
+/** `true` when a `delete_automation` rejection is "the person did not say yes" and not a failure. */
+export function isDeleteNotConfirmed(message: string): boolean {
+  return message.startsWith(`${DELETE_NOT_CONFIRMED_PREFIX}:`);
+}
 
 /** Look a command up FAIL-CLOSED: anything not in the mirror is treated as execution-tier and
  *  denied, so an unknown or renamed command can never be presented as permitted. */

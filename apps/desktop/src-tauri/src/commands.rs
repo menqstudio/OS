@@ -684,6 +684,13 @@ pub fn list_messages(state: State<AppState>, conversation_id: String) -> Result<
 // command) — a compromised renderer cannot forge agent provenance via post_message.
 const WEBVIEW_MESSAGE_ROLES: &[&str] = &["user"];
 
+/// Post a message with a renderer-named role. **DENIED to the window** (`deny-post-message`,
+/// `command-policy.json` grant `deny`): no surface calls it. `services/desktop.ts`
+/// `postMessage()` invokes [`post_user_message`], which FIXES the role server-side; this one
+/// takes a role from the renderer and only checks it against [`WEBVIEW_MESSAGE_ROLES`], so
+/// it was the wider of the two and it was registered and `allow`-granted with nothing using
+/// it. The role check below stays as defence in depth. It stays registered so the grant can
+/// be reviewed and flipped in one place if a surface ever needs it.
 #[tauri::command]
 pub fn post_message(state: State<AppState>, input: NewMessage) -> Result<Message, String> {
     // L-4b: reject any role outside the webview allowlist here; repo validates
@@ -2406,10 +2413,191 @@ pub fn set_automation_enabled(state: State<AppState>, id: String, enabled: bool)
     repo::automations::set_enabled(&conn, &id, enabled, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
 }
 
+// --- delete_automation: a hard delete the renderer cannot perform on its own -------------
+//
+// `delete_automation` removes the row and, by `ON DELETE CASCADE`, its whole run history.
+// There is no undo. It was granted to the window as tier X with `"protection": "none"`, so
+// one `invoke` from a compromised renderer deleted an automation with nobody asked — the
+// six other hard deletes are tier L2 and denied outright, and this one escaped that rule
+// by being classified X. The Owner's decision (2026-10-02) is native confirmation, not
+// denial: the handler raises an OS dialog from Rust, the same `tauri-plugin-dialog` path
+// `confirm_approval` uses, and deletes only on an affirmative answer. The webview sends an
+// id and a display language; it has no argument that answers for the person.
+
+/// Stable machine prefix of the refusal returned when the native dialog did not end in an
+/// affirmative answer — declined, dismissed, or never shown. Nothing was deleted. The page
+/// matches on it to say so in the reader's language.
+pub const DELETE_NOT_CONFIRMED_PREFIX: &str = "native_confirmation_not_given";
+
+/// What the native dialog shows. Built in Rust from the STORED row, never from anything the
+/// renderer sent, so the person is asked about the automation that will actually be deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeDeletePrompt {
+    title: String,
+    body: String,
+    confirm_label: String,
+    cancel_label: String,
+}
+
+/// The dialog's words, in the three languages the cockpit ships. `lang` comes from the
+/// renderer and selects among these compiled strings and nothing else: an unknown or absent
+/// value falls back to English, and no renderer text reaches the dialog. The row's own
+/// fields are truncated for display; the delete is by id and is not affected by that.
+fn delete_automation_prompt(lang: Option<&str>, a: &Automation) -> NativeDeletePrompt {
+    let (title, question, name, trigger, action, state, armed, disarmed, consequence, confirm, cancel) =
+        match lang {
+            Some("hy") => (
+                "Ջնջե՞լ ավտոմատը",
+                "Ջնջե՞լ այս ավտոմատը։",
+                "Անուն",
+                "Trigger",
+                "Գործողություն",
+                "Վիճակ",
+                "միացված",
+                "անջատված",
+                "Ավտոմատը և նրա գործարկումների ամբողջ պատմությունը կջնջվեն։ Սա հետ չի շրջվում։",
+                "Ջնջել",
+                "Չեղարկել",
+            ),
+            Some("ru") => (
+                "Удалить автоматизацию",
+                "Удалить эту автоматизацию?",
+                "Название",
+                "Триггер",
+                "Действие",
+                "Состояние",
+                "включена",
+                "выключена",
+                "Автоматизация и вся история её запусков будут удалены. Это нельзя отменить.",
+                "Удалить",
+                "Отмена",
+            ),
+            _ => (
+                "Delete automation",
+                "Delete this automation?",
+                "Name",
+                "Trigger",
+                "Action",
+                "State",
+                "armed",
+                "disarmed",
+                "The automation and its whole run history will be deleted. This cannot be undone.",
+                "Delete",
+                "Cancel",
+            ),
+        };
+    NativeDeletePrompt {
+        title: title.to_string(),
+        body: format!(
+            "{question}\n\n{name}: {}\n{trigger}: {}\n{action}: {}\n{state}: {}\n\n{consequence}",
+            truncated(&a.name, MAX_AUTOMATION_NAME_CHARS),
+            truncated(&a.trigger, 300),
+            truncated(&a.action, 300),
+            if a.enabled { armed } else { disarmed },
+        ),
+        confirm_label: confirm.to_string(),
+        cancel_label: cancel.to_string(),
+    }
+}
+
+/// The whole of `delete_automation`, with the confirmation as an injected step so a test can
+/// decline it. The Tauri handler passes the native dialog; nothing else in production calls
+/// this, and it holds the ONLY production call of `repo::automations::delete`.
+///
+/// Order, and why each step is where it is:
+///   1. read the row under the lock and release it — an id that names nothing is refused
+///      before any dialog is raised, and the lock is not held while a person reads;
+///   2. ask. `Ok(true)` is the only answer that continues: `Ok(false)` (declined or
+///      dismissed) and `Err` (the dialog could not be shown or awaited) both refuse with
+///      [`DELETE_NOT_CONFIRMED_PREFIX`], and neither touches the database;
+///   3. re-read under the lock and delete in the same hold. If the row is gone, or is no
+///      longer the one the dialog described, nothing is deleted: the answer was about a
+///      different thing.
+///
+/// The audit record names `native:<window label>` as a `user` actor — the same established
+/// fact `confirm_approval` records, and for the same reason.
+async fn delete_automation_after_native_confirmation<C, Fut>(
+    db: &Mutex<rusqlite::Connection>,
+    id: &str,
+    lang: Option<&str>,
+    confirmed_by: &str,
+    confirm: C,
+) -> Result<(), String>
+where
+    C: FnOnce(NativeDeletePrompt) -> Fut,
+    Fut: std::future::Future<Output = Result<bool, String>>,
+{
+    let shown = {
+        // Fail closed on a poisoned connection, exactly as `locked` does.
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        repo::automations::get(&conn, id).map_err(|e| e.to_string())?
+    };
+    match confirm(delete_automation_prompt(lang, &shown)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(format!(
+                "{DELETE_NOT_CONFIRMED_PREFIX}: nothing was deleted. The system dialog was declined or dismissed."
+            ));
+        }
+        Err(why) => {
+            return Err(format!(
+                "{DELETE_NOT_CONFIRMED_PREFIX}: nothing was deleted. The system dialog could not be shown or answered ({}).",
+                truncated(&why, 200)
+            ));
+        }
+    }
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let current = repo::automations::get(&conn, id).map_err(|e| e.to_string())?;
+    if (&current.name, &current.trigger, &current.action) != (&shown.name, &shown.trigger, &shown.action) {
+        return Err(format!(
+            "{DELETE_NOT_CONFIRMED_PREFIX}: nothing was deleted. The automation changed while the system dialog was open, so the answer was about a different one."
+        ));
+    }
+    repo::automations::delete(&conn, id, repo::audit::Actor::native_confirmer(confirmed_by))
+        .map_err(|e| e.to_string())
+}
+
+/// Delete an automation and its run history — after a **native** OS dialog, raised here from
+/// Rust, is answered affirmatively. `command-policy.json` declares this `"protection":
+/// "native-confirm"` and `tools/check_capabilities.py` holds that claim to this code.
+///
+/// The renderer cannot answer for the person: there is no "confirmed" argument, the dialog is
+/// not a webview element, and it shows the stored row rather than anything the renderer
+/// sent. It shares `confirm_approval`'s two bounds — one native dialog at a time, and a
+/// per-window rate limit — so a renderer cannot stack or spam prompts either.
 #[tauri::command]
-pub fn delete_automation(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = locked(&state)?;
-    repo::automations::delete(&conn, &id, repo::audit::Actor::local_operator()).map_err(|e| e.to_string())
+pub async fn delete_automation(
+    state: State<'_, AppState>,
+    window: tauri::Window,
+    id: String,
+    lang: Option<String>,
+) -> Result<(), String> {
+    confirm_rate_limit(window.label())?;
+    // Fail closed on a concurrent confirmation; the guard clears when this returns.
+    let _guard = ConfirmationGuard::acquire()?;
+    let confirmed_by = format!("native:{}", window.label());
+    let win = window.clone();
+    delete_automation_after_native_confirmation(
+        &state.db,
+        &id,
+        lang.as_deref(),
+        &confirmed_by,
+        move |prompt: NativeDeletePrompt| async move {
+            // Off the main thread, so `blocking_show` does not deadlock the event loop.
+            tauri::async_runtime::spawn_blocking(move || {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                win.dialog()
+                    .message(prompt.body)
+                    .title(prompt.title)
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancelCustom(prompt.confirm_label, prompt.cancel_label))
+                    .blocking_show()
+            })
+            .await
+            .map_err(|e| e.to_string())
+        },
+    )
+    .await
 }
 
 /// Run an automation NOW: perform its (local, no-AI) action and append a row to its run log,
@@ -3161,22 +3349,219 @@ mod tests {
         assert!(!GENERIC_APPROVE_REFUSED.contains("not available yet"));
     }
 
-    // `set_run_step_status` is denied to the window in BOTH files that say so. Nothing in the
-    // frontend calls it, and it let a renderer stamp a step `done` with no work behind it.
+    // `set_run_step_status` and `post_message` are denied to the window in BOTH files that say
+    // so. Nothing in the frontend calls either: the first let a renderer stamp a step `done`
+    // with no work behind it, and the second takes a role from the renderer where
+    // `post_user_message`, which every surface uses, never lets it name one.
     #[test]
-    fn set_run_step_status_is_denied_to_the_window() {
+    fn the_two_commands_no_surface_calls_are_denied_to_the_window() {
         let caps: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
         let perms: Vec<&str> =
             caps["permissions"].as_array().unwrap().iter().filter_map(|p| p.as_str()).collect();
-        assert!(perms.contains(&"deny-set-run-step-status"), "the capability must deny it");
-        assert!(!perms.contains(&"allow-set-run-step-status"), "…and must not also allow it");
         let policy: serde_json::Value =
             serde_json::from_str(include_str!("../command-policy.json")).unwrap();
-        assert_eq!(
-            policy["commands"]["set_run_step_status"]["grant"], "deny",
-            "command-policy.json must classify it, and as denied"
-        );
+        for command in ["set_run_step_status", "post_message"] {
+            let kebab = command.replace('_', "-");
+            assert!(perms.contains(&format!("deny-{kebab}").as_str()), "the capability must deny {command}");
+            assert!(!perms.contains(&format!("allow-{kebab}").as_str()), "…and must not also allow {command}");
+            assert_eq!(
+                policy["commands"][command]["grant"], "deny",
+                "command-policy.json must classify {command}, and as denied"
+            );
+        }
+        // The command every surface uses instead stays granted: denying the dead one must not
+        // have taken the live one with it.
+        assert!(perms.contains(&"allow-post-user-message"));
+        assert_eq!(policy["commands"]["post_user_message"]["grant"], "allow");
+    }
+
+    // ---- delete_automation: nothing is deleted unless the native dialog says yes -------
+    //
+    // These drive `delete_automation_after_native_confirmation`, which is the handler minus
+    // the Tauri window: the same function, the same database write, with the dialog replaced
+    // by a closure the test answers. The handler itself cannot be constructed without a
+    // running webview, so `the_delete_automation_handler_asks_natively` holds its text.
+
+    /// A real database behind the same `Mutex` `AppState` holds, with one stored automation.
+    fn db_with_an_automation() -> (Mutex<rusqlite::Connection>, Automation) {
+        let conn = brops_core::db::open_in_memory().expect("in-memory db");
+        let automation = repo::automations::create(
+            &conn,
+            NewAutomation {
+                name: "Nightly digest".to_string(),
+                trigger: "every: 1d".to_string(),
+                action: "note: digest".to_string(),
+            },
+            repo::audit::Actor::local_operator(),
+        )
+        .expect("automation");
+        (Mutex::new(conn), automation)
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread().build().expect("runtime").block_on(f)
+    }
+
+    fn deleted_events(db: &Mutex<rusqlite::Connection>) -> Vec<(String, String)> {
+        let conn = db.lock().unwrap();
+        let mut s = conn
+            .prepare("SELECT actor_type, actor_id FROM audit_events WHERE event_type = 'automation.deleted'")
+            .unwrap();
+        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    }
+
+    fn still_stored(db: &Mutex<rusqlite::Connection>, id: &str) -> bool {
+        repo::automations::get(&db.lock().unwrap(), id).is_ok()
+    }
+
+    #[test]
+    fn a_declined_native_dialog_deletes_nothing() {
+        let (db, a) = db_with_an_automation();
+        let err = block_on(delete_automation_after_native_confirmation(
+            &db, &a.id, None, "native:main", |_| async { Ok(false) },
+        ))
+        .expect_err("a declined dialog must refuse");
+        assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
+        assert!(err.contains("nothing was deleted"), "{err}");
+        assert!(still_stored(&db, &a.id), "the automation was deleted although the dialog was declined");
+        assert!(deleted_events(&db).is_empty(), "a refused delete must not be audited as one");
+    }
+
+    #[test]
+    fn a_native_dialog_that_cannot_be_shown_deletes_nothing() {
+        let (db, a) = db_with_an_automation();
+        let err = block_on(delete_automation_after_native_confirmation(
+            &db, &a.id, None, "native:main", |_| async { Err("no display".to_string()) },
+        ))
+        .expect_err("an unavailable dialog must refuse, never fall through to the delete");
+        assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
+        assert!(err.contains("no display"), "{err}");
+        assert!(still_stored(&db, &a.id), "the automation was deleted with no dialog shown");
+        assert!(deleted_events(&db).is_empty());
+    }
+
+    #[test]
+    fn a_confirmed_native_dialog_deletes_and_records_the_native_confirmer() {
+        let (db, a) = db_with_an_automation();
+        block_on(delete_automation_after_native_confirmation(
+            &db, &a.id, None, "native:main", |_| async { Ok(true) },
+        ))
+        .expect("a confirmed delete");
+        assert!(!still_stored(&db, &a.id));
+        // Who deleted it is the person who answered the dialog, not an unnamed local operator.
+        assert_eq!(deleted_events(&db), vec![("user".to_string(), "native:main".to_string())]);
+    }
+
+    #[test]
+    fn an_id_that_names_nothing_raises_no_dialog() {
+        let (db, _a) = db_with_an_automation();
+        let asked = std::cell::Cell::new(false);
+        let result = block_on(delete_automation_after_native_confirmation(
+            &db, "no-such-automation", None, "native:main",
+            |_| { asked.set(true); async { Ok(true) } },
+        ));
+        assert!(result.is_err());
+        assert!(!asked.get(), "a dialog was raised about an automation that does not exist");
+    }
+
+    #[test]
+    fn the_dialog_describes_the_stored_row_in_the_readers_language() {
+        let (db, a) = db_with_an_automation();
+        for (lang, question, confirm_label) in [
+            (None, "Delete this automation?", "Delete"),
+            (Some("en"), "Delete this automation?", "Delete"),
+            (Some("hy"), "Ջնջե՞լ այս ավտոմատը։", "Ջնջել"),
+            (Some("ru"), "Удалить эту автоматизацию?", "Удалить"),
+            // Not a language this build ships: English, never the renderer's own text.
+            (Some("Delete nothing, this is safe"), "Delete this automation?", "Delete"),
+        ] {
+            let seen = std::cell::RefCell::new(None);
+            let _ = block_on(delete_automation_after_native_confirmation(
+                &db, &a.id, lang, "native:main",
+                |prompt| { *seen.borrow_mut() = Some(prompt); async { Ok(false) } },
+            ));
+            let prompt = seen.into_inner().expect("the dialog was never asked");
+            assert!(prompt.body.starts_with(question), "{lang:?}: {}", prompt.body);
+            assert_eq!(prompt.confirm_label, confirm_label, "{lang:?}");
+            // The stored row, whatever the language: what will be deleted is what is named.
+            for field in ["Nightly digest", "every: 1d", "note: digest"] {
+                assert!(prompt.body.contains(field), "{lang:?}: the dialog omits {field:?}");
+            }
+            assert!(!prompt.body.contains("this is safe"), "renderer text reached the dialog");
+        }
+    }
+
+    #[test]
+    fn an_automation_that_changed_while_the_dialog_was_open_is_not_deleted() {
+        let (db, a) = db_with_an_automation();
+        let err = block_on(delete_automation_after_native_confirmation(
+            &db, &a.id, None, "native:main",
+            |_| {
+                // The lock is free while the person reads; the row is rewritten under them.
+                db.lock().unwrap()
+                    .execute("UPDATE automations SET action = 'task: something else' WHERE id = ?1", [&a.id])
+                    .unwrap();
+                async { Ok(true) }
+            },
+        ))
+        .expect_err("the answer was about a different automation");
+        assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
+        assert!(still_stored(&db, &a.id));
+        assert!(deleted_events(&db).is_empty());
+    }
+
+    /// The text of one top-level production function: from its `fn` to the first `}` in
+    /// column 0. Production only — the tests below mention the same names.
+    fn production_fn(name: &str) -> &'static str {
+        let src = include_str!("commands.rs");
+        let production = src.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        let start = production
+            .find(&format!("fn {name}("))
+            .or_else(|| production.find(&format!("fn {name}<")))
+            .unwrap_or_else(|| panic!("no production fn {name}"));
+        let rest = &production[start..];
+        &rest[..rest.find("\n}\n").expect("fn end")]
+    }
+
+    // The handler cannot be run without a webview, so its text is held instead: it takes the
+    // window, takes no "confirmed" argument, bounds the prompt exactly as `confirm_approval`
+    // does, shows a native dialog, and deletes only through the function the tests above drive.
+    #[test]
+    fn the_delete_automation_handler_asks_natively() {
+        let handler = production_fn("delete_automation");
+        assert!(handler.contains("window: tauri::Window"), "{handler}");
+        assert!(handler.contains("confirm_rate_limit(window.label())?"), "{handler}");
+        assert!(handler.contains("ConfirmationGuard::acquire()?"), "{handler}");
+        assert!(handler.contains(".blocking_show()"), "{handler}");
+        assert!(handler.contains("delete_automation_after_native_confirmation("), "{handler}");
+        assert!(!handler.contains(concat!("repo::automations::", "delete(")), "the handler deletes on its own");
+        let signature = &handler[..handler.find(") -> Result").expect("signature")];
+        assert!(!signature.contains("confirmed"), "the renderer must not be able to answer: {signature}");
+    }
+
+    // One production call of the delete, and it is inside the function that asks first, after
+    // the question. A second call site anywhere is a way around the dialog.
+    #[test]
+    fn the_only_production_delete_of_an_automation_is_behind_the_question() {
+        let src = include_str!("commands.rs");
+        let production = src.split("\n#[cfg(test)]\nmod tests {").next().unwrap();
+        let call = concat!("repo::automations::", "delete(");
+        assert_eq!(production.matches(call).count(), 1);
+        let gate = production_fn("delete_automation_after_native_confirmation");
+        let asked = gate.find("confirm(delete_automation_prompt(").expect("the gate never asks");
+        let deleted = gate.find(call).expect("the delete is not in the gate");
+        assert!(asked < deleted, "the delete comes before the question");
+    }
+
+    // The policy says what the code does.
+    #[test]
+    fn delete_automation_is_granted_only_as_natively_confirmed() {
+        let policy: serde_json::Value =
+            serde_json::from_str(include_str!("../command-policy.json")).unwrap();
+        assert_eq!(policy["commands"]["delete_automation"]["grant"], "allow");
+        assert_eq!(policy["commands"]["delete_automation"]["protection"], "native-confirm");
     }
 
     // ---- L2 hard-delete: registered, callable, and genuinely forbidden ----------------

@@ -3,7 +3,7 @@ import {
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from 'react';
 import { useApp } from '../app/store';
-import { Modal, FormRow, Input, Button, ConfirmDialog } from '../components/ui';
+import { Modal, FormRow, Input, Button } from '../components/ui';
 import { desktop, hasBackend } from '../services/desktop';
 import { useAsync } from '../hooks/useAsync';
 import { Mark } from '../components/Ambient';
@@ -13,8 +13,8 @@ import type { Automation } from '../domain/entities';
 import { STR } from './Automations.strings';
 import { parseTimestamp } from './timestamps';
 import {
-  assessAction, assessRun, bindReceipt, buildLedger, isContractEnforced, isEngineVerified,
-  parseTrigger, summarise,
+  assessAction, assessRun, bindReceipt, buildLedger, isContractEnforced, isDeleteNotConfirmed,
+  isEngineVerified, parseTrigger, summarise,
   type EvidenceItem, type LedgerEntry, type RefusalReason,
   type RiskFactor, type RunContract, type SessionRefusal, type TriggerParse,
 } from './automationsGovernance';
@@ -27,7 +27,8 @@ import {
 // the shared aios.css, rooted under `.v-automations`.
 //
 // REAL DATA. Every conduit is a REAL row from `list_automations` (services/desktop →
-// domain Automation). Create/delete/enable flows are unchanged. No pipeline is
+// domain Automation). Create and enable call the store directly; delete asks the Rust handler,
+// which raises a native dialog before it deletes anything. No pipeline is
 // invented.
 //
 // HONEST STATE. The real `Automation` entity carries only { name, trigger, action,
@@ -339,7 +340,11 @@ export function Automations() {
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
 
   const [creating, setCreating] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // The id whose NATIVE delete dialog is open right now, and the id whose dialog was last
+  // answered "no". There is no in-page confirm dialog: the Rust handler raises the system one,
+  // and a second question drawn here first would be a question whose answer decides nothing.
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteNotConfirmed, setDeleteNotConfirmed] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<'all' | RuntimeState>('all');
   // A wall/guard denial captured from an enable/disable attempt; drives the
@@ -490,22 +495,33 @@ export function Automations() {
   };
 
   // Not optimistic: the conduit leaves the selection only once the backend confirms.
-  // A refusal keeps it selected and reports the reason through the same denial channel
-  // every other refused action already uses, instead of a silent reload.
+  // The call does not delete by itself: the Rust handler raises a native dialog and this promise
+  // stays pending until the person answers it. "No" is not an error and is not shown as one;
+  // any other refusal keeps the conduit selected and reports the reason through the same denial
+  // channel every other refused action already uses, instead of a silent reload.
   const remove = (id: string) => {
-    setPendingDelete(null);
+    if (deleting !== null) return;
+    setDeleting(id);
+    setDeleteNotConfirmed(null);
     setActionError(null);
-    desktop.deleteAutomation(id)
+    setAnnounce(L('deleteAsking'));
+    desktop.deleteAutomation(id, lang)
       .then(() => {
         if (selectedId === id) setSelectedId(null);
         s.reload();
       })
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
-        setActionError({ id, message });
-        setAnnounce(isDenial(message) ? `${stateLabel('blocked')}: ${message}` : message);
+        if (isDeleteNotConfirmed(message)) {
+          setDeleteNotConfirmed(id);
+          setAnnounce(L('deleteNotConfirmed'));
+        } else {
+          setActionError({ id, message });
+          setAnnounce(isDenial(message) ? `${stateLabel('blocked')}: ${message}` : message);
+        }
         s.reload();
-      });
+      })
+      .finally(() => setDeleting(null));
   };
 
   /** Record a refusal so it survives in the history instead of vanishing. Never persisted —
@@ -617,7 +633,7 @@ export function Automations() {
   const filterRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (creating || pendingDelete) return;
+      if (creating) return;
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
@@ -633,7 +649,7 @@ export function Automations() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [creating, pendingDelete]);
+  }, [creating]);
 
   /** Arrow / Home / End across the filter chips, once `/` has put focus there. A group you can
    *  reach and then have to Tab through one chip at a time is half a shortcut. */
@@ -789,10 +805,26 @@ export function Automations() {
           <Button variant="ghost" onClick={() => toggle(a)}>
             {t(a.enabled ? 'automations.disable' : 'automations.enable')}
           </Button>
-          {/* `delete_automation` is a GRANTED command (tier X) — unlike the hard-deletes on the
-              neighbouring pages, which the window capability set denies. It stays offered here. */}
-          <Button variant="ghost" onClick={() => setPendingDelete(a.id)}>{t('action.delete')}</Button>
+          {/* `delete_automation` is a GRANTED command (tier X, native-confirm) — unlike the
+              hard-deletes on the neighbouring pages, which the window capability set denies. It
+              stays offered here, and pressing it deletes nothing: it asks the Rust handler, which
+              raises a system dialog. Disabled while one is open — the backend allows one at a time. */}
+          <Button
+            variant="ghost"
+            onClick={() => remove(a.id)}
+            disabled={deleting !== null}
+            title={L('deleteAsks')}
+          >
+            {t('action.delete')}
+          </Button>
         </div>
+        {/* Said on the page, not only in a tooltip: what Delete does before it is pressed. */}
+        <p className="sc-desc">{L('deleteAsks')}</p>
+        {/* No live-region role on these two: the page's one polite region already announces
+            the same sentence, and a second would have it read out twice. */}
+        {deleting === a.id && <p className="sc-desc">{L('deleteAsking')}</p>}
+        {deleting === null && deleteNotConfirmed === a.id
+          && <p className="sc-desc">{L('deleteNotConfirmed')}</p>}
 
         {/* governance guarantee, surfaced on the selected conduit */}
         <p className="sc-desc">{governLine}</p>
@@ -1133,16 +1165,6 @@ export function Automations() {
       <span className="au-sr" role="status" aria-live="polite">{announce}</span>
 
       {creating && <NewRuleForm onClose={() => setCreating(false)} onCreated={() => s.reload()} />}
-      {pendingDelete && (
-        <ConfirmDialog
-          title={t('confirm.deleteTitle')}
-          message={t('confirm.deleteBody')}
-          confirmLabel={t('action.delete')}
-          cancelLabel={t('action.cancel')}
-          onConfirm={() => remove(pendingDelete)}
-          onCancel={() => setPendingDelete(null)}
-        />
-      )}
 
       {body}
     </div>

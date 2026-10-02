@@ -88,9 +88,9 @@ Full text and observed state live in `config/reachability-declarations.json`. Su
 | Surface | Reason | Why |
 |---|---|---|
 | `decide_approval` | capability-denied | `deny-decide-approval` (T-011): approving needs renderer-independent native confirmation. Having no caller is the enforced state. |
-| `post_message` | superseded | `post_user_message` fixes the role server-side; `post_message` only validates it. Residual allow-granted surface. |
+| `post_message` | capability-denied | `post_user_message` fixes the role server-side; `post_message` only validates it. Denied to the window since T-153 (it was residual allow-granted surface). |
 | `reply_in_conversation` | superseded | Non-streaming twin of `stream_reply` on the same governed pipeline; every chat surface uses the streaming sibling. |
-| `set_run_step_status` | superseded | Steps transition through `stream_run_step` / `advance_run`; a renderer that could stamp a step status could claim work it never did. |
+| `set_run_step_status` | capability-denied | Steps transition through `stream_run_step` / `advance_run`; a renderer that could stamp a step status could claim work it never did. Denied to the window since T-145 wave 2. |
 | **`create_decision`** | **not-yet-wired (OPEN)** | **Tracked here.** The Decisions page is a read-only mirror and offers no create control, yet the command is registered and `allow`-granted. Closes either by wiring a create control on the Decisions page, **or** by flipping the grant to `deny` because authoring governance decisions from the webview is not wanted. Until one is chosen this is invokable surface with no user. |
 
 **Rust symbols — the five in `config/reachability-declarations.json` (`rust_symbols`), re-read 2026-10-01.**

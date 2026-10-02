@@ -98,9 +98,9 @@
       "observed": "2026-08-07: no invoke; one non-call mention as DENIED_DECIDE_COMMAND in features/approvalsAuthority.ts."
     },
     "post_message": {
-      "reason": "superseded",
-      "note": "Superseded by post_user_message for every renderer path (P1-6): post_user_message fixes the role server-side, so the webview cannot choose it, while post_message only VALIDATES the role against WEBVIEW_MESSAGE_ROLES = [\"user\"]. services/desktop.ts exposes postMessage(), which invokes post_user_message. post_message is therefore the WIDER of the two - it accepts a role and checks it, where the superseding command never lets the webview name one at all - and it stays registered and allow-granted with nothing calling it. That is residual invokable surface with no user; flipping its grant to deny is the cheapest way to remove it, and the gate will say so again the moment anyone wonders.",
-      "observed": "2026-08-07: zero invocations anywhere under apps/desktop/src/**, production or test."
+      "reason": "capability-denied",
+      "note": "DENIED to the main window in capabilities/default.json (deny-post-message) and command-policy.json (grant deny) since T-153, on the Owner's decision of 2026-10-02 - this entry itself used to recommend it. Having no caller is now the ENFORCED state: this gate refuses the reason 'capability-denied' unless the grant really is deny. Why it had no caller: post_user_message supersedes it for every renderer path (P1-6). post_user_message fixes the role server-side, so the webview cannot choose it, while post_message only VALIDATES the role against WEBVIEW_MESSAGE_ROLES = [\"user\"]. services/desktop.ts exposes postMessage(), which invokes post_user_message. post_message was therefore the WIDER of the two - it accepts a role and checks it, where the superseding command never lets the webview name one at all. It stays registered so the grant can be reviewed in one place; commands.rs pins the denial in both files (the_two_commands_no_surface_calls_are_denied_to_the_window).",
+      "observed": "2026-10-02: zero occurrences of the string post_message anywhere under apps/desktop/src/**, production or test; the three computed invoke() names there (agentsDispatch DISPATCH_COMMAND, delegationSource DELEGATION_LIST_COMMAND, integrationsProbe PROBE_COMMAND / DECLARE_COMMAND) are constants naming other commands."
     },
     "reply_in_conversation": {
       "reason": "superseded",
@@ -108,8 +108,8 @@
       "observed": "2026-08-07: zero invocations under apps/desktop/src/**; commands.rs keeps it on the governed path."
     },
     "set_run_step_status": {
-      "reason": "superseded",
-      "note": "No surface authors a run-step status directly. Command.tsx drives steps through stream_run_step (the governed execution path, which sets status as a consequence of real work) and advance_run (which moves the run forward transactionally). A renderer that could stamp an arbitrary step status could claim a step succeeded without it having run, which is the exact honesty defect the six-surface work closed, so leaving this uncalled is the safer state.",
+      "reason": "capability-denied",
+      "note": "DENIED to the main window in capabilities/default.json (deny-set-run-step-status) and command-policy.json (grant deny) since T-145 wave 2; the reason here said 'superseded' until T-153, which left this gate not holding the declaration to the grant. No surface authors a run-step status directly. Command.tsx drives steps through stream_run_step (the governed execution path, which sets status as a consequence of real work) and advance_run (which moves the run forward transactionally). A renderer that could stamp an arbitrary step status could claim a step succeeded without it having run, which is the exact honesty defect the six-surface work closed, so it is denied rather than merely left uncalled.",
       "observed": "2026-08-07: zero invocations under apps/desktop/src/**; add_run_step / advance_run / stream_run_step are the live callers of the run-step repo."
     },
     "create_decision": {

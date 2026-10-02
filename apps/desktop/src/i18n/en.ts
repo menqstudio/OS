@@ -97,7 +97,6 @@ export const en = {
   'action.delete': 'Delete',
   'action.deleteDisabledSafety': 'Delete is disabled for safety — deleting this needs a confirmation step that does not exist yet.',
   'confirm.deleteTitle': 'Delete this item?',
-  'confirm.deleteBody': 'This action cannot be undone.',
   'confirm.deleteDeniedBody': 'Nothing will be removed: this build denies this delete, because it has no undo and no native confirmation yet. Pressing Delete still asks the store, and its refusal is shown on this page.',
   'files.subtitle': 'Browse the local filesystem',
   'files.up': 'Up',

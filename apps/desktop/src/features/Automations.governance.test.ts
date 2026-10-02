@@ -9,8 +9,9 @@ import { resolve } from 'node:path';
 const fromDesktopRoot = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
 import {
-  COMMAND_POLICY, LOCAL_RISK_CEILING, assessAction, assessRun, bindReceipt, buildLedger,
-  classifyRun, commandPolicy, isAllowed, isContractEnforced, isEngineVerified, parseAction,
+  COMMAND_POLICY, DELETE_NOT_CONFIRMED_PREFIX, LOCAL_RISK_CEILING, assessAction, assessRun,
+  bindReceipt, buildLedger, classifyRun, commandPolicy, isAllowed, isContractEnforced,
+  isDeleteNotConfirmed, isEngineVerified, parseAction,
   parseIntervalMs, parseTrigger, riskExceeds, summarise,
   type RunContract, type SessionRefusal,
 } from './automationsGovernance';
@@ -72,6 +73,23 @@ describe('the capability mirror is a mirror, not a second opinion', () => {
   it('delete_automation is GRANTED at tier X — it is not one of the denied hard-deletes', () => {
     expect(authoritative.commands.delete_automation).toMatchObject({ tier: 'X', grant: 'allow' });
     expect(commandPolicy('delete_automation')).toEqual({ tier: 'X', grant: 'allow' });
+  });
+
+  // …and granted is not ungated. It was `protection: none`: one renderer call deleted the row
+  // and its run history. The grant now admits a question the Rust handler asks natively.
+  it('delete_automation is granted only as natively confirmed, never with protection none', () => {
+    expect(authoritative.commands.delete_automation.protection).toBe('native-confirm');
+  });
+
+  it('the page recognises the handler\'s "not confirmed" refusal by the prefix the handler really sends', () => {
+    const rust = fromDesktopRoot('src-tauri/src/commands.rs');
+    const declared = /pub const DELETE_NOT_CONFIRMED_PREFIX: &str = "([a-z_]+)";/.exec(rust);
+    expect(declared, 'commands.rs must declare DELETE_NOT_CONFIRMED_PREFIX').not.toBeNull();
+    expect(DELETE_NOT_CONFIRMED_PREFIX).toBe(declared?.[1]);
+    expect(isDeleteNotConfirmed(`${DELETE_NOT_CONFIRMED_PREFIX}: nothing was deleted.`)).toBe(true);
+    // A refusal of another kind is not "the person said no" — it stays an error on the page.
+    expect(isDeleteNotConfirmed('another confirmation is already in progress')).toBe(false);
+    expect(isDeleteNotConfirmed(`denied: ${DELETE_NOT_CONFIRMED_PREFIX}:`)).toBe(false);
   });
 
   it('the neighbouring hard-deletes stay DENIED — the automation grant is never generalised to them', () => {
@@ -317,6 +335,17 @@ describe('the run path cannot lose its pre-flight gate', () => {
     expect(gate, 'assessRun must be called before runAutomation').toBeGreaterThan(-1);
     const between = before.slice(gate);
     expect(between, 'the refusal must end the handler before the invoke').toMatch(/refusal !== null[\s\S]*return;/);
+  });
+
+  it('the page asks nobody itself before delete_automation — the native dialog is the only question', () => {
+    // An in-page confirm dialog used to precede the call. Kept beside the native one it would ask
+    // twice, and its "yes" would decide nothing; so the page has none, and the service sends an id
+    // and a display language — no argument that could answer for the person.
+    expect(pageSource).not.toMatch(/ConfirmDialog/);
+    const service = fromDesktopRoot('src/services/desktop.ts');
+    const call = /deleteAutomation:[^\n]*invoke<void>\('delete_automation', (\{[^}]*\})\)/.exec(service);
+    expect(call, 'services/desktop.ts must define deleteAutomation over delete_automation').not.toBeNull();
+    expect(call?.[1]).toBe('{ id, lang }');
   });
 
   it('the page never invokes a denied hard-delete', () => {
