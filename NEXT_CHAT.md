@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t159/implementation-questions` — `main` @ `71380ad`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `b69d57b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
+> **✅ SETTLED — `main` is at `b69d57b`.** The only thing open is PR #332 on `t145/cockpit-read-recorded`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-159: the Architect ruled (design, Appendix A) — a dependency-free grammar in the wall, the parser test-only; no code yet. T-163 rides: CI stamps the head it verifies.
+> **Next:** T-159: implement the classifier to the Architect's ruling, then a code audit. T-145's cockpit read rides this.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

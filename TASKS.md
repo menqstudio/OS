@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #331 · branch `t159/implementation-questions`** (base `main`, tip `71380ad`, task T-159).
+> **✅ SETTLED — `main` is at `b69d57b`.** The only thing open is PR #332 on `t145/cockpit-read-recorded`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-159: the Architect ruled (design, Appendix A) — a dependency-free grammar in the wall, the parser test-only; no code yet. T-163 rides: CI stamps the head it verifies.
+> **Next:** T-159: implement the classifier to the Architect's ruling, then a code audit. T-145's cockpit read rides this.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -20,7 +20,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 |----|------|-----------|--------|-------------|
 | **T-163** | **The run that verifies a head stamps it** — an Architect commit left `Repo-state` red on `#328` and `#331`; the job writes the marker before reading it; 10 mutants, 10 deaths ◑ | Bro | Review | `#331` |
 | **T-159** | **The shell classifier is rebuilt to the Architect's design** — [`docs/design/SHELL_CLASSIFIER_DESIGN.md`](docs/design/SHELL_CLASSIFIER_DESIGN.md), the Architect's, before any code (§G.2); answers R2-0001 and R2-0002. **No code yet**: the Architect ruled in its Appendix A — a dependency-free grammar in the wall, the parser test-only; the code is its own audited pull request | Bro | In-Progress | `#331` |
-| **T-145** | **The whole repository, read file by file** — first read: 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md), waves 1 and 2 merged (405 + 275 fixed), 89 open, 36 wait on the Owner (§8). Uncapped second read: **1226 more, all open**, in [`docs/WHOLE_REPO_READ_2026-10-02.md`](docs/WHOLE_REPO_READ_2026-10-02.md); the cockpit's re-read is running ◑ | Bro | In-Progress | `#325` |
+| **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
