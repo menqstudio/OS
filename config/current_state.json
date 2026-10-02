@@ -117,11 +117,11 @@
     "branch": "t153/tightening",
     "state": "open",
     "what": "Seven Owner-approved tightening changes from section 8 of the whole-repository read: native confirmation for delete_automation, post_message denied, the renderer contract stated, three roots added to the engine's protected perimeter, the dead HMAC verifier deleted, the test catalog enforced, laws L5 and L13 made true.",
-    "note": "the Owner-approved tightening list, built and NOT to be merged until he chooses: an Owner waiver or an Architect audit (roadmap G.2)",
+    "note": "the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #321 (t153/tightening), task T-153: Seven Owner-approved tightening changes from section 8 of the whole-repository read: native confirmation for delete_automation, post_message denied, the renderer contract stated, three roots added to the engine's protected perimeter, the dead HMAC verifier deleted, the test catalog enforced, laws L5 and L13 made true. Next: the Owner chooses: waiver or Architect audit; then merge with check_merge_ready",
+    "current": "PR #321 (t153/tightening), task T-153: the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2 Next: merge with check_merge_ready, settle, then the uncapped second read",
     "_note": "The carrier is current_workflow_pr (#321 on t153/tightening). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

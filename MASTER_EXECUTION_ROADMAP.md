@@ -356,7 +356,7 @@ before merge.
 These override the per-phase row whenever a task falls into the class — regardless of which phase it sits in.
 | Task class | Builder | Audit | Approval | Rule |
 |---|---|---|---|---|
-| Any `engine/` security code (wall · leases · gates · signatures · control-plane · root model) | 🔨 (own audited branch) | 📐 **mandatory** | 🛑 **before implementation** | Never rushed, never parallelized (§E serialization rule). |
+| Any `engine/` security code (wall · leases · gates · signatures · control-plane · root model) | 🔨 (own audited branch) | 📐 **mandatory** | 🛑 **before implementation** | Never rushed, never parallelized (§E serialization rule). **OWNER WAIVER 2026-10-02, scoped — the rule stands:** `#313` (shell classifier, floor-writer provisioner), `#314` (engine wall and services, built by parallel agents) and `T-153`'s engine half (`#321`) had **no Architect audit**; the Owner approved each by name and the Builder noticed this row only after the first two had merged. Each refuses more or deletes dead code. All three are in the next independent audit's scope; the waiver covers these three and nothing after them — the form of §B.5's waiver and the rev-30 `OWNER_APPROVED_NOT_ARCHITECT_AUDITED` token. |
 | Trust-boundary / key / secret handling | 🔨 | 📐 **mandatory** | 🛑 | Desktop never holds keys/leases/secrets. |
 | Contract / schema change (`bridge/`, `contracts/`, engine schemas) | 🔨 | 📐 **mandatory** | ✅ | Versioned; consumers updated same PR. |
 | Execution-order / dependency-graph change (§E) | 🔨 (proposal) | 📐 **mandatory** | 🛑 | This is a §I Change-Control event. |

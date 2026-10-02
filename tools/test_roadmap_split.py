@@ -108,6 +108,9 @@ ANNOTATED_LINES: dict[int, str] = {
          "sentence is kept and the correction sits on the same LINE, because this file also asserts "
          "the assembled roadmap keeps its line COUNT: an inserted line would shift every index in "
          "REPAIRED_LINES and silently invalidate the enumeration",
+    358: "T-153: §G.2's engine-security row gained a scoped Owner waiver (2026-10-02). Three changes "
+         "reached main or a pull request with no Architect audit; the row now says so, on the same "
+         "LINE, so the rule cannot be read as having been met",
     71: "T-021d: the phase-2 status-board cell reads 11/11. The board is an INDEPENDENT surface from "
         "the checkboxes -- check_roadmap_order compares the two on purpose -- so closing the boxes "
         "without moving it would be a phase that says two different things about itself",

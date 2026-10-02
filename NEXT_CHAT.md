@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #321 · branch `t153/tightening`** (base `main`, tip `e33c7e9`, task T-153).
 >
-> the Owner-approved tightening list, built and NOT to be merged until he chooses: an Owner waiver or an Architect audit (roadmap G.2)
+> the Owner-approved tightening list; Owner waiver for the missing Architect audit, written in roadmap G.2
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

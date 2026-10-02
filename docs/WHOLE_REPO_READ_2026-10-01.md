@@ -800,6 +800,7 @@ Each of these is a checker's finding about a wave-2 fix that was NOT resolved by
 - **2026-10-02 — finished worktrees may be deleted.** Done.
 - **2026-10-02 — the tightening list is approved** (changes that only refuse more, or delete dead code): `delete_automation` behind native confirmation; `post_message` denied; `ci/**`, `install/**`, `contracts/**` under the engine's protected and digest roots; the HMAC verifier and legacy nonce deleted; the test catalog enforced; laws L5 and L13 say what is enforced; the renderer's `trusted_verified` pin kept and stated as an acceptance contract. Built as `T-153`.
 - **2026-10-02 — the Approvals route ceiling is 11.5 KB**, and wave 1's three engine control-plane edits (`laws/registry.json`, `schemas/task-contract.schema.json`, `config/protected-control-plane.json`) stay.
+- **2026-10-02 — Owner waiver for the missing Architect audit.** Roadmap §G.2 requires one before any `engine/` security code is implemented; `#313`, `#314` and `T-153` had none. The Owner chose a recorded waiver over holding `T-153` for an audit. It is written in `MASTER_EXECUTION_ROADMAP.md` §G.2, covers those three only, and puts all three in the next independent audit's scope.
 - **Not decided:** the four risk items (audit-ledger lock, past-time verdict verification, the conductor token on the pre-tool path, the launcher's hard-coded uid). The Windows resolver's missing distinctness check is on the tightening list in spirit and is NOT built: that code does not compile on the Linux box the work runs on.
 
 
