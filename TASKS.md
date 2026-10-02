@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #322 · branch `t154/audit-gate`** (base `main`, tip `cf5f134`, task T-154).
+> **✅ SETTLED — `main` is at `3c03955`.** The only thing open is PR #323 on `t155/settled-at-3c03955`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> a merge that touches engine security code needs a cited audit or a waiver the Owner wrote on roadmap G.2
+> **Next:** the uncapped second read of T-145 (verifiers running), then design §10 and the executor design.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,8 +18,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-154** | **A merge that touches engine security code needs a cited audit or a waiver the Owner wrote** — `check_merge_ready.py` reads `config/audit-required-paths.json` (the engine's own protected roots, tests excluded); 73 mutants, 73 named deaths ◑ | Bro | Review | — |
-| **T-153** | **The tightening list the Owner approved** — a delete asks natively, a dead command is denied, `ci/` `install/` `contracts/` are protected, the HMAC verifier is gone, the test catalog is enforced, L5 and L13 say what runs. Owner waiver for the missing Architect audit: roadmap §G.2 ◑ | Bro | Review | `#321` |
+| **T-154** | **A merge that touches engine security code needs a cited audit or a waiver the Owner wrote** — `check_merge_ready.py` reads `config/audit-required-paths.json` (the engine's own protected roots, tests excluded); 73 mutants, 73 named deaths ◑ | Bro | Review | `#322` |
+| **T-153** | **The tightening list the Owner approved** — native-confirmed delete, a dead command denied, `ci/` `install/` `contracts/` protected, the HMAC verifier gone, the test catalog enforced, L5/L13 true. Owner waiver for the missing Architect audit: roadmap §G.2 ◑ | Bro | Review | `#321` |
 | **T-150** | **A merge and a push are refused before they turn `main` or CI red** — `check_merge_ready.py`, `check_push_ready.py`, and a pre-tool shell arm in the hook; 85 mutants, 85 named deaths ◑ | Bro | Review | `#319` |
 | **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): waves 1 and 2 merged (405 + 275 fixed), 89 open (§9 and wave 1), 36 wait on the Owner (§8); second read (uncapped) running ◑ | Bro | In-Progress | `#317` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t154/audit-gate` — `main` @ `cf5f134`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `3c03955`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #322 · branch `t154/audit-gate`** (base `main`, tip `cf5f134`, task T-154).
+> **✅ SETTLED — `main` is at `3c03955`.** The only thing open is PR #323 on `t155/settled-at-3c03955`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> a merge that touches engine security code needs a cited audit or a waiver the Owner wrote on roadmap G.2
+> **Next:** the uncapped second read of T-145 (verifiers running), then design §10 and the executor design.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
