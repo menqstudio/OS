@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #324 · branch `t155/audit-binds-to-head`** (base `main`, tip `0da38f1`, task T-155).
 >
-> an Architect audit passes the merge gate only for the pull request and the commit it names; three merged rows archived
+> an Architect audit passes the merge gate only for the PR and the commit it names; a push is refused while a commit is pending
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-02 | 1686 OK |
+| `tools/` self-tests · 2026-10-02 | 1690 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-02 | 2666 OK, 13 skipped |

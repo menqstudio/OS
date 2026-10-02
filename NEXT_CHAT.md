@@ -9,7 +9,7 @@
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #324 · branch `t155/audit-binds-to-head`** (base `main`, tip `0da38f1`, task T-155).
 >
-> an Architect audit passes the merge gate only for the pull request and the commit it names; three merged rows archived
+> an Architect audit passes the merge gate only for the PR and the commit it names; a push is refused while a commit is pending
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

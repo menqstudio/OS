@@ -134,6 +134,11 @@ class Inputs:
         paths |= set(self._git("diff", "--name-only", "--cached").splitlines())
         return base, sorted(p.strip() for p in paths if p.strip())
 
+    def staged(self) -> list[str]:
+        """Paths staged and not committed -- what a refused commit leaves behind."""
+        return sorted(p.strip() for p in
+                      self._git("diff", "--name-only", "--cached").splitlines() if p.strip())
+
     def run_gate(self, name: str, args: list[str]) -> tuple[int, str]:
         """Run one gate OF THE TREE BEING PUSHED and return `(exit code, what it printed)`."""
         script = self.root / "tools" / name
@@ -225,6 +230,24 @@ def verdict(inputs: Inputs) -> int:
         run_bundle = bool(frontend)
         bundle_why = ("frontend changed: " + ", ".join(frontend[:2])
                       + (f" +{len(frontend) - 2} more" if len(frontend) > 2 else ""))
+
+    # A staged change is a commit that was not made. On 2026-10-02 a commit gate went RED, the
+    # `&&` chain stopped the commit, and the push after the `;` went out anyway: the branch that
+    # reached GitHub -- and the pull request opened on it -- was a head without the canon update
+    # that had just been refused. What is staged is not in the push, so the push is not what was
+    # gated. Refused here, where the push is decided, rather than remembered.
+    try:
+        staged = inputs.staged()
+    except GateError as exc:
+        problems.append(f"whether a commit is pending could not be established ({exc}), "
+                        "so it is not assumed that none is")
+    else:
+        if staged:
+            shown = ", ".join(staged[:3]) + (f" +{len(staged) - 3} more" if len(staged) > 3 else "")
+            problems.append(
+                f"{len(staged)} path(s) are staged and not committed ({shown}) -- a commit was "
+                "refused or never made, so this push would carry a head that is not what you "
+                "gated. Commit them through the commit gates, or unstage them, then push")
 
     if run_bundle:
         _run(inputs, BUNDLE, ["--root", str(inputs.root)], bundle_why, problems, ran)
