@@ -19,8 +19,6 @@
 
 Then start. When Gev says *«գնա ռեպո կարդա ՄԴները»* that phrase **is** this law.
 
-**One read order, both languages** — until 2026-08-29 there were five, and they disagreed.
-
 **The read set is now budgeted.** [`tools/check_canon_budget.py`](./tools/check_canon_budget.py) holds every canonical file to a ceiling in `config/canon-budget.json` and the whole set to one context. It reached **1917 KB (~386,000 tokens)** on 2026-08-29, of which the hook could paste a quarter; `NEXT_CHAT.md` and `PROJECT_STATE.md` were the same document — 3037 identical lines from line 2 — and `TASKS.md` was 92% inside `NEXT_CHAT.md`. History lives in [`docs/archive/`](./docs/archive/).
 
 ## ⛔ CONTINUOUS-DOCUMENTATION LAW
@@ -101,7 +99,7 @@ Engine, Rust, frontend: 2026-10-02. **Verify before claiming green** — never a
 - **Engine tests need `BRO_ENV=ci`** — without it operator-pin gating denies and tests error rather than run.
 - **⚠ The wall loads from the SESSION's project root, not the repository you edit.** `.claude/settings.json` wires **six** events — `SessionStart`, `SubagentStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` — all addressed `$CLAUDE_PROJECT_DIR/.claude/hooks/…`. **A session opened elsewhere that then works inside `OS/` gets none of them**, and nothing announces their absence: no read receipt, no phase declaration, no prior-art check, no Stop guard. That happened for the whole of `T-019`. **Open the session at this checkout.**
 - **Session-scoped gates cannot see a bare shell.** `check_read_receipt.py` and `check_roadmap_order.py` resolve the session from `CLAUDE_SESSION_ID`, which the hooks set and the Bash tool does not. Pass `--session`, or the RED you get means "could not find the session", not "the gate failed".
-- **Gates needing arguments** (they print usage, not a verdict, when run bare): `check_canonical_sync.py`, `check_prior_art.py`, `check_read_receipt.py`, `check_merge_ready.py`. **Needing a build or a package:** `check_bundle_budget.py` (a Vite manifest, and it refuses a `dist/` older than the tree), `check_runbook_snippets.py` (`cryptography`).
+- **Gates needing arguments** (they print usage, not a verdict, when run bare): `check_canonical_sync.py`, `check_prior_art.py`, `check_read_receipt.py`, `check_merge_ready.py`. **Needing a build or a package:** `check_bundle_budget.py` (a fresh `dist/`), `check_runbook_snippets.py` (`cryptography`).
 - **Commit identity:** `user.name "MenQ"`, `user.email "menqstudio@gmail.com"`. End every commit with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - **Enforcement-hook wedge:** the engine's own hooks can crash on a non-UTF-8 console and fail-closed-cascade a session. Set `PYTHONUTF8=1` and relaunch, or park the wiring with `deploy/wall.sh off` if that script is present in the checkout you are in.
 
@@ -130,7 +128,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 ## 7. Rules for AI sessions
 
 1. **Do not start execution without Gev's explicit go** («սկսի» / «start»). He front-loads context across several messages — collect, don't act.
-2. **You push and merge**, but **only on an all-green exact head**: merge with the command `tools/check_merge_ready.py --pr N` prints; the hook refuses any other merge, and a push `check_push_ready.py` fails (T-150). Never mid-run. **Release and tagging stay the Owner's.**
+2. **You push and merge**, but **only on an all-green exact head**: merge with the command `tools/check_merge_ready.py --pr N` prints; the hook refuses any other merge, and a push `check_push_ready.py` fails (T-150). A PR touching engine security code needs an `Architect-Audit:` or `Owner-Waiver:` body line (T-154). Never mid-run. **Release and tagging stay the Owner's.**
    **A queue of open PRs costs N² synchronisation.** `check_repo_state` requires every open PR to be named in `prs[]` at its exact live head, so each merge invalidates every other PR's mirror. Seven open on 2026-08-31 cost six extra mirror commits. Merge one at a time, refreshing only the mirror before each, and settle **once** at the end — that is where you read `gh run list --branch main`. An intermediate red `main` is honest if the mirror records it.
 3. **A documented claim is not evidence.** Twelve comments that were true when written and false when read were found in one week. Check the code, then trust the sentence.
 4. **A green test is not a passing check.** When you add a check, delete it once and confirm its test goes red, then restore it. Of ninety checks swept that way, four came back green — four tests testing nothing. `T-045` ran the same sweep on its own gates and found three of seven checks tested by nothing, plus a fourth with no test at all.
@@ -181,7 +179,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 ## 5. Կանոններ
 
 1. **Մի սկսիր առանց Gev-ի հստակ go-ի** («սկսի»)։ Ինքը նախ context ա տալիս — հավաքիր, մի գործիր։
-2. **Push ու merge անում ես դու**, բայց **միայն ամբողջովին կանաչ ու ճշգրիտ head-ի վրա**՝ `tools/check_merge_ready.py --pr N`-ի տպած հրամանով (hook-ը ուրիշ merge-ը մերժում ա)։ Release-ը ու tag-ը մնում են Owner-ինը։
+2. **Push ու merge անում ես դու**, բայց **միայն ամբողջովին կանաչ ու ճշգրիտ head-ի վրա**՝ `tools/check_merge_ready.py --pr N`-ի տպած հրամանով (hook-ը ուրիշ merge-ը մերժում ա. engine-ի security PR-ին՝ `Architect-Audit:`/`Owner-Waiver:` տող)։ Release-ը ու tag-ը մնում են Owner-ինը։
    **N բաց PR արժենում ա N² համաժամանակացում** — ամեն merge հնացնում ա մնացած բոլորի mirror-ը։ Merge արա հերթով, ամեն մեկից առաջ միայն mirror-ը թարմացրու, ու settle արա **մեկ անգամ** վերջում — այնտեղ կարդա `gh run list --branch main`։
 3. **Փաստաթղթված պնդումը ապացույց չի։** Կոդը կարդա, հետո նախադասությանը վստահի։
 4. **Կանաչ թեստը անցած ստուգում չի։** Ավելացնելիս՝ ջնջի մեկ անգամ ու համոզվի որ կարմրում ա։

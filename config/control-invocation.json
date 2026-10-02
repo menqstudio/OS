@@ -214,7 +214,7 @@
       "kind": "check",
       "blocks": "session",
       "invoked_by": ".claude/hooks",
-      "why": "T-150. `.claude/hooks/canonical_law_gate.py` runs it before every `gh pr merge` a session types and refuses the command unless it is GREEN. It asks GitHub about a pull request, so it is not a CI job and no required context names it. Not covered: a merge in the GitHub web UI, a session opened outside this checkout, a merge run from inside a script."
+      "why": "T-150. `.claude/hooks/canonical_law_gate.py` runs it before every `gh pr merge` a session types and refuses the command unless it is GREEN. It asks GitHub about a pull request, so it is not a CI job and no required context names it. Since T-154 it also refuses a pull request that changes engine security code (config/audit-required-paths.json, derived from engine/config/protected-control-plane.json) unless its body cites an Architect audit that exists at the head or an Owner waiver written on roadmap G.2 naming that pull request. Not covered: a merge in the GitHub web UI, a session opened outside this checkout, a merge run from inside a script -- and for the audit rule nothing in CI stands behind the hook, so each of those three merges engine security code unaudited with no check going red afterwards."
     },
     "tools/check_negative_matrix.py": {
       "kind": "check",

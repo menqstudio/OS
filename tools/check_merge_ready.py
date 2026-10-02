@@ -2,6 +2,7 @@
 """May this pull request be merged right now -- and will `main` still be green after it?
 
     python3 tools/check_merge_ready.py --pr N
+    python3 tools/check_merge_ready.py --pr N --explain-audit     # check (f) alone; see below
 
 Exit 0 GREEN, 1 RED. GREEN prints the one command that may then be run. RED prints one
 line per problem, each with its remedy.
@@ -17,14 +18,16 @@ of them was a program, and the remedy on file afterwards was a memory note. This
 program. `.claude/hooks/canonical_law_gate.py` runs it before every `gh pr merge` and
 refuses the command unless it is GREEN.
 
-WHAT GREEN MEANS -- all five, each one refusable on its own
+WHAT GREEN MEANS -- all six, each one refusable on its own
   a. the pull request is OPEN and its head commit H is known;
   b. every check on H has completed and passed: none pending, none failed, at least one
      present. A check list that is empty or unreadable is RED, never GREEN;
   c. GitHub's merge state is CLEAN;
   d. `PROJECT_STATE.md` AS IT IS AT H carries a `Last updated` date that is not earlier
      than the date the squash commit will get -- in BOTH this machine's local zone and UTC;
-  e. the exact command is printed: `gh pr merge N --squash --match-head-commit H`.
+  e. the exact command is printed: `gh pr merge N --squash --match-head-commit H`;
+  f. if the pull request changes engine security code, its body cites an Architect audit
+     that exists at H, or a waiver the Owner wrote into the roadmap (T-154, below).
 
 THE DATE RULE, and the evidence it was derived from
   `check_coordination._check_project_state_freshness` reads `git log -1 --format=%cs --
@@ -48,7 +51,75 @@ THE DATE RULE, and the evidence it was derived from
   newest commit that touched it stays the one `main` already has, and this merge cannot
   redden that rule. When the base cannot be read the exemption is NOT taken.
 
+THE AUDIT RULE (f), and why it is a program
+  `MASTER_EXECUTION_ROADMAP.md` §G.2, first row: any `engine/` security code -- wall,
+  leases, gates, signatures, control-plane, root model -- needs a MANDATORY Architect audit
+  BEFORE implementation, on its own audited branch, never parallelized. On 2026-10-01/02
+  three changes went through without one (#313, #314, #321). The rule was written down and
+  nothing refused the merge; the Builder noticed after two had landed, and the Owner then
+  recorded a scoped waiver on that same row. A memory is not a solution, so this refuses.
+
+  The files the pull request changes are read from GitHub -- every page, and the count is
+  compared with the count GitHub reports, because a list cut at 100 entries is not the
+  list (#314 changed 569). A file renamed OUT of the perimeter counts under its old name.
+  If any of them matches `config/audit-required-paths.json`, the BODY must carry exactly
+  one of two lines. A line counts only when it BEGINS with the key, case-sensitive; the
+  key in the middle of a sentence, indented, or inside a quote is prose.
+
+    Architect-Audit: <repo-relative path>
+        The path must be a FILE that exists AT H, under `apps/desktop/AUDIT/` or
+        `engine/AUDIT/`, and must not be empty. THIS GATE DOES NOT JUDGE THE AUDIT'S
+        CONTENT: not its verdict, not whether it is about this change, not who wrote it.
+        It establishes that a report was filed where reports live and that the pull
+        request names it. Whether the report says GREEN is the reader's question.
+        Measured, not supposed: with the line added in memory, citing the tenth round's
+        report -- filed weeks before the change and about another head -- satisfied this
+        for #321. A report that must NAME the pull request, as a waiver must, would close
+        that; it is the Owner's to decide.
+        WHERE to file it, read from another gate rather than assumed:
+        `tools/check_audit_reports.py` takes the newest `YYYY-MM-DD-*.md` DIRECTLY under
+        `apps/desktop/AUDIT/` to be the round the ledger must call authoritative. A
+        per-change audit filed there under such a name moves the ledger; one filed in a
+        subdirectory of it, or under `engine/AUDIT/`, does not.
+
+    Owner-Waiver: YYYY-MM-DD
+        The §G.2 engine-security row AS IT IS AT H must contain the words `OWNER WAIVER`
+        followed by that same date, and THAT waiver -- the text between it and the next
+        `OWNER WAIVER` -- must name this pull request as `#N`. A waiver for another pull
+        request, or a date that is not on the row, is RED. This is what makes a waiver
+        something the Owner wrote into the roadmap rather than something a Builder typed
+        into a pull-request body. (Nothing here can tell WHO typed the roadmap line; the
+        roadmap's own change gate, `tools/test_roadmap_split.py`, is what makes an edit
+        to that row a recorded one.)
+
+  Neither line, both lines, or the same line twice: RED. An unreadable file list, body,
+  rule or roadmap: RED.
+
+  WHAT COUNTS AS ENGINE SECURITY CODE is not a list in this file. It is
+  `config/audit-required-paths.json`, DERIVED from the engine's own statement of its
+  perimeter -- the `protected_roots` of `engine/config/protected-control-plane.json`,
+  prefixed `engine/`, minus the roots that file excludes by name with a reason (tests, and
+  the secret-shaped name patterns and `.git/**`, which are not code paths).
+  `perimeter_drift` compares the two on every run: a protected root this gate neither
+  lists nor excludes is RED, not silence. The rule is read from the checkout that RUNS the
+  gate, never from H -- a pull request cannot exempt itself by editing the list.
+
+  `--explain-audit` prints ONLY this check's verdict, for the head GitHub records for the
+  pull request -- merged, closed or open -- and exits 0/1 on this check alone. It exists
+  so the rule can be read against history. It never prints a merge command, and its GREEN
+  is not permission to merge: without the flag a merged pull request stays RED as before.
+
 WHAT THIS DOES NOT COVER -- listed, not implied
+  * roadmap §G.2's SECOND row, trust-boundary / key / secret handling -- in practice
+    `apps/desktop/src-tauri` (broker, key manifest, provisioning, launcher). It carries the
+    same mandatory audit and this gate does not hold it, because the roadmap delimits that
+    row by subject and not by path. RECOMMENDED: the Owner names those paths on the row,
+    and they become a second declared list in `config/audit-required-paths.json`;
+  * the audit's content, and its timing. "Before implementation" cannot be read off a
+    merge: this refuses a merge with no audit on file, which is the latest moment the rule
+    can still be held, not the moment it names;
+  * engine tests, security-relevant code outside `engine/`, and the rest of that file's
+    `not_covered` list, each with its reason;
   * a person merging in the GitHub web UI. Nothing here runs there; branch protection is
     the only thing that does;
   * a session opened outside this checkout. The hook that calls this loads from the
@@ -71,8 +142,10 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fnmatch
 import json
 import pathlib
+import posixpath
 import re
 import subprocess
 import sys
@@ -81,8 +154,30 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 STATE_REL = "PROJECT_STATE.md"
-VIEW_FIELDS = "number,state,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup"
+VIEW_FIELDS = ("number,state,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup,"
+               "body,changedFiles")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+#: The audit rule (f). The path list is DECLARED in the first file and DERIVED from the
+#: second; nothing below restates either.
+AUDIT_PATHS_REL = "config/audit-required-paths.json"
+PERIMETER_REL = "engine/config/protected-control-plane.json"
+PERIMETER_PREFIX = "engine/"
+ROADMAP_REL = "MASTER_EXECUTION_ROADMAP.md"
+AUDIT_KEY = "Architect-Audit:"
+WAIVER_KEY = "Owner-Waiver:"
+#: Where audit reports live. A citation anywhere else is not a filed report.
+AUDIT_DIRS = ("apps/desktop/AUDIT/", "engine/AUDIT/")
+G2_HEADING = re.compile(r"(?m)^### G\.2\b")
+NEXT_HEADING = re.compile(r"(?m)^#{1,6} ")
+#: What identifies §G.2's engine-security row: the words of its first cell.
+G2_ROW_MARK = "`engine/` security code"
+WAIVER_WORDS = "OWNER WAIVER"
+WAIVER_DATED = re.compile(r"OWNER WAIVER\s+(\d{4}-\d{2}-\d{2})")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+#: `--jq` for the REST file list: one object per line, so pages concatenate into lines
+#: and not into `[...][...]`, which is not JSON.
+FILES_JQ = ".[] | {filename, previous_filename}"
 
 #: What a finished check may conclude and still not be a failure. SKIPPED and NEUTRAL are
 #: what a job with an unmet `if:` reports; they are not failures and they are not passes,
@@ -148,8 +243,8 @@ class Inputs:
             return False
         return True
 
-    def file_at(self, sha: str, rel: str, pr: int) -> str:
-        """`rel` as it is AT `sha`, fetching the commit when this clone does not have it."""
+    def _ensure_commit(self, sha: str, pr: int) -> None:
+        """Have `sha` in this clone, fetching it when it is not here."""
         if not self._has_commit(sha):
             for ref in (sha, f"pull/{pr}/head"):
                 try:
@@ -160,7 +255,44 @@ class Inputs:
                     break
             else:
                 raise GateError(f"commit {sha[:12]} is not in this clone and could not be fetched")
+
+    def file_at(self, sha: str, rel: str, pr: int) -> str:
+        """`rel` as it is AT `sha`, fetching the commit when this clone does not have it."""
+        self._ensure_commit(sha, pr)
         return _run(["git", "show", f"{sha}:{rel}"], cwd=self.root)
+
+    def blob_at(self, sha: str, rel: str, pr: int) -> str:
+        """`rel` AT `sha`, and only if it is a FILE there.
+
+        `git show H:dir` exits 0 and prints the directory's listing, so `file_at` alone
+        would accept `apps/desktop/AUDIT/tickets` as a non-empty audit report.
+        """
+        self._ensure_commit(sha, pr)
+        kind = _run(["git", "cat-file", "-t", f"{sha}:{rel}"], cwd=self.root).strip()
+        if kind != "blob":
+            raise GateError(f"{rel} at {sha[:12]} is a {kind or 'nothing readable'}, not a file")
+        return _run(["git", "show", f"{sha}:{rel}"], cwd=self.root)
+
+    def changed_files(self, pr: int) -> list[dict]:
+        """Every file the pull request changes, as GitHub lists them -- all pages.
+
+        The REST list, not `gh pr view --json files`: that one stops at 100 entries and
+        says nothing about having stopped. #314 changed 569 files.
+        """
+        where = f"repos/{self.repo}" if self.repo else "repos/{owner}/{repo}"
+        raw = _run(["gh", "api", "--paginate", f"{where}/pulls/{pr}/files?per_page=100",
+                    "--jq", FILES_JQ], cwd=self.root, timeout=120)
+        return parse_file_lines(raw)
+
+    def audit_rule(self) -> dict:
+        """`config/audit-required-paths.json`, from the checkout that RUNS this gate, and
+        only while it still accounts for every root of the engine's own perimeter."""
+        rule = _read_json(self.root / AUDIT_PATHS_REL)
+        drift = perimeter_drift(rule, _read_json(self.root / PERIMETER_REL))
+        if drift:
+            raise GateError(f"{AUDIT_PATHS_REL} has drifted from {PERIMETER_REL}: "
+                            + "; ".join(drift))
+        return rule
 
     def base_file(self, base: str, rel: str) -> str:
         """`rel` as the base branch has it on GitHub NOW -- fetched, not remembered."""
@@ -335,6 +467,288 @@ def check_state_date(inputs: Inputs, head: str, base: str, pr: int, res: Result)
     return f"{STATE_REL} says {claimed}; today is {local} here and {utc} in UTC"
 
 
+def _read_json(path: pathlib.Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GateError(f"{path.name} could not be read: {exc}") from None
+    if not isinstance(data, dict):
+        raise GateError(f"{path.name} is {type(data).__name__}, not an object")
+    return data
+
+
+def parse_file_lines(raw: str) -> list[dict]:
+    """The REST file list as `--jq` prints it: one JSON object per line."""
+    entries: list[dict] = []
+    for number, line in enumerate(raw.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise GateError(f"line {number} of the file list is not JSON: {exc}") from None
+        entries.append(entry)
+    return entries
+
+
+def audit_globs(rule: dict) -> list[str]:
+    """The declared globs. A rule that names no path would call every change exempt."""
+    globs = rule.get("globs")
+    if (not isinstance(globs, list) or not globs
+            or not all(isinstance(g, str) and g.strip() for g in globs)):
+        raise GateError(f"{AUDIT_PATHS_REL} must carry `globs`: a non-empty list of paths")
+    return globs
+
+
+def excluded_roots(rule: dict) -> dict[str, str]:
+    """`protected_root` -> reason, for every root the rule excludes by name."""
+    listed = rule.get("not_covered")
+    if not isinstance(listed, list):
+        raise GateError(f"{AUDIT_PATHS_REL} must carry `not_covered`: a list")
+    out: dict[str, str] = {}
+    for entry in listed:
+        if isinstance(entry, dict) and "protected_root" in entry:
+            out[str(entry["protected_root"])] = str(entry.get("reason") or "").strip()
+    return out
+
+
+def perimeter_drift(rule: dict, manifest: dict) -> list[str]:
+    """Every way the declared globs and the engine's own perimeter disagree; [] if none.
+
+    Each protected root must be accounted for exactly once: listed as a glob (prefixed
+    `engine/`), or excluded under `not_covered` with a reason. A root the engine gained
+    and this file never heard of is the silent drift this exists to refuse; a glob or an
+    exclusion for a root the engine no longer has is a stale line that reads as coverage.
+    """
+    roots = manifest.get("protected_roots")
+    if (not isinstance(roots, list) or not roots
+            or not all(isinstance(r, str) and r for r in roots)):
+        return [f"{PERIMETER_REL} carries no readable `protected_roots`"]
+    problems: list[str] = []
+    listed: set[str] = set()
+    for glob in audit_globs(rule):
+        if glob.startswith(PERIMETER_PREFIX):
+            listed.add(glob[len(PERIMETER_PREFIX):])
+        else:
+            problems.append(f"glob `{glob}` is not under `{PERIMETER_PREFIX}`, so it was not "
+                            f"derived from the engine's perimeter")
+    excluded = excluded_roots(rule)
+    for root in roots:
+        if root not in listed and root not in excluded:
+            problems.append(f"protected root `{root}` is neither listed as "
+                            f"`{PERIMETER_PREFIX}{root}` nor excluded with a reason")
+    for root in sorted(listed - set(roots)):
+        problems.append(f"glob `{PERIMETER_PREFIX}{root}` is not a protected root any more")
+    for root in sorted(set(excluded) - set(roots)):
+        problems.append(f"`{root}` is excluded and is not a protected root any more")
+    for root in sorted(listed & set(excluded)):
+        problems.append(f"`{root}` is both listed and excluded")
+    for root, reason in sorted(excluded.items()):
+        if not reason:
+            problems.append(f"`{root}` is excluded with no reason")
+    return problems
+
+
+def needs_audit(path: str, globs: list[str]) -> bool:
+    """Whether `path` is engine security code under the declared globs.
+
+    The engine's own matcher (`engine/runtime/bro_workspace.py::matches_pattern`): fnmatch,
+    where `*` crosses `/`, plus "a bare directory covers what is under it". Always
+    case-insensitive, which is the engine's rule on the platform where case does not
+    distinguish paths; here it is the stricter answer, and `engine/Runtime/x.py` asking
+    for an audit it did not need costs less than the reverse.
+    """
+    rel = path.replace("\\", "/").lower()
+    for glob in globs:
+        pat = glob.replace("\\", "/").lower()
+        if fnmatch.fnmatchcase(rel, pat):
+            return True
+        if not any(ch in pat for ch in "*?[") and rel.startswith(pat + "/"):
+            return True
+    return False
+
+
+def declarations(body: str) -> tuple[list[str], list[str]]:
+    """`(audit values, waiver values)`: the lines of `body` that BEGIN with a key.
+
+    Begins, at column 0, case-sensitive. "see the Architect-Audit: line below" is a
+    sentence, and so is the same key indented or quoted.
+    """
+    audits: list[str] = []
+    waivers: list[str] = []
+    for line in body.splitlines():
+        if line.startswith(AUDIT_KEY):
+            audits.append(line[len(AUDIT_KEY):].strip())
+        elif line.startswith(WAIVER_KEY):
+            waivers.append(line[len(WAIVER_KEY):].strip())
+    return audits, waivers
+
+
+def g2_engine_row(roadmap: str) -> str | None:
+    """§G.2's engine-security row, or None unless there is EXACTLY one."""
+    start = G2_HEADING.search(roadmap)
+    if not start:
+        return None
+    rest = roadmap[start.end():]
+    end = NEXT_HEADING.search(rest)
+    section = rest[:end.start()] if end else rest
+    rows = [line for line in section.splitlines()
+            if line.startswith("|") and G2_ROW_MARK in (line.split("|") + ["", ""])[1]]
+    return rows[0] if len(rows) == 1 else None
+
+
+def waivers_on(row: str) -> list[tuple[str, str]]:
+    """`(date, that waiver's own text)` for every dated `OWNER WAIVER` on the row.
+
+    A waiver's text runs to the next `OWNER WAIVER`, dated or not, so a pull request
+    named under one waiver is not covered by the date of another.
+    """
+    starts = [m.start() for m in re.finditer(re.escape(WAIVER_WORDS), row)]
+    found: list[tuple[str, str]] = []
+    for match in WAIVER_DATED.finditer(row):
+        later = [s for s in starts if s > match.start()]
+        found.append((match.group(1), row[match.end():later[0] if later else len(row)]))
+    return found
+
+
+def names_pull_request(text: str, pr: int) -> bool:
+    """`#N` as a whole number, of THIS repository: `#5` is not named by `#50`, and not by
+    `another/repo#5`."""
+    return re.search(rf"(?<!\w)#{pr}(?!\d)", text) is not None
+
+
+def check_audit_citation(inputs: Inputs, value: str, head: str, pr: int, res: Result) -> str:
+    """`Architect-Audit: <path>` -- a non-empty FILE at H under an AUDIT directory."""
+    cite = (f"write the line as `{AUDIT_KEY} <path>`, the path repo-relative and under "
+            f"{' or '.join(AUDIT_DIRS)}, with the report committed on this branch")
+    if not value:
+        res.bad(f"the `{AUDIT_KEY}` line names no path", cite)
+        return ""
+    if not value.startswith(AUDIT_DIRS) or posixpath.normpath(value) != value:
+        res.bad(f"`{AUDIT_KEY} {value}` is not a file under {' or '.join(AUDIT_DIRS)}",
+                f"an audit report is filed where audit reports live. Move it there and "
+                f"{cite}")
+        return ""
+    try:
+        text = inputs.blob_at(head, value, pr)
+    except GateError as exc:
+        res.bad(f"`{AUDIT_KEY} {value}` does not exist at {head[:12]}: {exc}",
+                "commit the report on this branch and push, wait for the checks on the new "
+                "head, then run this again. A report that is not at the head that merges is "
+                "not in what merges")
+        return ""
+    if not text.strip():
+        res.bad(f"`{AUDIT_KEY} {value}` is empty at {head[:12]}",
+                "an empty file is not a report. File the Architect's audit there, push, wait "
+                "for the checks, then run this again")
+        return ""
+    return f"Architect-Audit {value}"
+
+
+def check_waiver(inputs: Inputs, value: str, head: str, pr: int, res: Result) -> str:
+    """`Owner-Waiver: YYYY-MM-DD` -- on §G.2's row AT H, and naming this pull request."""
+    owner = (f"only the Owner records a waiver: on roadmap §G.2's engine-security row, as "
+             f"`{WAIVER_WORDS} <date>` naming `#{pr}`. Or get an Architect audit and cite it "
+             f"with `{AUDIT_KEY} <path>` instead")
+    try:
+        if not DATE_RE.fullmatch(value):
+            raise ValueError(value)
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        res.bad(f"`{WAIVER_KEY} {value}` is not a date",
+                f"write the line as `{WAIVER_KEY} YYYY-MM-DD`: the date of the waiver on "
+                f"roadmap §G.2's engine-security row")
+        return ""
+    try:
+        roadmap = inputs.file_at(head, ROADMAP_REL, pr)
+    except GateError as exc:
+        res.bad(f"{ROADMAP_REL} at {head[:12]} could not be read: {exc}",
+                "`git fetch origin`, then run this again")
+        return ""
+    row = g2_engine_row(roadmap)
+    if row is None:
+        res.bad(f"{ROADMAP_REL} at {head[:12]} has no single §G.2 row for "
+                f"{G2_ROW_MARK}, so there is no row a waiver could be on",
+                "restore §G.2's engine-security row; a waiver nobody can find is not one")
+        return ""
+    found = waivers_on(row)
+    mine = [text for date, text in found if date == value]
+    if not mine:
+        dates = ", ".join(sorted({date for date, _ in found})) or "none"
+        res.bad(f"roadmap §G.2's engine-security row at {head[:12]} carries no "
+                f"`{WAIVER_WORDS} {value}` (waivers on the row: {dates})", owner)
+        return ""
+    if not any(names_pull_request(text, pr) for text in mine):
+        res.bad(f"the `{WAIVER_WORDS} {value}` on roadmap §G.2's engine-security row at "
+                f"{head[:12]} does not name `#{pr}`: it is a waiver for other pull requests",
+                owner)
+        return ""
+    return f"Owner-Waiver {value} (roadmap §G.2 names #{pr})"
+
+
+def check_audit(inputs: Inputs, view: dict, head: str, pr: int, res: Result) -> str:
+    """Engine security code merges with a cited audit, or a waiver the Owner wrote.
+
+    Returns the sentence GREEN prints about it; "" when it added a problem.
+    """
+    try:
+        globs = audit_globs(inputs.audit_rule())
+    except GateError as exc:
+        res.bad(f"the audit rule could not be read: {exc}",
+                f"repair {AUDIT_PATHS_REL} so it accounts for every root of {PERIMETER_REL}; "
+                f"a rule that cannot be read exempts nothing")
+        return ""
+    again = "run this again; a file list that cannot be read is not a list of safe files"
+    try:
+        entries = inputs.changed_files(pr)
+    except GateError as exc:
+        res.bad(f"the files pull request #{pr} changes could not be read: {exc}", again)
+        return ""
+    if (not isinstance(entries, list) or not entries
+            or not all(isinstance(e, dict) and isinstance(e.get("filename"), str)
+                       and e["filename"] for e in entries)):
+        res.bad(f"the list of files pull request #{pr} changes is unreadable or empty", again)
+        return ""
+    claimed = view.get("changedFiles")
+    if type(claimed) is not int or claimed != len(entries):
+        res.bad(f"GitHub says pull request #{pr} changes {claimed!r} file(s) and listed "
+                f"{len(entries)}: the list is incomplete", again)
+        return ""
+    paths = {e["filename"] for e in entries}
+    paths |= {e["previous_filename"] for e in entries
+              if isinstance(e.get("previous_filename"), str) and e["previous_filename"]}
+    hits = sorted(p for p in paths if needs_audit(p, globs))
+    if not hits:
+        return "not required (no engine security path changed)"
+
+    changed = f"{len(hits)} engine security path(s) -- {_some(hits)}"
+    body = view.get("body")
+    if not isinstance(body, str):
+        res.bad(f"pull request #{pr} changes {changed} -- and its body could not be read "
+                f"(got {type(body).__name__})",
+                "run this again; a body that cannot be read carries no declaration")
+        return ""
+    audits, waivers = declarations(body)
+    if not audits and not waivers:
+        res.bad(f"pull request #{pr} changes {changed} -- and its body carries neither an "
+                f"`{AUDIT_KEY}` nor an `{WAIVER_KEY}` line. Roadmap §G.2: an Architect audit "
+                f"is mandatory for engine security code",
+                f"get an Architect audit and cite it, or have the Owner record a scoped "
+                f"waiver on roadmap §G.2 naming this pull request. Then ONE line in the "
+                f"body, beginning the line: `{AUDIT_KEY} <path under "
+                f"{' or '.join(AUDIT_DIRS)}>` or `{WAIVER_KEY} YYYY-MM-DD`")
+        return ""
+    if len(audits) + len(waivers) != 1:
+        res.bad(f"pull request #{pr}'s body carries {len(audits)} `{AUDIT_KEY}` and "
+                f"{len(waivers)} `{WAIVER_KEY}` line(s); which one it stands on is ambiguous",
+                "leave exactly ONE of them. An audit and a waiver are different claims, and "
+                "a pull request rests on one")
+        return ""
+    if audits:
+        return check_audit_citation(inputs, audits[0], head, pr, res)
+    return check_waiver(inputs, waivers[0], head, pr, res)
+
+
 def merge_command(pr: int, head: str, repo: str | None = None) -> str:
     return (f"gh pr merge {pr} --squash --match-head-commit {head}"
             + (f" -R {repo}" if repo else ""))
@@ -342,7 +756,7 @@ def merge_command(pr: int, head: str, repo: str | None = None) -> str:
 
 def evaluate(pr: int, inputs: Inputs, expect: str | None = None) -> tuple[Result, dict]:
     res = Result()
-    facts: dict = {"head": None, "counts": {}, "date": ""}
+    facts: dict = {"head": None, "counts": {}, "date": "", "audit": ""}
     try:
         view = inputs.pr_view(pr)
     except GateError as exc:
@@ -360,7 +774,53 @@ def evaluate(pr: int, inputs: Inputs, expect: str | None = None) -> tuple[Result
     if head:
         base = str(view.get("baseRefName") or "main")
         facts["date"] = check_state_date(inputs, head, base, pr, res)
+        facts["audit"] = check_audit(inputs, view, head, pr, res)
     return res, facts
+
+
+def evaluate_audit_only(pr: int, inputs: Inputs) -> tuple[Result, dict]:
+    """Check (f) alone, for whatever head GitHub records -- merged, closed or open."""
+    res = Result()
+    facts: dict = {"head": None, "state": "", "audit": ""}
+    try:
+        view = inputs.pr_view(pr)
+    except GateError as exc:
+        res.bad(f"pull request #{pr} could not be read from GitHub: {exc}",
+                "check `gh auth status` and the network, then run this again")
+        return res, facts
+    facts["state"] = str(view.get("state") or "").upper() or "in no readable state"
+    head = check_head(view, pr, None, res)
+    facts["head"] = head
+    if head:
+        facts["audit"] = check_audit(inputs, view, head, pr, res)
+    return res, facts
+
+
+def explain_audit(pr: int, inputs: Inputs) -> int:
+    """Print the audit check's verdict and nothing else. Never prints a merge command."""
+    try:
+        res, facts = evaluate_audit_only(pr, inputs)
+    except Exception as exc:  # noqa: BLE001 - a gate that crashed has not said yes
+        print(f"RED: the audit rule could NOT be checked for pull request #{pr} -- the gate "
+              f"itself failed\n")
+        print(f"  1. {type(exc).__name__}: {exc}")
+        print("     -> fix tools/check_merge_ready.py; a gate that could not run is not a pass")
+        return 1
+    at = f" at {facts['head'][:12]}" if facts["head"] else ""
+    if res.problems:
+        print(f"RED: pull request #{pr} does NOT meet the audit rule{at}\n")
+        for i, (what, remedy) in enumerate(res.problems, 1):
+            print(f"  {i}. {what}")
+            print(f"     -> {remedy}\n")
+        print("This is the audit check alone (roadmap §G.2, first row). It was run to "
+              "explain, not to merge.")
+        return 1
+    print(f"GREEN: pull request #{pr} meets the audit rule{at}.\n")
+    print(f"  state  : {facts['state']}")
+    print(f"  audit  : {facts['audit']}")
+    print("\nThis is the audit check alone. It is NOT permission to merge: run without "
+          "--explain-audit for that.")
+    return 0
 
 
 def main(argv: list[str] | None = None, inputs: Inputs | None = None) -> int:
@@ -370,8 +830,14 @@ def main(argv: list[str] | None = None, inputs: Inputs | None = None) -> int:
     ap.add_argument("--expect-head", default=None,
                     help="the commit a merge command pins; RED when the live head is another")
     ap.add_argument("--root", default=str(ROOT))
+    ap.add_argument("--explain-audit", action="store_true",
+                    help="print ONLY the audit check's verdict for this pull request's head, "
+                         "merged or not, and exit on that check alone. Never a merge command")
     args = ap.parse_args(argv)
     inputs = inputs or Inputs(pathlib.Path(args.root), args.repo)
+
+    if args.explain_audit:
+        return explain_audit(args.pr, inputs)
 
     try:
         res, facts = evaluate(args.pr, inputs, args.expect_head)
@@ -397,6 +863,7 @@ def main(argv: list[str] | None = None, inputs: Inputs | None = None) -> int:
           f"none failed")
     print("  state  : CLEAN")
     print(f"  date   : {facts['date']}")
+    print(f"  audit  : {facts['audit']}")
     print("\nRun exactly this:")
     print(f"  {merge_command(args.pr, facts['head'], inputs.repo)}")
     return 0
