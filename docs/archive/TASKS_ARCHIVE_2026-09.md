@@ -1,6 +1,6 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
-**79 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+**75 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
@@ -100,7 +100,3 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-155** | **An Architect audit passes the merge gate only for the PR and the commit it names** — the report carries `Audited-PR:` and `Audited-Head:`; no audit-required path may differ since; 44 mutants, 44 deaths ◑ | Bro | Review | merged `#324` |
 | **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 76 mutants, 76 deaths ◑ | Bro | Review | merged `#325` |
 | **T-158** | **The push gate runs every argument-free gate on the tree being pushed** — `#325` went red in CI on a gate that was green on an untracked file; 34 gates in about 7 s, 21 mutants, 21 deaths ◑ | Bro | Review | merged `#326` |
-| **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | merged `#257` |
-| **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | merged `#256` |
-| **T-021b** | **The engine records an ask and cannot decide it** - the first WRITE the sidecar serves, provisioned on its own; O-1..O-5 discharged, six mutants, six named deaths ◑ | Bro | Review | merged `#255` |
-| **T-021a** | **The approval-request contract, audited before it lands** - the schema the Owner's five invariants fixed in advance; four mutants, four named deaths ◑ | Bro | Review | merged `#254` |

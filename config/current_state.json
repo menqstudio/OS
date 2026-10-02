@@ -121,7 +121,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #327 (settle/after-326) settles the state at main 4bc36cb. Next: T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160, T-161 ride this PR.",
+    "current": "PR #327 (settle/after-326) settles the state at main 4bc36cb. Next: T-156 opens as its own PR and awaits the Architect's code audit; R2-0001/R2-0002 go to him for design. T-160 and T-161 ride this PR.",
     "_note": "The carrier is current_workflow_pr (#327 on settle/after-326). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
