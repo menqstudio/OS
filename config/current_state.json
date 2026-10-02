@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "dc64823bd4cc849f4ac9e3bb3d76f0b61ff8baca",
+  "settled_at_main_head": "db520c2459afb8af222d55c2929b5db12678470c",
   "sync": {
-    "baseline_main_head_at_sync": "dc64823bd4cc849f4ac9e3bb3d76f0b61ff8baca",
-    "snapshot_branch": "t150/merge-and-push-gates",
+    "baseline_main_head_at_sync": "db520c2459afb8af222d55c2929b5db12678470c",
+    "snapshot_branch": "t152/settled-at-db520c2",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t150/merge-and-push-gates"
+    "branch": "t152/settled-at-db520c2"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 319,
-    "branch": "t150/merge-and-push-gates",
+    "number": 320,
+    "branch": "t152/settled-at-db520c2",
     "state": "open",
-    "what": "Adds tools/check_merge_ready.py and tools/check_push_ready.py and gives the session hook a pre-tool shell arm that refuses a gh pr merge or a non-delete git push the gate does not pass.",
-    "note": "a merge and a push are refused before they turn main or CI red: two gates and a pre-tool shell arm in the hook",
+    "what": "The settle commit: records that main is at db520c2 and carries no product change.",
+    "note": "Settling the state anchor at main db520c2. Nothing else is open; this pull request is the commit that records it.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #319 (t150/merge-and-push-gates), task T-150: Adds tools/check_merge_ready.py and tools/check_push_ready.py and gives the session hook a pre-tool shell arm that refuses a gh pr merge or a non-delete git push the gate does not pass. Next: merge with the command check_merge_ready prints, settle, then the uncapped second read",
-    "_note": "The carrier is current_workflow_pr (#319 on t150/merge-and-push-gates). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #320 (t152/settled-at-db520c2) settles the state at main db520c2. Next: the uncapped second read of T-145, then design §10 and the executor design.",
+    "_note": "The carrier is current_workflow_pr (#320 on t152/settled-at-db520c2). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "dc64823bd4cc849f4ac9e3bb3d76f0b61ff8baca",
+      "head": "db520c2459afb8af222d55c2929b5db12678470c",
       "conclusion": "success",
-      "run_id": 36943429894,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-02: success at dc64823, run 36943429894."
+      "run_id": 36946103366,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-02: success at db520c2, run 36946103366."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
