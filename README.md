@@ -182,7 +182,7 @@ OS/
 ├── contracts/          6 extracted shared schemas — lease · evidence · receipt · grant · contract · approval-request
 ├── config/             The machine-checkable state — required checks, budgets, the negative matrix
 ├── docs/               Architecture, security model, guides, evidence, brand (bilingual)
-├── tools/              43 check_*.py gate scripts — capabilities · reachability · release signing · …
+├── tools/              45 check_*.py gate scripts — capabilities · reachability · release signing · …
 ├── .claude/            262 generated specialist definitions + 6 coordination hook events
 └── .github/workflows/  8 workflow files · ci.yml alone defines 22 jobs · 35 contexts required on main
 ```
@@ -290,8 +290,8 @@ fast, so run the command rather than trusting the number.
 | Engine test suite | **2620** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q` |
 | Bridge test suite | **228** թեստ · tests | `BRO_ENV=ci python -m unittest discover -s bridge/tests -t bridge/tests -q` |
 | Rust workspace | **10** crate | `cargo metadata --no-deps --manifest-path apps/desktop/src-tauri/Cargo.toml` |
-| Gate scripts | **43** | `ls tools/check_*.py \| wc -l` |
-| Declared controls | **63** — 49 check · 14 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`, which prints that split by KIND; by PATH the same 63 are `ls tools/check_*.py \| wc -l` (43) plus `ls engine/tools/*.py \| wc -l` (20), each set-equal to its half of that file |
+| Gate scripts | **45** | `ls tools/check_*.py \| wc -l` |
+| Declared controls | **65** — 51 check · 14 tool | `config/control-invocation.json`, derived by `tools/check_control_invocation.py`, which prints that split by KIND; by PATH the same 65 are `ls tools/check_*.py \| wc -l` (45) plus `ls engine/tools/*.py \| wc -l` (20), each set-equal to its half of that file |
 | Workflow files | **8** | `ls .github/workflows/*.yml \| wc -l` |
 | Jobs in `ci.yml` | **22** | the `jobs` KEY of `.github/workflows/ci.yml`, parsed as YAML — a 2-space-indent regex also catches `push:` under `on:` and answers 23 |
 | Required contexts on `main` | **35** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'`; the same list is `contexts` in `config/required-checks.json`, which `tools/check_repo_state.py` compares against live protection |

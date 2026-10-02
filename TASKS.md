@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `8a042eb`.** The only thing open is PR #318 on `t151/settled-at-8a042eb`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #319 · branch `t150/merge-and-push-gates`** (base `main`, tip `dc64823`, task T-150).
 >
-> **Next:** T-150 (merge and push gates), then the uncapped second read.
+> a merge and a push are refused before they turn main or CI red: two gates and a pre-tool shell arm in the hook
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,6 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
+| **T-150** | **A merge and a push are refused before they turn `main` or CI red** — `check_merge_ready.py`, `check_push_ready.py`, and a pre-tool shell arm in the hook; 85 mutants, 85 named deaths ◑ | Bro | Review | `#319` |
 | **T-145** | **The whole repository, read file by file** — 932 findings in [`docs/WHOLE_REPO_READ_2026-10-01.md`](docs/WHOLE_REPO_READ_2026-10-01.md): waves 1 and 2 merged (405 + 275 fixed), 89 open (§9 and wave 1), 42 wait on the Owner (§8); second read (uncapped) running ◑ | Bro | In-Progress | `#317` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |

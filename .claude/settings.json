@@ -39,6 +39,15 @@
             "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool"
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell|Shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || python3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool || py -3 -X utf8 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/canonical_law_gate.py\" pre-tool"
+          }
+        ]
       }
     ],
     "PostToolUse": [

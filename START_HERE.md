@@ -105,14 +105,16 @@ builder's own unverified claim*. Never promote your own work to ✅.
 > is the job to watch, along with `python tools/check_contrast.py`.
 
 **Run the gates before you open a PR.** `for g in tools/check_*.py; do python "$g"; done` plus
-`python tools/generate_agent_definitions.py --check`. **43 `check_*.py` files exist; 42 are invoked
-by path in `.github/workflows/`** (the one that is not, `check_prior_art.py`, is session-side by
-design). *(Measured at `4b25650` on 2026-10-01 with `for f in tools/check_*.py; do grep -rqF
+`python tools/generate_agent_definitions.py --check`. **45 `check_*.py` files exist; 42 are invoked
+by path in `.github/workflows/`** (the three that are not — `check_prior_art.py`,
+`check_merge_ready.py`, `check_push_ready.py` — are session-side by design: the hook runs the last
+two before a `gh pr merge` and a `git push`). *(Measured at `4b25650` on 2026-10-01 with `for f in tools/check_*.py; do grep -rqF
 "$(basename $f)" .github/workflows/; done`. This paragraph said 19/18 and `ARCHITECTURE.md` said 18 —
 the ninth audit filed it as `I-10` — and then said 40/39 while the tree held 42/41, so the method is
-written down here rather than the number alone.)* Three of the 43 need arguments and print usage
+written down here rather than the number alone.)* Four of the 45 need arguments and print usage
 instead of a verdict when that loop runs them bare:
-`check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`.
+`check_canonical_sync.py` (`--staged` / `--base`), `check_prior_art.py`, `check_read_receipt.py`,
+`check_merge_ready.py` (`--pr N`).
 Two more go RED on a machine that has not built or installed everything — `check_bundle_budget.py`
 wants a Vite manifest from `npm run build` **and, since `I-12`, refuses to grade a `dist/` older than
 the tree, so it says `the build is stale` after any checkout until you rebuild**, and `check_runbook_snippets.py` fails closed unless
@@ -140,10 +142,11 @@ rather than run.
 *builder-ի սեփական չստուգված պնդում*։ Երբեք սեփական գործդ ✅ մի դարձրու։
 
 **PR բացելուց առաջ վազեցրու gate-երը։** `for g in tools/check_*.py; do python "$g"; done` գումարած
-`python tools/generate_agent_definitions.py --check` — **43 `check_*.py` ֆայլ կա; 42-ը workflow-ներում
-կանչված են ուղիով**, չկանչվածը `check_prior_art.py`-ն ա (դիզայնով session-side)։ Դրանցից **երեքը**
+`python tools/generate_agent_definitions.py --check` — **45 `check_*.py` ֆայլ կա; 42-ը workflow-ներում
+կանչված են ուղիով**, չկանչված երեքը (`check_prior_art.py`, `check_merge_ready.py`,
+`check_push_ready.py`) դիզայնով session-side են։ Դրանցից **չորսը**
 արգումենտ են ուզում ու bare վազելիս verdict-ի փոխարեն usage են տպում՝ `check_canonical_sync.py`,
-`check_prior_art.py`, `check_read_receipt.py`; **երկուսը** RED են չկառուցված մեքենայի վրա՝
+`check_prior_art.py`, `check_read_receipt.py`, `check_merge_ready.py`; **երկուսը** RED են չկառուցված մեքենայի վրա՝
 `check_bundle_budget.py` (Vite manifest) ու `check_runbook_snippets.py` (`cryptography`)։
 *(Այս տողը գրում էր «15 gate, բոլորը GREEN» — անգլերեն կեսը գրում էր 19/18, ու իններորդ աուդիտը դա
 գրանցեց որպես `I-10`՝ **երկրորդ անընդմեջ ռաունդը**, երբ այս թվերը սխալ են։ Չափված ա այս head-ի վրա։)*

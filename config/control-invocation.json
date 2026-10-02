@@ -210,6 +210,12 @@
       "blocks": "merge",
       "invoked_by": "Supervisor · durable-ledger DDL single-source gate (F-01)"
     },
+    "tools/check_merge_ready.py": {
+      "kind": "check",
+      "blocks": "session",
+      "invoked_by": ".claude/hooks",
+      "why": "T-150. `.claude/hooks/canonical_law_gate.py` runs it before every `gh pr merge` a session types and refuses the command unless it is GREEN. It asks GitHub about a pull request, so it is not a CI job and no required context names it. Not covered: a merge in the GitHub web UI, a session opened outside this checkout, a merge run from inside a script."
+    },
     "tools/check_negative_matrix.py": {
       "kind": "check",
       "blocks": "merge",
@@ -239,6 +245,12 @@
       "kind": "check",
       "blocks": "merge",
       "why": "Runs in `Production half · the five conditions (T-055)`, which IS among the required `contexts` in config/required-checks.json since 2026-09-19 (#220, the Owner's edit that executed the expired T-055 deferral): a red T-055 job blocks a merge. Until then it said `blocks: nothing`, measured 2026-08-31 when the job name was absent from that file - and tools/check_control_invocation.py refused the understatement the moment the context was added, which is what it is for."
+    },
+    "tools/check_push_ready.py": {
+      "kind": "check",
+      "blocks": "session",
+      "invoked_by": ".claude/hooks",
+      "why": "T-150. `.claude/hooks/canonical_law_gate.py` runs it before every `git push` a session types that is not a delete, and refuses the push unless it is GREEN. It runs the two local gates the argument-free loop skips; CI runs the same two where they cannot be skipped. Not covered: a push from a person's own terminal, a session opened outside this checkout, a push run from inside a script."
     },
     "tools/check_reachability.py": {
       "kind": "check",

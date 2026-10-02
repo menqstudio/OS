@@ -10,6 +10,8 @@ There are two `.claude/settings.json` files in this repository and only one of t
 the ROOT wall:
 
     .claude/settings.json         PreToolUse  matcher='Edit|Write|MultiEdit|NotebookEdit'
+                                  PreToolUse  matcher='Bash|PowerShell|Shell'   (T-150, two
+                                              named commands only -- see below)
                                   PostToolUse matcher='Bash|PowerShell|Shell'   (T-053)
                                   SessionStart / SubagentStart / UserPromptSubmit / Stop
                                   (no matcher, so no tool filter applies to them)
@@ -47,8 +49,18 @@ WHY THE PreToolUse GAP IS PINNED RATHER THAN CLOSED
 Deciding which paths a shell command writes is undecidable in general. `SHELL_WRITE_FORMS`
 below is the evidence: every entry writes the same protected path, and a PreToolUse
 classifier would have to defeat all of them plus the ones nobody has thought of, while
-still waving through the read-only greps every agent here lives on. So `Bash` is NOT added
-to the PreToolUse matcher, and `TheGapDemonstrated` pins that: those assertions stay true.
+still waving through the read-only greps every agent here lives on. So no PreToolUse block
+asks what a shell command WRITES, and `TheGapDemonstrated` pins that: those assertions stay
+true, and since T-150 they run THROUGH the shell matcher rather than around it.
+
+WHAT T-150 ADDED, WHICH IS A DIFFERENT QUESTION
+-----------------------------------------------
+A second PreToolUse block, matched on `Bash|PowerShell|Shell`, that refuses exactly two
+commands by NAME: `gh pr merge` and a `git push` that is not a delete, each unless its gate
+(`tools/check_merge_ready.py`, `tools/check_push_ready.py`) is GREEN. "Is this command line
+one of those two" is decidable where "what does it write" is not. `TheTwoNamedCommands`
+tests the recogniser in both directions, and `TheTwoNamedCommandsRefused` the refusals --
+including that nothing else can be refused by it, whatever breaks inside it.
 
 WHAT T-053 ADDED INSTEAD
 ------------------------
@@ -85,8 +97,10 @@ ROOT_SETTINGS = ROOT / ".claude" / "settings.json"
 ENGINE_SETTINGS = ROOT / "engine" / ".claude" / "settings.json"
 HOOK = ROOT / ".claude" / "hooks" / "canonical_law_gate.py"
 
-#: The four tools the root PreToolUse matcher names, as of the head that added this file.
+#: The four tools the root PreToolUse EDIT block names, as of the head that added this file.
 ROOT_PRE_TOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit"
+#: The second PreToolUse block (T-150): the shells, for two named commands and nothing else.
+ROOT_PRE_SHELL_MATCHER = "Bash|PowerShell|Shell"
 
 #: A path only a correctly-declared session should be able to write. `apps/desktop/**` is
 #: outside `meta` scope and outside every governance prefix.
@@ -194,13 +208,24 @@ class RootSettingsWiring(unittest.TestCase):
     def setUp(self):
         self.settings = matchers(load(ROOT_SETTINGS))
 
-    def test_pre_tool_use_matcher_is_exactly_the_four_edit_tools(self):
-        self.assertEqual(self.settings["PreToolUse"], [ROOT_PRE_TOOL_MATCHER])
+    def test_pre_tool_use_is_the_four_edit_tools_and_then_the_shells(self):
+        """Two blocks, in this order, and no third. Until T-150 there was one."""
+        self.assertEqual(self.settings["PreToolUse"],
+                         [ROOT_PRE_TOOL_MATCHER, ROOT_PRE_SHELL_MATCHER])
 
-    def test_bash_is_absent_from_the_pre_tool_use_matcher(self):
+    def test_bash_is_absent_from_the_EDIT_block(self):
         # Read from the settings file. This split the constant defined at the top of
         # THIS file, so it could not fail whatever `.claude/settings.json` said.
         self.assertNotIn("Bash", self.settings["PreToolUse"][0].split("|"))
+
+    def test_every_pre_tool_block_runs_the_same_command_line(self):
+        """One program, one argument. A shell block wired to a different script, or to
+        `post-tool`, would be a second wall with its own idea of the rules."""
+        blocks = load(ROOT_SETTINGS)["hooks"]["PreToolUse"]
+        commands = {hook["command"] for block in blocks for hook in block["hooks"]}
+        self.assertEqual(len(commands), 1, commands)
+        self.assertEqual([len(block["hooks"]) for block in blocks], [1, 1])
+        self.assertTrue(next(iter(commands)).rstrip().endswith("pre-tool"))
 
     def test_the_session_scoped_events_carry_no_matcher(self):
         # No matcher means no tool filter -- these fire once per session/turn, not per tool,
@@ -209,19 +234,26 @@ class RootSettingsWiring(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertEqual(self.settings[event], [None])
 
-    def test_bash_is_seen_AFTER_the_fact_and_never_before_it(self):
+    def test_bash_is_judged_for_what_it_WROTE_only_after_the_fact(self):
         """The shape of the root wall in one assertion, both halves.
 
         Before T-053 this asserted that no root event saw Bash at all, and named itself
-        as the assertion a containment change would turn red. It did. What replaces it is
-        the same claim made precisely: Bash is absent from PreToolUse ON PURPOSE, because
-        a reliable pre-execution shell path-check is not possible, and present at
-        PostToolUse, where the decidable question can be asked.
+        as the assertion a containment change would turn red. It did. T-053's version
+        said "Adding Bash to PreToolUse turns this red, which is still the point" -- and
+        T-150 added Bash to PreToolUse and it stayed GREEN, because it read block 0 and
+        the shells arrived as block 1. A test that names the change it would catch and
+        then does not catch it; recorded here rather than quietly rewritten.
 
-        Adding Bash to PreToolUse turns this red, which is still the point.
+        What is true now, and asserted over EVERY block: the edit block names no shell;
+        the only block that does is exactly the three shells; nothing matches `*`. What a
+        shell command WROTE is still asked only at PostToolUse. That the shell block
+        refuses two named commands and never a path is `TheGapDemonstrated`'s business,
+        which runs every write form through it and gets no verdict.
         """
         self.assertNotIn("Bash", self.settings["PreToolUse"][0])
-        self.assertNotEqual(self.settings["PreToolUse"], ["*"])
+        self.assertNotIn("*", self.settings["PreToolUse"])
+        self.assertEqual([m for m in self.settings["PreToolUse"] if "Bash" in m],
+                         [ROOT_PRE_SHELL_MATCHER])
         self.assertEqual(self.settings["PostToolUse"], ["Bash|PowerShell|Shell"])
         # There is still no PostToolUseFailure at the root: a shell command that FAILED
         # may still have written before it failed. Named as a known hole rather than
@@ -281,7 +313,8 @@ class EngineSettingsWiring(unittest.TestCase):
 
 
 class TheHookItself(unittest.TestCase):
-    """Even if it WERE wired for Bash, the hook returns before deciding anything."""
+    """It IS wired for Bash since T-150, and for a shell it never reaches the path
+    predicates: `EDIT_TOOLS` is what admits a tool to them, and no shell is in it."""
 
     def test_the_hooks_own_tool_set_excludes_every_shell(self):
         source = HOOK.read_text(encoding="utf-8")
@@ -300,6 +333,13 @@ class TheHookItself(unittest.TestCase):
         wall = import_wall()
         wired = matchers(load(ROOT_SETTINGS))["PreToolUse"][0].split("|")
         self.assertEqual(set(wired), wall.EDIT_TOOLS)
+
+    def test_the_hooks_shell_tools_are_exactly_what_the_pre_tool_shell_block_names(self):
+        """The same, for the T-150 block: a shell the matcher delivers and the hook does
+        not know falls through to the EDIT arm, which returns for it -- silently unguarded."""
+        wall = import_wall()
+        wired = matchers(load(ROOT_SETTINGS))["PreToolUse"][1].split("|")
+        self.assertEqual(set(wired), wall.SHELL_TOOLS)
 
 
 class TheGapDemonstrated(unittest.TestCase):
@@ -784,6 +824,462 @@ class TheBudgetRule(unittest.TestCase):
         self.write(self.CAP)
         self.assertIsNone(self.pre("NotebookEdit", {"new_source": "x" * 999}))
         self.assertIsNone(self.pre("MultiEdit", {"edits": [{"old_string": "", "new_string": "x" * 999}]}))
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+#: Command lines that RUN `gh pr merge`. Each must be recognised.
+RUNS_A_MERGE = [
+    "gh pr merge 5 --squash",
+    f"gh pr merge 5 --squash --match-head-commit {SHA}",
+    "cd /somewhere && gh pr merge 5",
+    "git status; gh pr merge 5",
+    "git add -A\ngh pr merge 5 --squash",
+    "FOO=1 gh pr merge 5",
+    "sudo -E gh pr merge 5",
+    "/usr/bin/gh pr merge 5",
+    "gh -R menqstudio/OS pr merge 5",
+    "gh pr merge --squash 5",
+    "x=$(gh pr merge 5)",
+    'echo "$(gh pr merge 5)"',            # inside double quotes the shell still runs it
+    "echo `gh pr merge 5`",
+    "(gh pr merge 5)",
+    "true || gh pr merge 5",
+    "ls | gh pr merge 5",
+]
+
+#: Command lines that RUN `git push`. Each must be recognised.
+RUNS_A_PUSH = [
+    "git push",
+    "git push origin HEAD",
+    "git -C /some/where push origin HEAD",
+    "git -c user.name=x push",
+    "git --no-pager push -u origin branch",
+    "git status && git push",
+    "git push \\\n  origin main",
+    "GIT_TRACE=1 git push",
+    'git commit -m "message" && git push',
+    "timeout 30 git push",
+]
+
+#: Command lines that only MENTION the words. None may be recognised.
+ONLY_MENTIONS = [
+    'echo "gh pr merge 5"',
+    "echo 'git push origin main'",
+    'git commit -m "T-150: gh pr merge and git push are refused"',
+    "git commit -m 'never git push before the gate'",
+    "git commit -m \"$(cat <<'EOF'\nT-150: a merge and a push\n\ngh pr merge 5\ngit push\nEOF\n)\"",
+    "cat <<EOF\ngit push origin main\ngh pr merge 5\nEOF",
+    "cat <<-'END' > notes.txt\n\tgit push\n\tEND",
+    "grep -rn 'gh pr merge' docs/",
+    'grep -rn "git push" tools/',
+    "git stash push -m wip",
+    "git log --grep push",
+    "git log --oneline | grep merge && gh pr view 5",
+    "gh pr view 5 --json mergeStateStatus",
+    "gh pr list --search merge",
+    "gh pr checks 5   # then gh pr merge 5",
+    "# git push",
+    "ls   # ; git push",                               # a separator inside a comment
+    'echo "done; gh pr merge 5"',                      # ...inside double quotes
+    'git commit -m "build && git push later"',
+    "echo 'a | git push origin main'",                 # ...inside single quotes
+    "echo gh pr merge 5",                              # unquoted, and still only an echo:
+    "echo git push origin main",                       # the FIRST word is the command
+    "man git push",
+    "printf 'gh pr merge 5\\n' > notes.txt",
+    "python3 tools/check_merge_ready.py --pr 5 && git status && echo gh-merge",
+    "ls push-git/ merge-gh/",
+]
+
+
+class TheTwoNamedCommands(unittest.TestCase):
+    """The recogniser, both directions. Pure string work: nothing here spawns anything."""
+
+    def setUp(self):
+        self.wall = import_wall()
+
+    def kinds(self, command: str) -> list[str]:
+        return [inv["kind"] for inv in self.wall.guarded_invocations(command)]
+
+    def test_every_form_that_runs_a_merge_is_recognised(self):
+        for command in RUNS_A_MERGE:
+            with self.subTest(command=command):
+                self.assertTrue(self.wall.mentions_guarded(command))
+                self.assertEqual(self.kinds(command), ["merge"])
+
+    def test_every_form_that_runs_a_push_is_recognised(self):
+        for command in RUNS_A_PUSH:
+            with self.subTest(command=command):
+                self.assertTrue(self.wall.mentions_guarded(command))
+                self.assertEqual(self.kinds(command), ["push"])
+
+    def test_a_command_that_only_MENTIONS_them_is_not(self):
+        """Mutant: split on separators without honouring quotes ⇒ red here. A commit
+        message, an `echo`, a `grep` pattern, a heredoc body and a comment all contain
+        the words and run neither command."""
+        for command in ONLY_MENTIONS:
+            with self.subTest(command=command):
+                self.assertEqual(self.kinds(command), [])
+
+    def test_both_in_one_line_are_both_found(self):
+        self.assertEqual(self.kinds(f"git push && gh pr merge 5 --match-head-commit {SHA}"),
+                         ["push", "merge"])
+
+    def test_the_cheap_test_comes_first_and_is_string_only(self):
+        """What keeps every other command free. Mutant: make `mentions_guarded` return
+        True always ⇒ the `ls` case in `TheTwoNamedCommandsRefused` reaches the parser."""
+        for command in ("ls", "grep -rn lstrip tools/", "git status", "gh pr view 5",
+                        "cargo test --workspace", "npm run build", ""):
+            with self.subTest(command=command):
+                self.assertFalse(self.wall.mentions_guarded(command))
+
+    def test_what_a_merge_carries(self):
+        merge = self.wall.guarded_invocations(
+            f"gh pr merge 5 --squash --match-head-commit {SHA} -R a/b")[0]
+        self.assertEqual((merge["target"], merge["pinned"], merge["pin"], merge["repo"]),
+                         ("5", True, SHA, "a/b"))
+        equals = self.wall.guarded_invocations(f"gh pr merge 5 --match-head-commit={SHA}")[0]
+        self.assertEqual((equals["pinned"], equals["pin"]), (True, SHA))
+        bare = self.wall.guarded_invocations("gh pr merge --squash")[0]
+        self.assertEqual((bare["target"], bare["pinned"]), (None, False))
+
+    def test_the_pull_request_number(self):
+        for target, number in (("5", 5), ("#5", 5), ("https://github.com/a/b/pull/12", 12),
+                               ("https://github.com/a/b/pull/12/files", 12),
+                               ("t150/branch", None), ("0", None), ("", None), (None, None)):
+            with self.subTest(target=target):
+                self.assertEqual(self.wall.pr_number(target), number)
+
+    def test_a_delete_is_a_push_that_is_not_gated(self):
+        for command, delete in (("git push --delete origin old", True),
+                                ("git push origin --delete old", True),
+                                ("git push -d origin old", True),
+                                ("git push origin :old", True),
+                                ("git push origin :old new", False),
+                                ("git push origin HEAD", False),
+                                ("git push", False)):
+            with self.subTest(command=command):
+                self.assertEqual(self.wall.guarded_invocations(command)[0]["delete"], delete)
+
+    def test_where_a_push_is_sent_from(self):
+        push = self.wall.guarded_invocations("cd sub/dir && git -C ../other push")[0]
+        self.assertEqual((push["cd"], push["directory"]), ("sub/dir", "../other"))
+
+    def test_the_crude_reading_is_command_shaped(self):
+        """Used only when the parser itself raised. It must still tell `git push` from
+        `git log --grep push`, or a parser bug would refuse half of what agents type."""
+        for command in ("git push origin x", "git -C /x push", "gh pr merge 5",
+                        "gh -R a/b pr merge 5", "ls && git push"):
+            with self.subTest(command=command):
+                self.assertTrue(self.wall.reads_as_guarded(command))
+        for command in ("git log --grep push", "git stash push", "gh pr view 5 # merge",
+                        "ls", 'echo "git push"', "grep -rn 'gh pr merge' docs/"):
+            with self.subTest(command=command):
+                self.assertFalse(self.wall.reads_as_guarded(command))
+
+
+class TheTwoNamedCommandsRefused(unittest.TestCase):
+    """`handle_pre_shell` with the gate replaced, so no test here needs GitHub or a build.
+
+    The gate is replaced at `run_gate`, the one place the arm spawns anything; every
+    decision above that line is the real code.
+    """
+
+    GREEN = (0, "GREEN: it may be done.")
+    RED = (1, "RED: it must NOT be done now\n\n  1. the reason, in the gate's own words")
+
+    def setUp(self):
+        self.wall = import_wall()
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def shell(self, command: str, gate=None, *, tool: str = "Bash", cwd=None) -> str:
+        def fake(script, args):
+            self.calls.append((script, list(args)))
+            if isinstance(gate, BaseException):
+                raise gate
+            return gate
+
+        # `wall.ROOT` is CLAUDE_PROJECT_DIR when a session set it, which is the session's
+        # checkout and not necessarily the one under test.
+        out = io.StringIO()
+        with mock.patch.object(self.wall, "ROOT", ROOT), \
+                mock.patch.object(self.wall, "run_gate", fake), contextlib.redirect_stdout(out):
+            self.wall.handle_pre_shell({"tool_name": tool, "cwd": str(cwd or ROOT),
+                                        "tool_input": {"command": command}})
+        return out.getvalue()
+
+    def assert_asked_about_this_checkout(self):
+        """One call, to the push gate, about ROOT -- compared as paths, not as spellings."""
+        self.assertEqual(len(self.calls), 1, self.calls)
+        script, args = self.calls[0]
+        self.assertEqual((script, args[0]), ("check_push_ready.py", "--root"))
+        self.assertEqual(pathlib.Path(args[1]).resolve(), ROOT.resolve())
+
+    # --- gh pr merge ---------------------------------------------------------------
+
+    def test_a_merge_without_match_head_commit_is_refused_even_when_the_gate_is_GREEN(self):
+        """Mutant: drop the pin requirement ⇒ this is allowed. The gate being GREEN is
+        about the head it read; an unpinned merge takes whatever head is there later."""
+        out = self.shell("gh pr merge 5 --squash", self.GREEN)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("--match-head-commit", out)
+        self.assertIn("GREEN: it may be done.", out, "the gate's output, which carries the "
+                                                     "exact command, was not handed over")
+
+    def test_a_pin_with_no_value_is_not_a_pin(self):
+        out = self.shell("gh pr merge 5 --squash --match-head-commit", self.GREEN)
+        self.assertEqual(decision(out), "deny", out)
+
+    def test_a_pinned_merge_is_refused_while_the_gate_is_RED(self):
+        """Mutant: ignore the gate's verdict ⇒ allowed. The refusal IS the gate's text."""
+        out = self.shell(f"gh pr merge 5 --squash --match-head-commit {SHA}", self.RED)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("the reason, in the gate's own words", out)
+
+    def test_a_pinned_merge_is_allowed_when_the_gate_is_GREEN(self):
+        """The positive control, and what the gate was asked: THIS pull request, THIS head."""
+        out = self.shell(f"gh pr merge 5 --squash --match-head-commit {SHA}", self.GREEN)
+        self.assertEqual(out, "", out)
+        self.assertEqual(self.calls, [("check_merge_ready.py",
+                                       ["--pr", "5", "--expect-head", SHA])])
+
+    def test_a_merge_that_names_no_number_is_refused_without_asking_the_gate(self):
+        for command in ("gh pr merge --squash", "gh pr merge t150/branch --squash"):
+            with self.subTest(command=command):
+                self.calls.clear()
+                out = self.shell(command, self.GREEN)
+                self.assertEqual(decision(out), "deny", out)
+                self.assertIn("by number", out)
+                self.assertEqual(self.calls, [])
+
+    def test_a_merge_in_another_repository_is_said_and_allowed(self):
+        with mock.patch.object(self.wall, "_git_answer",
+                               lambda directory, *args: "git@github.com:menqstudio/OS.git"):
+            other = self.shell(f"gh pr merge 5 -R someone/else --match-head-commit {SHA}",
+                               self.RED)
+            self.assertIsNone(decision(other), other)
+            self.assertIn("NOT judged", other)
+            self.assertEqual(self.calls, [])
+            ours = self.shell(f"gh pr merge 5 -R MenQStudio/os --match-head-commit {SHA}",
+                              self.RED)
+        self.assertEqual(decision(ours), "deny", ours)
+        self.assertEqual(self.calls[0][1], ["--pr", "5", "--repo", "MenQStudio/os",
+                                            "--expect-head", SHA])
+
+    # --- git push ------------------------------------------------------------------
+
+    def test_a_push_is_refused_while_the_gate_is_RED(self):
+        """Mutant: skip the push arm ⇒ allowed."""
+        out = self.shell("git push origin HEAD", self.RED)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("the reason, in the gate's own words", out)
+
+    def test_a_push_is_allowed_when_the_gate_is_GREEN_and_the_gate_judged_THIS_tree(self):
+        out = self.shell("git push origin HEAD", self.GREEN)
+        self.assertEqual(out, "", out)
+        self.assert_asked_about_this_checkout()
+
+    def test_a_delete_is_not_gated(self):
+        """Mutant: drop the delete exemption ⇒ the gate is asked. Deleting a branch sends
+        no commit, so there is nothing for CI to refuse."""
+        for command in ("git push --delete origin old", "git push origin :old"):
+            with self.subTest(command=command):
+                self.calls.clear()
+                self.assertEqual(self.shell(command, self.RED), "")
+                self.assertEqual(self.calls, [])
+
+    def test_a_push_in_a_different_repository_is_said_and_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(pathlib.Path(tmp), "init", "-q")
+            # posix spelling: an unquoted backslash is an escape to a shell, and to the hook.
+            out = self.shell(f"git -C {pathlib.Path(tmp).as_posix()} push origin HEAD", self.RED)
+            moved = self.shell("git push origin HEAD", self.RED, cwd=tmp)
+        for text in (out, moved):
+            self.assertIsNone(decision(text), text)
+            self.assertIn("different repository", text)
+        self.assertEqual(self.calls, [])
+
+    def test_a_directory_that_cannot_be_resolved_is_judged_as_this_checkout(self):
+        """Not being able to tell is not being told it is somebody else's."""
+        out = self.shell('cd "$NOWHERE/nothing" && git push', self.RED)
+        self.assertEqual(decision(out), "deny", out)
+        self.assert_asked_about_this_checkout()
+
+    def test_a_gate_that_could_not_run_one_of_its_gates_is_said_on_the_way_through(self):
+        out = self.shell("git push", (0, "  tools/check_runbook_snippets.py -- COULD NOT RUN: "
+                                         "`cryptography` does not import here\n\nGREEN: 0 ran"))
+        self.assertIsNone(decision(out), out)
+        self.assertIn("COULD NOT RUN", out)
+        self.assertIn("NOT a pass", out)
+
+    # --- what only mentions them -----------------------------------------------------
+
+    def test_an_echo_and_a_commit_message_trigger_nothing(self):
+        """The other direction, end to end: no verdict and the gate never asked."""
+        for command in ('echo "gh pr merge 5"',
+                        'git commit -m "T-150: git push is refused before CI refuses it"',
+                        "git commit -m \"$(cat <<'EOF'\nthen git push\ngh pr merge 5\nEOF\n)\""):
+            with self.subTest(command=command):
+                self.assertEqual(self.shell(command, self.RED), "")
+        self.assertEqual(self.calls, [])
+
+    # --- how it fails ----------------------------------------------------------------
+
+    def test_a_gate_that_crashes_refuses_the_merge_and_the_push(self):
+        """Fail closed, for these two only. Mutant: catch the exception and allow ⇒ red."""
+        for command in (f"gh pr merge 5 --squash --match-head-commit {SHA}", "git push"):
+            with self.subTest(command=command):
+                out = self.shell(command, RuntimeError("the gate blew up"))
+                self.assertEqual(decision(out), "deny", out)
+                self.assertIn("did not give a verdict", out)
+                self.assertIn("the gate blew up", out)
+
+    def test_a_gate_that_times_out_refuses(self):
+        out = self.shell("git push", subprocess.TimeoutExpired(["python3"], 50))
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("did not give a verdict", out)
+
+    def test_a_traceback_is_not_a_verdict(self):
+        out = self.shell("git push", (1, "Traceback (most recent call last):\n  ...\nKeyError: 'x'"))
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("without a verdict", out)
+
+    def test_exit_zero_without_the_word_GREEN_is_not_a_pass(self):
+        """Mutant: accept exit 0 alone ⇒ allowed. A truncated or empty gate script exits 0
+        and has said nothing."""
+        for output in ("", "usage: check_push_ready.py [--root ROOT]"):
+            with self.subTest(output=output):
+                out = self.shell("git push", (0, output))
+                self.assertEqual(decision(out), "deny", out)
+
+    def test_a_nonzero_exit_is_not_a_pass_whatever_it_printed(self):
+        """Mutant: accept the word alone ⇒ allowed. The merge gate's own RED text says
+        "a head that is not GREEN here", so the word is in every refusal it prints."""
+        out = self.shell(f"gh pr merge 5 --squash --match-head-commit {SHA}",
+                         (1, "RED: must NOT be merged now\n  1. a head that is not GREEN here"))
+        self.assertEqual(decision(out), "deny", out)
+
+    def test_a_missing_gate_script_refuses(self):
+        """Not replaced: the REAL `run_gate`, pointed at a tools/ with no gate in it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            with mock.patch.object(self.wall, "ROOT", pathlib.Path(tmp)), \
+                    contextlib.redirect_stdout(out):
+                self.wall.handle_pre_shell({"tool_name": "Bash", "cwd": tmp, "tool_input": {
+                    "command": f"gh pr merge 5 --squash --match-head-commit {SHA}"}})
+        self.assertEqual(decision(out.getvalue()), "deny", out.getvalue())
+        self.assertIn("without a verdict", out.getvalue())
+
+    def test_an_exception_while_judging_one_of_the_two_refuses_it(self):
+        with mock.patch.object(self.wall, "push_problem",
+                               mock.Mock(side_effect=KeyError("boom"))):
+            out = self.shell("git push", self.GREEN)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertIn("KeyError", out)
+
+    def test_nothing_else_can_be_refused_whatever_breaks_inside_the_arm(self):
+        """The wedge, made structurally impossible. EVERY helper below the cheap string
+        test raises -- the parser, the crude reading, both judges, the gate -- and a
+        command that carries neither word pair still gets no verdict and no exception.
+
+        Mutant: drop the `mentions_guarded` early return ⇒ `ls` reaches the parser, and
+        the exception leaves `handle_pre_shell`.
+        """
+        boom = mock.Mock(side_effect=RuntimeError("the arm is broken"))
+        with mock.patch.object(self.wall, "guarded_invocations", boom), \
+                mock.patch.object(self.wall, "shell_segments", boom), \
+                mock.patch.object(self.wall, "reads_as_guarded", boom), \
+                mock.patch.object(self.wall, "merge_problem", boom), \
+                mock.patch.object(self.wall, "push_problem", boom):
+            for command in ("ls", "grep -rn lstrip tools/", "git status", "cargo test",
+                            "gh pr view 5", "npm run build", "git commit -m 'a merge'",
+                            "python3 tools/check_merge_ready.py --pr 5"):
+                with self.subTest(command=command):
+                    self.assertEqual(self.shell(command, RuntimeError("no gate either")), "")
+        boom.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_a_parser_crash_refuses_nothing_that_merely_carries_the_words(self):
+        """One step further in: these PASS the cheap test, the parser raises on them, and
+        the crude reading is what lets them through."""
+        boom = mock.Mock(side_effect=RuntimeError("the parser is broken"))
+        with mock.patch.object(self.wall, "guarded_invocations", boom):
+            for command in ("git log --grep push", "git stash push", "gh pr view 5 # merge",
+                            'echo "git push"', "grep -rn 'gh pr merge' docs/"):
+                with self.subTest(command=command):
+                    self.assertEqual(self.shell(command, RuntimeError("no gate either")), "")
+        self.assertEqual(self.calls, [])
+
+    def test_a_parser_crash_still_refuses_what_reads_as_one_of_the_two(self):
+        """The other half of the same rule: a broken parser must not wave a merge through."""
+        boom = mock.Mock(side_effect=RuntimeError("the parser is broken"))
+        with mock.patch.object(self.wall, "guarded_invocations", boom):
+            for command in ("git push origin HEAD", "gh pr merge 5 --squash"):
+                with self.subTest(command=command):
+                    out = self.shell(command, self.GREEN)
+                    self.assertEqual(decision(out), "deny", out)
+                    self.assertIn("could not parse it", out)
+
+    def test_a_payload_with_no_command_is_nobodys_business(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            for payload in ({}, {"tool_input": None}, {"tool_input": {"command": 5}},
+                            {"tool_input": {"command": None}}):
+                self.wall.handle_pre_shell(payload)
+        self.assertEqual(out.getvalue(), "")
+
+
+class TheTwoNamedCommandsLive(unittest.TestCase):
+    """The REAL hook, run as `.claude/settings.json` runs it. No network: every case
+    here is decided before a gate would be asked."""
+
+    def run_pre(self, command: str, tool: str = "Bash", env: dict | None = None) -> tuple[int, str]:
+        merged = dict(os.environ)
+        merged.update({"CLAUDE_PROJECT_DIR": str(ROOT), "PYTHONUTF8": "1"})
+        merged.pop("CANONICAL_LAW", None)
+        merged.update(env or {})
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(HOOK), "pre-tool"],
+            input=json.dumps({"session_id": "t150-live", "tool_name": tool, "cwd": str(ROOT),
+                              "tool_input": {"command": command}}),
+            capture_output=True, text=True, env=merged, timeout=120)
+        return result.returncode, result.stdout
+
+    def test_ls_exits_zero_and_says_nothing(self):
+        self.assertEqual(self.run_pre("ls"), (0, ""))
+
+    def test_a_merge_with_no_number_is_denied_by_the_real_hook(self):
+        """Mutant: do not route shell tools to the arm in `main` ⇒ no verdict at all."""
+        for tool in ("Bash", "PowerShell", "Shell"):
+            with self.subTest(tool=tool):
+                code, out = self.run_pre("gh pr merge --squash", tool)
+                self.assertEqual(code, 0)
+                self.assertEqual(decision(out), "deny", out)
+
+    def test_a_tool_that_is_not_a_shell_never_reaches_the_arm(self):
+        """`BashOutput` carries a command-shaped field and is not a shell."""
+        self.assertEqual(self.run_pre("gh pr merge --squash", "BashOutput"), (0, ""))
+
+    def test_the_disabled_switch_disables_this_arm_exactly_as_the_others(self):
+        """Mutant: put the shell arm above the `disabled()` return ⇒ still denied."""
+        self.assertEqual(self.run_pre("gh pr merge --squash", env={"CANONICAL_LAW": "off"}),
+                         (0, ""))
+
+    def test_the_arm_runs_before_the_session_imports(self):
+        """A broken receipt store is not `ls`'s problem, and not a merge's alibi either:
+        the arm must not depend on check_read_receipt / check_roadmap_order importing.
+
+        Driven with a project root that has no tools/ at all. `ls` still exits 0 in
+        silence, and the merge is still refused rather than failed open.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"CLAUDE_PROJECT_DIR": tmp}
+            self.assertEqual(self.run_pre("ls", env=env), (0, ""))
+            code, out = self.run_pre(f"gh pr merge 5 --squash --match-head-commit {SHA}", env=env)
+        self.assertEqual(code, 0)
+        self.assertEqual(decision(out), "deny", out)
+        self.assertNotIn("FAILED OPEN", out)
 
 
 class TheNamedBackstop(unittest.TestCase):

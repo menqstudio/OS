@@ -21,13 +21,19 @@ WHAT IT ENFORCES, PER EVENT
       2. the session has declared a roadmap phase, and it is the first open one;
       3. a `meta` session stays inside the governance/tooling scope;
       4. a NEW file has a recorded prior-art search.
+  PreToolUse (shell tools) -- TWO commands, recognised by NAME, are refused before they
+    run: `gh pr merge`, unless it pins `--match-head-commit` and
+    tools/check_merge_ready.py is GREEN; and a `git push` that is not a delete, unless
+    tools/check_push_ready.py is GREEN. Every other shell command returns before anything
+    is imported or spawned. See THE TWO NAMED COMMANDS below.
   PostToolUse (shell tools only) -- DETECTION, NOT CONTAINMENT. See below.
 
 SHELL: WHY THIS IS A PostToolUse CHECK AND NOT A MATCHER CHANGE
   Until T-053 the shell was not looked at here at all, and the paragraph in this
   place said so. The obvious repair -- add `Bash` to the PreToolUse matcher in
-  `.claude/settings.json` and read the command -- was designed first and rejected,
-  for a reason that is a property of shells and not of this implementation:
+  `.claude/settings.json` and read the command TO DECIDE WHAT IT WRITES -- was designed
+  first and rejected, for a reason that is a property of shells and not of this
+  implementation:
 
       A RELIABLE PreToolUse SHELL PATH-CHECK IS NOT POSSIBLE.
 
@@ -76,9 +82,52 @@ SHELL: WHY THIS IS A PostToolUse CHECK AND NOT A MATCHER CHANGE
     - `CANONICAL_LAW=off`, which disables this exactly as it disables the rest;
     - anything at all in a session whose project root is not this checkout.
 
+THE TWO NAMED COMMANDS (T-150) -- and why this does not contradict the paragraph above
+  `Bash|PowerShell|Shell` IS in a PreToolUse matcher now. Not for the question above --
+  which PATHS does this command write, still undecidable, still answered after the fact
+  -- but for a different and much smaller one: IS THIS COMMAND LINE `gh pr merge` OR
+  `git push`? That is a question about the words typed, and it has an answer.
+
+  Both had a written rule and both were broken in one day. #314 was squash-merged a few
+  minutes after midnight with 39 of 39 checks green; the squash is a new commit dated at
+  the merge, PROJECT_STATE.md still said the day before, and `main` went RED. #317 was
+  pushed without the bundle gate ever having been run to a verdict, and CI refused it.
+  The remedy on file each time was a memory note. A memory is not a mechanism.
+
+  HOW A COMMAND IS RECOGNISED. First, on the raw string and before anything is imported
+  or spawned: does it contain `gh` and `merge`, or `git` and `push`? If not, the arm
+  returns -- that is the whole cost for every other command, and it is why no bug below
+  that line can reach them. Otherwise the line is split into simple commands at the
+  UNQUOTED separators `;` `&` `|` newline `(` `)`; a quoted string is one word, a heredoc
+  body is skipped, and a `$(...)` or backtick substitution is its own command even inside
+  double quotes, because the shell runs it. Leading `NAME=value` words and wrappers
+  (`sudo`, `env`, `time`, `command`, ...) are dropped, and then the FIRST word must be
+  `gh` with positionals `pr merge`, or `git` with first non-option word `push`. So
+  `echo "gh pr merge 5"` and `git commit -m "then git push"` are not what is asked about.
+
+  HOW IT FAILS, which is two answers on purpose. Once a command IS one of the two, any
+  failure to get a GREEN -- the gate RED, crashed, timed out, missing, or printing no
+  verdict -- refuses it. For every other command a failure in this arm allows. If the
+  splitter itself raises, the command is refused only when the raw string still reads
+  `gh ... pr ... merge` or `git ... push` word for word; anything else passes. A wall
+  that blocks every shell command cannot be repaired from inside the session it blocks.
+
+  WHAT IT DOES NOT COVER, listed rather than implied:
+    - a person merging in the GitHub web UI, or pushing from their own terminal;
+    - a session whose project root is not this checkout: none of this loads;
+    - `git push` or `gh pr merge` inside a script, a Makefile target, an alias, `eval`,
+      `sh -c "..."`, or a heredoc fed to a shell -- the arm reads the command line, not
+      what the command line runs. That is the same wall the paragraph above describes;
+    - a push or a merge in a DIFFERENT repository: recognised, said out loud, and allowed;
+    - the heavy tools/check_produced_artifact.py and the three suites: neither gate runs
+      them;
+    - `CANONICAL_LAW=off`, which disables this exactly as it disables the rest.
+
 THE THREE HONEST LIMITS -- do not read this gate as more than it is
-  * SHELL IS NOT GATED BEFORE THE FACT. Only Edit/Write/MultiEdit/NotebookEdit are
-    refused in advance. A session can still write any file through Bash (`>`,
+  * SHELL IS NOT GATED BEFORE THE FACT -- for what it WRITES. Only
+    Edit/Write/MultiEdit/NotebookEdit are refused in advance for a path; the two named
+    commands above are refused for what they ARE, which says nothing about paths. A
+    session can still write any file through Bash (`>`,
     `sed -i`, a python one-liner) and the write WILL LAND; what changed in T-053 is
     that it is detected afterwards and the turn is failed. Closing it in advance
     needs shell-command classification, which the engine's own wall documents as
@@ -122,9 +171,14 @@ sys.path.insert(0, str(ROOT / "tools"))
 # module docstring's first honest limit.
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # Tools that run a shell. These are NOT added to EDIT_TOOLS: they are not refused in
-# advance (see the docstring -- a reliable PreToolUse shell path-check is not possible),
-# they are settled afterwards against what actually changed on disk.
+# advance for the PATHS they write (see the docstring -- a reliable PreToolUse shell
+# path-check is not possible), they are settled afterwards against what actually changed
+# on disk. Two commands are refused in advance by NAME: see `handle_pre_shell`.
 SHELL_TOOLS = {"Bash", "PowerShell", "Shell"}
+# How long a merge/push gate may take before the command it guards is refused. Kept under
+# a minute on purpose: a hook the harness has to kill has given no verdict, and no verdict
+# from the harness's side is an allow.
+GATE_TIMEOUT = 50
 # A dirty file larger than this is compared on (size, mtime_ns) instead of its hash, so
 # one big artifact cannot make every shell call slow. Weaker, and said so rather than
 # quietly hashing 400 MB on every `ls`.
@@ -741,6 +795,478 @@ def handle_post_tool(data: dict, roadmap, prior_art, sid: str) -> None:
           "report clears. It will keep firing until one of those is true."})
 
 
+# --- the pre-tool SHELL arm: two commands, refused before they run (T-150) -------------
+# Read THE TWO NAMED COMMANDS in the module docstring first. Everything from here to
+# `handle_pre_shell` is pure string work except `run_gate` and the two `_git` questions,
+# and those are reached only after a command has been recognised as one of the two.
+
+MERGE_GATE = "check_merge_ready.py"
+PUSH_GATE = "check_push_ready.py"
+RECOVERY = ("If this refusal is itself the bug, `CANONICAL_LAW=off` is the recovery path, "
+            "and it is a real bypass -- say so when you use it.")
+
+#: Words that may stand in front of a command without being it.
+_WRAPPERS = frozenset({"sudo", "env", "command", "builtin", "exec", "time", "nohup", "nice",
+                       "then", "do", "else", "elif", "if", "while", "until", "!", "{"})
+#: `gh` options that take a value, so the value is not mistaken for a positional.
+_GH_VALUE_FLAGS = frozenset({"-R", "--repo", "-b", "--body", "-F", "--body-file", "-t",
+                             "--subject", "-A", "--author-email", "--match-head-commit"})
+#: `git` options, before the subcommand, that take a value.
+_GIT_VALUE_FLAGS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                              "--exec-path", "--super-prefix", "--config-env"})
+
+
+def mentions_guarded(command: str) -> bool:
+    """Could this string possibly be `gh pr merge` or `git push`? String tests only.
+
+    This is the line that keeps every other command free: nothing is imported, parsed or
+    spawned for a command that fails it, so no bug below can refuse or delay one.
+    """
+    return ("merge" in command and "gh" in command) or ("push" in command and "git" in command)
+
+
+def reads_as_guarded(command: str) -> bool:
+    """The crude reading, used ONLY when `guarded_invocations` has itself raised.
+
+    Whitespace words, no quoting, and deliberately sharing no code with the parser that
+    just failed: `gh` whose first words past its options are `pr merge`, or `git` whose
+    first word past its options is `push`. It over-reads an unquoted mention
+    (`echo git push`), and that is accepted here: the alternative when the parser is
+    broken is to wave through the two commands this arm exists for.
+    """
+    words = command.split()
+    for i, word in enumerate(words):
+        name = word.rsplit("/", 1)[-1]
+        if name not in ("gh", "git"):
+            continue
+        j = i + 1
+        while j < len(words) and words[j].startswith("-"):
+            j += 2 if words[j] in ("-C", "-c", "-R", "--repo") else 1
+        if name == "gh" and words[j:j + 2] == ["pr", "merge"]:
+            return True
+        if name == "git" and words[j:j + 1] == ["push"]:
+            return True
+    return False
+
+
+def shell_segments(command: str) -> list[list[str]]:
+    """The simple commands in a command line, each as its list of words.
+
+    Split at the UNQUOTED separators `;` `&` `|` newline `(` `)`. A single- or
+    double-quoted string is one word. A heredoc body is skipped. A `$(...)` or backtick
+    substitution is a command of its own -- including inside double quotes, where the shell
+    still runs it -- and the word around it carries on afterwards.
+
+    This is not a shell. It does not expand variables, aliases or globs, and it does not
+    follow `eval`, `sh -c` or a script: the docstring lists those as not covered.
+    """
+    segments: list[list[str]] = []
+    words: list[str] = []
+    word: str | None = None
+    stack: list[tuple[str, list[str], str | None]] = []   # (kind, outer words, outer word)
+    heredocs: list[tuple[str, bool]] = []
+    i, n = 0, len(command)
+
+    def end_word() -> None:
+        nonlocal word
+        if word is not None:
+            words.append(word)
+            word = None
+
+    def end_segment() -> None:
+        nonlocal words
+        end_word()
+        if words:
+            segments.append(words)
+        words = []
+
+    def open_sub(kind: str) -> None:
+        nonlocal words, word
+        stack.append((kind, words, word))
+        words, word = [], None
+
+    def close_sub() -> None:
+        nonlocal words, word
+        end_segment()
+        _, words, word = stack.pop()
+
+    while i < n:
+        c = command[i]
+        if stack and stack[-1][0] == "dq":
+            if c == "\\" and i + 1 < n:
+                word = (word or "") + command[i + 1]
+                i += 2
+            elif c == '"':
+                stack.pop()
+                i += 1
+            elif c == "$" and command[i + 1:i + 2] == "(":
+                open_sub("sub")
+                i += 2
+            elif c == "`":
+                open_sub("bt")
+                i += 1
+            else:
+                word = (word or "") + c
+                i += 1
+            continue
+        if c == "\\":
+            if command[i + 1:i + 2] != "\n":                 # a line continuation is nothing
+                word = (word or "") + command[i + 1:i + 2]
+            i += 2
+        elif c == "'":
+            end = command.find("'", i + 1)
+            end = n if end < 0 else end
+            word = (word or "") + command[i + 1:end]
+            i = end + 1
+        elif c == '"':
+            word = word or ""
+            stack.append(("dq", words, word))               # nothing to restore; a marker
+            i += 1
+        elif c == "`":
+            if stack and stack[-1][0] == "bt":
+                close_sub()
+            else:
+                open_sub("bt")
+            i += 1
+        elif c == "$" and command[i + 1:i + 2] == "(":
+            open_sub("sub")
+            i += 2
+        elif c == "(":
+            open_sub("sub")
+            i += 1
+        elif c == ")":
+            if stack and stack[-1][0] == "sub":
+                close_sub()
+            else:
+                end_segment()
+            i += 1
+        elif c in ";&|":
+            end_segment()
+            i += 1
+        elif c == "\n":
+            end_segment()
+            i += 1
+            for delimiter, strip_tabs in heredocs:           # skip each pending body
+                while i < n:
+                    end = command.find("\n", i)
+                    end = n if end < 0 else end
+                    line = command[i:end]
+                    i = min(end + 1, n)
+                    if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                        break
+            heredocs = []
+        elif c in " \t\r":
+            end_word()
+            i += 1
+        elif c == "#" and word is None:
+            end = command.find("\n", i)
+            i = n if end < 0 else end
+        elif command.startswith("<<<", i):
+            word = (word or "") + "<<<"
+            i += 3
+        elif command.startswith("<<", i):
+            end_word()
+            i += 2
+            strip_tabs = command[i:i + 1] == "-"
+            i += 1 if strip_tabs else 0
+            while i < n and command[i] in " \t":
+                i += 1
+            delimiter = ""
+            while i < n and command[i] not in " \t\n;&|()<>":
+                if command[i] in "'\"":
+                    quote = command[i]
+                    end = command.find(quote, i + 1)
+                    end = n if end < 0 else end
+                    delimiter += command[i + 1:end]
+                    i = end + 1
+                else:
+                    delimiter += command[i + 1:i + 2] if command[i] == "\\" else command[i]
+                    i += 2 if command[i] == "\\" else 1
+            if delimiter:
+                heredocs.append((delimiter, strip_tabs))
+        else:
+            word = (word or "") + c
+            i += 1
+    end_segment()
+    while stack:                                             # an unclosed quote or paren
+        kind, outer_words, outer_word = stack.pop()
+        if kind != "dq":                                     # a quote opened no new command
+            words, word = outer_words, outer_word
+            end_segment()
+    return segments
+
+
+def _command_words(words: list[str]) -> list[str]:
+    """`words` without what may legally stand in front of the command name."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        name, eq, _ = w.partition("=")
+        if w in _WRAPPERS:
+            i += 1
+            while i < len(words) and words[i].startswith("-"):
+                i += 1                                       # `env -i`, `sudo -E`
+        elif eq and name and (name[0].isalpha() or name[0] == "_") \
+                and name.replace("_", "a").isalnum():
+            i += 1                                           # NAME=value
+        elif w == "timeout":
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or words[i][:1].isdigit()):
+                i += 1
+        else:
+            break
+    return words[i:]
+
+
+def _program(word: str) -> str:
+    name = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _gh_merge(words: list[str]) -> dict | None:
+    positional: list[str] = []
+    flags: dict[str, str] = {}
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w.startswith("-"):
+            name, eq, value = w.partition("=")
+            if eq:
+                flags[name] = value
+            elif name in _GH_VALUE_FLAGS and i + 1 < len(words):
+                flags[name] = words[i + 1]
+                i += 1
+            else:
+                flags[name] = ""
+        else:
+            positional.append(w)
+        i += 1
+    if positional[:2] != ["pr", "merge"]:
+        return None
+    return {"kind": "merge",
+            "target": positional[2] if len(positional) > 2 else None,
+            "pinned": "--match-head-commit" in flags,
+            "pin": flags.get("--match-head-commit", ""),
+            "repo": flags.get("--repo") or flags.get("-R") or None}
+
+
+def _git_push(words: list[str]) -> dict | None:
+    i, directory = 1, None
+    while i < len(words) and words[i].startswith("-"):
+        if words[i] in _GIT_VALUE_FLAGS and i + 1 < len(words):
+            if words[i] == "-C":
+                directory = words[i + 1]
+            i += 2
+        else:
+            i += 1
+    if i >= len(words) or words[i] != "push":
+        return None
+    args = words[i + 1:]
+    refs = [a for a in args if not a.startswith("-")][1:]    # after the remote
+    delete = (any(a in ("--delete", "-d") for a in args)
+              or (bool(refs) and all(r.startswith(":") for r in refs)))
+    return {"kind": "push", "delete": delete, "directory": directory}
+
+
+def guarded_invocations(command: str) -> list[dict]:
+    """Every `gh pr merge` and every `git push` this command line itself runs."""
+    found: list[dict] = []
+    moved_to: str | None = None
+    for segment in shell_segments(command):
+        words = _command_words(segment)
+        if not words:
+            continue
+        program = _program(words[0])
+        if program == "cd" and len(words) > 1:
+            moved_to = words[1]
+        elif program == "gh":
+            merge = _gh_merge(words)
+            if merge:
+                found.append(merge)
+        elif program == "git":
+            push = _git_push(words)
+            if push:
+                push["cd"] = moved_to
+                found.append(push)
+    return found
+
+
+def pr_number(target: str | None) -> int | None:
+    """The pull request a `gh pr merge` names: `5`, `#5`, or a `.../pull/5` URL."""
+    if not target:
+        return None
+    text = target.strip().rstrip("/")
+    if "/pull/" in text:
+        text = text.rsplit("/pull/", 1)[1].split("/", 1)[0]
+    text = text.lstrip("#")
+    return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def run_gate(script: str, args: list[str]) -> tuple[int, str]:
+    """Run one gate from THIS checkout's tools/ and return `(exit code, what it printed)`.
+
+    Raises on a timeout or a gate that cannot be started; the caller turns that into a
+    refusal. Replaced in the tests, which is why it is a module-level name.
+    """
+    import subprocess
+    done = subprocess.run([sys.executable, "-X", "utf8", "-B", str(ROOT / "tools" / script), *args],
+                          cwd=str(ROOT), capture_output=True, timeout=GATE_TIMEOUT)
+    text = ((done.stdout or b"") + (done.stderr or b"")).decode("utf-8", errors="replace")
+    return done.returncode, text.strip()
+
+
+def _git_answer(directory: pathlib.Path, *args: str) -> str | None:
+    import subprocess
+    try:
+        done = subprocess.run(["git", "-C", str(directory), *args],
+                              capture_output=True, text=True, timeout=10)
+    except Exception:  # noqa: BLE001 - no answer is an answer the caller handles
+        return None
+    return (done.stdout or "").strip() if done.returncode == 0 else None
+
+
+def _common_dir(directory: pathlib.Path) -> pathlib.Path | None:
+    """The git directory a checkout shares with its worktrees, or None."""
+    out = _git_answer(directory, "rev-parse", "--git-common-dir")
+    if not out:
+        return None
+    try:
+        return (directory / out).resolve()
+    except OSError:
+        return None
+
+
+def push_checkout(inv: dict, data: dict) -> pathlib.Path | None:
+    """The checkout a `git push` sends from; None when it is a DIFFERENT repository.
+
+    A worktree of this repository shares its git directory and is judged, as the tree it
+    is. A directory that cannot be resolved -- `cd "$DIR"`, a path that is not a
+    repository -- falls back to this checkout: not being able to tell is not being told
+    it is somebody else's.
+    """
+    here = pathlib.Path(str(data.get("cwd") or ROOT))
+    for step in (inv.get("cd"), inv.get("directory")):
+        if step:
+            here = here / pathlib.Path(step).expanduser()
+    top = _git_answer(here, "rev-parse", "--show-toplevel")
+    theirs, ours = _common_dir(here), _common_dir(ROOT)
+    if not top or theirs is None or ours is None:
+        return ROOT
+    return pathlib.Path(top) if theirs == ours else None
+
+
+def is_this_repository(slug: str | None) -> bool:
+    """Whether `-R owner/name` names this clone's origin. Unknown counts as yes."""
+    if not slug:
+        return True
+    url = _git_answer(ROOT, "remote", "get-url", "origin")
+    if not url:
+        return True
+    ours = url.strip().removesuffix(".git").replace(":", "/").split("/")[-2:]
+    theirs = slug.strip().removesuffix(".git").replace(":", "/").split("/")[-2:]
+    return [p.lower() for p in ours] == [p.lower() for p in theirs]
+
+
+def _gate_verdict(script: str, args: list[str]) -> tuple[bool, str]:
+    """`(green, text)`. GREEN needs BOTH exit 0 and the word: an empty or half-written
+    gate that exits 0 has not said yes."""
+    try:
+        code, output = run_gate(script, args)
+    except Exception as exc:  # noqa: BLE001 - a gate that did not answer has not said yes
+        return False, (f"tools/{script} did not give a verdict: {type(exc).__name__}: {exc}. "
+                       f"It crashed, timed out or is missing, and that is not a pass.")
+    if code == 0 and "GREEN" in output:
+        return True, output
+    if "RED" not in output:
+        output = (f"tools/{script} exited {code} without a verdict -- it crashed, or printed "
+                  f"usage. That is not a pass.\n\n{output}")
+    return False, output
+
+
+def merge_problem(inv: dict) -> tuple[str | None, str | None]:
+    """`(refusal, note)` for one `gh pr merge`."""
+    if not is_this_repository(inv.get("repo")):
+        return None, (f"CANONICAL LAW: `gh pr merge` names {inv['repo']}, which is not this "
+                      f"repository. It was NOT judged by tools/{MERGE_GATE}.")
+    number = pr_number(inv.get("target"))
+    if number is None:
+        return (f"CANONICAL LAW: `gh pr merge` is refused -- it does not name the pull request "
+                f"by number (got {inv.get('target')!r}), so there is nothing to check it "
+                f"against.\n\n  python3 tools/{MERGE_GATE} --pr <N>\n\nprints the exact "
+                f"command to run when it is GREEN.\n\n{RECOVERY}"), None
+    args = ["--pr", str(number)]
+    if inv.get("repo"):
+        args += ["--repo", str(inv["repo"])]
+    if inv.get("pin"):
+        args += ["--expect-head", str(inv["pin"])]
+    green, output = _gate_verdict(MERGE_GATE, args)
+    if not inv.get("pinned") or not inv.get("pin"):
+        return (f"CANONICAL LAW: `gh pr merge {number}` is refused -- it carries no "
+                f"`--match-head-commit <sha>`, so it would merge whatever head is there when "
+                f"GitHub gets to it rather than the head the checks passed on.\n\n"
+                f"tools/{MERGE_GATE} --pr {number} says:\n\n{output}\n\n{RECOVERY}"), None
+    if not green:
+        return (f"CANONICAL LAW: `gh pr merge {number}` is refused until "
+                f"tools/{MERGE_GATE} --pr {number} is GREEN.\n\n{output}\n\n{RECOVERY}"), None
+    return None, None
+
+
+def push_problem(inv: dict, data: dict) -> tuple[str | None, str | None]:
+    """`(refusal, note)` for one `git push`."""
+    if inv.get("delete"):
+        return None, None
+    checkout = push_checkout(inv, data)
+    if checkout is None:
+        return None, ("CANONICAL LAW: this `git push` is in a different repository. It was "
+                      f"NOT judged by tools/{PUSH_GATE}.")
+    green, output = _gate_verdict(PUSH_GATE, ["--root", str(checkout)])
+    if not green:
+        return (f"CANONICAL LAW: `git push` is refused until tools/{PUSH_GATE} is GREEN for "
+                f"{checkout}.\n\n{output}\n\n{RECOVERY}"), None
+    unrun = [line.strip() for line in output.splitlines() if "COULD NOT RUN" in line]
+    if unrun:
+        return None, ("CANONICAL LAW: the push is allowed, and one gate CI runs could not be "
+                      "run here -- it is NOT a pass:\n  " + "\n  ".join(unrun))
+    return None, None
+
+
+def handle_pre_shell(data: dict) -> None:
+    """Refuse `gh pr merge` and `git push` unless their gate is GREEN; touch nothing else."""
+    tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not mentions_guarded(command):
+        return                                   # every other command ends here, untouched
+
+    try:
+        found = guarded_invocations(command)
+    except Exception as exc:  # noqa: BLE001 - see HOW IT FAILS in the module docstring
+        if reads_as_guarded(command):
+            deny("CANONICAL LAW: this command reads as `gh pr merge` or `git push`, and the "
+                 f"hook could not parse it to be sure ({type(exc).__name__}: {exc}). It is "
+                 f"refused rather than waved through. Run the gate by hand -- "
+                 f"tools/{MERGE_GATE} --pr <N> or tools/{PUSH_GATE} -- and fix "
+                 f".claude/hooks/canonical_law_gate.py.\n\n{RECOVERY}")
+        return
+
+    notes: list[str] = []
+    for inv in found:
+        try:
+            refusal, note = (merge_problem(inv) if inv["kind"] == "merge"
+                             else push_problem(inv, data))
+        except Exception as exc:  # noqa: BLE001 - it IS one of the two, so no answer refuses
+            what = "gh pr merge" if inv.get("kind") == "merge" else "git push"
+            refusal, note = (f"CANONICAL LAW: `{what}` is refused -- the hook failed while "
+                             f"judging it ({type(exc).__name__}: {exc}), and a command of "
+                             f"this kind is not allowed on no answer.\n\n{RECOVERY}"), None
+        if refusal:
+            deny(refusal)
+            return
+        if note:
+            notes.append(note)
+    if notes:
+        context("PreToolUse", "\n\n".join(notes))
+
+
 def handle_pre_tool(data: dict, receipt_store, roadmap, prior_art, sid: str) -> None:
     tool = str(data.get("tool_name") or "")
     if tool not in EDIT_TOOLS:
@@ -807,6 +1333,13 @@ def main() -> int:
             context("SessionStart", "CANONICAL LAW is DISABLED for this session "
                                     "(CANONICAL_LAW=off). No read receipt, no phase order, no "
                                     "prior-art check is being enforced.")
+        return 0
+
+    # The shell arm goes FIRST, before the imports below: a shell command that is not one
+    # of the two named ones must cost nothing, and must not be exposed to anything that can
+    # fail on its behalf -- a broken receipt store is not `ls`'s problem.
+    if event == "pre-tool" and str(data.get("tool_name") or "") in SHELL_TOOLS:
+        handle_pre_shell(data)
         return 0
 
     import check_prior_art as prior_art

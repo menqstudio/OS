@@ -306,6 +306,14 @@
     "tools/check_prior_art.py": {
       "reason": "Not a CI gate and deliberately not run as one: it answers a per-SESSION question (has this session recorded what it searched for before creating a new file?) against a receipt that lives in the OS temp directory and never exists on a CI runner. Its caller is .claude/hooks/canonical_law_gate.py at PreToolUse. Running it in CI could only ever pass vacuously, and a check that cannot fail is worse than an absent one because it reads as coverage. Its self-tests DO run, in the ci.yml canonical-law job.",
       "observed": "2026-08-09: invoked from .claude/hooks/canonical_law_gate.py; self-tests run by ci.yml job canonical-law."
+    },
+    "tools/check_merge_ready.py": {
+      "reason": "Not a CI gate and cannot be one: it answers 'may THIS pull request be merged right NOW' by asking GitHub for that pull request's checks, merge state and head, and by comparing PROJECT_STATE.md at that head with today's date. Inside a CI run the question is circular -- the run asking it is one of the checks it would wait for, so it could only ever say 'pending'. Its caller is .claude/hooks/canonical_law_gate.py at PreToolUse, before every `gh pr merge` a session types (T-150). What CI holds instead is the consequence it prevents: check_coordination.py goes RED on `main` when the merge it should have stopped lands. Its self-tests DO run, in the ci.yml canonical-law job.",
+      "observed": "2026-10-02: invoked from .claude/hooks/canonical_law_gate.py (`merge_problem`); self-tests run by ci.yml job canonical-law."
+    },
+    "tools/check_push_ready.py": {
+      "reason": "Not a CI gate and deliberately not run as one: it SELECTS and runs two gates CI already runs unconditionally and by path -- check_bundle_budget.py in perf-budget.yml after a fresh build, check_runbook_snippets.py in supply-chain.yml -- and exists only because a session's argument-free gate loop cannot run the first to a verdict without a build. Running the selector in CI would re-run both for no new information. Its caller is .claude/hooks/canonical_law_gate.py at PreToolUse, before every `git push` a session types that is not a delete (T-150). Its self-tests DO run, in the ci.yml canonical-law job.",
+      "observed": "2026-10-02: invoked from .claude/hooks/canonical_law_gate.py (`push_problem`); self-tests run by ci.yml job canonical-law."
     }
   }
 }
