@@ -102,10 +102,11 @@ the section leaves exactly one of:
       record longer than the head describes. (Head-without-record cannot happen: the record
       is on disk before the head is replaced.) ``verify()`` REFUSES it, as it always has,
       and now names it ``AuditHeadBehind`` instead of calling it a truncation, which it is
-      not. The record is KEPT. ``append()`` has never consulted the head - it derives the
-      new head from the chain it read under the lock - so the next append rolls the head
-      forward over the dead writer's record, and ``verify()`` passes again with that record
-      in the chain. That is the whole recovery rule, and it drops nothing.
+      not. The record is KEPT. ``append()`` checks the head under the lock (see below) and
+      lets exactly this state through: it derives the new head from the chain it read, so
+      the next append rolls the head forward over the dead writer's record, and ``verify()``
+      passes again with that record in the chain. That is the whole recovery rule, and it
+      drops nothing.
   (d) record and head written, anchor not (custody configured). Every keyed ``verify()``
       refuses until the next append re-anchors - unchanged, and stated at the call site.
 This is about a writer that DIES. A machine that loses power can lose more (neither the
@@ -116,11 +117,28 @@ excluded, and a party who can write the ledger's directory can remove or replace
 file under a holder. That was equally true of the lock file, which the same party could
 simply delete. It is an agreement between honest writers and nothing more - it is NOT an
 integrity control, and it changes nothing about O-2: the ledger is still not tamper-evident
-against its own writer wherever anchor custody is unconfigured. Nor does ``append()``
-police the head: an append onto a ledger that was TRUNCATED (head ahead of the chain)
-still succeeds and writes a fresh, consistent head over the truncation, exactly as it did
-before this change. Only a ``verify()`` that runs before that append, or the signed anchor,
-sees it.
+against its own writer wherever anchor custody is unconfigured.
+
+APPEND LOOKS BEFORE IT WRITES (the Architect's audit of T-156, finding F-05). Under the
+lock, before anything is written, ``append()`` walks the chain it is about to extend and
+checks the plaintext head against it - the same two functions ``verify()`` runs,
+``_check_chain`` and ``_check_head``. A chain with a broken link or a rewritten record, a
+head that describes a longer or a different chain, and records with no head at all are
+refused (``AuditTruncated`` for the head cases) and nothing is written. Until this it did
+not look: an append onto a ledger that had been cut short wrote one more record and a
+fresh head that agreed with the shortened chain, and from then on only a signed anchor
+could tell. The one state let through is (c) above, because the append is its repair.
+WHAT THIS IS NOT: it reads the PLAINTEXT head, which the ledger's own writer can rewrite
+together with the chain. It turns an accidental or partial truncation into a refusal; it
+does not make the ledger tamper-evident against that writer. That is still the anchor's
+job and still O-2.
+
+THE FORK DEFENCE, exactly. The at-fork hook closes the lock descriptors a ``fork()`` COPIED
+into the child. A descriptor handed to another process any other way - sent over a Unix
+socket, or made inheritable on purpose and passed through an exec - is a second holder of
+the same open file description, the hook never sees it, and the lock stays held until
+that process closes it or dies. Nothing in this engine does that; it is named because the
+defence is against ``fork()`` and not against descriptor passing in general.
 
 A LEFTOVER ``<ledger>.lock`` from the old scheme is not a lock here. It is never read,
 trusted or deleted - its existence was the whole defect, and this process did not create
@@ -291,6 +309,18 @@ class AuditTornTail(AuditError):
     Refused by ``read_all`` (so by ``verify()`` and ``append()`` alike) and never repaired
     here - the partial bytes are what was being written, and removing them silently is
     removing a record.
+    """
+
+
+class AuditTruncated(AuditError):
+    """The plaintext head describes a longer or a different chain than the ledger holds, or
+    the ledger has records and no head: what a ledger cut short looks like.
+
+    `verify()` has always refused this, as a plain `AuditError` with the same words. It has
+    its own name since the Architect's audit of T-156 (finding F-05), because `append()` now
+    refuses it too and a caller needs to tell it from a lock that could not be taken. Nothing
+    repairs it: the records the head still counts are gone, and writing a fresh head over
+    the gap is how a truncation stops being visible.
     """
 
 
@@ -897,6 +927,17 @@ def append(path, kind: str, payload: dict, *, repo_root: pathlib.Path | None = N
         # for one that parses but lost its newline.
         existing = read_all(p)
         _refuse_unterminated_tail(p)
+        # The chain this append is about to extend is checked as `verify()` checks it, under
+        # the lock, before anything is written (the Architect's audit of T-156, F-05). Until
+        # then `append()` never looked: onto a ledger cut short it wrote one more record and
+        # a head that agreed with the shortened chain, and the truncation was gone for every
+        # reader that had no signed anchor. One state is let through, because this append is
+        # its repair: a head exactly one record behind (`AuditHeadBehind`).
+        _check_chain(existing)
+        try:
+            _check_head(p, existing)
+        except AuditHeadBehind:
+            pass
         prev_hash = existing[-1]["hash"] if existing else GENESIS
         seq = existing[-1]["seq"] + 1 if existing else 0
         body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, "payload": redact_mapping(payload)}
@@ -949,27 +990,13 @@ def _head_is_one_behind(count, last_hash, records: list) -> bool:
     return last_hash == (records[-2]["hash"] if len(records) >= 2 else GENESIS)
 
 
-def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
-    """Walk the chain, proving linkage, hashes and (via the head) no tail truncation.
+def _check_chain(records: list) -> None:
+    """Walk the chain: sequence, linkage and every record's hash. Raises AuditError.
 
-    With ``keys`` (the operator-pinned trusted key registry) the check is
-    authoritative: a signed head anchor from the ``audit-anchor`` authority is
-    REQUIRED and the chain must reproduce it exactly, so a writer that drops
-    records, recomputes the chain and rewrites the plaintext ``.head`` still fails
-    (it cannot re-sign the anchor). A ledger that exists but carries no anchor is
-    refused as ``AuditAnchorMissing`` - a different fact from tampering, raised as
-    its own type so an operator can act on the one that actually applies. Without
-    ``keys`` the check is structural only - sufficient against corruption, not
-    against the ledger's own writer.
-
-    Returns the record count. Raises AuditError on any break - including the two states a
-    writer that died mid-append leaves, each under its own subclass so the reader knows
-    what happened: ``AuditTornTail`` (a partial last record) and ``AuditHeadBehind`` (a
-    complete last record the head does not cover). Neither is accepted and neither is
-    repaired here; the module docstring gives the rule for each.
+    One walk for `verify()` and for `append()`. They were one loop inside `verify()` until
+    T-156's audit: `append()` extended whatever it read, so a chain that was already broken
+    grew by one well-formed record and a fresh head.
     """
-    p = pathlib.Path(path)
-    records = read_all(p)
     prev_hash = GENESIS
     for i, rec in enumerate(records):
         # EVERY malformed shape is an AuditError (its `AuditMalformed` subclass), as the
@@ -991,6 +1018,15 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
         if _record_hash(prev_hash, body) != rec.get("hash"):
             raise AuditError(f"audit ledger record tampered at seq {i}")
         prev_hash = rec["hash"]
+
+
+def _check_head(p: pathlib.Path, records: list) -> None:
+    """Refuse a plaintext head that does not describe `records`. Raises AuditError.
+
+    ``AuditHeadBehind`` for the one state a writer killed between its record and its head
+    leaves; ``AuditTruncated`` for a head that describes a longer or a different chain, or
+    for records with no head at all - which is what a ledger cut short looks like.
+    """
     head_file = _head_path(p)
     if head_file.exists():
         try:
@@ -1002,14 +1038,39 @@ def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
         if head.get("count") != len(records):
             if _head_is_one_behind(head.get("count"), head.get("last_hash"), records):
                 raise AuditHeadBehind(_HEAD_BEHIND)
-            raise AuditError("audit ledger truncated: head count disagrees with chain length")
+            raise AuditTruncated("audit ledger truncated: head count disagrees with chain length")
         if head.get("last_hash") != (records[-1]["hash"] if records else GENESIS):
-            raise AuditError("audit ledger truncated: head hash disagrees with chain tail")
+            raise AuditTruncated("audit ledger truncated: head hash disagrees with chain tail")
     elif records:
         # No head at all is the head of an empty ledger: count 0, tail GENESIS.
         if _head_is_one_behind(0, GENESIS, records):
             raise AuditHeadBehind(_HEAD_BEHIND)
-        raise AuditError("audit ledger has records but no head anchor")
+        raise AuditTruncated("audit ledger has records but no head anchor")
+
+
+def verify(path, *, keys: dict | None = None, now: int | None = None) -> int:
+    """Walk the chain, proving linkage, hashes and (via the head) no tail truncation.
+
+    With ``keys`` (the operator-pinned trusted key registry) the check is
+    authoritative: a signed head anchor from the ``audit-anchor`` authority is
+    REQUIRED and the chain must reproduce it exactly, so a writer that drops
+    records, recomputes the chain and rewrites the plaintext ``.head`` still fails
+    (it cannot re-sign the anchor). A ledger that exists but carries no anchor is
+    refused as ``AuditAnchorMissing`` - a different fact from tampering, raised as
+    its own type so an operator can act on the one that actually applies. Without
+    ``keys`` the check is structural only - sufficient against corruption, not
+    against the ledger's own writer.
+
+    Returns the record count. Raises AuditError on any break - including the two states a
+    writer that died mid-append leaves, each under its own subclass so the reader knows
+    what happened: ``AuditTornTail`` (a partial last record) and ``AuditHeadBehind`` (a
+    complete last record the head does not cover). Neither is accepted and neither is
+    repaired here; the module docstring gives the rule for each.
+    """
+    p = pathlib.Path(path)
+    records = read_all(p)
+    _check_chain(records)
+    _check_head(p, records)
     if keys is not None:
         anchor_file = _anchor_path(p)
         if not anchor_file.exists():

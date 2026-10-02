@@ -119,8 +119,14 @@ THE AUDIT RULE (f), and why it is a program
         `tools/check_audit_reports.py` takes the newest `YYYY-MM-DD-*.md` DIRECTLY under
         `apps/desktop/AUDIT/` to be the round the ledger must call authoritative. A
         per-change audit filed there under such a name moves the ledger. File it as
-        `engine/AUDIT/changes/pr-<N>-<what>.md`; a subdirectory of `apps/desktop/AUDIT/`
-        does as well. That other gate lists `apps/desktop/AUDIT/*.md` and no deeper.
+        `apps/desktop/AUDIT/changes/pr-<N>-<what>.md`: that other gate lists
+        `apps/desktop/AUDIT/*.md` and no deeper. NOT under `engine/AUDIT/`, which this
+        said until #328 found out why not: every Markdown file under `engine/` must be
+        registered in `engine/config/documentation-manifest.json`, that file is an
+        audit-required path, and registering the report is therefore a change to engine
+        security configuration AFTER the audited head -- which the rule above refuses. The
+        gate asked for a state that destroyed itself. `engine/AUDIT/` is still ACCEPTED as
+        a location, for a report whose registration was itself part of what was audited.
 
     Owner-Waiver: YYYY-MM-DD
         The §G.2 engine-security row AS IT IS AT H must contain the words `OWNER WAIVER`
@@ -230,7 +236,7 @@ PR_NUMBER_RE = re.compile(r"#([1-9][0-9]*)")
 #: Where a per-change audit is filed so that `tools/check_audit_reports.py` stays green:
 #: that gate takes the newest `YYYY-MM-DD-*.md` DIRECTLY under `apps/desktop/AUDIT/` for
 #: the round the ledger must call authoritative, and lists nothing deeper or elsewhere.
-PER_CHANGE_AUDIT_PATH = "engine/AUDIT/changes/pr-{pr}-<what>.md"
+PER_CHANGE_AUDIT_PATH = "apps/desktop/AUDIT/changes/pr-{pr}-<what>.md"
 #: The sha in every worked example. Nothing a clone has, so pasting the example is RED.
 EXAMPLE_SHA = "0123456789abcdef0123456789abcdef01234567"
 G2_HEADING = re.compile(r"(?m)^### G\.2\b")

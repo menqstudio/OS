@@ -7,9 +7,9 @@
 
 **Active branch:** `t156/audit-ledger-kernel-lock` — `main` @ `6743d7c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156).
+> **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156). Also open, and not this PR's work: PR #329 on `architect/shell-classifier-design`.
 >
-> the audit ledger's append lock is released by the kernel; NOT to merge without the Architect's audit report
+> the audit ledger's kernel lock; first audit RED, F-05 fixed; NOT to merge before a GREEN re-audit
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Stamp with `tools/stamp_pr_head.py --pr <N>`; `gh pr edit` dies.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2689 OK; skips are per-env
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2692 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1417 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context

@@ -478,7 +478,7 @@ class AuditRule(GateCase):
                        # must carry, so the audit is not filed twice.
                        "For an audit: the report must carry two lines",
                        "`Audited-PR: #5`", f"`Audited-Head: {check_merge_ready.EXAMPLE_SHA}`",
-                       "engine/AUDIT/changes/pr-5-<what>.md")
+                       "apps/desktop/AUDIT/changes/pr-5-<what>.md")
         self.assertNotIn("README.md", out)
 
     def test_many_engine_paths_are_counted_and_the_first_few_named(self):
@@ -828,7 +828,7 @@ class AuditRule(GateCase):
 
 
 #: Where the gate's own remedy says a per-change audit goes, with its `<what>` filled in.
-FILED = "engine/AUDIT/changes/pr-5-the-wall.md"
+FILED = "apps/desktop/AUDIT/changes/pr-5-the-wall.md"
 #: A round's report, on file since before the change: what satisfied the rule until T-155.
 OLD_ROUND = "apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md"
 
@@ -952,7 +952,7 @@ class AuditBinding(GateCase):
         refuses is worse than none. Mutant: narrow AUDIT_DIRS to top-level files ⇒ red."""
         self.assertEqual(FILED, check_merge_ready.PER_CHANGE_AUDIT_PATH.format(pr=5)
                          .replace("<what>", "the-wall"))
-        for commits, path in enumerate((FILED, "apps/desktop/AUDIT/changes/pr-5-the-wall.md"), 1):
+        for commits, path in enumerate((FILED, "engine/AUDIT/changes/pr-5-the-wall.md"), 1):
             with self.subTest(path=path):
                 self.file_report(path=path)
                 self.green(self.inputs(path), self.later(commits, path))
@@ -1124,7 +1124,7 @@ class AuditBinding(GateCase):
                  "each BEGINNING its line: `Audited-PR: #5` and `Audited-Head: <the 40-hex "
                  "commit the auditor read",
                  f"`Audited-Head: {check_merge_ready.EXAMPLE_SHA}`",
-                 "File it as `engine/AUDIT/changes/pr-5-<what>.md`",
+                 "File it as `apps/desktop/AUDIT/changes/pr-5-<what>.md`",
                  "NOT as a `YYYY-MM-DD-*.md` directly under apps/desktop/AUDIT/",
                  "tools/check_audit_reports.py")
 
@@ -1261,7 +1261,7 @@ class WhereAPerChangeAuditIsFiled(unittest.TestCase):
             self.assertEqual(code, 0, out)
 
             small = report()                       # far under that gate's size floor, too
-            for rel in (FILED, "apps/desktop/AUDIT/changes/pr-5-the-wall.md"):
+            for rel in (FILED, "engine/AUDIT/changes/pr-5-the-wall.md"):
                 path = root / rel
                 path.parent.mkdir(parents=True)
                 path.write_text(small, encoding="utf-8")

@@ -116,21 +116,21 @@
     "number": 328,
     "branch": "t156/audit-ledger-kernel-lock",
     "state": "open",
-    "what": "T-156: bro_audit_log.append holds a kernel advisory lock; waits for the Architect's code audit",
-    "note": "the audit ledger's append lock is released by the kernel; NOT to merge without the Architect's audit report",
+    "what": "T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; second Architect audit pending",
+    "note": "the audit ledger's kernel lock; first audit RED, F-05 fixed; NOT to merge before a GREEN re-audit",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #328 (t156/audit-ledger-kernel-lock), task T-156: T-156: bro_audit_log.append holds a kernel advisory lock; waits for the Architect's code audit Next: the Architect audits #328 and files engine/AUDIT/changes/pr-328-audit-ledger-lock.md; merge only on a GREEN report",
+    "current": "PR #328 (t156/audit-ledger-kernel-lock), task T-156: T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; second Architect audit pending Next: the Architect audits the new head and files apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-2.md; merge only on GREEN",
     "_note": "The carrier is current_workflow_pr (#328 on t156/audit-ledger-kernel-lock). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "4bc36cb6eb0b88073c3de023d70c55c65e6c8bfd",
+      "head": "6743d7cc7e6286acd11ccbb6a5c087479212b150",
       "conclusion": "success",
-      "run_id": 36992048558,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-02: success at 4bc36cb, run 36992048558."
+      "run_id": 36995862632,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-02: success at 6743d7c, run 36995862632."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

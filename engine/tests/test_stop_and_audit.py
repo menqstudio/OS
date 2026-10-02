@@ -19,6 +19,7 @@ from bro_audit_log import (
     AuditLockUnavailable,
     AuditMalformed,
     AuditTornTail,
+    AuditTruncated,
     append,
     read_all,
     verify,
@@ -500,6 +501,107 @@ class AuditLedgerLockTests(unittest.TestCase):
                     verify(self.ledger)
                 self.assertEqual(isinstance(caught.exception, AuditHeadBehind), head_behind,
                                  str(caught.exception))
+
+    # -- append() looks before it writes (the Architect's audit of #328, F-05) -------------
+    def _shapes(self):
+        """`(name, records, tamper, what append() must do)`. `tamper` gets the record hashes."""
+        import json
+
+        def set_head(count, last_hash):
+            self.head.write_text(json.dumps({"count": count, "last_hash": last_hash}),
+                                 encoding="utf-8")
+
+        def drop_records(keep):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            self.ledger.write_text("".join(line + "\n" for line in lines[:keep]),
+                                   encoding="utf-8")
+
+        def rewrite_first_payload(_hashes):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            record = json.loads(lines[0])
+            record["payload"] = {"i": "rewritten"}           # the stored hash is kept
+            lines[0] = json.dumps(record, sort_keys=True)
+            self.ledger.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+        def swap_two_records(_hashes):
+            lines = self.ledger.read_text(encoding="utf-8").splitlines()
+            lines[0], lines[1] = lines[1], lines[0]
+            self.ledger.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+        genesis = bro_audit_log.GENESIS
+        return (
+            ("TRUNCATED: the head is ahead of the chain", 3, lambda h: drop_records(2), AuditTruncated),
+            ("truncated to nothing, the head still counts three", 3, lambda h: drop_records(0), AuditTruncated),
+            ("the right count, the wrong tail hash", 2, lambda h: set_head(2, h[0]), AuditTruncated),
+            ("no head on a longer chain", 2, lambda h: self.head.unlink(), AuditTruncated),
+            ("two behind", 3, lambda h: set_head(1, h[0]), AuditTruncated),
+            ("one behind in count, another chain's hash", 3, lambda h: set_head(2, h[0]), AuditTruncated),
+            ("a head that is not JSON", 2, lambda h: self.head.write_text("{", encoding="utf-8"), AuditMalformed),
+            ("a head that is a list", 2, lambda h: self.head.write_text("[2]", encoding="utf-8"), AuditMalformed),
+            ("a record rewritten in the middle", 3, rewrite_first_payload, AuditError),
+            ("two records swapped", 3, swap_two_records, AuditError),
+            ("one behind", 3, lambda h: set_head(2, h[1]), None),
+            ("first append, no head yet", 1, lambda h: self.head.unlink(), None),
+            ("first append, an empty head", 1, lambda h: set_head(0, genesis), None),
+            ("an untouched ledger", 2, lambda h: None, None),
+            ("no ledger at all", 0, lambda h: None, None),
+        )
+
+    def test_append_refuses_a_ledger_its_head_does_not_describe_and_writes_nothing(self):
+        """Mutant: drop `_check_head` from `append()` ⇒ every truncation case appends, and
+        the fresh head it writes agrees with the shortened chain - `verify()` then PASSES on a
+        ledger that lost records. Mutant: drop `_check_chain` ⇒ the two rewritten-chain cases
+        append. Mutant: catch every AuditError where only AuditHeadBehind is meant ⇒ all of
+        them append."""
+        for name, count, tamper, refusal in self._shapes():
+            if refusal is None:
+                continue
+            with self.subTest(shape=name):
+                for leftover in list(self.dir.iterdir()):
+                    leftover.unlink()
+                for i in range(count):
+                    append(self.ledger, "k", {"i": i})
+                tamper([record["hash"] for record in read_all(self.ledger)])
+                before = {path.name: path.read_bytes() for path in self.dir.iterdir()
+                          if not path.name.endswith(".append-lock")}
+                with self.assertRaises(refusal) as caught:
+                    append(self.ledger, "after", {"x": 1})
+                self.assertIs(type(caught.exception), refusal, str(caught.exception))
+                after = {path.name: path.read_bytes() for path in self.dir.iterdir()
+                         if not path.name.endswith(".append-lock")}
+                self.assertEqual(after, before, "a refused append left something behind")
+
+    def test_append_still_proceeds_where_it_is_the_repair_or_there_is_nothing_to_repair(self):
+        """The other direction. Mutant: let AuditHeadBehind out of `append()` ⇒ a writer that
+        died between its record and its head strands the ledger again, which is the defect
+        T-156 exists to remove."""
+        for name, count, tamper, refusal in self._shapes():
+            if refusal is not None:
+                continue
+            with self.subTest(shape=name):
+                for leftover in list(self.dir.iterdir()):
+                    leftover.unlink()
+                for i in range(count):
+                    append(self.ledger, "k", {"i": i})
+                tamper([record["hash"] for record in read_all(self.ledger)] if count else [])
+                record = append(self.ledger, "after", {"x": 1})
+                self.assertEqual(record["seq"], count)
+                self.assertEqual(verify(self.ledger), count + 1)
+
+    def test_a_truncation_is_refused_by_verify_under_its_own_name_and_is_still_an_audit_error(self):
+        """Callers that catch AuditError keep working; ones that need to tell a truncation
+        from a lock that could not be taken now can. Mutant: raise plain AuditError again ⇒
+        the type assertion fails."""
+        append(self.ledger, "a", {"x": 1})
+        append(self.ledger, "b", {"x": 2})
+        self.ledger.write_text(self.ledger.read_text(encoding="utf-8").splitlines()[0] + "\n",
+                               encoding="utf-8")
+        with self.assertRaises(AuditError) as caught:
+            verify(self.ledger)
+        self.assertIs(type(caught.exception), AuditTruncated)
+        self.assertTrue(issubclass(AuditTruncated, AuditError))
+        self.assertFalse(issubclass(AuditTruncated, (AuditHeadBehind, AuditTornTail,
+                                                     AuditLockUnavailable, AuditMalformed)))
 
     # -- (d) a bounded wait that fails closed --------------------------------------------
     def test_a_live_holder_that_never_releases_makes_the_append_refuse_and_write_nothing(self):

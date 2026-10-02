@@ -6,7 +6,7 @@
 > Builder's, and it is said here rather than left to be noticed.
 >
 > **What the merge gate needs from you.** A report committed on this pull request's branch at
-> `engine/AUDIT/changes/pr-328-audit-ledger-lock.md` carrying two lines,
+> `apps/desktop/AUDIT/changes/` (see the second round below for why not `engine/AUDIT/`) carrying two lines,
 > `Audited-PR: #328` and `Audited-Head: <the 40-hex commit you read>`. The gate
 > (`tools/check_merge_ready.py`) refuses the merge unless that commit is an ancestor of the head
 > being merged and no audit-required path differs since it. Take the head from
@@ -118,3 +118,33 @@ Nothing is claimed about power loss: neither the head's temp file nor the direct
    says yes, as its own change.
 9. Is anything in the docstring's claims about what the lock does and does not guarantee stronger
    than the code supports?
+
+## 10. Second round — what changed after the first audit
+
+The first audit (`apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock.md`, verdict **RED** at the
+head it names) is answered as follows. Nothing below is confirmed by anyone but the Builder ◑.
+
+| Finding | What was done |
+|---|---|
+| **F-05** `append()` overwrote the head of a truncated ledger | **Fixed.** `append()` now runs `_check_chain` and `_check_head` — the same functions `verify()` runs — under the lock and before writing. A truncation, a head for another chain, records with no head, and a chain with a broken link are refused and nothing is written; `AuditHeadBehind` alone is let through, because the append is its repair. The head cases raise `AuditTruncated`, a new subclass of `AuditError`. Three tests over fifteen ledger shapes; 13 mutants, each killed by a named test. §4's second bullet above is therefore no longer true. |
+| **F-01** the full suite was not green on the auditor's host | **Not a change to this pull request.** The auditor's host had Python 3.14 with no `venv`, no `cryptography`, and no `python` on `PATH`. The same suite is 2692 tests, OK, 13 skipped here and green in CI. Two of the six are worth their own look and are recorded as open: the sudoers tests fail against a real `visudo`, and no `visudo` exists on the Builder's box, so that branch has never run here. |
+| **F-04** Windows not live-certified | **Run on Windows at the first audited head, by a second Codex session, tests only — relayed by the Owner, not verbatim.** `test_stop_and_audit`: 37 tests, OK, 9 skipped. It reports that tests there DO take the real `msvcrt` byte-range lock on a real file, not only the fake. By hand: a process holding the append lock was terminated (`proc.kill()`, i.e. `TerminateProcess`; `taskkill /F` answered `Access denied`) and a second process then appended to the same ledger without hanging. The full suite there: 2689 run, 10 failures, 2 errors, 253 skipped — **the failing tests' names have not reached the Builder**; CI's Windows engine job is green on the same commit. Not run on Windows: the second-round head. |
+| **F-02** descriptor passing is outside the fork defence | Docstring now says exactly that. No code: nothing in the engine passes that descriptor. |
+| **F-03** the lock is advisory | Unchanged and documented, as the audit says. |
+| **F-06** the signer runs inside the lock | Unchanged: fail-closed is the intent. |
+
+**Where the report goes, and a defect found in the merge gate.** The first report was filed under
+`engine/AUDIT/changes/`, as `tools/check_merge_ready.py` recommended. Every Markdown file under
+`engine/` must be registered in `engine/config/documentation-manifest.json`
+(`tools/bro_docs_freshness.py`), and that file is an audit-required path: registering the report
+is a change to engine security configuration AFTER the audited head, which the same gate refuses.
+The recommendation could not be followed. The report was moved, unchanged, to
+`apps/desktop/AUDIT/changes/`, which the gate accepts and no manifest lists. **File the
+second-round report there:** `apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-2.md`.
+
+**New questions.**
+
+10. `append()` now pays a full chain walk on every call. Is there a ledger size at which that
+    becomes a denial of service on the governed path, and should it be bounded?
+11. A ledger with a pre-existing break now refuses every append until an operator acts. Is that the
+    right availability trade for the plaintext-head check, given it adds no tamper-evidence?
