@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `t158/push-gate-runs-the-loop` — `main` @ `cc0c1e5`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `4bc36cb`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #326 · branch `t158/push-gate-runs-the-loop`** (base `main`, tip `cc0c1e5`, task T-158).
+> **✅ SETTLED — `main` is at `4bc36cb`.** The only thing open is PR #327 on `settle/after-326`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> the push gate runs every argument-free gate on the tree being pushed
+> **Next:** T-156 (audit-ledger lock) opens as its own pull request and waits for the Architect's code audit; R2-0001 and R2-0002 (split_shell) go to the Architect for design before any code.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
