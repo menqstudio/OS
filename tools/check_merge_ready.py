@@ -27,7 +27,9 @@ WHAT GREEN MEANS -- all six, each one refusable on its own
      than the date the squash commit will get -- in BOTH this machine's local zone and UTC;
   e. the exact command is printed: `gh pr merge N --squash --match-head-commit H`;
   f. if the pull request changes engine security code, its body cites an Architect audit
-     that exists at H, or a waiver the Owner wrote into the roadmap (T-154, below).
+     that exists at H AND ITSELF NAMES this pull request and the commit that was audited,
+     with no engine security path changed since that commit (T-155) -- or a waiver the
+     Owner wrote into the roadmap (T-154). Both below.
 
 THE DATE RULE, and the evidence it was derived from
   `check_coordination._check_project_state_freshness` reads `git log -1 --format=%cs --
@@ -68,19 +70,57 @@ THE AUDIT RULE (f), and why it is a program
 
     Architect-Audit: <repo-relative path>
         The path must be a FILE that exists AT H, under `apps/desktop/AUDIT/` or
-        `engine/AUDIT/`, and must not be empty. THIS GATE DOES NOT JUDGE THE AUDIT'S
-        CONTENT: not its verdict, not whether it is about this change, not who wrote it.
-        It establishes that a report was filed where reports live and that the pull
-        request names it. Whether the report says GREEN is the reader's question.
-        Measured, not supposed: with the line added in memory, citing the tenth round's
-        report -- filed weeks before the change and about another head -- satisfied this
-        for #321. A report that must NAME the pull request, as a waiver must, would close
-        that; it is the Owner's to decide.
+        `engine/AUDIT/`, and must not be empty. And THE REPORT ITSELF, as it is at H,
+        must bind to this change (T-155; the Owner's decision of 2026-10-02, in its
+        strongest form) by two lines. Each BEGINS its line, case-sensitive, exactly as
+        the body's keys do:
+
+            Audited-PR: #N                 N is this pull request's number
+            Audited-Head: <40-hex sha>     the commit the auditor read
+
+        A worked example -- for pull request 330, audited at the commit named, this is
+        everything the gate reads in the report, and the rest of the file is the
+        auditor's:
+
+            Audited-PR: #330
+            Audited-Head: 0123456789abcdef0123456789abcdef01234567
+
+        Then git decides, not the report and not the body:
+          * `Audited-Head` must be a commit this clone has, fetched when it is not here
+            exactly as H is. One it cannot find is RED, never GREEN;
+          * it must be H, or an ANCESTOR of H. A commit that is not in H's history -- a
+            rebase, a force-push, another branch -- is RED, and nothing here tries to
+            match a rebased commit to its original: an audit of a commit that is not in
+            what merges is an audit of something else;
+          * `git diff --name-only --no-renames <Audited-Head> H` must list NO path of the
+            audit-required set, by the same matcher that decided the pull request needed
+            an audit at all. That is the point of the head line: an audit of commit A
+            does not cover engine security code pushed after A. Docs, tests and the canon
+            may move after A; the audited code may not. `--no-renames`, so a file moved
+            OUT of the perimeter after A is listed under the name it had.
+        The report lives in the pull request, so its own commit comes AFTER the commit it
+        names. That does not invalidate it: nothing under the two AUDIT directories is an
+        audit-required path. Missing either line, a sha that is not 40 lowercase hex, an
+        `Audited-PR` that is not `#N` or names another number, or either key carrying
+        two different values: RED, each with its own message.
+
+        WHAT THE TWO LINES ESTABLISH: that the report names THIS pull request and a
+        commit in the history of the head that merges, and that the engine security
+        content at that commit is, path for path, the engine security content being
+        merged. An old report about something else no longer satisfies the rule.
+        WHAT THEY DO NOT: THIS GATE STILL DOES NOT JUDGE THE AUDIT'S CONTENT OR ITS
+        AUTHOR. Not its verdict -- a report that says RED and carries the two lines
+        passes; not who wrote it -- nothing tells an Architect's file from one a Builder
+        typed; not whether anyone read `Audited-Head` at all -- the line is a claim made
+        by whoever wrote the file. Whether the report says GREEN is the reader's
+        question.
+
         WHERE to file it, read from another gate rather than assumed:
         `tools/check_audit_reports.py` takes the newest `YYYY-MM-DD-*.md` DIRECTLY under
         `apps/desktop/AUDIT/` to be the round the ledger must call authoritative. A
-        per-change audit filed there under such a name moves the ledger; one filed in a
-        subdirectory of it, or under `engine/AUDIT/`, does not.
+        per-change audit filed there under such a name moves the ledger. File it as
+        `engine/AUDIT/changes/pr-<N>-<what>.md`; a subdirectory of `apps/desktop/AUDIT/`
+        does as well. That other gate lists `apps/desktop/AUDIT/*.md` and no deeper.
 
     Owner-Waiver: YYYY-MM-DD
         The §G.2 engine-security row AS IT IS AT H must contain the words `OWNER WAIVER`
@@ -108,6 +148,10 @@ THE AUDIT RULE (f), and why it is a program
   pull request -- merged, closed or open -- and exits 0/1 on this check alone. It exists
   so the rule can be read against history. It never prints a merge command, and its GREEN
   is not permission to merge: without the flag a merged pull request stays RED as before.
+  For a pull request that is not OPEN it says, in either colour, that the verdict is the
+  rule AS IT STANDS TODAY read against that head -- not the rule that was in force when
+  the pull request merged. The two binding lines are newer than every pull request merged
+  before them, so a RED there is not a finding that the merge broke the rule of its day.
 
 WHAT THIS DOES NOT COVER -- listed, not implied
   * roadmap §G.2's SECOND row, trust-boundary / key / secret handling -- in practice
@@ -115,9 +159,18 @@ WHAT THIS DOES NOT COVER -- listed, not implied
     same mandatory audit and this gate does not hold it, because the roadmap delimits that
     row by subject and not by path. RECOMMENDED: the Owner names those paths on the row,
     and they become a second declared list in `config/audit-required-paths.json`;
-  * the audit's content, and its timing. "Before implementation" cannot be read off a
-    merge: this refuses a merge with no audit on file, which is the latest moment the rule
-    can still be held, not the moment it names;
+  * the audit's content, its author, and its timing. A report that names this pull
+    request and an audited commit passes whatever its verdict and whoever typed it.
+    "Before implementation" cannot be read off a merge: this refuses a merge with no
+    audit on file, which is the latest moment the rule can still be held, not the moment
+    it names;
+  * what moves AFTER the audited commit outside the audit-required set: engine tests, the
+    desktop's trust-boundary code, this gate. The head line holds still only the paths
+    that made the audit mandatory;
+  * a rebase after the audit, on purpose. The rebased commit is a different commit and the
+    gate says RED rather than guess that it is the same change; the same holds when
+    `main` is merged into the branch and brings engine security changes with it. Both
+    cost a re-read by the auditor and a new `Audited-Head`, and that cost is the rule;
   * engine tests, security-relevant code outside `engine/`, and the rest of that file's
     `not_covered` list, each with its reason;
   * a person merging in the GitHub web UI. Nothing here runs there; branch protection is
@@ -168,6 +221,18 @@ AUDIT_KEY = "Architect-Audit:"
 WAIVER_KEY = "Owner-Waiver:"
 #: Where audit reports live. A citation anywhere else is not a filed report.
 AUDIT_DIRS = ("apps/desktop/AUDIT/", "engine/AUDIT/")
+#: The two lines a cited report must carry ITSELF (T-155): which pull request it audited,
+#: and which commit the auditor read.
+AUDITED_PR_KEY = "Audited-PR:"
+AUDITED_HEAD_KEY = "Audited-Head:"
+#: `#5`, and only that: `#05` and `5` are not how a pull request is named.
+PR_NUMBER_RE = re.compile(r"#([1-9][0-9]*)")
+#: Where a per-change audit is filed so that `tools/check_audit_reports.py` stays green:
+#: that gate takes the newest `YYYY-MM-DD-*.md` DIRECTLY under `apps/desktop/AUDIT/` for
+#: the round the ledger must call authoritative, and lists nothing deeper or elsewhere.
+PER_CHANGE_AUDIT_PATH = "engine/AUDIT/changes/pr-{pr}-<what>.md"
+#: The sha in every worked example. Nothing a clone has, so pasting the example is RED.
+EXAMPLE_SHA = "0123456789abcdef0123456789abcdef01234567"
 G2_HEADING = re.compile(r"(?m)^### G\.2\b")
 NEXT_HEADING = re.compile(r"(?m)^#{1,6} ")
 #: What identifies §G.2's engine-security row: the words of its first cell.
@@ -199,19 +264,28 @@ class Result:
         self.problems.append((what, remedy))
 
 
-def _run(args: list[str], *, cwd: pathlib.Path, timeout: int = 40) -> str:
-    """Run one program and return its stdout, or raise GateError saying why not."""
+def _exit(args: list[str], *, cwd: pathlib.Path, timeout: int = 40) -> tuple[int, str, str]:
+    """Run one program: `(exit code, stdout, stderr)`. GateError when it could not run."""
     try:
         done = subprocess.run(args, cwd=str(cwd), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise GateError(f"`{' '.join(args[:4])} ...` did not answer within {timeout}s") from None
     except OSError as exc:
         raise GateError(f"`{args[0]}` could not be run: {exc}") from None
-    out = (done.stdout or b"").decode("utf-8", errors="replace")
-    if done.returncode != 0:
-        err = (done.stderr or b"").decode("utf-8", errors="replace").strip()
-        first = (err or out.strip() or "no output").splitlines()[0][:300]
-        raise GateError(f"`{' '.join(args[:4])} ...` exited {done.returncode}: {first}")
+    return (done.returncode, (done.stdout or b"").decode("utf-8", errors="replace"),
+            (done.stderr or b"").decode("utf-8", errors="replace").strip())
+
+
+def _failed(args: list[str], code: int, out: str, err: str) -> GateError:
+    first = (err or out.strip() or "no output").splitlines()[0][:300]
+    return GateError(f"`{' '.join(args[:4])} ...` exited {code}: {first}")
+
+
+def _run(args: list[str], *, cwd: pathlib.Path, timeout: int = 40) -> str:
+    """Run one program and return its stdout, or raise GateError saying why not."""
+    code, out, err = _exit(args, cwd=cwd, timeout=timeout)
+    if code != 0:
+        raise _failed(args, code, out, err)
     return out
 
 
@@ -272,6 +346,43 @@ class Inputs:
         if kind != "blob":
             raise GateError(f"{rel} at {sha[:12]} is a {kind or 'nothing readable'}, not a file")
         return _run(["git", "show", f"{sha}:{rel}"], cwd=self.root)
+
+    def resolve_commit(self, sha: str, pr: int) -> None:
+        """Have `sha` in this clone as a COMMIT, fetching it when it is not here; GateError
+        when it cannot be had. The audited commit is read the way the head is."""
+        self._ensure_commit(sha, pr)
+
+    def is_ancestor(self, old: str, new: str) -> bool:
+        """Whether `old` is `new` or in its history. Both must already be in this clone.
+
+        `git merge-base --is-ancestor` answers with its exit code: 0 yes, 1 no. Anything
+        else is git failing to answer, and that is neither.
+        """
+        args = ["git", "merge-base", "--is-ancestor", old, new]
+        code, out, err = _exit(args, cwd=self.root)
+        if code == 0:
+            return True
+        if code == 1:
+            return False
+        raise _failed(args, code, out, err)
+
+    def commits_between(self, old: str, new: str) -> int:
+        """How many commits `new` has that `old` does not."""
+        raw = _run(["git", "rev-list", "--count", f"{old}..{new}"], cwd=self.root).strip()
+        if not raw.isdigit():
+            raise GateError(f"`git rev-list --count` printed {raw[:40]!r}, not a number")
+        return int(raw)
+
+    def paths_between(self, old: str, new: str) -> list[str]:
+        """Every path whose content differs between the two commits' trees.
+
+        `--no-renames`: a file moved after the audit is listed under BOTH names, so one
+        moved out of the perimeter still counts under the name it had. `-z`: a path with
+        a quote or a non-ASCII byte arrives as itself, not as git's quoted form of it.
+        """
+        raw = _run(["git", "diff", "--name-only", "--no-renames", "-z", old, new],
+                   cwd=self.root, timeout=120)
+        return [path for path in raw.split("\0") if path]
 
     def changed_files(self, pr: int) -> list[dict]:
         """Every file the pull request changes, as GitHub lists them -- all pages.
@@ -617,8 +728,134 @@ def names_pull_request(text: str, pr: int) -> bool:
     return re.search(rf"(?<!\w)#{pr}(?!\d)", text) is not None
 
 
-def check_audit_citation(inputs: Inputs, value: str, head: str, pr: int, res: Result) -> str:
-    """`Architect-Audit: <path>` -- a non-empty FILE at H under an AUDIT directory."""
+def audit_bindings(report: str) -> tuple[list[str], list[str]]:
+    """`(Audited-PR values, Audited-Head values)`: the DISTINCT values of the report's
+    lines that BEGIN with each key, in the order they appear.
+
+    Begins, at column 0, case-sensitive -- the rule `declarations` applies to the body.
+    A key said twice with one value is one statement; said with two, it is two.
+    """
+    prs: list[str] = []
+    heads: list[str] = []
+    for line in report.splitlines():
+        for key, found in ((AUDITED_PR_KEY, prs), (AUDITED_HEAD_KEY, heads)):
+            if line.startswith(key):
+                value = line[len(key):].strip()
+                if value not in found:
+                    found.append(value)
+    return prs, heads
+
+
+def binding_format(pr: int) -> str:
+    """The whole format, with a worked example and where to file the report -- written so
+    that a RED's remedy alone is enough to produce a report that passes."""
+    return (f"the report must carry two lines, each BEGINNING its line: `{AUDITED_PR_KEY} "
+            f"#{pr}` and `{AUDITED_HEAD_KEY} <the 40-hex commit the auditor read, as `git "
+            f"rev-parse HEAD` printed it on the audited checkout>` -- for example "
+            f"`{AUDITED_PR_KEY} #{pr}` and, on the next line, `{AUDITED_HEAD_KEY} "
+            f"{EXAMPLE_SHA}`. File it as `{PER_CHANGE_AUDIT_PATH.format(pr=pr)}` (or in a "
+            f"subdirectory of apps/desktop/AUDIT/) and NOT as a `YYYY-MM-DD-*.md` directly "
+            f"under apps/desktop/AUDIT/, which tools/check_audit_reports.py takes for the "
+            f"round the ledger must call authoritative. Commit it on this branch after the "
+            f"audited commit -- a file under an AUDIT directory is not an audit-required "
+            f"path, so adding the report does not outdate it -- then push, wait for the "
+            f"checks on the new head, and run this again")
+
+
+def check_audit_binding(inputs: Inputs, value: str, report: str, head: str, pr: int,
+                        globs: list[str], res: Result) -> str:
+    """The report names THIS pull request and a commit of its history, and no
+    audit-required path differs between that commit and H (T-155).
+
+    Returns what GREEN says in brackets after the report's path; "" when it added a problem.
+    """
+    fmt = binding_format(pr)
+    prs, heads = audit_bindings(report)
+    before = len(res.problems)
+
+    if not prs:
+        res.bad(f"the report `{value}` at {head[:12]} carries no `{AUDITED_PR_KEY}` line: it "
+                f"does not say which pull request it audited", fmt)
+    elif len(prs) > 1:
+        res.bad(f"the report `{value}` at {head[:12]} carries {len(prs)} different "
+                f"`{AUDITED_PR_KEY}` values ({_some(prs)}): which pull request it audited is "
+                f"ambiguous", f"leave ONE. A report is an audit of one pull request; {fmt}")
+    else:
+        named = PR_NUMBER_RE.fullmatch(prs[0])
+        if not named:
+            res.bad(f"`{AUDITED_PR_KEY} {prs[0]}` in the report `{value}` is not a pull "
+                    f"request number", f"write it as `#` and the number, nothing else on the "
+                    f"line; {fmt}")
+        elif int(named.group(1)) != pr:
+            res.bad(f"the report `{value}` says `{AUDITED_PR_KEY} {prs[0]}`, and this is pull "
+                    f"request #{pr}: it is an audit of another pull request",
+                    f"cite the report that audited THIS pull request, or have this one "
+                    f"audited. A report is not transferable; {fmt}")
+
+    audited = ""
+    if not heads:
+        res.bad(f"the report `{value}` at {head[:12]} carries no `{AUDITED_HEAD_KEY}` line: it "
+                f"does not say which commit the auditor read", fmt)
+    elif len(heads) > 1:
+        res.bad(f"the report `{value}` at {head[:12]} carries {len(heads)} different "
+                f"`{AUDITED_HEAD_KEY}` values ({_some([h[:12] for h in heads])}): which commit "
+                f"was audited is ambiguous", f"leave ONE: the commit the auditor read; {fmt}")
+    elif not SHA_RE.fullmatch(heads[0]):
+        res.bad(f"`{AUDITED_HEAD_KEY} {heads[0]}` in the report `{value}` is not a commit id: "
+                f"it must be exactly 40 lowercase hex characters",
+                f"a short id, a branch name or a tag can come to mean another commit. {fmt}")
+    else:
+        audited = heads[0]
+    if len(res.problems) != before:
+        return ""
+
+    redo = (f"the audit must be redone or extended to the new head; then update "
+            f"`Audited-Head` in {value} to the commit the auditor read, commit, push, wait "
+            f"for the checks on the new head, and run this again")
+    try:
+        inputs.resolve_commit(audited, pr)
+    except GateError as exc:
+        res.bad(f"`{AUDITED_HEAD_KEY} {audited}` in the report `{value}` names no commit this "
+                f"repository has, even after a fetch: {exc}",
+                f"the line must name a commit that is pushed and is in this pull request's "
+                f"history. {fmt}")
+        return ""
+    try:
+        ancestor = inputs.is_ancestor(audited, head)
+        later = inputs.commits_between(audited, head) if ancestor else 0
+        moved = inputs.paths_between(audited, head) if ancestor else []
+    except GateError as exc:
+        res.bad(f"what changed between the audited {audited[:12]} and the head {head[:12]} "
+                f"could not be read: {exc}",
+                "`git fetch origin`, then run this again; a history that cannot be read is "
+                "not a history in which nothing moved")
+        return ""
+    if not ancestor:
+        res.bad(f"`{AUDITED_HEAD_KEY} {audited[:12]}` in the report `{value}` is not in the "
+                f"history of pull request #{pr}'s head {head[:12]}: the report audited a "
+                f"commit this pull request does not contain (a rebase, a force-push, or "
+                f"another branch)",
+                f"an audit of a commit that is not in what merges is an audit of something "
+                f"else, and this gate does not guess that a rebased commit is the same "
+                f"change. So {redo}")
+        return ""
+    hits = sorted(p for p in moved if needs_audit(p, globs))
+    if hits:
+        res.bad(f"{len(hits)} audit-required path(s) changed after the audit -- "
+                f"{_some(hits)} -- between the audited {audited[:12]} and the head "
+                f"{head[:12]}, {later} commit(s) later: the report did not read what would "
+                f"merge", redo)
+        return ""
+    if audited == head:
+        return f"names #{pr} and was audited at this head"
+    return (f"names #{pr} and was audited at {audited[:12]}; the head is {later} commit(s) "
+            f"later and no audit-required path moved")
+
+
+def check_audit_citation(inputs: Inputs, value: str, head: str, pr: int, globs: list[str],
+                         res: Result) -> str:
+    """`Architect-Audit: <path>` -- a non-empty FILE at H under an AUDIT directory, which
+    itself names this pull request and the commit that was audited."""
     cite = (f"write the line as `{AUDIT_KEY} <path>`, the path repo-relative and under "
             f"{' or '.join(AUDIT_DIRS)}, with the report committed on this branch")
     if not value:
@@ -642,7 +879,11 @@ def check_audit_citation(inputs: Inputs, value: str, head: str, pr: int, res: Re
                 "an empty file is not a report. File the Architect's audit there, push, wait "
                 "for the checks, then run this again")
         return ""
-    return f"Architect-Audit {value}"
+    bound = check_audit_binding(inputs, value, text, head, pr, globs, res)
+    if not bound:
+        return ""
+    return (f"Architect-Audit {value} ({bound}). Its verdict and its author are NOT read "
+            f"by this gate")
 
 
 def check_waiver(inputs: Inputs, value: str, head: str, pr: int, res: Result) -> str:
@@ -736,7 +977,8 @@ def check_audit(inputs: Inputs, view: dict, head: str, pr: int, res: Result) -> 
                 f"get an Architect audit and cite it, or have the Owner record a scoped "
                 f"waiver on roadmap §G.2 naming this pull request. Then ONE line in the "
                 f"body, beginning the line: `{AUDIT_KEY} <path under "
-                f"{' or '.join(AUDIT_DIRS)}>` or `{WAIVER_KEY} YYYY-MM-DD`")
+                f"{' or '.join(AUDIT_DIRS)}>` or `{WAIVER_KEY} YYYY-MM-DD`. For an audit: "
+                f"{binding_format(pr)}")
         return ""
     if len(audits) + len(waivers) != 1:
         res.bad(f"pull request #{pr}'s body carries {len(audits)} `{AUDIT_KEY}` and "
@@ -745,7 +987,7 @@ def check_audit(inputs: Inputs, view: dict, head: str, pr: int, res: Result) -> 
                 "a pull request rests on one")
         return ""
     if audits:
-        return check_audit_citation(inputs, audits[0], head, pr, res)
+        return check_audit_citation(inputs, audits[0], head, pr, globs, res)
     return check_waiver(inputs, waivers[0], head, pr, res)
 
 
@@ -807,6 +1049,17 @@ def explain_audit(pr: int, inputs: Inputs) -> int:
         print("     -> fix tools/check_merge_ready.py; a gate that could not run is not a pass")
         return 1
     at = f" at {facts['head'][:12]}" if facts["head"] else ""
+    # A pull request that is no longer open was merged, or closed, under the rule of ITS
+    # day. What is printed here is today's rule, and saying so is the difference between
+    # "this would be refused now" and "this broke the rule when it merged".
+    then = ""
+    if facts["state"] and facts["state"] != "OPEN":
+        then = (f"Pull request #{pr} is {facts['state']}. The verdict above is the rule AS IT "
+                f"STANDS TODAY read against the head GitHub records for it -- not the rule "
+                f"that was in force when it was {facts['state'].lower()}. The audit rule is "
+                f"T-154 and the `{AUDITED_PR_KEY}` / `{AUDITED_HEAD_KEY}` lines a cited "
+                f"report must carry are T-155, both of 2026-10-02: a pull request settled "
+                f"before either was never asked.")
     if res.problems:
         print(f"RED: pull request #{pr} does NOT meet the audit rule{at}\n")
         for i, (what, remedy) in enumerate(res.problems, 1):
@@ -814,12 +1067,16 @@ def explain_audit(pr: int, inputs: Inputs) -> int:
             print(f"     -> {remedy}\n")
         print("This is the audit check alone (roadmap §G.2, first row). It was run to "
               "explain, not to merge.")
+        if then:
+            print(then)
         return 1
     print(f"GREEN: pull request #{pr} meets the audit rule{at}.\n")
     print(f"  state  : {facts['state']}")
     print(f"  audit  : {facts['audit']}")
     print("\nThis is the audit check alone. It is NOT permission to merge: run without "
           "--explain-audit for that.")
+    if then:
+        print(then)
     return 0
 
 

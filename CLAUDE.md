@@ -56,8 +56,8 @@ OS/
 ├── MASTER_EXECUTION_ROADMAP.md   the durable 11-phase plan
 ├── apps/desktop/        cockpit (git subtree, history preserved)
 ├── engine/              governance engine (git subtree)
-├── bridge/              Phase-1 governed adapter — real code, not a placeholder
-├── contracts/           the SOURCE for the five cross-half schemas, drift-gated
+├── bridge/              Phase-1 governed adapter
+├── contracts/           the SOURCE for the six cross-half schemas, drift-gated
 ├── docs/archive/        history moved out of the read set
 └── .github/workflows/   unified CI
 ```
@@ -128,7 +128,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 ## 7. Rules for AI sessions
 
 1. **Do not start execution without Gev's explicit go** («սկսի» / «start»). He front-loads context across several messages — collect, don't act.
-2. **You push and merge**, but **only on an all-green exact head**: merge with the command `tools/check_merge_ready.py --pr N` prints; the hook refuses any other merge, and a push `check_push_ready.py` fails (T-150). A PR touching engine security code needs an `Architect-Audit:` or `Owner-Waiver:` body line (T-154). Never mid-run. **Release and tagging stay the Owner's.**
+2. **You push and merge**, but **only on an all-green exact head**: merge with the command `tools/check_merge_ready.py --pr N` prints; the hook refuses any other merge, and a push `check_push_ready.py` fails (T-150). A PR touching engine security code needs an `Owner-Waiver:` line, or `Architect-Audit:` citing a report naming the PR and audited head (T-154/155). Never mid-run. **Release and tagging stay the Owner's.**
    **A queue of open PRs costs N² synchronisation.** `check_repo_state` requires every open PR to be named in `prs[]` at its exact live head, so each merge invalidates every other PR's mirror. Seven open on 2026-08-31 cost six extra mirror commits. Merge one at a time, refreshing only the mirror before each, and settle **once** at the end — that is where you read `gh run list --branch main`. An intermediate red `main` is honest if the mirror records it.
 3. **A documented claim is not evidence.** Twelve comments that were true when written and false when read were found in one week. Check the code, then trust the sentence.
 4. **A green test is not a passing check.** When you add a check, delete it once and confirm its test goes red, then restore it. Of ninety checks swept that way, four came back green — four tests testing nothing. `T-045` ran the same sweep on its own gates and found three of seven checks tested by nothing, plus a fourth with no test at all.

@@ -44,9 +44,10 @@ GATES = ["check_action_pins.py", BUNDLE, "check_canonical_sync.py", "check_coord
 
 class Fake(check_push_ready.Inputs):
     def __init__(self, changed=(), *, bundle=GREEN, snippets=GREEN, blocker=None,
-                 gates=GATES) -> None:
+                 gates=GATES, staged=()) -> None:
         super().__init__(ROOT)
         self._changed = changed
+        self._staged = staged
         self.results = {BUNDLE: bundle, SNIPPETS: snippets}
         self.blocker = blocker
         self._gates = gates
@@ -56,6 +57,11 @@ class Fake(check_push_ready.Inputs):
         if isinstance(self._changed, BaseException):
             raise self._changed
         return "0123456789abcdef0123456789abcdef01234567", sorted(self._changed)
+
+    def staged(self):
+        if isinstance(self._staged, BaseException):
+            raise self._staged
+        return sorted(self._staged)
 
     def run_gate(self, name, args):
         self.calls.append((name, list(args)))
@@ -90,6 +96,25 @@ BACKEND = ["engine/runtime/bro_hook.py", "tools/check_push_ready.py", "docs/ARCH
 
 
 class PushReady(unittest.TestCase):
+    def test_a_commit_that_was_not_made_is_red_and_names_what_is_staged(self):
+        # The refused commit of 2026-10-02: the gates were RED, nothing was committed, and the
+        # push after the `;` carried a head that was not what had been gated.
+        code, out = gate(Fake(BACKEND, staged=["TASKS.md", "config/current_state.json"]))
+        self.assertEqual(code, 1, out)
+        self.assertIn("2 path(s) are staged and not committed", out)
+        self.assertIn("TASKS.md", out)
+        self.assertNotIn("GREEN:", out)
+
+    def test_nothing_staged_is_not_a_problem(self):
+        code, out = gate(Fake(BACKEND))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("staged and not committed", out)
+
+    def test_an_index_that_cannot_be_read_is_red_not_assumed_clean(self):
+        code, out = gate(Fake(BACKEND, staged=check_push_ready.GateError("git diff exited 128")))
+        self.assertEqual(code, 1, out)
+        self.assertIn("could not be established", out)
+
     def ran(self, inputs: Fake) -> list[str]:
         return [name for name, _ in inputs.calls]
 
@@ -299,6 +324,18 @@ class TheRealInputs(unittest.TestCase):
             base, changed = check_push_ready.Inputs(root).changed()
         self.assertRegex(base, r"^[0-9a-f]{40}$")
         self.assertEqual(changed, ["apps/desktop/src/committed.ts", "apps/desktop/src/staged.ts"])
+
+    def test_staged_is_what_is_in_the_index_and_nothing_else(self):
+        """Mutant: read the working tree instead of the index ⇒ `unstaged.ts` appears."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(pathlib.Path(tmp))
+            src = root / "apps" / "desktop" / "src"
+            self.assertEqual(check_push_ready.Inputs(root).staged(), [])
+            (src / "staged.ts").write_text("export {}\n", encoding="utf-8")
+            self._git(root, "add", "apps/desktop/src/staged.ts")
+            (src / "unstaged.ts").write_text("export {}\n", encoding="utf-8")
+            self.assertEqual(check_push_ready.Inputs(root).staged(),
+                             ["apps/desktop/src/staged.ts"])
 
     def test_a_repository_with_no_main_is_a_GateError_not_an_empty_diff(self):
         with tempfile.TemporaryDirectory() as tmp:
