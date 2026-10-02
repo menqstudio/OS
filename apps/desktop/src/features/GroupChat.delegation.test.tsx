@@ -129,6 +129,11 @@ async function askTheRoom(question = 'Ship the redesign this week?') {
   const field = await screen.findByLabelText(STR.questionLabel.en);
   fireEvent.change(field, { target: { value: question } });
   const open = await screen.findByRole('button', { name: STR.openRound.en });
+  // The button is on screen from the first render and DISABLED until this room's roster read
+  // has answered. A click on a disabled button is dropped without a trace, so clicking as soon
+  // as the button could be found raced that read: lost once on `main` (2026-10-02), where the
+  // wait below then timed out with nothing sent. Reproduced by delaying the roster 400 ms.
+  await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
   await waitFor(() =>
     expect(invokeMock.mock.calls.some((c) => c[0] === 'stream_reply')).toBe(true));
