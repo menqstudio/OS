@@ -1,6 +1,6 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
-**76 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+**78 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
@@ -101,3 +101,5 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-157** | **A gate's verdict cannot be thrown away on the way to a commit, a push or a pull request** — the hook's shell arm refuses `gate \| tail && …` and `gate; git commit`; 76 mutants, 76 deaths ◑ | Bro | Review | merged `#325` |
 | **T-158** | **The push gate runs every argument-free gate on the tree being pushed** — `#325` went red in CI on a gate that was green on an untracked file; 34 gates in about 7 s, 21 mutants, 21 deaths ◑ | Bro | Review | merged `#326` |
 | **T-156** | **The audit ledger's lock is released by the kernel when its holder dies** — the Architect's round 4 is GREEN for this change (rounds 1-3 RED); `append()` also checks chain and head under the lock ([request](docs/design/T-156_AUDIT_LEDGER_LOCK_AUDIT_REQUEST.md)) ◑ | Bro | Review | merged `#328` |
+| **T-161** | **A CI reading older than the one recorded is refused** — the runs API answered from months ago and `sync_active_pr.py` wrote it down; 10 mutants ◑ | Bro | Review | merged `#327` |
+| **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | merged `#327` |
