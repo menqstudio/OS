@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #328 · branch `t156/audit-ledger-kernel-lock`** (base `main`, tip `6743d7c`, task T-156). Also open, and not this PR's work: PR #329 on `architect/shell-classifier-design`.
 >
-> the audit ledger's kernel lock; three audits RED, none on the code; NOT to merge before GREEN
+> the audit ledger's kernel lock; the Architect's fourth round is GREEN for this change
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

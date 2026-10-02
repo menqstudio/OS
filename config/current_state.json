@@ -116,12 +116,12 @@
     "number": 328,
     "branch": "t156/audit-ledger-kernel-lock",
     "state": "open",
-    "what": "T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; fourth Architect round pending",
-    "note": "the audit ledger's kernel lock; three audits RED, none on the code; NOT to merge before GREEN",
+    "what": "T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; audited GREEN in round 4",
+    "note": "the audit ledger's kernel lock; the Architect's fourth round is GREEN for this change",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #328 (t156/audit-ledger-kernel-lock), task T-156: T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; fourth Architect round pending Next: the Architect compares its 33 failures with main and reads CI's Windows job; merge only on GREEN",
+    "current": "PR #328 (t156/audit-ledger-kernel-lock), task T-156: T-156: bro_audit_log.append holds a kernel advisory lock and checks the chain and head under it; audited GREEN in round 4 Next: merge on the gate's command, then settle; what the audit left open is in docs/WHOLE_REPO_READ_2026-10-02.md section 4",
     "_note": "The carrier is current_workflow_pr (#328 on t156/audit-ledger-kernel-lock). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

@@ -174,3 +174,7 @@ tests of `test_stop_and_audit` are `ok` (the runner may create symbolic links; t
 could not), as are `test_a_holder_killed_while_holding_the_lock_does_not_strand_the_ledger` and
 `test_separately_started_processes_appending_together_keep_one_valid_chain`. The Linux job of the
 same run is `110821857399`: 2692 tests OK there too.
+
+## 12. Outcome
+
+Round 4 (`apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-4.md`): **GREEN for this change** at the audited head. The auditor found the failing ids identical on `main` and on this head on its own host, and closed F-04 on CI's `windows-latest` job, which it read itself. B-03, B-04, B-08 and B-09 stay open and are not part of this change.
