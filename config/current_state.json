@@ -117,11 +117,11 @@
     "branch": "t159/shell-positive-grammar",
     "state": "open",
     "what": "The T-159 implementation: a dependency-free positive grammar replaces the hand lexer in the engine's shell classifier; engine security code awaiting the Architect's code audit.",
-    "note": "T-159: the Architect's first audit is RED on one point, the parser pins in the deployment lock; they moved to a test-only lock. Not merged without his GREEN.",
+    "note": "T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved).",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #333 (t159/shell-positive-grammar), task T-159: T-159: the Architect's first audit is RED on one point, the parser pins in the deployment lock; they moved to a test-only lock. Not merged without his GREEN. Next: the Architect re-reads the diff since his audited head and updates apps/desktop/AUDIT/changes/pr-333-shell-classifier.md; merge only on GREEN.",
+    "current": "PR #333 (t159/shell-positive-grammar), task T-159: T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved). Next: merge on an all-green exact head; then settle.",
     "_note": "The carrier is current_workflow_pr (#333 on t159/shell-positive-grammar). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

@@ -13,7 +13,7 @@ is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 <!-- BANNER -->
 > **⏭️ CURRENT ACTIVE: PR #333 · branch `t159/shell-positive-grammar`** (base `main`, tip `eb3b791`, task T-159).
 >
-> T-159: the Architect's first audit is RED on one point, the parser pins in the deployment lock; they moved to a test-only lock. Not merged without his GREEN.
+> T-159: the shell classifier, built to Appendix A. The Architect's second audit is GREEN (the first was RED on the parser lock, since moved).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
