@@ -53,6 +53,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # The gate's own resolver: this tool writes the marker `check_repo_state.py` reads, so the two
@@ -126,12 +127,40 @@ def patch_command(repo: str, pr: int) -> list[str]:
     return ["gh", "api", "-X", "PATCH", f"repos/{repo}/pulls/{pr}", "--input", "-"]
 
 
+#: Attempts at one write, and the pause before each retry. A failed PATCH is asked about before
+#: it is repeated: the one seen in CI (#336, 2026-10-03, `unexpected end of JSON input`) is
+#: GitHub answering with an empty body, which says nothing about whether the write landed.
+WRITE_ATTEMPTS = 3
+RETRY_PAUSES = (2.0, 5.0)
+
+
 def write_body(repo: str, pr: int, body: str) -> None:
-    """Write the body, then read it back. A write nobody verified is a claim, not a fact."""
-    out = subprocess.run(patch_command(repo, pr), input=json.dumps({"body": body}),
-                         capture_output=True, text=True)
-    if out.returncode != 0:
-        raise SystemExit(f"RED: writing the body of PR #{pr} failed:\n{out.stderr.strip()}")
+    """Write the body, then read it back. A write nobody verified is a claim, not a fact.
+
+    Since T-166 a failed write is not the end of the run. `Repo-state` now stamps the head it
+    verifies (T-163), so one malformed answer from GitHub turned a green head red -- it did on
+    #336. After a failure the body is read: if it already names the head the write was about,
+    the write landed and is not repeated; otherwise it is tried again, `WRITE_ATTEMPTS` in all.
+    The read-back below still decides, whatever the attempts said.
+    """
+    errors: list[str] = []
+    for attempt in range(WRITE_ATTEMPTS):
+        out = subprocess.run(patch_command(repo, pr), input=json.dumps({"body": body}),
+                             capture_output=True, text=True)
+        if out.returncode == 0:
+            break
+        errors.append(out.stderr.strip() or f"exit {out.returncode}")
+        try:
+            landed = markers(run("gh", "api", f"repos/{repo}/pulls/{pr}", "--jq", ".body"))
+        except SystemExit:
+            landed = None
+        if landed == markers(body):
+            break
+        if attempt + 1 < WRITE_ATTEMPTS:
+            time.sleep(RETRY_PAUSES[min(attempt, len(RETRY_PAUSES) - 1)])
+    else:
+        raise SystemExit(f"RED: writing the body of PR #{pr} failed {WRITE_ATTEMPTS} times:\n"
+                         + "\n".join(errors))
     live = run("gh", "api", f"repos/{repo}/pulls/{pr}", "--jq", ".body")
     if markers(live) != markers(body):
         raise SystemExit(f"RED: PR #{pr} was written but reads back with a different marker; "

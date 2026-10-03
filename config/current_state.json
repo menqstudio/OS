@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "e514f3680801392d28013d3ea2297228c1e49f10",
+  "settled_at_main_head": "9c1eb20c9004ad1829f318768d25cbc3062a3d8b",
   "sync": {
-    "baseline_main_head_at_sync": "e514f3680801392d28013d3ea2297228c1e49f10",
-    "snapshot_branch": "t165/cryptography-50",
+    "baseline_main_head_at_sync": "9c1eb20c9004ad1829f318768d25cbc3062a3d8b",
+    "snapshot_branch": "t166/stamp-retries-a-failed-write",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "t165/cryptography-50"
+    "branch": "t166/stamp-retries-a-failed-write"
   },
   "prs": [],
   "status_tokens": {
@@ -113,24 +113,24 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 336,
-    "branch": "t165/cryptography-50",
+    "number": 337,
+    "branch": "t166/stamp-retries-a-failed-write",
     "state": "open",
-    "what": "The settle commit: records that main is at e514f36 and carries no product change.",
-    "note": "Settling the state anchor at main e514f36. Nothing else is open; this pull request is the commit that records it.",
+    "what": "The settle commit: records that main is at 9c1eb20 and carries no product change.",
+    "note": "Settling the state anchor at main 9c1eb20. Nothing else is open; this pull request is the commit that records it.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #336 (t165/cryptography-50) settles the state at main e514f36. Next: nothing is claimed. T-165 rides this PR: cryptography 50.0.2, four waivers deleted; the Architect's audit is GREEN.",
-    "_note": "The carrier is current_workflow_pr (#336 on t165/cryptography-50). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #337 (t166/stamp-retries-a-failed-write) settles the state at main 9c1eb20. Next: nothing is claimed. T-166 rides this PR: a stamp that fails once is retried.",
+    "_note": "The carrier is current_workflow_pr (#337 on t166/stamp-retries-a-failed-write). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "e514f3680801392d28013d3ea2297228c1e49f10",
+      "head": "9c1eb20c9004ad1829f318768d25cbc3062a3d8b",
       "conclusion": "success",
-      "run_id": 37073243762,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-03: success at e514f36, run 37073243762."
+      "run_id": 37105269920,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-03: success at 9c1eb20, run 37105269920."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."

@@ -285,6 +285,60 @@ class WriteDecisionTests(unittest.TestCase):
         self.assertEqual(self.written, [])
 
 
+class WriteRetryTests(unittest.TestCase):
+    """T-166. One malformed answer from GitHub turned #336's green head red: the stamp step's
+    PATCH failed with `unexpected end of JSON input`. A failed write is now asked about, and
+    repeated only when the body does not already say what the write was for."""
+
+    def setUp(self):
+        self.patches = []
+        self.answers = []          # one returncode per PATCH, in order
+        self.live = "prose\n"      # what a read of the body returns
+        self.sleeps = []
+        self._sub, self._run, self._sleep = st.subprocess.run, st.run, st.time.sleep
+
+        def fake_subprocess_run(argv, **kwargs):
+            self.patches.append(kwargs.get("input"))
+            code = self.answers.pop(0) if self.answers else 0
+            if code == 0:
+                self.live = __import__("json").loads(kwargs["input"])["body"]
+            return type("Done", (), {"returncode": code, "stderr": "unexpected end of JSON input"})()
+
+        def fake_run(*args):
+            return self.live
+
+        st.subprocess.run, st.run = fake_subprocess_run, fake_run
+        st.time.sleep = self.sleeps.append
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        st.subprocess.run, st.run, st.time.sleep = self._sub, self._run, self._sleep
+
+    def test_a_write_that_failed_once_is_tried_again_and_lands(self):
+        self.answers = [1, 0]
+        st.write_body("o/r", 336, st.restamp("prose", SHA))
+        self.assertEqual(len(self.patches), 2)
+        self.assertEqual(st.stamped_sha(self.live), SHA)
+        self.assertEqual(self.sleeps, [st.RETRY_PAUSES[0]])
+
+    def test_a_failed_answer_to_a_write_that_landed_is_not_repeated(self):
+        """The empty answer says nothing about the write. If the body already names the head,
+        it landed, and a second PATCH would only start another run."""
+        self.live = st.restamp("prose", SHA)
+        self.answers = [1]
+        st.write_body("o/r", 336, st.restamp("prose", SHA))
+        self.assertEqual(len(self.patches), 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_a_write_that_never_lands_is_still_a_refusal(self):
+        self.answers = [1] * st.WRITE_ATTEMPTS
+        with self.assertRaises(SystemExit) as caught:
+            st.write_body("o/r", 336, st.restamp("prose", SHA))
+        self.assertEqual(len(self.patches), st.WRITE_ATTEMPTS)
+        self.assertIn(f"failed {st.WRITE_ATTEMPTS} times", str(caught.exception))
+        self.assertEqual(st.stamped_sha(self.live), None)
+
+
 class CiStampsItsOwnHeadTests(unittest.TestCase):
     """`Repo-state` went red on #328 and on #331 for one reason: somebody who is not the Builder
     pushed, and nothing moved the marker. The job that reads the marker now writes it first."""
