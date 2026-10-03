@@ -17,10 +17,10 @@
       "id": "cryptography",
       "kind": "library",
       "resolve": "cryptography",
-      "version": ">=41,<47",
+      "version": ">=41,<51",
       "required_for": ["runtime", "test"],
       "optionality": "required",
-      "note": "Ed25519 signing/verification for grants, receipts and the evidence chain."
+      "note": "Ed25519 signing/verification for grants, receipts and the evidence chain. The upper bound admits the pinned release and refuses an untested major; it was <47 while requirements-ci.txt was moved to 50.0.2 (T-165), and that bound -- not any change in the library -- is what made the bump look like a broken runtime."
     },
     {
       "id": "jsonschema",

@@ -396,7 +396,13 @@ class NothingToCheckIsNotGreen(unittest.TestCase):
             finally:
                 os.chdir(here)
         self.assertEqual(code, 0, said)
-        self.assertRegex(said, r"GREEN: .* [1-9]\d* waived advisories each record a fix")
+        # Proof that THIS repository was judged and not an empty directory: the gate names the
+        # real pin and finds the real RustSec lists. It used to be "at least one cryptography
+        # waiver", which stopped being true when T-165 took the fix and deleted all four.
+        pinned = gate.pinned_cryptography(pathlib.Path(__file__).resolve().parents[1])
+        self.assertTrue(pinned)
+        self.assertIn(f"above the pinned {pinned};", said)
+        self.assertRegex(said, r"; [1-9]\d* RustSec waiver\(s\) identical")
 
 
 class ExitCodeTests(unittest.TestCase):
