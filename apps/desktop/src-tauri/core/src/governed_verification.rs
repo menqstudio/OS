@@ -1507,6 +1507,45 @@ mod tests {
         assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()), Err(TurnReason::UpstreamBlocked)));
     }
 
+    /// NM-XBIND-13 — `SHA256(attestation_evidence_jcs) != envelope.attestation_evidence_sha256` ⇒ Block.
+    ///
+    /// The test above cannot tell this check from the one after it: its foreign evidence changes
+    /// `receipt_id`, which step 4c compares too, and every refusal here is the same
+    /// `UpstreamBlocked`. With the digest comparison deleted it stays green.
+    ///
+    /// So the evidence here differs in bytes ONLY. One trailing space: `AttestedEvidence::parse` is
+    /// `serde_json` with a key-set check and no canonicality check, so the padded bytes parse to the
+    /// same fields and bind to this turn exactly as the genuine ones do, and they carry a VALID
+    /// supervisor-attestation signature. The one thing left that can refuse them is the digest the
+    /// isolated signer put in the envelope. The control is the same call with the genuine bytes.
+    #[test]
+    fn nm_xbind_13_evidence_that_differs_only_in_bytes_is_refused_by_the_envelope_digest() {
+        let f = fx();
+        let env = envelope(&f);
+        let k = keys(&f);
+
+        let genuine = attest(&f);
+        let mut ledger = InMemoryLedger::new();
+        assert!(
+            verify_and_accept(&expected(&f), &env, &f.env_sig, &genuine, &k, OUTPUT, &CTX, &mut ledger, &fresh()).is_ok(),
+            "NM-XBIND-13 control: the genuine evidence must be accepted, or the refusal below proves nothing"
+        );
+
+        let mut padded = f.attest_evidence.clone();
+        padded.push(b' ');
+        assert!(AttestedEvidence::parse(&padded).is_ok(), "the padded evidence must still parse");
+        let sig = sign_b64(&signing_key(9), &padded);
+        let a = SupervisorAttestation { evidence_jcs: &padded, signature_b64: &sig };
+        let mut ledger = InMemoryLedger::new();
+        assert!(
+            matches!(
+                verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()),
+                Err(TurnReason::UpstreamBlocked)
+            ),
+            "NM-XBIND-13: evidence whose bytes the envelope did not digest was accepted"
+        );
+    }
+
     #[test]
     fn a_wrong_artifact_type_blocks_before_any_signature_check() {
         let f = fx();

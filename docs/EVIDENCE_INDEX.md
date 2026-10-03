@@ -66,8 +66,8 @@ that is the point of them.
 **`config/negative-matrix.json`** — `python3 tools/check_negative_matrix.py`:
 
 ```
-GREEN: 242 matrix cases, all bound -- 155 implemented (test exists and carries its ID),
-52 blocked (each naming what must exist first), 35 unreviewed and frozen in the baseline.
+GREEN: 242 matrix cases, all bound -- 166 implemented (test exists and carries its ID),
+52 blocked (each naming what must exist first), 24 unreviewed and frozen in the baseline.
 No new debt.
 ```
 

@@ -786,6 +786,79 @@ class NegativeMatrixEvidenceFloorTests(_MatrixCase):
 # ---------------------------------------------------------------------------
 
 
+class NegativeMatrixOutOfScopeHonestyTests(_MatrixCase):
+    def test_nm_evid_13_a_full_database_restore_rolls_the_floor_back_and_nothing_notices(self):
+        """NM-EVID-13 -- out-of-scope honesty. This test asserts an ABSENCE of defence.
+
+        Addendum §7 says the evidence-head floor "CANNOT detect a full-DB restore to an older
+        self-consistent backup": there is no anchor outside the database, restoring the file
+        needs the supervisor identity or root (outside the §0 threat model), and external
+        anchoring is deferred to 3b-2. The row asks for the honest boundary to be tested rather
+        than a false claim made, so this does the restore and shows what the tree does.
+
+        The order is what makes it mean something. BEFORE the restore, head 13 is refused as
+        `StaleEvidence` against floor 99 -- the floor works. The ledger FILE is then replaced
+        with a copy taken when the floor was 12, and the same head 13, on the same attempt, is
+        accepted and becomes attestable. The floor rolled back with the file, and so did every
+        acceptance and completion row: nothing in the restored database can know.
+
+        The day an external anchor lands, the last assertions go red. That is the signal to
+        rewrite this row and the sentence in the addendum together -- which is why the sentence
+        is read here too: code and claim are held to each other.
+        """
+        import os
+        import shutil
+        import tempfile
+        case = "NM-EVID-13"
+        addendum = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "design"
+                    / "WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md")
+        self.assertIn(
+            "This local table CANNOT detect a full-DB restore to an older self-consistent backup",
+            " ".join(addendum.read_text(encoding="utf-8").split()),
+            f"{case}: the addendum no longer states this boundary; this test and that sentence "
+            f"move together")
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "sup", "ledger.db")
+        backup = os.path.join(tmp.name, "ledger.backup")
+
+        def complete(conn, attempt, head):
+            return gsl.record_completion(conn, attempt, _produced(), 40,
+                                         derived=_derived(evidence_head_sequence=head))
+
+        conn = gsl.open_ledger(path)
+        for attempt in ("att-1", "att-2", "att-3"):
+            _executing(conn, attempt)
+        self.assertEqual(complete(conn, "att-1", 12), gsl.CREATED, case)
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        shutil.copyfile(path, backup)                              # the older, consistent backup
+
+        conn = gsl.open_ledger(path)
+        self.assertEqual(complete(conn, "att-2", 99), gsl.CREATED, case)
+        with self.assertRaises(gsl.StaleEvidence, msg=f"{case}: the floor is not working at all"):
+            complete(conn, "att-3", 13)                            # the control
+        self.assertIsNone(gsl.load_attestation_state(conn, "run-1", "att-3"), case)
+        conn.close()
+
+        for name in os.listdir(os.path.dirname(path)):             # the restore
+            os.unlink(os.path.join(os.path.dirname(path), name))
+        shutil.copyfile(backup, path)
+
+        conn = gsl.open_ledger(path)
+        self.addCleanup(conn.close)
+        self.assertEqual(
+            conn.execute("SELECT highest_head_sequence FROM governed_evidence_head_floor"
+                         ).fetchone()[0], 12, f"{case}: the restored floor is not the old one")
+        self.assertEqual(gsl._current_state(conn, "att-2"), gsl.EXECUTING,
+                         f"{case}: the restore did not roll the completed attempt back")
+        self.assertEqual(complete(conn, "att-3", 13), gsl.CREATED,
+                         f"{case}: a restore to an older floor was DETECTED. Something now "
+                         f"defends this; rewrite the row and addendum §7 together")
+        self.assertIsNotNone(gsl.load_attestation_state(conn, "run-1", "att-3"), case)
+
+
 class NegativeMatrixConcurrencyTests(_MatrixCase):
     def test_nm_conc_05_a_ledger_operation_inside_a_caller_s_transaction_is_refused(self):
         """NM-CONC-05 -- nested-transaction rejection.
@@ -852,6 +925,94 @@ class NegativeMatrixConcurrencyTests(_MatrixCase):
         gsl.accept_prepare(conn, _acceptance(), 10)
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM governed_turn_acceptance").fetchone()[0], 1, case)
+
+    def test_nm_conc_03_a_second_connection_waits_for_the_floor_and_is_judged_on_the_new_one(self):
+        """NM-CONC-03 -- evidence-floor serialization across two CONNECTIONS.
+
+        NM-CONC-05 shows `_Tx` refusing a nested transaction on one connection. This is the
+        property that refusal exists for: the floor comparison and the write that follows it
+        are one `BEGIN IMMEDIATE`, so a second supervisor cannot read the floor, lose the race,
+        and then write a decision made against a floor that no longer exists.
+
+        Connection A takes the write lock by hand and raises the floor to 99 while it holds it.
+        Connection B, on its own thread and its own connection to the same ledger FILE, presents
+        head 13. B's `BEGIN IMMEDIATE` is observed through a trace callback, so "B is waiting
+        for the lock" is measured: once B has issued it, B is still alive and has decided
+        nothing. Only after A commits does B answer -- `StaleEvidence`, against floor 99, the
+        floor it did not see when it started.
+
+        With `_Tx` weakened to a deferred `BEGIN`, B does not wait: it reads the old floor,
+        and its write fails as an untyped `database is locked` rather than a ledger verdict.
+
+        The PRIMARY KEY half of the row is asserted last. The CAS never inserts a second row
+        for a bucket, so the key is a backstop -- shown by attempting the insert directly.
+
+        Not claimed: "exactly one completion per evidence head". Two attempts presenting the
+        SAME head both complete (addendum case B, the idempotent re-anchor); what is exactly-one
+        here is the floor row and the verdict each attempt gets against it.
+        """
+        import os
+        import tempfile
+        import threading
+        case = "NM-CONC-03"
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "sup", "ledger.db")
+        a = gsl.open_ledger(path)
+        self.addCleanup(a.close)
+        _executing(a, "att-1")
+        _executing(a, "att-2")
+        self.assertEqual(
+            gsl.record_completion(a, "att-1", _produced(), 40, derived=_derived()),
+            gsl.CREATED, case)                                    # floor: head 12
+
+        began = threading.Event()
+        outcome = {}
+
+        def second_supervisor():
+            b = gsl.open_ledger(path)
+            try:
+                b.set_trace_callback(
+                    lambda sql: began.set() if sql.lstrip().upper().startswith("BEGIN") else None)
+                outcome["value"] = gsl.record_completion(
+                    b, "att-2", _produced(), 41, derived=_derived(evidence_head_sequence=13))
+            except Exception as exc:  # noqa: BLE001 -- the verdict IS the exception
+                outcome["error"] = exc
+            finally:
+                b.close()
+
+        a.execute("BEGIN IMMEDIATE")                              # A holds the write lock
+        thread = threading.Thread(target=second_supervisor)
+        thread.start()
+        try:
+            self.assertTrue(began.wait(10), f"{case}: the second connection never began")
+            thread.join(0.3)
+            self.assertTrue(thread.is_alive(),
+                            f"{case}: the second connection finished while the first held the "
+                            f"write lock -- it did not serialize: {outcome!r}")
+            self.assertEqual(outcome, {}, case)
+            a.execute("UPDATE governed_evidence_head_floor SET highest_head_sequence = 99")
+        finally:
+            a.execute("COMMIT")
+            thread.join(15)
+        self.assertFalse(thread.is_alive(), f"{case}: the second connection never returned")
+
+        self.assertIsInstance(outcome.get("error"), gsl.StaleEvidence,
+                              f"{case}: the loser was not re-evaluated on the new floor: {outcome!r}")
+        self.assertIn("99", str(outcome["error"]), case)
+        self.assertEqual(
+            a.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 1, case)
+        self.assertEqual(
+            [tuple(r) for r in a.execute(
+                "SELECT task_id, highest_head_sequence FROM governed_evidence_head_floor")],
+            [("task-1", 99)], case)
+        self.assertEqual(gsl._current_state(a, "att-2"), gsl.EXECUTING, case)
+        self.assertIsNone(gsl.load_attestation_state(a, "run-1", "att-2"), case)
+
+        with self.assertRaises(sqlite3.IntegrityError, msg=case):
+            a.execute("INSERT INTO governed_evidence_head_floor (install_id, task_id,"
+                      " highest_head_sequence, event_count, last_sequence, final_event_hash,"
+                      " updated_at_ms) VALUES ('install-1', 'task-1', 100, 3, 3, ?, 50)", (H_C,))
 
 # ---------------------------------------------------------------------------
 # Plan section 5 -- Malformed / oversized frames (NM-FRAME-*), brops_protocol.py

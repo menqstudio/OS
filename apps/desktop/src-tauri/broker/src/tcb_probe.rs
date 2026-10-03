@@ -1291,6 +1291,48 @@ mod tests {
             assert!(read_pinned_artifact(&art, 64).is_err());
         }
 
+        /// NM-FS-03 — a `TCB_ARTIFACT` path that is a symlink is refused, at BOTH places the path is
+        /// opened. §2.5: `fstat` the opened fd (`O_NOFOLLOW`); refuse.
+        ///
+        /// The link here points at the RIGHT bytes, at the pinned digest. That is what makes it a test
+        /// of `O_NOFOLLOW` and not of the digest: followed, the link would measure and read exactly
+        /// what the pin names, and nothing downstream could tell.
+        ///
+        ///   * the floor probe (`LinuxFsProbe::stat`) opens `O_PATH | O_NOFOLLOW`, so what it holds is
+        ///     the LINK. It is not a regular file, the digest is empty, and the floor reads an empty
+        ///     digest as a hash mismatch;
+        ///   * the use-time read (`read_pinned_artifact`) opens `O_NOFOLLOW` and fails outright.
+        ///
+        /// Each has its own control — the real path — because a probe that returned an empty digest for
+        /// everything, or a read that refused everything, would pass the two refusals alone.
+        #[test]
+        fn nm_fs_03_a_symlinked_tcb_artifact_is_refused_by_the_probe_and_by_the_pinned_read() {
+            use brops_core::tcb_integrity::FsProbe;
+            use sha2::{Digest, Sha256};
+
+            let dir = tempfile::tempdir().unwrap();
+            let real = dir.path().join("real.json");
+            std::fs::write(&real, b"0123456789").unwrap();
+            let link = dir.path().join("link.json");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let pinned = format!("{:x}", Sha256::digest(b"0123456789"));
+
+            let probe = LinuxFsProbe { login_and_runtime_uids: vec![] };
+            let through_real = probe.stat(real.to_str().unwrap()).expect("the real file is stat-able");
+            assert_eq!(through_real.sha256, pinned, "NM-FS-03 control: the probe measures the real file");
+            let through_link = probe.stat(link.to_str().unwrap()).expect("the link itself is stat-able");
+            assert_eq!(
+                through_link.sha256, "",
+                "NM-FS-03: the probe followed a symlink and measured its target"
+            );
+
+            let art = artifact(ROOT_ANCHOR_ROLE, real.to_str().unwrap(), b"0123456789");
+            assert_eq!(read_pinned_artifact(&art, 64).unwrap(), b"0123456789", "NM-FS-03 control");
+            let art = artifact(ROOT_ANCHOR_ROLE, link.to_str().unwrap(), b"0123456789");
+            let why = read_pinned_artifact(&art, 64).unwrap_err();
+            assert!(why.contains("cannot be opened (O_NOFOLLOW)"), "NM-FS-03: {why}");
+        }
+
         /// The drivers' question, on the real filesystem. An anchor this test's own uid owns is NOT
         /// a TCB-owned file, and a manifest that expects root there refuses it by role — whatever
         /// the file says about itself.
