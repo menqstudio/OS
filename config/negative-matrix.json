@@ -28,18 +28,10 @@
     "NM-ACL-11",
     "NM-ACL-12",
     "NM-ACL-14",
-    "NM-CAP-03",
-    "NM-CONC-03",
     "NM-CONC-04",
-    "NM-CRASH-07",
-    "NM-CRASH-09",
-    "NM-CRASH-11",
     "NM-EVID-12",
-    "NM-EVID-13",
     "NM-FRAME-12",
     "NM-FRAME-19",
-    "NM-FS-02",
-    "NM-FS-03",
     "NM-FS-06",
     "NM-IPC-01",
     "NM-NORELAUNCH-04",
@@ -51,14 +43,11 @@
     "NM-PARITY-07",
     "NM-TCB-02",
     "NM-TCB-12",
-    "NM-TCB-13",
-    "NM-TCB-14",
     "NM-TCB-20",
     "NM-TCB-24",
     "NM-TIME-15",
     "NM-XBIND-05",
-    "NM-XBIND-10",
-    "NM-XBIND-13"
+    "NM-XBIND-10"
   ],
   "cases": {
     "NM-REPLAY-01": {
@@ -626,10 +615,10 @@
       "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_06_a_restart_finding_lease_ready_inside_the_window_completes_it"
     },
     "NM-CRASH-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "`LEASE_READY` found on restart, lease **expired**",
       "section": "§5(8a), §5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_07_a_restart_finding_lease_ready_past_its_window_expires_it"
     },
     "NM-CRASH-08": {
       "status": "implemented",
@@ -638,10 +627,10 @@
       "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_08_a_cut_before_the_launcher_call_leaves_execution_starting_unlaunched"
     },
     "NM-CRASH-09": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "inside the launcher, before `exec`",
       "section": "§5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_09_a_launcher_that_dies_before_exec_is_recovery_required"
     },
     "NM-CRASH-10": {
       "status": "implemented",
@@ -650,10 +639,10 @@
       "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_10_a_child_that_exits_before_executing_is_persisted_is_not_relaunched"
     },
     "NM-CRASH-11": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "a remote model call occurred but no output/receipt exists",
       "section": "§5 neg-tests",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_governed_acceptance.py::CrashCutTests::test_nm_crash_11_a_started_child_that_leaves_no_output_is_recovery_required"
     },
     "NM-CRASH-12": {
       "status": "implemented",
@@ -722,10 +711,10 @@
       "test": "engine/tests/test_negative_matrix.py::NegativeMatrixReplayTests::test_nm_conc_02_a_lost_acceptance_cas_is_an_acceptance_conflict"
     },
     "NM-CONC-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Evidence-floor serialization",
       "section": "§7 (P1-7)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixConcurrencyTests::test_nm_conc_03_a_second_connection_waits_for_the_floor_and_is_judged_on_the_new_one"
     },
     "NM-CONC-04": {
       "status": "unreviewed",
@@ -890,10 +879,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-EVID-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Out-of-scope honesty",
       "section": "§7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_negative_matrix.py::NegativeMatrixOutOfScopeHonestyTests::test_nm_evid_13_a_full_database_restore_rolls_the_floor_back_and_nothing_notices"
     },
     "NM-FS-01": {
       "status": "blocked",
@@ -902,16 +891,16 @@
       "blocked_on": "An `O_NOFOLLOW` open in the protected content-addressed store does not exist. MEASURED 2026-09-19: `grep -n NOFOLLOW engine/runtime/brops_evidence_store.py` = 0 hits; `EvidenceStore.read` (engine/runtime/brops_evidence_store.py:323-332) is `path.read_bytes()` and `has` (320-321) is `.exists()`, both of which follow a symlink; the only O_NOFOLLOW in engine/runtime is floor_writer.py:385/482 (a different store). What must exist first: `EvidenceStore.read`/`has` opening `root/<handle>` via `os.open(path, os.O_RDONLY | os.O_NOFOLLOW)` + `os.fstat` with an `S_ISREG` check (the §11 preamble's \"O_NOFOLLOW opens, fstat the opened fd (never a path re-lookup)\"), refusing a symlinked handle as an open failure rather than only by re-hash; and, for the `0640 non-owner cannot chmod/symlink-swap` limb, the same §2.3 real-path `store/sup/` + `store/rec/` split and per-principal prover that NM-ACL-01/02 are blocked on. The Rust recorder's `open_ro` (apps/desktop/src-tauri/proof/src/bin/governed_recorder.rs:716-722) already opens O_NOFOLLOW but is a closure inside the Linux fork path with no callable seam and no symlink negative control in engine/ci."
     },
     "NM-FS-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Executor image symlink",
       "section": "§4.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/launcher/src/main.rs::linux::syscall_checks::nm_fs_02_a_symlinked_executor_image_is_refused"
     },
     "NM-FS-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "TCB path symlink",
       "section": "§2.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/broker/src/tcb_probe.rs::tests::pinned_reads::nm_fs_03_a_symlinked_tcb_artifact_is_refused_by_the_probe_and_by_the_pinned_read"
     },
     "NM-FS-04": {
       "status": "implemented",
@@ -1220,16 +1209,16 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-TCB-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Launcher wrong caller",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/launcher/src/main.rs::linux::syscall_checks::nm_tcb_13_an_invoker_that_is_not_the_recorder_is_refused"
     },
     "NM-TCB-14": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Launcher extra argv/env/FD",
       "section": "§9(m)",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/launcher/tests/nm_tcb_14.rs::nm_tcb_14_extra_argv_a_non_empty_environment_or_an_extra_fd_is_refused"
     },
     "NM-TCB-15": {
       "status": "implemented",
@@ -1310,10 +1299,10 @@
       "blocked_on": "The governed-turn lease validator this row names does not exist. `validate_governed_turn_lease` has ZERO occurrences in any .py/.rs/.ts/.tsx/.json/.sql under engine/, apps/desktop/src-tauri/, bridge/ or contracts/, and so does the capability literal `INVOKE_GOVERNED_MODEL` that defines the closed governed-model-turn-v1 profile. There is a base `validate_execution_lease` (engine/runtime/bro_execution_lease.py) but it is a different artifact type; testing it would bind this row to a control it does not describe."
     },
     "NM-CAP-03": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Base-validator confusion",
       "section": "§4.3, §8",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_execution_leases.py::ExecutionLeaseTests::test_nm_cap_03_a_governed_turn_lease_is_refused_by_the_base_validator"
     },
     "NM-CAP-04": {
       "status": "blocked",
@@ -1454,10 +1443,10 @@
       "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_xbind_12_a_wrong_isolated_signer_key_blocks"
     },
     "NM-XBIND-13": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Attestation digest bind",
       "section": "§7.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_verification.rs::tests::nm_xbind_13_evidence_that_differs_only_in_bytes_is_refused_by_the_envelope_digest"
     },
     "NM-PARITY-01": {
       "status": "implemented",

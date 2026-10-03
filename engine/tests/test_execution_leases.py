@@ -139,6 +139,48 @@ class ExecutionLeaseTests(unittest.TestCase):
                 self.validate(value, temp)
             self.assertIn("allowed_egress", str(caught.exception))
 
+    def test_nm_cap_03_a_governed_turn_lease_is_refused_by_the_base_validator(self):
+        """NM-CAP-03 -- a governed-turn lease presented to the base `validate_execution_lease`.
+
+        The base validator must refuse the governed keys AS UNEXPECTED. The key set is
+        compared for equality, not for containment, and that is the whole control: a validator
+        that only asked "are my twenty keys here" would accept a base lease carrying a governed
+        field it never reads, and the two lease kinds would stop being distinguishable.
+
+        Two shapes, because they prove different things:
+
+          * the payload the supervisor actually builds today (`_lease_payload`, five keys). It
+            is refused -- but it shares no key with a base lease except `lease_id`, so that
+            refusal alone would survive a validator that checked only for MISSING keys;
+          * a VALID base lease plus exactly one governed key. Nothing is missing, so the only
+            thing that can refuse it is the unexpected-key half. This is the one that goes red
+            when the equality is weakened to a subset test.
+
+        What it does not establish: the §4.3 `brops.governed-turn-lease.v1` artifact (with
+        `generation_config_sha256` / `model_profile_id`) is not built in this tree, so those
+        two names are presented here as bare keys, not as a signed governed lease.
+        """
+        case = "NM-CAP-03"
+        import governed_supervisor as gs
+        governed = dict(gs._lease_payload(gs.Lease(
+            lease_id="lease-000000000001", execution_attempt_id="att-1",
+            lease_expires_at_ms=1_000_000 + 210_000,
+            launcher_executable_sha256="a" * 64, executor_executable_sha256="b" * 64)))
+        with tempfile.TemporaryDirectory() as temp:
+            self.validate(payload(temp), temp)            # the control: a base lease is valid
+            with self.assertRaises(LeaseError) as caught:
+                self.validate(governed, temp)
+            self.assertIn("unexpected=['execution_attempt_id'", str(caught.exception), case)
+
+            for key in sorted(set(governed) - {"lease_id"}) + ["generation_config_sha256",
+                                                               "model_profile_id"]:
+                value = payload(temp)
+                value[key] = "x"
+                with self.assertRaises(LeaseError, msg=f"{case}: {key}") as caught:
+                    self.validate(value, temp)
+                self.assertIn(f"(missing=[], unexpected=['{key}'])", str(caught.exception),
+                              f"{case}: {key} was not refused AS an unexpected key")
+
     def test_an_empty_egress_list_is_the_valid_state_at_this_head(self):
         """No class in CLASS_CAPABILITIES holds USE_NETWORK, so every valid
         lease today names no destination. The axis exists and states "none"."""

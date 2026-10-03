@@ -1162,6 +1162,74 @@ mod linux {
         }
         Err(Refusal::Syscall("fexecve"))
     }
+
+    // -----------------------------------------------------------------------------------------------
+    // Tests of the PRIVATE syscall-level checks. They live here, inside `mod linux`, because the
+    // sibling `mod tests` below cannot reach a private fn of this module — and until these existed,
+    // `open_executor_image` and `verify_invoker_is_recorder` were exercised only by the root live kit's
+    // positive turn, never by a refusal. They run unprivileged: no setuid, no lease, no exec.
+    // -----------------------------------------------------------------------------------------------
+    #[cfg(test)]
+    mod syscall_checks {
+        use super::*;
+
+        /// A root-owned, regular, non group/other-writable binary every Linux box has: what `/bin/sh`
+        /// resolves to. It stands in for the executor image — the checks under test read its owner, its
+        /// mode and its bytes, and never run it.
+        fn system_binary() -> (String, String) {
+            let path = std::fs::canonicalize("/bin/sh").expect("/bin/sh resolves");
+            let bytes = std::fs::read(&path).expect("/bin/sh is readable");
+            (path.to_str().unwrap().to_string(), brops_core::receipt::sha256_hex(&bytes))
+        }
+
+        /// NM-FS-02 — the executor image path is a symlink at launch ⇒ refuse.
+        ///
+        /// §4.7: the launcher opens `O_NOFOLLOW | O_RDONLY | O_CLOEXEC`, `fstat`s that fd and re-hashes
+        /// the bytes behind it. The link here points at the RIGHT image, pinned at the RIGHT digest, so
+        /// following it would pass the owner check, the mode check and the hash — `O_NOFOLLOW` is the
+        /// only thing that can refuse it. The control is the same call on the real path.
+        ///
+        /// Not shown here: that `fexecve` is then handed this same fd. Only the root kit's positive turn
+        /// witnesses that.
+        #[test]
+        fn nm_fs_02_a_symlinked_executor_image_is_refused() {
+            let (real, digest) = system_binary();
+            let fd = open_executor_image(&real, &digest)
+                .expect("NM-FS-02 control: the real image at its pinned digest opens");
+            unsafe { libc::close(fd) };
+
+            let dir = std::env::temp_dir().join(format!("brops-nm-fs-02-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let link = dir.join("executor");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let refused = open_executor_image(link.to_str().unwrap(), &digest);
+            let _ = std::fs::remove_dir_all(&dir);
+            assert_eq!(
+                refused,
+                Err(Refusal::ImageIntegrity),
+                "NM-FS-02: a symlink to the pinned image was opened"
+            );
+        }
+
+        /// NM-TCB-13 — the launcher is invoked by a UID that is not the recorder ⇒ refuse.
+        ///
+        /// The gate reads the REAL uid and gid (`getresuid` / `getresgid`) and holds both to the
+        /// recorder the lease names. This process IS its own invoker, so naming itself is the control,
+        /// and naming any other uid, or any other gid, is the fault.
+        ///
+        /// What this does not establish: that `real_main` CALLS the gate before the drop. It is a test
+        /// of the comparison. End to end — a second account running the setuid binary — needs a
+        /// root-owned lease and is not in any kit yet.
+        #[test]
+        fn nm_tcb_13_an_invoker_that_is_not_the_recorder_is_refused() {
+            let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+            assert_eq!(verify_invoker_is_recorder(uid, gid), Ok(()), "NM-TCB-13 control");
+            let refused = Err(Refusal::TcbIntegrity("invoker-not-recorder"));
+            assert_eq!(verify_invoker_is_recorder(uid + 1, gid), refused, "NM-TCB-13: wrong uid");
+            assert_eq!(verify_invoker_is_recorder(uid, gid + 1), refused, "NM-TCB-13: wrong gid");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------

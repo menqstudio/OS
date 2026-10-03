@@ -111,13 +111,17 @@
       ]
     },
     "engine_tests": {
-      "value": 2731,
+      "value": 2737,
       "command": "BRO_ENV=ci python -m unittest discover -s engine/tests -t engine/tests -q",
       "derive": null,
       "measured": {
-        "date": "2026-10-02",
-        "head": "e514f36",
+        "date": "2026-10-03",
+        "head": "f1a941d",
         "environments": {
+          "Debian 13 (trixie) native @ f1a941d + T-062 slice (six matrix rows bound), system python": {
+            "ran": 2737,
+            "skipped": 17
+          },
           "Debian 13 (trixie) native @ e514f36 + T-165, system python (cryptography 43)": {
             "ran": 2731,
             "skipped": 17

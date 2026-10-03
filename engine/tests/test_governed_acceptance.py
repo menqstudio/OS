@@ -1101,6 +1101,108 @@ class CrashCutTests(_Case):
         self.assertEqual(again, reply, f"{case}: the completed turn was not idempotent")
         self.assertEqual(len(self.executor.runs), 1, f"{case}: a completed turn executed again")
 
+    def test_nm_crash_07_a_restart_finding_lease_ready_past_its_window_expires_it(self):
+        """NM-CRASH-07 -- `LEASE_READY` found on restart with the lease EXPIRED: `EXPIRED`, zero launch.
+
+        The mirror of NM-CRASH-06, cut at the same clock read and restarted from the same ledger
+        FILE, with one thing changed: the restart's clock is one millisecond past
+        `lease_expires_at_ms`.
+
+        `failure_reason` is asserted, not only the state. `lease_launch_gate` has two limbs that
+        both end in `EXPIRED` -- past the window, and too little budget left -- and with the
+        first one deleted the second still expires this row, as `insufficient_execution_budget`.
+        A test that stopped at `EXPIRED` would stay green over a gate that no longer knows a
+        lease can run out.
+        """
+        case = "NM-CRASH-07"
+        document, _handle = self.ready_turn()
+        clock, reads = self._counting_clock(raise_on=3)
+        with self.assertRaises(KeyboardInterrupt):
+            self.trigger(document, driver=self.driver(clock_ms=clock))
+        self.assertEqual(len(reads), 3, f"{case}: the cut was not at the third read")
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.LEASE_READY, case)
+        expires = row["lease_expires_at_ms"]
+
+        self.conn.close()
+        self.conn = gsl.open_ledger(self.ledger_path)
+        self.assertEqual(self.acceptance_row(document)["state"], gsl.LEASE_READY,
+                         f"{case}: LEASE_READY did not survive on disk")
+
+        self.assertRefused(
+            self.trigger(document, driver=self.driver(clock_ms=lambda: expires + 1)),
+            "lease_expired")
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.EXPIRED, case)
+        self.assertEqual(row["failure_reason"], "lease_expired", case)
+        self.assertEqual(self.executor.runs, [], f"{case}: a child was launched under a dead lease")
+
+        # ... and a clock that goes back inside the window does not revive it.
+        self.assertRefused(
+            self.trigger(document, driver=self.driver(clock_ms=lambda: self.clock + 1_000)),
+            "lease_expired")
+        self.assertEqual(self.executor.runs, [], f"{case}: an EXPIRED attempt was launched")
+
+    def _assert_recovery_required_and_nothing_minted(self, case, document):
+        row = self.acceptance_row(document)
+        self.assertEqual(row["state"], gsl.RECOVERY_REQUIRED, case)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM governed_turn_completion").fetchone()[0], 0,
+            f"{case}: a completion was recorded for an attempt that produced nothing")
+        self.assertIsNone(
+            gsl.load_attestation_state(self.conn, row["run_id"], row["execution_attempt_id"]),
+            f"{case}: terminal attestation state exists, so something could be signed")
+        fresh = _Executor(self)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=fresh)),
+                           "not_completed")
+        self.assertEqual(fresh.runs, [], f"{case}: the attempt was relaunched")
+        return row
+
+    def test_nm_crash_09_a_launcher_that_dies_before_exec_is_recovery_required(self):
+        """NM-CRASH-09 -- the cut is inside the launcher, before `exec`.
+
+        What the supervisor sees of that: the execution seam fails and the child was never
+        confirmed started. The executor here raises WITHOUT calling `on_started`, so the row is
+        still `EXECUTION_STARTING` when the failure arrives and carries no process metadata.
+
+        What this does NOT establish: that a real setuid launcher dying before `execve` reaches
+        the supervisor as a seam failure. No launcher runs in this suite; the only non-test
+        `ExecutionService` implementations are `RefusingExecutor` and the Linux kit's. The fault
+        injected is the one NM-NORELAUNCH-02 injects -- the two rows meet at one control,
+        the driver's seam-failure arm, and this is not a second defence.
+        """
+        case = "NM-CRASH-09"
+        document, _handle = self.ready_turn()
+        executor = _Executor(self, fail=RuntimeError("launcher died before exec"),
+                             skip_started=True)
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=executor)),
+                           "not_completed")
+        self.assertEqual(len(executor.runs), 1, f"{case}: the seam was never reached")
+        row = self._assert_recovery_required_and_nothing_minted(case, document)
+        self.assertIsNone(row["process_group_id"],
+                          f"{case}: process metadata exists for a child that never started")
+
+    def test_nm_crash_11_a_started_child_that_leaves_no_output_is_recovery_required(self):
+        """NM-CRASH-11 -- a remote model call may have happened and no output or receipt exists.
+
+        The child is confirmed started (`EXECUTING`, process metadata durable) and the seam then
+        fails with nothing published. The supervisor cannot tell "never called the model" from
+        "called it and died", so the only safe state is `RECOVERY_REQUIRED`: an external effect
+        is possible, nothing is signed, and the attempt is never run again.
+
+        "A remote model call occurred" is modelled as exactly that -- started, then nothing. No
+        model is called here.
+        """
+        case = "NM-CRASH-11"
+        document, _handle = self.ready_turn()
+        executor = _Executor(self, fail=RuntimeError("model called, no output"))
+        self.assertRefused(self.trigger(document, driver=self.driver(execution=executor)),
+                           "not_completed")
+        row = self._assert_recovery_required_and_nothing_minted(case, document)
+        self.assertEqual(row["process_group_id"], "4242",
+                         f"{case}: the child was never recorded as started, so this was CRASH-09")
+        self.assertEqual(self.run_evidence, {}, f"{case}: run evidence exists without an output")
+
 
 class RefusalsAreReachableTests(_Case):
 
