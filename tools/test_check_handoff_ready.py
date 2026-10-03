@@ -34,7 +34,10 @@ def build_repo(tmp: pathlib.Path) -> pathlib.Path:
     """A repository that is ready to hand over: committed, pushed, in budget, and
     whose NEXT_CHAT.md names the branch, the head and a next action."""
     origin = tmp / "origin.git"
-    subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+    # `-b trunk`: the branch is NAMED, never whatever `init.defaultBranch` says on this machine.
+    # A fixture that is called `main` on one box and `master` on another has an origin/main on
+    # the first only, and CanonBesideLiveMain is about exactly that ref.
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "trunk", str(origin)], check=True)
     work = tmp / "work"
     subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
     git(work, "config", "user.name", "Test")
@@ -237,6 +240,78 @@ class HandoffReady(unittest.TestCase):
         git(solo, "add", "-A")
         git(solo, "commit", "-qm", "only")
         self.assertEqual(check_handoff_ready.main(solo, env={}), 1)
+
+
+class CanonBesideLiveMain(unittest.TestCase):
+    """T-167. GREEN was read as "the canon is current". The handoff is accepted when it names
+    HEAD's parent, so after a settle merges the documents name the head before it and the gate
+    is green; the two heads are printed side by side when they differ."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="handoff-"))
+        self.work = build_repo(self.tmp)
+
+    def said(self) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(check_handoff_ready.main(self.work, env={}), 0, out.getvalue())
+        return out.getvalue()
+
+    def publish_main(self) -> None:
+        git(self.work, "branch", "-f", "main", "HEAD")
+        git(self.work, "push", "-q", "-f", "origin", "main")
+        git(self.work, "fetch", "-q", "origin")
+
+    def test_a_canon_one_commit_behind_main_prints_both_heads(self):
+        """The fixture as built IS the case: the settle commit names its own parent. Mutant:
+        delete the `canon_beside_main` loop in main() => neither head is printed."""
+        self.publish_main()
+        head = head_of(self.work)
+        named = subprocess.run(["git", "-C", str(self.work), "rev-parse", "HEAD^"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+        said = self.said()
+        self.assertIn(f"canon  : names main @ {named[:7]}", said)
+        self.assertIn(f"main   : {head}", said)
+        self.assertIn("1 commit past it", said)
+        self.assertIn("does NOT say the canon names", said)
+
+    def test_a_canon_that_names_the_live_main_prints_nothing_extra(self):
+        """The control: a branch whose handoff names the merge base. Mutant: drop the
+        `full == live` return => the lines appear here too."""
+        self.publish_main()
+        base = head_of(self.work)
+        git(self.work, "checkout", "-q", "-b", "feature")
+        git(self.work, "push", "-q", "-u", "origin", "feature")
+        write_handoff(self.work, head=base, branch="feature")
+        commit(self.work, "handoff names the merge base")
+        said = self.said()
+        self.assertNotIn("canon  :", said)
+        self.assertNotIn("does NOT say", said)
+
+    def test_the_live_block_is_read_before_the_mirror(self):
+        """NEXT_CHAT.md's "`main` @ `<head>`" is what a reader sees; the mirror is the fallback.
+        Mutant: skip the regex and read the mirror => the older head and "2 commits" print."""
+        older = subprocess.run(["git", "-C", str(self.work), "rev-parse", "HEAD^"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+        named = head_of(self.work)
+        branch = branch_of(self.work)
+        (self.work / "NEXT_CHAT.md").write_text(
+            f"# NEXT_CHAT\n\n**Active branch:** `{branch}` — `main` @ `{named[:7]}`.\n\n"
+            "**Next:** continue.\n", encoding="utf-8")
+        (self.work / "config" / "current_state.json").write_text(
+            json.dumps({"settled_at_main_head": older}), encoding="utf-8")
+        commit(self.work, "the line and the mirror name different heads")
+        self.publish_main()
+        said = self.said()
+        self.assertIn(f"canon  : names main @ {named[:7]}", said)
+        self.assertIn("1 commit past it", said)
+
+    def test_a_clone_with_no_main_says_it_did_not_compare(self):
+        """"I could not check" is not silence. Mutant: return [] when main does not resolve."""
+        self.assertEqual(branch_of(self.work), "trunk")     # the fixture has no `main` at all
+        said = self.said()
+        self.assertIn("main   : not resolvable in this clone", said)
+        self.assertIn("NOT compared", said)
 
 
 class CiCheckout(unittest.TestCase):

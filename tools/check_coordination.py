@@ -460,6 +460,15 @@ def _check_current_state(root: pathlib.Path) -> list[str]:
             for f in ("number", "branch", "base"):
                 if cw.get(f) in (None, ""):
                     problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr.{f} is required")
+            # A STORED state is a claim nothing reads and the merge falsifies (T-167). The block
+            # carried `"state": "open"` by hand; `check_repo_state` asks GitHub for the carrier's
+            # state and never looked at it, so on `main` it said "open" about a merged pull
+            # request after every settle, and no gate could go red for it.
+            if "state" in cw:
+                problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr.state must not be stored "
+                                f"(found {cw.get('state')!r}): it is written inside the pull request and "
+                                f"read after its merge, so 'open' becomes false on main. The live state "
+                                f"is GitHub's, read by tools/check_repo_state.py — delete the key")
             if cw.get("number") in {p.get("number") for p in prs if isinstance(p, dict)}:
                 problems.append(f"{CURRENT_STATE_JSON}: current_workflow_pr #{cw.get('number')} must NOT also be "
                                 f"listed in prs[] (a self-carrier cannot exact-head-verify itself; it uses the "

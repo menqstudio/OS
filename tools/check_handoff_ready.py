@@ -291,6 +291,65 @@ def check_phase_declared(root: pathlib.Path, session: str | None, res: Result) -
                 'python tools/check_roadmap_order.py --declare <n|meta> --note "..."')
 
 
+#: The head the live handoff block says `main` is at, as `tools/sync_active_pr.py` writes it on
+#: the `**Active branch:**` line: "`main` @ `<hex>`".
+_NAMED_MAIN_RE = re.compile(r"`main`\s*@\s*`([0-9a-f]{7,40})`")
+
+
+def named_main_head(root: pathlib.Path) -> str | None:
+    """The `main` the canon NAMES: NEXT_CHAT.md's live block first, else the mirror's settled head."""
+    try:
+        lines = (root / "NEXT_CHAT.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    found = _NAMED_MAIN_RE.search("\n".join(lines[:LIVE_BLOCK_LINES]))
+    if found:
+        return found.group(1)
+    try:
+        state = json.loads((root / "config" / "current_state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    settled = state.get("settled_at_main_head") if isinstance(state, dict) else None
+    return settled if isinstance(settled, str) and re.fullmatch(r"[0-9a-f]{7,40}", settled) else None
+
+
+def canon_beside_main(root: pathlib.Path) -> list[str]:
+    """What to print under GREEN when the canon's `main` is not this clone's `main`. T-167.
+
+    GREEN was being read as "the canon is current". It never said that, and it cannot: the
+    handoff is accepted when it names HEAD's parent, because a document cannot name the commit
+    that contains it -- so on `main`, after the pull request that settled the canon has merged,
+    the documents name the head BEFORE that merge and this gate is green. On 2026-10-03 it said
+    GREEN at `9bafc6e` over banners reading "`main` is at `9c1eb20`, the only thing open is
+    #337", with #337 merged. Both heads are printed side by side now, with the distance.
+
+    Empty when they are the same commit: a pull-request branch whose handoff names the merge
+    base says nothing extra. This changes no verdict -- the questions above decide GREEN.
+    """
+    named = named_main_head(root)
+    if not named:
+        return ["  canon  : names no `main` head this gate could read, so nothing was compared"]
+    code, live = git(root, "rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+    if code != 0 or not live:
+        code, live = git(root, "rev-parse", "--verify", "--quiet", "main^{commit}")
+    if code != 0 or not live:
+        return [f"  main   : not resolvable in this clone, so the head the canon names "
+                f"({named[:7]}) was NOT compared with it"]
+    code, full = git(root, "rev-parse", "--verify", "--quiet", named + "^{commit}")
+    if code == 0 and full == live:
+        return []
+    distance = "at a commit this clone cannot place before it"
+    if code == 0:
+        code, count = git(root, "rev-list", "--count", f"{full}..{live}")
+        if code == 0 and count.isdigit() and int(count) > 0:
+            distance = f"{count} commit{'' if count == '1' else 's'} past it"
+    return [f"  canon  : names main @ {named[:7]}",
+            f"  main   : {live}  ({distance}; origin/main as last fetched)",
+            "",
+            "  GREEN says this repository can carry the work. It does NOT say the canon names",
+            f"  the newest main: its documents are a record as of {named[:7]}."]
+
+
 def main(root: pathlib.Path = ROOT, session: str | None = None,
          env: dict[str, str] | None = None) -> int:
     ci = ci_checkout(root, env)
@@ -320,6 +379,8 @@ def main(root: pathlib.Path = ROOT, session: str | None = None,
     print("GREEN: a new session can take over from this repository alone.\n")
     print(f"  branch : {branch}")
     print(f"  head   : {sha}")
+    for line in canon_beside_main(root):
+        print(line)
     print("\nIt is now true, and may be said out loud:")
     print("  \"Open a fresh session. Everything it needs is committed and pushed.\"")
     return 0

@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `9c1eb20`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `9bafc6e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `9c1eb20`.** The only thing open is PR #337 on `t166/stamp-retries-a-failed-write`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `9bafc6e`.** PR #338 on `t167/settle-banner-true-after-merge` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** nothing is claimed. T-166 rides this PR: a stamp that fails once is retried.
+> **Next:** T-062. T-167 rides this PR: a settle stays true after its merge.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -55,7 +55,7 @@ python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real
 python3 tools/check_no_assumptions.py     # no unmarked guess in the canon
-python3 tools/check_handoff_ready.py      # a new session could take over
+python3 tools/check_handoff_ready.py      # a new session could take over; prints live main beside the canon's (T-167)
 python3 tools/check_version_parity.py     # one product, one version, in all four files
 ```
 
@@ -106,7 +106,7 @@ once and watch a NAMED test go red. Both in full: CLAUDE.md §5 and §7 rule 4.
 
 ## Where the state lives
 
-CLAUDE.md §3 is the one table; this was a third copy of it. The two to open first:
+CLAUDE.md §3 is the one table. The two to open first:
 [`config/current_state.json`](config/current_state.json) — the machine mirror, verified against
 live GitHub by `tools/check_repo_state.py` — and
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md), the audit position.
