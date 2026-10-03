@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `e514f36`.** The only thing open is PR #336 on `t165/cryptography-50`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED — `main` is at `9c1eb20`.** The only thing open is PR #337 on `t166/stamp-retries-a-failed-write`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** nothing is claimed. T-165 rides this PR: cryptography 50.0.2, four waivers deleted; the Architect's audit is GREEN.
+> **Next:** nothing is claimed. T-166 rides this PR: a stamp that fails once is retried.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

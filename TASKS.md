@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `e514f36`.** The only thing open is PR #336 on `t165/cryptography-50`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED — `main` is at `9c1eb20`.** The only thing open is PR #337 on `t166/stamp-retries-a-failed-write`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** nothing is claimed. T-165 rides this PR: cryptography 50.0.2, four waivers deleted; the Architect's audit is GREEN.
+> **Next:** nothing is claimed. T-166 rides this PR: a stamp that fails once is retried.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-166** | **A stamp that fails once is asked about, then tried again** — one empty answer from GitHub turned `#336`'s green head red at the stamp step; a failed write is retried only if the body does not already name the head, three attempts in all; 3 mutants, 3 deaths ◑ | Bro | In-Progress | `t166/stamp-retries-a-failed-write` |
+| **T-166** | **A stamp that fails once is asked about, then tried again** — one empty answer from GitHub turned `#336`'s green head red at the stamp step; a failed write is retried only if the body does not already name the head, three attempts in all; 3 mutants, 3 deaths ◑ | Bro | Review | `#337` |
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
