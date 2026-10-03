@@ -485,6 +485,19 @@ class EveryValidationArm(unittest.TestCase):
         self.assertReports("current_workflow_pr must be an object",
                            lambda cs: cs.update(current_workflow_pr="PR 33"))
 
+    def test_a_carrier_that_stores_its_own_state(self):
+        """T-167. Mutation: delete the `"state" in cw` arm -- this goes red, and the control
+        below stays green either way."""
+        def mutate(cs):
+            cs["current_workflow_pr"] = {"number": 33, "branch": BRANCH_31, "base": "main",
+                                         "state": "open"}
+        self.assertReports("current_workflow_pr.state must not be stored", mutate)
+
+    def test_a_carrier_without_a_stored_state_is_not_reported_for_it(self):
+        def mutate(cs):
+            cs["current_workflow_pr"] = {"number": 33, "branch": BRANCH_31, "base": "main"}
+        self.assertFalse(any("must not be stored" in p for p in self._problems(mutate)))
+
     def test_a_carrier_transition_that_is_not_an_object(self):
         self.assertReports("carrier_transition must be an object when present",
                            lambda cs: self._carrier(cs).update(carrier_transition="soon"))

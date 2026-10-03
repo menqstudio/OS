@@ -343,7 +343,7 @@
       ]
     },
     "tasks_archive_2026_09_rows": {
-      "value": 83,
+      "value": 84,
       "command": "grep -cE '^\\| \\*\\*T-[0-9]+\\*\\*' docs/archive/TASKS_ARCHIVE_2026-09.md",
       "derive": {
         "line_regex": "docs/archive/TASKS_ARCHIVE_2026-09.md::^\\| \\*\\*T-\\d+\\*\\*"

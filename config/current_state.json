@@ -115,7 +115,6 @@
   "current_workflow_pr": {
     "number": 337,
     "branch": "t166/stamp-retries-a-failed-write",
-    "state": "open",
     "what": "The settle commit: records that main is at 9c1eb20 and carries no product change.",
     "note": "Settling the state anchor at main 9c1eb20. Nothing else is open; this pull request is the commit that records it.",
     "base": "main"

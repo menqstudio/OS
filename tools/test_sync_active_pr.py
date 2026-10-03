@@ -1049,6 +1049,64 @@ class SettleWritesOneAnswer(_Repository):
         self.assertEqual(mirror["sync"]["baseline_main_head_at_sync"], self.HEAD)
 
 
+class ASettleStaysTrueAfterItsOwnMerge(_Repository):
+    """T-167. A settle is written inside a pull request and read on `main` after that pull
+    request merged. "`main` is at X. The only thing open is PR #N" was true for the first and
+    false for the second -- on main, after every settle, with nothing able to go red for it."""
+
+    PARKED = {"number": 112, "headRefName": "design/parked", "headRefOid": "c" * 40,
+              "baseRefName": "main", "isDraft": False, "title": "A parked proposal"}
+
+    def settle(self, role_pairs=None):
+        self.run_quietly(sap.settle, self.HEAD, None, 302, "chore/settle", None, role_pairs)
+
+    def banner(self, name: str) -> str:
+        text = (self.root / name).read_text(encoding="utf-8")
+        return text[text.index(sap.BANNER_OPEN):text.index(sap.BANNER_CLOSE)]
+
+    def test_the_banner_says_as_of_and_where_the_live_head_is_read(self):
+        """Mutation: put "`main` is at" back in the lead, or drop the `git log -1` clause from
+        settled_carrier_sentence -- either turns this red."""
+        self.settle()
+        for name in sap.BANNER_FILES:
+            banner = self.banner(name)
+            self.assertIn("SETTLED as of `main` `" + self.HEAD[:7] + "`", banner, name)
+            self.assertNotIn("`main` is at", banner, name)
+            self.assertIn("git log -1", banner, name)
+            self.assertIn("PR #302 on `chore/settle`", banner, name)
+
+    def test_the_banner_does_not_call_its_own_pull_request_open(self):
+        """Nothing else is open in this fixture, so the word has no honest use anywhere in the
+        banner. Mutation: restore "The only thing open is PR #N" -- red."""
+        self.settle()
+        for name in sap.BANNER_FILES:
+            self.assertNotIn("open", self.banner(name).lower(), name)
+
+    def test_a_parked_pull_request_is_still_named_open_and_the_carrier_still_is_not(self):
+        """The control for the test above: "open" is not banned, it is kept for what the gate
+        anchors -- a prs[] entry, exact head -- and refused for the carrier."""
+        self.addCleanup(setattr, sap, "live_open_prs", sap.live_open_prs)
+        sap.live_open_prs = lambda: [dict(self.PARKED)]
+        self.settle(["112=design"])
+        banner = self.banner("NEXT_CHAT.md")
+        self.assertIn("Also open, and deliberately not merged here: PR #112", banner)
+        before_parked = banner[:banner.index("Also open")]
+        self.assertIn("PR #302", before_parked)
+        self.assertNotIn("open", before_parked.lower())
+
+    def test_the_mirror_prose_is_true_on_both_sides_of_the_merge(self):
+        """Mutation: restore "Nothing else is open" in the note, or "carries no product change"
+        in `what` -- red."""
+        self.settle()
+        carrier = self.mirror()["current_workflow_pr"]
+        self.assertIn("as of main " + self.HEAD[:7], carrier["note"])
+        self.assertIn("as of main " + self.HEAD[:7], carrier["what"])
+        for field in ("note", "what"):
+            self.assertNotIn("is open", carrier[field], field)
+            self.assertNotIn("main is at", carrier[field], field)
+        self.assertNotIn("no product change", carrier["what"])
+
+
 class ASwapThatFindsNothingRefuses(_StateFile):
     """`swap()` was silent when its text was absent, which is how two swaps went on "patching"
     sentences the mirror had not carried for months."""

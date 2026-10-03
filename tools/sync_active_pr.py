@@ -862,6 +862,18 @@ def _print_main_ci(reading: dict, written: list[str]) -> None:
                  " -- not green: " + ("; ".join(r["failing"]) if r["failing"] else "jobs unlisted")))
 
 
+def settled_carrier_sentence(pr: int, branch: str) -> str:
+    """Which pull request records a settle, in words that survive that pull request's merge.
+
+    It names the pull request and the branch -- `check_coordination` requires the documents to
+    name `active.branch` -- and says nothing about whether it is open: that is GitHub's to
+    answer, live, and `check_repo_state` asks it. What it does say is the one thing a reader on
+    `main` needs and the old sentence hid: this text merged AFTER the head it names.
+    """
+    return (" PR #" + str(pr) + " on `" + branch + "` records it and merges after: read the "
+            "live head with `git log -1`.")
+
+
 @_mirror_restored_on_refusal
 def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
            banner: str | None = None, role_pairs: list[str] | None = None) -> int:
@@ -935,13 +947,17 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
               " Also open, and deliberately not merged here: "
               + ", ".join("PR #" + str(p["number"]) + " (`" + p["headRefName"] + "`)"
                           for p in parked) + ".")
-    carrier = (((" The pull request that records it is PR #" + str(pr) + " on `" + branch + "`."
-                 if parked else
-                 " The only thing open is PR #" + str(pr) + " on `" + branch
-                 + "`, the pull request that records it.") + others) if pr and branch
+    #
+    # AND IT HAS TO STAY TRUE AFTER THE PULL REQUEST THAT CARRIES IT MERGES (T-167). It read
+    # "`main` is at X. The only thing open is PR #N" -- both true while #N was open, and both
+    # false on `main` from the moment #N merged: main had moved one commit past X, and #N was
+    # closed. Every settle left that on main, and the next settle did the same in its turn, so
+    # no hand could close it. The banner now says what it can know: the state AS OF X, which
+    # pull request records it, and where the live head is read.
+    carrier = ((settled_carrier_sentence(pr, branch) + others) if pr and branch
                else ((" Nothing is open." if not parked else " Open:" + others)))
     banner_text = banner or (
-        _bounded("> **\u2705 SETTLED \u2014 `main` is at `" + head[:7] + "`.**" + carrier
+        _bounded("> **\u2705 SETTLED as of `main` `" + head[:7] + "`.**" + carrier
                  + " Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`."
                  + tail + "\n>\n> " + audit_position_sentence()))
     locate_banners()
@@ -978,16 +994,19 @@ def settle(head: str, next_up: str | None, pr: int | None, branch: str | None,
     # And the settle commit's OWN pull request becomes the carrier. While it is open, it is the one
     # thing that is open, and the exact-head anchor has to point at it -- otherwise the snapshot
     # names a merged PR's dead branch and the gate refuses the very commit that resolves it.
-    parked_phrase = ("Nothing else is open" if not parked else
+    parked_phrase = ("Nothing else was open when it was written" if not parked else
                      "Also open, and NOT the carrier: "
                      + ", ".join("#" + str(p["number"]) for p in parked)
                      + " (recorded in prs[], exact-head anchored)")
     if pr and branch:
+        # Both sentences are written once and read on both sides of the merge, so neither says
+        # the pull request IS open or that main IS at `head`. `what` also said "and carries no
+        # product change", which this tool never measured and which was false of every settle
+        # pull request a task rode on.
         rewrite_state(pr, branch,
-                      "Settling the state anchor at main " + head[:7] + ". " + parked_phrase
-                      + "; this pull request is the commit that records it.", head,
-                      what="The settle commit: records that main is at " + head[:7]
-                           + " and carries no product change.",
+                      "Settled as of main " + head[:7] + "; this pull request records it and "
+                      "merges after that head. " + parked_phrase + ".", head,
+                      what="The settle commit: records the state as of main " + head[:7] + ".",
                       settled_head=settled)
         rewrite_carrier_block(pr, branch,
                               current="PR #" + str(pr) + " (" + branch + ") settles the state at main "

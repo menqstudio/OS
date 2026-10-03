@@ -55,7 +55,7 @@ python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
 python3 tools/check_doc_claims.py         # paths, commits, tickets, versions are real
 python3 tools/check_no_assumptions.py     # no unmarked guess in the canon
-python3 tools/check_handoff_ready.py      # a new session could take over
+python3 tools/check_handoff_ready.py      # a new session could take over; prints live main beside the canon's (T-167)
 python3 tools/check_version_parity.py     # one product, one version, in all four files
 ```
 
@@ -106,7 +106,7 @@ once and watch a NAMED test go red. Both in full: CLAUDE.md §5 and §7 rule 4.
 
 ## Where the state lives
 
-CLAUDE.md §3 is the one table; this was a third copy of it. The two to open first:
+CLAUDE.md §3 is the one table. The two to open first:
 [`config/current_state.json`](config/current_state.json) — the machine mirror, verified against
 live GitHub by `tools/check_repo_state.py` — and
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](apps/desktop/AUDIT/AUDIT_LEDGER.md), the audit position.
