@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED — `main` is at `9c1eb20`.** The only thing open is PR #337 on `t166/stamp-retries-a-failed-write`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `9bafc6e`.** PR #338 on `t167/settle-banner-true-after-merge` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** nothing is claimed. T-166 rides this PR: a stamp that fails once is retried.
+> **Next:** T-062. T-167 rides this PR: a settle stays true after its merge.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-167** | **A settle stays true after its own merge** — the banner read "`main` is at X, the only thing open is #N" on `main` after #N merged; it says *as of X* now, the mirror stores no carrier `state`, and the handoff gate prints live `main` beside the head the canon names; 10 mutants, 10 deaths ◑ | Bro | In-Progress | — |
+| **T-167** | **A settle stays true after its own merge** — the banner read "`main` is at X, the only thing open is #N" on `main` after #N merged; it says *as of X* now, the mirror stores no carrier `state`, and the handoff gate prints live `main` beside the head the canon names; 10 mutants, 10 deaths ◑ | Bro | Review | `#338` |
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
