@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #336 · branch `t165/cryptography-50`** (base `main`, tip `e514f36`, task T-165).
+> **✅ SETTLED — `main` is at `e514f36`.** The only thing open is PR #336 on `t165/cryptography-50`, the pull request that records it. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> T-165: cryptography 46.0.7 -> 50.0.2 and four advisory waivers deleted. Engine security paths: it waits on the Architect's audit.
+> **Next:** nothing is claimed. T-165 rides this PR: cryptography 50.0.2, four waivers deleted; the Architect's audit is GREEN.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-165** | **cryptography 46.0.7 → 50.0.2, four advisory waivers deleted** — the "bump broke the runtime" note was the health check's own `<47` bound: with 50.0.2 the engine passed 2729 of 2730, the bound the one failure. `pip-audit` with no waiver: clean. **Engine security path: waits on the Architect** ◑ | Bro | Review | `#336` |
+| **T-165** | **cryptography 46.0.7 → 50.0.2, four advisory waivers deleted** — the "bump broke the runtime" note was the health check's own `<47` bound: with 50.0.2 the engine passed 2729 of 2730, the bound the one failure. `pip-audit` with no waiver: clean. Architect audit GREEN ([report](apps/desktop/AUDIT/changes/pr-336-cryptography-50.md)) ◑ | Bro | Review | `#336` |
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
