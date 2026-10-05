@@ -85,7 +85,7 @@ operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured 
 at one file size and not at another (79,665 bytes red, 79,744 green) — and
 `config/required-checks.json` should promote the new Windows tools job once it has one green run.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
-protection is live and verified. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+protection is NOT in force (private; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close

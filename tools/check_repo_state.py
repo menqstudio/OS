@@ -776,6 +776,17 @@ def verify_branch_protection(expected: dict, live: dict | None, why: str = "") -
         # read can never succeed. Refusing here would make the gate permanently red in CI for a
         # reason nobody can act on, which is how a gate gets deleted. It reports and moves on, and
         # `verify_required_contexts_exist` below is the half CI can actually check.
+        # ONE 403 IS NOT ABOUT RIGHTS AT ALL. A private repository on a plan without the
+        # feature answers an ADMIN with 403 "Upgrade to GitHub Pro or make this repository
+        # public to enable this feature": the rules are not unreadable, they are not in force.
+        # That answer was skipped as if it were the workflow token's, so a `main` with no
+        # protection printed the same reassuring line as a protected one nobody could read
+        # (measured 2026-10-05, the day the tools first asked as the repository's owner).
+        if "Upgrade to GitHub" in why or "make this repository public" in why:
+            return [f"branch protection is NOT IN FORCE on this repository: GitHub refuses the "
+                    f"feature itself ({why.strip()}). {REQUIRED_CHECKS.as_posix()} describes "
+                    f"rules that do not exist while the repository is private on this plan; "
+                    f"nothing on GitHub's side stops a push or a merge to main."]
         if "403" in why or "Resource not accessible" in why or "Not Found" in why:
             print(f"  (SKIPPED: branch protection needs admin rights the workflow token cannot "
                   f"hold; {REQUIRED_CHECKS.as_posix()} verified against workflow job names only)",
@@ -1330,4 +1341,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Ask GitHub as this repository's owner whatever `gh` login is active (tools/gh_account.py).
+    # Here and not in main(): a test that calls main() must not start `gh` or gain a token.
+    import gh_account
+    gh_account.use_repo_account()
     raise SystemExit(main())

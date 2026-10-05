@@ -891,6 +891,18 @@ class BranchProtectionReadFailures(unittest.TestCase):
                 self.assertEqual(problems, [])
                 self.assertIn("SKIPPED: branch protection needs admin rights", err)
 
+    def test_a_403_that_refuses_the_feature_is_not_a_permission_gap(self):
+        """GitHub's own words to the repository's ADMIN, read 2026-10-05: the repository is
+        private on a plan without branch protection, so the rules are not in force. Skipped as
+        a rights problem, an unprotected `main` printed what a protected one prints in CI."""
+        why = ("gh: Upgrade to GitHub Pro or make this repository public to enable this "
+               "feature. (HTTP 403)")
+        problems, err = self._verify(why)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("branch protection is NOT IN FORCE", problems[0])
+        self.assertIn("Upgrade to GitHub Pro", problems[0])
+        self.assertNotIn("SKIPPED", err)
+
     def test_an_outage_is_a_refusal_and_carries_its_reason(self):
         for why in ("HTTP 503", "timed out after 30s", ""):
             with self.subTest(why=why):

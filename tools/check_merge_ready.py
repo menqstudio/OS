@@ -1133,4 +1133,8 @@ def main(argv: list[str] | None = None, inputs: Inputs | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Ask GitHub as this repository's owner whatever `gh` login is active (tools/gh_account.py).
+    # Here and not in main(): a test that calls main() must not start `gh` or gain a token.
+    import gh_account
+    gh_account.use_repo_account()
     raise SystemExit(main())

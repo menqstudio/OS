@@ -1,6 +1,6 @@
 # TASKS archive — 2026-09 · merged, awaiting independent confirmation
 
-**84 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
+**85 rows.** The count is checked: `config/counted-claims.json` derives it from this file.
 
 Every row here shipped: its pull request is merged and `main` was green after it. **None of it is
 independently confirmed.** The standing verdict is RED — the TENTH round,
@@ -109,3 +109,4 @@ Nothing was summarised on the way in. Each row is verbatim from the board on the
 | **T-165** | **cryptography 46.0.7 → 50.0.2, four advisory waivers deleted** — the "bump broke the runtime" note was the health check's own `<47` bound: with 50.0.2 the engine passed 2729 of 2730, the bound the one failure. `pip-audit` with no waiver: clean. Architect audit GREEN ([report](apps/desktop/AUDIT/changes/pr-336-cryptography-50.md)) ◑ | Bro | Review | merged `#336` |
 | **T-160** | **A push is judged on the tree it sends** — `commit && push` in one line is refused: the hook runs the push gate before the line starts; 16 mutants ◑ | Bro | Review | merged `#327` |
 | **T-166** | **A stamp that fails once is asked about, then tried again** — one empty answer from GitHub turned `#336`'s green head red at the stamp step; a failed write is retried only if the body does not already name the head, three attempts in all; 3 mutants, 3 deaths ◑ | Bro | Review | merged `#337` |
+| **T-167** | **A settle stays true after its own merge** — the banner read "`main` is at X, the only thing open is #N" on `main` after #N merged; it says *as of X* now, the mirror stores no carrier `state`, and the handoff gate prints live `main` beside the head the canon names; 10 mutants, 10 deaths ◑ | Bro | Review | merged `#338` |

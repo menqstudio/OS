@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-03 — 119 pull requests merged (`#219`–`#338`), `main` at
-`f1a941d`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-05 — 120 pull requests merged (`#219`–`#339`), `main` at
+`e9358e7`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-03 | 1755 OK |
+| `tools/` self-tests · 2026-10-05 | 1766 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-03 | 2737 OK, 17 skipped |
@@ -70,10 +70,10 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
-**Branch protection is ON and verified against live GitHub** by `check_repo_state.py` — 35 contexts (trust anchor added 2026-09-29),
-`strict`, `enforce_admins`, linear, no force-push, no deletions, restored from
-`config/required-checks.json` after a day private DELETED the rules. That day, and why 2026-09-19's
-merges were gated by reading instead, is in `docs/archive/`.
+**Branch protection is NOT in force — the repository is private again (measured 2026-10-05).**
+GitHub answers its admin *"Upgrade to GitHub Pro or make this repository public"*, so the 35
+contexts in `config/required-checks.json` bind nothing and merges are gated by the hook alone.
+`check_repo_state.py` is RED on it locally (`T-168`); the first time is in `docs/archive/`.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts startup,
 so the first-launch trust path is unreachable on the Debian dev box.
