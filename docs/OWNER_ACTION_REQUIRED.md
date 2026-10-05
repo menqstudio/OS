@@ -10,6 +10,20 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > trust and no person carries a key. From 2026-09-20 to 2026-09-30 this page asked you to mint an
 > offline root anyway; that contradicted your decision and was removed in T-130. See §0.
 
+> **2026-10-05 — `main` has no branch protection: the repository is private again (`T-168`).**
+> Asked as the repository's admin, `GET /branches/main/protection` answers **403** *"Upgrade to
+> GitHub Pro or make this repository public to enable this feature"*. The 35 contexts in
+> `config/required-checks.json` bind nothing; a merge is refused only by the session hook
+> (`tools/check_merge_ready.py`), which a push from outside a session does not meet. The same
+> thing happened on 2026-09-18 (below), and that day the private repository also ran out of free
+> Actions minutes and CI stopped. `tools/check_repo_state.py` is RED on this locally and prints
+> SKIPPED in CI, where the workflow token gets a different 403. **Recommended: decide the
+> visibility on purpose** — public restores protection (the rules may have to be re-applied from
+> `config/required-checks.json`, as they were on 2026-09-19); staying private needs a plan that
+> carries protection, because without one nothing on GitHub's side holds `main`. If it is
+> private because of what the 2026-10-05 zero-trust read found in the tree, say so here and the
+> canon will stop calling the repository public.
+
 > **2026-09-20 — THREE one-line edits need you, all in files only you touch.** *(Item 3 is DONE, 2026-09-29: two remain.)*
 >
 > **1. `.github/supply-chain/gitleaks.toml` — the secret gate carries a false positive that any edit

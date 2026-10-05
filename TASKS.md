@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `f1a941d`.** PR #339 on `t062/matrix-slice-engine-tests` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `e9358e7`.** PR #340 on `t168/tools-use-the-repo-owners-account` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-062's 24 left; most need security code or a 2nd UID - Owner's call.
+> **Next:** Owner: main has no branch protection while private (T-168).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -18,7 +18,7 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
-| **T-168** | **The tools ask GitHub as the repository's owner, and a refused feature is not a skip** — the active `gh` login was another account and the repository had gone private: `git pull` and `check_repo_state` failed. Asking as the owner showed `main` has NO branch protection; the gate skipped that 403 as a rights gap and now refuses it. **Owner: visibility or plan** ◑ | Bro | In-Progress | `t168/tools-use-the-repo-owners-account` |
+| **T-168** | **The tools ask GitHub as the repository's owner, and a refused feature is not a skip** — the active `gh` login was another account and the repository had gone private: `git pull` and `check_repo_state` failed. Asking as the owner showed `main` has NO branch protection; the gate skipped that 403 as a rights gap and now refuses it. **Owner: visibility or plan** ◑ | Bro | Review | `#340` |
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (680 fixed, 89 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370, where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
