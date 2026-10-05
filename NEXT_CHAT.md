@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `f1a941d`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `e9358e7`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `f1a941d`.** PR #339 on `t062/matrix-slice-engine-tests` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `e9358e7`.** PR #340 on `t168/tools-use-the-repo-owners-account` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-062's 24 left; most need security code or a 2nd UID - Owner's call.
+> **Next:** Owner: main has no branch protection while private (T-168).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -85,7 +85,7 @@ operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured 
 at one file size and not at another (79,665 bytes red, 79,744 green) — and
 `config/required-checks.json` should promote the new Windows tools job once it has one green run.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
-protection is live and verified. O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+protection is NOT in force (private; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close
