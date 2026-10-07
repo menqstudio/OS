@@ -1,6 +1,30 @@
-<div align="center">
+<!-- FRONT:START -->
+<p align="center"><picture><source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="docs/assets/front/cover-narrow-dark.svg"><source media="(max-width: 600px)" srcset="docs/assets/front/cover-narrow-light.svg"><source media="(prefers-color-scheme: dark)" srcset="docs/assets/front/cover-dark.svg"><img src="docs/assets/front/cover-light.svg" alt="OS: A governed AI operations desktop: one product assembled from two halves." width="960"></picture></p>
 
-<img src="docs/brand/menq-avatar.png" alt="MenQ Studio — the studio wordmark on its dark ground · MenQ Studio-ի բառանշանը մուգ հիմքի վրա" width="88">
+<p align="center"><b>Start here</b> · [Start here](START_HERE.md) · [Project state](PROJECT_STATE.md) · [Execution roadmap](MASTER_EXECUTION_ROADMAP.md) · [Rules for AI sessions](CLAUDE.md)</p>
+
+| | |
+| :-- | :-- |
+| **What it is** | A desktop for governed AI operations; version 0.1.0 |
+| **Who it serves** | Gev and MenQ Studio, running AI agents under explicit gates |
+| **State** | Production gate SHUT; the standing independent verdict is RED (measured figures in the table below) |
+| **Built with** | Tauri 2, Rust, React 19, TypeScript, Vite |
+
+<details><summary><b>Հայերեն</b></summary>
+
+| | |
+| :-- | :-- |
+| **Ինչ է** | Կառավարվող AI գործառնությունների desktop. տարբերակ 0.1.0 |
+| **Ում համար** | Գևի և MenQ Studio-ի համար՝ AI գործակալների աշխատանքը բացահայտ դարպասներով |
+| **Վիճակ** | Արտադրական դարպասը ՓԱԿ է. գործող անկախ վճիռը RED է (չափված թվերը ներքևի աղյուսակում) |
+| **Կառուցված է** | Tauri 2, Rust, React 19, TypeScript, Vite |
+
+</details>
+
+<sub>MenQ Studio · Operations desktop · repository front page standard v1</sub>
+<!-- FRONT:END -->
+
+<div align="center">
 
 <h1 align="center">
   <picture>
