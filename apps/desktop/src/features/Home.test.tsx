@@ -132,3 +132,17 @@ describe('activitySummary — seeded events are named, not hidden', () => {
     expect(plain.toLowerCase()).not.toContain('seeded');
   });
 });
+
+// The seeded count was taken over EVERY row, and the total it is reported against counts only the
+// rows whose time could be read. A seeded row with an unreadable time is not on the line, and was
+// still counted as one "of them".
+describe('Home — the seeded count is taken over the rows that are plotted', () => {
+  it('a seeded row that is not on the line is not one "of them"', async () => {
+    const rows = events(5, 3);
+    rows[0] = { ...rows[0], createdAt: 'not a time' };
+    setup(rows);
+    await waitFor(() =>
+      expect(screen.getByText(/2 of them are seeded demo data/)).toBeTruthy());
+    expect(screen.queryByText(/3 of them are seeded demo data/)).toBeNull();
+  });
+});

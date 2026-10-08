@@ -207,3 +207,11 @@ describe('a failed evidence read is described as a failed read', () => {
     }
   });
 });
+
+// The ledger header prints `ledger.length` — every row, settled ones included — and called the
+// figure "active decisions".
+describe('the ledger count is not called active', () => {
+  it.each(['en', 'hy', 'ru'] as const)('(%s)', (lang) => {
+    expect(DEC_STR.activeDecisions[lang]).not.toMatch(/active|ակտիվ|активн/);
+  });
+});

@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Memory } from './Memory';
+import { STR as MEM_STR } from './Memory.strings';
 
 function setup() {
   invokeMock.mockImplementation((cmd: string) => {
@@ -60,5 +61,13 @@ describe('Memory — the page shortcuts leave modified chords alone', () => {
     await waitFor(() => expect(screen.getAllByText('Rotate the API key monthly').length).toBeGreaterThan(0));
     expect(fireEvent.keyDown(window, { key: 'n' })).toBe(false);
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+// The metric is `blockedIds.size`: the number of MEMORIES that contain a sealed reference. It was
+// labelled "sealed refs", which is a different count the moment one memory holds two.
+describe('Memory — the sealed metric is named for what it counts', () => {
+  it.each(['en', 'hy', 'ru'] as const)('names memories, not references (%s)', (lang) => {
+    expect(MEM_STR.sealedRefs[lang]).toMatch(/memories|հիշողությ|воспоминани/);
   });
 });
