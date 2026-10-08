@@ -2,6 +2,13 @@
 
 **What this is.** The third part of the read the Owner asked for: `apps/desktop` — the Rust crates, the frontend and the cockpit's own documents — re-read with no cap on findings. It follows [`WHOLE_REPO_READ_2026-10-01.md`](WHOLE_REPO_READ_2026-10-01.md) (capped, 932 findings) and [`WHOLE_REPO_READ_2026-10-02.md`](WHOLE_REPO_READ_2026-10-02.md) (the engine, tools and documents, uncapped). It is a list of findings, not of fixes: **every item below is OPEN.**
 
+> **Found while closing these, 2026-10-08 — not one of the 1370.** `Memory.writeRecord.test.tsx` failed
+> on CI run 37821123738 and passed here. Three of its four panel lookups were a bare
+> `document.querySelector` straight after `select`, racing the row's own record-state read; the fourth
+> had been fixed for exactly this after run 35468281628. Reproduced on demand by delaying that read
+> 400 ms: the old file fails those three, the new one passes all ten. All four go through one waiting
+> helper now.
+
 ## How it was run
 
 - **35 slices** of at most 300 KB cut from the 527 text files under `apps/desktop` (9.1 MB; images, fonts, lockfiles and generated schemas excluded), one read-only reader per slice, plus **four sweeps**: duplicated Rust, documents against code, dead code and placeholders, tests that do not test.

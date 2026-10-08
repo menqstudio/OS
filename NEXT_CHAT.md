@@ -79,8 +79,8 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 **The standing independent verdict is RED.** TEN rounds; the current one is
 [`2026-09-19-tenth-audit-75fca65.md`](apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
 — RED, no P0, and the reason is three named items rather than unconfirmed claims.
-**93 pull requests, 886 files and 104,780 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `a90ca90`, 2026-10-08; this said 31 / 121 / 10,599 for seventeen days.)*
+**112 pull requests, 903 files and 106,095 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `40244f0`, 2026-10-08; this said 31 / 121 / 10,599 for seventeen days.)*
 
 **Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:
 commissioning the next independent audit — 93 pull requests are unaudited — and the Windows tools job,

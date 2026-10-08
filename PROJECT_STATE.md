@@ -56,9 +56,9 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **93 pull
-requests, 886 files and 104,780 inserted lines** have merged since, none independently
-confirmed — measured `75fca65..main` at `a90ca90` on 2026-10-08, PRs `#253`–`#346`.
+**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **112 pull
+requests, 903 files and 106,095 inserted lines** have merged since, none independently
+confirmed — measured `75fca65..main` at `40244f0` on 2026-10-08, PRs `#253`–`#365`.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

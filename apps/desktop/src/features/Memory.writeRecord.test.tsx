@@ -100,6 +100,24 @@ async function select(content: string) {
   await screen.findByRole('button', { name: 'Delete' });
 }
 
+/**
+ * The detail panel for one write-record state, WAITED FOR.
+ *
+ * `select` awaits the row opening. The panel depends on something else: that row's
+ * `memory_write_record_state` read, a separate invoke `select` never sees. A bare
+ * `document.querySelector` straight after `select` therefore races the read it is about — green
+ * on a fast machine, red on a loaded runner. That was found and fixed for the `diverged` panel
+ * after CI run 35468281628, in one place of four; the `unrecorded` one failed the same way on
+ * run 37821123738. Every panel lookup in this file goes through here now.
+ */
+async function panelFor(state: string): Promise<Element> {
+  return waitFor(() => {
+    const found = document.querySelector(`.wrec-panel[data-wrec="${state}"]`);
+    expect(found, `no .wrec-panel for "${state}" yet`).toBeTruthy();
+    return found as Element;
+  });
+}
+
 beforeEach(() => invokeMock.mockReset());
 
 describe('Memory — every row states its real write-record state', () => {
@@ -146,16 +164,7 @@ describe('Memory — a diverged row is not a shade of a recorded one', () => {
     setup();
     await select('Deploy window is Friday');
 
-    // WAITED FOR, like every other assertion in this file. `select` awaits the row opening — the
-    // Delete button — and the diverged panel does not depend on that: it depends on this row's
-    // `memory_write_record_state` read resolving, which is a SEPARATE invoke `select` never sees.
-    // So the bare query raced the very read it is about, and did so invisibly: it passes on any
-    // machine fast enough and fails on a loaded CI runner, which is what it did on run 35468281628.
-    const panel = await waitFor(() => {
-      const found = document.querySelector('.wrec-panel[data-wrec="diverged"]');
-      expect(found).toBeTruthy();
-      return found;
-    });
+    const panel = await panelFor('diverged');
     expect(panel).toHaveTextContent(/no longer matches its record/i);
     expect(panel).toHaveTextContent(/changed outside the app/i);
     // Both digests are shown, so the claim is checkable rather than decorative.
@@ -188,8 +197,7 @@ describe('Memory — "no record" is an honest absence, not a failure', () => {
     setup();
     await select('Written before the record existed');
 
-    const panel = document.querySelector('.wrec-panel[data-wrec="unrecorded"]');
-    expect(panel).toBeTruthy();
+    const panel = await panelFor('unrecorded');
     expect(panel).toHaveTextContent(/written before the record existed/i);
     expect(panel).toHaveTextContent(/nothing was back-filled/i);
     // An absence carries no record fields to show.
@@ -216,7 +224,7 @@ describe('Memory — a failed read is a fault, never an empty ledger', () => {
     setup();
     await select('The record read fails for this one');
 
-    const panel = document.querySelector('.wrec-panel[data-wrec="unreadable"]');
+    const panel = await panelFor('unreadable');
     expect(panel).toHaveTextContent(/this row’s state is unknown/i);
     expect(panel).toHaveTextContent(/not a row without a record/i);
     expect(panel).toHaveTextContent(READ_FAULT);
@@ -226,8 +234,7 @@ describe('Memory — a failed read is a fault, never an empty ledger', () => {
     setup();
     await select('The backend answers in a shape we cannot read');
 
-    const panel = document.querySelector('.wrec-panel[data-wrec="unreadable"]');
-    expect(panel).toBeTruthy();
+    const panel = await panelFor('unreadable');
     expect(panel).toHaveTextContent(/shape this page cannot read/i);
     expect(document.querySelector('.wrec-panel[data-wrec="unrecorded"]')).toBeNull();
   });
