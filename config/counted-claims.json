@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1021,
+      "value": 1027,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "b5af12f",
+        "head": "427fafa",
         "environments": {
+          "Debian 13 (trixie) native @ 427fafa + a governed-turn reply is correlated with its request": {
+            "ran": 1027,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ b5af12f + the other half of R3-0023 (the deck's posts reach the thread)": {
             "ran": 1021,
             "skipped": 0
@@ -343,7 +347,8 @@
         1009,
         1014,
         1019,
-        1020
+        1020,
+        1021
       ]
     },
     "a11y_tests": {

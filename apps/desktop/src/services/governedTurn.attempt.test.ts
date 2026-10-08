@@ -177,3 +177,56 @@ describe('attemptGovernedTurn — a non-decision is never a verdict', () => {
     expect(Object.keys(sent ?? {}).sort()).toEqual(['agent', 'client_request_id', 'conversation_id', 'protocol']);
   });
 });
+
+describe('attemptGovernedTurn — a reply answers the request that asked for it, or it is no verdict', () => {
+  // The renderer mints `client_request_id` for exactly this and then never looked at it again. A
+  // frame that is perfect in every other respect — right protocol, complete assistant projection,
+  // `trusted_verified` — was accepted and shown as Verified whichever request or conversation it
+  // named.
+  const OTHER = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+  it('a verified commit for ANOTHER request id is not a verdict, and is never Verified', async () => {
+    const a = await attemptGovernedTurn(
+      'conv-1', undefined, resolving({ ...committedFrame(), client_request_id: OTHER }), genId);
+    expect(isVerified(a)).toBe(false);
+    expect(unavailable(a).kind).toBe('malformed_broker_reply');
+  });
+
+  it('a verified commit for ANOTHER conversation is not a verdict either', async () => {
+    const a = await attemptGovernedTurn(
+      'conv-1', undefined, resolving({ ...committedFrame(), conversation_id: 'conv-OTHER' }), genId);
+    expect(isVerified(a)).toBe(false);
+    expect(unavailable(a).kind).toBe('malformed_broker_reply');
+  });
+
+  it('a refusal naming another request is not this request\'s refusal', async () => {
+    const a = await attemptGovernedTurn(
+      'conv-1', undefined, resolving({ ...blockedFrame('upstream_blocked'), client_request_id: OTHER }), genId);
+    expect(unavailable(a).kind).toBe('malformed_broker_reply');
+  });
+
+  it('control: the reply to THIS request is still a verdict', async () => {
+    const ok = await attemptGovernedTurn('conv-1', undefined, resolving(committedFrame()), genId);
+    expect(isVerified(ok)).toBe(true);
+    const refused = await attemptGovernedTurn('conv-1', undefined, resolving(blockedFrame('upstream_blocked')), genId);
+    expect(refused.status).toBe('blocked');
+  });
+
+  it('the broker\'s answer to a frame it could not decode — `malformed`, every id empty — stays a refusal', async () => {
+    // `broker_orchestrator::run_governed_turn` has nothing to echo on that path and echoes empty
+    // ids. It is a real broker decision; a plain equality check would turn it into "unavailable".
+    const a = await attemptGovernedTurn('conv-1', undefined, resolving({
+      protocol: RESULT_PROTOCOL, status: 'blocked', reason: 'malformed',
+      client_request_id: '', broker_turn_id: '', conversation_id: '',
+    }), genId);
+    expect(a.status).toBe('blocked');
+  });
+
+  it('empty ids are that one shape only: an uncorrelated refusal for any other reason is not accepted', async () => {
+    const a = await attemptGovernedTurn('conv-1', undefined, resolving({
+      protocol: RESULT_PROTOCOL, status: 'blocked', reason: 'upstream_blocked',
+      client_request_id: '', broker_turn_id: '', conversation_id: '',
+    }), genId);
+    expect(unavailable(a).kind).toBe('malformed_broker_reply');
+  });
+});

@@ -179,8 +179,34 @@ export function isVerified(result: GovernedTurnResult | GovernedTurnAttempt): bo
   return result.status === 'committed' && result.message.trustState === TRUSTED_VERIFIED;
 }
 
+/**
+ * Does this reply answer THIS request? `client_request_id` is minted for exactly this question and
+ * was never asked it: a frame perfect in every other respect — right protocol, complete assistant
+ * projection, `trusted_verified` — was accepted and rendered Verified whichever request, or
+ * conversation, it named.
+ *
+ * One shape is admitted without a match, and only that one: the broker's refusal of a frame it
+ * could not decode. `broker_orchestrator::run_governed_turn` has nothing to echo on that path, so
+ * it answers `blocked` / `malformed` with EVERY id empty. That is a real broker decision; a plain
+ * equality check would have turned it into "no verdict exists".
+ */
+export function answersRequest(
+  request: GovernedTurnRequest,
+  reply: { status: string; clientRequestId: string; brokerTurnId: string; conversationId: string; reason?: string },
+): boolean {
+  if (reply.clientRequestId === request.client_request_id
+    && reply.conversationId === request.conversation_id) {
+    return true;
+  }
+  return reply.status === 'blocked' && reply.reason === 'malformed'
+    && reply.clientRequestId === '' && reply.brokerTurnId === '' && reply.conversationId === '';
+}
+
+const UNCORRELATED = 'governed-turn reply answers another request or conversation';
+
 /** Run one governed turn: build the closed request, send it through the broker transport, and parse the
- * committed/blocked reply. Never throws for a well-formed `blocked` reply (that is a normal outcome). */
+ * committed/blocked reply. Never throws for a well-formed `blocked` reply (that is a normal outcome).
+ * Throws for a reply that does not answer this request (see [`answersRequest`]). */
 export async function runGovernedTurn(
   conversationId: string,
   agent: string | undefined,
@@ -189,7 +215,9 @@ export async function runGovernedTurn(
 ): Promise<GovernedTurnResult> {
   const request = buildRequest(conversationId, agent, genId);
   const raw = await transport(request);
-  return parseResult(raw);
+  const result = parseResult(raw);
+  if (!answersRequest(request, result)) throw new Error(UNCORRELATED);
+  return result;
 }
 
 // --- Non-decisions: the outcomes in which NO broker verdict exists ------------------------------
@@ -322,11 +350,18 @@ export async function attemptGovernedTurn(
   }
   try {
     // A well-formed `blocked` frame parses fine — that IS a broker decision and stays one.
-    return parseResult(raw);
+    const result = parseResult(raw);
+    // …provided it is a decision about THIS request. A verdict about another one is not ours.
+    if (!answersRequest(request, result)) throw new Error(UNCORRELATED);
+    return result;
   } catch (e) {
     // A complete broker commit under demonstration custody. Still refused — but it is not "no
-    // verdict exists", and saying so would deny a decision the broker made.
-    if (e instanceof CommitNotAcceptedError) {
+    // verdict exists", and saying so would deny a decision the broker made. Only for THIS request:
+    // a demonstration commit about another one is as foreign as a verified one.
+    if (e instanceof CommitNotAcceptedError && answersRequest(request, {
+      status: 'committed', clientRequestId: e.clientRequestId,
+      brokerTurnId: e.brokerTurnId, conversationId: e.conversationId,
+    })) {
       return {
         status: 'commit_not_accepted',
         trustState: e.trustState,
