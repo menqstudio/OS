@@ -1602,6 +1602,52 @@ mod tests {
         assert!(!s.contains(": "));
     }
 
+    /// NM-PARITY-07's governed half. The 23 literals below are the ones
+    /// `engine/tests/test_brops_parity.py::test_nm_parity_07_…` feeds the isolated signer's
+    /// `_jcs_bytes`, and that test reads THIS function's source for the digest, so the two cannot
+    /// drift apart silently. A non-ASCII `task_id` and a 2^53-1 timestamp are in it on purpose: an
+    /// escaped code point or a float round-trip is how two canonicalisers disagree.
+    const NM_PARITY_07_GOVERNED_ENVELOPE_SHA256: &str =
+        "5408619c0e4a3ccf11fa928ec91b108c6b51c83ab331fd25231b0c806c771e28";
+
+    #[test]
+    fn nm_parity_07_the_governed_envelope_jcs_is_the_engines_byte_for_byte() {
+        let case = "NM-PARITY-07";
+        let (h1, h2, h3, h4) = ("1".repeat(64), "2".repeat(64), "3".repeat(64), "4".repeat(64));
+        let (h5, h6, h7) = ("5".repeat(64), "6".repeat(64), "7".repeat(64));
+        let env = ReceiptEnvelope {
+            artifact_type: RECEIPT_ENVELOPE_ARTIFACT_TYPE,
+            key_id: "iso-signer-1",
+            receipt_id: "receipt-abc",
+            run_id: "run-1",
+            execution_attempt_id: "att-1",
+            task_id: "առաջադրանք-✈-1",
+            workspace_id: "ws-1",
+            install_id: "install-1",
+            request_nonce: "nonce-xyz",
+            request_sha256: &h1,
+            record_handle: &h2,
+            lease_handle: &h3,
+            execution_receipt_handle: &h4,
+            output_sha256: &h5,
+            output_bytes: 11,
+            challenge_accepted_at_ms: 1_700_000_000_000,
+            completed_at_ms: 9_007_199_254_740_991,
+            evidence_final_event_hash: &h6,
+            evidence_event_count: 3,
+            evidence_last_sequence: 12,
+            evidence_head_sequence: 13,
+            supervisor_attestation_key_id: "sup-att-1",
+            attestation_evidence_sha256: &h7,
+        };
+        let jcs = env.payload_jcs().unwrap();
+        assert_eq!(jcs.len(), 1104, "{case}: the canonical form is 1104 bytes on the engine side");
+        assert_eq!(sha256_hex(&jcs), NM_PARITY_07_GOVERNED_ENVELOPE_SHA256, "{case}");
+        let text = String::from_utf8(jcs).unwrap();
+        assert!(text.contains("\"task_id\":\"առաջադրանք-✈-1\""), "{case}: raw UTF-8, never \\u-escaped");
+        assert!(text.contains("\"completed_at_ms\":9007199254740991,"), "{case}: a bare integer");
+    }
+
     // =============================================================================================
     // Step 4c — the supervisor attestation must be an account of THIS turn.
     //

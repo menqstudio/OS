@@ -168,6 +168,32 @@ class ArtifactVerificationTests(SignatureFixture):
             verify_artifact(document, "verifier-receipt", self.load(), now=NOW + 10)
         self.assertIn("may not sign verifier-receipt", str(caught.exception))
 
+    def test_nm_oracle_12_an_authority_signing_another_authoritys_artifact_is_refused(self):
+        """NM-ORACLE-12: the lease-issuer signs a receipt, or the recorder signs a lease.
+
+        Both are well-formed, correctly signed documents under ACTIVE keys in the registry; the
+        only thing wrong with each is WHO signed it. What this does not cover, because it does
+        not exist in this tree: a `governed-turn-recorder` authority (NM-ORACLE-11 is blocked on
+        it), and the governed-turn receipt, which is signed outside this registry altogether.
+        """
+        self.assertIn("NM-ORACLE-12", self.test_nm_oracle_12_an_authority_signing_another_authoritys_artifact_is_refused.__doc__)
+        keys = self.load()
+        for authority, artifact_type in (("issuer", "verifier-receipt"),
+                                         ("evidence-recorder", "execution-lease")):
+            with self.subTest(authority=authority, artifact_type=artifact_type):
+                document = self.artifact(authority, artifact_type, verdict="GREEN")
+                with self.assertRaises(SignatureError) as caught:
+                    verify_artifact(document, artifact_type, keys, now=NOW + 10)
+                self.assertIn(f"({authority}) may not sign {artifact_type}", str(caught.exception))
+        # Positive controls: the same two artifact types under their OWN authority verify, so the
+        # refusals above are about the signer and not about the fixture or the payload.
+        for authority, artifact_type in (("verifier", "verifier-receipt"),
+                                         ("issuer", "execution-lease")):
+            with self.subTest(authority=authority, artifact_type=artifact_type):
+                document = self.artifact(authority, artifact_type, verdict="GREEN")
+                self.assertEqual(
+                    verify_artifact(document, artifact_type, keys, now=NOW + 10)["verdict"], "GREEN")
+
     def test_builder_may_sign_its_own_completion_claim(self):
         document = self.artifact("builder", "completion-manifest", task_id="t-1")
         payload = verify_artifact(document, "completion-manifest", self.load(), now=NOW + 10)

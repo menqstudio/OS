@@ -755,6 +755,57 @@ mod tests {
     }
 
     #[test]
+    fn nm_oracle_10_an_authority_minted_nonce_is_a_terminal_cross_binding_block() {
+        // NM-ORACLE-10: the authority mints its own `request_nonce` instead of copying the broker's,
+        // and does it CONSISTENTLY -- its `request_sha256` is recomputed over the nonce it minted, so
+        // the document is self-consistent and signed. The supervisor's open admits that document:
+        // its two nonce checks compare the document with an open frame whose nonce is lifted off the
+        // same document, and its recompute re-derives. This comparison is the one that has the
+        // broker's own nonce on the other side.
+        let p = prepared();
+        let minted = "authority-minted-nonce";
+        assert_ne!(p.context().request_nonce, minted);
+        let consistent = crate::receipt::request_envelope_sha256(
+            &p.context().workspace_id,
+            &p.context().install_id,
+            minted,
+            &p.context().system_sha256,
+            &p.context().history_sha256,
+            &p.context().generation_config_sha256,
+            &p.context().requested_at,
+        );
+        // Positive control: the same formula over the broker's nonce IS the prepared digest, so the
+        // refusal below is caused by the nonce and by nothing else in the recompute.
+        assert_eq!(
+            crate::receipt::request_envelope_sha256(
+                &p.context().workspace_id,
+                &p.context().install_id,
+                &p.context().request_nonce,
+                &p.context().system_sha256,
+                &p.context().history_sha256,
+                &p.context().generation_config_sha256,
+                &p.context().requested_at,
+            ),
+            p.request_sha256()
+        );
+        let document = json!({
+            "payload": {
+                "run_id": "run-1", "task_id": "t-1",
+                "install_id": p.context().install_id,
+                "request_nonce": minted,
+                "generation_config_sha256": p.context().generation_config_sha256,
+                "request_sha256": consistent,
+            },
+            "sig": "c2ln",
+        });
+        let doc = ChallengeDocument::from_bytes(&serde_json::to_vec(&document).unwrap()).unwrap();
+        assert_eq!(
+            submit_frame(&execution(p), &doc).unwrap_err(),
+            SubmitError::CrossBinding(CrossBinding::RequestSha256)
+        );
+    }
+
+    #[test]
     fn a_desynchronized_prepared_object_cannot_reach_the_frame() {
         // §4.10(g)'s encapsulation precondition, made REACHABLE BY NAME. Within the public API this
         // cannot fail — one constructor, private fields, no setter — and a mutation pass proved the

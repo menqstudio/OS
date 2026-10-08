@@ -36,11 +36,8 @@
     "NM-IPC-01",
     "NM-NORELAUNCH-04",
     "NM-ORACLE-07",
-    "NM-ORACLE-10",
-    "NM-ORACLE-12",
     "NM-PARITY-05",
     "NM-PARITY-06",
-    "NM-PARITY-07",
     "NM-TCB-02",
     "NM-TCB-12",
     "NM-TCB-20",
@@ -1113,10 +1110,10 @@
       "test": "engine/tests/test_challenge_authority.py::ValidateCreatePendingTests::test_nm_oracle_09_caller_supplied_request_sha256_rejected_as_malformed"
     },
     "NM-ORACLE-10": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Authority re-mints nonce",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/core/src/governed_submit.rs::tests::nm_oracle_10_an_authority_minted_nonce_is_a_terminal_cross_binding_block"
     },
     "NM-ORACLE-11": {
       "status": "blocked",
@@ -1125,10 +1122,10 @@
       "blocked_on": "The `governed-turn-recorder` authority does not exist as code. Addendum §8 (line 3502-3515) requires it as a `bro_signature.AUTHORITY_TYPES` entry + `ARTIFACT_AUTHORITY['brops.governed-turn-record.v1']` mapping + a `broctl sign --artifact brops.governed-turn-record.v1` key class held under the supervisor principal. MEASURED 2026-09-19: (G1) `grep -rn 'governed-turn-recorder|governed_turn_recorder'` over engine/ apps/ bridge/ contracts/ config/ tools/ code files -> 0 hits; (G2) `grep -n governed engine/runtime/bro_signature.py` -> 0 (AUTHORITY_TYPES :223-224 = operator-root, issuer, evidence-recorder, builder, verifier, release, recovery, audit-anchor, control-room, evidence-floor); (G3) `grep -n governed engine/tools/broctl.py` -> 0; (G5) `'brops.governed-turn-record.v1' in bro_signature.ARTIFACT_AUTHORITY` -> False and `verify_artifact` on that type raises 'unknown artifact type'. The record the supervisor actually emits is UNSIGNED: governed_supervisor.build_terminal_record (:706-739) returns bare canonical bytes and governed_supervisor_server.py:816 publishes them to the store. What must exist first: the recorder authority registered in bro_signature (AUTHORITY_TYPES + ARTIFACT_AUTHORITY), a supervisor-held key of that class, and a `sign_terminal_record` constructor that wraps build_terminal_record's payload in `{payload, signature}` -- only then can a test ask it to sign a non-record and have verify_artifact refuse."
     },
     "NM-ORACLE-12": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Cross-authority sign",
       "section": "§4.3, §8",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_signature_authority.py::ArtifactVerificationTests::test_nm_oracle_12_an_authority_signing_another_authoritys_artifact_is_refused"
     },
     "NM-ORACLE-13": {
       "status": "implemented",
@@ -1485,10 +1482,10 @@
       "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
     },
     "NM-PARITY-07": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "full-field receipt + governed envelope",
       "section": "plan 19",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_brops_parity.py::NegativeMatrixParityTests::test_nm_parity_07_the_full_field_receipt_and_the_governed_envelope_are_one_form"
     },
     "NM-PARITY-08": {
       "status": "implemented",

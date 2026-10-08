@@ -579,6 +579,32 @@ class RefusalsAreReachableTests(_Case):
         reply = self.open(request)
         self.assertEqual(reply["reason"], gto.REFUSE_CONTEXT_MISMATCH)
 
+    def test_nm_oracle_10_an_authority_minted_nonce_is_refused_only_against_the_brokers_own(self):
+        """NM-ORACLE-10: the authority signs a nonce it minted instead of the broker's.
+
+        Two halves, and the second is the reason this row is bound to the Rust test
+        `nm_oracle_10_an_authority_minted_nonce_is_a_terminal_cross_binding_block` and not here.
+        An open frame carrying the BROKER's nonce is refused `context_mismatch` and stages
+        nothing. An open frame whose nonce was lifted off the document -- which is how the
+        consumer builds it -- is ADMITTED: the document is self-consistent, so nothing on this
+        side has the broker's nonce to compare with. Only the broker's submit-time comparison of
+        its own prepared digest against the signed one does.
+        """
+        self.assertIn("NM-ORACLE-10", self.test_nm_oracle_10_an_authority_minted_nonce_is_refused_only_against_the_brokers_own.__doc__)
+        document_bytes = _canonical(_document(_payload(nonce="authority-minted-nonce")))
+
+        split = _request(document_bytes=document_bytes)
+        split["request_nonce"] = "broker-nonce"
+        reply = self.open(split)
+        self.assertEqual(reply["status"], "refused")
+        self.assertEqual(reply["reason"], gto.REFUSE_CONTEXT_MISMATCH)
+        self.assertEqual(self.staging_rows(), [])
+
+        consistent = _request(document_bytes=document_bytes)
+        self.assertEqual(consistent["request_nonce"], "authority-minted-nonce")
+        self.assertEqual(self.open(consistent)["status"], "opened")
+        self.assertEqual(len(self.staging_rows()), 1)
+
     def test_context_mismatch_when_the_challenge_names_another_supervisor(self):
         reply = self.open(_request(_payload(supervisor_id="sup-2")))
         self.assertEqual(reply["reason"], gto.REFUSE_CONTEXT_MISMATCH)
