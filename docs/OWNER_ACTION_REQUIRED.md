@@ -1259,12 +1259,15 @@ read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in n
 `COMMANDS` nor `capabilities/default.json`: `governed_turn_execute`, `read_decision_ledger`,
 `read_evidence_chain`, `read_verifier_verdicts`, `read_engine_approval_queue`,
 `governed_trust_selftest`. With an app manifest present, tauri 2.11.5 rejects a command that
-resolves no ACL — `src/webview/mod.rs`, `Command … not allowed by ACL`. Read in that source on this
-machine; **not** observed in a running window, and launching the app and pressing "Run self-test"
-is the experiment that would settle it.
+resolves no ACL — `src/webview/mod.rs`, `Command … not allowed by ACL`. Read in that source, and then
+**observed on 2026-10-09 in the installed application on this machine**: the Bridge page printed
+`Command read_decision_ledger not allowed by ACL`, `Command read_verifier_verdicts not allowed by
+ACL` and, on sending a turn, `Command governed_turn_execute not allowed by ACL`. Three of the six
+were seen; the evidence read, the approval-queue read and the self-test (on the Security page)
+were not pressed.
 
-If the reading is right, three things on screen cannot work as shipped: the Bridge panel's governed
-turn, the governance mirror on Decisions / Approvals, and the trust self-test in Settings. `CLAUDE.md`
+So three things on screen cannot work as shipped: the Bridge panel's governed
+turn, the governance mirror on Decisions / Approvals, and the trust self-test on the Security page. `CLAUDE.md`
 §6, `apps/desktop/SECURITY.md` and `docs/ARCHITECTURE.md` each said otherwise and are corrected.
 
 **Recommendation: grant the four reads and the self-test; keep `governed_turn_execute` for the audit.**

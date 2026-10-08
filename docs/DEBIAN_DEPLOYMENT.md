@@ -81,7 +81,7 @@ not report success until the application's own launch-time check passes for that
 then only finds and verifies the anchor; on a machine where that install step did not run, first
 launch refuses. Nothing is carried, nothing expires, nothing is ever asked of the person who
 installed it. *(This paragraph said "the app now provisions its own trust material on first
-launch", which is the Windows behaviour and is false on the platform this page is written for.)* *(Declared in `tauri.conf.json`, not observed: no `dpkg -i` of a built package has been run — `docs/design/DEBIAN_INSTALL_PROVISIONING.md`.)*
+launch", which is the Windows behaviour and is false on the platform this page is written for.)* *(Observed once, 2026-10-09, on the Debian 13 development box: `apt install` of a locally built `BroPS_0.1.0_amd64.deb` ran the `postinst`, the installer found all seven accounts already present and created none, minted the anchor under `/var/lib/brops-trust-anchor/trust-anchor` and the desktop account's `trust/` tree, and the application then started without refusing. The first attempt was REFUSED, correctly: a directory left at the anchor path by a root-run test on 2026-08-09 held one file and no manifest, and the installer does not mint over what it did not create. It was moved aside by hand. Not observed: a machine with no service accounts, an upgrade, or a removal — the package has no `postrm`.)*
 
 What that posture claims is written into the code and worth repeating here, because it is smaller
 than the ceremony's claim: locally-minted trust material defends against an attacker who arrives

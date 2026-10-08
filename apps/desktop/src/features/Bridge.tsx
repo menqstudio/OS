@@ -56,6 +56,7 @@ const NON_DECISION_COPY: Record<NonDecision, keyof typeof STR> = {
   malformed_request: 'nd_malformed_request',
   malformed_broker_reply: 'nd_malformed_broker_reply',
   no_desktop_backend: 'nd_no_desktop_backend',
+  command_not_allowed: 'nd_command_not_allowed',
   unclassified_transport_failure: 'nd_unclassified_transport_failure',
 };
 

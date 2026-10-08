@@ -352,3 +352,24 @@ describe('the verdict mirror does not show the previous decision\'s count', () =
     expect(row().textContent).toMatch(/reading…/);
   });
 });
+
+// Observed on the first real install (Debian, 2026-10-09): the window is refused
+// `governed_turn_execute` by Tauri's ACL, and the rejection is, verbatim,
+// "Command governed_turn_execute not allowed by ACL". It matched no named kind, so it was
+// `unclassified_transport_failure` — and one day earlier that kind had been given the words "the
+// request may have reached the broker". For this refusal that is false: the command never ran, so
+// nothing left the desktop. It is the commonest outcome on a shipped build and it has its own kind.
+describe('a command the window is refused never left the desktop', () => {
+  it.each([
+    'Command governed_turn_execute not allowed by ACL',
+    'governed_turn_execute not allowed. Permissions associated with this command: ',
+  ])('%s', async (message) => {
+    mount({ list_conversations: [CONVERSATION], governed_turn_execute: new Error(message) });
+    await waitFor(() => expect(screen.getByText('A real conversation')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Send one governed turn'));
+    await waitFor(() => expect(screen.getByText('command_not_allowed')).toBeInTheDocument());
+    expect(screen.getByText(/No broker allowed or refused/)).toBeInTheDocument();
+    expect(screen.queryByText(/may have reached the broker/)).not.toBeInTheDocument();
+    expect(screen.getByText(/never left the desktop/)).toBeInTheDocument();
+  });
+});
