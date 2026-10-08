@@ -798,6 +798,20 @@ jobs:
       # compile-check on the shipping platform is the property that was missing.
       - name: Shipped desktop host compiles on Windows
         run: cargo check -p brops --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # Production-gate refusal 2 -- `connect_broker()` answers `UnsupportedPlatform` off Linux -- has
+      # ONE test, and it is `#[cfg(not(target_os = "linux"))]`. `cargo test -p brops` runs on
+      # ubuntu-latest only, where that test does not exist, and the step above compiles it here and
+      # runs nothing: one of the three refusals holding the production gate shut was executed by no
+      # runner. It is named, so the tests that need a display stay out of this step, and the count
+      # is read back, because a filter that matches nothing also exits zero.
+      - name: Production-gate refusal 2 is executed on the platform it applies to
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p brops --lib --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            no_broker_transport_on_this_platform_says_so_and_is_not_broker_unavailable 2>&1 | tee refusal2.log
+          grep -q "test result: ok. 1 passed" refusal2.log \
+            || { echo "::error::the refusal-2 test did not run: no 'ok. 1 passed' line"; exit 1; }
       # (audit) Both Windows "machine-proof" harnesses used to PRINT their expectation beside an
       # unexamined result and exit 0 whatever the pipe or the chain answered. They now compare, and the
       # comparison is a pure function driven by `-SelfTest` against synthetic transcripts -- including
