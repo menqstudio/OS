@@ -1282,6 +1282,37 @@ was one `cfg(windows)` dependency line. That line is unconditional now. The mode
 (`BROPS_SELFTEST_MODEL_CMD`) stays Windows-only on purpose: off Windows the self-test spawns
 nothing and says its answer is the built-in placeholder.
 
+**Seen the same day, with the mirror provisioned by hand and the Linux self-test installed.** The
+application was started with `BROPS_GOVERNANCE_STATE_DIR` naming a new empty directory under the
+desktop account's home, `BROPS_GOVERNED_SIDECAR` naming `bridge/engine_sidecar.py` in this checkout
+and `BROPS_GOVERNED_PYTHON=python3` — set for that one launch, stored nowhere. The Bridge page's two
+rows read `ANSWERED · NOTHING TO MIRROR`; the engine's own reason, read from the sidecar directly,
+is `the orchestration runtime holds no tasks`. The evidence chain is refused in the engine's words:
+`this runtime is not bound to an evidence store`. And the self-test, pressed on the Security page,
+ran the chain to `trusted_verified`, `SELF-TEST PASSED`, `DEMONSTRATION CUSTODY`, and said `NO MODEL
+RAN`. The path window → host → sidecar → engine works in an installed build.
+
+**What that leaves, and it is `O-4` seen from the other side.** The mirror reads the engine's
+orchestration runtime. Searched for who WRITES one outside tests — `DurableOrchestrationRuntime`,
+`ControlRoomAPIV1(`, `.create_task(` across `engine/runtime`, `engine/tools`, `engine/ci` and
+`bridge` — the only constructor found is the mirror read itself. `O-4` already says nothing shipped
+mints a `control-room-command`; the consequence nobody had drawn is that the mirror is a window onto
+a store nothing in the product fills, so provisioning it yields an empty mirror, not a working one.
+A search that found nothing is not proof of absence: the experiment that would settle it is to drive
+one owner command end to end and watch a row appear.
+
+Two smaller things from the same run. The package installs neither `engine/` nor `bridge/`, so an
+installed application has no sidecar unless it is pointed at a checkout. And a READ created a
+`tasks/` directory inside the empty state directory: a read path that writes.
+
+**Recommendation: design the shipped caller before deploying anything.** One owner command — the
+cockpit signs a `control-room-command` with the retained `control-room` key
+(`provision::mint_control_room_command` exists and is called by nothing), the sidecar carries it,
+the engine verifies it and records a task — is what turns both `O-4` and the mirror from built into
+used. It touches the engine's control plane, so it is a design proposal and an audited change, not
+a patch. Installing an engine state directory first is cheaper and would only produce the empty
+mirror already seen; not recommended.
+
 `tools/check_capabilities.py` has said this in a comment since it was corrected; no document you
 read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in neither `build.rs`
 `COMMANDS` nor `capabilities/default.json`: `governed_turn_execute`, `read_decision_ledger`,
