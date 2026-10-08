@@ -5,9 +5,9 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `8d95b5e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `a90ca90`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `8d95b5e`.** PR #346 on `t062/reason-name-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `a90ca90`.** PR #347 on `canon/audit-scope-11` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: draft the 0.1.0 release.
 >
@@ -76,8 +76,8 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 **The standing independent verdict is RED.** TEN rounds; the current one is
 [`2026-09-19-tenth-audit-75fca65.md`](apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
 — RED, no P0, and the reason is three named items rather than unconfirmed claims.
-**31 pull requests, 121 files and 10,599 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` on 2026-09-21; it named the NINTH round until then. See `docs/README_CLAIM_HISTORY.md` §11.)*
+**93 pull requests, 886 files and 104,780 inserted lines have merged since that head**, and
+none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `a90ca90`, 2026-10-08; this said 31 / 121 / 10,599 for seventeen days.)*
 
 **Two things wait on the Owner** *(the gitleaks false positive is fixed, 2026-10-08)*: an UNSIGNED
 `BroPS 0.1.0` release is published and marked *Latest* — make it a draft — and the Windows tools job,

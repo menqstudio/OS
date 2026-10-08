@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-08 — 126 pull requests merged (`#219`–`#345`), `main` at
-`8d95b5e`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-08 — 127 pull requests merged (`#219`–`#346`), `main` at
+`a90ca90`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,7 +11,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `8d95b5e`.** PR #346 on `t062/reason-name-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `a90ca90`.** PR #347 on `canon/audit-scope-11` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: draft the 0.1.0 release.
 >
@@ -56,9 +56,9 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **31 pull
-requests, 121 files and 10,599 inserted lines** have merged since, none independently
-confirmed — measured `75fca65..main` on 2026-09-21, squash-merged PRs `#253`–`#284`.
+**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **93 pull
+requests, 886 files and 104,780 inserted lines** have merged since, none independently
+confirmed — measured `75fca65..main` at `a90ca90` on 2026-10-08, PRs `#253`–`#346`.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

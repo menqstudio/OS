@@ -4,7 +4,7 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `8d95b5e`.** PR #346 on `t062/reason-name-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `a90ca90`.** PR #347 on `canon/audit-scope-11` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: draft the 0.1.0 release.
 >
@@ -42,7 +42,7 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: the published unsigned 0.1.0 release, requiring the Windows
+Waiting on the Owner, not rows: commissioning the next independent audit (93 PRs unaudited), the published unsigned 0.1.0 release, requiring the Windows
 tools job (file and live protection together), `T-063`'s tag arm, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
 (§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
