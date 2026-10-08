@@ -140,6 +140,19 @@ export const STR = {
     hy: 'Broker-ին հասանք և նա որոշեց՝ հաղորդագրություն չի ստեղծվել։ Սա իրական վճիռ ա։',
     ru: 'Брокер был достигнут и вынес решение: сообщение не создано. Это настоящий вердикт.',
   },
+  // For a failure AFTER the broker was connected to (`broker_transport_failed`), or one this app
+  // cannot classify: the request may have been written before the exchange failed, so the panel
+  // may say that no answer came back and may not say that nobody decided.
+  outcomeNoVerdictReceived: { en: 'No verdict received', hy: 'Վճիռ չի ստացվել', ru: 'Вердикт не получен' },
+  outcomeNoVerdictReceivedBody: {
+    en: 'No verdict was received. The request may have reached the broker before the exchange '
+      + 'failed, so this does not establish that the broker decided nothing — only that no answer '
+      + 'came back here.',
+    hy: 'Վճիռ չի ստացվել։ Հարցումը կարող էր հասած լինել broker-ին մինչև փոխանակման ձախողվելը, ուստի սա '
+      + 'չի հաստատում, որ broker-ը ոչինչ չի որոշել — միայն այն, որ այստեղ պատասխան չի եկել։',
+    ru: 'Вердикт не получен. Запрос мог дойти до брокера до сбоя обмена, поэтому это не устанавливает, '
+      + 'что брокер ничего не решил, — только то, что сюда ответ не пришёл.',
+  },
   outcomeUnavailable: { en: 'No verdict exists', hy: 'Վճիռ գոյություն չունի', ru: 'Вердикта не существует' },
   outcomeUnavailableBody: {
     en: 'No broker allowed or refused this turn. Do not read this as a refusal — it is the absence '

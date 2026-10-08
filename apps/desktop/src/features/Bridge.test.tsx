@@ -296,3 +296,59 @@ describe('the panel is named in the language of the page', () => {
     }
   });
 });
+
+// `broker_transport_failed` is "connected to the broker, but the framed exchange failed". The
+// request may already have been written when it did, and this panel cannot know what the broker
+// did with it. It was told the same thing as a broker that was never reached: "No verdict exists
+// — no broker allowed or refused this turn".
+describe('a failure AFTER the broker was connected to is not "nobody decided"', () => {
+  it.each([
+    'broker_transport_failed: connected to the broker, but the framed exchange failed',
+    'socket hang up',
+  ])('%s', async (message) => {
+    mount({ list_conversations: [CONVERSATION], governed_turn_execute: new Error(message) });
+    await waitFor(() => expect(screen.getByText('A real conversation')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Send one governed turn'));
+    await waitFor(() => expect(screen.getByText(/No verdict was received/)).toBeInTheDocument());
+    expect(screen.queryByText(/No broker allowed or refused/)).not.toBeInTheDocument();
+    expect(screen.getByText(/does not establish that the broker decided nothing/)).toBeInTheDocument();
+  });
+
+  it('a broker that was never reached still says nobody decided', async () => {
+    mount({ list_conversations: [CONVERSATION], governed_turn_execute: new Error('broker_unavailable: no socket') });
+    await waitFor(() => expect(screen.getByText('A real conversation')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Send one governed turn'));
+    await waitFor(() => expect(screen.getByText(/No broker allowed or refused/)).toBeInTheDocument());
+    expect(screen.queryByText(/No verdict was received/)).not.toBeInTheDocument();
+  });
+});
+
+// The verdict mirror is read per decision. `useAsync` keeps the previous answer while the next
+// read is in flight, and the row printed it: under the newly selected decision stood the record
+// count of the one before.
+describe('the verdict mirror does not show the previous decision\'s count', () => {
+  it('says it is reading while the read for the new decision is in flight', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    const twoRecords = {
+      protocol: 'brops.governance-read.v1', surface: 'verifier_verdicts', state: 'ok',
+      records: [{ verdict: 'GREEN', task_id: 'd-1' }, { verdict: 'GREEN', task_id: 'd-1' }],
+      authenticated: false,
+    };
+    invokeMock.mockImplementation((cmd: string, args?: { taskId?: string }) => {
+      if (cmd === 'read_verifier_verdicts') {
+        return args?.taskId === 'd-1' ? Promise.resolve(twoRecords) : new Promise(() => { /* in flight */ });
+      }
+      return Promise.resolve(null);
+    });
+    const { rerender, container } = render(<AppProvider><BridgePanel taskId="d-1" /></AppProvider>);
+    const row = () => Array.from(container.querySelectorAll('.br-row'))
+      .find((r) => /verdict/i.test(r.textContent ?? ''))!;
+    await waitFor(() => expect(row().textContent).toMatch(/records · 2/));
+
+    rerender(<AppProvider><BridgePanel taskId="d-2" /></AppProvider>);
+    await waitFor(() => expect(invokeMock.mock.calls.some(
+      (c) => c[0] === 'read_verifier_verdicts' && (c[1] as { taskId?: string })?.taskId === 'd-2')).toBe(true));
+    expect(row().textContent).not.toMatch(/records · 2/);
+    expect(row().textContent).toMatch(/reading…/);
+  });
+});
