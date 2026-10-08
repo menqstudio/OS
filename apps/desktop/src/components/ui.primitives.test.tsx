@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import {
   DataTable,
@@ -253,4 +255,26 @@ describe('InlineAlert', () => {
     const { container } = render(<InlineAlert tone="success">ok</InlineAlert>);
     expect(container.querySelector('.inline-alert-glyph')?.textContent).toBe('✓');
   });
+});
+
+describe('.stack — one class name, one meaning', () => {
+  // `ui.css` defines `.stack` as the vertical list every Skeleton, the conversation rail and the
+  // task list are built from. `aios.css` defined the SAME name as an avatar overlap — children
+  // pulled 9px left with a 2px border — and it loads later, so it won on every one of those
+  // lists. Nothing in the app uses the overlap. jsdom runs with `css: false`, so this cannot be
+  // seen in a rendered test; it is held at the source.
+  const css = (rel: string) =>
+    readFileSync(resolve(process.cwd(), rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const definesStack = (text: string) => /(^|[\s,}])\.stack(?![\w-])/m.test(text);
+
+  it('ui.css is the stylesheet that defines it', () => {
+    expect(definesStack(css('src/components/ui.css'))).toBe(true);
+  });
+
+  it.each(['src/theme/aios.css', 'src/components/aios-shell.css', 'src/components/layout.css'])(
+    '%s does not redefine it',
+    (rel) => {
+      expect(definesStack(css(rel))).toBe(false);
+    },
+  );
 });

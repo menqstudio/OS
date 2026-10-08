@@ -340,15 +340,9 @@ export function Settings() {
                     <div className="set-blocked" role="group" aria-label={L('blockedTitle')}>
                       <div className="set-blocked-title"><span aria-hidden="true">⛔</span> {L('blockedTitle')}</div>
                       {data.detail && <p className="set-note" style={{ marginTop: 6 }}>{data.detail}</p>}
+                      {/* No steps and no Re-check: `ready` for the governed provider is a constant in
+                          `ai_status`, so a button that re-read it measured nothing. */}
                       <p className="set-note" style={{ marginTop: 6 }}>{L('blockedGuideIntro')}</p>
-                      <ol>
-                        <li>{L('blockedStep1')}</li>
-                        <li>{L('blockedStep2')}</li>
-                        <li>{L('blockedStep3')}</li>
-                      </ol>
-                      <div style={{ marginTop: 12 }}>
-                        <button type="button" className="chip" onClick={ai.reload}>{L('recheck')}</button>
-                      </div>
                     </div>
                   ) : (
                     <>
