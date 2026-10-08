@@ -109,7 +109,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **The production gate is SHUT**, and only the Owner opens it after an independent audit — not a green CI run, not the Builder's confidence. Three refusals hold it. There is no `platform_governed_execution_supported()` in the tree; that is the §0.1 spec symbol, and documents citing it are citing a name that does not exist:
 
-1. chat: `governed_verification_unconfigured()` returns `Some(...)` while any of its five compile-time inputs is absent — all are. **It guards chat only**: the Bridge panel reaches `connect_broker` without it, and there the renderer rejects any commit that is not `trusted_verified`
+1. chat: `governed_verification_unconfigured()` returns `Some(...)` while any of its five compile-time inputs is absent — all are. **It guards chat only**: Bridge's `governed_turn_execute` is outside the manifest, so the window is refused it before `connect_broker` (read, not run); the renderer rejects all but `trusted_verified`
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest verifies under the floor-pinned root anchor** — which nothing in the shipped app sets; then it commits only `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` — the Owner's line
 

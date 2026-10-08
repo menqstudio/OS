@@ -34,7 +34,7 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 | 6 Multi-Agent | Done — 10/10 |
 | 7 Group Chat | Done — 8/8 |
 | 8 Automation | In-Progress — 7/9; `run_automation` is a local write, not a governed dispatch, so its receipt evidence is permanently unobserved |
-| 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked rather than pretending |
+| 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked; no connector can be enabled or disabled (OWNER 2g) |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
 ## Suites

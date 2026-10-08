@@ -1252,6 +1252,29 @@ the grant for the reason `set_enabled` already gives. It is T-052 code, so it go
 through the next audit rather than into a copy fix. The alternative — removing the two buttons —
 is cheaper and leaves the feature dead; not recommended.
 
+## 2h. Six commands the cockpit calls are refused to its own window (recorded 2026-10-08)
+
+`tools/check_capabilities.py` has said this in a comment since it was corrected; no document you
+read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in neither `build.rs`
+`COMMANDS` nor `capabilities/default.json`: `governed_turn_execute`, `read_decision_ledger`,
+`read_evidence_chain`, `read_verifier_verdicts`, `read_engine_approval_queue`,
+`governed_trust_selftest`. With an app manifest present, tauri 2.11.5 rejects a command that
+resolves no ACL — `src/webview/mod.rs`, `Command … not allowed by ACL`. Read in that source on this
+machine; **not** observed in a running window, and launching the app and pressing "Run self-test"
+is the experiment that would settle it.
+
+If the reading is right, three things on screen cannot work as shipped: the Bridge panel's governed
+turn, the governance mirror on Decisions / Approvals, and the trust self-test in Settings. `CLAUDE.md`
+§6, `apps/desktop/SECURITY.md` and `docs/ARCHITECTURE.md` each said otherwise and are corrected.
+
+**Recommendation: grant the four reads and the self-test; keep `governed_turn_execute` for the audit.**
+The five hold no key and no lease, write nothing and fail closed, so a manifest entry and an
+`allow-*` each is a small change with a gate (`check_capabilities.py`) already watching it — and it
+makes the mirror the product describes reachable. `governed_turn_execute` is the path a governed
+result travels; it stays ungranted until the next independent audit has it in scope. Granting all
+six at once is quicker and puts the one that matters through no review; removing the callers
+instead keeps the documents true and the features dead. Neither is recommended.
+
 ## 3. Open, and not waiting on you
 
 Recorded so nothing reads as closed that is not.
