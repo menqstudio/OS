@@ -92,10 +92,13 @@ describe('governedTurnAttempt — the UI-facing governed turn', () => {
 
   it('a real broker refusal is returned as a `blocked` DECISION, not as unavailable', async () => {
     withBackend();
-    invokeMock.mockResolvedValue({
-      protocol: RESULT_PROTOCOL, status: 'blocked', client_request_id: 'x',
-      broker_turn_id: 'bt-9', conversation_id: 'conv-1', reason: 'upstream_blocked',
-    });
+    // The broker echoes the request's id; a refusal naming another request is not this one's.
+    invokeMock.mockImplementation((_cmd: string, args?: { request?: { client_request_id?: string } }) =>
+      Promise.resolve({
+        protocol: RESULT_PROTOCOL, status: 'blocked',
+        client_request_id: args?.request?.client_request_id,
+        broker_turn_id: 'bt-9', conversation_id: 'conv-1', reason: 'upstream_blocked',
+      }));
     const a = await governedTurnAttempt('conv-1');
     expect(a.status).toBe('blocked');
   });

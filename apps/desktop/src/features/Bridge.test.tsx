@@ -34,10 +34,18 @@ const outcome = (text: string) =>
 
 /** Route each command to a canned reply; anything unrouted resolves null (fail-closed by default). */
 function mount(routes: Record<string, unknown>, opts: { taskId?: string } = {}) {
-  invokeMock.mockImplementation((cmd: string) => {
+  invokeMock.mockImplementation((cmd: string, args?: { request?: { client_request_id?: string } }) => {
     if (cmd in routes) {
       const v = routes[cmd];
-      return v instanceof Error ? Promise.reject(v) : Promise.resolve(v);
+      if (v instanceof Error) return Promise.reject(v);
+      // A real broker ECHOES the request's `client_request_id`, and the renderer now refuses a
+      // reply that names another one. The fixtures below write `'x'` where the echo goes; it is
+      // filled in here, from the request actually sent, so they stay about what they test.
+      if (cmd === 'governed_turn_execute' && v && typeof v === 'object'
+        && (v as { client_request_id?: unknown }).client_request_id === 'x') {
+        return Promise.resolve({ ...v, client_request_id: args?.request?.client_request_id });
+      }
+      return Promise.resolve(v);
     }
     return Promise.resolve(null);
   });

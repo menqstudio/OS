@@ -11,7 +11,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `b5af12f`.** PR #354 on `cockpit/deck-to-thread` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `427fafa`.** PR #355 on `cockpit/reply-correlation` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
@@ -45,7 +45,7 @@ Each row carries the date it was measured, because they are not measured togethe
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
 | `tools/` self-tests · 2026-10-08 | 1769 OK |
-| frontend · 2026-10-08 | typecheck clean, 1021 / 87 files |
+| frontend · 2026-10-08 | typecheck clean, 1027 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
 | Rust, 10 crates · 2026-10-08 | 1425 passed, 1 ignored (needs root; CI runs it) |
