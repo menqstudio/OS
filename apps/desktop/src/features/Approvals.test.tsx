@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Approvals } from './Approvals';
+import { STR } from './Approvals.strings';
 import { POPULATED } from './pages.fixtures';
 import { parseTrigger } from './automationsGovernance';
 import { parseTimestamp } from './timestamps';
@@ -530,5 +531,34 @@ describe('the populated page fixtures carry values the backend really emits', ()
       expect(value, where).toMatch(/^\d{13}$/);
       expect(parseTimestamp(value), where).not.toBeNull();
     }
+  });
+});
+
+// Two things the queue row said that the record did not. In Armenian the column heads read
+// «Ազդեցություն» (impact) over the TARGET and «Ժամկետ» (deadline) over how long a request has
+// WAITED. And every risk level, `high` included, was painted `q-rev ok` — the success tone.
+describe('Approvals — the queue row says what the record says', () => {
+  it('the Armenian column heads translate Target and Waiting', () => {
+    expect(STR.target.hy).not.toBe('Ազդեցություն');
+    expect(STR.waitingLabel.hy).not.toBe('Ժամկետ');
+    expect(STR.target.hy).toBe('Թիրախ');
+    expect(STR.waitingLabel.hy).toBe('Սպասում');
+  });
+
+  it.each([
+    ['high', false],
+    ['critical', false],
+    ['medium', false],
+    ['low', true],
+  ])('a %s-risk row is in the success tone: %s', async (riskLevel, ok) => {
+    const { container } = setup([{ ...PENDING, riskLevel }]);
+    await waitFor(() => expect(container.querySelector('.q-rev')).not.toBeNull());
+    expect(container.querySelector('.q-rev')!.classList.contains('ok')).toBe(ok);
+  });
+
+  it('a high or critical row is in the danger tone', async () => {
+    const { container } = setup([{ ...PENDING, riskLevel: 'high' }]);
+    await waitFor(() => expect(container.querySelector('.q-rev')).not.toBeNull());
+    expect(container.querySelector('.q-rev')!.classList.contains('no')).toBe(true);
   });
 });

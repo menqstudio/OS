@@ -242,3 +242,26 @@ describe('Command — a rejected write says why', () => {
     expect(await screen.findByText('database is locked')).toBeInTheDocument();
   });
 });
+
+// `stepMeta` knew `done` and `active` and sent everything else to `wait`: a FAILED step and a
+// SKIPPED one wore the amber "waiting" pill, beside a status word that said otherwise.
+describe('Command — a failed or skipped step is not styled as a waiting one', () => {
+  async function traceWith(status: string) {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_runs') return Promise.resolve([RUN]);
+      if (cmd === 'list_run_steps') return Promise.resolve([{ ...STEP, status }]);
+      return Promise.resolve(null);
+    });
+    const { container } = render(<AppProvider><ToastProvider><Command /></ToastProvider></AppProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+    await screen.findByText('Gather the source figures');
+    return container.querySelector('.cmd-trace .rs')!;
+  }
+
+  it.each([['failed', 'rs-fail'], ['skipped', 'rs-skip'], ['pending', 'rs-wait'], ['done', 'rs-done'], ['active', 'rs-now']])(
+    'a %s step carries %s', async (status, cls) => {
+      const pill = await traceWith(status);
+      expect(pill.className).toContain(cls);
+      if (cls !== 'rs-wait') expect(pill.className).not.toContain('rs-wait');
+    });
+});

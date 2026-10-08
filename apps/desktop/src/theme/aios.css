@@ -2263,6 +2263,8 @@ body.ignited .shimmer{opacity:1}
 .v-command .cmd-trace .rs-done{color:var(--success);border-color:rgb(var(--success-rgb)/.3);background:rgb(var(--success-rgb)/.08)}
 .v-command .cmd-trace .rs-now{color:var(--cyan);border-color:rgb(var(--cyan-rgb)/.4);background:rgb(var(--cyan-rgb)/.08)}
 .v-command .cmd-trace .rs-wait{color:var(--warning);border-color:rgb(var(--warning-rgb)/.28);background:rgb(var(--warning-rgb)/.07)}
+.v-command .cmd-trace .rs-fail{color:var(--danger);border-color:rgb(var(--danger-rgb)/.4);background:rgb(var(--danger-rgb)/.08)}
+.v-command .cmd-trace .rs-skip{border-style:dashed}
 
 /* ── responsive ───────────────────────────────────────────────────────────── */
 @media (max-width:1040px){

@@ -115,6 +115,12 @@ function fmtElapsed(ms: number): string {
   return `${s}s`;
 }
 
+/** ` ok` for low, ` no` for high and critical, nothing otherwise — the two tones `.q-rev` has. */
+function riskTone(risk: string | null | undefined): string {
+  const r = (risk ?? '').toLowerCase();
+  return r === 'low' ? ' ok' : r === 'high' || r === 'critical' ? ' no' : '';
+}
+
 export function Approvals() {
   const { t, lang } = useApp();
   const toast = useToast();
@@ -724,7 +730,11 @@ export function Approvals() {
               <span className="q-impact">
                 <span className="micro">{L('target')}</span>
                 <b className="mono">{a.target}</b>
-                <span className="q-rev ok">{riskLabel((a.riskLevel ?? '').toLowerCase(), lang)}</span>
+                {/* The tone follows the level. This was `q-rev ok` for every row, so a HIGH-risk
+                    request wore the success colour. `medium`, and anything unrecognised, takes no
+                    tone: the stylesheet has no warning variant here, and inventing agreement is
+                    the defect being removed. */}
+                <span className={`q-rev${riskTone(a.riskLevel)}`}>{riskLabel((a.riskLevel ?? '').toLowerCase(), lang)}</span>
               </span>
               <span className="q-sla">
                 <span className="micro">{L('waitingLabel')}</span>

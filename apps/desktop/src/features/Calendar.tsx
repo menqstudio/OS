@@ -10,6 +10,7 @@ import { statusTone, type Tone } from '../domain/enums';
 import { kindLabel } from '../domain/statusLabels';
 import type { CalendarEvent } from '../domain/entities';
 import { STR } from './Calendar.strings';
+import { parseTimestamp } from './timestamps';
 
 // `startsAt` is free text: seed events store a millisecond-epoch string, while
 // the old form let the user type anything. Parse defensively and treat an
@@ -149,6 +150,15 @@ function NewEventForm(
  * gap that is papered over.
  */
 function RunHistory({ L }: { L: (k: keyof typeof STR) => string }) {
+  const { lang } = useApp();
+  // The shared parser and the PAGE's locale. This was `new Date(Number(ranAt)).toLocaleString()`:
+  // a time the parser reads and `Number()` does not printed "Invalid Date", in the machine's locale.
+  const fmtRunTime = (raw: string) => {
+    const d = parseTimestamp(raw);
+    if (d === null) return '—';
+    return new Intl.DateTimeFormat(lang === 'hy' ? 'hy-AM' : lang === 'ru' ? 'ru-RU' : 'en-US',
+      { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+  };
   const automations = useAsync(() => desktop.listAutomations(), []);
   const list = automations.data ?? [];
   // One read per automation. The set is small and owner-authored; a batched command would be the
@@ -202,7 +212,7 @@ function RunHistory({ L }: { L: (k: keyof typeof STR) => string }) {
             {rows.map(({ run, name }) => (
               <li key={run.id} className="cal-run" role="listitem">
                 <span className="cal-run-when mono micro">
-                  {new Date(Number(run.ranAt)).toLocaleString()}
+                  {fmtRunTime(run.ranAt)}
                 </span>
                 <span className="cal-run-name">{name}</span>
                 <span className="cal-run-outcome micro">{run.outcome}</span>

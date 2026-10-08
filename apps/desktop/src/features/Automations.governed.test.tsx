@@ -393,3 +393,25 @@ describe('a backend denial is not answered with a step that does not exist', () 
     expect(AU_STR.guardFix[lang]).toMatch(/no command|հրաման չկա|нет команды/);
   });
 });
+
+// "No runs yet" is a statement about a history that was READ. It was printed whenever there were
+// no rows and no error, which is also the state while the read is still in flight.
+describe('the run history does not say "no runs" before it has been read', () => {
+  it('prints nothing about an empty history while the read is pending', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_automations') return Promise.resolve([{ ...AUTOMATION, enabled: true }]);
+      if (cmd === 'list_automation_runs') return new Promise(() => { /* never answers */ });
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Automations /></ToastProvider></AppProvider>);
+    await loaded();
+    await waitFor(() => expect(called('list_automation_runs')).toBeGreaterThan(0));
+    expect(screen.queryAllByText(/No runs yet/)).toHaveLength(0);
+  });
+
+  it('and does say it once an empty history has come back', async () => {
+    setup({ runs: [] });
+    await loaded();
+    await waitFor(() => expect(screen.queryAllByText(/No runs yet/).length).toBeGreaterThan(0));
+  });
+});
