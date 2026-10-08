@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1009,
+      "value": 1014,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "2d1e4d2",
+        "head": "e40c1aa",
         "environments": {
+          "Debian 13 (trixie) native @ e40c1aa + two cockpit findings (stack class, settings blocked panel)": {
+            "ran": 1014,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 2d1e4d2 + two cockpit findings (deck room list, research run token)": {
             "ran": 1009,
             "skipped": 0
@@ -323,7 +327,8 @@
         801,
         984,
         999,
-        1007
+        1007,
+        1009
       ]
     },
     "a11y_tests": {

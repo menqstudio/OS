@@ -267,3 +267,26 @@ describe('Settings — says whether the preferences it offers are actually kept'
     }
   });
 });
+
+// The governed provider's `ready` is a hard-coded `false` in `ai_status` — nothing probes a
+// sidecar. The blocked panel nonetheless said the sidecar "did not become ready", called it
+// "misconfigured", gave three steps to "restore" it and a Re-check button that re-read a constant.
+describe('Settings — the blocked governed provider is described as what it is', () => {
+  const GOVERNED_UNPROVISIONED = {
+    provider: 'governed-engine', model: 'm', ready: false, governed: true,
+    detail: 'governed_verification_unconfigured — missing provisioning, not a check that ran and failed.',
+  };
+
+  it('shows the backend\'s own reason and claims no probe, no misconfiguration and no re-check', async () => {
+    mount(GOVERNED_UNPROVISIONED);
+    await waitFor(() => expect(document.querySelector('.set-blocked')).not.toBeNull());
+    const panel = document.querySelector('.set-blocked')!;
+    const text = panel.textContent ?? '';
+    expect(text).toContain(GOVERNED_UNPROVISIONED.detail);
+    expect(text).not.toMatch(/misconfigured/i);
+    expect(text).not.toMatch(/did not become ready/i);
+    expect(text).toMatch(/not provisioned/i);
+    // A button that re-reads a value the backend hard-codes measures nothing.
+    expect(screen.queryByRole('button', { name: 'Re-check' })).toBeNull();
+  });
+});

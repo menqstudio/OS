@@ -113,31 +113,18 @@ export const STR = {
     ru: 'Выбранный провайдер неуправляемый, поэтому вспомогательная служба управления не задействована. Обращения не проверяются.',
   },
   blockedTitle: {
-    en: 'Sidecar misconfigured — governed path is fail-closed',
-    hy: 'Կողմնակի ծառայությունը սխալ է կարգավորված — կառավարվող ուղին fail-closed է',
-    ru: 'Вспомогательная служба настроена неверно — управляемый путь в режиме fail-closed',
+    en: 'Governed path is fail-closed — this install is not provisioned',
+    hy: 'Կառավարվող ուղին fail-closed է — այս տեղադրումը provision արված չէ',
+    ru: 'Управляемый путь в режиме fail-closed — эта установка не подготовлена',
   },
+  // What this says is what `ai_status` can know: the governed provider's `ready` is a constant
+  // `false`, not a measurement. The copy used to say the sidecar "did not become ready" and gave
+  // three steps to restore it, beside a Re-check button that re-read the constant.
   blockedGuideIntro: {
-    en: 'The governed provider is enabled but the sidecar did not become ready, so every governed turn is blocked (no result is produced). To restore the governed path:',
-    hy: 'Կառավարվող մատակարարը միացված է, բայց կողմնակի ծառայությունը պատրաստ չդարձավ, ուստի յուրաքանչյուր կառավարվող շրջադարձ արգելափակված է (արդյունք չի ստեղծվում)։ Կառավարվող ուղին վերականգնելու համար՝',
-    ru: 'Управляемый провайдер включён, но вспомогательная служба не готова, поэтому каждое управляемое обращение блокируется (результат не создаётся). Чтобы восстановить управляемый путь:',
+    en: 'Every governed turn is refused before the model is called, and no result is produced. This is reported by the build, not measured: nothing here probes a sidecar, so there is nothing to re-check. It changes when the install provisions what receipt verification needs — the reason above is the backend\'s own.',
+    hy: 'Ամեն կառավարվող շրջադարձ մերժվում է մոդելը կանչելուց առաջ, և արդյունք չի ստեղծվում։ Սա հաղորդում է build-ը, չափում չէ. այստեղ ոչինչ չի հարցնում կողմնակի ծառայությանը, ուստի կրկին ստուգելու բան չկա։ Այն կփոխվի, երբ տեղադրումը provision անի այն, ինչ պետք է ստացականի ստուգմանը — վերևի պատճառը backend-ի սեփական խոսքն է։',
+    ru: 'Каждое управляемое обращение отклоняется до вызова модели, и результат не создаётся. Это сообщает сборка, а не измерение: здесь ничто не опрашивает вспомогательную службу, поэтому перепроверять нечего. Это изменится, когда установка подготовит то, что нужно для проверки квитанций, — причина выше дана самим backend.',
   },
-  blockedStep1: {
-    en: 'Confirm the governance engine / broker service is running in the backend environment.',
-    hy: 'Հաստատեք, որ կառավարման շարժիչը / broker ծառայությունը աշխատում է backend միջավայրում։',
-    ru: 'Убедитесь, что движок управления / служба брокера запущены в серверной среде.',
-  },
-  blockedStep2: {
-    en: 'Provision the trust root so signed receipts can be verified (do not fall back to ungoverned).',
-    hy: 'Ապահովեք վստահության արմատը, որպեսզի ստորագրված անդորրագրերը ստուգվեն (մի անցեք չկառավարվողի)։',
-    ru: 'Обеспечьте корень доверия, чтобы подписанные квитанции можно было проверить (не переходите в неуправляемый режим).',
-  },
-  blockedStep3: {
-    en: 'Re-check status once the sidecar is configured.',
-    hy: 'Կրկին ստուգեք վիճակը, երբ կողմնակի ծառայությունը կարգավորված է։',
-    ru: 'Повторно проверьте состояние после настройки вспомогательной службы.',
-  },
-  recheck: { en: 'Re-check', hy: 'Կրկին ստուգել', ru: 'Проверить снова' },
 
   // — system identity panel —
   systemHeading: { en: 'System', hy: 'Համակարգ', ru: 'Система' },
