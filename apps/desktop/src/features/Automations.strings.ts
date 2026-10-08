@@ -283,9 +283,9 @@ export const STR = {
   // ── blocked (wall/guard denial) ──────────────────────────────────────────────
   blockedByWall: { en: 'Blocked by the wall', hy: 'Արգելափակված է պատով', ru: 'Заблокировано стеной' },
   guardFix: {
-    en: 'A guard tripped or the wall denied this action. Resolve the guard condition or request approval, then retry.',
-    hy: 'Պահապանը գործարկվեց կամ պատը մերժեց այս գործողությունը։ Լուծեք պահապանի պայմանը կամ պահանջեք հաստատում, ապա կրկնեք։',
-    ru: 'Сработал страж или стена отклонила это действие. Устраните условие стража или запросите одобрение, затем повторите.',
+    en: 'A guard tripped or the wall denied this action. Resolve the guard condition, then retry. Arming an automation also needs a confirmed approval, and there is no command in this build that requests one.',
+    hy: 'Պահապանը գործարկվեց կամ պատը մերժեց այս գործողությունը։ Լուծեք պահապանի պայմանը, ապա կրկնեք։ Ավտոմատացումը զինելուն պետք է նաև հաստատված թույլտվություն, իսկ այս տարբերակում այդպիսին պահանջող հրաման չկա։',
+    ru: 'Сработал страж или стена отклонила это действие. Устраните условие стража, затем повторите. Чтобы взвести автоматизацию, нужно ещё и подтверждённое одобрение, а в этой сборке нет команды, которая его запрашивает.',
   },
   // `list_automations` only locks the local database and queries it. There is no mode, scope or
   // approval behind that read, so a refusal of it is not described as one that any of them opens.

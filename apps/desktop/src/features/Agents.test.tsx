@@ -13,6 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Agents } from './Agents';
+import { STR as AG_STR } from './Agents.strings';
 
 const AGENT = {
   id: 'a-1',
@@ -81,5 +82,18 @@ describe('Agents — Esc closes the dossier and it stays closed', () => {
     await waitFor(() => expect(screen.getByText('Select an agent')).toBeInTheDocument());
     fireEvent.keyDown(node, { key: 'Enter' });
     await waitFor(() => expect(document.querySelector('.dossier .ag-forge')).not.toBeNull());
+  });
+});
+
+// `agents.status` has one writer in the whole backend: `repo::seed`, which sets `shield` to
+// `blocked` at startup. No governed turn writes it. The panel said "A governed turn for this agent
+// was halted by the wall. Its result is withheld until a verified receipt is produced" — an event,
+// a withheld result and a receipt, none of which exist behind this status.
+describe('the blocked panel does not narrate a wall event nobody recorded', () => {
+  it.each(['en', 'hy', 'ru'] as const)('claims no halted turn and no pending receipt (%s)', (lang) => {
+    const body = AG_STR.blockedBody[lang];
+    expect(body).not.toMatch(/halted by the wall|կանգնեցվեց պատի|остановлен стеной/);
+    expect(body).not.toMatch(/withheld|պահվում է մինչև|удерживается/);
+    expect(body).toMatch(/does not record why|չի գրանցում, թե ինչու|не записывает, почему/);
   });
 });

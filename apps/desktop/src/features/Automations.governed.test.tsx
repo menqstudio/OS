@@ -29,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Automations } from './Automations';
+import { STR as AU_STR } from './Automations.strings';
 
 const AUTOMATION = {
   id: 'au-1',
@@ -379,5 +380,16 @@ describe('a refused read of the automation list is not the wall', () => {
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     }
+  });
+});
+
+// The advice under a backend denial ended "…or request approval, then retry". Arming does need a
+// confirmed grant (`automations::set_enabled`), but the only non-test caller of
+// `approvals::create` raises a request for a RUN STEP. There is nothing on this desktop to
+// request an automation's approval with, so the advice named a step that cannot be taken.
+describe('a backend denial is not answered with a step that does not exist', () => {
+  it.each(['en', 'hy', 'ru'] as const)('does not tell the operator to request approval (%s)', (lang) => {
+    expect(AU_STR.guardFix[lang]).not.toMatch(/or request approval|կամ պահանջեք հաստատում|или запросите одобрение/);
+    expect(AU_STR.guardFix[lang]).toMatch(/no command|հրաման չկա|нет команды/);
   });
 });

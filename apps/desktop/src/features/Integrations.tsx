@@ -46,6 +46,11 @@ function isGovernanceBlock(message: string): boolean {
   return /secret|ungoverned|governance|not provisioned|auth|denied|permission|refus/i.test(message);
 }
 
+/** The registry's own refusal when a status write found no confirmed grant to spend. */
+function needsApproval(message: string): boolean {
+  return /approval:\s*required/i.test(message);
+}
+
 /** A probe result kept alongside the record version it was taken against. A check
  *  describes the record as it was; the moment the row is rewritten (enable, disable,
  *  a backend change) the old result is stale and this page falls back to `untested`
@@ -186,10 +191,16 @@ export function Integrations() {
         const msg = e instanceof Error ? e.message : String(e);
         // A refusal to enable (would hold a desktop secret / run ungoverned) is the
         // spec's `blocked` outcome, announced with its reason.
-        setNotice({
-          kind: status === 'connected' && isGovernanceBlock(msg) ? 'blocked' : 'error',
-          text: msg,
-        });
+        // The T-052 gate's refusal is `invalid value for approval: required`. Shown raw it read
+        // as a malformed field; it is a refusal with a reason the page knows, in either direction.
+        if (needsApproval(msg)) {
+          setNotice({ kind: 'blocked', text: L('statusNeedsApproval').replace('{reason}', msg) });
+        } else {
+          setNotice({
+            kind: status === 'connected' && isGovernanceBlock(msg) ? 'blocked' : 'error',
+            text: msg,
+          });
+        }
         s.reload();
       });
   };

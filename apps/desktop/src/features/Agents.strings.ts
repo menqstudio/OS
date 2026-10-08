@@ -58,9 +58,11 @@ export const STR = {
   },
   blockedTitle: { en: 'Agent blocked', hy: 'Գործակալն արգելափակված է', ru: 'Агент заблокирован' },
   blockedBody: {
-    en: 'A governed turn for this agent was halted by the wall. Its result is withheld until a verified receipt is produced.',
-    hy: 'Այս գործակալի կառավարվող քայլը կանգնեցվեց պատի կողմից։ Արդյունքը պահվում է մինչև ստուգված ստացականի ստեղծումը։',
-    ru: 'Управляемый шаг этого агента был остановлен стеной. Его результат удерживается до создания проверенной квитанции.',
+    // The only writer of an agent's status in this build is the startup seed. This text narrated
+    // a halted governed turn and a withheld result behind a value nothing governed ever wrote.
+    en: 'The stored status of this agent is blocked or failed. This build does not record why: no governed turn writes an agent\'s status, and the agents listed here are sample rows written at startup.',
+    hy: 'Այս գործակալի պահված կարգավիճակը «արգելափակված» կամ «ձախողված» է։ Այս տարբերակը չի գրանցում, թե ինչու. ոչ մի կառավարվող քայլ գործակալի կարգավիճակ չի գրում, իսկ այստեղ ցուցակված գործակալները գործարկման ժամանակ գրված նմուշային տողեր են։',
+    ru: 'Сохранённый статус этого агента — «заблокирован» или «сбой». Эта сборка не записывает, почему: ни один управляемый шаг не пишет статус агента, а перечисленные здесь агенты — примерные строки, записанные при запуске.',
   },
   retry: { en: 'Retry', hy: 'Կրկնել', ru: 'Повторить' },
 

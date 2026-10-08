@@ -158,10 +158,18 @@ export const STR = {
   enableAction: { en: 'Enable', hy: 'Միացնել', ru: 'Включить' },
   disableAction: { en: 'Disable', hy: 'Անջատել', ru: 'Отключить' },
   reconnect: { en: 'Re-enable', hy: 'Վերամիացնել', ru: 'Включить снова' },
+  // The registry spends a natively confirmed grant on every status write, in both directions, and
+  // no command in this build raises a request for one against a connector. "Records your intent"
+  // described a write that is refused every time.
   enableActionNote: {
-    en: 'Records your intent in the local registry. It does not contact {name} and stores no credential.',
-    hy: 'Գրանցում է Ձեր մտադրությունը տեղական ռեեստրում։ Այն չի կապվում {name}-ի հետ և հավատարմագիր չի պահում։',
-    ru: 'Записывает ваше намерение в локальный реестр. Не связывается с {name} и не хранит учётные данные.',
+    en: 'Asks the local registry to record the change. It does not contact {name} and stores no credential. The registry accepts a status change only against a confirmed approval, and no command in this build requests one for a connector, so the change is refused.',
+    hy: 'Խնդրում է տեղական ռեեստրին գրանցել փոփոխությունը։ Այն չի կապվում {name}-ի հետ և հավատարմագիր չի պահում։ Ռեեստրը կարգավիճակի փոփոխությունն ընդունում է միայն հաստատված թույլտվության դիմաց, իսկ այս տարբերակում միակցիչի համար այդպիսին պահանջող հրաման չկա, ուստի փոփոխությունը մերժվում է։',
+    ru: 'Просит локальный реестр записать изменение. Не связывается с {name} и не хранит учётные данные. Реестр принимает смену статуса только при подтверждённом одобрении, а в этой сборке нет команды, которая запрашивает его для коннектора, поэтому изменение отклоняется.',
+  },
+  statusNeedsApproval: {
+    en: 'A status change needs a confirmed approval, and no command in this build requests one for a connector. Nothing was changed. The registry answered: {reason}',
+    hy: 'Կարգավիճակի փոփոխությանը պետք է հաստատված թույլտվություն, իսկ այս տարբերակում միակցիչի համար այդպիսին պահանջող հրաման չկա։ Ոչինչ չի փոխվել։ Ռեեստրի պատասխանը՝ {reason}',
+    ru: 'Для смены статуса нужно подтверждённое одобрение, а в этой сборке нет команды, которая запрашивает его для коннектора. Ничего не изменено. Ответ реестра: {reason}',
   },
   enabledNamed: {
     en: '{name} enabled locally — not yet verified',
@@ -297,9 +305,9 @@ export const STR = {
     ru: 'Проверка доступности не подключена в этой сборке',
   },
   capBody: {
-    en: 'None of the integration commands this desktop grants contacts a connector: they list, declare, enable or disable one, and record where its credential is referenced. So it can declare and enable connectors but cannot test one. Until `{probe}` ships and is granted, every connector stays unverified.',
-    hy: 'Այս աշխատասեղանի թույլատրած ինտեգրման հրամաններից ոչ մեկը միակցիչի հետ չի կապվում. դրանք ցուցակում են, հայտարարում, միացնում կամ անջատում են այն ու գրանցում, թե որտեղ է հղված դրա հավատարմագիրը։ Ուստի այն կարող է հայտարարել և միացնել միակցիչներ, բայց չի կարող ստուգել դրանցից որևէ մեկը։ Քանի դեռ `{probe}`-ը չի ավելացվել և թույլատրվել, ամեն միակցիչ մնում է չհաստատված։',
-    ru: 'Ни одна из команд интеграций, разрешённых этому компьютеру, не связывается с коннектором: они выводят список, объявляют, включают или отключают коннектор и записывают, где указана ссылка на его учётные данные. Поэтому он может объявлять и включать коннекторы, но не может проверить ни один. Пока `{probe}` не появится и не будет разрешена, каждый коннектор остаётся неподтверждённым.',
+    en: 'None of the integration commands this desktop grants contacts a connector: they list, declare, enable or disable one, and record where its credential is referenced. So it can declare a connector but cannot test one. Nor can it enable or disable one yet: that write needs a confirmed approval, and no command in this build requests one for a connector. Until `{probe}` ships and is granted, every connector stays unverified.',
+    hy: 'Այս աշխատասեղանի թույլատրած ինտեգրման հրամաններից ոչ մեկը միակցիչի հետ չի կապվում. դրանք ցուցակում են, հայտարարում, միացնում կամ անջատում են այն ու գրանցում, թե որտեղ է հղված դրա հավատարմագիրը։ Ուստի այն կարող է հայտարարել միակցիչ, բայց չի կարող ստուգել այն։ Միացնել կամ անջատել էլ դեռ չի կարող. այդ գրառմանը պետք է հաստատված թույլտվություն, իսկ այս տարբերակում միակցիչի համար այդպիսին պահանջող հրաման չկա։ Քանի դեռ `{probe}`-ը չի ավելացվել և թույլատրվել, ամեն միակցիչ մնում է չհաստատված։',
+    ru: 'Ни одна из команд интеграций, разрешённых этому компьютеру, не связывается с коннектором: они выводят список, объявляют, включают или отключают коннектор и записывают, где указана ссылка на его учётные данные. Поэтому он может объявить коннектор, но не может его проверить. Включить или отключить его он пока тоже не может: для этой записи нужно подтверждённое одобрение, а в этой сборке нет команды, которая запрашивает его для коннектора. Пока `{probe}` не появится и не будет разрешена, каждый коннектор остаётся неподтверждённым.',
   },
 
   // ── Declare a connector ────────────────────────────────────────────────────
