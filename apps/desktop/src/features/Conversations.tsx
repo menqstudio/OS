@@ -273,6 +273,11 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
   // `finally` cleared `thinking` / `streamingText` and drained the queue underneath the new
   // turn. A boolean cannot say "the turn I belong to was stopped"; an id can.
   const turnRef = useRef(0);
+  // How many reply streams THIS thread has started and not yet seen finish. Unmount cancels the
+  // room's in-flight turns only when this is non-zero: `cancel_reply` cancels EVERY turn armed
+  // under the conversation id, and on the group page the consensus deck streams its asks on the
+  // same room — so a thread that had started nothing, leaving, killed the deck's round.
+  const streamsInFlight = useRef(0);
   // Messages sent while a turn is running are queued and fire automatically when it
   // finishes — the user never waits to keep talking. A ref (not state) so the drain in
   // send's `finally` reads the latest queue without a stale closure.
@@ -394,6 +399,7 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
     // retires this turn's id, so this loop breaks and the backend turn is cancelled.
     setThinking(true);
     setStreamingText('');
+    streamsInFlight.current += 1;
     try {
       // #3 mention routing: if the message @mentions specific agents, THEY answer (in the
       // order named); otherwise a group room falls back to the first couple of specialists
@@ -439,6 +445,7 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
     } catch (e: unknown) {
       if (live()) setReplyError(e instanceof Error ? e.message : String(e));
     } finally {
+      streamsInFlight.current -= 1;
       // Only the turn that still owns the stream UI may clear it. A stopped turn finishing late
       // must not switch off the indicator of the turn that replaced it.
       if (live()) {
@@ -476,7 +483,10 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
   // conversation id, so selecting another conversation unmounts this instance and fires this cleanup.
   useEffect(() => () => {
     turnRef.current += 1;
-    void desktop.cancelReply(conversation.id).catch(() => {});
+    // Only a turn this thread started is this thread's to cancel (see `streamsInFlight`).
+    if (streamsInFlight.current > 0) {
+      void desktop.cancelReply(conversation.id).catch(() => {});
+    }
   }, [conversation.id]);
 
   // Run one DEMONSTRATION-verified reply: the reply is produced inside the in-process governed chain and

@@ -276,3 +276,54 @@ describe('GroupChat — a round the deck opens appears in the thread above it', 
     await waitFor(() => expect(thread().textContent).toContain('Does the deck reach the thread'));
   });
 });
+
+describe('GroupChat — leaving a thread cancels only a turn that thread started', () => {
+  // `cancel_reply` cancels EVERY in-flight turn armed under the conversation id, and the thread
+  // called it on every unmount. The consensus deck streams its asks on that same room id, so
+  // switching threads above killed the deck's round below.
+  const calledCancel = () => invokeMock.mock.calls.some((c) => c[0] === 'cancel_reply');
+  function mountRoom() {
+    const log = [msg('m-1', 'gev', 'hello', 'user')];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM]);
+      if (cmd === 'list_messages') return Promise.resolve(log.map((m) => ({ ...m })));
+      if (cmd === 'post_user_message') {
+        const made = msg(`m-${log.length + 1}`, String(args?.author ?? 'gev'), String(args?.body ?? ''), 'user');
+        log.push(made);
+        return Promise.resolve(made);
+      }
+      if (cmd === 'list_agents') return Promise.resolve([agent('scout', 'Scout'), agent('analyst', 'Analyst')]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Scout', 'Analyst']);
+      if (cmd === 'ai_status') {
+        return Promise.resolve({ provider: 'claude-cli', model: 'm', ready: true, detail: 'ok', governed: false });
+      }
+      if (cmd === 'search_all') return Promise.resolve([]);
+      if (cmd === 'stream_reply') return new Promise(() => {});   // a turn that is still running
+      return Promise.resolve(null);
+    });
+    return render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+  }
+
+  it('a thread that started nothing cancels nothing when it goes away', async () => {
+    const { unmount } = mountRoom();
+    await deck();
+    await waitFor(() => expect(document.querySelector('form.composer')).not.toBeNull());
+    unmount();
+    expect(calledCancel()).toBe(false);
+  });
+
+  it('control: a thread with its own turn in flight still cancels it', async () => {
+    const { unmount } = mountRoom();
+    await deck();
+    const composer = await waitFor(() => {
+      const f = document.querySelector('form.composer');
+      expect(f).not.toBeNull();
+      return f!;
+    });
+    fireEvent.change(composer.querySelector('textarea, input') as HTMLInputElement, { target: { value: 'go' } });
+    fireEvent.submit(composer);
+    await waitFor(() => expect(invokeMock.mock.calls.some((c) => c[0] === 'stream_reply')).toBe(true));
+    unmount();
+    expect(calledCancel()).toBe(true);
+  });
+});
