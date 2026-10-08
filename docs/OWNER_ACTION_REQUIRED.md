@@ -1230,6 +1230,28 @@ touches the governed surfaces, and the standing verdict is unchanged.
 
 ---
 
+## 2g. Two controls in the cockpit cannot be used at all (found 2026-10-08)
+
+Read in the code, not taken from a document. The T-052 gate makes two writes spend a natively
+confirmed approval: `integrations::set_status` (`core/src/repo.rs`, in both directions) and
+`automations::set_enabled` (arming only). The only caller of `approvals::create` outside tests is
+`commands.rs`, and it raises a request for a **run step**. So in the shipped app:
+
+- a connector can be neither enabled **nor disabled** — every press returns
+  `invalid value for approval: required`;
+- an automation can never be armed. Disarming works, and the code says why a stop control must
+  never sit behind an approval; the connector gate does not follow that reasoning.
+
+What was done: the cockpit no longer promises either (PR "approval honesty"), and a refused
+connector change is announced with its reason. What was NOT done: nothing in the gate was changed.
+
+**Recommendation: build the request path, and un-gate connector disable.** One command that raises
+an approval request for a connector status change or an automation arming, reusing the run-step
+request's origin principal, nonce and digest binding; and `set_status(disconnected)` exempt from
+the grant for the reason `set_enabled` already gives. It is T-052 code, so it goes as its own PR
+through the next audit rather than into a copy fix. The alternative — removing the two buttons —
+is cheaper and leaves the feature dead; not recommended.
+
 ## 3. Open, and not waiting on you
 
 Recorded so nothing reads as closed that is not.

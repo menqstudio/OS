@@ -27,6 +27,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Integrations } from './Integrations';
+import { STR as INTG_STR } from './Integrations.strings';
 
 const CONNECTED_ROW = {
   id: 'in-1', name: 'GitHub', provider: 'github', status: 'connected',
@@ -291,5 +292,47 @@ describe('declaring a connector', () => {
     expect(alert).toHaveTextContent(/This window was not allowed to declare a connector/);
     expect(alert).toHaveTextContent(/DOES expose `create_integration`/);
     expect(alert).toHaveTextContent(/create_integration not allowed/);
+  });
+});
+
+// `integrations::set_status` spends a natively confirmed grant inside its own transaction (the
+// T-052 gate), in BOTH directions. The only non-test caller of `approvals::create` raises a
+// request for a run step, so no command in this build can request one for a connector: every
+// press of Enable or Disable comes back `invalid value for approval: required`. The page said
+// the desktop "can declare and enable connectors" and that the button "records your intent".
+describe('enabling a connector is not promised while nothing can approve it', () => {
+  const APPROVAL_REFUSAL = 'invalid value for approval: required';
+
+  it.each(['en', 'hy', 'ru'] as const)('the copy does not say the desktop can enable one (%s)', (lang) => {
+    expect(INTG_STR.capBody[lang]).not.toMatch(/declare and enable connectors|հայտարարել և միացնել|объявлять и включать/);
+    expect(INTG_STR.enableActionNote[lang]).not.toMatch(/^Records your intent|^Գրանցում է Ձեր մտադրությունը|^Записывает ваше намерение/);
+    expect(INTG_STR.capBody[lang]).toMatch(/approval|թույլտվությ|одобрени/);
+    expect(INTG_STR.enableActionNote[lang]).toMatch(/approval|թույլտվությ|одобрени/);
+  });
+
+  it('a refused status change says what was missing, not only the raw field error', async () => {
+    const user = userEvent.setup();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_integrations') return Promise.resolve([{ ...CONNECTED_ROW, status: 'disconnected' }]);
+      if (cmd === 'set_integration_status') return Promise.reject(new Error(APPROVAL_REFUSAL));
+      return Promise.resolve(null);
+    });
+    const { container } = render(
+      <AppProvider>
+        <ToastProvider>
+          <Integrations />
+        </ToastProvider>
+      </AppProvider>,
+    );
+    await openConnector(user);
+    await user.click(await screen.findByRole('button', { name: 'Enable' }));
+
+    await waitFor(() => expect(container.querySelector('.intg-notice')).not.toBeNull());
+    const notice = container.querySelector('.intg-notice')!;
+    expect(notice.className).toContain('intg-notice--blocked');
+    expect(notice).toHaveTextContent(/needs a confirmed approval/);
+    expect(notice).toHaveTextContent(/no command in this build requests one/);
+    // the backend's own words stay on screen
+    expect(notice).toHaveTextContent(APPROVAL_REFUSAL);
   });
 });
