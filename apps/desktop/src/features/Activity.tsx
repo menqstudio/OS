@@ -152,7 +152,7 @@ export function Activity() {
     const max = n ? ts[n - 1] : 0;
     const span = max - min;
 
-    // Rate histogram: bucket every event into 12–24 equal time bins (never more
+    // Rate histogram: bucket every event into 1–24 equal time bins (never more
     // bins than events), bar height = real count in that bin.
     const binCount = Math.max(1, Math.min(24, n));
     const bins = new Array<number>(binCount).fill(0);

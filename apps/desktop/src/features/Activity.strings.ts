@@ -115,9 +115,11 @@ export const STR = {
     ru: 'Час пик',
   },
   eventsFlow: {
-    en: 'EVENTS FLOW · /min',
-    hy: 'ԿԱՆՉԵՐԻ ՀՈՍՔ · /Ր',
-    ru: 'ПОТОК СОБЫТИЙ · /мин',
+    // No unit: the histogram cuts the span between the oldest and the newest event into at most 24
+    // equal bins, so a bin is a minute only by coincidence. This read "· /min".
+    en: 'EVENTS FLOW',
+    hy: 'ԿԱՆՉԵՐԻ ՀՈՍՔ',
+    ru: 'ПОТОК СОБЫТИЙ',
   },
   beats: {
     en: 'beats',

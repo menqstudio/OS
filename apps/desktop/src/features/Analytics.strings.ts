@@ -119,7 +119,7 @@ export const STR = {
   // -- hero deck framing ------------------------------------------------------
   // There is no stream. `get_analytics` is a one-shot read of an all-time aggregate,
   // so the old always-on "STREAM · LIVE" pill was decoration dressed as telemetry.
-  // These three name the REAL state of that single read instead.
+  // These four name the REAL state of that single read instead.
   readReading: {
     en: 'READ · in flight',
     hy: 'ԸՆԹԵՐՑՈՒՄ · ընթացքում',

@@ -70,9 +70,9 @@ export const STR = {
     ru: 'Объявлен в реестре компьютера',
   },
   factDeclarationNote: {
-    en: 'A name and a provider. This is all a connector row is.',
-    hy: 'Անուն և մատակարար։ Միակցիչի գրառումն ընդամենը սա է։',
-    ru: 'Имя и поставщик. Это всё, чем является запись коннектора.',
+    en: 'A name and a provider. That is what a declaration records.',
+    hy: 'Անուն և մատակարար։ Հայտարարումը գրանցում է հենց սա։',
+    ru: 'Имя и поставщик. Это то, что записывает объявление.',
   },
   factEnablement: { en: 'Local enablement', hy: 'Տեղական միացում', ru: 'Локальное включение' },
   factEnablementNote: {

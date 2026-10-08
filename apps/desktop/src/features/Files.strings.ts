@@ -165,10 +165,12 @@ export const STR = {
     hy: 'Ուղի',
     ru: 'Путь',
   },
+  // The backend's root is a dedicated workspace (`~/BroPS`, or `BROPS_FILES_ROOT`), and it refuses
+  // a root that resolves to the home directory. The crumb read "Home".
   home: {
-    en: 'Home',
-    hy: 'Տուն',
-    ru: 'Домашняя',
+    en: 'Workspace root',
+    hy: 'Աշխատատարածքի արմատ',
+    ru: 'Корень рабочей области',
   },
   kinds: {
     en: 'Filter by kind',

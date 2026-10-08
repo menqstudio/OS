@@ -45,7 +45,7 @@ Each row carries the date it was measured, because they are not measured togethe
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
 | `tools/` self-tests · 2026-10-08 | 1769 OK; contrast gate 98 pairs |
-| frontend · 2026-10-08 | typecheck clean, 1075 / 87 files |
+| frontend · 2026-10-08 | typecheck clean, 1093 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
 | Rust, 10 crates · 2026-10-08 | 1430 passed, 1 ignored (needs root; CI runs it) |

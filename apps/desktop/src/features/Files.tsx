@@ -214,7 +214,8 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
 export function Files() {
   const { t, lang } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
-  // undefined path == home directory (resolved by the backend).
+  // undefined path == the files workspace root (`~/BroPS`, or `BROPS_FILES_ROOT`), resolved by the
+  // backend — which refuses the home directory as that root.
   const [path, setPath] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | 'folder' | 'file'>('all');

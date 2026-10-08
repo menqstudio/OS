@@ -97,3 +97,17 @@ describe('the blocked panel does not narrate a wall event nobody recorded', () =
     expect(body).toMatch(/does not record why|չի գրանցում, թե ինչու|не записывает, почему/);
   });
 });
+
+// `list_agents` is `repo::agents::list` over the local SQLite table, and the only caller of
+// `agents::create` is the startup seed. The error state blamed a lost "engine supervisor" link for
+// a failed local read, and the empty state promised agents "when the conductor dispatches a
+// governed pack" — a path that writes no agent.
+describe('the roster states say where the roster comes from', () => {
+  it.each(['en', 'hy', 'ru'] as const)('a failed read is not a lost supervisor link (%s)', (lang) => {
+    expect(AG_STR.linkLost[lang]).not.toMatch(/engine supervisor|վերահսկիչի հետ|супервизором/);
+    expect(AG_STR.linkLost[lang]).toMatch(/could not be read|չհաջողվեց կարդալ|Не удалось прочитать/);
+  });
+  it.each(['en', 'hy', 'ru'] as const)('an empty roster promises no dispatch that fills it (%s)', (lang) => {
+    expect(AG_STR.emptyHint[lang]).not.toMatch(/When the conductor dispatches|Երբ դիրիժորը ուղարկի|Когда дирижёр отправит/);
+  });
+});

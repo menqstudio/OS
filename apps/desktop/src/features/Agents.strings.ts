@@ -25,15 +25,17 @@ export const STR = {
   // State branches — loading · error(link lost) · empty
   building: { en: 'Building lattice…', hy: 'Ցանցը կառուցվում է…', ru: 'Построение сети…' },
   linkLost: {
-    en: 'Link to the engine supervisor was lost — the live pack state is unavailable.',
-    hy: 'Կապը շարժիչի վերահսկիչի հետ կորավ — կենդանի փաթեթի վիճակն անհասանելի է։',
-    ru: 'Связь с супервизором движка потеряна — состояние живого пакета недоступно.',
+    // `list_agents` reads the local SQLite table. This blamed a lost engine-supervisor link.
+    en: 'The local agent roster could not be read. Reason:',
+    hy: 'Գործակալների լոկալ ցուցակը չհաջողվեց կարդալ։ Պատճառ՝',
+    ru: 'Не удалось прочитать локальный список агентов. Причина:',
   },
   emptyTitle: { en: 'No active agents', hy: 'Ակտիվ գործակալներ չկան', ru: 'Нет активных агентов' },
   emptyHint: {
-    en: 'When the conductor dispatches a governed pack, its builders appear here.',
-    hy: 'Երբ դիրիժորը ուղարկի կառավարվող փաթեթ, նրա կառուցողները կհայտնվեն այստեղ։',
-    ru: 'Когда дирижёр отправит управляемый пакет, его исполнители появятся здесь.',
+    // Only the startup seed writes agents; a governed dispatch adds none. This promised it would.
+    en: 'The roster is the local agents table, and it is empty. In this build only the startup seed writes to it.',
+    hy: 'Ցուցակը գործակալների լոկալ աղյուսակն է, և այն դատարկ է։ Այս տարբերակում դրանում գրում է միայն գործարկման սերմնավորումը։',
+    ru: 'Список — это локальная таблица агентов, и она пуста. В этой сборке в неё пишет только начальное заполнение при запуске.',
   },
 
   // Dossier rail — role line, pick prompt, field labels, honest telemetry note

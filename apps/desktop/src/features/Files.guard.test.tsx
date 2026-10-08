@@ -151,3 +151,11 @@ describe('isGuardDenied — the classifier the blocked state turns on', () => {
     }
   });
 });
+
+// The root crumb read "Home". The backend's root is a dedicated workspace (`~/BroPS`, or
+// `BROPS_FILES_ROOT`) and it REFUSES a root that resolves to the home directory.
+describe('the root crumb does not call the files workspace the home directory', () => {
+  it.each(['en', 'hy', 'ru'] as const)('(%s)', (lang) => {
+    expect(FILES_STR.home[lang]).not.toMatch(/^Home$|^Տուն$|^Домашняя$/);
+  });
+});

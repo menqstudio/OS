@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { AppProvider } from '../app/store';
 import { BridgePanel } from './Bridge';
+import { STR as BR_STR } from './Bridge.strings';
 import { RESULT_PROTOCOL, TRUSTED_VERIFIED } from '../services/governedTurn';
 
 const CONVERSATION = {
@@ -269,5 +270,14 @@ describe('BridgePanel — outside a Tauri runtime', () => {
     expect(screen.getByText('no_desktop_backend')).toBeInTheDocument();
     // The proxy command does not exist here, so it must not have been called.
     expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain('governed_turn_execute');
+  });
+});
+
+// The panel is embedded under the Decisions table AND mounted alone on the `bridge` route. On the
+// second there is no table above it, and the note said "the local decision table shown above".
+describe('the ledger note does not point at something that may not be on the page', () => {
+  it.each(['en', 'hy', 'ru'] as const)('names the table instead of a position (%s)', (lang) => {
+    expect(BR_STR.surfaceLedgerNote[lang]).not.toMatch(/shown above|վերևի լոկալ|таблица выше/);
+    expect(BR_STR.surfaceLedgerNote[lang]).toMatch(/Decisions page|«Որոշումներ» էջի|странице «Решения»/);
   });
 });
