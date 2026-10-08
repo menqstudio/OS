@@ -320,9 +320,9 @@ fast, so run the command rather than trusting the number.
 | Jobs in `ci.yml` | **22** | the `jobs` KEY of `.github/workflows/ci.yml`, parsed as YAML — a 2-space-indent regex also catches `push:` under `on:` and answers 23 |
 | Required contexts on `main` | **35** · +5 deliberately excluded | `gh api repos/menqstudio/OS/branches/main/protection --jq '.required_status_checks.contexts\|length'`; the same list is `contexts` in `config/required-checks.json`, which `tools/check_repo_state.py` compares against live protection |
 | Specialist definitions | **262** | `ls .claude/agents/*.md \| wc -l` |
-| Cockpit frontend (jsdom) | **1057** թեստ · tests, 87 file | `cd apps/desktop && npm ci && npm test` |
+| Cockpit frontend (jsdom) | **1059** թեստ · tests, 87 file | `cd apps/desktop && npm ci && npm test` |
 | Cockpit accessibility (axe) | **82** թեստ · tests | `cd apps/desktop && npm ci && npm run test:a11y` |
-| Cockpit in real Chromium | **433** թեստ · tests | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
+| Cockpit in real Chromium | **434** թեստ · tests | `cd apps/desktop && npm ci && npx playwright install chromium && npm run test:browser` |
 
 > **Skip counts are not stated here.** The engine suite RUNS 2741 tests in every environment and
 > SKIPS a different number in each: measured at `9659281` on 2026-09-20, 14 on the ubuntu runner, 82

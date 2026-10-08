@@ -105,7 +105,7 @@
   color: inherit;
   opacity: 0.9;
   font-size: 0; /* neutralise any text-glyph fallback */
-  transition: color var(--fast), transform var(--slow) var(--spring),
+  transition: color var(--fast), transform 220ms var(--spring),
     filter var(--slow);
 }
 .nav a i svg {
@@ -138,7 +138,7 @@
   transform: scaleY(0);
   transform-origin: 50% 50%;
   opacity: 0;
-  transition: transform var(--slow) var(--spring), opacity var(--fast);
+  transition: transform 220ms var(--spring), opacity var(--fast);
 }
 .nav a.on {
   box-shadow: none; /* the animated ::before bar stands in for the inset shadow */
@@ -164,7 +164,7 @@
   opacity: 1;
   transform: scale(1.08);
   filter: drop-shadow(0 0 5px rgb(var(--cyan-rgb) / 0.55));
-  animation: navPop var(--slow) var(--spring);
+  animation: navPop 220ms var(--spring);
 }
 @keyframes navPop {
   0% {
@@ -184,7 +184,7 @@
   transition: transform var(--fast);
 }
 .brand .mark {
-  transition: transform var(--slow) var(--spring);
+  transition: transform 220ms var(--spring);
 }
 .brand:hover {
   transform: translateY(-1px);
@@ -200,10 +200,13 @@
   transform: scale(0.96);
 }
 
+/* `220ms var(--spring)` below, and in four places above, was `var(--slow) var(--spring)`. `--slow`
+   already carries an easing, so that was two easings in one item — an invalid declaration, which a
+   browser drops whole. These five were written and never ran until 2026-10-08. */
 /* stage page-enter: keyed on route in app/routes.tsx (RouteView), so the routed view fades and
    rises once per navigation. Per-view `.reveal` staggers run inside, untouched */
 .stage-enter {
-  animation: stageEnter var(--slow) var(--spring) both;
+  animation: stageEnter 220ms var(--spring) both;
 }
 @keyframes stageEnter {
   from {

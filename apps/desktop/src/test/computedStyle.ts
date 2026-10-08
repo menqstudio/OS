@@ -184,6 +184,9 @@ export const MOTION_CLASSES: Record<string, string> = {
   'u-breathe': 'breathe',
   'u-pulse': 'pulse',
   'u-spin': 'spin',
+  // The route wrapper. Its declaration was invalid for as long as it existed, and no class in this
+  // table promised its keyframes, so no sweep could notice it had never run.
+  'stage-enter': 'stageEnter',
 };
 
 /** Elements whose class promises an animation the computed style does not name. */

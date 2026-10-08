@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 // `computedStyle.ts` imports `cdp` from `vitest/browser` for its media-emulation helper, and that
 // module refuses to load outside Browser Mode. Nothing under test here touches it.
@@ -57,5 +59,55 @@ describe('belowNeed — the verdict is on the raw ratio, and no number is not a 
 
   it('fails a ratio that was never measured', () => {
     expect(belowNeed(Number.NaN, 4.5)).toBe(true);
+  });
+});
+
+// A `transition` or `animation` item takes ONE easing function. `--slow` is
+// `220ms cubic-bezier(…)` — a duration AND an easing — so `var(--slow) var(--spring)` expands to two
+// easings, and the browser drops the whole declaration: the page-enter animation, the active-icon
+// pop and three spring transitions in `aios-shell.css` were written and never ran. Nothing failed,
+// because an invalid declaration is not an error anywhere; this reads the stylesheets and counts.
+describe('no transition or animation item carries two easing functions', () => {
+  const SRC = resolve(__dirname, '..');
+  const cssFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? cssFiles(join(dir, e.name)) : e.name.endsWith('.css') ? [join(dir, e.name)] : []);
+  const files = cssFiles(SRC);
+  const sheets = files.map((f) => ({ f, css: readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '') }));
+
+  // Every custom property declared anywhere, last one wins — enough to expand the motion tokens.
+  const tokens = new Map<string, string>();
+  for (const { css } of sheets) {
+    for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)) tokens.set(m[1], m[2].trim());
+  }
+  const expand = (value: string, depth = 0): string => depth > 8 ? value
+    : value.replace(/var\(\s*(--[\w-]+)\s*(?:,[^()]*)?\)/g, (_all, name: string) => expand(tokens.get(name) ?? '', depth + 1));
+  const topLevelItems = (value: string): string[] => {
+    const out: string[] = []; let depth = 0; let cur = '';
+    for (const ch of value) {
+      if (ch === '(') depth += 1;
+      if (ch === ')') depth -= 1;
+      if (ch === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += ch;
+    }
+    return [...out, cur];
+  };
+  const EASING = /cubic-bezier\(|steps\(|linear\(|\b(?:ease-in-out|ease-in|ease-out|ease|linear|step-start|step-end)\b/g;
+
+  it('finds the stylesheets and the motion tokens it needs', () => {
+    expect(files.length).toBeGreaterThan(3);
+    expect(tokens.get('--slow')).toMatch(/cubic-bezier/);
+    expect(tokens.get('--spring')).toMatch(/cubic-bezier/);
+  });
+
+  it('holds across every stylesheet under src/', () => {
+    const doubled: string[] = [];
+    for (const { f, css } of sheets) {
+      for (const m of css.matchAll(/(?:^|[;{\s])(transition|animation)\s*:\s*([^;}]+)/g)) {
+        for (const item of topLevelItems(expand(m[2]))) {
+          const n = (item.match(EASING) ?? []).length;
+          if (n > 1) doubled.push(`${f.slice(SRC.length + 1)} — ${m[1]}: ${m[2].trim().replace(/\s+/g, ' ')}`);
+        }
+      }
+    }
+    expect(doubled).toEqual([]);
   });
 });
