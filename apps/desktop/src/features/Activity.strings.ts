@@ -284,6 +284,17 @@ export function seededNoteStr(lang: Lang, seeded: number): string {
     : `${seeded} seeded demo rows are not plotted or counted. The first-run seed wrote them; no real event did.`;
 }
 
+/** How many rows `activity::list` returns at most — the SQL `LIMIT` in `core/src/repo.rs`. A test
+ *  reads that file and holds this number to it. */
+export const ACTIVITY_WINDOW = 200;
+
+/** Said when the read came back FULL: the page then holds a window of the record, not the record. */
+export function windowNoteStr(lang: Lang): string {
+  if (lang === 'hy') return `Այս թվերը վերաբերում են շարժիչի վերադարձրած վերջին ${ACTIVITY_WINDOW} audit տողին. ընթերցումը այդտեղ է կանգնում, ուստի գրառումը կարող է ավելի երկար լինել։ Զարկերի թիվը, տեմպը և հաշվարկները այս պատուհանինն են, ոչ թե ամբողջ գրառմանը։`;
+  if (lang === 'ru') return `Эти цифры относятся к последним ${ACTIVITY_WINDOW} строкам аудита, которые вернул движок: чтение на этом останавливается, поэтому запись может быть длиннее. Число ударов, темп и подсчёты — этого окна, а не всей записи.`;
+  return `These figures cover the latest ${ACTIVITY_WINDOW} audit rows the engine returned — the read stops there, so the record may be longer. The beat count, the rate and the tallies are of this window, not of the whole record.`;
+}
+
 /** Tail note when older beats are not plotted. */
 export function hiddenTailStr(lang: Lang, hidden: number): string {
   if (lang === 'hy') return `+${hidden} ավելի վաղ զարկ չեն գծագրված`;
