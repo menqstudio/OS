@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1019,
+      "value": 1020,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "b506907",
+        "head": "88eefb5",
         "environments": {
+          "Debian 13 (trixie) native @ 88eefb5 + half a cockpit finding (the thread's posts reach the deck)": {
+            "ran": 1020,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ b506907 + one cockpit finding (an unreadable colour is not a passing colour)": {
             "ran": 1019,
             "skipped": 0
@@ -333,7 +337,8 @@
         999,
         1007,
         1009,
-        1014
+        1014,
+        1019
       ]
     },
     "a11y_tests": {

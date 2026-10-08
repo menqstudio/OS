@@ -197,3 +197,42 @@ describe('GroupChat — a room created in the workspace appears in the deck bene
       expect(Array.from(selector().options).map((o) => o.text)).toEqual(['Design room', 'Fresh room']));
   });
 });
+
+describe('GroupChat — a position posted in the thread reaches the deck', () => {
+  // The deck and the thread each read the room's messages on their own. A POSITION typed into the
+  // thread was stored, shown in the thread, and never counted by the deck under it until the page
+  // was left and re-entered.
+  it('the deck counts a position the moment the thread has posted it', async () => {
+    const log = [msg('m-1', 'gev', formatConsensusOpening('Ship it?', 'unanimous', ['gev']), 'user')];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM]);
+      if (cmd === 'list_messages') return Promise.resolve(log.map((m) => ({ ...m })));
+      if (cmd === 'post_user_message') {
+        const made = msg(`m-${log.length + 1}`, String(args?.author ?? 'gev'), String(args?.body ?? ''), 'user');
+        log.push(made);
+        return Promise.resolve(made);
+      }
+      if (cmd === 'list_agents') return Promise.resolve([agent('scout', 'Scout'), agent('analyst', 'Analyst')]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Scout', 'Analyst']);
+      if (cmd === 'ai_status') {
+        return Promise.resolve({ provider: 'claude-cli', model: 'm', ready: true, detail: 'ok', governed: false });
+      }
+      if (cmd === 'search_all') return Promise.resolve([]);
+      if (cmd === 'stream_reply') return new Promise(() => {});
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+
+    const d = await deck();
+    await within(d).findByText('Ship it?');
+    expect(within(d).queryByText('CONSENSUS REACHED')).toBeNull();
+
+    const composer = document.querySelector('form.composer')!;
+    const field = composer.querySelector('textarea, input') as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: 'POSITION: YES — ready' } });
+    fireEvent.submit(composer);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('post_user_message', expect.anything()));
+
+    await waitFor(() => expect(within(d).getByText('CONSENSUS REACHED')).toBeInTheDocument());
+  });
+});
