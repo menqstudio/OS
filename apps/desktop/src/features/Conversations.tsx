@@ -15,6 +15,7 @@ import { Mark } from '../components/Ambient';
 import type { Conversation, Message, SearchResult } from '../domain/entities';
 import type { Tone } from '../domain/enums';
 import { STR } from './Conversations.strings';
+import { parseTimestamp } from './timestamps';
 import {
   asDelegationEvent, applyDelegationEventForConversation,
   type Delegation, type DelegationEvent,
@@ -159,9 +160,12 @@ function Sigil({ name, state = 'idle' }: { name: string; state?: string }) {
   );
 }
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
+// The backend writes epoch-milliseconds AS TEXT, which `new Date(text)` reads as an Invalid Date —
+// so this returned '' for every stored message and no time was ever shown beside a bubble.
+// `parseTimestamp` is the one shared step that knows the shape.
+export function fmtTime(raw: string): string {
+  const d = parseTimestamp(raw);
+  if (!d) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 

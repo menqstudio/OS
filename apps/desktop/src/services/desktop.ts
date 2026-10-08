@@ -85,6 +85,10 @@ export interface TrustSelftest {
     | 'builtin_placeholder_model_failed';
   answer_is_from_a_model: boolean;
   bound: boolean;
+  /** The whole challenge→lease→attest→sign→verify chain ran and resolved a key. With `bound`,
+   *  this is what a self-test PASS means. `production_verified` is false on every in-process
+   *  run (demonstration custody), so a verdict gated on it can never be shown. */
+  chain_bound: boolean;
   detail: string;
   /** The reply the chain's executor produced INSIDE the governed turn and which the receipt
    *  bound + verified. A real model answer when BROPS_SELFTEST_MODEL_CMD is set, else a fixed

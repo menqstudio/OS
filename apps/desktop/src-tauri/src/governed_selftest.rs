@@ -44,6 +44,12 @@ pub struct TrustSelftest {
     pub demonstration_custody: bool,
     /// The committed body read back as `trusted_verified`.
     pub bound: bool,
+    /// The whole challenge→lease→attest→sign→verify chain ran and resolved a key under a verified
+    /// anchor (`ProofOutcome::chain_bound`). THIS is what a self-test pass means, together with
+    /// `bound` — not `production_verified`, which is `false` on every path into the in-process kit.
+    /// The panel gated its PASSED verdict on `production_verified`, so a good run rendered nothing
+    /// at all for as long as the panel existed; this field is what it reads now.
+    pub chain_bound: bool,
     /// The kit's own trust string (e.g. `trusted_verified(production key=… epoch=…)`).
     pub detail: String,
     /// The reply the chain's executor produced INSIDE the governed turn and which the receipt then bound +
@@ -183,6 +189,7 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             production_verified: outcome.production_verified,
             demonstration_custody: true, // the in-process self-test always runs under the TCB demonstration anchor
             bound: outcome.bound,
+            chain_bound: outcome.chain_bound,
             detail: outcome.trust_str,
             answer,
             // The user is told WHAT answered, beside the verdict about custody. A verified
@@ -202,6 +209,7 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             production_verified: false,
             demonstration_custody: true, // this build never proves production trust
             bound: false,
+            chain_bound: false,
             detail: "The in-process governed trust self-test is compiled only for the Windows build.".to_string(),
             answer: String::new(),
             answer_source: AnswerSource::BuiltinPlaceholderNoModelConfigured,

@@ -367,6 +367,10 @@ export function Approvals() {
   // were counted in "in queue" and in no other tile.
   const queue = useMemo(() => countQueue(items), [items]);
   const pendingCount = queue.pending;
+  // Whether the ledger was actually READ. `items` is `data ?? []`, so while it is loading or
+  // after a failed read the count is a count of nothing — and the header said a green
+  // "0 pending" for it. A number is shown only for a ledger that answered.
+  const ledgerRead = data !== null && !error;
 
   const style = <ApprovalsStyle />;
 
@@ -380,8 +384,8 @@ export function Approvals() {
         <p className="sub">{t('approvals.subtitle')}</p>
       </div>
       <div className="right">
-        <span className={`pill ${pendingCount > 0 ? 'warn' : 'live'}`}>
-          <b className="mono">{pendingCount}</b>&nbsp;{L('pending')}
+        <span className={`pill ${!ledgerRead ? 'off' : pendingCount > 0 ? 'warn' : 'live'}`}>
+          <b className="mono">{ledgerRead ? pendingCount : '—'}</b>&nbsp;{L('pending')}
         </span>
       </div>
     </header>

@@ -39,7 +39,10 @@ export function TrustSelftestPanel() {
     }
   };
 
-  const passed = result?.available === true && result.bound && result.production_verified;
+  // A pass is "the chain ran and the committed row is what it bound". It is NOT
+  // `production_verified`: that is false on every in-process run — the kit signs under the
+  // demonstration anchor — and gating on it meant a good run painted nothing, ever.
+  const passed = result?.available === true && result.bound && result.chain_bound;
 
   return (
     <section className="sec-section surface soft reveal trust-selftest" aria-label={tr('Trust chain self-test', 'Վստահության շղթայի ինքնաստուգում', 'Самопроверка цепочки доверия')}>
@@ -74,6 +77,26 @@ export function TrustSelftestPanel() {
           <p className="pill off" role="status">
             {tr('Unavailable on this platform (Windows build only).', 'Անհասանելի այս հարթակում (միայն Windows-ի բիլդ)։', 'Недоступно на этой платформе (только сборка Windows).')}
           </p>
+        )}
+        {state === 'done' && result && result.available && !passed && (
+          /* The chain RAN here and did not verify. This arm did not exist: the region stayed empty,
+             which reads as "nothing happened" — the one outcome an owner most needs to be told.
+             Shown with the engine's own state and detail, and never with the pass chain. */
+          <div className="ts-pass">
+            <p className="ts-verdict" role="status">
+              {/* `trust_state` is deliberately NOT shown here: the command sets it from `bound` alone,
+                  so on a run whose chain resolved no key it still reads "trusted_verified". */}
+              <span className="pill bad">{tr('SELF-TEST DID NOT VERIFY', 'ԻՆՔՆԱՍՏՈՒԳՈՒՄԸ ՉՀԱՍՏԱՏՎԵՑ', 'САМОПРОВЕРКА НЕ ПОДТВЕРЖДЕНА')}</span>
+            </p>
+            <p className="ts-caveat" role="note">
+              <b>
+                {result.bound
+                  ? tr('The committed reply matches its receipt, but the chain did not resolve a key under a verified anchor: ', 'Պահված պատասխանը համընկնում է ստացականին, բայց շղթան ստուգված խարսխի տակ բանալի չգտավ՝ ', 'Сохранённый ответ совпадает с квитанцией, но цепочка не нашла ключ под проверенным якорем: ')
+                  : tr('The committed reply is not what the receipt bound: ', 'Պահված պատասխանը այն չէ, ինչ ստացականը կապել է՝ ', 'Сохранённый ответ не тот, что связала квитанция: ')}
+              </b>
+              <span className="mono">{result.detail}</span>
+            </p>
+          </div>
         )}
         {state === 'done' && passed && (
           <div className="ts-pass">
