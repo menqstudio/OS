@@ -402,9 +402,11 @@ function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
   const room = roomList.find((c) => c.id === pickedRoom) ?? roomList[0] ?? null;
   const roomId = room?.id ?? null;
 
+  // Re-read on `roomsVersion` too: the thread above posts into this same room, and a POSITION
+  // typed there was stored and shown there and never counted here.
   const messages = useAsync(
     () => (roomId ? desktop.listMessages(roomId) : Promise.resolve([])),
-    [roomId],
+    [roomId, roomsVersion],
   );
   const roster = useAsync(
     () => (roomId ? desktop.listConversationParticipants(roomId) : Promise.resolve([] as string[])),

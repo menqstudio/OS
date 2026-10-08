@@ -913,7 +913,7 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
  *  (group) screens. Both are backed by the same conversations/messages tables. */
 /**
  * `onListChanged` is told when this workspace changed the SET or the NAMES of its conversations
- * (a room created, a room renamed). A sibling that keeps its own read of the same list has no
+ * (a room created, a room renamed) or posted into one of them. A sibling that keeps its own read of the same list has no
  * other way to learn of it — the group page's consensus deck read the rooms once at mount and
  * went on offering a list that no longer matched the one above it.
  */
@@ -1101,7 +1101,7 @@ export function Conversations({ kind, onListChanged }: { kind: Kind; onListChang
               <MessageThread
                 key={active.id}
                 conversation={active}
-                onActivity={() => s.reload()}
+                onActivity={() => { s.reload(); onListChanged?.(); }}
                 onDelegation={onDelegation}
               />
             );
