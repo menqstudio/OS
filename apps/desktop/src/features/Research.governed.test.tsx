@@ -202,3 +202,36 @@ describe('Research — the delete dialog does not promise a delete', () => {
     expect(screen.getAllByText(ITEM.title).length).toBeGreaterThan(0);
   });
 });
+
+describe('Research — an answer belongs to the record that asked for it', () => {
+  // One boolean ref was shared by every run. Selecting another record set it true in the cleanup
+  // and false again in the next effect, so the FIRST record's late `ready` passed the guard and
+  // was held under the SECOND record — whose title `save_ask_to_knowledge` then files it under.
+  const OTHER = { ...ITEM, id: 'rs-2', title: 'How is the ledger anchored', question: 'What signs the audit head?' };
+
+  it('a `ready` that arrives after the record was switched is dropped, not held under the new record', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_research') return Promise.resolve([ITEM, OTHER]);
+      if (cmd === 'stream_ask') return new Promise(() => {});
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><Research /></ToastProvider></AppProvider>);
+    fireEvent.click(await screen.findByRole('option', { name: new RegExp(ITEM.title) }));
+    fireEvent.click(await screen.findByRole('button', { name: /Run this question/ }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith(
+      'stream_ask', expect.objectContaining({ prompt: ITEM.question }),
+    ));
+    const firstRun = lastChannel;
+
+    // The owner moves to another record while the first question is still out.
+    fireEvent.click(screen.getByRole('option', { name: new RegExp(OTHER.title) }));
+    await screen.findByRole('button', { name: /Run this question/ });
+
+    // The first question's answer lands now.
+    act(() => { firstRun?.onmessage?.({ type: 'ready', resultId: 'answer-to-the-FIRST-question' }); });
+
+    expect(screen.queryByRole('button', { name: /Save to knowledge/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Run this question/ })).toBeTruthy();
+    expect(invokeMock).not.toHaveBeenCalledWith('save_ask_to_knowledge', expect.anything());
+  });
+});

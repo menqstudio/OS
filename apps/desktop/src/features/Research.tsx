@@ -83,24 +83,29 @@ type RunState =
 
 function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
   const [run, setRun] = useState<RunState>({ k: 'idle' });
-  const cancelled = useRef(false);
+  // The token of the run whose events are still wanted. Every start, every cancel and every
+  // change of record takes a NEW one, and a callback acts only while its own token is current.
+  //
+  // This was one shared boolean, `cancelled`. Switching record set it true in the effect's
+  // cleanup and false again in the next effect — in the same commit — so the previous record's
+  // late `ready` passed the guard and was HELD under the new record, whose title the save then
+  // files it under: one question's answer under another question's name.
+  const current = useRef(0);
 
-  // A new record is a new run. Without this, selecting another item keeps the previous
-  // record's held id on screen — and saving it would file one question's answer under
-  // another question's title.
+  // A new record is a new run: nothing the old one still has in flight may land here.
   useEffect(() => {
-    cancelled.current = false;
+    current.current += 1;
     setRun({ k: 'idle' });
-    return () => { cancelled.current = true; };
+    return () => { current.current += 1; };
   }, [item.id]);
 
   const question = (item.question ?? '').trim();
   const start = () => {
     if (!question || run.k === 'running') return;
-    cancelled.current = false;
+    const mine = (current.current += 1);
     setRun({ k: 'running' });
     void desktop.streamAsk(question, (ev) => {
-      if (cancelled.current) return;
+      if (current.current !== mine) return;
       // `delta` is ignored on purpose: a governed ask is buffered by construction and the
       // body is held, not streamed. Painting deltas here would show text that the verify
       // step may still refuse.
@@ -110,12 +115,12 @@ function GovernedRun({ item, L }: { item: ResearchItem; L: Localize }) {
       else if (ev.type === 'blocked') setRun({ k: 'blocked', reason: ev.reason });
       else if (ev.type === 'error') setRun({ k: 'failed', reason: ev.message });
     }).catch((e: unknown) => {
-      if (!cancelled.current) {
+      if (current.current === mine) {
         setRun({ k: 'failed', reason: e instanceof Error ? e.message : String(e) });
       }
     });
   };
-  const cancel = () => { cancelled.current = true; setRun({ k: 'idle' }); };
+  const cancel = () => { current.current += 1; setRun({ k: 'idle' }); };
   const save = () => {
     if (run.k !== 'held') return;
     const { resultId } = run;

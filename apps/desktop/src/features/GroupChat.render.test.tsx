@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 // The group room's CONSENSUS deck rendered over a real transcript. The assertions
 // that matter are the negative ones: a round is never shown as reached while anyone
@@ -156,5 +156,44 @@ describe('Group chat consensus deck', () => {
     expect(within(d).getByText(/Drifter/)).toBeInTheDocument();
     // The uncounted objection does not change the tally of the people who were asked.
     expect(within(d).getByText('CONSENSUS REACHED')).toBeInTheDocument();
+  });
+});
+
+describe('GroupChat — a room created in the workspace appears in the deck beneath it', () => {
+  // The deck read the room list once, on mount, and its copy tells the user to "create a room
+  // above, then a consensus round can be opened in it". The room was created, the workspace
+  // reloaded its own list, and the deck went on offering the rooms it had seen at mount.
+  it('the deck\'s room selector gains the new room without a remount', async () => {
+    const rooms = [{ ...ROOM }];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_conversations') return Promise.resolve(rooms.map((r) => ({ ...r })));
+      if (cmd === 'create_conversation') {
+        const made = { ...ROOM, id: 'g-2', title: String(args?.title ?? ''), messageCount: 0 };
+        rooms.push(made);
+        return Promise.resolve(made);
+      }
+      if (cmd === 'list_messages') return Promise.resolve([]);
+      if (cmd === 'list_agents') return Promise.resolve([agent('scout', 'Scout'), agent('analyst', 'Analyst')]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Scout', 'Analyst']);
+      if (cmd === 'ai_status') {
+        return Promise.resolve({ provider: 'claude-cli', model: 'm', ready: true, detail: 'ok', governed: false });
+      }
+      if (cmd === 'search_all') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+
+    const d = await deck();
+    const selector = () => within(d).getByRole('combobox', { name: 'Room' }) as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(selector().options).map((o) => o.text)).toEqual(['Design room']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Fresh room' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('create_conversation', expect.anything()));
+
+    await waitFor(() =>
+      expect(Array.from(selector().options).map((o) => o.text)).toEqual(['Design room', 'Fresh room']));
   });
 });
