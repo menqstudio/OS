@@ -144,8 +144,9 @@ function PreviewPlane({ entry, onGuard, onEdit }: {
 
   if (s.loading && s.data === null) return <Skeleton rows={8} />;
 
-  // blocked (sealed): the engine scope guard refused the open. Assertive live
-  // region so assistive tech announces the guard reason immediately.
+  // blocked (sealed): the open was refused before a byte was read — by the window's command
+  // permissions, the only refusal `isGuardDenied` can recognise; the engine is not on this route.
+  // Assertive live region so assistive tech announces the reason immediately.
   if (s.error && denied) {
     return (
       <div className="fx-blocked fx-fade" role="alert" aria-live="assertive">

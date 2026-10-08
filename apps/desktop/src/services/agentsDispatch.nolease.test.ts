@@ -147,6 +147,27 @@ describe('dispatch — the desktop never serializes a lease or a key', () => {
     expect(flatten(sent)).toContain('Read the ledger');
   });
 
+  // The header said non-string leaves "are visited too". Three containers were not: a typed array
+  // has no enumerable own string keys worth reading and is not `Array.isArray`, and `Object.entries`
+  // of a Map or a Set is empty. Each carried `lease-7f2a91` through the sweep unseen.
+  it.each([
+    ['a Uint8Array of character codes', () => new Uint8Array([...'lease-7f2a91'].map((c) => c.charCodeAt(0)))],
+    ['an ArrayBuffer of character codes', () => new Uint8Array([...'lease-7f2a91'].map((c) => c.charCodeAt(0))).buffer],
+    ['a Map value', () => new Map([['note', 'lease-7f2a91']])],
+    ['a Map key', () => new Map([['lease-7f2a91', 1]])],
+    ['a Set member', () => new Set(['lease-7f2a91'])],
+    ['a Map holding a character-code array', () => new Map([['n', [...'lease-7f2a91'].map((c) => c.charCodeAt(0))]])],
+  ])('the sweep sees a credential carried in %s', (_name, make) => {
+    const swept = flatten({ smuggled: make() });
+    expect(swept).toContain('lease-7f2a91');
+    expect(swept.filter((s) => FORBIDDEN.test(s)).length).toBeGreaterThan(0);
+  });
+
+  it('and still invents nothing from a container with no credential in it', () => {
+    const clean = flatten({ a: new Uint8Array([1, 2, 3, 200]), b: new Map([['title', 'Read the ledger']]), c: new Set([7]) });
+    expect(clean.filter((s) => FORBIDDEN.test(s))).toEqual([]);
+  });
+
   it('`I-03`: one byte outside the printable range no longer defeats the decode', () => {
     // The ninth audit escaped route 3's fix by appending 0x0a: the all-or-nothing decode returned
     // null for the whole array and the sweep went silent again. Both escapes are pinned here as

@@ -11,6 +11,13 @@ import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Files } from './Files';
 import { isGuardDenied } from './filesModel';
+import { STR as FILES_STR } from './Files.strings';
+
+/** Verbatim: what Tauri answers for a command the window's capability set does not grant. */
+const ACL_DENIAL = 'read_file not allowed. Permissions associated with this command: ';
+/** Verbatim: the two strings `src-tauri/src/files.rs` `read_file` can return (`PATH_REFUSED`, `fs_err`). */
+const PATH_REFUSED = 'path is not accessible in this workspace';
+const READ_FAILED = 'cannot read file';
 
 /**
  * Phase 5: *"Files honor engine guard states (open/read/sealed); no unlawful open"*, and the
@@ -47,21 +54,28 @@ async function open(name: string) {
 beforeEach(() => invokeMock.mockReset());
 
 describe('Files — a sealed file is refused, and the page says why', () => {
-  it('renders the blocked state with the engine guard reason, and no content', async () => {
-    mount(() => Promise.reject(new Error('scope guard: path not in the declared protected_scope')));
+  // These were driven with 'scope guard: path not in the declared protected_scope', commented "the
+  // engine's own words", and with 'permission denied'. Neither string is produced anywhere in
+  // src-tauri, the engine or the bridge: `read_file` is `confine` + `read_text`, the engine is never
+  // asked, and `fs_err` forwards one generic sentence. The guard was proven against a backend that
+  // does not exist. The one refusal this page can really classify is the capability wall's.
+  it('renders the blocked state with the refusal that was returned, and no content', async () => {
+    mount(() => Promise.reject(new Error(ACL_DENIAL)));
     await open('sealed.key');
 
     const alert = await screen.findByRole('alert');
     // Announced immediately: a refusal the owner triggered is not something to queue politely.
     expect(alert).toHaveAttribute('aria-live', 'assertive');
-    // The engine's own words, not a paraphrase.
-    expect(alert.textContent).toContain('not in the declared protected_scope');
+    // The refuser's own words, not a paraphrase.
+    expect(alert.textContent).toContain('read_file not allowed');
+    // And the refusal is not attributed to an engine that this route never consults.
+    expect(alert.textContent).not.toMatch(/engine scope guard denied/i);
     // And nothing that looks like file content came back with it.
     expect(alert.textContent).not.toContain('sealed.key contents');
   });
 
   it('a refused open leaves no editable surface behind', async () => {
-    mount(() => Promise.reject(new Error('permission denied')));
+    mount(() => Promise.reject(new Error(ACL_DENIAL)));
     await open('sealed.key');
     await screen.findByRole('alert');
     // No textarea, no save: a sealed file must not present the affordances of an open one.
@@ -76,6 +90,21 @@ describe('Files — a sealed file is refused, and the page says why', () => {
     await open('notes.txt');
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('read_file', expect.anything()));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each([PATH_REFUSED, READ_FAILED])('the backend\'s own "%s" is not announced as sealed', async (message) => {
+    // `PATH_REFUSED` covers "does not exist", "not accessible" and "outside the root" on purpose,
+    // so the page cannot know a guard refused anything; `fs_err` is a failed read.
+    mount(() => Promise.reject(new Error(message)));
+    await open('notes.txt');
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('read_file', expect.anything()));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(isGuardDenied(message)).toBe(false);
+  });
+
+  it.each(['en', 'hy', 'ru'] as const)('the sealed hint does not name the engine as the refuser (%s)', (lang) => {
+    expect(FILES_STR.blockedHint[lang]).not.toMatch(/engine scope guard denied|Շարժիչի scope-պահակը մերժեց|Охрана области движка отклонила/);
+    expect(FILES_STR.blockedHint[lang]).toMatch(/not consulted|չեն դիմում|не запрашивается/);
   });
 
   it('a readable file still opens — the guard is a gate, not a wall', async () => {
