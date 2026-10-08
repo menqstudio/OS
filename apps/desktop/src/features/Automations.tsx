@@ -831,9 +831,13 @@ export function Automations() {
 
         {/* Three distinct "no"s, never blurred into one: OUR contract refused (nothing was
             called), the backend denied, or an ordinary failure. */}
+        {/* A refusal by THIS PAGE's contract is headed as one. It was rendered under the default
+            title, "Blocked by the wall", with the real title prefixed into the reason — for a
+            refusal where nothing was called and no wall was reached. */}
         {err?.reason !== undefined && renderBlocked(
-          `${L('refusalTitle')}: ${err.message}`,
+          err.message,
           L(REFUSAL_FIX[err.reason]),
+          L('refusalTitle'),
         )}
         {err?.reason === undefined && denial && isDenial(denial) && renderBlocked(
           denial,
@@ -842,8 +846,9 @@ export function Automations() {
         {err?.reason === undefined && denial && !isDenial(denial) && <div className="form-error">{denial}</div>}
         {/* A standing seal is shown even before anything is pressed: this rule cannot run. */}
         {err === null && seal !== null && renderBlocked(
-          `${L('refusalTitle')}: ${L(REFUSAL_STR[seal])}`,
+          L(REFUSAL_STR[seal]),
           L(REFUSAL_FIX[seal]),
+          L('refusalTitle'),
         )}
 
         <div className="sc-grid">

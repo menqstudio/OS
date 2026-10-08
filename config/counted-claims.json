@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1033,
+      "value": 1041,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "7c36d8d",
+        "head": "d256558",
         "environments": {
+          "Debian 13 (trixie) native @ d256558 + three statements on screen that were not true": {
+            "ran": 1041,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 7c36d8d + the activity page says when its read is a window": {
             "ran": 1033,
             "skipped": 0
@@ -363,7 +367,8 @@
         1021,
         1027,
         1028,
-        1030
+        1030,
+        1033
       ]
     },
     "a11y_tests": {

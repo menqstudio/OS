@@ -161,6 +161,10 @@ describe('a run that cannot be governed is refused before the backend is touched
     // The standing refusal is on screen without anyone pressing anything.
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Refused by the run contract');
+    // It is THIS PAGE's contract that refused, before anything was called. The panel was headed
+    // "Blocked by the wall" with the real title prefixed into the reason beneath it.
+    expect(alert).not.toHaveTextContent('Blocked by the wall');
+    expect(alert.querySelector('.au-blocked-title')).toHaveTextContent('Refused by the run contract');
     expect(alert).toHaveTextContent(/would reach the model\/engine/i);
     expect(alert).toHaveTextContent(/Ask Bro directly in chat/i);
 
