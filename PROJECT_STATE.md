@@ -11,7 +11,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `c1c5e0f`.** PR #375 on `cockpit/bugs-6` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `487793e`.** PR #376 on `cockpit/bugs-7` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
@@ -45,7 +45,7 @@ Each row carries the date it was measured, because they are not measured togethe
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
 | `tools/` self-tests · 2026-10-08 | 1769 OK; contrast gate 98 pairs |
-| frontend · 2026-10-09 | typecheck clean, 1149 / 87 files |
+| frontend · 2026-10-09 | typecheck clean, 1151 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
 | Rust, 10 crates · 2026-10-08 | 1430 passed, 1 ignored (needs root; CI runs it) |
@@ -56,9 +56,9 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **112 pull
-requests, 903 files and 106,095 inserted lines** have merged since, none independently
-confirmed — measured `75fca65..main` at `40244f0` on 2026-10-08, PRs `#253`–`#365`.
+**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **122 pull
+requests, 910 files and 107,086 inserted lines** have merged since, none independently
+confirmed — measured `75fca65..main` at `487793e` on 2026-10-09, PRs `#253`–`#375`.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

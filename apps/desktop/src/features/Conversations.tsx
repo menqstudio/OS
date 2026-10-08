@@ -599,7 +599,8 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
           id="thread"
           ref={threadRef}
           role="log"
-          aria-label={t('chat.conversations')}
+          // Its own name. It was `chat.conversations`, the name of the rail beside it.
+          aria-label={t('chat.messages')}
           aria-live="polite"
           aria-busy={thinking}
         >
@@ -689,7 +690,8 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
             <button
               type="button"
               className={`comp-at${showMentions ? ' on' : ''}`}
-              aria-label={t('chat.replyAs')}
+              // Its own name. It was `chat.replyAs`, the name of the agent select.
+              aria-label={t('chat.mentionAgent')}
               aria-expanded={showMentions}
               onClick={onAtClick}
             >@</button>

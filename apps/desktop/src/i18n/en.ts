@@ -64,6 +64,8 @@ export const en = {
   'chat.you': 'gev',
   'chat.replyFailed': 'Agent could not reply',
   'chat.replyAs': 'Reply as',
+  'chat.messages': 'Messages',
+  'chat.mentionAgent': 'Mention an agent',
   'chat.rename': 'Rename',
   'chat.renameTitle': 'Rename conversation',
   'chat.saveToChat': 'Save to chat',

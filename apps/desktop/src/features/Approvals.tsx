@@ -346,7 +346,11 @@ export function Approvals() {
     // listener is registered once per staged-state and is never a commit behind the data.
   }, [staged]);
 
-  // While a confirm dialog is open: Enter commits, Esc cancels.
+  // While a confirm dialog is open: Esc cancels, and Enter commits ONLY when focus is outside the
+  // dialog's buttons. In practice that is almost never: `Modal` puts focus on its first button,
+  // which is Cancel, so `g` then Enter CANCELS. That is the safe default for a gate, and it is
+  // left exactly so; whether Enter should confirm is the Owner's decision, not a comment's. This
+  // line used to say "Enter commits" (`R3-0221`).
   //
   // EXCEPT on a button inside the dialog. This listener is on `window` and used to commit on
   // every Enter whatever the target, with `preventDefault` — so tabbing to CANCEL and pressing

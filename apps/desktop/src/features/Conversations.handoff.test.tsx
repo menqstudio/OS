@@ -67,3 +67,27 @@ describe('Group chat handoffs — real transcript-derived chain', () => {
     expect(within(chain).getAllByRole('listitem')).toHaveLength(3);
   });
 });
+
+// Two controls carried another control's name. The message log was `aria-label` "Conversations" —
+// the name of the conversation rail beside it — and the "@" button was "Reply as", the name of
+// the agent select. A screen-reader user met two things called the same in each pair.
+describe('the chat\'s log and its mention button have their own names', () => {
+  it('the message log is not named after the conversation list', async () => {
+    setup();
+    const log = await screen.findByRole('log');
+    await waitFor(() => expect(log).toHaveAccessibleName('Messages'));
+    expect(log).not.toHaveAccessibleName('Conversations');
+  });
+
+  it('the "@" button says what it does', async () => {
+    const { container } = setup();
+    await screen.findByRole('log');
+    const at = await waitFor(() => {
+      const found = container.querySelector('button.comp-at');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(at).toHaveAccessibleName('Mention an agent');
+    expect(at).not.toHaveAccessibleName('Reply as');
+  });
+});

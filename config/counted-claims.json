@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1149,
+      "value": 1151,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-09",
-        "head": "c1c5e0f",
+        "head": "487793e",
         "environments": {
+          "Debian 13 (trixie) native @ 487793e + the chat log and the mention button have their own names": {
+            "ran": 1151,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ c1c5e0f + a failed exchange is not nobody decided": {
             "ran": 1149,
             "skipped": 0
@@ -423,7 +427,8 @@
         1118,
         1135,
         1144,
-        1145
+        1145,
+        1149
       ]
     },
     "a11y_tests": {
