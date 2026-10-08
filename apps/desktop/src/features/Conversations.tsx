@@ -911,7 +911,13 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
 
 /** Two-pane conversation workspace shared by the Chat (direct) and Group Chat
  *  (group) screens. Both are backed by the same conversations/messages tables. */
-export function Conversations({ kind }: { kind: Kind }) {
+/**
+ * `onListChanged` is told when this workspace changed the SET or the NAMES of its conversations
+ * (a room created, a room renamed). A sibling that keeps its own read of the same list has no
+ * other way to learn of it — the group page's consensus deck read the rooms once at mount and
+ * went on offering a list that no longer matched the one above it.
+ */
+export function Conversations({ kind, onListChanged }: { kind: Kind; onListChanged?: () => void }) {
   const { t, lang, focus, clearFocus, setSelectedConversation } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1008,6 +1014,7 @@ export function Conversations({ kind }: { kind: Kind }) {
           onCreated={(c) => {
             setSelectedId(c.id);
             s.reload();
+            onListChanged?.();
           }}
         />
       )}
@@ -1016,7 +1023,7 @@ export function Conversations({ kind }: { kind: Kind }) {
         <RenameConversationForm
           conversation={renaming}
           onClose={() => setRenaming(null)}
-          onRenamed={() => s.reload()}
+          onRenamed={() => { s.reload(); onListChanged?.(); }}
         />
       )}
 

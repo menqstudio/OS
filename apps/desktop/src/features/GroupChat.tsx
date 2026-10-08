@@ -388,11 +388,13 @@ function RoomDelegations({ roomId, state }: { roomId: string; state: GroupDelega
 
 /** The consensus deck for one group room: every round the transcript records, plus
  *  the form that opens a new one and actually asks the participants. */
-function ConsensusDeck() {
+function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
   const { t, lang, openEntity } = useApp();
   const L = (k: Key) => STR[k][lang] ?? STR[k].en;
 
-  const rooms = useAsync(() => desktop.listConversations('group'), []);
+  // Re-read whenever the workspace above reports that it changed the room list. This was `[]`,
+  // so a room created above never appeared here, under copy that says to create one above.
+  const rooms = useAsync(() => desktop.listConversations('group'), [roomsVersion]);
   const agents = useAsync(() => desktop.listAgents(), []);
   const [pickedRoom, setPickedRoom] = useState<string | null>(null);
 
@@ -719,13 +721,17 @@ function ConsensusDeck() {
  * selection privately; "Show this room above" pushes the deck's choice up through
  * the store's deep-link. The one seam still missing is the other direction — see the
  * note in the handoff report.
+ *
+ * What does cross: when the workspace creates or renames a room it says so, and the deck
+ * re-reads its list. Two reads of one list are still two reads; they are no longer two answers.
  */
 export function GroupChat() {
+  const [roomsVersion, setRoomsVersion] = useState(0);
   return (
     <div className="v-group">
       <style>{VIEW_CSS}</style>
-      <Conversations kind="group" />
-      <ConsensusDeck />
+      <Conversations kind="group" onListChanged={() => setRoomsVersion((v) => v + 1)} />
+      <ConsensusDeck roomsVersion={roomsVersion} />
     </div>
   );
 }
