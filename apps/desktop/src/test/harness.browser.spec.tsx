@@ -141,6 +141,27 @@ describe('each detector fires on a deliberate defect', () => {
     expect(clobberedMotion(container)).toEqual([]);
   });
 
+  it('the route wrapper runs its entrance, and the shell springs are real transitions', () => {
+    // Five declarations in `aios-shell.css` read `var(--slow) var(--spring)`. `--slow` carries its
+    // own easing, so each item had two, and Chromium dropped the declaration whole: the page-enter
+    // animation computed to `none`. Measured here because no class list can show it.
+    const { container } = render(
+      <>
+        <div className="stage-enter">a routed page</div>
+        <nav className="nav"><a className="on" href="#x"><i>·</i>Home</a></nav>
+        <div className="brand"><span className="mark">m</span></div>
+      </>,
+    );
+    const stage = getComputedStyle(container.querySelector('.stage-enter')!);
+    expect(stage.animationName).toBe('stageEnter');
+    expect(stage.animationDuration).toBe('0.22s');
+    expect(getComputedStyle(container.querySelector('.nav a.on i')!).animationName).toBe('navPop');
+    const mark = getComputedStyle(container.querySelector('.brand .mark')!);
+    expect(mark.transitionProperty).toBe('transform');
+    expect(mark.transitionDuration).toBe('0.22s');
+    expect(clobberedMotion(container)).toEqual([]);
+  });
+
   it('describeEl gives a path someone can find in the source', () => {
     const { container } = render(<div className="outer"><p id="x" className="a b">t</p></div>);
     expect(describeEl(container.querySelector('#x')!)).toBe('div.outer > p#x.a.b');

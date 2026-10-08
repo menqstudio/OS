@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1057,
+      "value": 1059,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "bc01a43",
+        "head": "120f118",
         "environments": {
+          "Debian 13 (trixie) native @ 120f118 + no motion item carries two easing functions": {
+            "ran": 1059,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ bc01a43 + the raw-ratio verdict and a failed evidence read described as one": {
             "ran": 1057,
             "skipped": 0
@@ -378,7 +382,8 @@
         1030,
         1033,
         1041,
-        1051
+        1051,
+        1057
       ]
     },
     "a11y_tests": {
